@@ -341,6 +341,51 @@ def write_wfn_mol(scf_data, filename, basis_scf_data=None, wfn=None,
     nelec = mol.nelec
  
     norb = scf_data['norb']
+    
+    # Check if frozen core Hamiltonian exists and read active space info
+    import os
+    if os.path.exists(filename):
+        try:
+            with h5py.File(filename, 'r') as f:
+                if 'Hamiltonian/dims' in f:
+                    ham_dims = f['Hamiltonian/dims'][:]
+                    # dims structure: [0, 0, 0, nmo, nelec[0], nelec[1], 0, nchol]
+                    ham_nmo = ham_dims[3]
+                    ham_nelec = (int(ham_dims[4]), int(ham_dims[5]))
+                    
+                    # If Hamiltonian has different dimensions (frozen core), use those
+                    if ham_nmo != norb or ham_nelec != nelec:
+                        if verbose:
+                            print(f" # Using frozen core dimensions from Hamiltonian:")
+                            print(f" #   norb: {norb} -> {ham_nmo}")
+                            print(f" #   nelec: {nelec} -> {ham_nelec}")
+                        norb = ham_nmo
+                        nelec = ham_nelec
+                        
+                        # Read active space orbitals from Hamiltonian
+                        if 'Hamiltonian/X' in f:
+                            X = f['Hamiltonian/X'][:]
+                            if verbose:
+                                print(f" #   Using active space orbitals from Hamiltonian: {X.shape}")
+                            
+                            # Update scf_data to use active space info
+                            scf_data = scf_data.copy()
+                            scf_data['norb'] = norb
+                            scf_data['nelec'] = nelec
+                            scf_data['mo_coeff'] = X
+                            # Update mo_occ to match active space (all active orbitals are doubly occupied)
+                            scf_data['mo_occ'] = np.array([2.0] * norb)
+                            
+                            # Also update basis_scf_data
+                            if basis_scf_data is not None:
+                                basis_scf_data = basis_scf_data.copy()
+                                basis_scf_data['mo_coeff'] = X
+                                basis_scf_data['norb'] = norb
+                                basis_scf_data['nelec'] = nelec
+                                basis_scf_data['mo_occ'] = np.array([2.0] * norb)
+        except Exception as e:
+            if verbose:
+                print(f" # Warning: Could not read Hamiltonian dimensions: {e}")
 
     # ensure valid walkers up-front
     walker_type = _slater_enum_map(
