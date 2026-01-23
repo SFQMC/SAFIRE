@@ -151,22 +151,20 @@ class TestFrozenCoreWavefunction:
             scf_data=scf_data,
             hamil_file=fout,
             chol_cut=1e-6,
-            verbose=True,  # Enable verbose to see what's happening
+            verbose=False,
             cas=(8, -1),
             ortho_ao=False,
             nelec=None,
             real_chol=True,
             dense=True,
             df=False,
-            walker_type="closed",  # Use closed for RHF
+            walker_type="collinear",  # Use collinear (same as first test)
             with_soc=False
         )
         
         # Check the Hamiltonian file has correct dimensions
         with h5.File(fout, 'r') as f:
             hcore = f['Hamiltonian/hcore'][:]
-            print(f"hcore shape: {hcore.shape}")
-            
             # Should be 4x4 for the active space
             assert hcore.shape == (4, 4), \
                 f"Expected hcore shape (4, 4), got {hcore.shape}"

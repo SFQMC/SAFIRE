@@ -194,6 +194,8 @@ def generate_hamiltonian(
         # mol.nelec = nelec
         orbs = np.identity(h1e.shape[-1])
         orbs = orbs[nfzc:nbasis-nfzv,nfzc:nbasis-nfzv]
+        # Update X to contain only active space MO coefficients
+        # X is returned and used by callers to know which orbitals are active
         X = C[:,nfzc:nbasis-nfzv]
     
     if walker_type == _SlaterType.NONCOLLINEAR and not scf_data['with_x2c']:
