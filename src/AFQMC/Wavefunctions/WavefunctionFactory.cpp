@@ -25,6 +25,7 @@
 #include "AFQMC/SlaterDeterminantOperations/SlaterDetOperations.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
+#include "AFQMC/Wavefunctions/StochasticWfn.hpp"
 //#include "AFQMC/HamiltonianOperations/HamOpsIO.hpp"
 #include "AFQMC/Wavefunctions/Excitations.hpp"
 #include "Memory/buffer_managers.h"
@@ -33,6 +34,18 @@ namespace sfqmc
 {
 namespace afqmc
 {
+
+namespace
+{
+template<bool MP, class MType, class... Args>
+Wavefunction makeNomsdWavefunction(bool stochastic, Args&&... args)
+{
+  if (stochastic)
+    return Wavefunction(StochasticWfn<MP, MType>(std::forward<Args>(args)...));
+  return Wavefunction(NOMSD<MP, MType>(std::forward<Args>(args)...));
+}
+} // namespace
+
 
 Wavefunction WavefunctionFactory::fromHDF5(TaskGroup_& TGprop,
                                            TaskGroup_& TGwfn,
@@ -53,6 +66,7 @@ Wavefunction WavefunctionFactory::fromHDF5(TaskGroup_& TGprop,
   std::string filename      = pt.get<std::string>("filename");
   std::string restart_file  = pt.get<std::string>("restart_file");
   bool recompute_ci  = pt.get<bool>("rediag");
+  bool stochastic    = pt.get<bool>("stochastic");
   int ndets_to_read  = pt.get<int>("ndets_to_read");
   boost::optional<bool> dense_trial_opt;// = pt.get_optional<bool>("dense_trial");
   if( auto node = pt.get_child_optional("dense_trial") )
@@ -86,7 +100,7 @@ Wavefunction WavefunctionFactory::fromHDF5(TaskGroup_& TGprop,
 
   if (type == "nomsd")
   {
-    app_log(1," Wavefunction type: NOMSD");
+    app_log(1," Wavefunction type: {}", stochastic ? "StochasticWfn (wrapping NOMSD)" : "NOMSD");
     if (dump.push("NOMSD", false)<0)
       APP_ABORT(" Error in WavefunctionFactory: Group NOMSD not found.");
     std::vector<ComplexType> ci;
@@ -163,16 +177,16 @@ Wavefunction WavefunctionFactory::fromHDF5(TaskGroup_& TGprop,
           auto HOps(getHamOps<true>(restart_file, walker_type, NMO, NAEA, NAEB, PsiT, 
 		TGprop, TGwfn, h));
           TGwfn.Node().barrier();
-          return Wavefunction(NOMSD<true,MType>(AFinfo, pt, TGwfn, std::move(SDetOp), 
-					 std::move(HOps), std::move(ci),
-                                         std::move(PsiT_), walker_type, NCE, targetNW));
+          return makeNomsdWavefunction<true, MType>(stochastic, AFinfo, pt, TGwfn, std::move(SDetOp),
+                                                  std::move(HOps), std::move(ci), std::move(PsiT_), walker_type, NCE,
+                                                  targetNW);
 	} else {
           auto HOps(getHamOps<false>(restart_file, walker_type, NMO, NAEA, NAEB, PsiT, 
 		TGprop, TGwfn, h));
           TGwfn.Node().barrier();
-          return Wavefunction(NOMSD<false,MType>(AFinfo, pt, TGwfn, std::move(SDetOp),
-                                         std::move(HOps), std::move(ci),
-                                         std::move(PsiT_), walker_type, NCE, targetNW));
+          return makeNomsdWavefunction<false, MType>(stochastic, AFinfo, pt, TGwfn, std::move(SDetOp),
+                                                     std::move(HOps), std::move(ci), std::move(PsiT_), walker_type,
+                                                     NCE, targetNW);
         }
       }
       else
@@ -181,16 +195,18 @@ Wavefunction WavefunctionFactory::fromHDF5(TaskGroup_& TGprop,
           auto HOps(getHamOps<true>(restart_file, walker_type, NMO, NAEA, NAEB, PsiT, 
 		TGprop, TGwfn, h));
           TGwfn.Node().barrier();	
-          return Wavefunction(NOMSD<true, local_csr_Matrix<ComplexType>>(AFinfo, pt, TGwfn, 
-						std::move(SDetOp), std::move(HOps), std::move(ci),
-						std::move(PsiT), walker_type, NCE, targetNW));
+          return makeNomsdWavefunction<true, local_csr_Matrix<ComplexType>>(stochastic, AFinfo, pt, TGwfn,
+                                                                            std::move(SDetOp), std::move(HOps),
+                                                                            std::move(ci), std::move(PsiT), walker_type,
+                                                                            NCE, targetNW);
 	} else {
           auto HOps(getHamOps<false>(restart_file, walker_type, NMO, NAEA, NAEB, PsiT, 
 		TGprop, TGwfn, h));
           TGwfn.Node().barrier();
-          return Wavefunction(NOMSD<false, local_csr_Matrix<ComplexType>>(AFinfo, pt, TGwfn, 
-                                                std::move(SDetOp), std::move(HOps), std::move(ci),
-                                                std::move(PsiT), walker_type, NCE, targetNW));
+          return makeNomsdWavefunction<false, local_csr_Matrix<ComplexType>>(stochastic, AFinfo, pt, TGwfn,
+                                                                             std::move(SDetOp), std::move(HOps),
+                                                                             std::move(ci), std::move(PsiT),
+                                                                             walker_type, NCE, targetNW);
 	}
       }
     }
@@ -214,14 +230,15 @@ Wavefunction WavefunctionFactory::fromHDF5(TaskGroup_& TGprop,
           auto HOps(getHamOps<true>(restart_file, walker_type, NMO, NAEA, NAEB, PsiT, 
 		TGprop, TGwfn, h));
           TGwfn.Node().barrier(); 
-          return Wavefunction(NOMSD<true,MType>(AFinfo, pt, TGwfn, std::move(SDetOp), 
-		std::move(HOps), std::move(ci), std::move(PsiT_), walker_type, NCE, targetNW));
+          return makeNomsdWavefunction<true, MType>(stochastic, AFinfo, pt, TGwfn, std::move(SDetOp), std::move(HOps),
+                                                    std::move(ci), std::move(PsiT_), walker_type, NCE, targetNW);
         } else { 
           auto HOps(getHamOps<false>(restart_file, walker_type, NMO, NAEA, NAEB, PsiT,
 		TGprop, TGwfn, h));
           TGwfn.Node().barrier(); 
-          return Wavefunction(NOMSD<false,MType>(AFinfo, pt, TGwfn, std::move(SDetOp), 
-		std::move(HOps), std::move(ci), std::move(PsiT_), walker_type, NCE, targetNW));
+          return makeNomsdWavefunction<false, MType>(stochastic, AFinfo, pt, TGwfn, std::move(SDetOp),
+                                                     std::move(HOps), std::move(ci), std::move(PsiT_), walker_type,
+                                                     NCE, targetNW);
         }
       }
       else
@@ -230,14 +247,18 @@ Wavefunction WavefunctionFactory::fromHDF5(TaskGroup_& TGprop,
           auto HOps(getHamOps<true>(restart_file, walker_type, NMO, NAEA, NAEB, PsiT, 
 		TGprop, TGwfn, h));
           TGwfn.Node().barrier(); 
-          return Wavefunction(NOMSD<true,local_csr_Matrix<ComplexType>>(AFinfo, pt, TGwfn, std::move(SDetOp), 
-		std::move(HOps), std::move(ci), std::move(PsiT), walker_type, NCE, targetNW));
+          return makeNomsdWavefunction<true, local_csr_Matrix<ComplexType>>(stochastic, AFinfo, pt, TGwfn,
+                                                                            std::move(SDetOp), std::move(HOps),
+                                                                            std::move(ci), std::move(PsiT), walker_type,
+                                                                            NCE, targetNW);
         } else { 
           auto HOps(getHamOps<false>(restart_file, walker_type, NMO, NAEA, NAEB, PsiT, 
 		TGprop, TGwfn, h));
           TGwfn.Node().barrier(); 
-          return Wavefunction(NOMSD<false,local_csr_Matrix<ComplexType>>(AFinfo, pt, TGwfn, std::move(SDetOp), 
-		std::move(HOps), std::move(ci), std::move(PsiT), walker_type, NCE, targetNW));
+          return makeNomsdWavefunction<false, local_csr_Matrix<ComplexType>>(stochastic, AFinfo, pt, TGwfn,
+                                                                             std::move(SDetOp), std::move(HOps),
+                                                                             std::move(ci), std::move(PsiT),
+                                                                             walker_type, NCE, targetNW);
         }
       }
     }

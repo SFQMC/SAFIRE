@@ -23,6 +23,7 @@
 #include "AFQMC/SlaterDeterminantOperations/SlaterDetOperations.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
+#include "AFQMC/Wavefunctions/StochasticWfn.hpp"
 
 namespace sfqmc
 {
@@ -239,6 +240,10 @@ class Wavefunction : public boost::variant<dummy::dummy_wavefunction,
                                            NOMSD<false,local_csr_Matrix<ComplexType>>,
                                            NOMSD<true,ComplexMatrix<node_allocator<ComplexType>>>,
                                            NOMSD<false,ComplexMatrix<node_allocator<ComplexType>>>,
+                                           StochasticWfn<true,local_csr_Matrix<ComplexType>>,
+                                           StochasticWfn<false,local_csr_Matrix<ComplexType>>,
+                                           StochasticWfn<true,ComplexMatrix<node_allocator<ComplexType>>>,
+                                           StochasticWfn<false,ComplexMatrix<node_allocator<ComplexType>>>,
                                            PHMSD<true>,
                                            PHMSD<false>>
 {
@@ -257,6 +262,20 @@ public:
   explicit Wavefunction(NOMSD<false,ComplexMatrix<node_allocator<ComplexType>>>&& other) : 
 			variant(std::move(other)) {}
   explicit Wavefunction(NOMSD<false,ComplexMatrix<node_allocator<ComplexType>>> const& other) = delete;
+
+  explicit Wavefunction(StochasticWfn<true,local_csr_Matrix<ComplexType>>&& other) : variant(std::move(other)) {}
+  explicit Wavefunction(StochasticWfn<true,local_csr_Matrix<ComplexType>> const& other) = delete;
+
+  explicit Wavefunction(StochasticWfn<false,local_csr_Matrix<ComplexType>>&& other) : variant(std::move(other)) {}
+  explicit Wavefunction(StochasticWfn<false,local_csr_Matrix<ComplexType>> const& other) = delete;
+
+  explicit Wavefunction(StochasticWfn<true,ComplexMatrix<node_allocator<ComplexType>>>&& other) :
+                        variant(std::move(other)) {}
+  explicit Wavefunction(StochasticWfn<true,ComplexMatrix<node_allocator<ComplexType>>> const& other) = delete;
+
+  explicit Wavefunction(StochasticWfn<false,ComplexMatrix<node_allocator<ComplexType>>>&& other) :
+                        variant(std::move(other)) {}
+  explicit Wavefunction(StochasticWfn<false,ComplexMatrix<node_allocator<ComplexType>>> const& other) = delete;
 
   explicit Wavefunction(PHMSD<true>&& other) : variant(std::move(other)) {}
   explicit Wavefunction(PHMSD<true> const& other) = delete;

@@ -58,6 +58,7 @@ public:
     std::string filename      = pt0.get<std::string>("filename");
     std::string restart_file  = pt0.get<std::string>("restart_file", "");
     bool rediag        = pt0.get<bool>("rediag", false);
+    bool stochastic    = pt0.get<bool>("stochastic", false);
     // validate inputs
     // create verbose internal inputs
     ptree pt1;
@@ -67,6 +68,7 @@ public:
     pt1.put("restart_file", restart_file);
     pt1.put("rediag", rediag);
     pt1.put("ndets_to_read", ndets_to_read);
+    pt1.put("stochastic", stochastic);
     // optional parameters 
     if( auto val = pt0.get_optional<int>("algorithm") )
       pt1.put("algorithm", *val);
