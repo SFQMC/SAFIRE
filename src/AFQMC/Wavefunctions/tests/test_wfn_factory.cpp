@@ -507,6 +507,189 @@ void wfn_fac(boost::mpi3::communicator& world)
 }
 
 template<bool MP, class Allocator>
+void stochastic_wfn_matches_nomsd(boost::mpi3::communicator& world)
+{
+  if (not file_exists(UTEST_HAMIL) || not file_exists(UTEST_WFN))
+  {
+    APP_ABORT(" Hamiltonian or wavefunction file not found. Run unit test with --hamil /path/to/hamil.h5 and --wfn /path/to/wfn.h5.");
+  }
+
+  std::string wfn_type = afqmc::getWavefunctionType(UTEST_WFN);
+  if (wfn_type != "NOMSD")
+    return;
+
+  GlobalTaskGroup gTG(world);
+
+  std::string base_name = UTEST_WFN.substr(UTEST_WFN.find_last_of("\\/") + 1);
+  std::string test_wfn  = base_name.substr(0, base_name.find_last_of("."));
+  auto file_data    = read_test_results_from_hdf<ComplexType>(UTEST_HAMIL, test_wfn);
+  int NMO           = file_data.NMO;
+  int NAEA          = file_data.NAEA;
+  int NAEB          = file_data.NAEB;
+  WALKER_TYPES type = afqmc::getWalkerType(UTEST_WFN, wfn_type);
+  int npol          = (type == NONCOLLINEAR) ? 2 : 1;
+
+  std::map<std::string, AFQMCInfo> InfoMap;
+  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, NAEA, NAEB}));
+
+  ptree ham_pt;
+  ham_pt.put("name", "ham0");
+  ham_pt.put("system", "info0");
+  ham_pt.put("filename", UTEST_HAMIL);
+
+  HamiltonianFactory HamFac(InfoMap);
+  HamFac.push("ham0", ham_pt);
+  Hamiltonian& ham = HamFac.getHamiltonian(gTG, "ham0");
+
+  auto TG     = TaskGroup_(gTG, std::string("WfnTG"), 1, gTG.getTotalCores());
+  int nwalk   = 11;
+  utils::RandomGenerator_t rng;
+
+  Allocator alloc_(make_localTG_allocator<ComplexType>(TG));
+
+  ptree wlk_pt;
+  wlk_pt.put("name", "wset0");
+  if (type == CLOSED)
+    wlk_pt.put("walker_type", "closed");
+  else if (type == COLLINEAR)
+    wlk_pt.put("walker_type", "collinear");
+  else if (type == NONCOLLINEAR)
+    wlk_pt.put("walker_type", "noncollinear");
+  else if (type == FULLYPOLARIZED)
+    wlk_pt.put("walker_type", "fullypolarized");
+
+  ptree wfn_pt_nomsd;
+  wfn_pt_nomsd.put("name", "wfn_nomsd");
+  wfn_pt_nomsd.put("system", "info0");
+  wfn_pt_nomsd.put("filename", UTEST_WFN);
+  wfn_pt_nomsd.put("stochastic", false);
+
+  ptree wfn_pt_stoch;
+  wfn_pt_stoch.put("name", "wfn_stoch");
+  wfn_pt_stoch.put("system", "info0");
+  wfn_pt_stoch.put("filename", UTEST_WFN);
+  wfn_pt_stoch.put("stochastic", true);
+
+  WavefunctionFactory WfnFac(InfoMap, MP);
+  WfnFac.push("wfn_nomsd", wfn_pt_nomsd);
+  WfnFac.push("wfn_stoch", wfn_pt_stoch);
+  Wavefunction& wfn_nomsd = WfnFac.getWavefunction(TG, TG, "wfn_nomsd", type, &ham, 1e-6, nwalk);
+  Wavefunction& wfn_stoch = WfnFac.getWavefunction(TG, TG, "wfn_stoch", type, &ham, 1e-6, nwalk);
+
+  REQUIRE(wfn_nomsd.size_of_G_for_vbias() == wfn_stoch.size_of_G_for_vbias());
+  REQUIRE(wfn_nomsd.transposed_G_for_vbias() == wfn_stoch.transposed_G_for_vbias());
+  REQUIRE(wfn_nomsd.local_number_of_cholesky_vectors() == wfn_stoch.local_number_of_cholesky_vectors());
+
+  auto initial_guess = WfnFac.getInitialGuess("wfn_nomsd");
+  REQUIRE(initial_guess.size(0) == 2);
+  REQUIRE(initial_guess.size(1) == npol * NMO);
+  REQUIRE(initial_guess.size(2) == NAEA);
+
+  auto init_walkers = [&](WalkerSet& wset) {
+    if (type == COLLINEAR)
+      wset.resize(nwalk, initial_guess[0], initial_guess[1](initial_guess.extension(1), {0, NAEB}));
+    else
+      wset.resize(nwalk, initial_guess[0], initial_guess[0]);
+  };
+
+  using CMatrix = Matrix_<Allocator>;
+  auto size_of_G = wfn_nomsd.size_of_G_for_vbias();
+  int Gdim1      = (wfn_nomsd.transposed_G_for_vbias() ? nwalk : size_of_G);
+  int Gdim2      = (wfn_nomsd.transposed_G_for_vbias() ? size_of_G : nwalk);
+  double dt(0.01);
+  auto nCV = wfn_nomsd.local_number_of_cholesky_vectors();
+
+  auto maybe_init_model_ham = [&](Wavefunction& wfn) {
+    if (wfn.getHamType() != ModelHamiltonian)
+      return;
+    if (TG.Global().root())
+    {
+      using SPComplexType = typename to_working_precision<MP, ComplexType>::type;
+      boost::multi::array<SPComplexType, 1> vMF_discrete(iextensions<1u>{nCV});
+      boost::multi::array<SPComplexType, 1> nMF(iextensions<1u>{2 * NMO});
+      for (int i = 0; i < npol * NMO; i++)
+        nMF[i] = SPComplexType(0.0, 0.0);
+      if (type == COLLINEAR)
+        for (int i = 0; i < NMO; i++)
+          nMF[i + NMO] = SPComplexType(0.0, 0.0);
+      wfn.update_potentials(dt, nMF, vMF_discrete, false);
+    }
+    TG.Global().barrier();
+  };
+
+  WalkerSet wset_nomsd(TG, wlk_pt, InfoMap["info0"], &rng);
+  init_walkers(wset_nomsd);
+  wfn_nomsd.Overlap(wset_nomsd);
+  wfn_nomsd.Energy(wset_nomsd);
+  TG.TG_local().barrier();
+
+  std::vector<ComplexType> ov_ref;
+  std::vector<ComplexType> E1_ref;
+  std::vector<ComplexType> EXX_ref;
+  std::vector<ComplexType> EJ_ref;
+  std::vector<ComplexType> Etot_ref;
+  for (auto it = wset_nomsd.begin(); it != wset_nomsd.end(); ++it)
+  {
+    ov_ref.push_back(ComplexType(*it->overlap()));
+    E1_ref.push_back(ComplexType(*it->E1()));
+    EXX_ref.push_back(ComplexType(*it->EXX()));
+    EJ_ref.push_back(ComplexType(*it->EJ()));
+    Etot_ref.push_back(ComplexType(it->energy()));
+  }
+
+  CMatrix G_nomsd({Gdim1, Gdim2}, alloc_);
+  wfn_nomsd.MixedDensityMatrix_for_vbias(wset_nomsd, G_nomsd);
+  maybe_init_model_ham(wfn_nomsd);
+  CMatrix X_nomsd({nCV, nwalk}, alloc_);
+  wfn_nomsd.vbias(G_nomsd, X_nomsd, dt);
+  TG.TG_local().barrier();
+
+  WalkerSet wset_stoch(TG, wlk_pt, InfoMap["info0"], &rng);
+  init_walkers(wset_stoch);
+  wfn_stoch.Overlap(wset_stoch);
+  wfn_stoch.Energy(wset_stoch);
+  TG.TG_local().barrier();
+
+  REQUIRE(wset_stoch.size() == ov_ref.size());
+  for (int n = 0; n < static_cast<int>(ov_ref.size()); ++n)
+  {
+    REQUIRE(real(ComplexType(*wset_stoch[n].overlap())) == Approx(real(ov_ref[n])));
+    REQUIRE(imag(ComplexType(*wset_stoch[n].overlap())) == Approx(imag(ov_ref[n])));
+    REQUIRE(real(ComplexType(*wset_stoch[n].E1())) == Approx(real(E1_ref[n])));
+    REQUIRE(imag(ComplexType(*wset_stoch[n].E1())) == Approx(imag(E1_ref[n])));
+    REQUIRE(real(ComplexType(*wset_stoch[n].EXX())) == Approx(real(EXX_ref[n])));
+    REQUIRE(imag(ComplexType(*wset_stoch[n].EXX())) == Approx(imag(EXX_ref[n])));
+    REQUIRE(real(ComplexType(*wset_stoch[n].EJ())) == Approx(real(EJ_ref[n])));
+    REQUIRE(imag(ComplexType(*wset_stoch[n].EJ())) == Approx(imag(EJ_ref[n])));
+    REQUIRE(real(ComplexType(wset_stoch[n].energy())) == Approx(real(Etot_ref[n])));
+    REQUIRE(imag(ComplexType(wset_stoch[n].energy())) == Approx(imag(Etot_ref[n])));
+  }
+
+  CMatrix G_stoch({Gdim1, Gdim2}, alloc_);
+  wfn_stoch.MixedDensityMatrix_for_vbias(wset_stoch, G_stoch);
+  for (int i = 0; i < G_stoch.size(0); ++i)
+    for (int j = 0; j < G_stoch.size(1); ++j)
+    {
+      REQUIRE(real(ComplexType(G_stoch[i][j])) == Approx(real(ComplexType(G_nomsd[i][j]))));
+      REQUIRE(imag(ComplexType(G_stoch[i][j])) == Approx(imag(ComplexType(G_nomsd[i][j]))));
+    }
+
+  maybe_init_model_ham(wfn_stoch);
+  CMatrix X_stoch({nCV, nwalk}, alloc_);
+  wfn_stoch.vbias(G_stoch, X_stoch, dt);
+  TG.TG_local().barrier();
+
+  for (int i = 0; i < X_stoch.size(0); ++i)
+    for (int j = 0; j < X_stoch.size(1); ++j)
+    {
+      REQUIRE(real(ComplexType(X_stoch[i][j])) == Approx(real(ComplexType(X_nomsd[i][j]))));
+      REQUIRE(imag(ComplexType(X_stoch[i][j])) == Approx(imag(ComplexType(X_nomsd[i][j]))));
+    }
+
+  TG.Global().barrier();
+}
+
+template<bool MP, class Allocator>
 void wfn_fac_distributed(boost::mpi3::communicator& world, int ngroups)
 {
 
@@ -1105,6 +1288,25 @@ TEST_CASE("wfn_fac_sdet", "[wavefunction_factory]")
 
   wfn_fac<false,Alloc>(world);
   wfn_fac<true,Alloc>(world);
+  release_memory_managers();
+}
+
+TEST_CASE("stochastic_wfn_matches_nomsd", "[wavefunction_factory][stochastic_wfn]")
+{
+  auto world = boost::mpi3::environment::get_world_instance();
+  auto node  = world.split_shared(world.rank());
+  setup_loggers(world.root(), 2, 2);
+
+#if defined(ENABLE_DEVICE)
+  arch::INIT(node);
+  using Alloc = device::device_allocator<ComplexType>;
+#else
+  using Alloc = shared_allocator<ComplexType>;
+#endif
+  setup_memory_managers(node, 10uL * 1024uL * 1024uL);
+
+  stochastic_wfn_matches_nomsd<false, Alloc>(world);
+  stochastic_wfn_matches_nomsd<true, Alloc>(world);
   release_memory_managers();
 }
 
