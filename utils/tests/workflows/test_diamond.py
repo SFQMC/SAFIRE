@@ -9,10 +9,10 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 import pytest
-from mpi4py import MPI
 
-#skip this file if pyscf can't import
-pyscf = pytest.importorskip("pyscf")
+pytest.importorskip("pyscf")
+pytest.importorskip("mpi4py")
+from mpi4py import MPI
 
 from afqmctools.inputs.from_pyscf import pyscf_to_afqmc
 from afqmctools.hamiltonian.converter import read_hamiltonian

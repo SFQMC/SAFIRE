@@ -297,6 +297,7 @@ class HamiltonianDirector(_HamiltonianDirector):
 
         _supported_steps = {
             'nth_neighbor_hopping' : 't',
+            'custom_one_body' : 'custom_one_body',
             'onsite_hubbard' : 'U',
             'hubbard_U1_density_density' : 'U1',
             'hubbard_U2_spin_spin' : 'U2',

@@ -1,0 +1,27 @@
+{
+  "afqmc": {
+    "project": {
+      "id": "qmc",
+      "series": 0,
+      "mixed_precision": false
+    },
+    "execute": {
+      "walker_set": {
+        "walker_type": "FULLYPOLARIZED"
+      },
+      "wavefunction": {
+        "filename": "shci_wfn.h5"
+      },
+      "hamiltonian":{
+	"filename" : "afqmc.h5"
+      },
+      "timestep": 0.005,
+      "steps": 7000,
+      "n_walkers_per_mpi_task": 50,
+      "measure_interval_multiplier": 1,
+      "population_control_interval": 10,
+      "walker_ortho_interval": 10,
+      "seed": 42
+    }
+  }
+}

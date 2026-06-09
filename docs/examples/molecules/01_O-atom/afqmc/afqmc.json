@@ -1,0 +1,22 @@
+{
+    "afqmc" :{
+        "project": {
+      "id": "qmc",
+      "series": 0
+    },
+    "execute": {    
+      "walker_set": {
+        "walker_type": "COLLINEAR"
+      },
+       "wavefunction": {
+         "filename": "../ham/afqmc.h5"
+       },
+       "timestep": "0.01",
+       "steps": "6000",
+       "population_control_interval": "10",
+       "measure_interval_multiplier": "1",
+       "n_walkers_per_mpi_task": "100",
+       "seed": "42"
+    }
+  }
+}

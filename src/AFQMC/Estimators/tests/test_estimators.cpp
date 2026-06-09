@@ -83,6 +83,9 @@ void reduced_density_matrix(boost::mpi3::communicator& world)
     std::tie(wfn_NMO,NAEA, NAEB) = read_info_from_wfn(UTEST_WFN, "any");
     CHECK(NMO == wfn_NMO);
 
+    WALKER_TYPES type = afqmc::getWalkerType(UTEST_WFN);
+    int npol = (type == NONCOLLINEAR) ? 2 : 1;
+
     utils::RandomGenerator_t rng;
     auto rng_dev = utils::make_device_rng(777);
     auto TG = TaskGroup_(gTG, std::string("WfnTG"), 1, gTG.getTotalCores());
@@ -99,7 +102,6 @@ void reduced_density_matrix(boost::mpi3::communicator& world)
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(gTG, "ham0");
 
-    WALKER_TYPES type                = afqmc::getWalkerType(UTEST_WFN);
     ptree wlk_pt;
     wlk_pt.put("name","wset0");
     wlk_pt.put("system","info0");
@@ -131,7 +133,7 @@ void reduced_density_matrix(boost::mpi3::communicator& world)
 
     auto initial_guess = WfnFac.getInitialGuess("wfn0");
     REQUIRE(initial_guess.size(0) == 2);
-    REQUIRE(initial_guess.size(1) == NMO);
+    REQUIRE(initial_guess.size(1) == npol * NMO);
     REQUIRE(initial_guess.size(2) == NAEA);
     wset.resize(nwalk, initial_guess[0], initial_guess[0]);
     using EstimPtr = std::shared_ptr<EstimatorBase>;
@@ -151,7 +153,10 @@ void reduced_density_matrix(boost::mpi3::communicator& world)
                                                                         type, wset, wfn, prop, impsamp)));
 
     // generate P1 with dt=0
-    prop.generateP1(0.0, wset.getWalkerType());
+    //   Discrete HS transformation requires finite dt to generate P1, 
+    //   but for continuous HS transformation we can safely use dt=0.0
+    double dt = ( wfn.getHamType() == ModelHamiltonian ) ? 1.0e-12 : 0.0;                                                                      
+    prop.generateP1(dt, wset.getWalkerType());
 
     std::string file = create_test_hdf(UTEST_WFN, UTEST_HAMIL);
     std::ofstream out;
@@ -229,9 +234,23 @@ void reduced_density_matrix(boost::mpi3::communicator& world)
       boost::multi::array_ref<ComplexType, 2, pointer> G(Gw.origin(), {NMO, NMO});
       verify_approx(G, BPRDM);
     }
+    else if (type == NONCOLLINEAR)
+    {
+      REQUIRE(read_data.num_elements() >= npol * NMO * npol * NMO);
+      boost::multi::array_ref<ComplexType, 2> BPRDM(read_data.origin(), {npol * NMO, npol * NMO});
+      ma::scal(1.0 / denom, BPRDM);
+      ComplexType trace = ComplexType(0.0);
+      for (int i = 0; i < npol * NMO; i++)
+        trace += BPRDM[i][i];
+      REQUIRE(trace.real() == Approx(NAEA + NAEB));
+      boost::multi::array<ComplexType, 2, Allocator> Gw({1, npol * NMO * npol * NMO}, alloc_);
+      wfn.MixedDensityMatrix(wset, Gw, false, true);
+      boost::multi::array_ref<ComplexType, 2, pointer> G(Gw.origin(), {npol * NMO, npol * NMO});
+      verify_approx(G, BPRDM);
+    }
     else
     {
-      APP_ABORT(" NONCOLLINEAR Wavefunction found.");
+      APP_ABORT(" Unknown wavefunction type.");
     }
 
     ptree est_pt2;
@@ -316,9 +335,23 @@ void reduced_density_matrix(boost::mpi3::communicator& world)
       boost::multi::array_ref<ComplexType, 2, pointer> G(Gw.origin(), {NMO, NMO});
       verify_approx(G, BPRDM);
     }
+    else if (type == NONCOLLINEAR)
+    {
+      REQUIRE(read_data.num_elements() >= npol * NMO * npol * NMO);
+      boost::multi::array_ref<ComplexType, 2> BPRDM(read_data.origin(), {npol * NMO, npol * NMO});
+      ma::scal(1.0 / denom, BPRDM);
+      ComplexType trace = ComplexType(0.0);
+      for (int i = 0; i < npol * NMO; i++)
+        trace += BPRDM[i][i];
+      REQUIRE(trace.real() == Approx(NAEA + NAEB));
+      boost::multi::array<ComplexType, 2, Allocator> Gw({1, npol * NMO * npol * NMO}, alloc_);
+      wfn.MixedDensityMatrix(wset, Gw, false, true);
+      boost::multi::array_ref<ComplexType, 2, pointer> G(Gw.origin(), {npol * NMO, npol * NMO});
+      verify_approx(G, BPRDM);
+    }
     else
     {
-      APP_ABORT(" NONCOLLINEAR Wavefunction found.");
+      APP_ABORT(" Unknown wavefunction type.");
     }
 
     if (!reader.open(file, H5F_ACC_RDONLY))

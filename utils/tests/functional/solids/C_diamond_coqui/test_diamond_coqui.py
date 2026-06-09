@@ -12,128 +12,34 @@
 Define functional tests for CoQuí format input Hamiltonians.
     Also use the CoQuí generated trial wavefunctions.
 """
-import enum
-from dataclasses import dataclass
-
-from afqmctools.hamiltonian.model.ham_class import SpinSymm
-
 from pathlib import Path
 from warnings import warn
 
 import pytest
 
-# TODO: generalize and centralize if useful!
-class HamiltonianClass(enum.Enum):
-    """
-    """
-    GENERIC_DENSE = enum.auto()
-    GENERIC_SPARSE = enum.auto()
-    MODEL = enum.auto()
-    KPFAC_CHOL = enum.auto()
-    THC = enum.auto()
+from afqmctools.hamiltonian.model.ham_class import SpinSymm
 
-# TODO: generalize and centralize if useful!
-class WavefunctionClass(enum.Enum):
-    """
-    """
-    NOMSD = enum.auto()
-    PHMSD = enum.auto()
+# Import centralized testing infrastructure
+from dev_tools.test_infrastructure import (
+    HamiltonianClass,
+    WavefunctionClass,
+    AFQMCHamiltonian,
+    AFQMCWavefunction,
+    AFQMCWalker,
+    AFQMCInputSet,
+    get_all_rules,
+    generate_param_list,
+    should_run_successfully,
+    should_exit_werror,
+    should_run_warn,
+    should_run_successfully_bp,
+)
+
 
 TEST_ROOT = Path(__file__).resolve().parent
 INPUTS_DIR = TEST_ROOT / "afqmc_inputs"
 REF_DATA_DIR = TEST_ROOT / "afqmc_ref_runs"
 
-@dataclass
-class AFQMCHamiltonian:
-    path:Path
-    spin_symm:SpinSymm
-    type:HamiltonianClass
-    runparams:dict = None
-
-@dataclass
-class AFQMCWavefunction:
-    path:Path
-    spin_symm:SpinSymm
-    type:WavefunctionClass
-    runparams:dict = None
-
-@dataclass
-class AFQMCWalker:
-    name:str
-    spin_symm:SpinSymm
-    runparams:dict = None
-
-@dataclass
-class AFQMCInputSet:
-    """
-    Holds metadata related to AFQMC inputs for sorting into
-        'correct behavior' categories.
-    """
-    hamiltonian:AFQMCHamiltonian
-    wavefunction:AFQMCWavefunction
-    walker:AFQMCWalker
-    reference:Path
-    runparams:dict = None
-
-
-# Some general filtering rules to use in the tests
-def wfn_is_implemented(case):
-    """
-    Filters cases based on whether the wavefunction is implemented
-    or not.
-
-    TODO: Filter based on which Hamiltonian / wavefunction combinations are implemented.
-    """
-    if case.wavefunction.type == WavefunctionClass.PHMSD:
-        # currently, only collinear PHMSD wavefunctions are implemented
-        if case.wavefunction.spin_symm == SpinSymm.COLLINEAR:
-            return True
-        else:
-            return False
-    elif case.wavefunction.type == WavefunctionClass.NOMSD:
-        return True
-    else:
-        raise ValueError(f"Unrecognized wavefunction type: {case.wavefunction.type}")
-
-def not_closed_thc_with_noncollinear_wfn(case:AFQMCInputSet):
-    """
-    Filters out cases where the Hamiltonian is Closed and THC and the wavefunction is non-collinear,
-        since this combination is known to be not implemented.
-    """
-    if case.hamiltonian.type == HamiltonianClass.THC and case.hamiltonian.spin_symm == SpinSymm.CLOSED:
-        if case.wavefunction.spin_symm == SpinSymm.NONCOLLINEAR:
-            return False
-    return True
-
-def compatible_spin_H_wfn(case:AFQMCInputSet):
-    # high int value means less spin symmetry!
-    if case.wavefunction.spin_symm >= case.hamiltonian.spin_symm:
-        return True
-    else:
-        return False
-    
-def compatible_spin_H_walker(case:AFQMCInputSet):
-    # high int value means less spin symmetry!
-    if case.walker.spin_symm >= case.hamiltonian.spin_symm:
-        return True
-    else:
-        return False
-    
-def compatible_spin_wfn_walker(case:AFQMCInputSet):
-    # high int value means less spin symmetry!
-    if case.walker.spin_symm >= case.wavefunction.spin_symm:
-        return True
-    else:
-        return False
-
-def get_all_rules():
-    return [
-        wfn_is_implemented,
-        compatible_spin_H_wfn,
-        compatible_spin_H_walker,
-        compatible_spin_wfn_walker,
-        not_closed_thc_with_noncollinear_wfn
-    ]
 
 def hamil_type_dictionary():
     """Generates and returns a dict of Hamiltonian
@@ -195,95 +101,19 @@ def walker_type_list():
     ]
 
 
-def generate_param_list(
+# Use centralized generate_param_list
+def generate_test_params():
+    """Generate test parameters using the centralized infrastructure."""
+    return generate_param_list(
         hamil_type_dictionary=hamil_type_dictionary(),
         wavefunction_type_dictionary=wavefunction_type_dictionary(),
         walker_type_list=walker_type_list(),
         ref_data_dir=REF_DATA_DIR
-    ):
-    """
-    Simple function to generate the full list of combinations of Hamiltonian types,
-      wavefunction types, and walker types for use with the pytest.mark.parameterize decorator.
-    """
-    params = []
-    for h_name in hamil_type_dictionary:
-        hamil_path = ref_data_dir/ h_name
-        if not hamil_path.exists:
-            warn(f"requested a test against non-existant Hamiltonian directory: {hamil_path}; SKIPPING!")
-            continue
-        for trial_wfn_name in wavefunction_type_dictionary:
-            trial_wfn_path = hamil_path / trial_wfn_name
-            if not trial_wfn_path.exists:
-                warn(f"requested a test against non-existant wavefunction directory: {trial_wfn_path}; SKIPPING!")
-                continue
-            for walker in walker_type_list:
-                walker_path = trial_wfn_path / walker.name.lower()
-                if not walker_path.exists:
-                    warn(f"requested a test against non-existant walker type directory: {walker_path}; SKIPPING!")
-                    continue
-                # get custom run parameters if they exist - Walker, Wavefunction, Hamiltonian is the order of precedence
-                runparams = hamil_type_dictionary[h_name].runparams or {}
-                runparams.update(wavefunction_type_dictionary[trial_wfn_name].runparams or {})
-                runparams.update(walker.runparams or {})
-
-                params.append(
-                    AFQMCInputSet(
-                        hamiltonian=hamil_type_dictionary[h_name],
-                        wavefunction=wavefunction_type_dictionary[trial_wfn_name],
-                        walker=walker,
-                        reference=walker_path/"results.h5",
-                        runparams=runparams
-                    )
-                )
-    return params
+    )
 
 
-def should_run_successfully(all_cases=generate_param_list()):
-    rules = get_all_rules()
-    return [ case for case in all_cases if all( (rule(case) for rule in rules) ) ]
+### Back-propagation selection now centralized via should_run_successfully_bp()
 
-def should_run_successfully_bp(all_cases=generate_param_list()):
-    """Generates list of cases where SAFIRE should run successfully
-    with back-propagation.
-    """
-
-    def cherry_pick(case):
-        """Cherry-pick cases ro run with back-propagation. This 
-        is simply to limit the number of cases that run with back-propagation; 
-        other cases should also run successfully."""
-        if (case.hamiltonian.spin_symm == SpinSymm.CLOSED):
-            if (case.wavefunction.spin_symm == SpinSymm.COLLINEAR):
-                if (case.walker.spin_symm != SpinSymm.CLOSED):
-                    return True
-            elif (case.wavefunction.spin_symm == SpinSymm.NONCOLLINEAR):
-                if (case.walker.spin_symm == SpinSymm.NONCOLLINEAR):
-                    return True
-        elif (case.hamiltonian.spin_symm == SpinSymm.COLLINEAR):
-            if (case.wavefunction.spin_symm == SpinSymm.COLLINEAR): 
-                if (case.walker.spin_symm == SpinSymm.COLLINEAR or 
-                    case.walker.spin_symm == SpinSymm.NONCOLLINEAR):
-                    return True
-        elif (case.hamiltonian.spin_symm == SpinSymm.NONCOLLINEAR and
-              case.wavefunction.spin_symm == SpinSymm.NONCOLLINEAR and
-              case.walker.spin_symm == SpinSymm.NONCOLLINEAR):
-            return True
-
-        # catch all
-        return False
-    
-    rules = [cherry_pick] + get_all_rules()
-    return [ case for case in all_cases if all( (rule(case) for rule in rules) ) ]
-
-
-def should_exit_werror(all_cases=generate_param_list()):
-    rules = get_all_rules()
-    return [ case for case in all_cases if any(( not rule(case) for rule in rules )) ]
-
-def should_run_warn(all_cases=generate_param_list()):
-    """Generates list of cases where SAFIRE should run with a warning
-    """
-    rules = []
-    return [ case for case in all_cases if any(( not rule(case) for rule in rules )) ]
 
 
 def _expected_success(
@@ -411,7 +241,7 @@ def test_fail_push(
 @pytest.mark.dev
 @pytest.mark.functional
 @pytest.mark.weekly
-@pytest.mark.parametrize("case",should_run_successfully())
+@pytest.mark.parametrize("case", should_run_successfully(generate_test_params()))
 def test_success_weekly(
     afqmc_helper,
     result_checker,
@@ -430,7 +260,7 @@ def test_success_weekly(
 @pytest.mark.dev
 @pytest.mark.functional
 @pytest.mark.weekly
-@pytest.mark.parametrize("case",should_exit_werror())
+@pytest.mark.parametrize("case", should_exit_werror(generate_test_params()))
 def test_fail_weekly(
     afqmc_helper,
     result_checker,
@@ -452,9 +282,10 @@ def test_expected_warn(
     afqmc_helper,
     result_checker,
     afqmc_runmode,
-    tmp_path,
-    should_run_warn
+    tmp_path
     ):
+    # Use centralized should_run_warn function
+    cases = should_run_warn(generate_test_params())
     raise NotImplementedError
 
 ## Back-propagation tests - be sparing with these, they are expensive! ##
@@ -463,7 +294,7 @@ def test_expected_warn(
 @pytest.mark.dev
 @pytest.mark.functional
 @pytest.mark.weekly
-@pytest.mark.parametrize("case",should_run_successfully_bp())
+@pytest.mark.parametrize("case", should_run_successfully_bp(generate_test_params()))
 def test_success_weekly_bp(
     afqmc_helper,
     result_checker_bp,

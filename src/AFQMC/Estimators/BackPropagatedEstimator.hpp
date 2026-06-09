@@ -122,11 +122,11 @@ public:
       app_log(2, "BackPropagatedEstimator: nback_prop_steps[{}] = {} ( = measure_interval_multiplier[{}] * population_control_interval) \n", i, nback_prop_steps[i], i);
     }
     max_nback_prop = *std::max_element(nback_prop_steps.begin(), nback_prop_steps.end());
-    
+
     if ((equil_multiplier * _population_control_interval) % max_nback_prop != 0 )
       APP_ABORT("Error in BackPropagatedEstimator user input: 'equil_multiplier' must be evenly divisible by the maximum value in 'measure_interval_multiplier'");
-    nblocks_equil = (equil_multiplier *_population_control_interval )/ max_nback_prop; // Note: nback_prop is in steps, so we have to convert equil_multiplier to steps by multiplying by _population_control_interval
-    _measure_interval_for_handler = max_nback_prop;
+    // Note: nback_prop is in steps, so we have to convert equil_multiplier to steps by multiplying by _population_control_interval
+    nblocks_equil = (equil_multiplier *_population_control_interval )/ max_nback_prop;
 
     /* 
     BP uses "blocks" internally, but we want the input
@@ -256,8 +256,10 @@ public:
       if (previous_average > -1 && !average_has_run[previous_average])
       {
         APP_ABORT("Error: missed a measurement in BackPropagate::accumulate_block.\n"
+          + std::string("Current bp_step = ") + std::to_string(bp_step) + "\n"
+          + std::string("Previous average bp_step = ") + std::to_string(nback_prop_steps[previous_average]) + "\n"
           "Use a number of steps in the back propagation estimator that is divisible\n"
-          "by the measurement_interval defined in the execute block.");
+          "by the measurement_interval defined in the execute block." );
       }
     }
 
@@ -356,8 +358,11 @@ public:
 
   int get_measurement_interval()
   {
-    // this is forced to be commensurate with population control interval; see constructor.
-    return _measure_interval_for_handler;
+    // we want this to be the GCD of nback_prop_steps
+    int gcd = nback_prop_steps[0];
+    for (int i = 1; i < nback_prop_steps.size(); i++)
+      gcd = std::gcd(gcd, nback_prop_steps[i]);
+    return gcd;
   }
 
   void print([[maybe_unused]] std::ofstream& out, hdf_archive& dump, [[maybe_unused]] WalkerSet& wset)
@@ -417,9 +422,6 @@ private:
   int max_nback_prop = 0;
   std::vector<int> nback_prop_steps;
   std::vector<int> nback_prop_interval_multipliers;
-
-  // this is for the EstimatorHandler
-  int _measure_interval_for_handler = 1; 
 
   int iblock       = 0;
   int nblocks_equil = 0;

@@ -179,21 +179,29 @@ def random_cplx_hamiltonian(my_logger):
 #         then we can simply use `pyscf = pytest.importskip(pyscf)` to skip the entire
 @pytest.fixture(scope='session')
 def neon_atom():
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     return gto.M(atom='Ne 0 0 0', basis='sto-3g',parse_arg=False)
 
 
 @pytest.fixture(scope='session')
 def neon_atom_dz():
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     return gto.M(atom='Ne 0 0 0', basis='aug-ccpvdz',parse_arg=False)
 
 
 @pytest.fixture(scope='session')
 def neon_atom_tz():
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     return gto.M(atom='Ne 0 0 0', basis='aug-ccpvtz',parse_arg=False)
 
 
 @pytest.fixture(scope='session')
 def neon_rhf(tmp_path_factory,neon_atom):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     mf = scf.RHF(neon_atom)
     mf.chkfile = tmp_path_factory.mktemp('scf') / 'scf.chk'
     energy = mf.kernel()
@@ -202,6 +210,8 @@ def neon_rhf(tmp_path_factory,neon_atom):
 
 @pytest.fixture(scope='session')
 def neon_rhf_tz(tmp_path_factory,neon_atom_tz):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     mf = scf.RHF(neon_atom_tz)
     mf.chkfile = tmp_path_factory.mktemp('scf') / 'scf.chk'
     energy = mf.kernel()
@@ -210,6 +220,8 @@ def neon_rhf_tz(tmp_path_factory,neon_atom_tz):
 
 @pytest.fixture(scope='session')
 def neon_casscf(neon_rhf):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     mf,_ = neon_rhf
     mc = mcscf.CASSCF(mf, 4, (4,4))
     mc.kernel()
@@ -221,16 +233,22 @@ def neon_casscf(neon_rhf):
 
 @pytest.fixture(scope='session')
 def neon_eri(neon_atom):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     return neon_atom.intor('int2e', aosym='s1')
 
 
 @pytest.fixture(scope='session')
 def neon_eri_dz(neon_atom_dz):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     return neon_atom_dz.intor('int2e', aosym='s1')
 
 
 @pytest.fixture(scope='session')
 def diamond():
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
 
     from pyscf.pbc import gto
 
@@ -248,6 +266,8 @@ def diamond():
 
 @pytest.fixture(scope='session')
 def diamond_lda(diamond,tmp_path_factory):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     from pyscf.pbc import dft
 
     cell = diamond
@@ -263,6 +283,8 @@ def diamond_lda(diamond,tmp_path_factory):
 
 @pytest.fixture(scope='session')
 def diamond_lda_k221(diamond,tmp_path_factory):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     from pyscf.pbc import dft
 
     cell = diamond
@@ -278,6 +300,8 @@ def diamond_lda_k221(diamond,tmp_path_factory):
 
 @pytest.fixture(scope='session')
 def diamond_lda_k221_orthao(diamond_lda_k221):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     
     mf,kpts = diamond_lda_k221
 
@@ -296,6 +320,8 @@ def diamond_lda_k221_orthao(diamond_lda_k221):
 
 @pytest.fixture(scope='session')
 def oxygen():
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     return gto.M(
         atom="O 0. 0. 0.",
         spin=2,
@@ -306,6 +332,8 @@ def oxygen():
 
 @pytest.fixture(scope='session')
 def oxygen_rohf(oxygen,tmp_path_factory):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     mf = scf.ROHF(oxygen)
     mf.chkfile = tmp_path_factory.mktemp('scf') / 'rohf.chk'
     energy = mf.kernel()
@@ -314,6 +342,8 @@ def oxygen_rohf(oxygen,tmp_path_factory):
 
 @pytest.fixture(scope='session')
 def oxygen_uhf(oxygen_rohf,tmp_path_factory):
+    if not USE_PYSCF:
+        pytest.skip("pyscf is not installed")
     mf,_ = oxygen_rohf
     mf = mf.to_uhf()
     mf.chkfile = tmp_path_factory.mktemp('scf') / 'uhf.chk'

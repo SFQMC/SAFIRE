@@ -37,11 +37,16 @@ IF(QMC_OMP)
   ENDIF()
 ENDIF(QMC_OMP)
 
-# Set clang specific flags (which we always want)
+# Set clang specific flags (which we always want, unless coverage is enabled)
 ADD_DEFINITIONS( -Drestrict=__restrict__ )
 
-SET(CMAKE_C_FLAGS     "${CMAKE_C_FLAGS} -fstrict-aliasing")
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fstrict-aliasing -D__forceinline=inline")
+# Skip optimization flags when coverage is enabled
+IF(NOT ENABLE_COVERAGE)
+  SET(CMAKE_C_FLAGS     "${CMAKE_C_FLAGS} -fstrict-aliasing")
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fstrict-aliasing -D__forceinline=inline")
+ELSE()
+  MESSAGE(STATUS "Coverage mode enabled: skipping optimization flags for Clang")
+ENDIF()
 
 # treat VLA as error
 SET(CMAKE_C_FLAGS     "${CMAKE_C_FLAGS} -Werror=vla")

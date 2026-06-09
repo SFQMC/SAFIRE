@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
 
 WORKDIR /var/app/
 ENV DEBIAN_FRONTEND=noninteractive
@@ -7,8 +7,8 @@ SHELL ["/bin/bash", "-c"]
 
 # install dependencies
 RUN apt-get update && apt-get install -y openssh-client git \
-   gcc \
-   g++ \
+   gcc-12 \
+   g++-12 \
    cmake \
    openmpi-bin \
    openmpi-common \
@@ -20,22 +20,24 @@ RUN apt-get update && apt-get install -y openssh-client git \
    libboost-dev \
    python3-mpi4py \
    python3-h5py-mpi \
-   python3-venv
+   python3-venv \
+   && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 120 --slave /usr/bin/g++ g++ /usr/bin/g++-12 
 
 # checkout source from private repo via ssh
 RUN mkdir -p -m 0700 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
 RUN --mount=type=ssh \
-   git clone --progress --verbose git@github.com:SFQMC/SAFIRE.git afqmc \
+   git clone --progress --verbose git@github.com:bkesk/SAFIRE.git afqmc \
    && cd afqmc \
    && git submodule init \
    && git submodule update \
-   && git checkout pre_beta \
+   && git checkout develop \
    && mkdir build \
    && cd build \
    && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=ON \
    && make -j 4
 
 ENV AFQMC_EXEC=/var/app/afqmc/build/bin/safire
+
 
 # Build Python layer
 RUN cd /var/app/ \

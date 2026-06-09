@@ -17,6 +17,8 @@ from afqmctools.systems.lattice import get_lattice
 from afqmctools.hamiltonian.model.director import HamiltonianDirector
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import SpinSymm
+
+pytest.importorskip("autohf")
 from autohf.solver import lattice_hf # TODO: move partially to afqmctools
 
 class TestAutoHFConverters:

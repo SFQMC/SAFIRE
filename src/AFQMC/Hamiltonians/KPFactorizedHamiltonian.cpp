@@ -273,9 +273,6 @@ KPFactorizedHamiltonian::getHamiltonianOperations_shared(WALKER_TYPES type,
     TG.Global().broadcast_n(hcore_shape.data(), 5, 0);
   }
 
-  app_log(1, "hcore_shape {} {} {} {} {} \n", 
-            hcore_shape[0], hcore_shape[1], hcore_shape[2], hcore_shape[3], hcore_shape[4]);
-
   IVector kp_to_ibz(iextensions<1u>{nkpts});
   IVector kp_trev(iextensions<1u>{nkpts});
   if (format == "coqui" && nkpts_H1_ints != nkpts)
@@ -366,16 +363,6 @@ KPFactorizedHamiltonian::getHamiltonianOperations_shared(WALKER_TYPES type,
               std::vector<int> local_hcore_shape = {hcore_shape[2], hcore_shape[3]};
               upgradeOneBodyIntegrals<ComplexType>(h_k, H1_sk, local_hcore_shape, nmo_per_kp[k], npol, nspins_H1, type, "upgrading H1 in KPFactorizedHamiltonian");
             }
-            // for debugging, print out H1
-             for(int k=0; k<nkpts; k++)
-             {
-               app_log(1, "H1 for kpoint {} ", k);
-               for(int i=0; i<npol*nmo_per_kp[k]; i++)
-               {
-                 for(int j=0; j<npol*nmo_per_kp[k]; j++)
-                   app_log(1, "{} ", H1[k][i][j]);
-               }
-             } 
           } else {
             // fine to read directly, since nmo_per_kp == nbnd for all k
             boost::multi::array_ref<ComplexType, 4> h_(raw_pointer_cast(H1.origin()), 

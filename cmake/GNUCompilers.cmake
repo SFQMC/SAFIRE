@@ -13,11 +13,16 @@ IF(QMC_OMP)
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
 ENDIF(QMC_OMP)
 
-# Set gnu specific flags (which we always want)
+# Set gnu specific flags (which we always want, unless coverage is enabled)
 ADD_DEFINITIONS( -Drestrict=__restrict__ )
 
-SET(CMAKE_C_FLAGS     "${CMAKE_C_FLAGS} -finline-limit=1000 -fstrict-aliasing -funroll-all-loops")
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -finline-limit=1000 -fstrict-aliasing -funroll-all-loops -D__forceinline=inline")
+# Skip optimization flags when coverage is enabled
+IF(NOT ENABLE_COVERAGE)
+  SET(CMAKE_C_FLAGS     "${CMAKE_C_FLAGS} -finline-limit=1000 -fstrict-aliasing -funroll-all-loops")
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -finline-limit=1000 -fstrict-aliasing -funroll-all-loops -D__forceinline=inline")
+ELSE()
+  MESSAGE(STATUS "Coverage mode enabled: skipping optimization flags for GCC")
+ENDIF()
 
 SET( CMAKE_C_FLAGS_DEBUG     "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer" )
 SET( CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer" )
@@ -94,8 +99,9 @@ IF(QMC_BUILD_STATIC)
 SET(CMAKE_CXX_LINK_FLAGS " -static")
 ENDIF(QMC_BUILD_STATIC)
 
-# Coverage
+# Coverage (legacy support - prefer ENABLE_COVERAGE)
 IF (ENABLE_GCOV)
+  MESSAGE(WARNING "ENABLE_GCOV is deprecated. Please use ENABLE_COVERAGE instead.")
   SET(GCOV_SUPPORTED TRUE)
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage")
   SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --coverage")

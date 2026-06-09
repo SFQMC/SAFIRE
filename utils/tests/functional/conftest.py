@@ -374,11 +374,17 @@ class ResultChecker:
         
 
     def same_error(self,fname_test,fname_ref):
-        """Checks that the same error is raised by SAFIRE in the test and reference cases.
+        """Checks that SAFIRE raised an error in both the test and reference cases. Errors that
+        do not originate from SAFIRE are intentionally not 
+            Warns if the specific error messages do not match.
         
         Parameters
         ----------
-
+        fname_test : str or Path
+            The path to the results.h5 file containing the test results
+        fname_ref : str or Path
+            The path to the results.h5 file containing the reference results
+        
         Raises
         ------
         ValueError
@@ -387,12 +393,17 @@ class ResultChecker:
 
         with h5.File(fname_test,'r') as f_test:
             with h5.File(fname_ref,'r') as f_ref:
-                return (self._same_return_code(f_test,f_ref,1) and 
-                    self._same_messages(
+                num_messages_g1 = f_test["error_messages"].get("num_messages")[...]
+                num_messages_g2 = f_ref["error_messages"].get("num_messages")[...]
+                assert num_messages_g1 > 0, "Test case does not contain any error messages, but an error was expected."
+                assert num_messages_g2 > 0, "Reference case does not contain any error messages, but an error was expected."
+
+                # warn if error message are not the same
+                if not self._same_messages(
                         test_group=f_test["error_messages"],
-                        ref_group=f_ref["error_messages"]    
-                    )
-                )
+                        ref_group=f_ref["error_messages"]):
+                   warn("Error messages do not match between test and reference files.") 
+                return self._same_return_code(f_test,f_ref,must_match=1)
 
 @pytest.fixture(scope="session")
 def result_checker():

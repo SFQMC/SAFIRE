@@ -15,8 +15,22 @@ import scipy.sparse as sps
 
 from afqmctools.systems.lattice import get_lattice
 from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder, skip_empty_params
 from afqmctools.hamiltonian.model.ham_class import SpinSymm
+
+
+class MockBuilder:
+    """Mock class to test decorators."""
+
+    def __init__(self):
+        self.called_with = []
+
+    @skip_empty_params
+    def test_method(self, params, *args, **kwargs):
+        """Method decorated with skip_empty_params."""
+        self.called_with.append(params)
+        print(f"  MockBuilder test_method called with params={params}")
+
 
 class TestLatticeClass:
     """
@@ -572,3 +586,31 @@ class TestModelHamiltonianBuilder:
                 builder.custom_one_body(random_tmat,spin_symm=spin_symm)
         
         print("\ntij matricies match!\n")
+
+    #@pytest.mark.dev
+    @pytest.mark.parametrize("params,expected",[
+        ( None, False),
+        ( [None, None], False),
+        ( 0.0, False),
+        ( [0.0, 0.0], False),
+        ( [None, 0.0], False),
+        ( 1.5, True),
+        ( [1.5, None, 0.0], True),
+        ( [1.0, 2.0], True),
+        ( [[None, None], [None, None]], False),
+        ( [[1.0, None], [0.0, 2.0]], True),
+        ( [], False),
+        ( [None], False),
+        ( np.array([0.0, 0.0]), False),
+        ( np.array([1.0, 2.0]), True),
+    ])
+    def test_skip_empty_params(self,params,expected):
+        """
+        Test that empty parameters are properly identified
+        """
+        builder = MockBuilder()
+        initial_count = len(builder.called_with)
+        builder.test_method(params)
+        was_called = len(builder.called_with) > initial_count
+        assert was_called == expected
+

@@ -190,10 +190,9 @@ def generate_hamiltonian(
                                            verbose)
         h1e = h1e[0]
         nelec = (mol.nelec[0]-nfzc, mol.nelec[1]-nfzc)
-        mol.nelec = nelec
         orbs = np.identity(h1e.shape[-1])
         orbs = orbs[nfzc:nbasis-nfzv,nfzc:nbasis-nfzv]
-        scf_data['mo_coeff'] = C[nfzc:nbasis-nfzv,nfzc:nbasis-nfzv]
+        X = C[:,nfzc:nbasis-nfzv]
     
     if walker_type == _SlaterType.NONCOLLINEAR and not scf_data['with_x2c']:
         h1e = np.block(

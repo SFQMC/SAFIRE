@@ -235,9 +235,30 @@ def _parse_twist(twist):
     - number : interpreted as the twist anlge in radians
     '''
 
-    if len(twist) != 2:
-        raise ValueError("Invalid 'twist' parameter given: must have length 2")
+    # Check if twist is iterable (but not a string, which is iterable but should be rejected)
+    if isinstance(twist, (int, float)):
+        raise TypeError(
+            "Invalid 'twist' parameter: expected a 2-element iterable (tuple or list), "
+            f"but got a single number: {twist}"
+        )
+    
+    if isinstance(twist, str):
+        raise TypeError(
+            "Invalid 'twist' parameter: expected a 2-element iterable (tuple or list), "
+            f"but got a string: '{twist}'"
+        )
+    
+    # Check if twist has the __len__ attribute to avoid TypeError
+    if not hasattr(twist, '__len__'):
+        raise TypeError(
+            "Invalid 'twist' parameter: expected a 2-element iterable (tuple or list), "
+            f"but got type {type(twist).__name__}"
+        )
 
+    if len(twist) != 2:
+        raise ValueError(
+            f"Invalid 'twist' parameter given: must have length 2, got length {len(twist)}"
+        )
 
     _twist = [0.,0.]
 

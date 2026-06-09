@@ -15,7 +15,7 @@ Some preliminaries
 ==================
 
 Typical quantum chemistry calculations are performed in a basis
-of contracted Gaussian-type orbitals (cGTOs), $g_\mu(\vec{r})$;
+of contracted Gaussian-type orbitals (cGTOs), :math:`g_\mu(\vec{r})`;
 however, AFQMC is formulated in the language of 2nd quantization
 and requires an orthonormal basis.
 Some common choices of orthonormal basis are the set of canonical Hartree-Fock orbitals,
@@ -121,9 +121,9 @@ Typical Workflow
 .. image:: https://users.flatironinstitute.org/~beskridge/tutorial_figs/6784ee4ea455921958ac327234b91ab07702736ab22fa2df804e8dccbc36a404/00a_molecules_intro/QChemWorkflow_v3.png
    :width: 900
 
-AuxiliaryFields reads :math:`\hat{H}` in generic 2nd-quantized form from an HDF5 file.
-This allows AuxiliaryFields to use any Hamiltonian that can be expressed in this form.
-The `afqmctools` CLI tools / Python package can write a Hamiltonian to the AuxiliaryFields format
+SAFIRE reads :math:`\hat{H}` in generic 2nd-quantized form from an HDF5 file.
+This allows SAFIRE to use any Hamiltonian that can be expressed in this form.
+The `afqmctools` CLI tools / Python package can write a Hamiltonian to the SAFIRE format
 given arrays containing the matrix elements,
 or from the standard FCIDUMP format.
 If the optional dependency PySCF is installed, `afqmctools` is able to use PySCF's
@@ -137,19 +137,19 @@ Software prerequisites
 ======================
 
 Many mature quantum chemisty codes exist and are widely used in the quantum chemistry community.
-For this reason, AuxiliaryFields does not implement common quantum chemistry methods,
+For this reason, SAFIRE does not implement common quantum chemistry methods,
 such as Hartree-Fock (HF), density functional theory (DFT), complete active space (CAS) methdos, etc.
-Instead, AuxiliaryFields is designed to use externally generated Hamiltonians and trial wavefunctions
+Instead, SAFIRE is designed to use externally generated Hamiltonians and trial wavefunctions
 for easy integration into existing workflows.
 
-To use AuxiliaryFields, you will need a quantum chemistry code that can:
+To use SAFIRE, you will need a quantum chemistry code that can:
 
-1. generate / output Hamiltonian matrix elements, :math:`H^0`, :math:`H^1_{ij}`, and :math:`H^2_{ijjkl}`. AuxiliaryFields comes with a converter from the commmon FCIDUMP format to its internal format via afqmctools.
+1. generate / output Hamiltonian matrix elements, :math:`H^0`, :math:`H^1_{ij}`, and :math:`H^2_{ijjkl}`. SAFIRE comes with a converter from the commmon FCIDUMP format to its internal format via afqmctools.
 2. compute / output wavefunctions to use as trial wavefunctions. This can either be:
     - a list of CI coefficients, :math:`C_n`, and occupation strings :math:`O_\sigma = [o_0, o_1, ..., o_{N_\sigma}]`
     - a set of CI coefficients, :math:`C_n`, with corresponding non-orthogonal Slater determinant Slater matrices, :math:`[\Phi^\sigma_n]_{ip}`.
 
-For all of tutorials excpet for `Hello AuxiliaryFields <../auxiliary_fields/01_hello_auxiliary_fields/hello_auxiliary_fields.ipynb>`_, we assume that you have access to a quantum
+For all of tutorials excpet for Hello SAFIRE we assume that you have access to a quantum
 chemisty code that can do all of this.
 If you do not have access to a quantum chemistry code that can do all of this,
 PySCF is a possible choice which is free and open source.
@@ -159,8 +159,8 @@ The Tutorials
 =============
 
 The following tutorials will guide you through AFQMC calculations
-using AuxiliaryFields in order to teach you the typical workflow,
-and some of the main features of AuxiliaryFields.
+using SAFIRE in order to teach you the typical workflow,
+and some of the main features of SAFIRE.
 We assume that you are familiar with typical quantum chemistry calculations
 in a standard cGTO basis including Hartree-Fock,
 and CAS-methods.
@@ -171,36 +171,25 @@ Each tutorial builds on the previous one.
 We recommend going through them in order.
 
 .. toctree::
-   :maxdepth: 1
-   :caption: Local Notebooks
+   :hidden:
 
-   01_hello_afqmc_mols.ipynb
+   01_hello_safire/01_hello_safire_executed.ipynb
+   02_understanding_the_input_file/02_understanding_the_input_file_executed.ipynb
+   03_writing_a_hamiltonian/03_writing_a_hamiltonian_executed.ipynb
+   04_writing_a_trial_wavefunction/04_writing_a_trial_wavefunction_executed.ipynb
+   05_computing_observables/05_computing_observables.ipynb
 
 Online copies of tutorials
 ==========================
 
-1. `Hello AuxiliaryFields Tutorial <https://colab.research.google.com/drive/1112A9uavLLuzUYKMss8n-FSDyAn7uXvV>`_ `🧑‍💻 ready for edits 🧑‍💻`
-2. `Understanding the input file <https://colab.research.google.com/drive/1rWeqD-DVQNMN8ILqelEZ56OURmCYpozp>`_ `🧑‍💻 ready for edits 🧑‍💻`
-3. `Writing a Hamiltonian <https://colab.research.google.com/drive/1qQmWtMg5aoWdLeG33jaqS0saIWJ94MTL>`_ `🧑‍💻 ready for edits 🧑‍💻`
-4. `Writing a trial wavefunction <https://colab.research.google.com/drive/11C6SWJVSMy_BrXhGGpdIIG_DYpI6I7ig>`_ `🧑‍💻 ready for edits 🧑‍💻`
-5. `Computing Observables <https://colab.research.google.com/drive/1jZ1EkxE9A_q8hq5hQWY40QFG__mG0H64>`_ ` - `🛠️ Under construction 🛠️`
+1. `Hello SAFIRE <01_hello_safire/01_hello_safire_executed.html>`__ | `Open in Colab <https://colab.research.google.com/drive/1112A9uavLLuzUYKMss8n-FSDyAn7uXvV>`_ `🧑‍💻 ready for edits 🧑‍💻`
+2. `Understanding the input file <02_understanding_the_input_file/02_understanding_the_input_file_executed.html>`__ | `Open in Colab <https://colab.research.google.com/drive/1rWeqD-DVQNMN8ILqelEZ56OURmCYpozp>`_ `🧑‍💻 ready for edits 🧑‍💻`
+3. `Writing a Hamiltonian <03_writing_a_hamiltonian/03_writing_a_hamiltonian_executed.html>`__ | `Open in Colab <https://colab.research.google.com/drive/1qQmWtMg5aoWdLeG33jaqS0saIWJ94MTL>`_ `🧑‍💻 ready for edits 🧑‍💻`
+4. `Writing a trial wavefunction <04_writing_a_trial_wavefunction/04_writing_a_trial_wavefunction_executed.html>`__ | `Open in Colab <https://colab.research.google.com/drive/11C6SWJVSMy_BrXhGGpdIIG_DYpI6I7ig>`_ `🧑‍💻 ready for edits 🧑‍💻`
+5. `Computing Observables <05_computing_observables/05_computing_observables.html>`__ | `Open in Colab <https://colab.research.google.com/drive/1fQvrANCxxetELZnCFOWfxB6JsQBIe3jp>`_ `🧑‍💻 ready for edits 🧑‍💻`
 
 Worked Examples
 ===============
 
-We provide the following worked examples in which we
-go through the entire workflow. For the convenience, we use
-PySCF since it can be directly invoked within
-interactive Python notebooks; however, using the information
-in the tutorials, these same calculations can be performed starting
-from other quantum chemistry codes so long as they can write a FCIDUMP,
-and can print wavefunction information. Both of these features are
-ubiquitous in modern quantum chemistry codes.
+.. include:: ../../examples/molecules/index.rst
 
-1. `Potential energy curve of the nitrogen dimer <https://colab.research.google.com/drive/1mGHyp2hxF-upogHeI_uTSlyegSyqimpu#scrollTo=HAXNMGv0fmdE>`_ `🧑‍💻 ready for edits 🧑‍💻`
-2. `Electron Affinity of the lead atom <https://colab.research.google.com/drive/1RUJ1buSrK8rBjreHA0oaPfOGPBuF3PAp#scrollTo=8rI2HhjiZRWO>`_ `🛠️ Under construction 🛠️`
-3. `Charge density of the water molecule <https://colab.research.google.com/drive/1uiF2R6CE_cSQ7m9uj2R2aS0KB1Un3Bn_>`_  `🛠️ Under construction 🛠️`
-4. `B atom : SHCI trial wavefunction <https://colab.research.google.com/drive/1gC5CtD4Kw8PXFuPKAWuQReCEwzVQrvvd#scrollTo=UwuNT7DqI_rN>`_  `🧑‍💻 ready for edits 🧑‍💻`
-5. `Local embedding <https://colab.research.google.com/drive/1571aeCThqCVBlQeuXIASTbGRmD5BNlu8>`_  `🧑‍💻 ready for edits 🧑‍💻`
-6. `Ionization Potential <https://colab.research.google.com/drive/1We4jEkm_Vx8RLhGiXP16wGT6gw2WaM84>`_ 💭 Idea 💭 
-7. `3d-Transition Metal diatomics <https://colab.research.google.com/drive/1aLP4sl0Xe0ZvKlJl1jCOikYx_g6G6UEO>`_ `🛠️ Under construction 🛠️`

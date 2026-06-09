@@ -3,18 +3,19 @@ from pathlib import Path
 import os
 from time import perf_counter
 import subprocess as sp
+from warnings import warn
 
 AFQMC_EXEC = os.environ.get("AFQMC_EXEC",None)  # provided by the modulefile
 AFQMC_SCRATCH_DIR_ROOT = os.environ.get("AFQMC_SCRATCH_DIR",Path("./"))
 
 if AFQMC_EXEC is None:
-    raise RuntimeError(
+    warn(
         "AFQMC_EXEC environment variable is not set. "
         "Set it to the path to the AFQMC executable."
     )
 
 if not Path(AFQMC_EXEC).exists():
-    raise RuntimeError(
+    warn(
         f"AFQMC_EXEC is set to {AFQMC_EXEC} which does not exist. "
         "Set it to the path to the AFQMC executable."
     )
@@ -38,7 +39,7 @@ def get_scratch_dir(run_name:str,root_dir:Path=AFQMC_SCRATCH_DIR_ROOT,create:boo
     scratch_dir = Path(root_dir) / run_name
     scratch_dir.mkdir(parents=True, exist_ok=create)
     if not os.access(scratch_dir, os.W_OK):
-        raise RuntimeError(
+        warn(
             f"You don't have write to scratch directory {scratch_dir} "
             "Please use a different scratch directory."
         )

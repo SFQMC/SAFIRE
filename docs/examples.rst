@@ -20,23 +20,7 @@ The walkthroughs are organized based on their application domain.
 Quantum Chemistry / Molecules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The quantum chemistry workflow requires some external 
-quantum chemistry code to generate integrals and a trial wavefunction.
-For the convenience, we use
-PySCF since it can be directly invoked within
-interactive Python notebooks; however, using the information
-in the tutorials, these same calculations can be performed starting
-from other quantum chemistry codes so long as they can write a FCIDUMP,
-and can print wavefunction information. Both of these features are
-ubiquitous in modern quantum chemistry codes.
-
-1. `Potential energy curve of the nitrogen dimer <https://colab.research.google.com/drive/1mGHyp2hxF-upogHeI_uTSlyegSyqimpu#scrollTo=HAXNMGv0fmdE>`_
-2. `Electron Affinity of the lead atom <https://colab.research.google.com/drive/1RUJ1buSrK8rBjreHA0oaPfOGPBuF3PAp#scrollTo=8rI2HhjiZRWO>`_
-3. `Charge density of the water molecule <https://colab.research.google.com/drive/1uiF2R6CE_cSQ7m9uj2R2aS0KB1Un3Bn_>`_ 
-4. `B atom : SHCI trial wavefunction <https://colab.research.google.com/drive/1gC5CtD4Kw8PXFuPKAWuQReCEwzVQrvvd#scrollTo=UwuNT7DqI_rN>`_
-5. `Local embedding <https://colab.research.google.com/drive/1571aeCThqCVBlQeuXIASTbGRmD5BNlu8>`_
-6. `Ionization Potential <https://colab.research.google.com/drive/1We4jEkm_Vx8RLhGiXP16wGT6gw2WaM84>`_
-7. `3d-Transition Metal diatomics <https://colab.research.google.com/drive/1aLP4sl0Xe0ZvKlJl1jCOikYx_g6G6UEO>`_
+.. include:: examples/molecules/index.rst
 
 
 Ab initio solids
@@ -66,7 +50,8 @@ HF calculations, and afqmctools to generate Hamiltonians and write trial wavefun
 5. `Multi-Slater determinant trial wavefunction <https://colab.research.google.com/drive/1yTDk1u8Ww-c1t6kUKhBkEAKUIsnmGm3e>`_
 6. `Hubbard on a Honeycomb lattice <https://colab.research.google.com/drive/1g9_84kc92vAyDfKHTjDiuWHXeJsp12vZ>`_
 7. `Hubbard with t-prime <https://colab.research.google.com/drive/1eR1RNS-BiMToOswQ4OyJWeijcpW21a4J>`_
-8. `Emery Model <https://colab.research.google.com/drive/1s3nON1d7OvS7sOJBSPZZhBGj8fWm_Vsh>`_
+8. `Emery Model <https://colab.research.google.com/drive/1-zKd4kHd6Pu8WrDFbQzv3MqeyC4tiiQz>`_
+
 
 .. _snippet_examples:
 

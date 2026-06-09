@@ -10,6 +10,7 @@
 
 from warnings import warn
 import itertools
+import functools
 
 import numpy as np
 import scipy.sparse as sps
@@ -20,7 +21,7 @@ from afqmctools.utils.matrix import force_herm, is_hermitian
 
 def skip_empty_params(func):
     """
-    Decorator to skip over a function if the parameters are all zero.
+    Decorator to skip over a function if the parameters are all zero. None is interpreted as zero.
 
     Parameters
     ----------
@@ -30,12 +31,14 @@ def skip_empty_params(func):
     Notes
     -----
     This decorator is useful for functions that would attempt to build
-       an empty Hamiltonian component if the parameters are all zero.
+       an empty Hamiltonian component if the parameters are all zero. None is interpreted as zero.
+    This decorator preserves the original docstring of the decorated function.
     """
 
-    def wrapper(self,params,*args,**kwargs):
+    @functools.wraps(func)
+    def wrapper(self, params, *args, **kwargs):
         """
-        Wrapper function to check if all parameters are zero before calling
+        Wrapper function to check if all parameters are zero before calling. None is interpreted as zero.
         the decorated function.
 
         Parameters
@@ -49,8 +52,10 @@ def skip_empty_params(func):
         kwargs : dict
             additional keyword arguments to pass to the function
         """
-
         params = np.array(params)
+        # The following line looks wrong, but is correct!
+        #   numpy properly handles the comparison with None behind the scenes!
+        params[params == None] = 0.0
         if not np.allclose(params,0.0):
             func(self,params,*args,**kwargs)
         elif kwargs.get("verbose",False):
@@ -81,6 +86,7 @@ def iterate_nth_order(start_n=1):
         the starting index for the nth_neighbor parameter
     """
     def decorator(func):
+        @functools.wraps(func)
         def wrapper(self,params,*args,**kwargs):
             params = np.array(params)
             if len(params.shape) in {0,2}:
@@ -252,6 +258,120 @@ class HamiltonianBuilder:
         return input.shape == (self.hamiltonian.nbands,self.hamiltonian.nbands)
     
 
+    def _upgrade_one_body_shape(self, in_mat:np.ndarray, target_spin_symm, nbasis:int) -> np.ndarray:
+        """
+        Upgrade the shape of a one-body matrix to match the target spin symmetry.
+        
+        Performs automatic shape conversions:
+        - CLOSED (nbasis, nbasis) → COLLINEAR (2*nbasis, nbasis) by vstacking
+        - CLOSED (nbasis, nbasis) → NONCOLLINEAR (2*nbasis, 2*nbasis) as block diagonal
+        - COLLINEAR (2*nbasis, nbasis) → NONCOLLINEAR (2*nbasis, 2*nbasis) by splitting
+          up/down sectors into diagonal blocks
+        
+        Parameters
+        ----------
+        in_mat : numpy.ndarray
+            the input one-body matrix to upgrade
+        target_spin_symm : afqmctools.hamiltonian.model.ham_class.SpinSymm
+            the target spin symmetry to upgrade to
+        nbasis : int
+            the basis size (nbands * N_sites)
+        
+        Returns
+        -------
+        numpy.ndarray
+            the upgraded matrix with the appropriate shape for target_spin_symm
+        
+        Raises
+        ------
+        ValueError
+            when the input matrix has an invalid shape for the target spin symmetry
+        """
+        if target_spin_symm == model.SpinSymm.NONCOLLINEAR:
+            if in_mat.shape == (2*nbasis, 2*nbasis):
+                # Already correct shape for NONCOLLINEAR
+                return in_mat
+            elif in_mat.shape == (nbasis, nbasis):
+                # Upgrade from CLOSED to NONCOLLINEAR: block diagonal
+                return sps.block_diag([in_mat, in_mat], format='csr').toarray()
+            elif in_mat.shape == (2*nbasis, nbasis):
+                # Upgrade from COLLINEAR to NONCOLLINEAR: split up/down into diagonal blocks
+                up_block = in_mat[:nbasis, :]
+                down_block = in_mat[nbasis:, :]
+                return sps.block_diag([up_block, down_block], format='csr').toarray()
+            else:
+                raise ValueError(
+                    "custom one-body in_mat has invalid shape. "
+                    f"Must have shape (nbasis,nbasis), (2*nbasis,nbasis), or (2*nbasis,2*nbasis) "
+                    f"for NONCOLLINEAR spin symmetry, but has shape {in_mat.shape}."
+                )
+        elif target_spin_symm == model.SpinSymm.COLLINEAR:
+            if in_mat.shape == (2*nbasis, nbasis):
+                # Already correct shape for COLLINEAR
+                return in_mat
+            elif in_mat.shape == (nbasis, nbasis):
+                # Upgrade from CLOSED to COLLINEAR
+                return np.vstack([in_mat, in_mat])
+            else:
+                raise ValueError(
+                    "custom one-body in_mat has invalid shape. "
+                    f"Must have shape (nbasis,nbasis) or (2*nbasis,nbasis) "
+                    f"for COLLINEAR spin symmetry, but has shape {in_mat.shape}."
+                )
+        elif target_spin_symm == model.SpinSymm.CLOSED:
+            if in_mat.shape == (nbasis, nbasis):
+                # Already correct shape for CLOSED
+                return in_mat
+            else:
+                raise ValueError(
+                    "custom one-body in_mat has invalid shape. "
+                    f"Must have shape (nbasis,nbasis) for CLOSED spin symmetry, "
+                    f"but has shape {in_mat.shape}."
+                )
+        else:
+            raise ValueError(
+                "invalid spin symmetry. Only CLOSED, COLLINEAR and NONCOLLINEAR are supported"
+            )
+
+
+    def _wrap_one_body_spin_structure(self, mat_up, target_spin_symm, mat_down=None):
+        """
+        Wrap up and down spin sector matrices into the appropriate spin structure.
+        
+        Parameters
+        ----------
+        mat_up : sparse or dense array
+            the spin-up sector matrix (nbasis x nbasis)
+        target_spin_symm : afqmctools.hamiltonian.model.ham_class.SpinSymm
+            the target spin symmetry
+        mat_down : sparse or dense array, optional
+            the spin-down sector matrix (nbasis x nbasis). If None, uses mat_up.
+        
+        Returns
+        -------
+        sparse array
+            the wrapped matrix in the appropriate format for target_spin_symm
+        """
+        if mat_down is None:
+            mat_down = mat_up
+        
+        if target_spin_symm == model.SpinSymm.COLLINEAR:
+            return sps.bmat(
+                blocks=[
+                    [mat_up],
+                    [mat_down]
+                ],
+                format='csr'
+            )
+        elif target_spin_symm == model.SpinSymm.NONCOLLINEAR:
+            return sps.block_diag(
+                mats=[mat_up, mat_down],
+                format='csr'
+            )
+        else:  # CLOSED
+            return mat_up
+
+
     @iterate_nth_order(1)
     @skip_empty_params
     def nth_neighbor_hopping(self,t=1.0,nth_neighbor:int=1,spin_symm=None,opposite_twists=False):
@@ -384,19 +504,7 @@ class HamiltonianBuilder:
 
         Hhop_up = Hhop
 
-        if spin_symm == model.SpinSymm.COLLINEAR:
-            Hhop = sps.bmat(
-                blocks=[
-                    [Hhop_up],
-                    [Hhop_down]
-                ],
-                format='csr'
-            )
-        elif spin_symm == model.SpinSymm.NONCOLLINEAR:
-            Hhop = sps.block_diag(
-                mats=[Hhop_up,Hhop_down],
-                format='csr'
-                )
+        Hhop = self._wrap_one_body_spin_structure(Hhop_up, spin_symm, Hhop_down)
 
         component = model.HamiltonianComponent(
             csr_array=Hhop,
@@ -451,32 +559,10 @@ class HamiltonianBuilder:
 
         nbasis = self.hamiltonian.nbands * self.lattice.N_sites
 
-        if spin_symm == model.SpinSymm.NONCOLLINEAR:
-            valid_shapes = [(2*nbasis,2*nbasis)]
-        elif spin_symm == model.SpinSymm.COLLINEAR:
-            valid_shapes = [(nbasis,nbasis),(2*nbasis,nbasis)]
-        elif spin_symm == model.SpinSymm.CLOSED:
-            valid_shapes = [(nbasis,nbasis)]
-        else:
-            raise ValueError("invalid spin symmetry. Only COLLINEAR and NONCOLLINEAR are supported")
-
-        if all(in_mat.shape != shape for shape in valid_shapes):
-            raise ValueError(
-                "custom one-body in_mat has invalid shape. "
-                f"Must have shape {valid_shapes} for spin symmetry {spin_symm}  "
-                f"but has shape {in_mat.shape}."
-            )
+        # Upgrade matrix shape to match target spin symmetry
+        upgraded_mat = self._upgrade_one_body_shape(in_mat, spin_symm, nbasis)
     
-        if spin_symm == model.SpinSymm.COLLINEAR and in_mat.shape == (nbasis,nbasis):
-            out_mat = sps.bmat(
-                blocks=[
-                    [in_mat],
-                    [in_mat]
-                ],
-                format='csr'
-            )
-        else:
-          out_mat = sps.csr_array(in_mat)
+        out_mat = sps.csr_array(upgraded_mat)
 
         component = model.HamiltonianComponent(
             csr_array=out_mat,
@@ -539,21 +625,7 @@ class HamiltonianBuilder:
         )
 
         # for now, assume that the band energies are the same in the up and down sectors
-        if spin_symm == model.SpinSymm.COLLINEAR:
-            epsilon_mat = sps.bmat(
-                blocks=[
-                    [epsilon_up],
-                    [epsilon_up]
-                ],
-                format='csr'
-            )
-        elif spin_symm == model.SpinSymm.NONCOLLINEAR:
-            epsilon_mat = sps.block_diag(
-                mats=[epsilon_up,epsilon_up],
-                format='csr'
-            )
-        else:
-            epsilon_mat = epsilon_up
+        epsilon_mat = self._wrap_one_body_spin_structure(epsilon_up, spin_symm)
 
         component = model.HamiltonianComponent(
             csr_array=epsilon_mat,
@@ -860,26 +932,14 @@ class HamiltonianBuilder:
             (data,(row,column)),
             shape=shape
         )
-        H_pin_down =sps.csr_array(
+        H_pin_down = sps.csr_array(
             (data,(row,column)),
             shape=shape
         )
         if not same_sign:
             H_pin_down *= -1
 
-        if spin_symm == model.SpinSymm.COLLINEAR:
-            Hhop = sps.bmat(
-                blocks=[
-                    [H_pin_up],
-                    [H_pin_down]
-                ],
-                format='csr'
-            )
-        elif spin_symm == model.SpinSymm.NONCOLLINEAR:
-            Hhop = sps.block_diag(
-                mats=[H_pin_up,H_pin_down],
-                format='csr'
-                )
+        Hhop = self._wrap_one_body_spin_structure(H_pin_up, spin_symm, H_pin_down)
 
         component = model.HamiltonianComponent(
             csr_array=Hhop,

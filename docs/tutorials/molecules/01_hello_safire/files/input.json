@@ -1,0 +1,23 @@
+{
+  "afqmc": {
+    "project": {
+      "id": "qmc",
+      "series": 0
+    },
+    "execute": {
+      "walker_set": {
+        "walker_type": "CLOSED"
+      },
+      "wavefunction": {
+        "filename": "files/input.h5"
+      },
+      "hamiltonian": {
+        "filename": "files/hamil.h5"
+      },
+      "timestep": 0.01,
+      "steps": 10000,
+      "n_walkers_per_mpi_task": 200,
+      "seed": 42
+    }
+  }
+}

@@ -9,10 +9,8 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 """
-Defines functional tests for the Rashba SOC.
+Defines functional tests for the Rashba SOC model.
 """
-import enum
-from dataclasses import dataclass
 from pathlib import Path
 from warnings import warn
 
@@ -20,51 +18,19 @@ import pytest
 
 from afqmctools.hamiltonian.model.ham_class import SpinSymm
 
-class HamiltonianClass(enum.Enum):
-    """
-    """
-    GENERIC_DENSE = enum.auto()
-    GENERIC_SPARSE = enum.auto()
-    MODEL = enum.auto()
-
-# TODO: generalize and centralize if useful!
-class WavefunctionClass(enum.Enum):
-    """
-    """
-    NOMSD = enum.auto()
-    PHMSD = enum.auto()
+# Import centralized testing infrastructure
+from dev_tools.test_infrastructure import (
+    HamiltonianClass,
+    WavefunctionClass,
+    AFQMCHamiltonian,
+    AFQMCWavefunction,
+    AFQMCWalker,
+    AFQMCInputSet,
+)
 
 THIS_TEST_DIR = Path(__file__).resolve().parent
 INPUTS_DIR = THIS_TEST_DIR / "afqmc_inputs"
 REF_DATA_DIR = THIS_TEST_DIR / "afqmc_ref_runs"
-
-@dataclass
-class AFQMCHamiltonian:
-    path:Path
-    spin_symm:SpinSymm
-    type:HamiltonianClass
-
-@dataclass
-class AFQMCWavefunction:
-    path:Path
-    spin_symm:SpinSymm
-    type:WavefunctionClass
-
-@dataclass
-class AFQMCWalker:
-    name:str
-    spin_symm:SpinSymm
-
-@dataclass
-class AFQMCInputSet:
-    """
-    Holds metadata related to AFQMC inputs for sorting into
-        'correct behavior' categories.
-    """
-    hamiltonian:AFQMCHamiltonian
-    wavefunction:AFQMCWavefunction
-    walker:AFQMCWalker
-    reference:Path
 
 @pytest.mark.dev
 @pytest.mark.functional

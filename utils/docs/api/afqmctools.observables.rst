@@ -5,7 +5,7 @@ Submodules
 ----------
 
 afqmctools.observables.generic module
-----------------------------------
+-------------------------------------
 
 .. automodule:: afqmctools.observables.generic
    :members:

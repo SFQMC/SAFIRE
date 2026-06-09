@@ -63,7 +63,7 @@ def dm_in_basis(dma, orbs, imag_tol=1e-6):
 
 def calc_nofk(dma, meta, orbs, kcut, **kwargs):
     """
-    calculate momentum distribution n(k)
+    Calculate momentum distribution n(k).
 
     Parameters
     ----------
@@ -72,21 +72,29 @@ def calc_nofk(dma, meta, orbs, kcut, **kwargs):
     meta : dict
         dictionary containing system metadata
     orbs : numpy.ndarray
-        orbitals represented in terms of the FFT grid
+        orbitals on common reciprocal space grid, shape (nkpts, nbands, num_grid)
     kcut : float
         cutoff for k-points
 
     TODO: get k-point weights
     """
     nkpts = meta["nkpts"]
+    nbands = meta["nbands"]
+    
+    # Generate k-vectors for the COMMON dense grid with centered indices
+    mesh = meta.get("common_grid_shape", meta["mesh"])  # Use common grid if available
+    gvecs_common = get_centered_gvecs(mesh)  # Centered Miller indices for full grid
+    kvecs = gvecs_common @ meta["recvec"]  # Convert to k-space
+    kmags = np.linalg.norm(kvecs, axis=-1)
+    ksel = kmags < kcut  # Filter once, applies to all k-points
+    
     warn("Assuming equally weighted k-points for now")
     nkm, nke = 0.0, 0.0 # just to initialize
     for k in range(nkpts):
+        dma_k = dma[:, k*nbands:(k+1)*nbands, k*nbands:(k+1)*nbands]
         weight = 1.0 / nkpts # TODO: get this from metadata
-        kvecs = meta[f"gvecs_k{k}"] @ meta["recvec"]
-        kmags = np.linalg.norm(kvecs, axis=-1)
-        ksel = kmags < kcut
-        _nkm, _nke = dm_in_basis(dma, orbs[k][:, ksel], **kwargs)
+        # Use SAME filtered orbitals for all k-points
+        _nkm, _nke = dm_in_basis(dma_k, orbs[k][:, ksel], **kwargs)
         nkm += weight*_nkm
         nke += weight*_nke
 
@@ -179,8 +187,6 @@ def calc_rhor(dma, meta, orbs, pwcut=None, **kwargs):
                     _rhom = np.einsum("s,r,r->sr", dma[:,i,j], orb_ik_dagger, orb_jkprime)
                     _rhoe = _rhom.real.std(axis=0, ddof=1)
                     _rhom = _rhom.real.mean(axis=0)
-                    
-                    
                     rhom += _rhom
                     rhoe += _rhoe
     print(f"Integrated electron density per cell = {np.sum(rhom) / nkpts}")
@@ -325,6 +331,34 @@ def get_gvecs(mesh):
     return cubic_pos(spaces)
 
 
+def get_centered_gvecs(mesh):
+    """
+    Get centered Miller indices for FFT grid.
+    
+    Converts FFT convention indices [0, 1, ..., N-1] to centered indices
+    [-N//2, ..., -1, 0, 1, ..., N//2-1] (for even N)
+    or [-N//2, ..., -1, 0, 1, ..., N//2] (for odd N)
+    
+    Parameters
+    ----------
+    mesh : array-like
+        FFT grid dimensions (Nx, Ny, Nz)
+    
+    Returns
+    -------
+    gvecs : np.ndarray
+        Centered Miller indices with shape (Nx*Ny*Nz, 3)
+    """
+    spaces = []
+    for nx in mesh:
+        # Create centered indices using FFT convention
+        indices = np.arange(nx)
+        # Shift indices > nx//2 to negative values
+        centered = np.where(indices > nx // 2, indices - nx, indices)
+        spaces.append(centered)
+    return cubic_pos(spaces)
+
+
 def get_rvecs(axes, mesh, center=False):
     gvecs = get_gvecs(mesh)
     fracs = axes / np.array(mesh)[:, np.newaxis]  # axes is row-major
@@ -400,8 +434,6 @@ def charge_density(
     verbose : bool
         Whether to print additional information.
     """
-    warn("Expiremental Implementation")
-    
     orbital_source = Path(orbital_source)
     rho_outfile = Path(rho_outfile)
 
@@ -419,7 +451,6 @@ def charge_density(
 
     #TODO: have read_qe_orbitals return the meta data
     orbital_format,prefix = _infer_orbital_format(orbital_source)
-    
     if "qe" in orbital_format:
         orbital_meta = read_qe_metadata(
             prefix=prefix,
@@ -461,6 +492,84 @@ def charge_density(
         overwrite=True
     )
 
+
+def momentum_distribution(
+        rdm,
+        error_rdm,
+        orbital_source:Path,
+        kcut:float,
+        nsample:int=32,
+        verbose=False
+    ):
+    """Calculate the momentum distribution n(k) from the 1-RDM.
+
+    Parameters
+    ----------
+    rdm : np.ndarray
+        The 1-RDM. Shape (nspins, norbs, norbs).
+    error_rdm : np.ndarray
+        The error in the 1-RDM. Shape (nspins, norbs, norbs).
+    orbital_source : Path
+        The path to the orbitals file.
+    kcut : float
+        Cutoff for k-points in momentum space.
+    nsample : int
+        The number of samples to use for resampling.
+    verbose : bool
+        Whether to print additional information.
+
+    Returns
+    -------
+    kvecs : np.ndarray
+        K-vectors within the cutoff.
+    nkm : np.ndarray
+        Mean momentum distribution n(k).
+    nke : np.ndarray
+        Error in momentum distribution n(k).
+    """
+    orbital_source = Path(orbital_source)
+
+    # NOTE: This is spin-traced for now.
+    if rdm.shape[0] == 2:
+        warn("Spin-tracing the 1-RDM", stacklevel=1)
+        rdm = rdm[0] + rdm[1]
+        error_rdm = error_rdm[0] + error_rdm[1]
+
+    rdm_samples = resample(rdm, error_rdm, nsample)
+
+    if verbose:
+        for i in range(nsample):
+            print(f"sample {i} has trace {np.trace(rdm_samples[i])}")
+
+    # Infer orbital format and read reciprocal-space orbitals
+    orbital_format, prefix = _infer_orbital_format(orbital_source)
+
+    if "qe" in orbital_format:
+        #orbital_meta = read_qe_metadata(
+        #    prefix=prefix,
+        #    path=(orbital_source / f"{prefix}.xml").parent
+        #)
+        orbital_meta, orbitals_k, _ = read_orbitals(
+            prefix=prefix,
+            path=(orbital_source / f"{prefix}.xml").parent,
+            realspace=False  # We need reciprocal space orbitals for momentum distribution
+        )
+        kvecs, nkm, nke = calc_nofk(rdm_samples, orbital_meta, orbitals_k, kcut, imag_tol=1e-2)
+    elif "coqui" in orbital_format:
+        orbital_meta, orbitals_k = read_coqui_orbitals(orbital_source)
+        kvecs, nkm, nke = calc_nofk(rdm_samples, orbital_meta, orbitals_k, kcut, imag_tol=1e-2)
+    else:
+        raise ValueError(f"[For Developers] Unsupported orbital format {orbital_format}")
+
+    print(f" [+]  Integrated momentum distribution = {np.sum(nkm)}")
+
+    if verbose:
+        print("==== Orbital metadata ====")
+        for key, val in orbital_meta.items():
+            print(f"{key}: {val}")
+
+    return kvecs, nkm, nke
+
 # from qharv.reel.inspect.volumetric
 def write_gaussian_cube(fcub, data, overwrite=False, **kwargs):
     """Write Gaussian cube file from volumetric data.
@@ -493,6 +602,7 @@ def write_gaussian_cube(fcub, data, overwrite=False, **kwargs):
     ...     "two_line_comment": "This is a test cube file\\nGenerated by write_gaussian_cube\\n"
     ... }
     >>> write_gaussian_cube("test.cube", data, overwrite=True)
+        
     
     This will create a Gaussian cube file named "test.cube" with the provided data.
     """

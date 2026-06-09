@@ -265,11 +265,11 @@ def analyze_scalar_data(args=None,**pyplot_kwargs):
     series_column = args.series_column
     if series_column is None:
         myx = df["time"]
-    elif series_column in ("index","time"):
+    elif series_column in ("block","time"):
         myx = df[series_column]
     else:
         raise ValueError(f"Invalid series_column: {series_column}. "
-                         "Must be 'index' or 'time'.")
+                         "Must be 'block' or 'time'.")
     nequil = args.nequil
     if args.estimate_equil:
         nequil = nequil_std(df[column].values)

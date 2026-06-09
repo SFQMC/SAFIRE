@@ -11,6 +11,7 @@
 from autohf import AutoHFHamiltonian,lattice_hf
 
 from afqmctools.wavefunction.model import write_wfn
+from afqmctools.wavefunction.common import modified_gram_schmidt, check_orthonormality
 from afqmctools.hamiltonian.model.ham_class import Hamiltonian
 import numpy as np
 
@@ -92,6 +93,15 @@ def autohf_to_afqmc(input_ = None,
     wfn = np.zeros((1,N,sum(nelec)), dtype=np.complex128)
     wfn[0,:,:] = state_afqmc[:,:]
 
+    # Check orthonormality
+    norm = check_orthonormality(wfn, sum(nelec), wfn_type='noncollinear')
+    
+    # Orthonormalize columns for noncollinear case if norm is not 1.0
+    if abs(norm - 1.0) > 1.0e-10:
+      wfn[0,:,:] = modified_gram_schmidt(wfn[0,:,:])
+      # Re-check after orthonormalization
+      check_orthonormality(wfn, sum(nelec), wfn_type='noncollinear')
+
     write_wfn(
         filename=output_fname,
         wfn=[coeffs,wfn],
@@ -103,6 +113,14 @@ def autohf_to_afqmc(input_ = None,
     state_afqmc = _autoHF_2_afqmc_wfn_collinear(orbs,N,nelec)
     wfn = np.zeros((1,N,sum(nelec)), dtype=np.complex128)
     wfn[0,:,:] = state_afqmc[:,:]
+
+    # Check orthonormality
+    norm = check_orthonormality(wfn, nelec, wfn_type='collinear')
+    
+    if abs(norm - 1.0) > 1.0e-10:
+      wfn[0,:,:nelec[0]] = modified_gram_schmidt(wfn[0,:,:nelec[0]])
+      wfn[0,:,nelec[0]:] = modified_gram_schmidt(wfn[0,:,nelec[0]:])
+      check_orthonormality(wfn, nelec, wfn_type='collinear')
 
     write_wfn(
         filename=output_fname,

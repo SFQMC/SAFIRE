@@ -189,8 +189,20 @@ def average_diag_two_rdm(filename, estimator='back_propagated', eqlb=1, blocksiz
                 two_rdm_err[j,i] = err[ij].conj()
                 ij += 1
     elif walker == 'non_collinear':
-        print("Non-collinear wavefunction not supported.")
-        return None
+        # For non-collinear, work in the spinor basis (2*nbasis)
+        spinor_basis = 2 * nbasis
+        dm_size = spinor_basis * (spinor_basis - 1) // 2
+        assert mean.shape[0] == dm_size, f"Expected {dm_size} elements, got {mean.shape[0]}"
+        two_rdm = numpy.zeros((spinor_basis, spinor_basis), dtype=mean.dtype)
+        two_rdm_err = numpy.zeros((spinor_basis, spinor_basis), dtype=mean.dtype)
+        ij = 0
+        for i in range(spinor_basis):
+            for j in range(i+1, spinor_basis):
+                two_rdm[i,j] = mean[ij]
+                two_rdm_err[i,j] = err[ij]
+                two_rdm[j,i] = mean[ij].conj()
+                two_rdm_err[j,i] = err[ij].conj()
+                ij += 1
         
     # Diagonal is zero
     return two_rdm, two_rdm_err
@@ -501,9 +513,10 @@ def average_spinspin(filename, estimator='back_propagated', eqlb=1, blocksize=1,
 
     # reshape upper triangular data to full matrix
     SS = numpy.zeros((2,nbasis,nbasis),dtype=mean.dtype)
-    SS[:,*numpy.triu_indices(nbasis)] = mean.reshape(2,-1)
+    triu_idx = numpy.triu_indices(nbasis)
+    SS[:, triu_idx[0], triu_idx[1]] = mean.reshape(2,-1)
     SS_err = numpy.zeros_like(SS)
-    SS_err[:,*numpy.triu_indices(nbasis)] = err.reshape(2,-1)
+    SS_err[:, triu_idx[0], triu_idx[1]] = err.reshape(2,-1)
     for i in range(2):
       SS[i]  += numpy.triu(SS[i],k=1).T.conj()
       SS_err[i]  += numpy.triu(SS_err[i],k=1).T.conj()

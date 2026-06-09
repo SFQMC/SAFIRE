@@ -1,0 +1,21 @@
+{
+  "afqmc": {
+    "project": {
+      "id": "qmc",
+      "series": 0
+    },
+    "execute": {
+      "walker_set": {
+        "walker_type": "CLOSED"
+      },
+      "wavefunction": {
+        "filename": "afqmc.h5"
+      },
+      "timestep": 0.01,
+      "steps": 7000,
+      "n_walkers_per_mpi_task": 100,
+      "population_control_interval": 10,
+      "seed": 42
+    }
+  }
+}

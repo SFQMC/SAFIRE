@@ -354,7 +354,6 @@ def write_model_hamiltonian(
     # the AFQMC code expects all components to be either real or complex
     real_valued = hamiltonian.real_valued
 
-    max_conn = 0
     component_num = 0
 
     if spin_symm is not None:
@@ -370,6 +369,34 @@ def write_model_hamiltonian(
     else:
         raise ValueError("Hamiltonian has invalid spin symmetry")
 
+    # Track max_nnz per collection matrix in C++
+    # collect_U has 4 categories (by hst_type): continuous_charge, continuous_spin, 
+    #                                           discrete_charge, discrete_spin
+    # collect_J has 3 categories (by hst_type): continuous_charge, continuous_spin,
+    #                                           (discrete placeholder)
+    # Multiple components can contribute to the same collection matrix, so
+    #                                         we need to sum their max_nnz
+    max_nnz_U = {'continuous_charge': 0, 'continuous_spin': 0, 'discrete_charge': 0, 'discrete_spin': 0}
+    max_nnz_J = {'continuous_charge': 0, 'continuous_spin': 0}
+
+    # First pass: accumulate max_nnz for components that go into the same collection matrix
+    for key in hamiltonian.keys():
+        for component in hamiltonian[key]:
+            if key == 'Uij':  # Hubbard U components
+                hst = component.metadata.get('hst_type', 'continuous_spin')
+                max_nnz_U[hst] += component.max_nnz
+            elif key == 'Jij':  # Hubbard J components
+                hst = component.metadata.get('hst_type', 'continuous_spin')
+                if hst in max_nnz_J:
+                    max_nnz_J[hst] += component.max_nnz
+
+    # Calculate overall maximum connectivity needed
+    max_conn = max(
+        max(max_nnz_U.values()),
+        max(max_nnz_J.values()),
+        12  # Default minimum
+    )
+
     with h5.File(fname,'w') as f:
 
         f.create_dataset(
@@ -379,7 +406,7 @@ def write_model_hamiltonian(
         # write Energies!
         f.create_dataset(
             'Hamiltonian/Energies',
-            data = np.array([0, 0])
+            data = np.array([0., 0.], dtype=np.float64),
         )
 
         f.create_dataset(
@@ -393,9 +420,7 @@ def write_model_hamiltonian(
         )
 
         for key in hamiltonian.keys():
-            
             for component in hamiltonian[key]:
-                max_conn = max(component.max_nnz,max_conn)
                 component_prefix = prefix + f"/ModelComponent_{component_num}/"
                 f.create_dataset(
                     name=component_prefix + 'model_type',
@@ -465,7 +490,7 @@ def _write_param_json(fname:str=None,params=None):
             params,
             fp=f
         )
-    
+
 def _write_param_toml(fname:str=None,params=None):
     assert fname.endswith('.toml')
     with open(fname,"w") as f:

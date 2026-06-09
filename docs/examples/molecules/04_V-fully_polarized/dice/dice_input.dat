@@ -1,0 +1,28 @@
+#system - 3d^3 shell of V atom with Sz=3/2
+nocc 3
+  0 2 4
+end
+orbitals ./FCIDUMP
+nroots 1
+
+#variational
+schedule
+1   0.01
+2   0.005
+3   0.001
+5   0.0005
+10  0.0001
+end
+davidsonTol 5e-05
+dE 1e-08
+maxiter 20
+
+#pt
+nPTiter 500
+epsilon2 1e-08
+epsilon2Large 1000
+targetError 0.00001
+sampleN 300
+
+#misc
+printBestDeterminants 2000 # this is for the output file in ASCII

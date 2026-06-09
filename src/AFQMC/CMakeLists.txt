@@ -67,6 +67,10 @@ if (BUILD_UNIT_TESTS)
       ${PROJECT_SOURCE_DIR}/tests/unit_test_files/Ne_cc-pvdz/wfn_rhf.h5     	
       ${PROJECT_SOURCE_DIR}/tests/unit_test_files/hubbard/4x4squareU1/hubb4x4U1.h5
       ${PROJECT_SOURCE_DIR}/tests/unit_test_files/hubbard/4x4squareU1/wfn_uhf.h5
+      ${PROJECT_SOURCE_DIR}/tests/unit_test_files/hubbard-kanamori/4x1square/hk_4x1.h5
+      ${PROJECT_SOURCE_DIR}/tests/unit_test_files/hubbard-kanamori/4x1square/hk_4x1.h5
+      ${PROJECT_SOURCE_DIR}/tests/unit_test_files/Li_noncollinear/Li_ham.h5
+      ${PROJECT_SOURCE_DIR}/tests/unit_test_files/Li_noncollinear/Li_ghf_wfn.h5
     )
   else()
     set(AFQMC_UNIT_TEST_INPUTS 
@@ -88,6 +92,10 @@ if (BUILD_UNIT_TESTS)
       ${PROJECT_SOURCE_DIR}/tests/unit_test_files/Ne_cc-pvdz/wfn_rhf.h5
       ${PROJECT_SOURCE_DIR}/tests/unit_test_files/hubbard/4x4squareU1/hubb4x4U1.h5
       ${PROJECT_SOURCE_DIR}/tests/unit_test_files/hubbard/4x4squareU1/wfn_uhf.h5
+      ${PROJECT_SOURCE_DIR}/tests/unit_test_files/hubbard-kanamori/4x1square/hk_4x1.h5
+      ${PROJECT_SOURCE_DIR}/tests/unit_test_files/hubbard-kanamori/4x1square/hk_4x1.h5
+      ${PROJECT_SOURCE_DIR}/tests/unit_test_files/Li_noncollinear/Li_ham.h5
+      ${PROJECT_SOURCE_DIR}/tests/unit_test_files/Li_noncollinear/Li_ghf_wfn.h5
     )
   endif()
   SUBDIRS(SlaterDeterminantOperations/tests)

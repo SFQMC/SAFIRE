@@ -17,6 +17,9 @@
 #include <vector>
 #include <type_traits>
 #include <boost/math/tools/roots.hpp>
+#if defined(ENABLE_DEVICE)
+#include <boost/math/tools/toms748_solve.hpp>
+#endif
 
 #include "config.h" // NOLINT(misc-include-cleaner)
 #include "Utilities/AppAbort.hpp"
@@ -391,6 +394,8 @@ private:
     using std::get;
     using boost::math::tools::bisect;
     using boost::math::tools::eps_tolerance;
+    RUNTIME_CHECK(dt>0.0, "Error in Discrete_GeneralUJ::get_parameters:"
+      " dt > 0 is required to determine the parameters of the discrete HS transformation.");
     if(abs(U_) < 1e-8)
       APP_ABORT("Error in Discrete_GeneralUJ::get_parameters: U==0.");
     if(abs(ma::imag(U_)) > 1e-8)

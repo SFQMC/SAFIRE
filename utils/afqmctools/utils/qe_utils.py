@@ -369,6 +369,48 @@ def _rec2realspace(miller_inds,reciprocal,fft_grid,visualize=False):
     )
     return real_space
 
+
+def _orbitals_to_dense_grid(miller_inds_k, evc_k, fft_grid, nkpts, nbands):
+    """
+    Convert sparse reciprocal space orbitals to a dense common grid.
+    
+    Parameters
+    ----------
+    miller_inds_k : list of np.ndarray
+        List of Miller indices for each k-point, each with shape (n_gvecs_k, 3)
+    evc_k : list of np.ndarray
+        List of orbital coefficients for each k-point, each with shape (nbands, n_gvecs_k)
+    fft_grid : np.ndarray
+        FFT grid dimensions as (M1, M2, M3)
+    nkpts : int
+        Number of k-points
+    nbands : int
+        Number of bands
+    
+    Returns
+    -------
+    orbitals_dense : np.ndarray
+        Dense orbital array with shape (nkpts, nbands, M1*M2*M3)
+    """
+    M = np.array(fft_grid, dtype=np.int32)
+    num_grid = np.prod(M)
+    
+    # Initialize dense array for all k-points
+    orbitals_dense = np.zeros((nkpts, nbands, num_grid), dtype=np.complex128)
+    
+    for k in range(nkpts):
+        miller_k = np.array(miller_inds_k[k], dtype=np.int32)
+        evc = evc_k[k]
+        
+        for b in range(nbands):
+            # Map sparse coefficients to dense 3D grid
+            dense_3d = _sparse_reciprocal_2dense(miller_k, evc[b], M)
+            # Flatten to 1D
+            orbitals_dense[k, b, :] = dense_3d.reshape(num_grid)
+    
+    return orbitals_dense
+
+
 def read_orbitals(
         prefix,
         path=None, 
@@ -406,9 +448,9 @@ def read_orbitals(
         - orbitals : np.ndarray with shape (N_kpts,N_bands,N_grid)
         - fft_grid : np.ndarray with shape (3,) containing the size of the FFT grid
         if realspace is False, then return a tuple containing:
-        - metadata : dict containing metadata
-        - orbitals : list of np.ndarray with shape (N_kpts,N_bands,N_fft)
-        - None : for tuple lenght consistency with the realspace case
+        - metadata : dict containing metadata (includes 'common_grid_shape' and 'num_grid_points')
+        - orbitals : np.ndarray with shape (N_kpts,N_bands,M1*M2*M3) on common reciprocal space grid
+        - fft_grid : np.ndarray with shape (3,) containing the size of the FFT grid
     """
     if path is not None:
         path = Path(path)
@@ -479,14 +521,19 @@ def read_orbitals(
             M
         )
     else:
-        print("Returning orbitals in reciprocal space")
-        meta = read_qe_metadata(prefix, path=path, realspace=realspace)
+        print("Returning orbitals in reciprocal space on common grid")
+        # Convert sparse orbitals to dense common grid
+        orbitals_dense = _orbitals_to_dense_grid(miller_inds_k, evc_k, M, nkpts, nbands)
+        meta = read_qe_metadata(prefix, path=path)
+        meta["common_grid_shape"] = M
+        meta["num_grid_points"] = np.prod(M)
+        # Keep per-k-point Miller indices for reference/backward compatibility
         for k in range(nkpts):
             meta[f"gvecs_k{k}"] = miller_inds_k[k]
         return (
             meta,
-            np.array(evc_k),
-            None
+            orbitals_dense,
+            M
         )
 
 def read_qe_metadata(prefix, path=None):

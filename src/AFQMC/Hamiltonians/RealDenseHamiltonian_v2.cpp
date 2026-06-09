@@ -225,10 +225,10 @@ RealDenseHamiltonian_v2::getHamiltonianOperations_impl(WALKER_TYPES type,
     if (type == COLLINEAR)
     {
       CMatrix_ref haj_r(raw_pointer_cast(haj[nd].origin()), {nup, NMO});
-      ma::product(PsiT[2 * nd], H1C, haj_r);
+      ma::product(PsiT[2 * nd], H1C.sliced(0, NMO), haj_r);
       CMatrix_ref hbj_r(raw_pointer_cast(haj[nd].origin()) + (nup * NMO), {ndown, NMO});
       if (ndown > 0)
-        ma::product(PsiT[2 * nd + 1], H1C, hbj_r);
+        ma::product(PsiT[2 * nd + 1], H1C.sliced(NMO, 2*NMO), hbj_r);
     }
     else
     {

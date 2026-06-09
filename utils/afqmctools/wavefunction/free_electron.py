@@ -45,7 +45,8 @@ THETA_Y = 1/np.sqrt(47603)     # 47603 is prime
 
 
 def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=None,
-                  return_autohf=False,measure_spin=True,filling_strategy='aufbau',shell_tol=1e-6):
+                  return_autohf=False,measure_spin=True,filling_strategy='aufbau',shell_tol=1e-6,
+                  measure_evar=True):
     """
     Builds a free-electron trial wavefunction based on the 'source' lattice hamiltonian.
 
@@ -80,6 +81,9 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
         tolerance for grouping eigenvalues into shells (default: 1e-6)
         Orbitals with eigenvalues within this tolerance are considered 
         to belong to the same shell.
+    measure_evar : bool
+        whether to measure the variational energy with respect to the interacting Hamiltonian
+        using AutoHF (default: True)
     
     Returns
     -------
@@ -147,20 +151,20 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
     # TODO: put this somewhere else, probably parse from an input file
     settings = dict(
         ansatz = 'SD',
-        numSteps = -1, # prints only the reference energy
+        steps = -1, # prints only the reference energy
         verbose = True,
         nelec = nelec,
-        numTrials = 1,
+        batch_size = 1,
         measure_spin = measure_spin
     )
 
     if spin_symm_wfn == SpinSymm.NONCOLLINEAR:
         settings["noncollinear"] = True
 
-    if not HAS_AUTOHF:
+    if measure_evar and not HAS_AUTOHF:
         warn("AutoHF not available. Skipping energy evaluation.")
         results = None
-    else:
+    elif measure_evar:
         results = lattice_hf(
             AutoHFHamiltonian(source=hamiltonian),
             settings=settings,

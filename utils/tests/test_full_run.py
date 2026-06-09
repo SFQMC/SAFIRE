@@ -44,8 +44,8 @@ from afqmctools.analysis.rdm import average_afqmc_rdm
 from afqmctools.inputs.from_hdf import write_json
 import afqmctools.hamiltonian.model.director as ham
 
-#skip this file if pyscf can't import
-optax = pytest.importorskip("optax")
+pytest.importorskip("optax")
+pytest.importorskip("autohf")
 
 from autohf import lattice_hf, AutoHFHamiltonian
 from afqmctools.wavefunction.free_electron import free_electron

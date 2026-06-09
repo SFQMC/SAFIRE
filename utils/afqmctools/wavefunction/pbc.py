@@ -404,10 +404,13 @@ def create_wavefunction(orbs, occs, nmo_pk, nelec, uhf, verbose):
         print(" # Shape of supercell wavefunction "
               "({:d},{:d})".format(nmo_tot, (nalpha+nbeta) if uhf else nalpha))
         print(" # Number of electrons (nalpha, nbeta) = ({}, {})".format(nalpha, nbeta))
-    wfn = np.zeros((1,nmo_tot, nalpha+nbeta), dtype=np.complex128)
     row = 0
     col = 0
     col_b = nalpha
+    if uhf:
+        wfn = np.zeros((1,nmo_tot,nalpha+nbeta), dtype=np.complex128)
+    else:
+        wfn = np.zeros((1,nmo_tot,nalpha), dtype=np.complex128)
     for k in range(len(nmo_pk)):
         row_end = row + nmo_pk[k]
         nocca = int(round(sum(occ_a[k])))

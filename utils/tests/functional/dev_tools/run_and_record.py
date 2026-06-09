@@ -20,6 +20,7 @@ import numpy as np
 
 from stats.scalar_dat import analyze_scalar_data
 from afqmctools.analysis.rdm import average_afqmc_rdm
+from dev_tools.results import Results
 
 AFQMC_EXEC = os.environ.get("AFQMC_EXEC",None)
 if AFQMC_EXEC is None:
@@ -140,57 +141,19 @@ def get_afqmc_results(return_code:int,run_time_secs=-1.0,nequil=5.0,run_bp=False
     3. AFQMC avg. walker weight (set equil)
     4. AFQMC LogOvlpFActor (set equil)
     5. Averaged 1-rdm
+    
+    This function now uses the Results class internally for better modularity.
     """
-
-    with h5.File("results.h5","w") as f:
-        f.create_dataset("return_code",data=return_code)
-        f.create_dataset("run_time_seconds",data=run_time_secs)
-
-        f.create_dataset("afqmc_raised_warning",data=afqmc_raised_warning("afqmc.out"))
-        get_and_save_warnings("afqmc.out",fh5=f)
-        
-        f.create_dataset("afqmc_raised_error",data=afqmc_raised_error("afqmc.out"))
-        get_and_save_errors("afqmc.out",fh5=f)
-
-        f.create_dataset("afqmc_is_finite",data=afqmc_out_is_finite("afqmc.out"))
-
-        with open("afqmc.json","r") as infile:
-            f.create_dataset("input_file",data=infile.read())
-
-        if return_code == 0:
-            E,dE = analyze_scalar_data(
-                dict(
-                    fname = "qmc.s000.scalar.dat",
-                    xaxis = "time",
-                    nequil = nequil
-                )
-            )
-            f.create_dataset("energy",data=np.array([E,dE]))
-
-            weight,dweight = analyze_scalar_data(
-                dict(
-                    fname = "qmc.s000.scalar.dat",
-                    xaxis = "time",
-                    nequil = nequil,
-                    column = "weight"
-                )
-            )
-            f.create_dataset("weight",data=np.array([weight,dweight]))
-
-            log_ovlp,dlog_ovlp = analyze_scalar_data(
-                dict(
-                    fname = "qmc.s000.scalar.dat",
-                    xaxis = "time",
-                    nequil = nequil,
-                    column = "LogOvlpFactor"
-                )
-            )
-            f.create_dataset("LogOvlpFactor",data=np.array([log_ovlp,dlog_ovlp]))
-
-            if run_bp:
-                rho_avg, delta_rho = average_afqmc_rdm()
-                f.create_dataset("avg_1rdm",data=rho_avg)
-                f.create_dataset("avg_1rdm_stoch_error",data=delta_rho)
+    # Create Results object from AFQMC run output files
+    results = Results.from_afqmc_run(
+        return_code=return_code,
+        run_time_secs=run_time_secs,
+        nequil=nequil,
+        run_bp=run_bp
+    )
+    
+    # Write to HDF5 file
+    results.to_hdf5("results.h5")
 
 
 def afqmc_raised_error(fname):
@@ -201,7 +164,7 @@ def afqmc_raised_error(fname):
     """
     # TODO: use regex groups to identify what error is raised
     with open(fname,'r') as f:
-        result = re.search("\[error\]",f.read())
+        result = re.search(r"\[error\]",f.read())
     if result is None:
         return False
     else:
@@ -216,7 +179,7 @@ def afqmc_raised_warning(fname):
     """
     # TODO: use regex groups to identify what warning is raised
     with open(fname,'r') as f:
-        result = re.search("\[warning\]",f.read())
+        result = re.search(r"\[warning\]",f.read())
     if result is None:
         return False
     else:
@@ -255,7 +218,9 @@ class AFQMCHelper:
 
     def __init__(self,afqmc_exec,num_mpi_tasks,timeout_mins=None) -> None:
         self.afqmc_exec = afqmc_exec
-        self.num_mpi_tasks = num_mpi_tasks
+        if num_mpi_tasks is None:
+            num_mpi_tasks = os.environ.get("AFQMC_NUM_MPI_TASKS", 1)
+        self.num_mpi_tasks = int(num_mpi_tasks)
 
         if timeout_mins is not None:
             timeout_mins = float(timeout_mins)
@@ -271,7 +236,20 @@ class AFQMCHelper:
         )
 
     # TODO: update to use the afqmctools to generate the input file
-    def make_afqmc_input(self,fname,hamil_file,wfn_file,walker_type,num_mpi_tasks=None,n_walkers_per_mpi_task=None,run_bp=False,gpu=False,total_walkers=1600):
+    def make_afqmc_input(
+            self,
+            fname,
+            hamil_file,
+            wfn_file,
+            walker_type,
+            num_mpi_tasks=None,
+            n_walkers_per_mpi_task=None,
+            run_bp=False,
+            gpu=False,
+            total_walkers=1600,
+            steps=10000,
+            timestep=0.01
+        ):
 
         num_mpi_tasks = self.num_mpi_tasks if num_mpi_tasks is None else num_mpi_tasks
 
@@ -298,8 +276,8 @@ class AFQMCHelper:
       "hamiltonian": {''' + f'''
         "filename": "{hamil_file}" ''' + '''
       }, ''' + f'''
-      "timestep": 0.01,
-      "steps": 10000,
+      "timestep": {timestep},
+      "steps": {steps},
       "n_walkers_per_mpi_task": {n_walkers_per_mpi_task},'''
 
             if run_bp:
@@ -349,12 +327,16 @@ class AFQMCHelper:
         
         if timeout_mins is None:
             timeout_mins = self.timeout_mins
-    
-        runparams = kwargs.pop("runparams", {}) # do not forward runparams to make_afqmc_input!
-        num_mpi_tasks = runparams.get("num_mpi_tasks",self.num_mpi_tasks)
-        max_num_mpi_ranks = runparams.get("max_num_mpi_ranks",None)
-        total_walkers = runparams.get("total_walkers",1600)
-    
+
+        _runparams = kwargs.pop("runparams", {}) # do not forward  allrunparams to make_afqmc_input!
+        num_mpi_tasks = _runparams.setdefault("num_mpi_tasks",self.num_mpi_tasks)
+        max_num_mpi_ranks = _runparams.setdefault("max_num_mpi_ranks",None)
+        total_walkers = _runparams.setdefault("total_walkers",1600)
+        _runparams.pop("num_mpi_tasks")
+        _runparams.pop("max_num_mpi_ranks")
+        _runparams.pop("total_walkers")
+        kwargs.update(_runparams)
+
         if max_num_mpi_ranks is not None and num_mpi_tasks > max_num_mpi_ranks:
             warn(
                 f"Requested {num_mpi_tasks} MPI tasks, but the maximum allowed is {max_num_mpi_ranks}. "
