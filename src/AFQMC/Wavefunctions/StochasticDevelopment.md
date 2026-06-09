@@ -67,7 +67,7 @@ Called every outer propagation step from `AFQMCBasePropagator`, `AFQMCModelPropa
 distributed propagator variants.
 
 | Method | Current behavior | Desired functionality |
-|--------|------------------|----------------------|
+|--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `MixedDensityMatrix_for_vbias(wset, G)` | Delegates to `nomsd_`; computes analytic mixed DM of outer walkers w.r.t. the deterministic MSD trial. | Compute the **stochastic** mixed density matrix used by `vbias`. Run (or sample from) the inner walker/propagator ensemble, evaluate inner `NOMSD` mixed DMs, and return an effective DM in the layout expected by `vbias` (`compact_G_for_vbias`, `transposed_G_for_vbias`). |
 | `vbias(G, v, dt, a)` | Delegates to `nomsd_.HamOp.vbias` using the analytic `G` from above. | Apply Cholesky-vector bias using the **stochastic** mixed DM. May call inner `HamOps.vbias` on inner-walker quantities and reduce/average to the outer-walker buffer layout. |
 | `vHS(X, v, dt, a)` | Delegates to `nomsd_.HamOp.vHS`. | Compute the spin-dependent or spin-independent one-body propagation matrix contribution from auxiliary fields, using inner stochastic information where the trial is not a single deterministic MSD. |
@@ -81,7 +81,7 @@ distributed propagator variants.
 Called from `MixedObsHandler`, `FullObsHandler`, force estimators, and related code paths.
 
 | Method | Current behavior | Desired functionality |
-|--------|------------------|----------------------|
+|--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `MixedDensityMatrix(wset, G, ...)` | Delegates to `nomsd_`; full analytic mixed DM for outer walkers. | Stochastic mixed DM for **observable evaluation** (may differ in layout/options from the `for_vbias` variant). Average inner ensemble contributions; support `compact` and `transpose` flags as today. |
 | `MixedDensityMatrix(wset, G, Ov, ...)` | Same as above, also returns overlaps per determinant/walker. | As above, plus return the overlap vector needed for weighted accumulation in multi-determinant or multi-reference estimators. |
 | `DensityMatrix(wset, RefA, RefB, G, Ov, ...)` | Delegates to `nomsd_`; DM w.r.t. a specific reference determinant. | Stochastic DM relative to a chosen reference orbital set. Needed by `MixedObsHandler` for reference-resolved force and density estimators. |
@@ -94,7 +94,7 @@ Called from `MixedObsHandler`, `FullObsHandler`, force estimators, and related c
 Called during propagator setup and mean-field initialization.
 
 | Method | Current behavior | Desired functionality |
-|--------|------------------|----------------------|
+|--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `G_MF(G)` | Delegates to `nomsd_`; builds mean-field Green's function from CI-weighted determinant DMs. | Build the **stochastic** mean-field Green's function used to subtract the trial mean-field potential. Average inner-walker MF contributions from the owned inner stack. |
 | `vMF(v, dt)` | Delegates to `nomsd_`; mean-field contribution of Cholesky vectors. | Compute mean-field bias from the stochastic trial. May require inner `HamOps` and inner walker sampling. |
 
@@ -107,7 +107,7 @@ overridden Tier 1–3 methods actually produce; may need custom logic once inner
 separately.
 
 | Method | Current behavior | Desired functionality |
-|--------|------------------|----------------------|
+|--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `size_of_G_for_vbias()` | Returns `nomsd_` DM dimension for `vbias` layout. | Return the DM dimension the stochastic `MixedDensityMatrix_for_vbias` / `vbias` pair actually uses. |
 | `transposed_G_for_vbias()` | From inner `HamOp` flags. | Match the memory layout of stochastic `G` passed to `vbias`. |
 | `transposed_G_for_E()` | From inner `HamOp` flags. | Match the memory layout of stochastic `G` used in energy evaluation. |
@@ -127,7 +127,7 @@ May continue to delegate to inner objects early on, but ownership should eventua
 `StochasticWfn`.
 
 | Method | Current behavior | Desired functionality |
-|--------|------------------|----------------------|
+|--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `getHamType()` | Returns `nomsd_.HamOp.getHamType()`. | Return Hamiltonian type from **inner** `HamOps`. |
 | `getFieldTypes(...)` | Delegates to inner `HamOp`. | Expose auxiliary-field layout for inner Hamiltonian (used by `PropagatorFactory`). |
 | `update_potentials(...)` | Delegates to inner `HamOp`. | Update inner Hamiltonian potentials after grid / ionic moves. |
@@ -143,7 +143,7 @@ May continue to delegate to inner objects early on, but ownership should eventua
 Called from `BackPropagatedEstimator` and related reference-tracking code.
 
 | Method | Current behavior | Desired functionality |
-|--------|------------------|----------------------|
+|--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `number_of_references_for_back_propagation()` | Returns `nomsd_` reference count. | Number of reference Slater matrices the stochastic trial exposes for back-propagation (may differ if inner ensemble uses a reduced reference set). |
 | `getReferenceWeight(i)` | Returns `nomsd_.ci[i]`. | CI weight (or effective stochastic weight) for reference `i`. |
 | `getReferencesForBackPropagation(A)` | Copies reference orbitals from `nomsd_`. | Provide reference Slater matrices for back-propagation, possibly averaged or selected from the inner ensemble. |
@@ -155,7 +155,7 @@ Called from `BackPropagatedEstimator` and related reference-tracking code.
 Not wavefunction visitor methods, but required for a full-fledged type.
 
 | Component | Current behavior | Desired functionality |
-|-----------|------------------|----------------------|
+|--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `StochasticWfn` constructor | Accepts same arguments as `NOMSD`; builds inner `nomsd_` only. | Construct inner **walker set**, **NOMSD**, **propagator(s)**, and **HamOps** from input; wire task groups and memory managers. |
 | `interpret_inputs(pt)` | Validates against `NOMSD` keys plus `stochastic`. | Parse inner-AFQMC parameters (inner walker count, inner steps, population control, etc.). |
 | `WavefunctionFactory` | `stochastic: true` flag on NOMSD HDF5 path. | First-class `stochasticwfn` type (or dedicated HDF5 group) with its own `fromHDF5` branch, matching `NOMSD`/`PHMSD` treatment. |
