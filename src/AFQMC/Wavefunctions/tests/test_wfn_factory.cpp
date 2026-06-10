@@ -133,14 +133,20 @@ struct WfnTestContext
         alloc_(make_localTG_allocator<ComplexType>(TG))
   {}
 
-  ptree make_wfn_pt(const std::string& name, const std::string& filename, bool stochastic = false) const
+  ptree make_wfn_pt(const std::string& name,
+                    const std::string& filename,
+                    bool stochastic   = false,
+                    int inner_nwalkers = 1) const
   {
     ptree pt;
     pt.put("name", name);
     pt.put("system", "info0");
     pt.put("filename", filename);
     if (stochastic)
+    {
       pt.put("stochastic", true);
+      pt.put("inner_nwalkers", inner_nwalkers);
+    }
     return pt;
   }
 
@@ -149,8 +155,10 @@ struct WfnTestContext
                                       TaskGroup_& TGprop,
                                       TaskGroup_& TGwfn)
   {
+    bool stochastic = wfn_pt.get<bool>("stochastic", false);
+    ptree const* walker_ptr = stochastic ? &wlk_pt : nullptr;
     WfnFac.push(id, wfn_pt);
-    return WfnFac.getWavefunction(TGprop, TGwfn, id, type, &ham, 1e-6, nwalk);
+    return WfnFac.getWavefunction(TGprop, TGwfn, id, type, &ham, 1e-6, nwalk, walker_ptr);
   }
 
   Wavefunction& register_wavefunction(const std::string& id, const ptree& wfn_pt)
@@ -646,6 +654,83 @@ void stochastic_wfn_matches_nomsd(boost::mpi3::communicator& world)
       REQUIRE(real(ComplexType(X_stoch[i][j])) == Approx(real(ComplexType(X_nomsd[i][j]))));
       REQUIRE(imag(ComplexType(X_stoch[i][j])) == Approx(imag(ComplexType(X_nomsd[i][j]))));
     }
+
+  ctx.TG.Global().barrier();
+}
+
+template<bool MP, class Allocator>
+void stochastic_inner_walkers_init(boost::mpi3::communicator& world)
+{
+  if (not file_exists(UTEST_HAMIL) || not file_exists(UTEST_WFN))
+    APP_ABORT(" Hamiltonian or wavefunction file not found. Run unit test with --hamil /path/to/hamil.h5 and --wfn /path/to/wfn.h5.");
+  if (afqmc::getWavefunctionType(UTEST_WFN) != "NOMSD")
+    return;
+
+  WfnTestContext<MP, Allocator> ctx(world);
+  auto initial_guess = [&](const std::string& wfn_id) { return ctx.WfnFac.getInitialGuess(wfn_id); };
+
+  // Default inner_nwalkers = 1
+  Wavefunction& wfn_stoch =
+      ctx.register_wavefunction("wfn_stoch", ctx.make_wfn_pt("wfn_stoch", UTEST_WFN, true));
+  REQUIRE(wfn_stoch.is_stochastic_wavefunction());
+  REQUIRE(wfn_stoch.stochastic_inner_walkers_initialized());
+  REQUIRE(wfn_stoch.stochastic_inner_wset().size() == 1);
+
+  // inner_nwalkers > 1
+  const int inner_nwalk = 5;
+  Wavefunction& wfn_ensemble = ctx.register_wavefunction(
+      "wfn_ensemble", ctx.make_wfn_pt("wfn_ensemble", UTEST_WFN, true, inner_nwalk));
+  REQUIRE(wfn_ensemble.stochastic_inner_wset().size() == inner_nwalk);
+
+  auto guess = initial_guess("wfn_stoch");
+  REQUIRE(guess.size(0) == 2);
+  REQUIRE(guess.size(1) == ctx.npol * ctx.NMO);
+  REQUIRE(guess.size(2) == ctx.NAEA);
+
+  for (int iw = 0; iw < wfn_stoch.stochastic_inner_wset().size(); ++iw)
+  {
+    REQUIRE(*wfn_stoch.stochastic_inner_wset()[iw].SlaterMatrix(Alpha) == guess[0]);
+    if (ctx.type == COLLINEAR)
+      REQUIRE(*wfn_stoch.stochastic_inner_wset()[iw].SlaterMatrix(Beta) ==
+              guess[1](guess.extension(1), {0, ctx.NAEB}));
+  }
+
+  // Inner NOMSD evaluates on inner walkers
+  boost::apply_visitor(
+      [&](auto&& a) {
+        using Wfn = std::decay_t<decltype(a)>;
+        if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+        {
+          a.inner_wfn().Overlap(a.inner_wset());
+          a.inner_wfn().Energy(a.inner_wset());
+          ctx.TG.TG_local().barrier();
+
+          Wavefunction& wfn_nomsd =
+              ctx.register_wavefunction("wfn_nomsd_ref", ctx.make_wfn_pt("wfn_nomsd_ref", UTEST_WFN, false));
+          WalkerSet wset_ref = ctx.make_walker_set();
+          ctx.init_walkers(wset_ref, "wfn_nomsd_ref");
+          wfn_nomsd.Overlap(wset_ref);
+          wfn_nomsd.Energy(wset_ref);
+          ctx.TG.TG_local().barrier();
+
+          REQUIRE(real(ComplexType(*a.inner_wset()[0].overlap())) ==
+                  Approx(real(ComplexType(*wset_ref[0].overlap()))));
+          REQUIRE(imag(ComplexType(*a.inner_wset()[0].overlap())) ==
+                  Approx(imag(ComplexType(*wset_ref[0].overlap()))));
+          REQUIRE(real(ComplexType(a.inner_wset()[0].energy())) == Approx(real(ComplexType(wset_ref[0].energy()))));
+          REQUIRE(imag(ComplexType(a.inner_wset()[0].energy())) == Approx(imag(ComplexType(wset_ref[0].energy()))));
+
+          // Replicated initial guess gives identical inner-walker observables
+          a.inner_wfn().Overlap(a.inner_wset());
+          ComplexType ov0 = ComplexType(*a.inner_wset()[0].overlap());
+          for (int iw = 1; iw < inner_nwalk; ++iw)
+          {
+            REQUIRE(real(ComplexType(*a.inner_wset()[iw].overlap())) == Approx(real(ov0)));
+            REQUIRE(imag(ComplexType(*a.inner_wset()[iw].overlap())) == Approx(imag(ov0)));
+          }
+        }
+      },
+      wfn_ensemble);
 
   ctx.TG.Global().barrier();
 }
@@ -1268,6 +1353,25 @@ TEST_CASE("stochastic_wfn_matches_nomsd", "[wavefunction_factory][stochastic_wfn
 
   stochastic_wfn_matches_nomsd<false, Alloc>(world);
   stochastic_wfn_matches_nomsd<true, Alloc>(world);
+  release_memory_managers();
+}
+
+TEST_CASE("stochastic_inner_walkers_init", "[wavefunction_factory][stochastic_wfn]")
+{
+  auto world = boost::mpi3::environment::get_world_instance();
+  auto node  = world.split_shared(world.rank());
+  setup_loggers(world.root(), 2, 2);
+
+#if defined(ENABLE_DEVICE)
+  arch::INIT(node);
+  using Alloc = device::device_allocator<ComplexType>;
+#else
+  using Alloc = shared_allocator<ComplexType>;
+#endif
+  setup_memory_managers(node, 10uL * 1024uL * 1024uL);
+
+  stochastic_inner_walkers_init<false, Alloc>(world);
+  stochastic_inner_walkers_init<true, Alloc>(world);
   release_memory_managers();
 }
 
