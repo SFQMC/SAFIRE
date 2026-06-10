@@ -21,6 +21,7 @@
 #include "AFQMC/config.h"
 
 #include "AFQMC/SlaterDeterminantOperations/SlaterDetOperations.hpp"
+#include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
 #include "AFQMC/Wavefunctions/StochasticWfn.hpp"
@@ -29,6 +30,16 @@ namespace sfqmc
 {
 namespace afqmc
 {
+namespace wavefunction_detail
+{
+template<class T>
+struct is_stochastic_wfn : std::false_type
+{};
+template<bool MP, class devPsiT>
+struct is_stochastic_wfn<StochasticWfn<MP, devPsiT>> : std::true_type
+{};
+} // namespace wavefunction_detail
+
 namespace dummy
 {
 /*
@@ -453,6 +464,65 @@ public:
 
   bool spin_dependent_vHS() const { 
     return boost::apply_visitor([&](auto&& a) { return a.spin_dependent_vHS(); }, *this);
+  }
+
+  bool is_stochastic_wavefunction() const
+  {
+    return boost::apply_visitor(
+        [](auto&& a) { return wavefunction_detail::is_stochastic_wfn<std::decay_t<decltype(a)>>::value; }, *this);
+  }
+
+  bool stochastic_inner_walkers_initialized() const
+  {
+    return boost::apply_visitor(
+        [](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.inner_walkers_initialized();
+          return false;
+        },
+        *this);
+  }
+
+  void initialize_stochastic_inner_walkers(ptree const& walker_pt,
+                                           boost::multi::array<ComplexType, 3> const& initial_guess,
+                                           int NAEB)
+  {
+    boost::apply_visitor(
+        [&](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            a.initialize_inner_walkers(walker_pt, initial_guess, NAEB);
+        },
+        *this);
+  }
+
+  WalkerSet& stochastic_inner_wset()
+  {
+    if (not is_stochastic_wavefunction())
+      APP_ABORT("Error in Wavefunction::stochastic_inner_wset: not a StochasticWfn.");
+    return boost::apply_visitor(
+        [](auto&& a) -> WalkerSet& {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.inner_wset();
+          throw std::runtime_error("Error in Wavefunction::stochastic_inner_wset: not a StochasticWfn.");
+        },
+        *this);
+  }
+
+  WalkerSet const& stochastic_inner_wset() const
+  {
+    if (not is_stochastic_wavefunction())
+      APP_ABORT("Error in Wavefunction::stochastic_inner_wset: not a StochasticWfn.");
+    return boost::apply_visitor(
+        [](auto&& a) -> WalkerSet const& {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.inner_wset();
+          throw std::runtime_error("Error in Wavefunction::stochastic_inner_wset: not a StochasticWfn.");
+        },
+        *this);
   }
 
 };

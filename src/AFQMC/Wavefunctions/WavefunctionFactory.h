@@ -59,6 +59,11 @@ public:
     std::string restart_file  = pt0.get<std::string>("restart_file", "");
     bool rediag        = pt0.get<bool>("rediag", false);
     bool stochastic    = pt0.get<bool>("stochastic", false);
+    int inner_nwalkers = pt0.get<int>("inner_nwalkers", 1);
+    if (inner_nwalkers < 1)
+      APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
+    if (not stochastic && pt0.get_child_optional("inner_nwalkers"))
+      APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers requires stochastic: true.");
     // validate inputs
     // create verbose internal inputs
     ptree pt1;
@@ -69,6 +74,8 @@ public:
     pt1.put("rediag", rediag);
     pt1.put("ndets_to_read", ndets_to_read);
     pt1.put("stochastic", stochastic);
+    if (stochastic)
+      pt1.put("inner_nwalkers", inner_nwalkers);
     // optional parameters 
     if( auto val = pt0.get_optional<int>("algorithm") )
       pt1.put("algorithm", *val);
@@ -76,7 +83,9 @@ public:
     if( auto val = pt0.get_optional<bool>("dense_trial") )
       pt1.put("dense_trial", *val);
     std::unordered_set<std::string> pass_through_keys = {
-      "system"
+        "system",
+        "stochastic",
+        "inner_nwalkers",
     };
     io::compare_known_keys("Wavefunction Factory",pt1, pt0,pass_through_keys);
     return pt1;
@@ -106,7 +115,8 @@ public:
                                 WALKER_TYPES walker_type,
                                 Hamiltonian* h,
                                 RealType cutvn = 1e-6,
-                                int targetNW   = 1)
+                                int targetNW   = 1,
+                                ptree const* walker_pt = nullptr)
   {
     auto xml = wfnBlocks.find(ID);
     if (xml == wfnBlocks.end())
@@ -121,10 +131,40 @@ public:
           std::make_pair(ID, buildWavefunction(TGprop, TGwfn, xml->second, walker_type, h, cutvn, targetNW)));
       if (!neww.second)
         APP_ABORT(" Error: Problems building new wavefunction in WavefunctionFactory::getWavefunction(string&). ");
+      if (walker_pt != nullptr)
+        maybe_initialize_stochastic_inner_walkers((neww.first)->second, ID, walker_type, *walker_pt);
       return (neww.first)->second;
     }
     else
+    {
+      if (walker_pt != nullptr)
+        maybe_initialize_stochastic_inner_walkers(w0->second, ID, walker_type, *walker_pt);
       return w0->second;
+    }
+  }
+
+  // Phase 1a: initialize owned inner WalkerSet for stochastic trial wavefunctions.
+  void maybe_initialize_stochastic_inner_walkers(Wavefunction& wfn,
+                                                 const std::string& ID,
+                                                 WALKER_TYPES walker_type,
+                                                 ptree const& walker_pt)
+  {
+    auto xml = wfnBlocks.find(ID);
+    if (xml == wfnBlocks.end())
+      APP_ABORT(" Error in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers: Missing wfn block. ");
+    ptree pt = interpret_inputs(xml->second);
+    if (not pt.get<bool>("stochastic"))
+      return;
+    if (not wfn.is_stochastic_wavefunction())
+      return;
+    if (wfn.stochastic_inner_walkers_initialized())
+      return;
+    std::string info = pt.get<std::string>("system");
+    if (InfoMap.find(info) == InfoMap.end())
+      APP_ABORT("ERROR: Undefined system in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers.");
+    int NAEB = InfoMap[info].NAEB;
+    (void)walker_type;
+    wfn.initialize_stochastic_inner_walkers(walker_pt, getInitialGuess(ID), NAEB);
   }
 
   // Use this routine to check if there is a wfn associated with a given ID

@@ -375,6 +375,7 @@ bool DriverFactory::executeAFQMCNewDriver(std::string title, int m_series, ptree
 
   // wfn builder should not use Hamiltonian pointer now
   Wavefunction& wfn0 = WfnFac.getWavefunction(TGprop, TGwfn, wfn_name, walker_type, nullptr, cutvn, nWalkers);
+  WfnFac.maybe_initialize_stochastic_inner_walkers(wfn0, wfn_name, walker_type, WSetFac.get_input(wset_name));
 
   // propagator
   Propagator& prop0 = PropFac.getPropagator(TGprop, prop_name, wfn0, &rng);
@@ -584,6 +585,7 @@ bool DriverFactory::executeAFQMCDriver(std::string title, int m_series, ptree pt
 
   // wfn builder should not use Hamiltonian pointer now
   Wavefunction& wfn0 = WfnFac.getWavefunction(TGprop, TGwfn, wfn_name, walker_type, nullptr, cutvn, nWalkers);
+  WfnFac.maybe_initialize_stochastic_inner_walkers(wfn0, wfn_name, walker_type, WSetFac.get_input(wset_name));
 
   // propagator
   Propagator& prop0 = PropFac.getPropagator(TGprop, prop_name, wfn0, &rng);
@@ -813,6 +815,7 @@ bool DriverFactory::executeCSAFQMCDriver(std::string title, int m_series, ptree 
 
     // wfn builder should not use Hamiltonian pointer now
     Wavefunction& wfn0 = WfnFac.getWavefunction(TGprop, TGwfn, wfn_name, walker_type, nullptr, cutvn, nWalkers);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn0, wfn_name, walker_type, WSetFac.get_input(wset_name));
     wfn_ref.emplace_back(std::ref(wfn0));
 
     // propagator

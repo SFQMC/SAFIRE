@@ -37,12 +37,20 @@ namespace afqmc
 
 namespace
 {
-template<bool MP, class MType, class... Args>
-Wavefunction makeNomsdWavefunction(bool stochastic, Args&&... args)
+ptree strip_stochastic_factory_keys(ptree pt)
+{
+  pt.erase("stochastic");
+  pt.erase("inner_nwalkers");
+  return pt;
+}
+
+template<bool MP, class MType, class... Rest>
+Wavefunction makeNomsdWavefunction(bool stochastic, AFQMCInfo& info, ptree pt, Rest&&... rest)
 {
   if (stochastic)
-    return Wavefunction(StochasticWfn<MP, MType>(std::forward<Args>(args)...));
-  return Wavefunction(NOMSD<MP, MType>(std::forward<Args>(args)...));
+    return Wavefunction(StochasticWfn<MP, MType>(info, std::move(pt), std::forward<Rest>(rest)...));
+  return Wavefunction(
+      NOMSD<MP, MType>(info, strip_stochastic_factory_keys(std::move(pt)), std::forward<Rest>(rest)...));
 }
 } // namespace
 
