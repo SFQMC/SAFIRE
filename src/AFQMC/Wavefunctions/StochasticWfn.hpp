@@ -17,8 +17,12 @@
 #ifndef SFQMC_AFQMC_STOCHASTICWFN_H
 #define SFQMC_AFQMC_STOCHASTICWFN_H
 
+#include <memory>
+
 #include "io/ptree/ptree_utilities.hpp"
+#include "Utilities/Random.hpp"
 #include "AFQMC/config.h"
+#include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
 
 namespace sfqmc
@@ -32,7 +36,25 @@ namespace afqmc
 template<bool MP, class devPsiT>
 class StochasticWfn : public AFQMCInfo
 {
+  struct StochasticInnerEnsemble
+  {
+    std::unique_ptr<WalkerSet> wset;
+    utils::RandomGenerator_t rng;
+    bool initialized{false};
+  };
+
+  afqmc::TaskGroup_& TG_;
+  StochasticInnerEnsemble inner_ensemble_;
+  int inner_nwalkers_{1};
   NOMSD<MP, devPsiT> nomsd_;
+
+  static ptree nomsd_inputs(ptree const& pt0)
+  {
+    ptree pt_nomsd_in = pt0;
+    pt_nomsd_in.erase("stochastic");
+    pt_nomsd_in.erase("inner_nwalkers");
+    return NOMSD<MP, devPsiT>::interpret_inputs(pt_nomsd_in);
+  }
 
 public:
   template<class MType>
@@ -47,16 +69,22 @@ public:
                 ComplexType nce,
                 [[maybe_unused]] int targetNW = 1)
       : AFQMCInfo(info),
-        nomsd_(info, pt_in, tg_, std::move(sdet_), std::move(hop_), std::move(ci_), std::move(orbs_), wlk, nce,
-               targetNW)
+        TG_(tg_),
+        nomsd_(info, nomsd_inputs(pt_in), tg_, std::move(sdet_), std::move(hop_), std::move(ci_), std::move(orbs_),
+               wlk, nce, targetNW)
   {
     ptree pt = interpret_inputs(pt_in);
+    inner_nwalkers_ = pt.get<int>("inner_nwalkers");
     app_log(2, "\nStochasticWfn input:\n{}\n", io::to_string(pt));
   }
 
   static ptree interpret_inputs(const ptree pt0)
   {
-    ptree pt1 = NOMSD<MP, devPsiT>::interpret_inputs(pt0);
+    ptree pt1 = nomsd_inputs(pt0);
+    int inner_nwalkers = pt0.get<int>("inner_nwalkers", 1);
+    if (inner_nwalkers < 1)
+      APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_nwalkers must be >= 1.");
+    pt1.put("inner_nwalkers", inner_nwalkers);
     std::unordered_set<std::string> pass_through_keys = {
         "system",
         "name",
@@ -64,6 +92,7 @@ public:
         "restart_file",
         "filename",
         "stochastic",
+        "inner_nwalkers",
     };
     io::compare_known_keys("Stochastic trial wavefunction (StochasticWfn)", pt1, pt0, pass_through_keys);
     return pt1;
@@ -75,6 +104,16 @@ public:
   StochasticWfn& operator=(StochasticWfn const& other) = delete;
   StochasticWfn(StochasticWfn&& other)                   = default;
   StochasticWfn& operator=(StochasticWfn&& other)        = delete;
+
+  void initialize_inner_walkers(ptree const& walker_pt,
+                                boost::multi::array<ComplexType, 3> const& initial_guess,
+                                int NAEB);
+
+  bool inner_walkers_initialized() const { return inner_ensemble_.initialized; }
+  int inner_nwalkers() const { return inner_nwalkers_; }
+
+  WalkerSet& inner_wset();
+  WalkerSet const& inner_wset() const;
 
   NOMSD<MP, devPsiT>& inner_wfn() { return nomsd_; }
   NOMSD<MP, devPsiT> const& inner_wfn() const { return nomsd_; }

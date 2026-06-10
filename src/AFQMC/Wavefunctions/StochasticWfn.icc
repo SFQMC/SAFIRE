@@ -20,6 +20,39 @@ namespace afqmc
 {
 
 template<bool MP, class devPsiT>
+WalkerSet& StochasticWfn<MP, devPsiT>::inner_wset()
+{
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::inner_wset: inner walkers not initialized.");
+  return *inner_ensemble_.wset;
+}
+
+template<bool MP, class devPsiT>
+WalkerSet const& StochasticWfn<MP, devPsiT>::inner_wset() const
+{
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::inner_wset: inner walkers not initialized.");
+  return *inner_ensemble_.wset;
+}
+
+template<bool MP, class devPsiT>
+void StochasticWfn<MP, devPsiT>::initialize_inner_walkers(ptree const& walker_pt,
+                                                           boost::multi::array<ComplexType, 3> const& initial_guess,
+                                                           int NAEB)
+{
+  if (inner_ensemble_.initialized)
+    APP_ABORT("Error in StochasticWfn::initialize_inner_walkers: inner walkers already initialized.");
+  inner_ensemble_.wset =
+      std::make_unique<WalkerSet>(TG_, walker_pt, static_cast<AFQMCInfo&>(*this), &inner_ensemble_.rng);
+  if (getWalkerType() == COLLINEAR)
+    inner_ensemble_.wset->resize(inner_nwalkers_, initial_guess[0],
+                                 initial_guess[1](initial_guess.extension(1), {0, NAEB}));
+  else
+    inner_ensemble_.wset->resize(inner_nwalkers_, initial_guess[0], initial_guess[0]);
+  inner_ensemble_.initialized = true;
+}
+
+template<bool MP, class devPsiT>
 template<class Mat>
 void StochasticWfn<MP, devPsiT>::G_MF(Mat&& G)
 {
