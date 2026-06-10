@@ -166,6 +166,12 @@ struct WfnTestContext
     return register_wavefunction(id, wfn_pt, TG, TG);
   }
 
+  Wavefunction& register_wavefunction_without_inner_init(const std::string& id, const ptree& wfn_pt)
+  {
+    WfnFac.push(id, wfn_pt);
+    return WfnFac.getWavefunction(TG, TG, id, type, &ham, 1e-6, nwalk);
+  }
+
   WalkerSet make_walker_set() { return WalkerSet(TG, wlk_pt, InfoMap.at("info0"), &rng); }
 
   void init_walkers(WalkerSet& wset, const std::string& wfn_id)
@@ -731,6 +737,38 @@ void stochastic_inner_walkers_init(boost::mpi3::communicator& world)
         }
       },
       wfn_ensemble);
+
+  ctx.TG.Global().barrier();
+}
+
+template<bool MP, class Allocator>
+void stochastic_inner_walkers_uninitialized_smoke(boost::mpi3::communicator& world)
+{
+  if (not file_exists(UTEST_HAMIL) || not file_exists(UTEST_WFN))
+    APP_ABORT(" Hamiltonian or wavefunction file not found. Run unit test with --hamil /path/to/hamil.h5 and --wfn /path/to/wfn.h5.");
+  if (afqmc::getWavefunctionType(UTEST_WFN) != "NOMSD")
+    return;
+
+  WfnTestContext<MP, Allocator> ctx(world);
+  Wavefunction& wfn = ctx.register_wavefunction_without_inner_init(
+      "wfn_uninit", ctx.make_wfn_pt("wfn_uninit", UTEST_WFN, true));
+
+  REQUIRE(wfn.is_stochastic_wavefunction());
+  REQUIRE(not wfn.stochastic_inner_walkers_initialized());
+
+  boost::apply_visitor(
+      [&](auto&& a) {
+        using Wfn = std::decay_t<decltype(a)>;
+        if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+          REQUIRE(not a.inner_walkers_initialized());
+      },
+      wfn);
+
+  // Inner walkers are mandatory: factory init must be called explicitly when
+  // getWavefunction() is invoked without walker_pt (as drivers do post-build).
+  ctx.WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_uninit", ctx.type, ctx.wlk_pt);
+  REQUIRE(wfn.stochastic_inner_walkers_initialized());
+  REQUIRE(wfn.stochastic_inner_wset().size() == 1);
 
   ctx.TG.Global().barrier();
 }
@@ -1372,6 +1410,25 @@ TEST_CASE("stochastic_inner_walkers_init", "[wavefunction_factory][stochastic_wf
 
   stochastic_inner_walkers_init<false, Alloc>(world);
   stochastic_inner_walkers_init<true, Alloc>(world);
+  release_memory_managers();
+}
+
+TEST_CASE("stochastic_inner_walkers_uninitialized_smoke", "[wavefunction_factory][stochastic_wfn]")
+{
+  auto world = boost::mpi3::environment::get_world_instance();
+  auto node  = world.split_shared(world.rank());
+  setup_loggers(world.root(), 2, 2);
+
+#if defined(ENABLE_DEVICE)
+  arch::INIT(node);
+  using Alloc = device::device_allocator<ComplexType>;
+#else
+  using Alloc = shared_allocator<ComplexType>;
+#endif
+  setup_memory_managers(node, 10uL * 1024uL * 1024uL);
+
+  stochastic_inner_walkers_uninitialized_smoke<false, Alloc>(world);
+  stochastic_inner_walkers_uninitialized_smoke<true, Alloc>(world);
   release_memory_managers();
 }
 
