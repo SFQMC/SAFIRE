@@ -334,15 +334,14 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     });
   } // Q
 
- // kpoint dependent occupations
-  nda::array<int,2> nocc(nspin,nkpts);
-  if(mpi->comm.root())
-    nocc = nocc_per_kpoint(type,nkpts,PsiT);
-  mpi->broadcast(nocc);
-  auto nocc_max = nda::max_element(nocc);
-  utils::check(nel_up == nda::sum(nocc(0,all)), "Error: Mismatch in number of electrons: nel_up:{} sum(nel_up(k)):{}",nel_up,nda::sum(nocc(0,all)));
+ // kpoint dependent occupations: for each (spin,kpoint), the list of PsiT row
+ // indices occupying that kpoint. Computed on every rank (depends only on PsiT,
+ // which is replicated), so no broadcast of the ragged list-of-lists is needed.
+  auto nocc = nocc_per_kpoint(type,nkpts,PsiT);
+  auto nocc_max = max_nocc_per_kpoint(nocc);
+  utils::check(nel_up == nelec_for_spin(nocc,0), "Error: Mismatch in number of electrons: nel_up:{} sum(nel_up(k)):{}",nel_up,nelec_for_spin(nocc,0));
   if(type == COLLINEAR)
-    utils::check(nel_dn == nda::sum(nocc(1,all)), "Error: Mismatch in number of electrons: ndown:{} sum(ndown(k)):{}",nel_dn,nda::sum(nocc(1,all)));
+    utils::check(nel_dn == nelec_for_spin(nocc,1), "Error: Mismatch in number of electrons: ndown:{} sum(ndown(k)):{}",nel_dn,nelec_for_spin(nocc,1));
 
   /* half-rotate LQ and H1:
    * Given that PsiT = H(SM),
@@ -361,13 +360,13 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         [&](std::array<long,3> idx, auto&& block) {
       auto [id,is,ik] = idx;
       int is_ = is%nspin_in_H1;
-      int n0 = ( ik==0 ? 0 : nda::sum(nocc(is,range(ik))) );
-      int nk = nocc(is,ik);
+      auto const& rows = nocc(is,ik);
+      int nk = int(rows.size());
       for(long ip=0; ip<npol; ++ip) {
         int ip_ = ip%npol_in_H1;
         if(Q <= Qm) {
           // L[Q,k,k2=k-Q]
-          auto Aai = math::sparse::to_array<'N'>(PsiT(id,is),range(n0,n0+nk),
+          auto Aai = math::sparse::to_array<'N'>(PsiT(id,is),rows,
                                                  range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
           auto Lijn = LQ(Q)()(is_,ip_,ik,all,all,all);
           auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
@@ -376,7 +375,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         } else {
           // L[Q,k,k2=k-Q]
           int k2 = qk_to_k2(Q,ik);
-          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),range(n0,n0+nk),
+          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),rows,
                                                  range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
           auto Lljn = LQ(Qm)()(is_,ip_,k2,all,all,all);
           auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
@@ -398,12 +397,12 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         auto [id,is,k2] = idx;
         int is_ = is%nspin_in_H1;
         int ik = k2_to_k(k2);
-        int n0b = ( k2==0 ? 0 : nda::sum(nocc(is,range(k2))) );
-        int nb = nocc(is,k2);
+        auto const& rows = nocc(is,k2);
+        int nb = int(rows.size());
         for(long ip=0; ip<npol; ++ip) {
           int ip_ = ip%npol_in_H1;
           // conj(L[Q,k,k2](lj,n)) * A[k2]bj
-          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),range(n0b,n0b+nb),
+          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),rows,
                                                  range(ip*NMO+k2*nbnd,ip*NMO+(k2+1)*nbnd));
           auto Lljn = LQ(Q)()(is_,ip_,ik,all,all,all);
           auto L_ = block(range(nb),all,range(ip*nbnd,(ip+1)*nbnd));

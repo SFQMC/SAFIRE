@@ -275,15 +275,14 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   } else {
     Zuv = share_read("coulomb_matrix",std::array<long,3>{nqpts_ibz,nu,nu});
   }
-  // kpoint dependent occupations
-  nda::array<int,2> nocc(nspin,nkpts);
-  if(mpi->comm.root())
-    nocc = nocc_per_kpoint(type,nkpts,PsiT);
-  mpi->broadcast(nocc);
-  auto nocc_max = nda::max_element(nocc);
-  utils::check(nel_up == nda::sum(nocc(0,all)), "Error: Mismatch in number of electrons: nel_up:{} sum(nel_up(k)):{}",nel_up,nda::sum(nocc(0,all)));
+  // kpoint dependent occupations: for each (spin,kpoint), the list of PsiT row
+  // indices occupying that kpoint. Computed on every rank (depends only on PsiT,
+  // which is replicated), so no broadcast of the ragged list-of-lists is needed.
+  auto nocc = nocc_per_kpoint(type,nkpts,PsiT);
+  auto nocc_max = max_nocc_per_kpoint(nocc);
+  utils::check(nel_up == nelec_for_spin(nocc,0), "Error: Mismatch in number of electrons: nel_up:{} sum(nel_up(k)):{}",nel_up,nelec_for_spin(nocc,0));
   if(type == COLLINEAR)
-    utils::check(nel_dn == nda::sum(nocc(1,all)), "Error: Mismatch in number of electrons: ndown:{} sum(ndown(k)):{}",nel_dn,nda::sum(nocc(1,all)));
+    utils::check(nel_dn == nelec_for_spin(nocc,1), "Error: Mismatch in number of electrons: ndown:{} sum(ndown(k)):{}",nel_dn,nelec_for_spin(nocc,1));
 
   // Y = PsiT*conj(X): (since PsiT is already conjugated/transposed)
   auto Ydsau = memory::share_from_ranks<MEM,ComplexType,6,4>(*mpi,
@@ -292,9 +291,9 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         auto [id,is,ip,ik] = idx;
         long is_ = is%nspin_in_H1;
         long ip_ = ip%npol_in_H1;
-        int n0 = ( ik==0 ? 0 : nda::sum(nocc(is,range(ik))) );
-        int nel = nocc(is,ik);
-        auto Aai = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),range(n0,n0+nel),range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
+        auto const& rows = nocc(is,ik);
+        int nel = int(rows.size());
+        auto Aai = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),rows,range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
         auto Yau = block(range(nel),all);
         auto Xiu = Xsiu()(is_,ik,range(ip_*nbnd,(ip_+1)*nbnd),all);
         nda::tensor::contract(Aai,"ai", nda::conj(Xiu),"iu",Yau,"au");

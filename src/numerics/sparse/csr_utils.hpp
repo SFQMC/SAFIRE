@@ -231,6 +231,48 @@ auto to_array(csr_matrix<ValType,MEM,IndxType,IntType> const& csr)
   return to_array<op>(csr,nda::range(csr.extent(0)),nda::range(csr.extent(1)));
 }
 
+// Gathers an arbitrary (not necessarily contiguous) set of rows from a CSR matrix
+// into a dense array. Output row r corresponds to source row rows(r). This does a host copy for now. Optimize if needed.
+template<char op, typename ValType, MEMORY_SPACE MEM = HOST_MEMORY, typename IndxType = int, typename IntType = long>
+requires( (op == 'N' or op == 'T' or op == 'H') )
+auto to_array(csr_matrix<ValType,MEM,IndxType,IntType> const& csr, nda::array<int,1> const& rows, nda::range col_range)
+{
+  sfqmc::utils::check(col_range.first() >= 0 and col_range.first() <= csr.extent(1) and
+                      col_range.last() >= col_range.first() and col_range.last() <= csr.extent(1),
+                      "to_array: col_range out of bounds.");
+  auto vals = ::nda::to_host(csr.values());
+  auto cols = ::nda::to_host(csr.columns());
+  auto row_begin = ::nda::to_host(csr.row_begin());
+  auto row_end = ::nda::to_host(csr.row_end());
+
+  long nr = rows.size();
+  long nc = col_range.size();
+  long i0 = row_begin(0);
+  long c0 = col_range.first();
+  long c1 = col_range.last();
+
+  long nr_out = op == 'N' ? nr : nc;
+  long nc_out = op == 'N' ? nc : nr;
+  
+  auto A = nda::array<ValType, 2>::zeros({nr_out,nc_out});
+  for(long ridx=0; ridx<nr; ++ridx) {
+    long r = rows(ridx);
+    sfqmc::utils::check(r >= 0 and r < csr.extent(0), "to_array: row index out of bounds.");
+    for(long i=row_begin(r); i<row_end(r); ++i) {
+      if( cols(i-i0) >= c0 and cols(i-i0) < c1 ) {
+        if constexpr (op=='T') {
+          A(cols(i-i0)-c0,ridx) = ValType(vals(i-i0));
+        } else if constexpr (op=='H') {
+          A(cols(i-i0)-c0,ridx) = std::conj(ValType(vals(i-i0)));
+        } else {
+          A(ridx,cols(i-i0)-c0) = ValType(vals(i-i0));
+        }
+      }
+    }
+  }
+  return memory::to_memory_space<MEM>(std::move(A));
+}
+
 // On host returns a view, on device returns an array
 template<char op, typename... Args>
 requires( (op == 'N' or op == 'T' or op == 'H' or op == 'C') )

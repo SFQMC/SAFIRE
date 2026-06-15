@@ -28,6 +28,7 @@
 #include "numerics/nda_functions.hpp"
 #include "numerics/operations/tensor.hpp"
 #include "detail/one_body.hpp"
+#include "AFQMC/Utilities/wfn_utils.hpp"
 
 namespace sfqmc
 {
@@ -49,7 +50,7 @@ public:
           WALKER_TYPES type,
           int nbnd_,
           int q0,
-          nda::array<int,2>&& nocc_,
+          nda::array<nda::array<int,1>,2>&& nocc_,
           nda::array<int,1>&& minusq_,
           nda::array<int,2>&& qk_to_k2_,
           nda::array<int,1>&& qmap_,
@@ -65,9 +66,9 @@ public:
         walker_type(type),
         nkpts(nocc_.extent(1)),
         nbnd(nbnd_),
-        nup(nda::sum(nocc_(0,nda::range::all))),
-        ndown(walker_type==COLLINEAR ? nda::sum(nocc_(1,nda::range::all)) : 0),
-        nocc_max(nda::max_element(nocc_)),
+        nup(nelec_for_spin(nocc_,0)),
+        ndown(walker_type==COLLINEAR ? nelec_for_spin(nocc_,1) : 0),
+        nocc_max(max_nocc_per_kpoint(nocc_)),
         nchol_max(0),
         nocc(std::move(nocc_)),
         minusq(std::move(minusq_)),
@@ -217,9 +218,7 @@ public:
     int nwalk = G.extent(0);
     int nspin  = (walker_type == COLLINEAR) ? 2 : 1;
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
-    int nup = nda::sum(nocc(0,all));
-    int ndown = (walker_type==COLLINEAR ? nda::sum(nocc(1,all)) : 0);
-    int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0 
+    int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0
     int nqpts = LQ.extent(0);
     utils::check(E.shape() == std::array<long,2>{nwalk,3}, "Size mismatch.");
     utils::check(G.extent(1) == nel*npol*nkpts*nbnd, "Size mismatch.");
@@ -427,8 +426,6 @@ public:
     int is = (spin_component == Alpha ? 0 : 1);
     int nwalk = G.extent(0);
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
-    int nup = nda::sum(nocc(0,all));
-    int ndown = (walker_type==COLLINEAR ? nda::sum(nocc(1,all)) : 0);
     int nel  = (is==0 ? nup : ndown);
     int nqpts = LQ.extent(0);
     utils::check(E.shape() == std::array<long,2>{nwalk,3}, "Size mismatch.");
@@ -917,8 +914,9 @@ protected:
   int nchol_max=0;
   int ncvecs=0;     // total number of cholesky vectors
 
-  nda::array<int,2> nocc;
-         
+  // For each (spin,kpoint): the list of occupied PsiT row indices at that kpoint.
+  nda::array<nda::array<int,1>,2> nocc;
+
   // BZ information
   nda::array<int,1> minusq;
   nda::array<int,2> qk_to_k2;
@@ -958,35 +956,48 @@ protected:
   // Changes the layout of G:
   //    From: G(nwalk,nel_tot,npol,nkpts,nbnd)
   //    To:   GKK(nkpts,nkpts,nwalk*nocc_max,npol*nbnd)
-  void Gc_to_GKKwaj(int is, int n0, nda::MemoryArrayOfRank<5> auto const& G,
+  // `base` is the offset of spin `is`'s block in the occupied dimension of G; the
+  // occupied orbital `a` of kpoint ik1 lives at G-row base+nocc(is,ik1)(a).
+  void Gc_to_GKKwaj(int is, int base, nda::MemoryArrayOfRank<5> auto const& G,
                         nda::MemoryArrayOfRank<4> auto && GKK)
   {
     using nda::range;
     auto all  = range::all;
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
-    int nwalk = G.extent(0); 
- 
+    int nwalk = G.extent(0);
+
     auto G6d = nda::reshape(GKK,std::array<long,6>{nkpts,nkpts,nwalk,nocc_max,npol,nbnd});
     GKK() = ComplexType(0.0);
-    if constexpr (MEM==HOST_MEMORY) {
-      for(int ik1=0; ik1<nkpts; ++ik1) 
-      {
-        int nk1 = nocc(is,ik1);
-        for(int ik2=0; ik2<nkpts; ++ik2) 
-        { 
-          for(int ip=0; ip<npol; ++ip) 
-            for(int iw=0; iw<nwalk; ++iw) 
-              G6d(ik1,ik2,iw,range(nk1),ip,all) = G(iw,range(n0,n0+nk1),ip,ik2,all);
-        } 
-        n0 += nk1;
-      }
-    } else {
-      for(int ik1=0; ik1<nkpts; ++ik1) 
-      {
-        int nk1 = nocc(is,ik1);
-        nda::tensor::add(ComplexType(1.0),G(all,range(n0,n0+nk1),all,all,all),"wapkj",
-                         ComplexType(0.0),G6d(ik1,all,all,range(nk1),all,all),"kwapj");
-        n0 += nk1;
+    for(int ik1=0; ik1<nkpts; ++ik1)
+    {
+      auto const& rows = nocc(is,ik1);
+      int nk1 = int(rows.size());
+      if(nk1==0) continue;
+      bool contig = contiguous_rows(rows);
+      if constexpr (MEM==HOST_MEMORY) {
+        for(int ik2=0; ik2<nkpts; ++ik2)
+        {
+          for(int ip=0; ip<npol; ++ip)
+            for(int iw=0; iw<nwalk; ++iw) {
+              if(contig) {
+                int r0 = base + rows(0);
+                G6d(ik1,ik2,iw,range(nk1),ip,all) = G(iw,range(r0,r0+nk1),ip,ik2,all);
+              } else {
+                for(int a=0; a<nk1; ++a)
+                  G6d(ik1,ik2,iw,a,ip,all) = G(iw,base+rows(a),ip,ik2,all);
+              }
+            }
+        }
+      } else {
+        if(contig) {
+          int r0 = base + rows(0);
+          nda::tensor::add(ComplexType(1.0),G(all,range(r0,r0+nk1),all,all,all),"wapkj",
+                           ComplexType(0.0),G6d(ik1,all,all,range(nk1),all,all),"kwapj");
+        } else {
+          for(int a=0; a<nk1; ++a)
+            nda::tensor::add(ComplexType(1.0),G(all,range(base+rows(a),base+rows(a)+1),all,all,all),"wapkj",
+                             ComplexType(0.0),G6d(ik1,all,all,range(a,a+1),all,all),"kwapj");
+        }
       }
     }
   }
@@ -994,7 +1005,8 @@ protected:
   // Changes the layout of G:
   //    From: G(nwalk,nel_tot,npol,nkpts,nbnd)
   //    To:   GQK(nkpts,nwalk,nkpts,nocc_max,npol*nbnd)
-  void Gc_to_GQKwaj(int is, int n0, int iq, nda::MemoryArrayOfRank<5> auto const& G,
+  // `base` is the offset of spin `is`'s block in the occupied dimension of G.
+  void Gc_to_GQKwaj(int is, int base, int iq, nda::MemoryArrayOfRank<5> auto const& G,
                     nda::MemoryArrayOfRank<4> auto && GQK)
   {
     using nda::range;
@@ -1005,14 +1017,22 @@ protected:
     auto G5d = nda::reshape(GQK,std::array<long,5>{nwalk,nkpts,nocc_max,npol,nbnd});
     GQK() = ComplexType(0.0);
     arch::set_device_synchronization(false);
-    int nk0 = n0;
     for(int ik=0; ik<nkpts; ++ik)
     {
       int k2 = qk_to_k2(iq,ik);
-      int nk = nocc(is,ik);
-      for(int ip=0; ip<npol; ++ip) 
-        math::accumulate(ComplexType(1.0),G(all,range(nk0,nk0+nk),ip,k2,all),G5d(all,ik,range(nk),ip,all));
-      nk0 += nk;
+      auto const& rows = nocc(is,ik);
+      int nk = int(rows.size());
+      if(nk==0) continue;
+      bool contig = contiguous_rows(rows);
+      for(int ip=0; ip<npol; ++ip) {
+        if(contig) {
+          int r0 = base + rows(0);
+          math::accumulate(ComplexType(1.0),G(all,range(r0,r0+nk),ip,k2,all),G5d(all,ik,range(nk),ip,all));
+        } else {
+          for(int a=0; a<nk; ++a)
+            math::accumulate(ComplexType(1.0),G(all,range(base+rows(a),base+rows(a)+1),ip,k2,all),G5d(all,ik,range(a,a+1),ip,all));
+        }
+      }
     }
     arch::set_device_synchronization(true);
   }
