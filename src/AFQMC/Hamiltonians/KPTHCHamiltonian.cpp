@@ -36,6 +36,7 @@
 #include "KPTHCHamiltonian.h"
 #include "AFQMC/Utilities/wfn_utils.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
+#include "AFQMC/HamiltonianOperations/detail/one_body.hpp"
 
 #include "numerics/sparse/sparse.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
@@ -72,7 +73,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   long nel_up = PsiT(0,0).extent(0);
   long NMO = PsiT(0,0).extent(1)/npol;
   utils::check(PsiT(0,0).extent(1)%npol==0, base_error + "Psi.size(1)%npol != 0");
-  utils::check(nspin_in_PsiT==1 or nspin_in_PsiT==nspin, "Size mismatch");
+  utils::check(nspin_in_PsiT==nspin, "Size mismatch");
   utils::check(ndet==1, "Error: ndet > 1 not yet implemented in KPTHCHamiltonian::getHamiltonianOperations.");
   long nel_dn = ( type == FULLYPOLARIZED or type == NONCOLLINEAR ? 0l :
               (type == CLOSED ? nel_up : PsiT(0,nspin_in_PsiT-1).extent(0) ) );
@@ -85,8 +86,8 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   utils::check(nel_up >= nel_dn, base_error + "nel_up:{} < nel_dn:{} not allowed.",nel_up,nel_dn);
 
   // THC variables
-  long nspin_in_file = nspin;
-  long npol_in_file = npol;
+  long nspin_in_H1 = nspin;
+  long npol_in_H1 = npol;
   // ISDF variables
   long nu = 1; // number of interpolating points/vectors
   long nv = 1; // number of columns of Vuv matrix
@@ -138,13 +139,13 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       utils::check(NMO%nkpts==0, base_error + "NMO%nkpts != 0, NMO:{}, nkpts:{}",NMO,nkpts);
       utils::check((NMO/nkpts)==n, base_error + "nbnd:{} differs from file n:{}",nbnd,n);
       nbnd = long(NMO/nkpts);
-      // read nspin_in_file
+      // read nspin_in_H1
       h5::h5_read_attribute(*hgrp,"number_of_spins",n);
-      nspin_in_file = long(n);
-      // read npol_in_file
+      nspin_in_H1 = long(n);
+      // read npol_in_H1
 //      h5::h5_read_attribute(bz,"number_of_polarizations",n);
-//      npol_in_file=long(n);
-      utils::check(walkerDimsAreConvertible(nspin_in_file, npol_in_file, nspin, npol), "Hamiltonian with nspin: {}, npol: {} cannot be broadcasted to {}", nspin_in_file, npol_in_file, walkerTypeToString(type));
+//      npol_in_H1=long(n);
+      utils::check(walkerDimsAreConvertible(nspin_in_H1, npol_in_H1, nspin, npol), "Hamiltonian with nspin: {}, npol: {} cannot be broadcasted to {}", nspin_in_H1, npol_in_H1, walkerTypeToString(type));
       minusq.resize(nkpts);
       nda::h5_read(bz,"qminus",minusq);
       qk_to_k2.resize(nkpts,nkpts);
@@ -173,13 +174,13 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       // check consistency
 // MAM: fix this, integer types in h5 file are not consistent!!!
       long n;
-      // read nspin_in_file
+      // read nspin_in_H1
       h5::h5_read_attribute(igrp,"number_of_spins",n);
-      utils::check(nspin_in_file==n,
+      utils::check(nspin_in_H1==n,
                    base_error + " Incompatible nspin:{} in h5::/Interaction.",n);
-      // read npol_in_file
+      // read npol_in_H1
 //      h5::h5_read_attribute(igrp,"number_of_polarizations",n);
-//      utils::check(npol_in_file==n,
+//      utils::check(npol_in_H1==n,
 //                   base_error + " Incompatible npol:{} in h5::/Interaction.",n);
       // nbnd 
       h5::h5_read_attribute(igrp,"number_of_bands",n);
@@ -193,7 +194,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       // now read dimensions
       auto lX = h5::array_interface::get_dataset_info(igrp,"collocation_matrix");
       nu = lX.lengths[3];
-      utils::check_shape(lX, "collocation_matrix", nspin_in_file, nkpts, nbnd, nu);
+      utils::check_shape(lX, "collocation_matrix", nspin_in_H1, nkpts, nbnd, nu);
       auto lL = h5::array_interface::get_dataset_info(igrp,"factorized_coulomb_matrix");
       nv = lL.lengths[2];
       utils::check_shape(lL, "factorized_coulomb_matrix", nqpts_ibz, nu, nv);
@@ -201,7 +202,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         have_rot_coul = 1;
         auto lXr = h5::array_interface::get_dataset_info(igrp,"collocation_matrix_half_rotated");
         nu_rot = lXr.lengths[3];
-        utils::check_shape(lXr, "collocation_matrix_half_rotated", nspin_in_file, nkpts, nbnd, nu_rot);
+        utils::check_shape(lXr, "collocation_matrix_half_rotated", nspin_in_H1, nkpts, nbnd, nu_rot);
         auto lZr = h5::array_interface::get_dataset_info(igrp,"half_rotated_coulomb_matrix");
         nv_rot = lZr.lengths[2];
         utils::check_shape(lZr, "half_rotated_coulomb_matrix", nqpts_ibz, nu_rot, nv_rot);
@@ -215,8 +216,8 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       }
     }
   }
-  mpi->comm.broadcast_value(nspin_in_file);
-  mpi->comm.broadcast_value(npol_in_file);
+  mpi->comm.broadcast_value(nspin_in_H1);
+  mpi->comm.broadcast_value(npol_in_H1);
   mpi->comm.broadcast_value(nu);
   mpi->comm.broadcast_value(nv);
   mpi->comm.broadcast_value(nu_rot);
@@ -250,7 +251,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   // read H1.
   // H0: /System/H0:   [nspin][nkpts][npol*nbnd][npol*nbnd]   Only needed in host memory
   auto H1 = memory::share_from_root(*mpi, [&]() {
-    nda::array<ComplexType,4> A(nspin_in_file,nkpts,npol_in_file*nbnd,npol_in_file*nbnd);
+    nda::array<ComplexType,4> A(nspin_in_H1,nkpts,npol_in_H1*nbnd,npol_in_H1*nbnd);
     utils::h5_read(*hgrp,"H0",A);
     return A;
   });
@@ -261,7 +262,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   // Xrot: /Interaction/collocation_matrix_half_rotated:  [nspins,nkpts,nbnd,Nu]
   // Zrot: /Interaction/half_rotated_coulomb_matrix:      [Nq][Nu][Nv]
   auto Xsiu = share_read("collocation_matrix",
-                         std::array<long,4>{nspin_in_file,nkpts,npol_in_file*nbnd,nu});
+                         std::array<long,4>{nspin_in_H1,nkpts,npol_in_H1*nbnd,nu});
   auto Luv = share_read("factorized_coulomb_matrix",std::array<long,3>{nqpts_ibz,nu,nv});
   std::optional<decltype(Luv)> Zuv = std::nullopt;
   // half-rotated
@@ -269,7 +270,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   std::optional<decltype(Luv)> Zuv_rot = std::nullopt;
   if(have_rot_coul) {
     Xsiu_rot = share_read("collocation_matrix_half_rotated",
-                          std::array<long,4>{nspin_in_file,nkpts,npol_in_file*nbnd,nu_rot});
+                          std::array<long,4>{nspin_in_H1,nkpts,npol_in_H1*nbnd,nu_rot});
     Zuv_rot = share_read("half_rotated_coulomb_matrix",std::array<long,3>{nqpts_ibz,nu_rot,nu_rot});
   } else {
     Zuv = share_read("coulomb_matrix",std::array<long,3>{nqpts_ibz,nu,nu});
@@ -289,8 +290,8 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       {ndet,nspin,npol,nkpts,nocc_max,nu},
       [&](std::array<long,4> idx, auto&& block) {
         auto [id,is,ip,ik] = idx;
-        long is_ = is%nspin_in_file;
-        long ip_ = ip%npol_in_file;
+        long is_ = is%nspin_in_H1;
+        long ip_ = ip%npol_in_H1;
         int n0 = ( ik==0 ? 0 : nda::sum(nocc(is,range(ik))) );
         int nel = nocc(is,ik);
         auto Aai = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),range(n0,n0+nel),range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
@@ -312,11 +313,11 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   memory::buffered_array<MEM,ComplexType,2> Wuv(nu,nu);
   memory::buffered_array<MEM,ComplexType,2> vt(nbnd,nbnd);
   auto v0 = memory::share_from_ranks<HOST_MEMORY,ComplexType,4,2>(*mpi,
-      std::array<long,4>{nspin_in_file*npol_in_file, nkpts, nbnd, nbnd},
+      std::array<long,4>{nspin_in_H1*npol_in_H1, nkpts, nbnd, nbnd},
       [&](std::array<long,2> idx, auto&& block) {
         auto [isp,ik] = idx;
-        long is = isp/npol_in_file;
-        long ip = isp%npol_in_file;
+        long is = isp/npol_in_H1;
+        long ip = isp%npol_in_H1;
         // sum over q
         Tuv() = ComplexType(0.0);
         Wuv() = ComplexType(0.0);
@@ -344,33 +345,19 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   // MAM: this uses a lot more memory/compute, but can be batched into a single call (energy eval)
   // time the two versions and change to k-dependent haj if the timing in gpu is not that different
   // You can also write a kernel that dispatches all the gemms from device side using the new library
-  long nel[] = {nel_up, (type == COLLINEAR ? nel_dn : 0l) };
-  auto haj = memory::share_from_ranks<MEM,ComplexType,3,1>(*mpi,
-      std::array<long,3>{ndet, nel[0]+nel[1], npol*NMO},
-      [&](std::array<long,1> idx, auto&& block) {
-        auto [id] = idx;
-        for(long is=0; is<nspin; ++is) {
-          for(long ik=0; ik<nkpts; ++ik) {
-            int n0 = ( ik==0 ? 0 : nda::sum(nocc(is,range(ik))) );
-            int nk = nocc(is,ik);
-            for(long ip1=0; ip1<npol; ++ip1) {
-              int ip1_ = ip1%npol_in_file;
-              auto Aai = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),range(n0,n0+nk),range(ip1*NMO+ik*nbnd,ip1*NMO+(ik+1)*nbnd));
-              for(long ip2=0; ip2<npol; ++ip2) {
-                int ip2_ = ip2%npol_in_file;
-                auto h_ = block(range(is*nel_up+n0,is*nel_up+n0+nk),nda::range(ip2*NMO+ik*nbnd,ip2*NMO+(ik+1)*nbnd));
-                if constexpr (MEM==HOST_MEMORY) {
-                  auto hij = H1()(is%nspin_in_file,ik,range(ip1_*nbnd,(ip1_+1)*nbnd),range(ip2_*nbnd,(ip2_+1)*nbnd));
-                  nda::blas::gemm(ComplexType(1.0),Aai,hij,ComplexType(1.0),h_);
-                } else {
-                  memory::array<MEM,ComplexType,2> hij(H1()(is%nspin_in_file,ik,range(ip1_*nbnd,(ip1_+1)*nbnd),range(ip2_*nbnd,(ip2_+1)*nbnd)));
-                  nda::blas::gemm(ComplexType(1.0),Aai,hij,ComplexType(1.0),h_);
-                }
-              }
-            }
-          }  // ik
-        }  // is
-      });
+  auto nel = std::to_array<long>({nel_up, (type == COLLINEAR ? nel_dn : 0l)});
+
+  auto hfull = memory::share_from_root(*mpi, [&](){
+    memory::array<MEM,ComplexType,3> hfull(nspin_in_H1, npol_in_H1*nkpts*nbnd, npol_in_H1*nkpts*nbnd);
+    hfull() = 0;
+    auto hfull7 = nda::reshape(hfull, nspin_in_H1, npol_in_H1, nkpts, nbnd, npol_in_H1, nkpts, nbnd);
+    for(int ik = 0; ik < nkpts; ik++) {
+      hfull7(all, all, ik, all, all, ik, all) = nda::reshape(H1(), nspin_in_H1, nkpts, npol_in_H1, nbnd, npol_in_H1, nbnd)(all, ik, all, all, all, all);
+    }
+
+    return hfull;
+  });
+  auto haj = half_rotate_hamiltonian<MEM>(*mpi, nel, nspin, npol, nspin_in_H1, npol_in_H1, NMO, PsiT(), hfull());
 
   ComplexType E0 = NuclearCoulombEnergy + FrozenCoreEnergy;
   return HamiltonianOperations<MEM>(KPTHCOps<MEM>(mpi,type,NMO,nel_up,nel_dn,nkpts,Q0_index,std::move(nocc),

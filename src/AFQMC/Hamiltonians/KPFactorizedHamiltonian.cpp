@@ -63,7 +63,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   long nel_up = PsiT(0,0).extent(0);
   long NMO = PsiT(0,0).extent(1)/npol;
   utils::check(PsiT(0,0).extent(1)%npol==0, base_error + "Psi.extent(1)%npol != 0");
-  utils::check(nspin_in_PsiT==1 or nspin_in_PsiT==nspin, "Size mismatch");
+  utils::check(nspin_in_PsiT==nspin, "Size mismatch");
   utils::check(ndet==1, "Error: ndet > 1 not yet implemented in KPFactorizedHamiltonian::getHamiltonianOperations.");
   long nel_dn = ( type == FULLYPOLARIZED or type == NONCOLLINEAR ? 0l :
               (type == CLOSED ? nel_up : PsiT(0,nspin_in_PsiT-1).extent(0) ) );
@@ -77,8 +77,8 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   utils::check(nel_up >= nel_dn, base_error + "nel_up:{} < nel_dn:{} not allowed.",nel_up,nel_dn);
 
   // Hamiltonian variables
-  int nspin_in_file = nspin;
-  int npol_in_file = npol;
+  int nspin_in_H1 = nspin;
+  int npol_in_H1 = npol;
   // BZ variables
   int nkpts = 1;
   int nqpts = 1;
@@ -115,21 +115,21 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         utils::check(nqpts == nkpts, base_error + "nqpts != nkpts, nqpts:{}, nkpts:{}",nqpts,nkpts);
         h5::h5_read_attribute(bz,"number_of_qpoints_ibz",nqpts_ibz);
         // nbnd
-        int nbnd_in_file{};
-        h5::h5_read_attribute(hgrp,"number_of_bands",nbnd_in_file);  // per kpoint
+        int nbnd_in_H1{};
+        h5::h5_read_attribute(hgrp,"number_of_bands",nbnd_in_H1);  // per kpoint
         // check nbnd 
         nbnd = long(NMO/nkpts);
         utils::check(NMO%nkpts==0, base_error + "NMO%nkpts != 0, NMO: {}, nkpts: {}",NMO,nkpts);
-        utils::check((NMO/nkpts)==nbnd_in_file, base_error + "nbnd: {} differs from file: {}",nbnd,nbnd_in_file);
-        // read nspin_in_file
-        h5::h5_read_attribute(hgrp,"number_of_spins",nspin_in_file);
-        // read npol_in_file
+        utils::check((NMO/nkpts)==nbnd_in_H1, base_error + "nbnd: {} differs from file: {}",nbnd,nbnd_in_H1);
+        // read nspin_in_H1
+        h5::h5_read_attribute(hgrp,"number_of_spins",nspin_in_H1);
+        // read npol_in_H1
 //        h5::h5_read_attribute(bz,"number_of_polarizations",n);
-//        npol_in_file=long(n);
+//        npol_in_H1=long(n);
         // TODO: does this format even support polarizations?
-        npol_in_file = 1;
+        npol_in_H1 = 1;
 
-        utils::check(walkerDimsAreConvertible(nspin_in_file, npol_in_file, nspin, npol), "Hamiltonian with nspin: {}, npol: {} cannot be broadcasted to {}", nspin_in_file, npol_in_file, walkerTypeToString(type));
+        utils::check(walkerDimsAreConvertible(nspin_in_H1, npol_in_H1, nspin, npol), "Hamiltonian with nspin: {}, npol: {} cannot be broadcasted to {}", nspin_in_H1, npol_in_H1, walkerTypeToString(type));
         minusq.resize(nkpts);
         nda::h5_read(bz,"qminus",minusq);
         qk_to_k2.resize(nkpts,nkpts);
@@ -156,7 +156,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         // interaction
         h5::group igrp = grp.open_group("Interaction");
 
-        auto expected_shape = std::to_array<long>({nspin_in_file * npol_in_file, nkpts, nbnd, nbnd});
+        auto expected_shape = std::to_array<long>({nspin_in_H1 * npol_in_H1, nkpts, nbnd, nbnd});
         nchol.resize(nkpts); 
         for(int Q=0; Q<nkpts; ++Q) {
           auto l = h5::array_interface::get_dataset_info(igrp,"Vq"+std::to_string(Q));
@@ -174,8 +174,8 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       //      was/is limited to spin independent basis sets. Generalize this if needed...
       // Current implementation is limited to cases with a consistent number of bands 
       // per kpoint, unlikely we will go back to the more general case.
-      nspin_in_file = 1;
-      npol_in_file  = 1;
+      nspin_in_H1 = 1;
+      npol_in_H1  = 1;
       h5::group hgrp = grp.open_group("Hamiltonian");
       std::vector<int> Idata(8);
       h5::h5_read(hgrp,"dims",Idata);
@@ -223,8 +223,8 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     }
   } // root
 
-  mpi->comm.broadcast_value(nspin_in_file);
-  mpi->comm.broadcast_value(npol_in_file);
+  mpi->comm.broadcast_value(nspin_in_H1);
+  mpi->comm.broadcast_value(npol_in_H1);
   mpi->comm.broadcast_value(nbnd);
   mpi->comm.broadcast_value(nkpts);
   mpi->comm.broadcast_value(nkpts_ibz);
@@ -256,12 +256,12 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   // Read hamiltonian components from h5. Only root reads
   // H0: /System/H0:   [nspin][nkpts][npol*nbnd][npol*nbnd]
   auto H1 = memory::share_from_root(*mpi, [&]() {
-    nda::array<ComplexType,4> H1_h(nspin_in_file,nkpts,npol_in_file*nbnd,npol_in_file*nbnd);
+    nda::array<ComplexType,4> H1_h(nspin_in_H1,nkpts,npol_in_H1*nbnd,npol_in_H1*nbnd);
     h5::group grp = h5::group(file);
 
     if(format == "std") {
 
-      utils::check(npol_in_file==1 and nspin_in_file==1, "KPFactorized: std format requires nspin_in_file==1 and npol_in_file==1.");
+      utils::check(npol_in_H1==1 and nspin_in_H1==1, "KPFactorized: std format requires nspin_in_H1==1 and npol_in_H1==1.");
 
       h5::group hgrp = grp.open_group("Hamiltonian");
 
@@ -278,7 +278,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       if(nkpts_ibz == nkpts) {
         utils::h5_read(sgrp,"H0",H1_h());
       } else {
-        nda::array<ComplexType,4> H1_ibz(nspin_in_file, nkpts_ibz, npol_in_file*nbnd, npol_in_file*nbnd);
+        nda::array<ComplexType,4> H1_ibz(nspin_in_H1, nkpts_ibz, npol_in_H1*nbnd, npol_in_H1*nbnd);
         utils::h5_read(sgrp,"H0",H1_ibz());
 
         nda::vector<int> kp_to_ibz(nkpts);
@@ -300,7 +300,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   });
 
   app_log(2, "KPFactorizedHamiltonian: Allocating Lijn: {} GB",
-    number_of_allocated_Q*nspin_in_file*npol_in_file*nkpts*nbnd*nbnd*nchol_av*GBx);
+    number_of_allocated_Q*nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd*nchol_av*GBx);
   // L(Q)(ispin*ip,ik,i,j,n): Since each qpoint has its own nchol
   // Entries with Q > minusq(Q) are never read and stay default-constructed (empty)
   nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> LQ(nkpts);
@@ -310,7 +310,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     }
     // too much memory? replace by share_from_ranks?
     LQ(Q) = memory::share_from_root(*mpi, [&]() {
-      nda::array<ComplexType,6> L_h(nspin_in_file,npol_in_file,nkpts,nbnd,nbnd,nchol(Q));
+      nda::array<ComplexType,6> L_h(nspin_in_H1,npol_in_H1,nkpts,nbnd,nbnd,nchol(Q));
       h5::group grp = h5::group(file);
 
       if(format == "std") {
@@ -321,11 +321,11 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         // normalization (1/sqrt(nkpts)) assummed to be included
       } else if(format == "coqui") {
         h5::group igrp = grp.open_group("Interaction");
-        nda::array<ComplexType,5> L(nchol(Q),nspin_in_file*npol_in_file,nkpts,nbnd,nbnd);
+        nda::array<ComplexType,5> L(nchol(Q),nspin_in_H1*npol_in_H1,nkpts,nbnd,nbnd);
         utils::h5_read(igrp,"Vq"+std::to_string(Q),L);
-        utils::check_shape(L, "Vq", nchol(Q), nspin_in_file*npol_in_file, nkpts, nbnd, nbnd);
-        auto L2d = nda::reshape(L,std::array<long,2>{nchol(Q),nspin_in_file*npol_in_file*nkpts*nbnd*nbnd});
-        auto LQ2d = nda::reshape(L_h(),std::array<long,2>{nspin_in_file*npol_in_file*nkpts*nbnd*nbnd,nchol(Q)});
+        utils::check_shape(L, "Vq", nchol(Q), nspin_in_H1*npol_in_H1, nkpts, nbnd, nbnd);
+        auto L2d = nda::reshape(L,std::array<long,2>{nchol(Q),nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd});
+        auto LQ2d = nda::reshape(L_h(),std::array<long,2>{nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd,nchol(Q)});
         LQ2d() = nda::transpose(L2d());
         // normalize
         nda::tensor::scale(ComplexType(1.0/std::sqrt(RealType(nkpts))), L_h());
@@ -350,7 +350,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
    *  where a includes the kpoint index implicitly, e.g. a:{0,nup/ndown}
    */
   app_log(2, "KPFactorizedHamiltonian: Allocating Lank: {} GB",
-        (number_of_symmetric_Q+nkpts)*ndet*nspin_in_file*npol_in_file*nel_up*nbnd*nchol_av*GBx);
+        (number_of_symmetric_Q+nkpts)*ndet*nspin_in_H1*npol_in_H1*nel_up*nbnd*nchol_av*GBx);
   nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> Lank(nkpts);
   nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> Lbnk(number_of_symmetric_Q);
 // should be nspin_in_PsiT instead of nspin!!!
@@ -360,14 +360,14 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         {ndet,nspin,nkpts,nocc_max,nchol(Q),npol*nbnd},
         [&](std::array<long,3> idx, auto&& block) {
       auto [id,is,ik] = idx;
-      int is_ = is%nspin_in_file;
+      int is_ = is%nspin_in_H1;
       int n0 = ( ik==0 ? 0 : nda::sum(nocc(is,range(ik))) );
       int nk = nocc(is,ik);
       for(long ip=0; ip<npol; ++ip) {
-        int ip_ = ip%npol_in_file;
+        int ip_ = ip%npol_in_H1;
         if(Q <= Qm) {
           // L[Q,k,k2=k-Q]
-          auto Aai = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),range(n0,n0+nk),
+          auto Aai = math::sparse::to_array<'N'>(PsiT(id,is),range(n0,n0+nk),
                                                  range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
           auto Lijn = LQ(Q)()(is_,ip_,ik,all,all,all);
           auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
@@ -376,7 +376,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         } else {
           // L[Q,k,k2=k-Q]
           int k2 = qk_to_k2(Q,ik);
-          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),range(n0,n0+nk),
+          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),range(n0,n0+nk),
                                                  range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
           auto Lljn = LQ(Qm)()(is_,ip_,k2,all,all,all);
           auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
@@ -396,14 +396,14 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
           {ndet,nspin,nkpts,nocc_max,nchol(Q),npol*nbnd},
           [&](std::array<long,3> idx, auto&& block) {
         auto [id,is,k2] = idx;
-        int is_ = is%nspin_in_file;
+        int is_ = is%nspin_in_H1;
         int ik = k2_to_k(k2);
         int n0b = ( k2==0 ? 0 : nda::sum(nocc(is,range(k2))) );
         int nb = nocc(is,k2);
         for(long ip=0; ip<npol; ++ip) {
-          int ip_ = ip%npol_in_file;
+          int ip_ = ip%npol_in_H1;
           // conj(L[Q,k,k2](lj,n)) * A[k2]bj
-          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),range(n0b,n0b+nb),
+          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),range(n0b,n0b+nb),
                                                  range(ip*NMO+k2*nbnd,ip*NMO+(k2+1)*nbnd));
           auto Lljn = LQ(Q)()(is_,ip_,ik,all,all,all);
           auto L_ = block(range(nb),all,range(ip*nbnd,(ip+1)*nbnd));
@@ -415,45 +415,30 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   }  // Q
 
   // haj(idet,a_is_ik,j_ip_ik) = sum_j PsiT(idet,is)(a_is,i) H1(is,ik,i,j_ip)
-  long nel[] = {nel_up, (type == COLLINEAR ? nel_dn : 0l) };
-  auto haj = memory::share_from_ranks<MEM,ComplexType,3,1>(*mpi,
-      {ndet, nel[0]+nel[1], npol*NMO},
-      [&](std::array<long,1> idx, auto&& block) {
-    auto [id] = idx;
-    for(long is=0; is<nspin; ++is) {
-      for(long ik=0; ik<nkpts; ++ik) {
-        int n0 = ( ik==0 ? 0 : nda::sum(nocc(is,range(ik))) );
-        int nk = nocc(is,ik);
-        for(long ip1=0; ip1<npol; ++ip1) {
-          int ip1_ = ip1%npol_in_file;
-          auto Aai = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),range(n0,n0+nk),range(ip1*NMO+ik*nbnd,ip1*NMO+(ik+1)*nbnd));
-          // haj = PsiT * H1
-          for(long ip2=0; ip2<npol; ++ip2) {
-            int ip2_ = ip2%npol_in_file;
-            auto h_ = block(range(is*nel_up+n0,is*nel_up+n0+nk),nda::range(ip2*NMO+ik*nbnd,ip2*NMO+(ik+1)*nbnd));
-            if constexpr (MEM==HOST_MEMORY) {
-              auto hij = H1()(is%nspin_in_file,ik,range(ip1_*nbnd,(ip1_+1)*nbnd),range(ip2_*nbnd,(ip2_+1)*nbnd));
-              nda::blas::gemm(one,Aai,hij,one,h_);
-            } else {
-              memory::array<MEM,ComplexType,2> hij(H1()(is%nspin_in_file,ik,range(ip1_*nbnd,(ip1_+1)*nbnd),range(ip2_*nbnd,(ip2_+1)*nbnd)));
-              nda::blas::gemm(one,Aai,hij,one,h_);
-            }
-          } // ip2
-        } // ip1
-      } // ik
-    }  // is
+  auto nel = std::to_array<long>({nel_up, (type == COLLINEAR ? nel_dn : 0l)});
+
+  auto hfull = memory::share_from_root(*mpi, [&](){
+    memory::array<MEM,ComplexType,3> hfull(nspin_in_H1, npol_in_H1*nkpts*nbnd, npol_in_H1*nkpts*nbnd);
+    hfull() = 0;
+    auto hfull7 = nda::reshape(hfull, nspin_in_H1, npol_in_H1, nkpts, nbnd, npol_in_H1, nkpts, nbnd);
+    for(int ik = 0; ik < nkpts; ik++) {
+      hfull7(all, all, ik, all, all, ik, all) = nda::reshape(H1(), nspin_in_H1, nkpts, npol_in_H1, nbnd, npol_in_H1, nbnd)(all, ik, all, all, all, all);
+    }
+
+    return hfull;
   });
+  auto haj = half_rotate_hamiltonian<MEM>(*mpi, nel, nspin, npol, nspin_in_H1, npol_in_H1, NMO, PsiT(), hfull());
 
   // calculate vn0
   // v0(s,k,i,l) = -0.5*sum_k,q sum_j <i_k,j_k-q|j_k-q,l_k>
   //         = -0.5 sum_kq sum_j,n L[Q](s,k,i,j,n) conj( L[Q](s,k,l,j) )
   auto v0 = memory::share_from_ranks<HOST_MEMORY,ComplexType,4,2>(*mpi,
-      {nspin_in_file*npol_in_file, nkpts, nbnd, nbnd},
+      {nspin_in_H1*npol_in_H1, nkpts, nbnd, nbnd},
       [&](std::array<long,2> idx, auto&& block) {
     memory::buffered_array<MEM,ComplexType,2> vt(nbnd,nbnd);
     auto [isp,ik] = idx;
-    long is_ = isp/npol_in_file;
-    long ip_ = isp%npol_in_file;
+    long is_ = isp/npol_in_H1;
+    long ip_ = isp%npol_in_H1;
     vt() = zero;
     for(long Q=0; Q<nkpts; Q++) {
       if(Q<=minusq(Q)) {

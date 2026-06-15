@@ -87,6 +87,8 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
   long nel[] = {nup, ndown};
   WALKER_TYPES wfn_type = afqmc::initWALKER_TYPES(dims[3]);
 
+  utils::check(walkerTypeIsConvertible(wfn_type, walker_type), "{} trial wavefunction is not compatible with {} walkers", walkerTypeToString(wfn_type), walkerTypeToString(walker_type));
+
   if(wfn_type == walker_type) {
     for(int id=0, k=0; id<ndets; ++id) {
       for(int is=0; is<nspin; ++is, ++k) {
@@ -96,7 +98,6 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
       } 
     }
   } else if(wfn_type == COLLINEAR) { 
-    utils::check(walker_type == NONCOLLINEAR, "walker_type=={} incompatible with wfn_type:{}", walkerTypeToString(walker_type), walkerTypeToString(wfn_type));
     // upgrade from COLLINEAR to NONCOLLINEAR
     for(int id=0; id<ndets; ++id) {
       h5::group ugrp = grp.open_group("PsiT_"+std::to_string(2*id));
@@ -105,7 +106,7 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
       auto dn = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(dgrp);
       utils::check(up.extent(1) == NMO, "Shape mismatch");
       utils::check(dn.extent(1) == NMO, "Shape mismatch");
-      utils::check(up.extent(0) + dn.extent(1) == nel[0], "Shape mismatch");
+      utils::check(up.extent(0) + dn.extent(0) == nel[0], "Shape mismatch");
       // combining, shift dn by NMO 
       psi(id,0) = math::sparse::combine_csr(up,dn,NMO);
     }
