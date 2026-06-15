@@ -87,9 +87,11 @@ public:
     app_log(1, "    -- MPI nodes      : {} ", mpi->internode_comm.size());
     app_log(1, "    -- MPI tasks      : {} ", mpi->comm.size());
     app_log(1, "    -- Compute Device    : {} ", (MEM==DEVICE_MEMORY?"gpu":"cpu")); 
-    app_log(1, "    -- TBLIS_NUM_THREADS : {} {}", std::getenv("TBLIS_NUM_THREADS"),
+    const char* tblis_env = std::getenv("TBLIS_NUM_THREADS");
+    const char* omp_env = std::getenv("OMP_NUM_THREADS");
+    app_log(1, "    -- TBLIS_NUM_THREADS : {} {}", tblis_env ? tblis_env : "(unset)",
             sfqmc::utils::tblis_threads_was_user_set() ? "(user-provided)" : "");
-    app_log(1, "    -- OMP_NUM_THREADS   : {} {}\n\n", std::getenv("OMP_NUM_THREADS"),
+    app_log(1, "    -- OMP_NUM_THREADS   : {} {}\n\n", omp_env ? omp_env : "(unset)",
             sfqmc::utils::omp_threads_was_user_set() ? "(user-provided)" : "");
     // parse input
     utils::check(parse(pt), " Error in AFQMCFactory: Problems parsing the input file. ");
