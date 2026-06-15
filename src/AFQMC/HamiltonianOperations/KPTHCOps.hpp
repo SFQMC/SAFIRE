@@ -888,61 +888,6 @@ protected:
     return GKK;
   }
 
-  // Computes Guv and Guu for a set of walkers
-  // rotMuv is partitioned along 'u'
-  // G[w][nel*nmo]
-  // Guv[w][nu][nv]
-  // Twav[w][nel][nv]
-  void get_Guv(int ispin, int p1, int p2, int k1, int k2, 
-         nda::MemoryArrayOfRank<5> auto const& G, 
-         nda::MemoryArrayOfRank<3> auto && Guv, 
-         nda::MemoryArrayOfRank<1> auto && Tbuff, int idet)
-  {
-// MAM: in GPU implementation, do multiple k1 or k2 simultaneously
-    using nda::range;
-    auto all = range::all;
-    int nstot = hij.extent(0);
-    int nptot = hij.extent(2)/nbnd;
-    long p2_ = long(p2)%nptot;
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
-    int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0 
-    auto const& rows = nocc_per_kp(ispin,k1);
-    int nel_k1 = int(rows.size());
-    bool has_rot = _Xsiu_rot_.has_value();
-    const auto Xiu = ( has_rot ? (*_Xsiu_rot_)()(ispin%nstot,k2,range(p2_*nbnd,(p2_+1)*nbnd),all) : 
-                                  _Xsiu_()(ispin%nstot,k2,range(p2_*nbnd,(p2_+1)*nbnd),all) );
-    const auto Yau = ( has_rot ? (*_Ydsau_rot_)()(idet,ispin,p1,k1,range(nel_k1),all) : 
-                                 _Ydsau_()(idet,ispin,p1,k1,range(nel_k1),all) );
-    int nw   = int(G.extent(0));
-    int nu = Xiu.extent(1);
-
-    // G5d[w][a][j]
-    utils::check(G.shape() == std::array<long,5>{nw,nel,npol,nkpts,nbnd}, "THC::get_Guv: Shape mismatch");
-    utils::check(Tbuff.size() >= nw*nel_k1*nu, "THC::get_Guv: Twav size mismatch.");
-    memory::array_view<MEM,ComplexType,3> Twav(std::array<long,3>{nw,nel_k1,nu},Tbuff.data());
-
-    // Twav[w][a][v] = sum_j G[w][a][j] X[j][v]
-    if(contiguous_rows(rows)) {
-      int r0 = ispin*nup + rows(0);
-      auto Gwai = G(all,range(r0,r0+nel_k1),p2,k2,all);
-      nda::tensor::contract(Gwai,"wai",Xiu,"iv",Twav,"wav");
-    } else {
-      memory::buffered_array<MEM,ComplexType,3> Gg(nw,nel_k1,nbnd);
-      for(int aa=0; aa<nel_k1; ++aa)
-        Gg(all,aa,all) = G(all,ispin*nup+rows(aa),p2,k2,all);
-      nda::tensor::contract(Gg,"wai",Xiu,"iv",Twav,"wav");
-    }
-    // G[w][u][v] = sum_a X[a][u] Twav[w][a][v]
-    nda::tensor::contract(Yau,"au",Twav,"wav",Guv,"wuv");
-
-//    over a range of k2
-//    auto Gwai = G(all,range(ispin*nup+n0,ispin*nup+n0+nel_k1),p2,all,all);
-//    // Twav[w][a][k2][v] = sum_j G[w][a][k2][j] X[j][v]
-//    nda::tensor::contract(Gwai,"waki",Xiu,"kiv",Twav,"wakv");
-//    // G[w][u][v] = sum_a X[a][u] Twav[w][a][v]
-//    nda::tensor::contract(Yau,"au",Twav,"wakv",Guv,"wkuv");
-  }
-
 protected:
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
