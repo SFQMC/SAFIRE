@@ -789,7 +789,7 @@ protected:
     bool has_rot = _Xsiu_rot_.has_value();
     // [nstot][nkpts][nptot*nbnd][nu]
     const auto Xsiu = ( has_rot ? (*_Xsiu_rot_)() : _Xsiu_());
-    // [nstot][nptot][nkpts][nocc_max][nu]
+    // [nspin][npol][nkpts][nocc_max][nu]  (walker dims, not interaction dims)
     const auto Ysau = ( has_rot ? (*_Ydsau_rot_)()(idet,nda::ellipsis{}) :
                                  _Ydsau_()(idet,nda::ellipsis{}) );
     long nw   = G.extent(0);
@@ -805,16 +805,17 @@ protected:
       for( int is=0; is<nspin; is++ ) {
         memory::buffered_array<MEM,ComplexType,2> Tau(nelec[is],nu);    
         for( int ip=0; ip<npol; ip++ ) {
+          auto [is_,ip_] = interaction_block(is,ip,npol,nstot,nptot);
           for(int iw=0; iw<nw; ++iw) {
-        
+
             for(int k2=0; k2<nkpts; k2++) {
-              auto Xju = Xsiu(is%nstot,k2,range((ip%nptot)*nbnd,(ip%nptot+1)*nbnd),all);
+              auto Xju = Xsiu(is_,k2,range(ip_*nbnd,(ip_+1)*nbnd),all);
               nda::blas::gemm(G(iw,range(is*nup,nup+is*ndown),ip,k2,all),Xju,Tau);
 
               for(int k1=0; k1<nkpts; k1++) {
                 auto const& rows = nocc_per_kp(is,k1);
                 int nel_k = int(rows.size());
-                auto Yau = Ysau(is%nstot,ip%nptot,k1,range(nel_k),all);
+                auto Yau = Ysau(is,ip,k1,range(nel_k),all);
                 for(int i=0; i<nel_k; ++i)
                   GKK(k1,k2,iw,all) += ComplexType(a) * Tau(rows(i),all) * Yau(i,all);
               }  //k1
@@ -841,7 +842,7 @@ protected:
     bool has_rot = _Xsiu_rot_.has_value();
     // [nstot][nkpts][nptot*nbnd][nu]
     const auto Xsiu = ( has_rot ? (*_Xsiu_rot_)() : _Xsiu_());
-    // [nstot][nptot][nkpts][nocc_max][nu]
+    // [nspin][npol][nkpts][nocc_max][nu]  (walker dims, not interaction dims)
     const auto Ysau = ( has_rot ? (*_Ydsau_rot_)()(idet,nda::ellipsis{}) :
                                  _Ydsau_()(idet,nda::ellipsis{}) );
     long nw   = G.extent(0);
@@ -856,16 +857,17 @@ protected:
     if constexpr (MEM==HOST_MEMORY) {
       memory::buffered_array<MEM,ComplexType,2> Tau(nelec[is],nu);
       memory::buffered_array<MEM,ComplexType,2> Tau_k(nelec[is],nu);
+      auto [is_,ip_] = interaction_block(is,p2,npol,nstot,nptot);
       for(int iw=0; iw<nw; ++iw) {
 
         for(int k2=0; k2<nkpts; k2++) {
-          auto Xju = Xsiu(is%nstot,k2,range((p2%nptot)*nbnd,(p2%nptot+1)*nbnd),all);
+          auto Xju = Xsiu(is_,k2,range(ip_*nbnd,(ip_+1)*nbnd),all);
           nda::blas::gemm(G(iw,range(is*nup,nup+is*ndown),p2,k2,all),Xju,Tau);
 
           for(int k1=0; k1<nkpts; k1++) {
             auto const& rows = nocc_per_kp(is,k1);
             int nel_k = int(rows.size());
-            auto Yau = Ysau(is%nstot,p1%nptot,k1,range(nel_k),all);
+            auto Yau = Ysau(is,p1,k1,range(nel_k),all);
             if(contiguous_rows(rows)) {
               int r0 = rows(0);
               nda::blas::gemm(ComplexType(a),nda::transpose(Yau),Tau(range(r0,r0+nel_k),all),

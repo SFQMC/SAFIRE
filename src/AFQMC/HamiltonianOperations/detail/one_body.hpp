@@ -49,6 +49,14 @@ void broadcast_one_body(nda::ArrayOfRank<5> auto const& src, nda::ArrayOfRank<5>
   }
 }
 
+// Maps a walker (spin is, pol ip) to the (spin, pol) block of an interaction tensor stored
+// with native symmetry (nspin_in_H, npol_in_H). Folds collinear spin blocks into
+// noncollinear polarization blocks, consistent with broadcast_one_body() above.
+inline std::array<int,2> interaction_block(int is, int ip, int npol, int nspin_in_H, int npol_in_H) {
+  int c = (is*npol + ip) % (nspin_in_H * npol_in_H);
+  return {c / npol_in_H, c % npol_in_H};
+}
+
 // comuptes H' = H + meanfield_shift + vexx. The meanfield shift was created as vHS(vMF) so it already includes dt.
 void add_one_body_shifts(RealType dt, nda::ArrayOfRank<3> auto const& hij, nda::ArrayOfRank<4> auto const& meanfield_shift, nda::ArrayOfRank<3> auto const& vexx, nda::ArrayOfRank<5> auto&& dest) {
   auto all = nda::range::all;

@@ -220,10 +220,9 @@ public:
       Guu() = ComplexType(0.0);
       for (int ispin = 0; ispin < nspin; ++ispin)
       {
-        long is_ = long(ispin)%nspin_in_H; 
         for (int p1 = 0; p1 < npol; ++p1)
         {
-          long ip1_ = long(p1)%npol_in_H; 
+          auto [is_,ip1_] = interaction_block(ispin,p1,npol,nspin_in_H,npol_in_H);
           for (int p2 = 0; p2 < npol; ++p2)
           {
             // Buffer space
@@ -368,10 +367,9 @@ public:
       memory::buffered_array<MEM,ComplexType,2> Guu(nu,nw);
       Guu() = ComplexType(0.0);
 
-      long is_ = long(ispin)%nspin_in_H; 
       for (int p1 = 0; p1 < npol; ++p1)
       {
-        long ip1_ = long(p1)%npol_in_H; 
+        auto [is_,ip1_] = interaction_block(ispin,p1,npol,nspin_in_H,npol_in_H);
         for (int p2 = 0; p2 < npol; ++p2)
         {
           // Buffer space
@@ -666,7 +664,8 @@ protected:
     for( int is=0; is<nspin; is++ ) {
       for( int ip=0; ip<npol; ip++ ) {
         
-        auto Xiu = Xsiu(is%nspin_in_H,range(ip%npol_in_H*NMO,(ip%npol_in_H+1)*NMO),all);
+        auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H,npol_in_H);
+        auto Xiu = Xsiu(is_,range(ip_*NMO,(ip_+1)*NMO),all);
         auto Yau = Ysau(is,ip,range(nelec[is]),all);
 
         if constexpr (MEM==HOST_MEMORY) {
@@ -762,15 +761,15 @@ protected:
   {
     using nda::range;
     auto all = range::all;
-    long nspin_in_H = _Xsiu_().shape()[0]; 
-    long npol_in_H = _Xsiu_().shape()[1]/NMO; 
-    long ip_ = long(p2)%npol_in_H;
-    range M_rng(ip_*NMO,(ip_+1)*NMO);
+    long nspin_in_H = _Xsiu_().shape()[0];
+    long npol_in_H = _Xsiu_().shape()[1]/NMO;
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
-    int nel  = G.extent(1); 
+    auto [is_,ip_] = interaction_block(ispin,p2,npol,nspin_in_H,npol_in_H);
+    range M_rng(ip_*NMO,(ip_+1)*NMO);
+    int nel  = G.extent(1);
     bool has_rot = _Xsiu_rot_.has_value();
-    const auto Xiu = ( has_rot ? (*_Xsiu_rot_)()(ispin%nspin_in_H,M_rng,all) : 
-                                  _Xsiu_()(ispin%nspin_in_H,M_rng,all) );
+    const auto Xiu = ( has_rot ? (*_Xsiu_rot_)()(is_,M_rng,all) :
+                                  _Xsiu_()(is_,M_rng,all) );
     const auto Yau = ( has_rot ? (*_Ydsau_rot_)()(idet,ispin,p1,range(nelec[ispin]),all) : 
                                  _Ydsau_()(idet,ispin,p1,range(nelec[ispin]),all) );
     int nw = int(G.extent(0));

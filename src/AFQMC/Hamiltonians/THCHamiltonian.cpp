@@ -250,7 +250,6 @@ THCHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
       [&](std::array<long,2> idx, auto&& block) {
         using matrix_t = memory::buffered_array<MEM,ComplexType,2>;
         auto [id, is] = idx;
-        long is_ = is%nspin_in_H1;
         long nel = (is==0 ? nup : ndn);
         auto Aai = math::sparse::to_array<'N'>(PsiT(id,is));
         // need to loop over npol since npol_in_H1 might be != than npol
@@ -258,7 +257,7 @@ THCHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
           auto Yau = matrix_t(nel,nu);
           auto Xiu = matrix_t(NMO,nu);
           for(long ip=0; ip<npol; ++ip) {
-            long ip_ = ip%npol_in_H1;
+            auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
             math::copy(Xsiu()(is_,range(ip_*NMO,(ip_+1)*NMO),all),Xiu);
             // for simplicity, make calculations with copies at full precision
             nda::tensor::contract(Aai(all,range(ip*NMO,(ip+1)*NMO)),"ai",
@@ -269,7 +268,7 @@ THCHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
         } else {
           for(long ip=0; ip<npol; ++ip) {
             auto Yau = block(ip,range(nel),all);
-            long ip_ = ip%npol_in_H1;
+            auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
             auto Xiu = Xsiu()(is_,range(ip_*NMO,(ip_+1)*NMO),all);
             nda::tensor::contract(Aai(all,range(ip*NMO,(ip+1)*NMO)),"ai",
                             nda::conj(Xiu),"iu",Yau,"au");

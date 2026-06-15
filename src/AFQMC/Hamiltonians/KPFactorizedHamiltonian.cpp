@@ -35,6 +35,7 @@
 #include "KPFactorizedHamiltonian.h"
 #include "AFQMC/Utilities/wfn_utils.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
+#include "AFQMC/HamiltonianOperations/detail/one_body.hpp"
 
 #include "numerics/sparse/sparse.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
@@ -352,18 +353,16 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         (number_of_symmetric_Q+nkpts)*ndet*nspin_in_H1*npol_in_H1*nel_up*nbnd*nchol_av*GBx);
   nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> Lank(nkpts);
   nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> Lbnk(number_of_symmetric_Q);
-// should be nspin_in_PsiT instead of nspin!!!
   for(int Q=0; Q<nkpts; ++Q) {
     int Qm = minusq(Q);
     Lank(Q) = memory::share_from_ranks<MEM,ComplexType,6,3>(*mpi,
         {ndet,nspin,nkpts,nocc_max,nchol(Q),npol*nbnd},
         [&](std::array<long,3> idx, auto&& block) {
       auto [id,is,ik] = idx;
-      int is_ = is%nspin_in_H1;
       auto const& rows = nocc(is,ik);
       int nk = int(rows.size());
       for(long ip=0; ip<npol; ++ip) {
-        int ip_ = ip%npol_in_H1;
+        auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
         if(Q <= Qm) {
           // L[Q,k,k2=k-Q]
           auto Aai = math::sparse::to_array<'N'>(PsiT(id,is),rows,
@@ -395,12 +394,11 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
           {ndet,nspin,nkpts,nocc_max,nchol(Q),npol*nbnd},
           [&](std::array<long,3> idx, auto&& block) {
         auto [id,is,k2] = idx;
-        int is_ = is%nspin_in_H1;
         int ik = k2_to_k(k2);
         auto const& rows = nocc(is,k2);
         int nb = int(rows.size());
         for(long ip=0; ip<npol; ++ip) {
-          int ip_ = ip%npol_in_H1;
+          auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
           // conj(L[Q,k,k2](lj,n)) * A[k2]bj
           auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),rows,
                                                  range(ip*NMO+k2*nbnd,ip*NMO+(k2+1)*nbnd));

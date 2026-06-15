@@ -203,7 +203,6 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       for(int p=0; p<npol; ++p) {
         int ip_f = (is*npol + p) % (nspin_in_H2*npol_in_H2);
 
-        nda::range rng(ip_f*NMO,(ip_f+1)*NMO);
         auto Aai_is = Aai_r(all,nda::range(p*NMO,(p+1)*NMO),all);
         nda::tensor::contract(RealType(1.0),Aai_is,"aic",Likn()(ip_f,all,all,all),"ijn",
                               RealType(0.0),L_r(p,all,all,all,all),"najc");

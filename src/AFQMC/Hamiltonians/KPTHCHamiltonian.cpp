@@ -289,11 +289,10 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       {ndet,nspin,npol,nkpts,nocc_max,nu},
       [&](std::array<long,4> idx, auto&& block) {
         auto [id,is,ip,ik] = idx;
-        long is_ = is%nspin_in_H1;
-        long ip_ = ip%npol_in_H1;
+        auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
         auto const& rows = nocc(is,ik);
         int nel = int(rows.size());
-        auto Aai = math::sparse::to_array<'N'>(PsiT(id,is%nspin_in_PsiT),rows,range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
+        auto Aai = math::sparse::to_array<'N'>(PsiT(id,is),rows,range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
         auto Yau = block(range(nel),all);
         auto Xiu = Xsiu()(is_,ik,range(ip_*nbnd,(ip_+1)*nbnd),all);
         nda::tensor::contract(Aai,"ai", nda::conj(Xiu),"iu",Yau,"au");
