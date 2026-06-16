@@ -354,10 +354,16 @@ public:
     utils::check_strides(G,v);
     // limiting G to contiguous arrays for simplicity now, reconsider if necessary
     utils::check(v.shape() == std::array<long,2>{nwalk,nCV}, "Real3IndexFactorization::vbias: Size mismatch.");
-    if(haj.extent(0) == 1) // ndet==1, G half rotated
-      utils::check(G.extent(1) == nel*npol*NMO, "Real3IndexFactorization::vbias: Size mismatch.");
-    else // ndet>1, full G 
-      utils::check(G.extent(1) == nspin*npol*NMO*npol*NMO, "Real3IndexFactorization::vbias: Size mismatch.");
+    // Dispatch on the G layout, not the trial determinant count. The half-rotated path takes a
+    // compact G [nwalk, nel*npol*NMO]; the full path takes a full G [nwalk, nspin*npol*NMO*npol*NMO]
+    // and contracts the un-rotated Likn. NOMSD passes a compact G for ndet==1 and a full G for
+    // ndet>1, so existing behavior is unchanged; the stochastic trial reaches the full path with a
+    // single-determinant trial (this is what the former vbias_fullG provided).
+    long const half_size = long(nel)*npol*NMO;
+    long const full_size = long(nspin)*npol*NMO*npol*NMO;
+    utils::check(G.extent(1) == half_size || G.extent(1) == full_size,
+                 "Real3IndexFactorization::vbias: Size mismatch.");
+    bool const half_rotated = (G.extent(1) == half_size);
     utils::check(G.is_contiguous(), "Layout mismatch");
 
     // scale a by sqrt(dt)
@@ -365,7 +371,7 @@ public:
     
     v() = ComplexType(0.0);
 
-    if (Lnak(0).extent(0) == 1)
+    if (half_rotated)
     {
       memory::array_view<MEM,const ComplexType,3> G3d(std::array<long,3>{nwalk,nel,npol*NMO},G.data());
       //Lnak(idet,ispin,ipol,n,a,k) * G(w,a,k)
@@ -753,34 +759,6 @@ public:
     ensure_full_cholesky();
     full_g::energy_closed<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_, hij_full_flat_,
                                int(nCV), E0, addH1, addEJ, addEXX);
-  }
-
-  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto& v, double dt)
-  {
-    if (walker_type != CLOSED)
-      APP_ABORT("Real3IndexFactorization::vbias_fullG supports CLOSED trials only.");
-    using nda::range;
-    auto all = range::all;
-    memory::check_memory_space<MEM>(G, v);
-    int nwalk = int(G.extent(0));
-    utils::check(G.extent(1) == long(NMO) * NMO, "vbias_fullG: G shape mismatch");
-    utils::check(v.shape() == std::array<long, 2>{nwalk, nCV}, "vbias_fullG: v shape mismatch");
-    RealType a = std::sqrt(dt) * RealType(2.0);
-    v() = ComplexType(0.0);
-    auto L2d = nda::reshape(Likn()(0, all, all, all), std::array<long, 2>{NMO * NMO, nCV});
-    // v(w,n) = a * sum_x G(w,x) * L2d(x,n); real Likn * complex G (mirrors vbias() lines 403-412).
-    if constexpr (MEM == HOST_MEMORY)
-    {
-      memory::buffered_array<MEM, ComplexType, 2> Gt(NMO * NMO, nwalk);
-      memory::buffered_array<MEM, ComplexType, 2> vt(nCV, nwalk);
-      Gt() = nda::transpose(G());
-      nda::blas::gemm(a, nda::transpose(L2d), Gt, RealType(0.0), vt);
-      v() = nda::transpose(vt());
-    }
-    else
-    {
-      nda::tensor::contract(RealType(a), G, "wx", L2d, "xn", RealType(0.0), v, "wn");
-    }
   }
 
 private:

@@ -644,11 +644,6 @@ public:
     APP_ABORT("THCOps::energy_fullG not implemented.");
   }
 
-  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const&, nda::MemoryArrayOfRank<2> auto&, double)
-  {
-    APP_ABORT("THCOps::vbias_fullG not implemented.");
-  }
-
 protected:
   // Guu[nu][nwalk]
   void Guu_from_compact(nda::MemoryArrayOfRank<3> auto const& G,

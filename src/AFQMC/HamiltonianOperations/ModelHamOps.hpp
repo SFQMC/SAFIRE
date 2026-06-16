@@ -417,11 +417,6 @@ public:
     APP_ABORT("ModelHamOps::energy_fullG not implemented.");
   }
 
-  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const&, nda::MemoryArrayOfRank<2> auto&, double)
-  {
-    APP_ABORT("ModelHamOps::vbias_fullG not implemented.");
-  }
-
 private:
 
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;

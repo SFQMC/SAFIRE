@@ -780,11 +780,6 @@ public:
     APP_ABORT("KPTHCOps::energy_fullG not implemented.");
   }
 
-  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const&, nda::MemoryArrayOfRank<2> auto&, double)
-  {
-    APP_ABORT("KPTHCOps::vbias_fullG not implemented.");
-  }
-
 protected:
   // G(k1,k2,w,u) = sum_a,j Y(d,s,k1,a,u) * G(w,k1,a,k2,j) * X(s,k2,p,j,u)
   auto Gu_from_compact(nda::MemoryArrayOfRank<5> auto const& G, int idet)

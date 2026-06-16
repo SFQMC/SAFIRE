@@ -380,12 +380,6 @@ protected:
     HamOp.vbias(G, std::forward<MatA>(v), dt);
   }
 
-  template<class MatG, class MatA>
-  void vbias_fullG(MatG const& G, MatA&& v, double dt)
-  {
-    HamOp.vbias_fullG(G, std::forward<MatA>(v), dt);
-  }
-
   int dm_size(bool full) const
   {
     int npol  = (walker_type == NONCOLLINEAR ? 2 : 1);
