@@ -293,6 +293,7 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, ptr
 
   // wfn builder should not use Hamiltonian pointer now
   auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, nullptr, nWalkers);
+  WfnFac.maybe_initialize_stochastic_inner_walkers(wfn0, wfn_name, walker_type, WSetFac.get_input(wset_name));
 
   // propagator
   auto& prop0 = PropFac.getPropagator(mpi, prop_name, wfn0, rng);
