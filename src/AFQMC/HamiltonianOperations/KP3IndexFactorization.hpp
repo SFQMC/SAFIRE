@@ -903,6 +903,17 @@ public:
   nda::array<ComplexType, 2> getHSPotentials()
   { return nda::array<ComplexType, 2>{}; }
 
+  void energy_fullG(nda::MemoryArrayOfRank<2> auto&&, nda::MemoryArrayOfRank<2> auto const&, bool = true,
+                    bool = true, bool = true)
+  {
+    APP_ABORT("KP3IndexFactorization::energy_fullG not implemented.");
+  }
+
+  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const&, nda::MemoryArrayOfRank<2> auto&, double)
+  {
+    APP_ABORT("KP3IndexFactorization::vbias_fullG not implemented.");
+  }
+
 protected:
   // keeping communicators here seems unnecessary
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;

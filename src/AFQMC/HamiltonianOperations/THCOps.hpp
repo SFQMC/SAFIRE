@@ -638,6 +638,17 @@ public:
   nda::array<ComplexType, 2> getHSPotentials() 
   { return nda::array<ComplexType, 2>{}; }
 
+  void energy_fullG(nda::MemoryArrayOfRank<2> auto&&, nda::MemoryArrayOfRank<2> auto const&, bool = true,
+                    bool = true, bool = true)
+  {
+    APP_ABORT("THCOps::energy_fullG not implemented.");
+  }
+
+  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const&, nda::MemoryArrayOfRank<2> auto&, double)
+  {
+    APP_ABORT("THCOps::vbias_fullG not implemented.");
+  }
+
 protected:
   // Guu[nu][nwalk]
   void Guu_from_compact(nda::MemoryArrayOfRank<3> auto const& G,

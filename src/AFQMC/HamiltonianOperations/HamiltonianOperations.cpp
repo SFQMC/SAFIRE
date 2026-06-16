@@ -163,6 +163,38 @@ __vbias__(HOST_MEMORY)
 __vbias__(DEVICE_MEMORY)
 #endif
 
+  template<MEMORY_SPACE M>
+  void HamiltonianOperations<M>::energy_fullG_impl(nda::MemoryArrayOfRank<2> auto& E,
+                                                   nda::MemoryArrayOfRank<2> auto const& G,
+                                                   bool addH1,
+                                                   bool addEJ,
+                                                   bool addEXX)
+  {
+    std::visit([&](auto&& a) { a.energy_fullG(E, G, addH1, addEJ, addEXX); }, var);
+  }
+
+#define __energy_fullG__(M) \
+  template void HamiltonianOperations<M>::energy_fullG_impl(memory::array_view<M,ComplexType,2>&, memory::array_view<M,const ComplexType,2>const&,bool,bool,bool);
+__energy_fullG__(HOST_MEMORY)
+#if defined(ENABLE_DEVICE)
+__energy_fullG__(DEVICE_MEMORY)
+#endif
+
+  template<MEMORY_SPACE M>
+  void HamiltonianOperations<M>::vbias_fullG_impl(nda::MemoryArrayOfRank<2> auto const& G,
+                                                  nda::MemoryArrayOfRank<2> auto& v,
+                                                  double dt)
+  {
+    std::visit([&](auto&& a) { a.vbias_fullG(G, v, dt); }, var);
+  }
+
+#define __vbias_fullG__(M) \
+  template void HamiltonianOperations<M>::vbias_fullG_impl(memory::array_view<M,ComplexType const,2>const&,memory::array_view<M,ComplexType,2>&,double);
+__vbias_fullG__(HOST_MEMORY)
+#if defined(ENABLE_DEVICE)
+__vbias_fullG__(DEVICE_MEMORY)
+#endif
+
   // update_potential
   template<MEMORY_SPACE M>
   void HamiltonianOperations<M>::update_potentials_impl(double dt, nda::MemoryVector auto const& nMF, nda::MemoryVector auto& vMF, bool natural_shift)

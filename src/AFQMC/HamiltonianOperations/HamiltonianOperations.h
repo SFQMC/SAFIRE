@@ -119,6 +119,19 @@ public:
     vbias_impl(G(),v_,dt);
   }
 
+  void energy_fullG(nda::MemoryArrayOfRank<2> auto && E, nda::MemoryArrayOfRank<2> auto const& G,
+                    bool addH1 = true, bool addEJ = true, bool addEXX = true)
+  {
+    auto E_ = E();
+    energy_fullG_impl(E_, G(), addH1, addEJ, addEXX);
+  }
+
+  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto&& v, double dt)
+  {
+    auto v_ = v();
+    vbias_fullG_impl(G(), v_, dt);
+  }
+
   int number_of_cholesky_vectors() const;
 
   int number_of_ke_vectors() const;
@@ -143,6 +156,11 @@ public:
               int idet, bool addH1, bool addEJ,bool addEXX);
 
   void vbias_impl(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto& v, double dt);
+
+  void energy_fullG_impl(nda::MemoryArrayOfRank<2> auto& E, nda::MemoryArrayOfRank<2> auto const& G,
+                         bool addH1, bool addEJ, bool addEXX);
+
+  void vbias_fullG_impl(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto& v, double dt);
 
   auto vHS_impl(nda::MemoryMatrix auto& X, double dt);
 

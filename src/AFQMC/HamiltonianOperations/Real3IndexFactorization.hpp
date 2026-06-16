@@ -31,6 +31,7 @@
 #include "detail/one_body.hpp"
 
 #include "AFQMC/Wavefunctions/detail/phmsd_impl.hpp"
+#include "AFQMC/HamiltonianOperations/full_g_estimators.hpp"
 
 namespace sfqmc
 {
@@ -741,6 +742,47 @@ public:
   nda::array<ComplexType, 2> getHSPotentials()
   { return nda::array<ComplexType, 2>{}; }
 
+  void energy_fullG(nda::MemoryArrayOfRank<2> auto && E,
+                    nda::MemoryArrayOfRank<2> auto const& Gfull,
+                    bool addH1 = true,
+                    bool addEJ = true,
+                    bool addEXX = true)
+  {
+    if (walker_type != CLOSED)
+      APP_ABORT("Real3IndexFactorization::energy_fullG supports CLOSED trials only.");
+    ensure_full_cholesky();
+    full_g::energy_closed<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_, hij_full_flat_,
+                               int(nCV), E0, addH1, addEJ, addEXX);
+  }
+
+  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto& v, double dt)
+  {
+    if (walker_type != CLOSED)
+      APP_ABORT("Real3IndexFactorization::vbias_fullG supports CLOSED trials only.");
+    using nda::range;
+    auto all = range::all;
+    memory::check_memory_space<MEM>(G, v);
+    int nwalk = int(G.extent(0));
+    utils::check(G.extent(1) == long(NMO) * NMO, "vbias_fullG: G shape mismatch");
+    utils::check(v.shape() == std::array<long, 2>{nwalk, nCV}, "vbias_fullG: v shape mismatch");
+    RealType a = std::sqrt(dt) * RealType(2.0);
+    v() = ComplexType(0.0);
+    auto L2d = nda::reshape(Likn()(0, all, all, all), std::array<long, 2>{NMO * NMO, nCV});
+    // v(w,n) = a * sum_x G(w,x) * L2d(x,n); real Likn * complex G (mirrors vbias() lines 403-412).
+    if constexpr (MEM == HOST_MEMORY)
+    {
+      memory::buffered_array<MEM, ComplexType, 2> Gt(NMO * NMO, nwalk);
+      memory::buffered_array<MEM, ComplexType, 2> vt(nCV, nwalk);
+      Gt() = nda::transpose(G());
+      nda::blas::gemm(a, nda::transpose(L2d), Gt, RealType(0.0), vt);
+      v() = nda::transpose(vt());
+    }
+    else
+    {
+      nda::tensor::contract(RealType(a), G, "wx", L2d, "xn", RealType(0.0), v, "wn");
+    }
+  }
+
 private:
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
@@ -770,7 +812,31 @@ private:
   // Twian = sum_k G_ref[w][i][k] L[a][n][k]
   memory::array<MEM,ComplexType,1> Twina_ph;
   // Swia = sum_k G_ref[w][i][k] h[a][k]
-  memory::array<MEM,ComplexType,1> Swia_ph; 
+  memory::array<MEM,ComplexType,1> Swia_ph;
+
+  bool full_cholesky_ready_{false};
+  memory::array<MEM,ComplexType,2> Lank_full_flat_;
+  memory::array<HOST_MEMORY,ComplexType,1> hij_full_flat_;
+
+  void ensure_full_cholesky()
+  {
+    if (full_cholesky_ready_)
+      return;
+    Lank_full_flat_ = memory::array<MEM, ComplexType, 2>(NMO * nCV, NMO);
+    auto Lhost = nda::to_host(Likn()(0, nda::range::all, nda::range::all, nda::range::all));
+    for (int i = 0; i < NMO; ++i)
+      for (int k = 0; k < NMO; ++k)
+        for (int nc = 0; nc < nCV; ++nc)
+          Lank_full_flat_(i * nCV + nc, k) = ComplexType(Lhost(i, k, nc));
+    hij_full_flat_ = memory::array<HOST_MEMORY, ComplexType, 1>(NMO * NMO);
+    auto hij_h = hij();
+    for (int i = 0; i < NMO; ++i)
+      for (int k = 0; k < NMO; ++k)
+        hij_full_flat_(i * NMO + k) = hij_h(0, i, k);
+    if constexpr (MEM != HOST_MEMORY)
+      Lank_full_flat_ = nda::to_device(Lank_full_flat_);
+    full_cholesky_ready_ = true;
+  } 
 
   // zero of energy 
   ComplexType E0;

@@ -411,6 +411,17 @@ public:
   nda::array<ComplexType, 2> getHSPotentials()
   { return nda::array<ComplexType, 2>{}; }
 
+  void energy_fullG(nda::MemoryArrayOfRank<2> auto&&, nda::MemoryArrayOfRank<2> auto const&, bool = true,
+                    bool = true, bool = true)
+  {
+    APP_ABORT("ModelHamOps::energy_fullG not implemented.");
+  }
+
+  void vbias_fullG(nda::MemoryArrayOfRank<2> auto const&, nda::MemoryArrayOfRank<2> auto&, double)
+  {
+    APP_ABORT("ModelHamOps::vbias_fullG not implemented.");
+  }
+
 private:
 
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
