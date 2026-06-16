@@ -10,6 +10,7 @@ target_sources(safire_lib
   #  Propagators/AFQMCModelPropagator.cpp
     Propagators/PropagatorFactory.cpp
     Wavefunctions/WavefunctionFactory.cpp
+    Wavefunctions/StochasticWfn.cpp
     HamiltonianOperations/HamiltonianOperations.cpp
     Hamiltonians/KPFactorizedHamiltonian.cpp
     Hamiltonians/RealDenseHamiltonian.cpp
