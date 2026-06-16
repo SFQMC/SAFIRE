@@ -35,6 +35,86 @@ in this document as **develop-only** unless tagged **[overhaul]**.
 | `Overlap` | `Log_Overlap` |
 | `test_afqmc_wavefunctions` (`src/AFQMC/Wavefunctions/tests/`) | `test_afqmc` (`tests/`, consolidated binary) |
 
+### Test fixtures on overhaul (the develop fixtures are GONE)
+
+Overhaul **deleted the entire sparse Hamiltonian path** — no `FactorizedSparseHamiltonian` /
+`SparseTensor` / `SparseHamiltonian`. `peekHamType` (`Hamiltonians/hdf5_helpers.hpp`, `std` format)
+recognizes only `/Hamiltonian/{KPFactorized, DenseFactorized, ModelHamiltonian}`; a legacy
+`/Hamiltonian/Factorized` (old sparse cholesky) subgroup now **aborts**
+(`"Invalid hdf5 file format in peekHamType()"`).
+
+- **`C_1x1x1_dzvp/ham_chol_sc.h5` no longer exists.** Every `develop` example in this doc that uses it
+  is stale — treat as historical. The only cholesky-ish file left in `C_1x1x1_dzvp/` is
+  `choldump_phmsd.h5`, which is the old `/Hamiltonian/Factorized` (sparse) format and **aborts in
+  `peekHamType`** — do **not** point tests at it.
+- The stochastic full-G path (Phase 3b) requires a HamOp that implements `energy_fullG` + the full-G
+  `vbias` layout. On overhaul that is **`Real3IndexFactorization` only** (others carry `energy_fullG`
+  stubs). The chain is `/Hamiltonian/DenseFactorized` → `RealDenseHamiltonian` →
+  `getHamiltonianOperations()` → `Real3IndexFactorization`.
+
+**Canonical overhaul fixture** — dense cholesky + closed-shell RHF, routes through
+`Real3IndexFactorization`:
+
+| Role | File |
+|------|------|
+| Hamiltonian | `tests/unit_test_files/Ne_cc-pvdz/ham_chol_dense.h5` (`/Hamiltonian/DenseFactorized`) |
+| Trial (CLOSED/RHF) | `tests/unit_test_files/Ne_cc-pvdz/wfn_rhf.h5` |
+
+```bash
+HAMIL=$PWD/tests/unit_test_files/Ne_cc-pvdz/ham_chol_dense.h5
+WFN=$PWD/tests/unit_test_files/Ne_cc-pvdz/wfn_rhf.h5
+mpirun -np 1 ./build/tests/bin/test_afqmc --hamil "$HAMIL" --wfn "$WFN" "[stochastic_wfn]"
+```
+
+`Ne_cc-pvdz` is **single-determinant RHF only** (no dense-cholesky `wfn_msd.h5`). That suffices for the
+minimal port: delegate-limit checks require `ndet == 1` anyway, and `inner_nwalkers`-invariance uses a
+static replicated ensemble that is `ndet`-independent. The **delegate-limit** parity test
+(`stochastic_wfn_matches_nomsd`, `inner_nsteps = 0`) is in fact **HamOp-agnostic** — at the delegate
+limit the stochastic `vbias` uses the *compact* path, so it runs on any cholesky/THC NOMSD fixture
+(including the harness's built-in `utils/tests/functional/` files); only the **full-G** tests
+(`inner_nsteps > 0`) need the `Ne_cc-pvdz` dense+RHF set. Other dense/KP fixtures for reference:
+`He_2x2x2_dzv/ham_chol_uc.h5` = `KPFactorized` (→ `KP3IndexFactorization`, full-G stub — not usable
+for the full-G path yet).
+
+### Known blocker: `stochastic_wfn_matches_nomsd` SIGSEGV (overhaul port)
+
+**Status: failing on CPU (active investigation).** The keystone delegate-limit test in
+`tests/test_wfn_factory.cpp` compiles and links but **SIGSEGVs** before any `CHECK_THAT` NOMSD-parity
+assertions run.
+
+**Repro (compute node):**
+
+```bash
+HAMIL=$PWD/tests/unit_test_files/Ne_cc-pvdz/ham_chol_dense.h5
+WFN=$PWD/tests/unit_test_files/Ne_cc-pvdz/wfn_rhf.h5
+mpirun -np 1 ./build/tests/bin/test_afqmc --hamil "$HAMIL" --wfn "$WFN" stochastic_wfn_matches_nomsd
+```
+
+**Observed behavior:**
+
+- `is_stochastic_wavefunction` and `stochastic_inner_walkers_initialized` `REQUIRE`s pass.
+- Log shows **two** `WalkerSet` init banners (inner ensemble, then outer `wset_nomsd`).
+- **No** `Building StochasticWfn inner propagator` line when `inner_nsteps = 0` (propagator build is
+  correctly skipped after the delegate-limit fix).
+- Catch reports a fatal `SIGSEGV` near the layout-parity / outer-walker setup `REQUIRE`s; the bisected
+  test splits NOMSD `Log_Overlap` / `Energy` / `vbias` into stepwise checkpoints to narrow the fault.
+- **GDB (RelWithDebInfo):** `RIP = 0`, empty `bt full` on the main thread — stack already destroyed;
+  consistent with heap/stack corruption or a bad indirect call, not a clean null deref with intact
+  frames. UCX/OpenMPI helper threads are idle; do not trust `catch signal SIGSEGV` in GDB here.
+
+**Fixes already landed on the branch (delegate limit, not sufficient alone):**
+
+- Skip inner `Propagator` construction when `inner_nsteps == 0` (`WavefunctionFactory.cpp`).
+- At `inner_nwalkers == 1 && inner_nsteps == 0`, route `Log_Overlap`, `Energy`, `MixedDensityMatrix_for_vbias`,
+  and `vbias` through `nomsd_` instead of the inner cross-reduction path (`StochasticWfn.icc`).
+- `reduce_inner_cross_dm` uses owned ref buffers and `exp(ov_)` for log-overlap weighting.
+
+**Leading hypothesis:** crash occurs on the **plain NOMSD outer-walker path** (`make_WalkerSet` →
+`resize` → `perturb` → `Log_Overlap` / `Energy` / `vbias` on `wfn_nomsd`), *after* stochastic inner
+init — not in the stochastic cross-reduction machinery. Confirm with: (1) bisection `REQUIRE` line
+from a normal `mpirun` run (no GDB), (2) **AddressSanitizer** build (`-fsanitize=address`), (3) whether
+`wfn_factory_sdet` passes on the same `ham_chol_dense` + `wfn_rhf` fixture.
+
 ---
 
 ## Current State
@@ -128,14 +208,18 @@ Phase 3b begins driving inner evolution.
 
 **Phase 3b (dynamic ensemble + phase weights) is implemented on develop (CPU-verified); ported to overhaul, untested.**
 **[develop]** All `[stochastic_wfn]` tests pass on a compute node with both `wfn_rhf.h5` (CLOSED) and `wfn_msd.h5`.
-**[overhaul]** `energy_fullG` / `vbias_fullG` wired through `full_g_estimators.hpp` and `Real3IndexFactorization`;
-other HamOps types carry stubs until tests exercise them.
+**[overhaul]** `energy_fullG` is wired through `full_g_estimators.hpp` and `Real3IndexFactorization`
+(other HamOps types carry `energy_fullG` stubs until tests exercise them). The **full-G force bias has
+no separate seam**: `Real3IndexFactorization::vbias` dispatches on the **G layout** (compact vs full
+NMO×NMO) rather than the trial determinant count, so the un-rotated full-G contraction is reached
+through the ordinary `vbias` / `vbias_from_G` path for a single-determinant stochastic trial. (The
+former `vbias_fullG` seam — a near-duplicate of `vbias`'s `ndet>1` branch — was removed.)
 `inner_nsteps > 0` now drives the inner propagator in **free-projection** mode: each outer step the
 inner ensemble is reset to the anchor and advanced `inner_nsteps` `B̂_T` steps (`begin_inner_step()` +
 `maybe_advance_inner_ensemble()`), the reductions use the Eq. 27 `S_p` phase weights (with `Overlap`
 kept absolute), the shared cross-DM loop is factored into `reduce_inner_cross_dm`, and the True-Ham
-energy/force bias for moved walkers use the **un-rotated full-G contraction** (`energy_fullG`/
-`vbias_fullG`, CLOSED trials only this phase). The **Variational Hamiltonian `Ĥ_var` is deferred** — the
+energy for moved walkers uses the **un-rotated full-G contraction** (`energy_fullG`, CLOSED trials only
+this phase); the force bias contracts the same full-G through `vbias`. The **Variational Hamiltonian `Ĥ_var` is deferred** — the
 inner stack stays a True-Ham clone (`B̂_T` generated by the cloned True Cholesky). At `inner_nsteps = 0`
 behavior is unchanged (Phases 1c–3a). See [Phase 3b](#phase-3b--dynamic-ensemble--phase-weights-implemented-cpu-ĥ_var-deferred).
 
@@ -1076,8 +1160,8 @@ repo — a follow-up "Phase 3b-var". The deferred input key is **`inner_hamilton
 | Fail-fast / limits | ✓ `inner_nsteps > 0` is rejected **at `StochasticWfn` construction** unless the trial is **CLOSED (RHF)** and the build is **CPU** (`!ENABLE_DEVICE`) — the un-rotated full-G kernels are CLOSED/CPU-only this phase, so misuse fails immediately, not deep in the first reduction's HamOp dispatch. |
 | Phase weight | ✓ `⟨Ô⟩_w = Σ_p ⟨Ô⟩_{p,w} S_p / Σ_p S_p` with `S_p[w] = ⟨ψ_p\|φ_w⟩/\|⟨ψ_p\|φ_w⟩\|` (Eq. 26) in `Energy`/`MixedDensityMatrix_for_vbias`; degenerate `S_p` recovers 3a. **`Overlap` stays the absolute `(1/P) Σ_p ⟨ψ_p\|φ_w⟩`** (Eq. 24's normalization) — dropping the magnitude would break `Overlap == NOMSD` at the delegate limit, and the exact `𝒩(φ)` cancellation is the Phase 3c leapfrog. (The earlier Tier-1 "Overlap: replace 1/P with `S_p`" note was imprecise.) |
 | Refactor | ✓ The shared per-inner-walker cross-DM loop is now a private `reduce_inner_cross_dm(wset, compact, transposed, Gsize, D, Ov, accumulate)` (the callback folds `G_{p,w}` into each estimator's `S_p`-weighted numerator); it also owns the `maybe_advance_inner_ensemble()` resample. `Overlap` keeps its own `nw×P` FairDivide loop. |
-| Half-rotation | ✓ **[develop]** Resolved via the **un-rotated full-G contraction** (not per-walker re-rotation): once `ψ_p ≠` anchor the reductions form the **full** NMO×NMO cross `G` and contract it with the full (un-rotated) Cholesky/bare `hij`. The EXX/EJ/E1 kernel is a single shared `full_g::energy_closed` (`HamiltonianOperations/full_g_estimators.hpp`, reusing the proven `energy_impl` structure with an identity-rotated Cholesky) used by **both** Cholesky HamOps: `Real3IndexFactorization` (dense; `Likn` already dense) and **`SparseTensor`** (sparse; `Likn` densified once via `Matrix2MA`, as `getHSPotentials` does). **The CPU test Hamiltonian `ham_chol_sc.h5` is `FactorizedSparseHamiltonian` → `SparseTensor`, so SparseTensor is the path the develop tests exercise.** Both `energy_fullG` and `vbias_fullG` need the full path (the single-determinant `vbias`/energy are half-rotated). `ma_rotate::getLank` could not be reused (it reinterprets a real `Likn` as complex). Wired through NOMSD seams `energy_from_fullG`/`vbias_fullG` and HamOps dispatch. **[overhaul]** `Real3IndexFactorization` implements the full path; `THCOps`, `ModelHamOps`, `KPTHCOps`, and `KP3IndexFactorization` carry stubs pending test coverage. The full-G energy G is requested as `[nwalk][NMO*NMO]` (transposed) uniformly so the kernel's layout is HamOp-independent. **CLOSED (RHF) trials only this phase** (rejected at `StochasticWfn` construction otherwise; also CPU-only); COLLINEAR/NONCOLLINEAR full-G are a follow-up. |
-| Tests | ✓ **[develop]** **`stochastic_full_g_matches_compact`** — full-G at the anchor == compact `nd = 0` == NOMSD (new-kernel validation). ✓ **`stochastic_dynamic_ensemble_smoke`** — resample + **all four** stochastic overrides (`MixedDensityMatrix_for_vbias`/`vbias_fullG`, `Energy`/`energy_fullG`, `Overlap`) on the moved ensemble; asserts finite. ✓ **`stochastic_propagator_step`** — real OUTER `AFQMCBasePropagator::Propagate()` on a dynamic trial (`inner_nsteps = 1`, `inner_nwalkers = 4`); full hot path through the propagator (`begin_inner_step` → resample → `MixedDensityMatrix_for_vbias`/`vbias_fullG` → `vHS` → apply → `Overlap`), including G-buffer sizing from `size_of_G_for_vbias()`; asserts finite weights/energies/overlaps over 3 steps (smoke, not NOMSD parity). All three gated on **CLOSED (RHF)**. **CPU-verified** on a compute node with `wfn_rhf.h5` + `ham_chol_sc.h5`; the rest of `[stochastic_wfn]` also passes with `wfn_msd.h5`. **[overhaul]** Tests not yet ported. Remaining (research-level): `P → ∞` convergence and `inner_seed` stability. |
+| Half-rotation | ✓ **[develop]** Resolved via the **un-rotated full-G contraction** (not per-walker re-rotation): once `ψ_p ≠` anchor the reductions form the **full** NMO×NMO cross `G` and contract it with the full (un-rotated) Cholesky/bare `hij`. The EXX/EJ/E1 kernel is a single shared `full_g::energy_closed` (`HamiltonianOperations/full_g_estimators.hpp`, reusing the proven `energy_impl` structure with an identity-rotated Cholesky) used by **both** Cholesky HamOps: `Real3IndexFactorization` (dense; `Likn` already dense) and **`SparseTensor`** (sparse; `Likn` densified once via `Matrix2MA`, as `getHSPotentials` does). **The CPU test Hamiltonian `ham_chol_sc.h5` is `FactorizedSparseHamiltonian` → `SparseTensor`, so SparseTensor is the path the develop tests exercise.** Both `energy_fullG` and `vbias_fullG` need the full path (the single-determinant `vbias`/energy are half-rotated). `ma_rotate::getLank` could not be reused (it reinterprets a real `Likn` as complex). Wired through NOMSD seams `energy_from_fullG`/`vbias_fullG` and HamOps dispatch. **[overhaul]** `Real3IndexFactorization` implements the full path; `THCOps`, `ModelHamOps`, `KPTHCOps`, and `KP3IndexFactorization` carry `energy_fullG` stubs pending test coverage. **The full-G force bias has no separate `vbias_fullG` seam on overhaul** — `Real3IndexFactorization::vbias` dispatches on the G layout (compact vs full NMO×NMO), so the un-rotated full-G contraction is reached through the ordinary `vbias`/`vbias_from_G` path; only `energy_fullG` remains a dedicated seam. The full-G energy G is requested as `[nwalk][NMO*NMO]` (transposed) uniformly so the kernel's layout is HamOp-independent. **CLOSED (RHF) trials only this phase** (rejected at `StochasticWfn` construction otherwise; also CPU-only); COLLINEAR/NONCOLLINEAR full-G are a follow-up. |
+| Tests | ✓ **[develop]** **`stochastic_full_g_matches_compact`** — full-G at the anchor == compact `nd = 0` == NOMSD (new-kernel validation). ✓ **`stochastic_dynamic_ensemble_smoke`** — resample + **all four** stochastic overrides (`MixedDensityMatrix_for_vbias`/`vbias_fullG`, `Energy`/`energy_fullG`, `Overlap`) on the moved ensemble; asserts finite. ✓ **`stochastic_propagator_step`** — real OUTER `AFQMCBasePropagator::Propagate()` on a dynamic trial (`inner_nsteps = 1`, `inner_nwalkers = 4`); full hot path through the propagator (`begin_inner_step` → resample → `MixedDensityMatrix_for_vbias`/`vbias` (full-G via layout dispatch) → `vHS` → apply → `Overlap`), including G-buffer sizing from `size_of_G_for_vbias()`; asserts finite weights/energies/overlaps over 3 steps (smoke, not NOMSD parity). All three gated on **CLOSED (RHF)**. **CPU-verified** on a compute node with `wfn_rhf.h5` + `ham_chol_sc.h5`; the rest of `[stochastic_wfn]` also passes with `wfn_msd.h5`. **[overhaul]** Tests not yet ported. Remaining (research-level): `P → ∞` convergence and `inner_seed` stability. |
 
 #### Phase 3c — Walker-conditioned sampling + propagate-then-resample leapfrog
 
@@ -1168,7 +1252,7 @@ to a single deterministic state (`inner_nwalkers = 1`, `inner_nsteps = 0`):
 
 | Test case | Checkpoint |
 |-----------|------------|
-| `stochastic_wfn_matches_nomsd` | Parity preserved at default inputs (delegate limit). |
+| `stochastic_wfn_matches_nomsd` | Parity preserved at default inputs (delegate limit). **[overhaul] BLOCKED: SIGSEGV — see [Known blocker](#known-blocker-stochastic_wfn_matches_nomsd-sigsegv-overhaul-port).** |
 | `stochastic_inner_walkers_init` | Inner walkers initialize to `inner_nwalkers`; Slater matrices match `getInitialGuess()`; inner `NOMSD` overlap/energy on `inner_wset()` matches reference; replicated ensemble gives identical observables. |
 | `stochastic_inner_walkers_uninitialized_smoke` | Stochastic wavefunction built without `walker_pt` stays uninitialized until `maybe_initialize_stochastic_inner_walkers()`; then `stochastic_inner_wset()` is usable. (`inner_wset()` before init calls `APP_ABORT` — not exercised in-process.) |
 
@@ -1290,7 +1374,7 @@ the dynamic/full-G checks silently.
 | Test case | Checkpoint |
 |-----------|------------|
 | `stochastic_full_g_matches_compact` | Un-rotated full-G energy and force bias at the anchor equal the compact `nd = 0` path and NOMSD (single-determinant delegate limit). |
-| `stochastic_dynamic_ensemble_smoke` | With `inner_nsteps > 0`, inner resample + all four stochastic overrides on moved walkers; asserts finite energies/overlaps (and vbias path via MixedDM + `vbias_fullG`). |
+| `stochastic_dynamic_ensemble_smoke` | With `inner_nsteps > 0`, inner resample + all four stochastic overrides on moved walkers; asserts finite energies/overlaps (and vbias path via MixedDM + `vbias`, full-G via layout dispatch). |
 | `stochastic_propagator_step` | Real outer `AFQMCBasePropagator::Propagate()` on a dynamic trial (`inner_nsteps = 1`, `inner_nwalkers = 4`); full propagator hot path; asserts finite weights/energies/overlaps over 3 steps. |
 
 **[develop] Verified (CPU):** `C_1x1x1_dzvp/wfn_rhf.h5` + `ham_chol_sc.h5`
