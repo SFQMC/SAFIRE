@@ -23,11 +23,24 @@
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
 #include "AFQMC/Wavefunctions/NOMSD_FT.hpp"
+#include "AFQMC/Wavefunctions/StochasticWfn.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
+
+namespace wavefunction_detail
+{
+template<class T>
+struct is_stochastic_wfn : std::false_type
+{};
+template<MEMORY_SPACE MEM, class devPsiT>
+struct is_stochastic_wfn<StochasticWfn<MEM, devPsiT>> : std::true_type
+{};
+template<MEMORY_SPACE MEM, class MType2>
+struct StochasticInnerStackImpl;
+} // namespace wavefunction_detail
 
 template<MEMORY_SPACE MEM>
 class Wavefunction 
@@ -51,6 +64,10 @@ public:
   explicit Wavefunction(NOMSD_FT<MEM,memory::const_shared_array<MEM,ComplexType,2>>&& other) : var(std::move(other)) {}
   explicit Wavefunction(NOMSD_FT<MEM,memory::const_shared_array<MEM,ComplexType,2>> const& other) = delete; 
 
+  explicit Wavefunction(StochasticWfn<MEM, PsiT_Matrix<MEM>>&& other) : var(std::move(other)) {}
+  explicit Wavefunction(StochasticWfn<MEM, memory::const_shared_array<MEM, ComplexType, 2>>&& other)
+      : var(std::move(other))
+  {}
 
   Wavefunction(Wavefunction const& other) = delete;
   Wavefunction(Wavefunction&& other)      = default;
@@ -204,8 +221,54 @@ public:
   template<class... Args>
   auto getLogScale(Args&&... args)
   {
-    std::visit([&](auto&& a) { a.getLogScale(std::forward<Args>(args)...); }, var);
+    return std::visit([&](auto&& a) { return a.getLogScale(std::forward<Args>(args)...); }, var);
   }
+
+  bool is_stochastic_wavefunction() const
+  {
+    return std::visit(
+        [](auto&& a) { return wavefunction_detail::is_stochastic_wfn<std::decay_t<decltype(a)>>::value; }, var);
+  }
+
+  bool stochastic_inner_walkers_initialized() const
+  {
+    return std::visit(
+        [](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.inner_walkers_initialized();
+          return false;
+        },
+        var);
+  }
+
+  void initialize_stochastic_inner_walkers(
+      ptree const& walker_pt,
+      memory::const_shared_array<HOST_MEMORY, ComplexType, 3> const& initial_guess,
+      int NAEB)
+  {
+    std::visit(
+        [&](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            a.initialize_inner_walkers(walker_pt, initial_guess, NAEB);
+        },
+        var);
+  }
+
+  void begin_inner_step()
+  {
+    std::visit(
+        [](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            a.begin_inner_step();
+        },
+        var);
+  }
+
+  template<MEMORY_SPACE MEM2, class MType2>
+  friend struct wavefunction_detail::StochasticInnerStackImpl;
 
   private:
 
@@ -214,7 +277,9 @@ public:
                NOMSD<MEM,memory::const_shared_array<MEM,ComplexType,2>>,
                NOMSD_FT<MEM,PsiT_Matrix<MEM>>,
                NOMSD_FT<MEM,memory::const_shared_array<MEM,ComplexType,2>>,
-               PHMSD<MEM>
+               PHMSD<MEM>,
+               StochasticWfn<MEM, PsiT_Matrix<MEM>>,
+               StochasticWfn<MEM, memory::const_shared_array<MEM, ComplexType, 2>>
               > var;
 
 };

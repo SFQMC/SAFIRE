@@ -20,6 +20,7 @@
 #include <vector>
 #include <map>
 #include <fstream>
+#include <unordered_set>
 #include <boost/optional.hpp>
 
 #include "AFQMC/config.h"
@@ -72,8 +73,33 @@ public:
     // set default later, since it depends on HamiltonianOperations type
     if( auto val = pt0.get_optional<bool>("dense_trial") )
       pt1.put("dense_trial", *val);
+    bool stochastic    = pt0.get<bool>("stochastic", false);
+    int inner_nwalkers = pt0.get<int>("inner_nwalkers", 1);
+    if (inner_nwalkers < 1)
+      APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
+    int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
+    int inner_seed   = pt0.get<int>("inner_seed", 777);
+    auto inner_propagator_block = pt0.get_child_optional("inner_propagator");
+    for (auto const& key : {"inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator"})
+      if (not stochastic && pt0.get_child_optional(key))
+        APP_ABORT("Error in WavefunctionFactory::interpret_inputs: " + std::string(key) +
+                  " requires stochastic: true.");
+    pt1.put("stochastic", stochastic);
+    if (stochastic)
+    {
+      pt1.put("inner_nwalkers", inner_nwalkers);
+      pt1.put("inner_nsteps", inner_nsteps);
+      pt1.put("inner_seed", inner_seed);
+      if (inner_propagator_block)
+        pt1.put_child("inner_propagator", *inner_propagator_block);
+    }
     std::unordered_set<std::string> pass_through_keys = {
-      "system"
+      "system",
+      "stochastic",
+      "inner_nwalkers",
+      "inner_nsteps",
+      "inner_seed",
+      "inner_propagator",
     };
     io::compare_known_keys("Wavefunction Factory",pt1, pt0,pass_through_keys);
     return pt1;
@@ -119,6 +145,32 @@ public:
     }
     else
       return w0->second;
+  }
+
+  void maybe_initialize_stochastic_inner_walkers(Wavefunction<MEM>& wfn,
+                                                 const std::string& ID,
+                                                 WALKER_TYPES walker_type,
+                                                 ptree const& walker_pt)
+  {
+    auto xml = wfnBlocks.find(ID);
+    if (xml == wfnBlocks.end())
+      APP_ABORT(" Error in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers: Missing wfn block. ");
+    ptree pt = interpret_inputs(xml->second);
+    if (not pt.get<bool>("stochastic"))
+      return;
+    if (not wfn.is_stochastic_wavefunction())
+      return;
+    if (wfn.stochastic_inner_walkers_initialized())
+      return;
+    std::string info = pt.get<std::string>("system");
+    if (InfoMap.find(info) == InfoMap.end())
+      APP_ABORT("ERROR: Undefined system in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers.");
+    int ndown = InfoMap[info].ndown;
+    (void)walker_type;
+    auto ig = initial_guess.find(ID);
+    if (ig == initial_guess.end())
+      APP_ABORT(" Error: Missing initial guess in WavefunctionFactory. ");
+    wfn.initialize_stochastic_inner_walkers(walker_pt, ig->second, ndown);
   }
 
   // Use this routine to check if there is a wfn associated with a given ID

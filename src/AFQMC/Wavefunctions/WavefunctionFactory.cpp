@@ -21,12 +21,148 @@
 #include "AFQMC/Utilities/readWfn.h"
 #include "WavefunctionFactory.h"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
+#include "AFQMC/Wavefunctions/StochasticWfn.hpp"
+#include "AFQMC/Propagators/PropagatorFactory.h"
 //#include "AFQMC/Wavefunctions/Excitations.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
+
+namespace wavefunction_detail
+{
+
+template<MEMORY_SPACE MEM, class MType>
+struct StochasticInnerStackImpl final : StochasticInnerStack<MEM, MType>
+{
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_;
+  std::unique_ptr<Wavefunction<MEM>> wfn_;
+  std::unique_ptr<Propagator<MEM>> prop_;
+
+  NOMSD<MEM, MType>& nomsd() override { return std::get<NOMSD<MEM, MType>>(wfn_->var); }
+  NOMSD<MEM, MType> const& nomsd() const override { return std::get<NOMSD<MEM, MType>>(wfn_->var); }
+
+  Wavefunction<MEM>& wavefunction() override { return *wfn_; }
+  Wavefunction<MEM> const& wavefunction() const override { return *wfn_; }
+
+  bool has_propagator() const override { return prop_ != nullptr; }
+  Propagator<MEM>& propagator() override
+  {
+    if (prop_ == nullptr)
+      APP_ABORT("Error in StochasticInnerStackImpl::propagator: not built.");
+    return *prop_;
+  }
+  Propagator<MEM> const& propagator() const override
+  {
+    if (prop_ == nullptr)
+      APP_ABORT("Error in StochasticInnerStackImpl::propagator: not built.");
+    return *prop_;
+  }
+};
+
+struct InnerPropagatorBuilder : PropagatorFactory<HOST_MEMORY>
+{
+  using PropagatorFactory<HOST_MEMORY>::PropagatorFactory;
+  using PropagatorFactory<HOST_MEMORY>::buildPropagator;
+};
+
+#if defined(ENABLE_DEVICE)
+struct InnerPropagatorBuilderDevice : PropagatorFactory<DEVICE_MEMORY>
+{
+  using PropagatorFactory<DEVICE_MEMORY>::PropagatorFactory;
+  using PropagatorFactory<DEVICE_MEMORY>::buildPropagator;
+};
+#endif
+
+template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
+std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
+    std::map<std::string, AFQMCInfo>& InfoMap,
+    AFQMCInfo& info,
+    ptree const& pt,
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+    HamiltonianOperations<MEM>&& inner_hop,
+    nda::array<ComplexType, 1>&& inner_ci,
+    OrbsContainer&& inner_orbs,
+    WALKER_TYPES walker_type,
+    ComplexType NCE,
+    int targetNW)
+{
+  auto stack = std::make_unique<StochasticInnerStackImpl<MEM, MType>>();
+
+  ptree nomsd_pt = NOMSD<MEM, MType>::interpret_inputs(strip_stochastic_input_keys(pt));
+  stack->wfn_    = std::make_unique<Wavefunction<MEM>>(
+      NOMSD<MEM, MType>(info, std::move(nomsd_pt), walker_type, mpi, std::move(inner_hop), std::move(inner_ci),
+                        std::forward<OrbsContainer>(inner_orbs), NCE, targetNW));
+
+  ptree prop_pt;
+  if (auto child = pt.get_child_optional("inner_propagator"))
+    prop_pt = *child;
+  if (not prop_pt.get_child_optional("system"))
+    prop_pt.put("system", pt.get<std::string>("system"));
+  if (not prop_pt.get_child_optional("name"))
+    prop_pt.put("name", pt.get<std::string>("name") + "_inner_propagator");
+
+  if (pt.get<int>("inner_nsteps", 0) > 0)
+  {
+    prop_pt.put("free_projection", true);
+    prop_pt.put("hybrid", true);
+    prop_pt.put("importance_sampling", false);
+    prop_pt.put("apply_constrain", false);
+  }
+
+  int inner_seed = pt.get<int>("inner_seed", 777);
+  auto iseed     = (inner_seed == 0) ? utils::make_seed(mpi->comm) : utils::split_seed(inner_seed, mpi->comm);
+  stack->rng_    = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(iseed));
+
+  app_log(2, " Building StochasticWfn inner propagator (inner_seed = {}).", inner_seed);
+  if constexpr (MEM == HOST_MEMORY)
+  {
+    InnerPropagatorBuilder prop_builder(InfoMap);
+    stack->prop_ = std::make_unique<Propagator<MEM>>(
+        prop_builder.buildPropagator(mpi, std::move(prop_pt), stack->wavefunction(), stack->rng_));
+  }
+#if defined(ENABLE_DEVICE)
+  else
+  {
+    InnerPropagatorBuilderDevice prop_builder(InfoMap);
+    stack->prop_ = std::make_unique<Propagator<MEM>>(
+        prop_builder.buildPropagator(mpi, std::move(prop_pt), stack->wavefunction(), stack->rng_));
+  }
+#endif
+
+  return stack;
+}
+
+template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
+Wavefunction<MEM> buildStochasticNomsdWavefunction(
+    std::map<std::string, AFQMCInfo>& InfoMap,
+    AFQMCInfo& AFinfo,
+    ptree pt,
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+    Hamiltonian& h,
+    WALKER_TYPES walker_type,
+    nda::array<ComplexType, 1> ci,
+    OrbsContainer orbs,
+    ComplexType NCE,
+    int targetNW,
+    nda::array<PsiT_Matrix<MEM>, 2>& PsiT_for_ham)
+{
+  auto outer_HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
+  auto inner_HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
+  auto inner_ci   = ci;
+  auto inner_orbs = orbs;
+  auto inner_stack =
+      buildStochasticInnerStack<MEM, MType>(InfoMap, AFinfo, pt, mpi, std::move(inner_HOps), std::move(inner_ci),
+                                            std::move(inner_orbs), walker_type, NCE, targetNW);
+  return Wavefunction<MEM>(StochasticWfn<MEM, MType>(AFinfo, std::move(pt), mpi, std::move(outer_HOps), std::move(ci),
+                                                     std::move(orbs), std::move(inner_stack), walker_type, NCE,
+                                                     targetNW));
+}
+
+} // namespace wavefunction_detail
+
+using wavefunction_detail::buildStochasticNomsdWavefunction;
 
 template<MEMORY_SPACE MEM>
 Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
@@ -45,6 +181,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
   std::string name          = pt.get<std::string>("name");
   std::string filename      = pt.get<std::string>("filename");
   bool recompute_ci  = pt.get<bool>("rediag");
+  bool stochastic    = pt.get<bool>("stochastic", false);
   int ndets_to_read  = pt.get<int>("ndets_to_read");
   boost::optional<bool> dense_trial_opt;// = pt.get_optional<bool>("dense_trial");
   if( auto node = pt.get_child_optional("dense_trial") )
@@ -83,7 +220,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
   if (wfn_type == NOMSD_WFN)
   {
     if (walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT){
-      app_log(1," Wavefunction type: NOMSD");
+      app_log(1," Wavefunction type: {}", stochastic ? "StochasticWfn (wrapping NOMSD)" : "NOMSD");
       h5::group ngrp = wgrp.open_group("NOMSD");
       nda::array<ComplexType,1> ci;
 
@@ -115,6 +252,26 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
           dense_trial = false; 
       } else {
         dense_trial = *dense_trial_opt;
+      }
+
+      if (stochastic)
+      {
+        if (dense_trial)
+        {
+          using MType = memory::const_shared_array<MEM,ComplexType,2>;
+          nda::array<MType,2> PsiT_dense(ndets_to_read,nspin);
+          for(int id=0; id<ndets_to_read; ++id) {
+            for(int is=0; is<nspin; ++is) {
+              PsiT_dense(id,is) = memory::share_from_root(*mpi, [&] {
+                return memory::to_memory_space<MEM>(math::sparse::to_array<'N'>(PsiT(id,is)));
+              });
+            }
+          }
+          return buildStochasticNomsdWavefunction<MEM, MType>(InfoMap, AFinfo, std::move(pt), mpi, h, walker_type, ci,
+                                                              PsiT_dense, NCE, targetNW, PsiT);
+        }
+        return buildStochasticNomsdWavefunction<MEM, PsiT_Matrix<MEM>>(InfoMap, AFinfo, std::move(pt), mpi, h,
+                                                                       walker_type, ci, PsiT, NCE, targetNW, PsiT);
       }
 
       auto HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT);
