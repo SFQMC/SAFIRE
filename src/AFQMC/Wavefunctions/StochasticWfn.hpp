@@ -108,6 +108,8 @@ public:
 
   void begin_inner_step() { inner_step_pending_ = true; }
 
+  bool at_delegate_limit() const { return inner_nwalkers_ == 1 && inner_nsteps_ == 0; }
+
   NOMSD<MEM, devPsiT>& outer_nomsd() { return nomsd_; }
   NOMSD<MEM, devPsiT> const& outer_nomsd() const { return nomsd_; }
 
@@ -141,6 +143,37 @@ public:
 
   template<class WlkSet>
   void Energy(WlkSet& wset);
+
+  template<class WlkSet>
+  void Energy(WlkSet& wset, int nt)
+  {
+    (void)nt;
+    Energy(wset);
+  }
+
+  template<class WlkSet, class MatG>
+  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, bool compact = true)
+  {
+    nomsd_.MixedDensityMatrix(wset, std::forward<MatG>(G), compact);
+  }
+
+  template<class WlkSet, class MatG, class TVec>
+  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true)
+  {
+    nomsd_.MixedDensityMatrix(wset, std::forward<MatG>(G), std::forward<TVec>(Ov), compact);
+  }
+
+  template<class WlkSet, class RVec, class MatG, class TVec>
+  void DensityMatrix(const WlkSet& wset,
+                     RVec&& Ref,
+                     MatG&& G,
+                     TVec&& Ov,
+                     bool compact = true,
+                     bool herm    = true)
+  {
+    nomsd_.DensityMatrix(wset, std::forward<RVec>(Ref), std::forward<MatG>(G), std::forward<TVec>(Ov), compact,
+                         herm);
+  }
 
   template<class WlkSet, class MatG>
   void MixedDensityMatrix_for_vbias(const WlkSet& wset, MatG&& G);
@@ -189,6 +222,18 @@ public:
 
   auto vHS_dims() const { return nomsd_.vHS_dims(); }
 
+  template<class... Args>
+  void updateLogScale(Args&&... args)
+  {
+    nomsd_.updateLogScale(std::forward<Args>(args)...);
+  }
+
+  template<class... Args>
+  auto getLogScale(Args&&... args)
+  {
+    return nomsd_.getLogScale(std::forward<Args>(args)...);
+  }
+
 private:
   static ptree nomsd_inputs(ptree const& pt0)
   {
@@ -228,3 +273,5 @@ private:
 
 } // namespace afqmc
 } // namespace sfqmc
+
+#include "AFQMC/Wavefunctions/StochasticWfn.icc"

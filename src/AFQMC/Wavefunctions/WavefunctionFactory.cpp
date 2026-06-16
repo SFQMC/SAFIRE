@@ -115,21 +115,27 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
   auto iseed     = (inner_seed == 0) ? utils::make_seed(mpi->comm) : utils::split_seed(inner_seed, mpi->comm);
   stack->rng_    = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(iseed));
 
-  app_log(2, " Building StochasticWfn inner propagator (inner_seed = {}).", inner_seed);
-  if constexpr (MEM == HOST_MEMORY)
+  // Inner propagator is only needed when the ensemble is dynamic (inner_nsteps > 0).
+  // At the delegate limit (inner_nsteps == 0) it stays dormant; lazy build on first access
+  // covers stochastic_inner_propagator_construction when that test is ported.
+  if (pt.get<int>("inner_nsteps", 0) > 0)
   {
-    InnerPropagatorBuilder prop_builder(InfoMap);
-    stack->prop_ = std::make_unique<Propagator<MEM>>(
-        prop_builder.buildPropagator(mpi, std::move(prop_pt), stack->wavefunction(), stack->rng_));
-  }
+    app_log(2, " Building StochasticWfn inner propagator (inner_seed = {}).", inner_seed);
+    if constexpr (MEM == HOST_MEMORY)
+    {
+      InnerPropagatorBuilder prop_builder(InfoMap);
+      stack->prop_ = std::make_unique<Propagator<MEM>>(
+          prop_builder.buildPropagator(mpi, std::move(prop_pt), stack->wavefunction(), stack->rng_));
+    }
 #if defined(ENABLE_DEVICE)
-  else
-  {
-    InnerPropagatorBuilderDevice prop_builder(InfoMap);
-    stack->prop_ = std::make_unique<Propagator<MEM>>(
-        prop_builder.buildPropagator(mpi, std::move(prop_pt), stack->wavefunction(), stack->rng_));
-  }
+    else
+    {
+      InnerPropagatorBuilderDevice prop_builder(InfoMap);
+      stack->prop_ = std::make_unique<Propagator<MEM>>(
+          prop_builder.buildPropagator(mpi, std::move(prop_pt), stack->wavefunction(), stack->rng_));
+    }
 #endif
+  }
 
   return stack;
 }

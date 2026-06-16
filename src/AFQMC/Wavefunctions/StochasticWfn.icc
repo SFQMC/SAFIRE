@@ -21,7 +21,6 @@
 #include "utilities/FairDivide.hpp"
 #include "utilities/check.hpp"
 #include "AFQMC/SlaterDeterminantOperations/density_matrix.hpp"
-#include "AFQMC/Propagators/Propagator.hpp"
 
 namespace sfqmc
 {
@@ -149,66 +148,6 @@ void StochasticWfn<MEM, devPsiT>::initialize_inner_walkers(
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
-Propagator<MEM>& StochasticWfn<MEM, devPsiT>::inner_propagator()
-{
-  if (not inner_stack_->has_propagator())
-    APP_ABORT("Error in StochasticWfn::inner_propagator: inner propagator not built.");
-  return inner_stack_->propagator();
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-Propagator<MEM> const& StochasticWfn<MEM, devPsiT>::inner_propagator() const
-{
-  if (not inner_stack_->has_propagator())
-    APP_ABORT("Error in StochasticWfn::inner_propagator: inner propagator not built.");
-  return inner_stack_->propagator();
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-void StochasticWfn<MEM, devPsiT>::maybe_advance_inner_ensemble()
-{
-  if (inner_nsteps_ <= 0)
-  {
-    inner_step_pending_ = false;
-    return;
-  }
-  if (not inner_step_pending_)
-    return;
-  inner_step_pending_ = false;
-
-  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
-    APP_ABORT("Error in StochasticWfn::maybe_advance_inner_ensemble: inner walkers not initialized.");
-  if (not inner_stack_->has_propagator())
-    APP_ABORT("Error in StochasticWfn::maybe_advance_inner_ensemble: inner propagator not built.");
-
-  WalkerSet<MEM>& inner     = *inner_ensemble_.wset;
-  const bool collinear      = (inner_stack_->nomsd().getWalkerType() == COLLINEAR);
-  auto all                  = nda::range::all;
-  const int P               = inner.size();
-  nda::array<ComplexType, 3> anchor_on_mem = inner_anchor_;
-#if defined(ENABLE_DEVICE)
-  if constexpr (MEM == DEVICE_MEMORY)
-    anchor_on_mem = nda::to_device(inner_anchor_);
-#endif
-
-  for (int ip = 0; ip < P; ++ip)
-  {
-    inner.SlaterMatrices(Alpha)(ip, all, all) = anchor_on_mem(0, all, all);
-    if (collinear)
-    {
-      int naeb = int(inner.SlaterMatrices(Beta).extent(2));
-      inner.SlaterMatrices(Beta)(ip, all, all) = anchor_on_mem(1, all, nda::range(naeb));
-    }
-  }
-
-  RealType eshift(0);
-  RealType dt(inner_timestep_);
-  for (int step = 0; step < inner_nsteps_; ++step)
-    inner_propagator().Propagate(inner, eshift, dt, 0);
-  mpi_->comm.barrier();
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet, class TVec>
 void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt)
 {
@@ -216,6 +155,11 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
   memory::check_memory_space<MEM>(Ov);
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::Log_Overlap: inner walkers not initialized.");
+  if (at_delegate_limit())
+  {
+    nomsd_.Log_Overlap(wset, std::forward<TVec>(Ov), nt);
+    return;
+  }
   maybe_advance_inner_ensemble();
 
   WalkerSet<MEM>& inner = *inner_ensemble_.wset;
@@ -233,24 +177,28 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
   std::tie(tk0, tkN) = FairDivideBoundary(mpi_->comm.rank(), nw * P, mpi_->comm.size());
 
   memory::buffered_array<MEM, ComplexType, 1> log_ov(1, ComplexType(0.0));
+  memory::buffered_array<MEM, ComplexType, 3> inner_one(1, NMO, nup);
   memory::buffered_array<MEM, ComplexType, 3> outer_one(1, NMO, nup);
 
   for (int tk = tk0; tk < tkN; ++tk)
   {
     const int iw = tk / P;
     const int ip = tk % P;
+    inner_one(0, all, all) = inner.SlaterMatrices(Alpha)(ip, all, all);
     outer_one(0, all, all) = wset.SlaterMatrices(Alpha)(iw, all, all);
     log_ov(0)              = ComplexType(0.0);
-    det_ops::Log_Overlap(inner.SlaterMatrices(Alpha)(ip, all, all), outer_one, log_ov, false);
+    det_ops::Log_Overlap(inner_one, outer_one, log_ov);
     if (wt == CLOSED)
       nda::tensor::scale(ComplexType(2.0), log_ov);
     ComplexType ov = std::exp(log_ov(0));
     if (wt == COLLINEAR)
     {
+      memory::buffered_array<MEM, ComplexType, 3> inner_beta(1, NMO, ndown);
       memory::buffered_array<MEM, ComplexType, 3> outer_beta(1, NMO, ndown);
+      inner_beta(0, all, all) = inner.SlaterMatrices(Beta)(ip, all, all);
       outer_beta(0, all, all) = wset.SlaterMatrices(Beta)(iw, all, all);
       log_ov(0)               = ComplexType(0.0);
-      det_ops::Log_Overlap(inner.SlaterMatrices(Beta)(ip, all, all), outer_beta, log_ov, false);
+      det_ops::Log_Overlap(inner_beta, outer_beta, log_ov);
       ov *= std::exp(log_ov(0));
     }
     Ov(iw) += inv_P * ov;
@@ -264,6 +212,11 @@ template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet>
 void StochasticWfn<MEM, devPsiT>::Log_Overlap(WlkSet& wset)
 {
+  if (at_delegate_limit())
+  {
+    nomsd_.Log_Overlap(wset);
+    return;
+  }
   int nw = wset.size();
   memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
   Log_Overlap(wset, ovlp);
@@ -278,6 +231,11 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
   memory::check_memory_space<MEM>(E, Ov);
   utils::check(E.shape() == std::array<long, 2>{wset.size(), 3}, "Size mismatch");
   utils::check(Ov.size() == wset.size(), "Size mismatch");
+  if (at_delegate_limit())
+  {
+    nomsd_.Energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
+    return;
+  }
 
   const int nwalk         = wset.size();
   const ComplexType zero(0.0);
@@ -312,6 +270,11 @@ template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet>
 void StochasticWfn<MEM, devPsiT>::Energy(WlkSet& wset)
 {
+  if (at_delegate_limit())
+  {
+    nomsd_.Energy(wset);
+    return;
+  }
   int nw = wset.size();
   memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
   memory::buffered_array<MEM, ComplexType, 2> eloc(nw, 3);
@@ -324,18 +287,23 @@ void StochasticWfn<MEM, devPsiT>::Energy(WlkSet& wset)
 
 template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet, nda::MemoryMatrix MatA>
-void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int /*nt*/)
+void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int nt)
 {
+  if (at_delegate_limit())
+  {
+    nomsd_.vbias(wset, std::forward<MatA>(v), dt, nt);
+    return;
+  }
   const int nwalk = wset.size();
   const bool full = (inner_nsteps_ > 0);
   const int Gsize = dm_size(full);
   memory::buffered_array<MEM, ComplexType, 2> G(nwalk, Gsize);
   MixedDensityMatrix_for_vbias(wset, G);
   v() = ComplexType(0.0);
-  if (full)
-    nomsd_.vbias_fullG(G, std::forward<MatA>(v), dt);
-  else
-    nomsd_.vbias_from_G(G, std::forward<MatA>(v), dt);
+  // vbias_from_G -> HamOp.vbias dispatches on the G layout: a compact G when the inner ensemble is
+  // at the anchor (inner_nsteps == 0) and a full NMO*NMO G once it has moved off (inner_nsteps > 0),
+  // so a single seam covers both. (full is still used above to size G via dm_size.)
+  nomsd_.vbias_from_G(G, std::forward<MatA>(v), dt);
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -348,6 +316,9 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
                                                          Accumulate&& accumulate)
 {
   memory::check_memory_space<MEM>(D, Ov);
+  if (at_delegate_limit())
+    APP_ABORT("Error in StochasticWfn::reduce_inner_cross_dm: called at delegate limit "
+              "(inner_nwalkers=1, inner_nsteps=0); use nomsd_ reductions instead.");
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::reduce_inner_cross_dm: inner walkers not initialized.");
   maybe_advance_inner_ensemble();
@@ -374,36 +345,39 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
   D()  = zero;
   Ov() = zero;
 
+  memory::array<MEM, ComplexType, 2> ref_alpha(NMO, nup);
+  memory::array<MEM, ComplexType, 2> ref_beta(NMO, ndown);
+
   for (int ip = 0; ip < P; ++ip)
   {
     Gp()  = zero;
     ov_() = zero;
-    auto refA = inner.SlaterMatrices(Alpha)(ip, all, all);
+    ref_alpha() = inner.SlaterMatrices(Alpha)(ip, all, all);
     if (compact)
     {
       auto G3d = nda::reshape(Gp, std::array<long, 3>{nwalk, nel, npol * NMO});
-      det_ops::MixedDensityMatrix(refA, wset.SlaterMatrices(Alpha), G3d(all, nda::range(nup), all), ov_, compact,
-                                  false);
+      det_ops::MixedDensityMatrix(ref_alpha, wset.SlaterMatrices(Alpha), G3d(all, nda::range(nup), all), ov_,
+                                  compact, false);
       if (wt == CLOSED)
         nda::tensor::scale(ComplexType(2.0), ov_);
       else if (wt == COLLINEAR)
       {
-        auto refB = inner.SlaterMatrices(Beta)(ip, all, all);
-        det_ops::MixedDensityMatrix(refB, wset.SlaterMatrices(Beta), G3d(all, nda::range(nup, nel), all), ov_,
+        ref_beta() = inner.SlaterMatrices(Beta)(ip, all, all);
+        det_ops::MixedDensityMatrix(ref_beta, wset.SlaterMatrices(Beta), G3d(all, nda::range(nup, nel), all), ov_,
                                     compact, false);
       }
     }
     else
     {
       auto G3d = nda::reshape(Gp, std::array<long, 3>{nwalk, nspin * npol * NMO, npol * NMO});
-      det_ops::MixedDensityMatrix(refA, wset.SlaterMatrices(Alpha), G3d(all, nda::range(npol * NMO), all), ov_,
-                                  compact, false);
+      det_ops::MixedDensityMatrix(ref_alpha, wset.SlaterMatrices(Alpha), G3d(all, nda::range(npol * NMO), all),
+                                  ov_, compact, false);
       if (wt == CLOSED)
         nda::tensor::scale(ComplexType(2.0), ov_);
       else if (wt == COLLINEAR)
       {
-        auto refB = inner.SlaterMatrices(Beta)(ip, all, all);
-        det_ops::MixedDensityMatrix(refB, wset.SlaterMatrices(Beta),
+        ref_beta() = inner.SlaterMatrices(Beta)(ip, all, all);
+        det_ops::MixedDensityMatrix(ref_beta, wset.SlaterMatrices(Beta),
                                     G3d(all, nda::range(npol * NMO, nspin * npol * NMO), all), ov_, compact,
                                     false);
       }
@@ -411,12 +385,12 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
 
     for (int w = 0; w < nwalk; ++w)
     {
-      ComplexType o = ov_(w);
-      double mag    = std::abs(o);
-      ComplexType s = (mag > 0.0) ? (o / ComplexType(mag, 0.0)) : zero;
-      Sp(w)         = s;
-      D(w)          = D(w) + s;
-      Ov(w)         = Ov(w) + inv_P * o;
+      ComplexType lin_ov = std::exp(ov_(w));
+      double mag         = std::abs(lin_ov);
+      ComplexType s      = (mag > 0.0) ? (lin_ov / ComplexType(mag, 0.0)) : zero;
+      Sp(w)              = s;
+      D(w)               = D(w) + s;
+      Ov(w)              = Ov(w) + inv_P * lin_ov;
     }
     accumulate(Gp, ov_, Sp, ip, 0, Gsize);
     mpi_->comm.barrier();
@@ -427,6 +401,11 @@ template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet, class MatG>
 void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix_for_vbias(const WlkSet& wset, MatG&& G)
 {
+  if (at_delegate_limit())
+  {
+    nomsd_.MixedDensityMatrix(wset, std::forward<MatG>(G), compact_G_for_vbias());
+    return;
+  }
   memory::check_memory_space<MEM>(G);
   const int nwalk       = wset.size();
   const ComplexType zero(0.0);
