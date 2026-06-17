@@ -491,4 +491,80 @@ TEST_CASE("stochastic_wfn_matches_nomsd", "[wfn_factory][stochastic_wfn]")
 }
 
 
+// ----------------------------------------------------------------------------
+// StochasticWfn build + inner-init smoke test (tag [stochastic_wfn]).
+//
+// Isolates the StochasticWfn *construction* and inner-walker initialization from
+// the reductions and from the plain-NOMSD path: it builds ONLY a stochastic trial
+// and initializes its inner ensemble -- no outer walker set, no Log_Overlap/Energy/
+// vbias, no second wavefunction. Triangulating the SIGSEGV in stochastic_wfn_matches_nomsd:
+//   - If THIS test SIGSEGVs   -> fault is in the stochastic build / inner-walker init.
+//   - If THIS test passes but `wfn_factory: sdet` SIGSEGVs on the same fixture
+//                              -> fault is in the plain dense-Hamiltonian path (not stochastic).
+//   - If both pass            -> fault is specific to running reductions after the stochastic
+//                                 build (e.g. shared buffer-manager / global state interaction).
+// ----------------------------------------------------------------------------
+template<MEMORY_SPACE MEM>
+void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                            std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+
+  const auto info  = read_info_from_wfn(wfn_file, "any");
+  const int  NMO   = std::get<0>(info);
+  const int  nup   = std::get<1>(info);
+  const int  ndown = std::get<2>(info);
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+    return;
+
+  std::map<std::string, AFQMCInfo> InfoMap;
+  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+  ptree ham_pt;
+  ham_pt.put("name", "ham0");
+  ham_pt.put("system", "info0");
+  ham_pt.put("filename", hamil_file);
+  HamiltonianFactory HamFac(InfoMap);
+  HamFac.push("ham0", ham_pt);
+  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  ptree wlk_pt;
+  wlk_pt.put("name", "wset0");
+  wlk_pt.put("walker_type", walkerTypeToString(type));
+
+  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  ptree stoch_pt;
+  stoch_pt.put("name", "wfn_stoch");
+  stoch_pt.put("system", "info0");
+  stoch_pt.put("filename", wfn_file);
+  stoch_pt.put("stochastic", true);
+  stoch_pt.put("inner_nwalkers", 1);
+  WfnFac.push("wfn_stoch", stoch_pt);
+
+  app_log(0, "[stochastic_build_smoke] building stochastic wavefunction");
+  auto& wfn_stoch = WfnFac.getWavefunction(mpi, "wfn_stoch", type, &ham, 11);
+  app_log(0, "[stochastic_build_smoke] built; initializing inner walkers");
+  REQUIRE(wfn_stoch.is_stochastic_wavefunction());
+  WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_stoch, "wfn_stoch", type, wlk_pt);
+  REQUIRE(wfn_stoch.stochastic_inner_walkers_initialized());
+  app_log(0, "[stochastic_build_smoke] inner walkers initialized OK");
+}
+
+TEST_CASE("stochastic_build_smoke", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+
+  app_log(0,"StochasticWfn build + inner-init smoke test.");
+
+  using namespace utils;
+
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_build_smoke<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+
+}
+
+
 } // namespace sfqmc
