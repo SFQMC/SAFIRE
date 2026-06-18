@@ -64,7 +64,11 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
   if (addH1)
   {
     // E[w][0] += scl * sum_ik h_ik G[w][ik]
-    nda::tensor::contract(scl, hijf, "ik", Gfull, "wik", ComplexType(1.0), E(all, 0), "w");
+    // hijf is stored flat [NMO*NMO] and Gfull flat [nwalk][NMO*NMO]; tensor::contract needs the
+    // index ranks to match the labels, so view them as h[i][k] and G[w][i][k].
+    auto hij2 = nda::reshape(hijf, std::array<long, 2>{NMO, NMO});
+    auto G3   = nda::reshape(Gfull, std::array<long, 3>{nwalk, NMO, NMO});
+    nda::tensor::contract(scl, hij2, "ik", G3, "wik", ComplexType(1.0), E(all, 0), "w");
   }
 
   if (not addEXX)
@@ -87,7 +91,9 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
   std::tie(i0, iN) = FairDivideBoundary(long(mpi->comm.rank()), long(NMO) * local_nCV, long(mpi->comm.size()));
   if (iN > i0)
   {
-    auto Lslice = Lankf(all, range(i0, iN));
+    // Lankf is [NMO*local_nCV][NMO] indexed at row (i*local_nCV + nc); the (i,nc) combined index
+    // (== Twban's column index) is what FairDivide partitions, so slice Lankf's ROWS, not its columns.
+    auto Lslice = Lankf(range(i0, iN), all);
     auto Tslice = Twban(all, range(i0, iN));
     nda::blas::gemm(ComplexType(1.0), GF, nda::transpose(Lslice), ComplexType(0.0), Tslice);
   }
@@ -102,7 +108,8 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
     ComplexType exx(0.0);
     for (int a = 0; a < NMO; ++a)
       for (int b = 0; b < NMO; ++b)
-        exx += static_cast<ComplexType>(nda::blas::dotc(T4D(n, a, b, all), T4D(n, b, a, all)));
+        // non-conjugating dot: EXX = sum_{ij,nc} T[i][j][nc] T[j][i][nc] (matches energy_impl).
+        exx += static_cast<ComplexType>(nda::blas::dot(T4D(n, a, b, all), T4D(n, b, a, all)));
     E(n, 1) -= ComplexType(0.5) * scl * exx;
   }
 
@@ -123,7 +130,7 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
       if (n % mpi->comm.size() != mpi->comm.rank())
         continue;
       E(n, 2) += ComplexType(0.5) * scl * scl *
-                 static_cast<ComplexType>(nda::blas::dotc(Kl(n, all), Kl(n, all)));
+                 static_cast<ComplexType>(nda::blas::dot(Kl(n, all), Kl(n, all)));
     }
   }
   else
