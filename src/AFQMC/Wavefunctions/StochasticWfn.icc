@@ -206,6 +206,11 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
 
   if (mpi_->comm.size() > 1)
     mpi_->comm.all_reduce_in_place_n(Ov().data(), nw, std::plus<>{});
+
+  // The pair loop accumulates the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; the OVLP
+  // property convention (matching NOMSD::Log_Overlap) is the LOG overlap, so convert back here.
+  for (int iw = 0; iw < nw; ++iw)
+    Ov(iw) = std::log(Ov(iw));
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -264,6 +269,11 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
     mpi_->comm.all_reduce_in_place_n(E().data(), 3 * nwalk, std::plus<>{});
   for (int w = 0; w < nwalk; ++w)
     E(w, nda::range::all) /= D(w);
+
+  // reduce_inner_cross_dm fills Ov with the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; the
+  // OVLP property convention (matching NOMSD::Energy) is the LOG overlap, so convert back here.
+  for (int w = 0; w < nwalk; ++w)
+    Ov(w) = std::log(Ov(w));
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
