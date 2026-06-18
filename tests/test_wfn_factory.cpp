@@ -567,4 +567,397 @@ TEST_CASE("stochastic_build_smoke", "[wfn_factory][stochastic_wfn]")
 }
 
 
+// ============================================================================
+// Stochastic hot-path overrides: delegate-limit parity (Phases 2a/2b/3a) and the
+// dynamic ensemble (Phase 3b), tag [stochastic_wfn].
+//
+// These exercise the StochasticWfn reductions through the public Wavefunction API
+// only (the overhaul variant keeps its typed internals private): Log_Overlap (2a),
+// Energy (2b), and vbias (3a) on the OUTER walkers, plus the dynamic free-projection
+// drive (3b). Two invariants are checked, mirroring the develop reference suite:
+//   (1) inner_nwalkers invariance -- a static replicated ensemble (inner_nsteps = 0)
+//       gives observables independent of inner_nwalkers (holds for ANY trial);
+//   (2) delegate limit -- for a single-determinant trial the stochastic reduction
+//       equals the plain NOMSD result. Multi-determinant trials diverge by design (a
+//       single-determinant inner ensemble cannot reproduce a CI-weighted NOMSD), so
+//       (2) is gated on ndet == 1. See StochasticDevelopment.md.
+// ============================================================================
+
+// Deterministic, reproducible perturbation of the outer walker Slater matrices, identical to the
+// sequence in stochastic_wfn_matches_nomsd, so independently-built walker sets are bit-for-bit
+// identical going into the reductions (a meaningful parity check needs non-trivial overlaps).
+template<MEMORY_SPACE MEM>
+void perturb_stochastic_walkers(WalkerSet<MEM>& wset, WALKER_TYPES type, int NMO, int nup, int ndown)
+{
+  const int nspin = (type == COLLINEAR) ? 2 : 1;
+  const int npol  = (type == NONCOLLINEAR) ? 2 : 1;
+  const int nwalk = wset.size();
+  std::array<int, 2> nels = {nup, ndown};
+  for (int spin = 0; spin < nspin; spin++) {
+    nda::array<ComplexType, 1> p_h(long(nwalk) * npol * NMO * nels[spin]);
+    for (long k = 0; k < p_h.size(); ++k) {
+      double v = 0.1 * (k + 1);
+      p_h[k] = {std::cos(v), std::sin(v * v)};
+    }
+    memory::array<MEM, ComplexType, 3> p(reshape(p_h, nwalk, npol * NMO, nels[spin]));
+    auto SM = wset.SlaterMatrices(static_cast<SpinTypes>(spin));
+    nda::tensor::add(p, "ijk", SM, "ijk");
+  }
+}
+
+// The OVLP property stores a complex LOG overlap whose imaginary part (phase) is defined only mod
+// 2*pi. NOMSD::Log_Overlap accumulates the unwrapped log-det phase, while the stochastic reduction
+// sums in linear space and then takes the log, so it returns the principal branch -- the two can
+// differ by an integer multiple of 2*pi*i while describing the SAME overlap. Compare the physical
+// (linear) overlaps exp(log_ov), which are branch-independent (this also matches the develop
+// reference suite, which compared linear overlaps directly).
+inline nda::array<ComplexType, 1> linear_overlap(nda::array<ComplexType, 1> const& log_ov)
+{
+  nda::array<ComplexType, 1> lin(log_ov.size());
+  for (long i = 0; i < log_ov.size(); ++i)
+    lin(i) = std::exp(log_ov(i));
+  return lin;
+}
+
+// Phase 2a: StochasticWfn::Log_Overlap reduces the inner ensemble into an effective trial overlap
+// (Eq. 24 of arXiv:2505.18519, static-ensemble limit). Overlap is read WITHOUT a following Energy
+// call -- Energy overwrites the OVLP walker property and would otherwise mask the override.
+template<MEMORY_SPACE MEM>
+void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                      std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+
+  const auto info  = read_info_from_wfn(wfn_file, "any");
+  const int  NMO   = std::get<0>(info);
+  const int  nup   = std::get<1>(info);
+  const int  ndown = std::get<2>(info);
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+    return;
+
+  std::map<std::string, AFQMCInfo> InfoMap;
+  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+  ptree ham_pt;
+  ham_pt.put("name", "ham0");
+  ham_pt.put("system", "info0");
+  ham_pt.put("filename", hamil_file);
+  HamiltonianFactory HamFac(InfoMap);
+  HamFac.push("ham0", ham_pt);
+  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  const int nwalk = 11; // prime: forces non-trivial splits in shared routines
+  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+  ptree wlk_pt;
+  wlk_pt.put("name", "wset0");
+  wlk_pt.put("walker_type", walkerTypeToString(type));
+
+  WavefunctionFactory<MEM> WfnFac(InfoMap);
+
+  ptree nomsd_pt;
+  nomsd_pt.put("name", "wfn_nomsd_ov");
+  nomsd_pt.put("system", "info0");
+  nomsd_pt.put("filename", wfn_file);
+  WfnFac.push("wfn_nomsd_ov", nomsd_pt);
+  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_ov", type, &ham, nwalk);
+
+  // Stochastic trials at the static limit (inner_nsteps = 0) with inner_nwalkers = 1 and = 3.
+  auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
+    ptree pt;
+    pt.put("name", name);
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    pt.put("stochastic", true);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    WfnFac.push(name, pt);
+    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
+    REQUIRE(w.is_stochastic_wavefunction());
+    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
+    REQUIRE(w.stochastic_inner_walkers_initialized());
+    return w;
+  };
+  auto& wfn_s1 = build_stoch("wfn_stoch_ov1", 1);
+  auto& wfn_s3 = build_stoch("wfn_stoch_ov3", 3);
+
+  // Every walker set is initialized from the SAME guess and SAME deterministic perturbation, so the
+  // three wavefunctions see bit-for-bit identical outer walkers.
+  auto collect_overlaps = [&](Wavefunction<MEM>& wfn) {
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_ov"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    wfn.Log_Overlap(wset);
+    nda::array<ComplexType, 1> ov(nwalk);
+    wset.getProperty(OVLP, ov);
+    return ov;
+  };
+  auto ov_ref = collect_overlaps(wfn_nomsd);
+  auto ov_s1  = collect_overlaps(wfn_s1);
+  auto ov_s3  = collect_overlaps(wfn_s3);
+
+  // (1) inner_nwalkers invariance (holds for any trial).
+  CHECK_THAT(linear_overlap(ov_s3), utils::Approx(linear_overlap(ov_s1)));
+  // (2) delegate limit: single-determinant trial => stochastic overlap == NOMSD overlap.
+  if (wfn_nomsd.total_number_of_references() == 1)
+    CHECK_THAT(linear_overlap(ov_s1), utils::Approx(linear_overlap(ov_ref)));
+}
+
+TEST_CASE("stochastic_overlap_matches_nomsd", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn Log_Overlap delegate-limit parity (Phase 2a).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_overlap_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Phase 2b: StochasticWfn::Energy reduces the inner ensemble into an effective local energy
+// (E1, EXX, EJ) and overlap per outer walker (Eq. 27 of arXiv:2505.18519, static-ensemble limit).
+template<MEMORY_SPACE MEM>
+void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                     std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+
+  const auto info  = read_info_from_wfn(wfn_file, "any");
+  const int  NMO   = std::get<0>(info);
+  const int  nup   = std::get<1>(info);
+  const int  ndown = std::get<2>(info);
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+    return;
+
+  std::map<std::string, AFQMCInfo> InfoMap;
+  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+  ptree ham_pt;
+  ham_pt.put("name", "ham0");
+  ham_pt.put("system", "info0");
+  ham_pt.put("filename", hamil_file);
+  HamiltonianFactory HamFac(InfoMap);
+  HamFac.push("ham0", ham_pt);
+  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  const int nwalk = 11;
+  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+  ptree wlk_pt;
+  wlk_pt.put("name", "wset0");
+  wlk_pt.put("walker_type", walkerTypeToString(type));
+
+  WavefunctionFactory<MEM> WfnFac(InfoMap);
+
+  ptree nomsd_pt;
+  nomsd_pt.put("name", "wfn_nomsd_en");
+  nomsd_pt.put("system", "info0");
+  nomsd_pt.put("filename", wfn_file);
+  WfnFac.push("wfn_nomsd_en", nomsd_pt);
+  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_en", type, &ham, nwalk);
+
+  auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
+    ptree pt;
+    pt.put("name", name);
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    pt.put("stochastic", true);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    WfnFac.push(name, pt);
+    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
+    return w;
+  };
+  auto& wfn_s1 = build_stoch("wfn_stoch_en1", 1);
+  auto& wfn_s3 = build_stoch("wfn_stoch_en3", 3);
+
+  struct WalkerEnergies
+  {
+    nda::array<ComplexType, 1> ov, e1, exx, ej;
+  };
+  auto collect_energies = [&](Wavefunction<MEM>& wfn) {
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_en"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    wfn.Energy(wset);
+    WalkerEnergies out;
+    out.ov.resize(nwalk);
+    out.e1.resize(nwalk);
+    out.exx.resize(nwalk);
+    out.ej.resize(nwalk);
+    wset.getProperty(OVLP, out.ov);
+    wset.getProperty(E1_, out.e1);
+    wset.getProperty(EXX_, out.exx);
+    wset.getProperty(EJ_, out.ej);
+    return out;
+  };
+  WalkerEnergies ref = collect_energies(wfn_nomsd);
+  WalkerEnergies s1  = collect_energies(wfn_s1);
+  WalkerEnergies s3  = collect_energies(wfn_s3);
+
+  // (1) inner_nwalkers invariance.
+  CHECK_THAT(linear_overlap(s3.ov), utils::Approx(linear_overlap(s1.ov)));
+  CHECK_THAT(s3.e1, utils::Approx(s1.e1));
+  CHECK_THAT(s3.exx, utils::Approx(s1.exx));
+  CHECK_THAT(s3.ej, utils::Approx(s1.ej));
+
+  // (2) delegate limit: single-determinant trial => stochastic energy/overlap == NOMSD.
+  if (wfn_nomsd.total_number_of_references() == 1)
+  {
+    CHECK_THAT(linear_overlap(s1.ov), utils::Approx(linear_overlap(ref.ov)));
+    CHECK_THAT(s1.e1, utils::Approx(ref.e1));
+    CHECK_THAT(s1.exx, utils::Approx(ref.exx));
+    CHECK_THAT(s1.ej, utils::Approx(ref.ej));
+  }
+
+  // (3) Overlap/Energy consistency: Energy's Ov is the same reduction as the Phase 2a Log_Overlap,
+  // computed through a different code path, so the two must agree.
+  {
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_en"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    wfn_s1.Log_Overlap(wset);
+    nda::array<ComplexType, 1> ov_ovlp(nwalk);
+    wset.getProperty(OVLP, ov_ovlp);
+    CHECK_THAT(linear_overlap(ov_ovlp), utils::Approx(linear_overlap(s1.ov)));
+  }
+
+  // (4) Propagator entry point: the 3-arg Energy(wset, E, Ov) -- called directly by the
+  // local-energy propagation path in the propagator (not the property-setter form) -- agrees with
+  // Energy(wset). Exercises the 3-arg overload with caller-allocated buffers.
+  {
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_en"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    memory::array<MEM, ComplexType, 2> E_direct(nwalk, 3);
+    memory::array<MEM, ComplexType, 1> Ov_direct(nwalk);
+    wfn_s1.Energy(wset, E_direct, Ov_direct);
+    auto E_h  = nda::to_host(E_direct);
+    auto Ov_h = nda::to_host(Ov_direct);
+    nda::array<ComplexType, 1> e1_col(nwalk), exx_col(nwalk), ej_col(nwalk);
+    for (int n = 0; n < nwalk; ++n)
+    {
+      e1_col(n)  = E_h(n, 0);
+      exx_col(n) = E_h(n, 1);
+      ej_col(n)  = E_h(n, 2);
+    }
+    CHECK_THAT(linear_overlap(Ov_h), utils::Approx(linear_overlap(s1.ov)));
+    CHECK_THAT(e1_col, utils::Approx(s1.e1));
+    CHECK_THAT(exx_col, utils::Approx(s1.exx));
+    CHECK_THAT(ej_col, utils::Approx(s1.ej));
+  }
+}
+
+TEST_CASE("stochastic_energy_matches_nomsd", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn Energy delegate-limit parity (Phase 2b).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_energy_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Phase 3a: StochasticWfn::MixedDensityMatrix_for_vbias reduces the inner ensemble into the mixed
+// density matrix the force bias contracts against (estimator 3 of arXiv:2505.18519, static limit),
+// and vbias contracts it (estimator 4, x_gamma[w] = L_gamma . G[w]) against the True-Ham Cholesky.
+// The overhaul vbias(wset, X, dt) drives MixedDensityMatrix_for_vbias internally, so we compare the
+// resulting force bias X (= L.G) directly; the intermediate G is not exposed on the variant.
+template<MEMORY_SPACE MEM>
+void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                    std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+
+  const auto info  = read_info_from_wfn(wfn_file, "any");
+  const int  NMO   = std::get<0>(info);
+  const int  nup   = std::get<1>(info);
+  const int  ndown = std::get<2>(info);
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+    return;
+  const double dt(0.01);
+
+  std::map<std::string, AFQMCInfo> InfoMap;
+  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+  ptree ham_pt;
+  ham_pt.put("name", "ham0");
+  ham_pt.put("system", "info0");
+  ham_pt.put("filename", hamil_file);
+  HamiltonianFactory HamFac(InfoMap);
+  HamFac.push("ham0", ham_pt);
+  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  const int nwalk = 11;
+  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+  ptree wlk_pt;
+  wlk_pt.put("name", "wset0");
+  wlk_pt.put("walker_type", walkerTypeToString(type));
+
+  WavefunctionFactory<MEM> WfnFac(InfoMap);
+
+  ptree nomsd_pt;
+  nomsd_pt.put("name", "wfn_nomsd_vb");
+  nomsd_pt.put("system", "info0");
+  nomsd_pt.put("filename", wfn_file);
+  WfnFac.push("wfn_nomsd_vb", nomsd_pt);
+  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_vb", type, &ham, nwalk);
+
+  auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
+    ptree pt;
+    pt.put("name", name);
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    pt.put("stochastic", true);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    WfnFac.push(name, pt);
+    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
+    return w;
+  };
+  auto& wfn_s1 = build_stoch("wfn_stoch_vb1", 1);
+  auto& wfn_s3 = build_stoch("wfn_stoch_vb3", 3);
+
+  auto collect_vbias = [&](Wavefunction<MEM>& wfn) {
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_vb"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    // Discrete (model) propagators must initialize potentials before vbias.
+    if (wfn.getHamType() == ModelHamiltonian)
+    {
+      const long ncv = wfn.number_of_cholesky_vectors();
+      memory::array<MEM, ComplexType, 1> vMF_discrete(ncv, ComplexType(0.0, 0.0));
+      memory::host_array<ComplexType, 1> nMF(2 * NMO, ComplexType(0.0, 0.0));
+      wfn.update_potentials(dt, nMF, vMF_discrete, false);
+    }
+    memory::array<MEM, ComplexType, 2> X(nwalk, wfn.number_of_cholesky_vectors());
+    wfn.vbias(wset, X, dt);
+    return nda::to_host(X);
+  };
+  auto X_ref = collect_vbias(wfn_nomsd);
+  auto X_s1  = collect_vbias(wfn_s1);
+  auto X_s3  = collect_vbias(wfn_s3);
+
+  // (1) inner_nwalkers invariance.
+  CHECK_THAT(X_s3, utils::Approx(X_s1));
+  // (2) delegate limit: single-determinant trial => stochastic force bias == NOMSD.
+  if (wfn_nomsd.total_number_of_references() == 1)
+    CHECK_THAT(X_s1, utils::Approx(X_ref));
+}
+
+TEST_CASE("stochastic_vbias_matches_nomsd", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn vbias delegate-limit parity (Phase 3a).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_vbias_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+
+// ============================================================================
+
 } // namespace sfqmc
