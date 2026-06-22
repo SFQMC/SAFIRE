@@ -1303,5 +1303,141 @@ TEST_CASE("stochastic_propagator_step", "[wfn_factory][stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
+// Phase 3b-var regression anchor: the stochastic inner (Variational) stack can be built from a
+// SEPARATE Hamiltonian named by the `inner_hamiltonian` input key, which the WavefunctionFactory
+// builds on demand through the HamiltonianFactory passed to its two-argument constructor. Two trials
+// are built in one factory: wfn_clone (no inner_hamiltonian -> inner stack clones the True Ham, the
+// pre-3b-var path) and wfn_hvar (inner_hamiltonian = the SAME integral file -> factory builds a second
+// Hamiltonian and uses it for the inner stack). With identical inputs (so identical inner_seed) and
+// identical integrals, running the dynamic path (inner_nsteps = 1, so the inner Ham actually drives
+// B_T) must give identical Energy/Log_Overlap/vbias. The has_input checks prove the factory actually
+// traversed the inner_hamiltonian path (built + registered the second Ham) rather than silently
+// ignoring the key. (Proving that a *different* Variational Ham changes B_T is the deferred research
+// validation -- it needs a variational HDF5 fixture that does not yet exist in the repo.)
+template<MEMORY_SPACE MEM>
+void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                               std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // Phase 3b un-rotated full-G kernels are CPU-only this phase.
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    const double dt(0.01);
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk = 11;
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    // The two-argument WavefunctionFactory constructor wires in HamFac so the factory can build the
+    // inner (Variational) Hamiltonian on demand.
+    WavefunctionFactory<MEM> WfnFac(InfoMap, HamFac);
+    auto build_pt = [&](std::string id, bool with_inner_ham) {
+      ptree pt;
+      pt.put("name", id);
+      pt.put("system", "info0");
+      pt.put("filename", wfn_file);
+      pt.put("stochastic", true);
+      pt.put("inner_nwalkers", 4);
+      pt.put("inner_nsteps", 1);
+      ptree inner_prop;
+      inner_prop.put("timestep", 0.01);
+      pt.put_child("inner_propagator", inner_prop);
+      if (with_inner_ham)
+      {
+        ptree inner_ham_block;
+        inner_ham_block.put("filename", hamil_file); // same integrals as the True Ham
+        pt.put_child("inner_hamiltonian", inner_ham_block);
+      }
+      return pt;
+    };
+
+    WfnFac.push("wfn_clone", build_pt("wfn_clone", false));
+    WfnFac.push("wfn_hvar", build_pt("wfn_hvar", true));
+    auto& wfn_clone = WfnFac.getWavefunction(mpi, "wfn_clone", type, &ham, nwalk);
+    auto& wfn_hvar  = WfnFac.getWavefunction(mpi, "wfn_hvar", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_clone, "wfn_clone", type, wlk_pt);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_hvar, "wfn_hvar", type, wlk_pt);
+
+    // The factory built (and registered) a second Ham for the inner_hamiltonian trial only.
+    REQUIRE(HamFac.has_input("wfn_hvar__inner_hamiltonian__"));
+    REQUIRE_FALSE(HamFac.has_input("wfn_clone__inner_hamiltonian__"));
+
+    std::shared_ptr<utils::RandomGenerator_t<>> rng_a = std::make_shared<utils::RandomGenerator_t<>>();
+    std::shared_ptr<utils::RandomGenerator_t<>> rng_b = std::make_shared<utils::RandomGenerator_t<>>();
+    auto wset_a = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng_a);
+    auto wset_b = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng_b);
+    wset_a.resize(nwalk, WfnFac.getInitialGuess("wfn_clone"));
+    wset_b.resize(nwalk, WfnFac.getInitialGuess("wfn_hvar"));
+    perturb_stochastic_walkers<MEM>(wset_a, type, NMO, nup, ndown); // deterministic -> wset_a == wset_b
+    perturb_stochastic_walkers<MEM>(wset_b, type, NMO, nup, ndown);
+
+    const double tol = 1e-9;
+    for (int step = 0; step < 3; ++step)
+    {
+      // Same hot-path order as stochastic_dynamic_ensemble_smoke, lockstep on both trials.
+      wfn_clone.begin_inner_step();
+      wfn_hvar.begin_inner_step();
+      memory::array<MEM, ComplexType, 2> Xa(nwalk, wfn_clone.number_of_cholesky_vectors());
+      memory::array<MEM, ComplexType, 2> Xb(nwalk, wfn_hvar.number_of_cholesky_vectors());
+      wfn_clone.vbias(wset_a, Xa, dt); // first reduction -> resamples inner ensemble
+      wfn_hvar.vbias(wset_b, Xb, dt);
+      wfn_clone.Energy(wset_a);
+      wfn_hvar.Energy(wset_b);
+      wfn_clone.Log_Overlap(wset_a);
+      wfn_hvar.Log_Overlap(wset_b);
+
+      nda::array<ComplexType, 1> ova(nwalk), e1a(nwalk), exxa(nwalk), eja(nwalk);
+      nda::array<ComplexType, 1> ovb(nwalk), e1b(nwalk), exxb(nwalk), ejb(nwalk);
+      wset_a.getProperty(OVLP, ova); wset_a.getProperty(E1_, e1a);
+      wset_a.getProperty(EXX_, exxa); wset_a.getProperty(EJ_, eja);
+      wset_b.getProperty(OVLP, ovb); wset_b.getProperty(E1_, e1b);
+      wset_b.getProperty(EXX_, exxb); wset_b.getProperty(EJ_, ejb);
+      auto Xa_h = nda::to_host(Xa);
+      auto Xb_h = nda::to_host(Xb);
+      for (int w = 0; w < nwalk; ++w)
+      {
+        REQUIRE(std::abs(ova(w) - ovb(w)) < tol);
+        REQUIRE(std::abs(e1a(w) - e1b(w)) < tol);
+        REQUIRE(std::abs(exxa(w) - exxb(w)) < tol);
+        REQUIRE(std::abs(eja(w) - ejb(w)) < tol);
+      }
+      for (int w = 0; w < nwalk; ++w)
+        for (int g = 0; g < Xa_h.extent(1); ++g)
+          REQUIRE(std::abs(Xa_h(w, g) - Xb_h(w, g)) < tol);
+    }
+  }
+}
+
+TEST_CASE("stochastic_inner_hamiltonian_same_as_true", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn inner_hamiltonian (same integral file) reproduces the clone path (Phase 3b-var).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_inner_hamiltonian_same_as_true<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
 
 } // namespace sfqmc
