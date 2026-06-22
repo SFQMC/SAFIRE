@@ -8,11 +8,19 @@ rather than a thin delegate wrapper around `NOMSD`.
 
 ## Overhaul port status
 
-The stochastic feature was first implemented on **develop** (`stochastic-wfn-phase-3b-dynamic-ensemble`
-on `beevus77/SAFIRE`). It is being transplanted onto **`upstream/overhaul`** on branch
-`stochastic-wfn-overhaul` (`nda`, `std::variant`, `memory::const_shared_array`, `Log_Overlap`, …).
+### Branch layout (`beevus77/SAFIRE`, Jun 2026)
 
-| | Develop (reference) | Overhaul port (`stochastic-wfn-overhaul`) |
+| Branch | Role |
+|--------|------|
+| **`main`** | Active development — overhaul API + ported stochastic (Phases 1a–3b). Cut feature branches here and merge back after review. |
+| **`stochastic-wfn-develop`** | Frozen develop-line reference (Phases 1a–3b complete on the old `boost::variant` stack). Kept for comparison and fixture history; not the integration target. |
+| **`upstream/overhaul`** | Upstream architecture base; rebase `main` onto it periodically while upstream settles. |
+
+The stochastic feature was first implemented on the develop-line (`stochastic-wfn-phase-*` branches,
+now archived on **`stochastic-wfn-develop`**). It was transplanted onto **`upstream/overhaul`**;
+that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Overlap`, …).
+
+| | `stochastic-wfn-develop` | `main` |
 |---|---|---|
 | Phases 1a–3b implementation | Complete | **Ported** (as of Jun 2026) |
 | `safire_lib` build | Verified | **Compiles** |
@@ -1300,7 +1308,7 @@ the dynamic/full-G checks silently. On overhaul the tests also `return` for `DEV
 All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD wavefunction input
 (RHF/UHF/PHMSD inputs skip stochastic checks silently).
 
-**Overhaul (`stochastic-wfn-overhaul`)** — target binary is the consolidated `test_afqmc`
+**`main` (overhaul API)** — target binary is the consolidated `test_afqmc`
 (`tests/test_wfn_factory.cpp`); output under `${BUILD_DIR}/tests/bin/`. The static + 3b cases are
 **ported and CPU-verified** (8 cases, 2892 assertions) on the `Ne_cc-pvdz` dense+RHF fixture (the
 develop `ham_chol_sc.h5` / `wfn_msd.h5` fixtures are gone). Build is driven via `cmake --build` (Ninja
@@ -1335,7 +1343,7 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 - Port the Phase 1a/1b/1c **infrastructure** tests (need new `Wavefunction`-variant accessors).
 - Run the `[stochastic_wfn]` tag with `-np > 1` (the ported tests run `-np 1`).
 
-**Both branches (longer term):**
+**Both code lines (`stochastic-wfn-develop` and `main`; longer term):**
 
 - Full production driver run (`DriverFactory` / input deck) with `stochastic: true` and `inner_nsteps > 0`.
 - Static-limit outer propagator step matching NOMSD at the delegate limit (dynamic path covered by `stochastic_propagator_step`; static delegate parity remains unit-tested per method, not through `Propagate()`).
