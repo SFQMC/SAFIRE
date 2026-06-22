@@ -30,8 +30,8 @@ that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Over
 | Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only** |
 | GPU build | CPU-only gate in dynamic path | **Not tested** |
 
-**The full `[stochastic_wfn]` tag passes on overhaul (8 cases, 2892 assertions, `mpirun -np 1`,
-`Ne_cc-pvdz`, Jun 2026).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
+**The full `[stochastic_wfn]` tag passes on overhaul (9 cases, 5567 assertions, `mpirun -np 1`,
+`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
 parity + Phases 2a/2b/3a static reductions + the 3b full-G dynamic trio). Porting them surfaced and
 fixed three real overhaul-only bugs — see
 [Port bugs surfaced by the test port](#port-bugs-surfaced-by-the-test-port-overhaul).
@@ -736,7 +736,7 @@ delegates to it). All stochastic keys require `stochastic: true` in `Wavefunctio
 | `inner_nsteps` | `0` | 1c/3b | Number of free-projection `B̂_T` steps applied (from the anchor) per outer step. `0` = static anchor (Phases 1c–3a). **`> 0` (Phase 3b)** drives the inner free-projection propagator; forces free-projection mode in `buildStochasticInnerStack` and the un-rotated full-G True-Ham scoring (CLOSED trials only this phase). |
 | `inner_seed` | `777` | 1c | Seed for the inner propagator device RNG. `0` selects a time-based seed (same convention as the driver `seed`). Rank-decorrelated via `split_seed`. |
 | `inner_propagator` | *(optional subtree)* | 1c/3b | Propagator input block for `PropagatorFactory`. If omitted, factory defaults apply. `system` and `name` are injected when missing (`name` suffix `_inner_propagator`). At `inner_nsteps > 0` the free-projection mode flags are forced; `timestep` (default `0.01`) sets the `B̂_T` step `dt`. |
-| `inner_hamiltonian` *(deferred)* | *(required for Ĥ_var)* | 3b-var | Handle/filename for the pre-optimized **Variational** Cholesky Hamiltonian `Ĥ_var` that defines `B̂_T` (same basis/NMO as the True Ham). **Not yet parsed/built** — Phase 3b runs with the inner stack as a True-Ham clone; introducing `Ĥ_var` (a second `Hamiltonian` build + a variational Ham HDF5 file) is the deferred follow-up. See [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational--the-end-goal). |
+| `inner_hamiltonian` | *(optional sub-block; `filename` required, `system` inherited)* | 3b-var ✓ | Sub-block of the stochastic wfn block naming the pre-optimized **Variational** Cholesky Hamiltonian `Ĥ_var` that defines `B̂_T` (same basis/NMO as the True Ham). **Parsed and built (3b-var):** `WavefunctionFactory` builds it on demand through the `HamiltonianFactory` it holds; absent ⇒ the inner stack clones the True Ham. The remaining deferred piece is the variational HDF5 *file* (none in the repo yet). See [Phase 3b-var](#phase-3b-var--variational-hamiltonian-factory-plumbing-complete-factory-plumbing-research-validation-deferred) and [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational--the-end-goal). |
 
 Example wavefunction block fragment:
 
@@ -783,7 +783,7 @@ Optional explicit inner propagator settings:
 | Helper | Role |
 |--------|------|
 | `NomsdSdetPair` / `makeOuterInnerSlaterDetOperations()` | Two independent `SlaterDetOperations` instances (same layout flags). |
-| `NomsdHamOpsPair` / `makeOuterInnerHamOps()` | Two independent `getHamOps()` builds (in-place brace init; `HamOps` is move-only). **Today both are built from the True Hamiltonian (a clone); at Phase 3b the inner build switches to the Variational Hamiltonian** (read from `variational_hamiltonian`). |
+| `NomsdHamOpsPair` / `makeOuterInnerHamOps()` | Two independent `getHamOps()` builds (in-place brace init; `HamOps` is move-only). The outer build always uses the True Ham `h`; **at Phase 3b-var the inner build takes the Variational Ham** that `WavefunctionFactory` builds from the `inner_hamiltonian` block, else clones the True Ham. |
 | `clone_orbitals()` | Deep copy of CI/orbital vectors for the inner `NOMSD`. |
 | `buildStochasticInnerStack()` | Assembles inner `Wavefunction` + device RNG + `Propagator` (`.cpp` only; avoids `Propagator.hpp` in header). |
 | `buildStochasticNomsdWavefunction*()` | Assembles `StochasticWfn` with outer infrastructure + pre-built inner stack. |
@@ -950,7 +950,7 @@ Not wavefunction visitor methods, but required for a full-fledged type.
 
 | Component | Current behavior | Desired functionality |
 |--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| `StochasticWfn` constructor | Builds outer `nomsd_`; accepts pre-built `StochasticInnerStack` (inner NOMSD + propagator + RNG). Parses `inner_nwalkers`, `inner_nsteps`, `inner_seed`, `inner_propagator`. Defers inner `WalkerSet` resize. | **Build two `HamOps`** (Phase 3b): the True Ham for `nomsd_` and the **Variational** Ham for the inner stack — the factory must read the second Cholesky Hamiltonian (`variational_hamiltonian`) and build the inner stack around it instead of cloning the True Ham. Plus population control, first-class HDF5 type (Phase 8). |
+| `StochasticWfn` constructor | Builds outer `nomsd_`; accepts pre-built `StochasticInnerStack` (inner NOMSD + propagator + RNG). Parses `inner_nwalkers`, `inner_nsteps`, `inner_seed`, `inner_propagator`. Defers inner `WalkerSet` resize. | **Builds two `HamOps`** (3b-var ✓): the True Ham for `nomsd_` (from `h`) and the **Variational** Ham for the inner stack — `WavefunctionFactory` builds the second Cholesky Hamiltonian from `inner_hamiltonian` through the `HamiltonianFactory` it holds (absent ⇒ clones the True Ham). Remaining: population control, first-class HDF5 type (Phase 8). |
 | `interpret_inputs(pt)` | Validates NOMSD keys plus all stochastic keys listed above. Rejects `inner_nsteps > 0`. | Relax the `inner_nsteps` guard when Phase 3b invokes `inner_propagator()`. |
 | `WavefunctionFactory` | `stochastic: true` on NOMSD HDF5 path; `buildStochasticInnerStack()` + `buildStochasticNomsdWavefunction*`; `maybe_initialize_stochastic_inner_walkers()` after build. | First-class `stochasticwfn` type with its own `fromHDF5` branch (Phase 8). |
 | `getWavefunctionType()` | Not aware of `StochasticWfn`. | Detect stochastic trial wavefunction files on disk. |
@@ -1115,11 +1115,15 @@ that have left the anchor. Reductions stay **scored against the True Hamiltonian
 
 **Scope landed this phase (CPU-verified on develop and overhaul):** dynamic free-projection sampling, the
 `S_p` phase weights, the `reduce_inner_cross_dm` refactor, the un-rotated full-G True-Ham scoring, and
-end-to-end outer propagator integration (`stochastic_propagator_step`). **Deferred:** the **Variational Hamiltonian `Ĥ_var`** — the inner stack stays a True-Ham clone, so
-`B̂_T` is generated by the cloned True Cholesky; the machinery is fully exercised, only the generator differs
-from the paper's intent. Building `Ĥ_var` needs new factory plumbing for a *second* `Hamiltonian` (the
-wavefunction factory has only one) **and** a variational-Hamiltonian HDF5 file that does not exist in the
-repo — a follow-up "Phase 3b-var". The deferred input key is **`inner_hamiltonian`**.
+end-to-end outer propagator integration (`stochastic_propagator_step`). **Deferred at 3b:** the
+**Variational Hamiltonian `Ĥ_var`** — the inner stack stayed a True-Ham clone, so `B̂_T` was generated
+by the cloned True Cholesky; the machinery is fully exercised, only the generator differed from the
+paper's intent. The **factory plumbing for a *second* `Hamiltonian`** is now done in
+[Phase 3b-var](#phase-3b-var--variational-hamiltonian-factory-plumbing-complete-factory-plumbing-research-validation-deferred)
+(input key **`inner_hamiltonian`**, built on demand by `WavefunctionFactory` through the
+`HamiltonianFactory` it now holds). What remains is the **variational-Hamiltonian HDF5 file**, which
+does not exist in the repo — until it is generated (quantum-chemistry side), the inner stack still runs
+as a True-Ham clone in practice and the "different `Ĥ_var` ⇒ different `B̂_T`" validation is deferred.
 
 | Item | Status |
 |------|--------|
@@ -1129,6 +1133,35 @@ repo — a follow-up "Phase 3b-var". The deferred input key is **`inner_hamilton
 | Refactor | ✓ The shared per-inner-walker cross-DM loop is now a private `reduce_inner_cross_dm(wset, compact, transposed, Gsize, D, Ov, accumulate)` (the callback folds `G_{p,w}` into each estimator's `S_p`-weighted numerator); it also owns the `maybe_advance_inner_ensemble()` resample. `Log_Overlap` keeps its own `nw×P` FairDivide loop. |
 | Half-rotation | ✓ Resolved via the **un-rotated full-G contraction** (not per-walker re-rotation): once `ψ_p ≠` anchor the reductions form the **full** NMO×NMO cross `G` and contract it with the full (un-rotated) Cholesky/bare `hij`. The EXX/EJ/E1 kernel is a single shared `full_g::energy_closed` (`HamiltonianOperations/full_g_estimators.hpp`, reusing the proven `energy_impl` structure with an identity-rotated Cholesky), written HamOp-agnostically (G requested as `[nwalk][NMO*NMO]` transposed). On overhaul only the dense `Real3IndexFactorization` route is live (`THCOps`, `ModelHamOps`, `KPTHCOps`, `KP3IndexFactorization` carry `energy_fullG` stubs pending coverage); the sparse `SparseTensor` route existed only on develop (`Likn` densified via `Matrix2MA`, exercised there by `ham_chol_sc.h5`). `ma_rotate::getLank` could not be reused (it reinterprets a real `Likn` as complex). **The full-G force bias has no separate `vbias_fullG` seam** — `Real3IndexFactorization::vbias` dispatches on the G layout (compact vs full NMO×NMO), so the un-rotated contraction is reached through the ordinary `vbias`/`vbias_from_G` path; only `energy_fullG` remains a dedicated seam (`energy_from_fullG` on NOMSD). **CLOSED (RHF) trials only this phase** (rejected at `StochasticWfn` construction otherwise; also CPU-only); COLLINEAR/NONCOLLINEAR full-G are a follow-up. |
 | Tests | ✓ **`stochastic_full_g_matches_compact`** — full-G at the anchor == compact `nd = 0` == NOMSD (new-kernel validation). ✓ **`stochastic_dynamic_ensemble_smoke`** — resample + **all four** stochastic overrides (`MixedDensityMatrix_for_vbias`/`vbias`, `Energy`/`energy_fullG`, `Log_Overlap`) on the moved ensemble; asserts finite. ✓ **`stochastic_propagator_step`** — real OUTER `AFQMCBasePropagator::Propagate()` on a dynamic trial (`inner_nsteps = 1`, `inner_nwalkers = 4`); full hot path through the propagator (`begin_inner_step` → resample → `MixedDensityMatrix_for_vbias`/`vbias` (full-G via layout dispatch) → `vHS` → apply → `Log_Overlap`), including G-buffer sizing from `size_of_G_for_vbias()`; asserts finite weights/energies/overlaps over 3 steps (smoke, not NOMSD parity). All three gated on **CLOSED (RHF)**. **[develop]** CPU-verified with `C_1x1x1_dzvp/wfn_rhf.h5` + `ham_chol_sc.h5` (also passes with `wfn_msd.h5`). **[overhaul] Ported + CPU-verified** on `Ne_cc-pvdz` (`ham_chol_dense.h5` + `wfn_rhf.h5`), after fixing the full-G kernel bugs (see [Port bugs](#port-bugs-surfaced-by-the-test-port-overhaul)). Remaining (research-level): `P → ∞` convergence and `inner_seed` stability. |
+
+#### Phase 3b-var — Variational Hamiltonian factory plumbing (**complete**, factory plumbing; research validation deferred)
+
+**Goal:** let the inner (Variational) stack be built from a **separate** Cholesky Hamiltonian `Ĥ_var`
+read from its own HDF5 file, instead of cloning the True Ham. This is the factory-plumbing follow-up
+that Phase 3b explicitly deferred (the inner stack was a True-Ham clone, so `B̂_T` was generated by the
+cloned True Cholesky). The dual-Hamiltonian end goal becomes real here: the outer `nomsd_` scores
+against the **True** Ham (unchanged), and `B̂_T` is generated by the **Variational** Cholesky.
+
+**Design decision (where the second Hamiltonian gets built):** `WavefunctionFactory` now **holds a
+`HamiltonianFactory&`** (added to its constructor) and builds `Ĥ_var` on demand inside `fromHDF5` when
+a stochastic trial names one via `inner_hamiltonian`. It remains a Hamiltonian *consumer* — it does
+not own Hamiltonians or duplicate any build logic; it asks the `HamiltonianFactory` (a deliberately
+small class) to build the second one, exactly as the driver does for the True Ham. **`DriverFactory`
+is untouched** — the alternative of building `Ĥ_var` in the driver and threading a second `Hamiltonian*`
+through `getWavefunction` was prototyped and rejected (it spread the change across the driver's call
+sites); concentrating it in `WavefunctionFactory` keeps the feature in one layer. The
+`inner_hamiltonian` key is consumed entirely at the factory level (read from the raw input in
+`fromHDF5`) and is **never forwarded into the wavefunction's own ptree**, so `StochasticWfn` /
+`strip_stochastic_input_keys` are unchanged.
+
+| Item | Status |
+|------|--------|
+| Input key | ✓ **`inner_hamiltonian`** — an optional sub-block of the stochastic wfn block naming the Variational Ham (`filename` required; `system` inherited from the wfn block if absent). `WavefunctionFactory::interpret_inputs` rejects it unless `stochastic: true` and lists it as a known pass-through key; it is **not** copied into the cleaned ptree, so it stays out of the wavefunction. |
+| Factory wiring | ✓ The `WavefunctionFactory` constructor is **overloaded**: the original `WavefunctionFactory(InfoMap)` is preserved (member `HamFac_` is a `HamiltonianFactory*` defaulting to `nullptr`), and a new `WavefunctionFactory(InfoMap, HamiltonianFactory&)` sets `HamFac_`. So every existing call site (all in tests) compiles **unchanged**; only callers that need an inner Hamiltonian use the two-arg form. `fromHDF5` resolves `Hamiltonian& inner_ham`: if the wfn block has `inner_hamiltonian`, it builds/fetches that Ham via `HamFac_` (registered under the namespaced ID `<wfn>__inner_hamiltonian__`, idempotent via the new `HamiltonianFactory::has_input`) — aborting with a clear message if `HamFac_` is null (single-arg-constructed factory); otherwise `inner_ham = h` (the True Ham, clone path). It passes `inner_ham` to `buildStochasticNomsdWavefunction`, whose inner HamOps now come from `inner_ham.getHamiltonianOperations(...)` (outer `nomsd_` HamOps still from `h`). Both half-rotated with the **same** trial orbitals; only the integrals differ. |
+| Driver | ✓ **`DriverFactory` call sites unchanged.** `AFQMCFactory` constructs `WfnFac(InfoMap, HamFac)` so production input decks can name `inner_hamiltonian`; `DriverFactory::getWavefunction` is untouched. |
+| Layout queries | ✓ No change. All outer-facing Tier-4/5 metadata (Cholesky counts, transpose flags, `size_of_G_for_vbias`, Ham type) stay on `nomsd_` (True Ham), exactly as the dual-Hamiltonian rule requires. `Ĥ_var`'s (generally different) Cholesky count is internal to the inner propagator. |
+| Tests | ✓ **`stochastic_inner_hamiltonian_same_as_true`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — one factory builds two trials: `wfn_clone` (no `inner_hamiltonian` → inner clones the True Ham) and `wfn_hvar` (`inner_hamiltonian` = the **same** integral file → factory builds a second Ham and uses it for the inner stack). On the dynamic path (`inner_nsteps = 1`, so the inner Ham drives `B̂_T`) the two must agree to `1e-9` on `Energy`/`Log_Overlap`/`vbias` over 3 resampled steps. A `HamFac.has_input("wfn_hvar__inner_hamiltonian__")` check proves the factory actually traversed the `inner_hamiltonian` path (built + registered the Ham) rather than silently ignoring the key. Gated on CLOSED (RHF) + CPU. **CPU-verified** on a compute node (`Ne_cc-pvdz`, `mpirun -np 1`): passes in isolation (2675 assertions) and as part of the full `[stochastic_wfn]` tag (9 cases, 5567 assertions). The build also confirmed the constructor overload is non-breaking — the untouched estimator/propagator/phmsd test TUs recompile and link against the new header unchanged. |
+| Deferred (research) | The **variational HDF5 file does not exist in the repo** — so proving that a *different* `Ĥ_var` changes `B̂_T` (and that the stochastic-trial energy is still correct) is deferred to when that fixture is generated (quantum-chemistry side). The same-file anchor proves the plumbing is wired (the `inner_hamiltonian` path runs and registers a real second Ham) and behavior-preserving when `Ĥ_var ≡` True Ham. COLLINEAR/NONCOLLINEAR, GPU, and the non-`Real3IndexFactorization` HamOps stubs remain follow-ups as in Phase 3b. |
 
 #### Phase 3c — Walker-conditioned sampling + propagate-then-resample leapfrog
 
@@ -1303,6 +1336,17 @@ the dynamic/full-G checks silently. On overhaul the tests also `return` for `DEV
 | `stochastic_dynamic_ensemble_smoke` | With `inner_nsteps > 0`, inner resample + all four stochastic overrides on moved walkers; asserts finite energies/overlaps (and vbias path via MixedDM + `vbias`, full-G via layout dispatch). |
 | `stochastic_propagator_step` | Real outer `AFQMCBasePropagator::Propagate()` on a dynamic trial (`inner_nsteps = 1`, `inner_nwalkers = 4`); full propagator hot path; asserts finite weights/energies/overlaps over 3 steps. |
 
+### Phase 3b-var-specific tests (implemented)
+
+***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
+`wfn_rhf.h5`), CPU/CLOSED only (passes in isolation, 2675 assertions, and in the full
+`[stochastic_wfn]` tag, 9 cases / 5567 assertions). Requires a **NOMSD** + **CLOSED (RHF)** input;
+other inputs skip silently.
+
+| Test case | Checkpoint |
+|-----------|------------|
+| `stochastic_inner_hamiltonian_same_as_true` | Inner stack built from a separate Hamiltonian via the `inner_hamiltonian` key (same integral file) reproduces the clone path: `wfn_clone` (no `inner_hamiltonian`) and `wfn_hvar` (`inner_hamiltonian` = same file) agree to `1e-9` on `Energy`/`Log_Overlap`/`vbias` over 3 dynamic (`inner_nsteps = 1`) steps. `HamFac.has_input("wfn_hvar__inner_hamiltonian__")` (+ its `REQUIRE_FALSE` for `wfn_clone`) confirms the factory actually built/registered the second Ham. |
+
 ### Running the stochastic test suite
 
 All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD wavefunction input
@@ -1310,8 +1354,8 @@ All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD
 
 **`main` (overhaul API)** — target binary is the consolidated `test_afqmc`
 (`tests/test_wfn_factory.cpp`); output under `${BUILD_DIR}/tests/bin/`. The static + 3b cases are
-**ported and CPU-verified** (8 cases, 2892 assertions) on the `Ne_cc-pvdz` dense+RHF fixture (the
-develop `ham_chol_sc.h5` / `wfn_msd.h5` fixtures are gone). Build is driven via `cmake --build` (Ninja
+**ported and CPU-verified** (9 cases, 5567 assertions — incl. the Phase 3b-var anchor) on the
+`Ne_cc-pvdz` dense+RHF fixture (the develop `ham_chol_sc.h5` / `wfn_msd.h5` fixtures are gone). Build is driven via `cmake --build` (Ninja
 generator); on the Flatiron cluster build on a compute node, not the gateway:
 
 ```bash
@@ -1331,7 +1375,8 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 **Overhaul port — done (Jun 2026):**
 
 - ✅ Ported the static (1a–3a) + 3b `[stochastic_wfn]` cases to `tests/test_wfn_factory.cpp`; built
-  `test_afqmc` and ran the full tag on a compute node (8 cases, 2892 assertions, `Ne_cc-pvdz`).
+  `test_afqmc` and ran the full tag on a compute node (now 9 cases, 5567 assertions, `Ne_cc-pvdz`,
+  incl. the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`).
 - ✅ Fixed the three overhaul-only bugs the port surfaced (log-overlap convention; full-G one-body
   rank mismatch; full-G EXX/EJ slice axis + `dotc`→`dot`).
 - ✅ Full-G validated against the compact path on the dense `Real3IndexFactorization` route
