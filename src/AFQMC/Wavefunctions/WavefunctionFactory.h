@@ -25,6 +25,7 @@
 
 #include "AFQMC/config.h"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
+#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
 
@@ -37,7 +38,21 @@ template<MEMORY_SPACE MEM>
 class WavefunctionFactory
 {
 public:
-  WavefunctionFactory(std::map<std::string, AFQMCInfo>& info) : InfoMap(info) 
+  // Original constructor (no inner-Hamiltonian support): kept so every existing call site stays valid.
+  // A stochastic trial that names `inner_hamiltonian` under a factory built this way aborts in fromHDF5
+  // with a clear message.
+  WavefunctionFactory(std::map<std::string, AFQMCInfo>& info) : InfoMap(info)
+  {
+    // initialize in fromHDF5
+  }
+
+  // Overload that additionally takes the HamiltonianFactory used to build the StochasticWfn inner
+  // (Variational) Hamiltonian `Ĥ_var` on demand when a stochastic trial names one via
+  // `inner_hamiltonian` (Phase 3b-var). WavefunctionFactory remains a Hamiltonian *consumer* — it does
+  // not own Hamiltonians, it asks hamfac to build the second one. Non-stochastic and clone-path trials
+  // never touch it.
+  WavefunctionFactory(std::map<std::string, AFQMCInfo>& info, HamiltonianFactory& hamfac)
+      : InfoMap(info), HamFac_(&hamfac)
   {
     // initialize in fromHDF5
   }
@@ -80,7 +95,12 @@ public:
     int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
     int inner_seed   = pt0.get<int>("inner_seed", 777);
     auto inner_propagator_block = pt0.get_child_optional("inner_propagator");
-    for (auto const& key : {"inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator"})
+    // inner_hamiltonian: optional block naming the second (Variational) Hamiltonian HDF5 file for the
+    // stochastic inner stack. It is a factory-level key consumed by fromHDF5 (which builds the Ham via
+    // HamFac_); it is deliberately NOT forwarded into pt1, so it never reaches the wavefunction's own
+    // ptree (StochasticWfn::interpret_inputs does not know it). interpret_inputs only (a) rejects it
+    // when stochastic is off and (b) lists it as a known pass-through key for compare_known_keys.
+    for (auto const& key : {"inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator", "inner_hamiltonian"})
       if (not stochastic && pt0.get_child_optional(key))
         APP_ABORT("Error in WavefunctionFactory::interpret_inputs: " + std::string(key) +
                   " requires stochastic: true.");
@@ -100,6 +120,7 @@ public:
       "inner_nsteps",
       "inner_seed",
       "inner_propagator",
+      "inner_hamiltonian",
     };
     io::compare_known_keys("Wavefunction Factory",pt1, pt0,pass_through_keys);
     return pt1;
@@ -257,6 +278,11 @@ public:
 protected:
   // reference to container of AFQMCInfo objects
   std::map<std::string, AFQMCInfo>& InfoMap;
+
+  // HamiltonianFactory used to build the inner (Variational) Hamiltonian on demand (Phase 3b-var).
+  // Null when constructed via the original single-arg constructor; fromHDF5 aborts if a stochastic
+  // trial then requests an inner_hamiltonian.
+  HamiltonianFactory* HamFac_ = nullptr;
 
   // generates a new Wavefunction and returns the pointer to the base class
   Wavefunction<MEM> buildWavefunction(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
