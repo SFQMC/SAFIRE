@@ -140,6 +140,10 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
   return stack;
 }
 
+// h scores the outer (True Ham) nomsd_; h_var builds the inner (Variational) stack that generates the
+// stochastic trial samples. The factory passes h_var == h to clone the True Ham (pre-Phase-3b-var
+// behavior); a distinct h_var routes the inner stack to a separate Variational Hamiltonian. Both
+// HamOps are half-rotated with the same trial orbitals (PsiT_for_ham); only the integrals differ.
 template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
 Wavefunction<MEM> buildStochasticNomsdWavefunction(
     std::map<std::string, AFQMCInfo>& InfoMap,
@@ -147,6 +151,7 @@ Wavefunction<MEM> buildStochasticNomsdWavefunction(
     ptree pt,
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
     Hamiltonian& h,
+    Hamiltonian& h_var,
     WALKER_TYPES walker_type,
     nda::array<ComplexType, 1> ci,
     OrbsContainer orbs,
@@ -155,7 +160,7 @@ Wavefunction<MEM> buildStochasticNomsdWavefunction(
     nda::array<PsiT_Matrix<MEM>, 2>& PsiT_for_ham)
 {
   auto outer_HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
-  auto inner_HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
+  auto inner_HOps = h_var.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
   auto inner_ci   = ci;
   auto inner_orbs = orbs;
   auto inner_stack =
@@ -262,6 +267,28 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 
       if (stochastic)
       {
+        // Resolve the inner (Variational) Hamiltonian (Phase 3b-var). If the wfn block names one via
+        // `inner_hamiltonian` (read from the raw pt_in -- it is a factory-level key, never forwarded
+        // into the wavefunction ptree), build it on demand through HamFac_ and use it for the inner
+        // stack; otherwise clone the True Ham h (pre-3b-var behavior). The var Ham inherits the wfn's
+        // `system` unless its block sets one, and is registered under a namespaced ID that cannot
+        // collide with a user Hamiltonian.
+        Hamiltonian* inner_ham_ptr = &h;
+        if (auto var_block = pt_in.get_child_optional("inner_hamiltonian"))
+        {
+          utils::check(HamFac_ != nullptr,
+                       "Error in WavefunctionFactory::fromHDF5: inner_hamiltonian requires the "
+                       "WavefunctionFactory to be constructed with a HamiltonianFactory (two-argument "
+                       "constructor).");
+          ptree var_pt = *var_block;
+          if (not var_pt.get_child_optional("system"))
+            var_pt.put("system", info);
+          std::string var_id = name + "__inner_hamiltonian__";
+          if (not HamFac_->has_input(var_id))
+            HamFac_->push(var_id, var_pt);
+          inner_ham_ptr = &HamFac_->getHamiltonian(mpi, var_id);
+        }
+        Hamiltonian& inner_ham = *inner_ham_ptr;
         if (dense_trial)
         {
           using MType = memory::const_shared_array<MEM,ComplexType,2>;
@@ -273,10 +300,10 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
               });
             }
           }
-          return buildStochasticNomsdWavefunction<MEM, MType>(InfoMap, AFinfo, std::move(pt), mpi, h, walker_type, ci,
-                                                              PsiT_dense, NCE, targetNW, PsiT);
+          return buildStochasticNomsdWavefunction<MEM, MType>(InfoMap, AFinfo, std::move(pt), mpi, h, inner_ham,
+                                                              walker_type, ci, PsiT_dense, NCE, targetNW, PsiT);
         }
-        return buildStochasticNomsdWavefunction<MEM, PsiT_Matrix<MEM>>(InfoMap, AFinfo, std::move(pt), mpi, h,
+        return buildStochasticNomsdWavefunction<MEM, PsiT_Matrix<MEM>>(InfoMap, AFinfo, std::move(pt), mpi, h, inner_ham,
                                                                        walker_type, ci, PsiT, NCE, targetNW, PsiT);
       }
 
