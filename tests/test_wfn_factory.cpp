@@ -1161,7 +1161,7 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
     // score the same moved ensemble. Assert finiteness (values are stochastic, not fixed).
     for (int step = 0; step < 3; ++step)
     {
-      wfn.begin_inner_step();
+      wfn.begin_inner_step(wset);
       memory::array<MEM, ComplexType, 2> X(nwalk, wfn.number_of_cholesky_vectors());
       wfn.vbias(wset, X, dt); // first reduction -> resamples; full-G force bias on the moved ensemble
       wfn.Energy(wset);       // energy_fullG on the same ensemble
@@ -1313,7 +1313,7 @@ TEST_CASE("stochastic_propagator_step", "[wfn_factory][stochastic_wfn]")
 // is Phase 3c-ii; this is a finiteness smoke, not NOMSD parity.
 template<MEMORY_SPACE MEM>
 void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
-                                            std::string hamil_file, std::string wfn_file)
+                                            std::string hamil_file, std::string wfn_file, bool leapfrog = false)
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
@@ -1358,6 +1358,7 @@ void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t
     pt.put("inner_nwalkers", inner_nwalkers);
     pt.put("inner_nsteps", 1);
     pt.put("inner_conditioning", true);
+    pt.put("inner_leapfrog", leapfrog);
     ptree inner_prop;
     inner_prop.put("timestep", 0.01);
     pt.put_child("inner_propagator", inner_prop);
@@ -1411,6 +1412,31 @@ TEST_CASE("stochastic_conditioned_propagator_step", "[wfn_factory][stochastic_wf
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_conditioned_propagator_step<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Phase 3c-ii: the propagate-then-resample leapfrog (inner_conditioning + inner_leapfrog). At each
+// outer step, begin_inner_step(wset) resamples the inner ensemble conditioned on the OLD walker and
+// stores the importance-reweighted old overlap (Sum_p S_p) against it; the post-propagation Log_Overlap
+// scores the NEW walker against the SAME ensemble, so the hybrid ratio new/old reproduces Eq. 25 of
+// arXiv:2505.18519 exactly and N(phi) cancels. Drives a real OUTER hybrid AFQMCBasePropagator and
+// asserts the walkers stay finite over several steps (finiteness smoke; energy-vs-analytic-AFQMC and
+// variance reduction vs 3b are the research-level validation). CLOSED+CPU; reuses the conditioned
+// driver above with leapfrog = true.
+template<MEMORY_SPACE MEM>
+void stochastic_leapfrog_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                         std::string hamil_file, std::string wfn_file)
+{
+  stochastic_conditioned_propagator_step<MEM>(mpi, hamil_file, wfn_file, /*leapfrog=*/true);
+}
+
+TEST_CASE("stochastic_leapfrog_propagator_step", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn propagate-then-resample leapfrog over a real outer propagator (Phase 3c-ii).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_leapfrog_propagator_step<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
@@ -1507,8 +1533,8 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     for (int step = 0; step < 3; ++step)
     {
       // Same hot-path order as stochastic_dynamic_ensemble_smoke, lockstep on both trials.
-      wfn_clone.begin_inner_step();
-      wfn_hvar.begin_inner_step();
+      wfn_clone.begin_inner_step(wset_a);
+      wfn_hvar.begin_inner_step(wset_b);
       memory::array<MEM, ComplexType, 2> Xa(nwalk, wfn_clone.number_of_cholesky_vectors());
       memory::array<MEM, ComplexType, 2> Xb(nwalk, wfn_hvar.number_of_cholesky_vectors());
       wfn_clone.vbias(wset_a, Xa, dt); // first reduction -> resamples inner ensemble
