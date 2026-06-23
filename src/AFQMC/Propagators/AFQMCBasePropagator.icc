@@ -47,7 +47,7 @@ template<MEMORY_SPACE MEM>
 template<class WlkSet>
 void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType dt, int nt)
 {
-  wfn->begin_inner_step();
+  wfn->begin_inner_step(wset);
   AFQMCTimer.start(setup_timer);
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();

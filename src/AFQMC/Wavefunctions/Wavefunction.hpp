@@ -256,13 +256,14 @@ public:
         var);
   }
 
-  void begin_inner_step()
+  template<class WlkSet>
+  void begin_inner_step(WlkSet& wset)
   {
     std::visit(
-        [](auto&& a) {
+        [&](auto&& a) {
           using Wfn = std::decay_t<decltype(a)>;
           if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.begin_inner_step();
+            a.begin_inner_step(wset);
         },
         var);
   }
