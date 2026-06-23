@@ -13,7 +13,7 @@ rather than a thin delegate wrapper around `NOMSD`.
 | Branch | Role |
 |--------|------|
 | **`main`** | Active development — overhaul API + ported stochastic (Phases 1a–3b-var merged Jun 2026). Cut feature branches here and merge back after review. |
-| **`stochastic-wfn-phase-3c`** | Active feature branch for Phase 3c (walker-conditioned sampling + leapfrog). |
+| **`stochastic-wfn-phase-3c`** | Phase 3c **complete** (3c-i walker-conditioned sampling + 3c-ii leapfrog, incl. the generalized-`w_p` measurement-energy fix); cut from `main` after 3b-var, pending merge back. |
 | **`stochastic-wfn-develop`** | Frozen develop-line reference (Phases 1a–3b complete on the old `boost::variant` stack). Kept for comparison and fixture history; not the integration target. |
 | **`upstream/overhaul`** | Upstream architecture base; rebase `main` onto it periodically while upstream settles. |
 
@@ -160,42 +160,41 @@ energy/exchange contraction over the real Cholesky uses the **non-conjugating** 
 `template<MEMORY_SPACE MEM, class devPsiT>` class that inherits from `AFQMCInfo` and owns:
 
 ```cpp
-StochasticInnerEnsemble inner_ensemble_;  // inner WalkerSet + RNG (walker init only)
-int inner_nwalkers_{1};
-int inner_nsteps_{0};                     // parsed; > 0 drives inner propagation when Phase 3b is active
-NOMSD<MEM, devPsiT> nomsd_;               // outer delegate (outer-walker-facing)
-std::unique_ptr<StochasticInnerStack<MEM, devPsiT>> inner_stack_;  // inner NOMSD + Propagator + RNG
+NOMSD<MEM, devPsiT> nomsd_;                // outer delegate (True Ham; outer-walker-facing)
+std::unique_ptr<StochasticInnerStack<…>> inner_stack_;  // inner NOMSD (Ĥ_var) + Propagator + RNG
+StochasticInnerEnsemble inner_ensemble_;   // inner WalkerSet + walker-init RNG
+int  inner_nwalkers_{1};                   // inner samples P per outer walker
+int  inner_nsteps_{0};                     // B̂_T steps from the anchor (0 = static; 1 = canonical)
+bool inner_conditioning_{false};           // 3c-i: sample conditioned on each outer walker φ_w
+bool inner_leapfrog_{false};               // 3c-ii: shared-ensemble exact Eq. 25 ratio
+nda::array<RealType,1> inner_cond_mag_;    // |⟨ψ_q|φ_cond⟩| per inner walker (leapfrog reweight)
+// + mechanical members: inner_timestep_, inner_step_pending_ (latch), inner_anchor_ (|φ_T⟩ cache), mpi_
 ```
 
-**The inner stack (Phases 1a–1c) is complete and ported.** It owns an inner trial ensemble
-(`inner_wset()`, sized by `inner_nwalkers`, two-phase factory/driver init), an independent inner
-`NOMSD` with its own `HamiltonianOperations`/`SlaterDetOperations` (cloned CI/orbitals), and an inner
-`Propagator` built via `PropagatorFactory` at construction — dormant at `inner_nsteps = 0`, driving
-free-projection `B̂_T` steps at `inner_nsteps > 0` (Phase 3b). The inner stack is exercised by the
-ported stochastic suite; only the dedicated Phase 1a/1b/1c infrastructure unit tests are not yet
-ported (they need typed accessors the overhaul `Wavefunction` variant does not expose).
+**The inner stack (Phases 1a–1c) is complete and ported:** an inner trial ensemble (`inner_wset()`,
+sized `P = inner_nwalkers`, two-phase factory/driver init), an independent inner `NOMSD` with its own
+`HamiltonianOperations`/`SlaterDetOperations`, and an inner `Propagator` built via `PropagatorFactory`
+at construction. The inner `NOMSD` holds the **Variational Hamiltonian `Ĥ_var`** — built from the
+`inner_hamiltonian` HDF5 file (Phase 3b-var), or a clone of the True Ham when that key is absent. Only
+the dedicated Phase 1a/1b/1c infrastructure unit tests are unported (they need typed accessors the
+overhaul `Wavefunction` variant does not expose).
 
-**Every Tier 1 propagator hot-path quantity is stochastic and CPU-verified on overhaul** (`Ne_cc-pvdz`):
-hybrid propagation uses the Phase 2a `Log_Overlap` override, local-energy propagation the Phase 2b
-`Energy` override, and the force bias the Phase 3a `MixedDensityMatrix_for_vbias` override — each
-reduces the inner ensemble (Eq. 24/27 of arXiv:2505.18519) and reproduces plain `NOMSD` at the
-single-determinant delegate limit. `vbias` and `vHS` are trial-independent and **delegate permanently**
-to `nomsd_` (given `G`, the `L·G` and `√Δτ·L·X` contractions need no override). **All other Tier 2–6
-visitor methods also delegate to `nomsd_`**, so outer-facing behavior matches plain `NOMSD` at the
-single-determinant delegate limit.
+**Every Tier 1 hot-path quantity is stochastic and CPU-verified on overhaul** (`Ne_cc-pvdz`): hybrid
+propagation uses the Phase 2a `Log_Overlap` override, local-energy the Phase 2b `Energy` override, and
+the force bias the Phase 3a `MixedDensityMatrix_for_vbias` override — each reduces the inner ensemble
+(Eq. 27 of arXiv:2505.18519) and reproduces plain `NOMSD` at the single-determinant delegate limit.
+`vbias` and `vHS` are trial-independent and **delegate permanently** to `nomsd_`; all other Tier 2–6
+methods delegate too, so outer-facing behavior matches plain `NOMSD` at the delegate limit.
 
-The dynamic **Phase 3b** ensemble is implemented and CPU-verified for CLOSED trials: `inner_nsteps > 0`
-drives the inner propagator in free-projection mode (reset to the anchor, then `inner_nsteps` `B̂_T`
-steps via `begin_inner_step()` + `maybe_advance_inner_ensemble()`), the reductions use the Eq. 26 `S_p`
-phase weights (`Log_Overlap` kept absolute), and walkers that have left the anchor are scored with the
-**un-rotated full-G** contraction against the True Ham (`energy_fullG`; the force bias reaches it via
-`Real3IndexFactorization::vbias` G-layout dispatch — no separate seam). At `inner_nsteps = 0` behavior
-is unchanged (Phases 1c–3a). The **Variational Hamiltonian `Ĥ_var` is still deferred** — the inner
-stack is a True-Ham clone. Reductions are always scored against the **True** Hamiltonian (outer `nomsd_`).
-
-Inner `NOMSD` is evaluated on `inner_wset()` via `inner_wfn()` / `inner_nomsd()`; the inner propagator
-(`inner_propagator()`) drives inner evolution when `inner_nsteps > 0`. Per-phase detail (members,
-factory wiring, reductions, tests, deferrals) is in
+**Inner-ensemble sampling** is static at `inner_nsteps = 0`; at `inner_nsteps > 0` the inner propagator
+field-samples `{ψ_p = B̂_T(Y^[p])|φ_T⟩}` from the anchor, in one of three modes (CLOSED/CPU only this
+phase): **free projection** (Phase 3b — walker-independent, bare Gaussian fields), **walker-conditioned**
+(`inner_conditioning`, Phase 3c-i — `nwalk·P` block-structured, each block importance-sampled toward its
+outer walker `φ_w`), and **+ leapfrog** (`inner_leapfrog`, Phase 3c-ii — the shared-ensemble
+propagate-then-resample that makes the Eq. 25 overlap-ratio `𝒩(φ)` cancellation exact). Reductions are
+always scored against the **True** Hamiltonian (outer `nomsd_`); inner walkers that have left the anchor
+use the **un-rotated full-G** contraction (`energy_fullG`; the force bias reaches it via
+`Real3IndexFactorization::vbias` G-layout dispatch — no separate seam). Per-phase detail is in
 [Implementation phases](#implementation-phases-status-and-plan); the math is in
 [Estimator Definitions](#estimator-definitions).
 
@@ -257,11 +256,12 @@ reductions assume `TGprop` geometry.
 
 ---
 
-## Dual-Hamiltonian architecture (True vs Variational) — the end goal
+## Dual-Hamiltonian architecture (True vs Variational)
 
-A full `StochasticWfn` carries **two** Hamiltonians, with two distinct jobs. This is the target
-architecture; the current code is a static-limit placeholder that only ever sees one of them (see
-[the placeholder note](#current-placeholder-one-hamiltonian-cloned) below).
+A full `StochasticWfn` carries **two** Hamiltonians, with two distinct jobs. Both are now live: the
+outer **True** Ham scores every returned quantity, and the inner **Variational** `Ĥ_var` generates the
+stochastic-trial samples (built from `inner_hamiltonian`, or a True-Ham clone when absent — see
+[Inner Hamiltonian](#inner-hamiltonian-ĥ_var-vs-clone-fallback) below).
 
 | | **True Hamiltonian `Ĥ`** | **Variational Hamiltonian `Ĥ_var`** |
 |---|--------------------------|--------------------------------------|
@@ -306,18 +306,17 @@ Because `Ĥ` lives in the **outer `nomsd_`**, every Tier 1 reduction must take i
 contraction from `nomsd_`, **not** from `inner_nomsd()` (which becomes `Ĥ_var`). The cross **density
 matrix** `⟨ψ_p|c†c|φ_w⟩` is Hamiltonian-independent (pure orbital algebra) and can use either
 `SDetOp`; only the `HamOp.energy` / `HamOp.vbias` contractions are Ham-specific and must be True.
-**Phase 2b `Energy` already follows this** (its contraction was switched from `inner_nomsd()` to
-`nomsd_` ahead of Phase 3b — behavior-preserving while the inner Ham is a True clone); the Phase 3a
-`vbias` will do the same.
+**Phase 2b `Energy` and Phase 3a `vbias` both follow this** — their contractions run on the outer
+`nomsd_` (True Ham), not `inner_nomsd()`.
 
-### Current placeholder: one Hamiltonian, cloned
+### Inner Hamiltonian: `Ĥ_var` vs. clone fallback
 
-Today the inner `NOMSD` is a **clone of the outer (True) Hamiltonian** (Phase 1b), and the inner
-propagator is dormant (`inner_nsteps = 0`). In the static limit `B̂_T = 𝟙`, so `Ĥ_var` is never
-exercised and the clone is harmless: Phase 2/3a are correct as static placeholders regardless. The
-clone becomes wrong only when Phase 3b swaps the inner `HamOps` to `Ĥ_var`; at that point the inner
-vs outer layout-parity tests (which assume equal Cholesky counts) no longer hold — they are
-static-phase scaffolding.
+The inner `NOMSD`'s `HamOps` is the **Variational** `Ĥ_var` when the stochastic wfn block names an
+`inner_hamiltonian` HDF5 file (Phase 3b-var); otherwise it is a **clone of the True Ham** (the
+pre-3b-var fallback, still valid when no variational file is supplied). At `inner_nsteps = 0` the inner
+propagator is dormant (`B̂_T = 𝟙`), so the static Phases 2/3a are insensitive to which one it is. With a
+distinct `Ĥ_var`, the inner-vs-outer layout-parity assertions of Phase 1b (equal Cholesky counts) no
+longer hold — they were static-phase scaffolding.
 
 ---
 
@@ -335,7 +334,7 @@ different propagator modes.
 | **Reduction** | Cross overlaps `(1/P) Σ_p ⟨ψ_p\|φ_w⟩` between inner walkers `ψ_p` and outer walkers `φ_w` | `E[w] = Σ_p ⟨ψ_p\|Ĥ\|φ_w⟩ / Σ_p ⟨ψ_p\|φ_w⟩` from the same inner/outer cross pairs; `Ov[w]` identical to 2a |
 | **Propagator consumer** | **Hybrid** path: `wfn.Log_Overlap(wset, new_overlaps)` in `AFQMCBasePropagator::step` | **Local-energy** path: `wfn.Energy(wset, new_energies, new_overlaps)` |
 | **Implementation** | `StochasticWfn.icc` — uses outer `SDetOp`, `FairDivideBoundary` over `nw×P` pairs | `StochasticWfn.icc` — mirrors `NOMSD::Energy_shared`, looping inner walkers as the determinant index (weight `1/P`); the cross DM + `energy_from_G` run on the **outer `nomsd_` (True Ham)** with inner-walker bras |
-| **Phase 3 coupling** | Absolute overlap only; the `S_p` phase weight (Eq. 26) arrives in Phase 3b and the importance-sampling leapfrog (Eq. 25) in Phase 3c | Same, plus the per-inner-walker `nd` half-rotation in Phase 3b once `ψ_p ≠` anchor |
+| **Phase 3 coupling (now done)** | The dynamic ensemble (3b), the `S_p` phase weights (Eq. 26), conditioning (3c-i) and the leapfrog (Eq. 25, 3c-ii) all build on this reduction; `Log_Overlap` is absolute in 3b and importance-reweighted under the leapfrog | Same, plus the off-anchor full-G scoring (3b) and the generalized `w_p` weight (3c-ii) |
 
 At the single-determinant delegate limit (`inner_nwalkers = 1`, `inner_nsteps = 0`) both
 overrides reproduce plain `NOMSD`, verified by `stochastic_overlap_matches_nomsd` (2a) and
@@ -388,17 +387,17 @@ Implementation notes (`StochasticWfn.icc`):
   transient overlap vector in the `Log_Overlap(wset)` overload (mirrors NOMSD). The outer `nomsd_`'s
   `SlaterDetOperations` and `TG_` (= outer `TGwfn`) are reused.
 
-### Why the visitor `Log_Overlap` is overridden directly, and what stays in Phase 3
+### Why the visitor `Log_Overlap` is overridden directly
 
 The hybrid propagation path (`AFQMCBasePropagator::step`) consumes the overlap **only as a step-to-step
 ratio** `ratioOverlaps = new/old` in `hybrid_walker_update`: its argument drives the cosine (phase)
 constraint and its log feeds the hybrid energy, and the stored `OVLP` property is overwritten each step.
-This is exactly Eq. 25's structure, so overriding the visitor `Log_Overlap` is the correct integration point.
-**The exact `𝒩(φ)` cancellation of Eq. 25, however, requires numerator and denominator to share the inner
-field samples conditioned on the old walker** — a coupling that only exists in the paper's
-propagate-then-resample *leapfrog*, which lives in the propagator hot path. So the phase factor `S_p`
-(Phase 3b), and walker-conditioned importance sampling + the leapfrog (Phase 3c), are deferred;
-`Log_Overlap` itself just produces the absolute reduction above, which is exact at `inner_nsteps = 0`.
+This is exactly Eq. 25's structure, so overriding the visitor `Log_Overlap` is the correct integration
+point. The exact `𝒩(φ)` cancellation of Eq. 25 requires numerator and denominator to share the inner
+field samples conditioned on the old walker — the paper's propagate-then-resample *leapfrog*, which
+lives in the propagator hot path. Phase 2a's `Log_Overlap` produces just the absolute reduction above
+(exact at `inner_nsteps = 0`); the phase weights `S_p`, walker-conditioning, and the leapfrog are added
+in [Phase 3b/3c](#phase-3--propagator-hot-path-completion-and-the-dynamic-ensemble).
 
 ### Delegate limit and the multi-determinant caveat
 
@@ -488,8 +487,8 @@ lone exception — it is the normalization, not a ratio of this form).
 What the random walk consumes is never this absolute value but the step-to-step **ratio**
 `⟨Ψ_T|φ'⟩/⟨Ψ_T|φ⟩` (Eq. 25), in which `𝒩(φ_w)` cancels — see
 [Stochastic overlap (Phase 2a)](#stochastic-overlap-phase-2a). Phase 2a stores the static-limit
-absolute overlap; the phase weights `S_p` arrive in Phase 3b and the `𝒩` cancellation (leapfrog)
-in Phase 3c.
+absolute overlap; the phase weights `S_p` are added in Phase 3b and the exact `𝒩` cancellation (the
+leapfrog) in Phase 3c-ii.
 
 **2 — Local energy (`Ô = Ĥ`).** Eq. 27 with the Hamiltonian; this is the per-walker term of the AFQMC
 mixed-energy estimator (Eq. 16):
@@ -552,9 +551,9 @@ walker** (Eq. 23):
 ```
 
 so both the inner ensemble `{ψ_p}` and the phase weights `S_p(φ_w)` depend on `φ_w`. This walker coupling
-— together with the propagate-then-resample *leapfrog* that makes the `𝒩(φ_w)` cancellation in the
-Eq. 25 ratio exact — is what Phase 3c adds (on top of the dynamic, walker-independent ensemble of
-Phase 3b). Phases 2a/2b/3a implement the `B̂_T = 𝟙` static limit, where the ensemble is
+(Phase 3c-i), together with the propagate-then-resample *leapfrog* that makes the `𝒩(φ_w)` cancellation
+in the Eq. 25 ratio exact (Phase 3c-ii), is what Phase 3c adds on top of the dynamic, walker-independent
+ensemble of Phase 3b. Phases 2a/2b/3a implement the `B̂_T = 𝟙` static limit, where the ensemble is
 walker-independent, `S_p` is degenerate, and Eq. 27 collapses to the plain `(1/P) Σ_p` average.
 
 ---
@@ -602,23 +601,21 @@ Implementation notes (`StochasticWfn.icc`):
   `Overlap` uses), not the pre-transposed trial NOMSD passes with `herm = true`. The two produce
   the same `G`.
 - `nd = 0`: `HamOp.energy`'s `nd` selects the **half-rotated integrals of trial determinant `nd`**,
-  which are tied to that determinant's bra orbitals. In the static-ensemble limit every inner
-  walker equals the inner trial's anchor determinant (`getInitialGuess == OrbMats[0]`), so `nd = 0`
-  is the correct (and only valid) half-rotation. This single-determinant assumption is what
-  **Phase 3b must revisit** once `inner_nsteps > 0` propagates the inner walkers away from the anchor.
+  which are tied to that determinant's bra orbitals. In the static-ensemble limit every inner walker
+  equals the anchor (`getInitialGuess == OrbMats[0]`), so `nd = 0` is the correct half-rotation. Once
+  `inner_nsteps > 0` moves inner walkers off the anchor, **Phase 3b** drops the half-rotation entirely
+  for those walkers and scores them with the un-rotated full-G contraction (`energy_from_fullG`).
 - The reduction runs through the **outer `nomsd_`** (the True Hamiltonian), which shares `TG_` so the
   `DensityMatrix` / `energy_from_G` barriers stay consistent. A `LocalTGBufferManager
   shm_buffer_manager` member backs the shared `G` buffer; per-core energies are reduced with
   `all_reduce` over `TG_local`, then `E /= Ov`.
-- **✓ Dual-Hamiltonian sourcing (revisit applied).** The contraction is scored against the **True**
-  Hamiltonian via the outer `nomsd_`, *not* `inner_nomsd()` — see
-  [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational--the-end-goal).
-  This was switched from `inner_nomsd()` ahead of Phase 3b: it is behavior-preserving today (the inner
-  NOMSD is still a True-Ham clone) but becomes a correctness requirement once Phase 3b makes the inner
-  `HamOps` the Variational `Ĥ_var` — at which point `inner_nomsd().energy_from_G` would return the
-  wrong operator. The cross **density matrix** is Hamiltonian-independent, so running it on `nomsd_`
-  too just keeps Overlap (2a) and Energy (2b) on the same `SDetOp`. The Phase 3a `vbias` contraction
-  follows the same rule.
+- **✓ Dual-Hamiltonian sourcing.** The contraction is scored against the **True** Hamiltonian via the
+  outer `nomsd_`, *not* `inner_nomsd()` — see
+  [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational).
+  This is a correctness requirement now that the inner `HamOps` can be the Variational `Ĥ_var`
+  (Phase 3b-var): `inner_nomsd().energy_from_G` would return the wrong operator. The cross **density
+  matrix** is Hamiltonian-independent, so running it on `nomsd_` too just keeps Overlap (2a) and Energy
+  (2b) on the same `SDetOp`. The Phase 3a `vbias` contraction follows the same rule.
 - **Distributed Cholesky (`NGroupsPerTG > 1`) is guarded with `APP_ABORT`**: a single `energy_from_G`
   sees only one group's Cholesky vectors. The ring reduction (`NOMSD::Energy_distributed`) is a
   later phase; Phase 2b targets the shared limit (and the CPU test runs single-group).
@@ -642,13 +639,11 @@ at the single-determinant delegate limit `Energy` reproduces NOMSD exactly (`E =
   `stochastic_wfn_matches_nomsd` exercises both overrides with its energy/overlap assertions gated
   on `ndet == 1`.
 
-### Deferred to Phase 3b/3c (same as 2a)
+### Dynamic-ensemble extensions (Phase 3b/3c, done)
 
-Phase factor `S_p` (Eq. 26) arrives in **Phase 3b**; walker-conditioned importance sampling and the
-propagate-then-resample leapfrog (Eq. 25) in **Phase 3c**. Phase 2b deliberately does **not** invoke
-inner propagation (it reduces the static ensemble only), so the `inner_nsteps > 0` parse guard and
-the `nd = 0` static-anchor half-rotation stay until **Phase 3b** drives `inner_propagator()` and
-rebuilds the half-rotation per propagated inner walker.
+Phase 2b reduces the static ensemble only. The `S_p` phase weights (Eq. 26), the off-anchor full-G
+scoring, walker-conditioning, the leapfrog (Eq. 25), and the generalized `w_p` weight are layered on by
+**Phases 3b/3c** — see [Phase 3](#phase-3--propagator-hot-path-completion-and-the-dynamic-ensemble).
 
 ---
 
@@ -688,13 +683,12 @@ Implementation notes (`StochasticWfn.icc`):
 - **Output layout is the outer `nomsd_` `vbias` layout** (`compact_G_for_vbias` / `transposed_G_for_vbias_`,
   reached via the existing `friend` access — no new NOMSD public API), so the unchanged `vbias` delegate
   contracts it exactly as in deterministic AFQMC.
-- **✓ Dual-Hamiltonian sourcing.** Like the Phase 2b energy, the cross DM is run on the **outer `nomsd_`
-  (True Ham)**, not `inner_nomsd()`. The cross DM is Hamiltonian-independent, so this just keeps Overlap
-  (2a), Energy (2b), and the vbias DM (3a) on the same `SDetOp`; it becomes a correctness requirement at
-  Phase 3b when the inner `HamOps` becomes the Variational `Ĥ_var`. The `nd = 0` static-anchor assumption
-  is implicit: at `inner_nsteps = 0` every inner walker equals the trial anchor (`getInitialGuess ==
-  OrbMats[0]`), so the compact DM's bra basis matches `nomsd_`'s half-rotated Cholesky (`vbias` carries no
-  per-determinant `nd`). Phase 3b must revisit this once inner walkers leave the anchor.
+- **✓ Dual-Hamiltonian sourcing.** Like the Phase 2b energy, the cross DM and the `vbias` contraction
+  run on the **outer `nomsd_` (True Ham)**, not `inner_nomsd()` — a correctness requirement now that the
+  inner `HamOps` can be the Variational `Ĥ_var` (Phase 3b-var). At `inner_nsteps = 0` every inner walker
+  equals the anchor, so the compact DM's bra basis matches `nomsd_`'s half-rotated Cholesky (`vbias`
+  carries no per-determinant `nd`); once inner walkers move off the anchor, **Phase 3b** switches the
+  `vbias` contraction to the un-rotated full-G layout (via `Real3IndexFactorization::vbias` dispatch).
 - The shared output `G` is partitioned by its `Gsize` dimension across `TG_local` (all walkers stay in
   each band), exactly as `MixedDensityMatrix_shared` partitions its normalization, so each band is written
   by one core — no mutex, no double counting. The weighted numerator is accumulated in a **full-precision
@@ -721,11 +715,11 @@ at the single-determinant delegate limit the stochastic mixed DM and force bias 
 multi-determinant trial they diverge by design. `stochastic_vbias_matches_nomsd` gates its
 NOMSD-equality assertions on `ndet == 1`.
 
-### Deferred to Phase 3b/3c (same as 2a/2b)
+### Dynamic-ensemble extensions (Phase 3b/3c, done)
 
-Phase factor `S_p` (Eq. 26) arrives in **Phase 3b**; walker-conditioned importance sampling and the
-propagate-then-resample leapfrog (Eq. 25) in **Phase 3c**. Phase 3a reduces the static ensemble only, so
-the `inner_nsteps > 0` parse guard and the `nd = 0` static-anchor assumption stay until **Phase 3b**.
+Phase 3a reduces the static ensemble only; the `S_p` phase weights, off-anchor full-G force bias,
+walker-conditioning, and the leapfrog are added by **Phases 3b/3c** — see
+[Phase 3](#phase-3--propagator-hot-path-completion-and-the-dynamic-ensemble).
 
 ---
 
@@ -744,7 +738,7 @@ delegates to it). All stochastic keys require `stochastic: true` in `Wavefunctio
 | `inner_leapfrog` | `false` | 3c-ii ✓ | When `true`, the propagate-then-resample **leapfrog**: each outer step resamples the inner ensemble conditioned on the **old** walker and uses it for both the old and new effective overlap, so the hybrid step ratio `new/old` is exactly Eq. 25 and `𝒩(φ)` cancels. Switches `Log_Overlap` to the **importance-reweighted** `Σ_p⟨ψ_p\|χ⟩/\|⟨ψ_p\|φ_cond⟩\|` and refreshes the stored old overlap in `begin_inner_step(wset)`. Requires `inner_conditioning: true`. Hybrid propagation (CLOSED/CPU). See [Phase 3c-ii](#phase-3c-ii--propagate-then-resample-leapfrog-complete-cpu-verified-overhaul). |
 | `inner_seed` | `777` | 1c | Seed for the inner propagator device RNG. `0` selects a time-based seed (same convention as the driver `seed`). Rank-decorrelated via `split_seed`. |
 | `inner_propagator` | *(optional subtree)* | 1c/3b | Propagator input block for `PropagatorFactory`. If omitted, factory defaults apply. `system` and `name` are injected when missing (`name` suffix `_inner_propagator`). At `inner_nsteps > 0` the free-projection mode flags are forced; `timestep` (default `0.01`) sets the `B̂_T` step `dt`. |
-| `inner_hamiltonian` | *(optional sub-block; `filename` required, `system` inherited)* | 3b-var ✓ | Sub-block of the stochastic wfn block naming the pre-optimized **Variational** Cholesky Hamiltonian `Ĥ_var` that defines `B̂_T` (same basis/NMO as the True Ham). **Parsed and built (3b-var):** `WavefunctionFactory` builds it on demand through the `HamiltonianFactory` it holds; absent ⇒ the inner stack clones the True Ham. The remaining deferred piece is the variational HDF5 *file* (none in the repo yet). See [Phase 3b-var](#phase-3b-var--variational-hamiltonian-factory-plumbing-complete-factory-plumbing-research-validation-deferred) and [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational--the-end-goal). |
+| `inner_hamiltonian` | *(optional sub-block; `filename` required, `system` inherited)* | 3b-var ✓ | Sub-block of the stochastic wfn block naming the pre-optimized **Variational** Cholesky Hamiltonian `Ĥ_var` that defines `B̂_T` (same basis/NMO as the True Ham). **Parsed and built (3b-var):** `WavefunctionFactory` builds it on demand through the `HamiltonianFactory` it holds; absent ⇒ the inner stack clones the True Ham. A distinct variational file (VAFQMC-exported `ham_var.h5`) is exercised by the Ne driver Stages C/E; there is no in-repo unit-test fixture yet (the `stochastic_inner_hamiltonian_same_as_true` anchor reuses the True-Ham file). See [Phase 3b-var](#phase-3b-var--variational-hamiltonian-factory-plumbing-complete) and [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational). |
 
 Example wavefunction block fragment:
 
@@ -827,18 +821,20 @@ inner walk and are deliberately *not* surfaced through these outer-facing access
 
 ## Target Architecture
 
-> **Current and future expectation:** `StochasticWfn` owns **two** engines (see
-> [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational--the-end-goal)):
+> `StochasticWfn` owns **two** engines (see
+> [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational)):
 >
 > - **Outer `nomsd_` (True Hamiltonian)** — scores every returned quantity and faces the outer driver.
 > - **Inner AFQMC stack (Variational Hamiltonian)** — generates the stochastic-trial samples:
 >   - **Walker set** — stochastic ensemble defining the trial wavefunction *(Phase 1a ✓)*
->   - **NOMSD** — single-determinant anchor + its own `HamOps`/`SDetOp`. Currently a True-Ham clone
->     *(Phase 1b ✓)*; **becomes the Variational `Ĥ_var` engine at Phase 3b**.
->   - **Propagator** — built and bound at construction; applies `B̂_T` (a free-projection step under
->     `Ĥ_var`) once Phase 3b enables `inner_nsteps > 0` *(Phase 1c ✓ infrastructure; invocation deferred)*
-> - **Effective outer quantities** — overlap *(Phase 2a ✓)*, local energy *(Phase 2b ✓)*, mixed DM /
->   force bias *(Phase 3a ✓)*, all reduced from the inner ensemble and scored against the True Ham.
+>   - **NOMSD** — single-determinant anchor + its own `HamOps`/`SDetOp`, holding `Ĥ_var` (from
+>     `inner_hamiltonian`) or a True-Ham clone fallback *(Phase 1b ✓ / 3b-var ✓)*.
+>   - **Propagator** — built and bound at construction; applies `B̂_T` under `Ĥ_var` when
+>     `inner_nsteps > 0` — free projection (3b), walker-conditioned (3c-i), or leapfrog (3c-ii)
+>     *(Phase 1c ✓ infrastructure; driven from 3b)*.
+> - **Effective outer quantities** — overlap *(2a ✓)*, local energy *(2b ✓)*, mixed DM / force bias
+>   *(3a ✓)*, all reduced from the inner ensemble (static 3a → dynamic 3b → conditioned/leapfrog 3c)
+>   and scored against the True Ham.
 >
 > The outer AFQMC driver calls `StochasticWfn` methods as it does `NOMSD`/`PHMSD`; `StochasticWfn`
 > orchestrates the inner (Variational) sampling and returns the True-Ham effective quantities
@@ -861,13 +857,16 @@ outer timestep). These are the hardest and most important to replace.
 Called every outer propagation step from `AFQMCBasePropagator`, `AFQMCModelPropagator`, and
 distributed propagator variants.
 
-| Method | Current behavior | Desired functionality |
-|--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| `MixedDensityMatrix_for_vbias(wset, G)` | **Phase 3a ✓ (static limit):** reduces the per-pair cross mixed DMs over the inner ensemble, `G[w] = Σ_p ⟨ψ_p\|c†c\|φ_w⟩ / Σ_p ⟨ψ_p\|φ_w⟩` (estimator 3 of arXiv:2505.18519 with `B̂_T = 𝟙`), returned in the outer `nomsd_` `vbias` layout (`compact_G_for_vbias`, `transposed_G_for_vbias_`); built via `nomsd_.DensityMatrix(…, herm=false)` on the **outer (True Ham)** delegate, as in Phase 2b. Matches NOMSD at the single-determinant delegate limit; diverges for multi-determinant trials by design. See [Stochastic mixed DM + force bias (Phase 3a)](#stochastic-mixed-dm--force-bias-phase-3a). | **Phase 3b:** replace `1/P` with the phase factor `S_p` (Eq. 26), drive inner propagation, and add the per-inner-walker `nd` half-rotation once `ψ_p ≠` anchor. **Phase 3c:** the leapfrog (Eq. 25). |
-| `vbias(G, v, dt, a)` | **Phase 3a ✓:** permanent delegate to `nomsd_.vbias`, now fed the stochastic `G[w]` from `MixedDensityMatrix_for_vbias` — the `L·G` contraction (estimator 4, `x̄_γ[w] = L_γ · G[w]`) is trial-independent given `G`, scored against the **True Ham**, with the `nd = 0` static-anchor half-rotation (no per-determinant `nd` in `vbias`). The `√Δτ`/timestep prefactor stays in the propagator. | No override needed; consumes the Phase 3b/3c stochastic `G` unchanged. |
-| `vHS(X, v, dt, a)` | Delegates to `nomsd_.HamOp.vHS`. | **No override — permanent delegate.** `vHS` is trial-independent: `v = √Δτ · Σ_γ X_γ L_γ` uses only the auxiliary fields `X` and the (trial-independent) Cholesky tensor `L` (no half-rotation, no inner-ensemble quantity). This is why Phase 3a completes the static propagator hot path. |
-| `Log_Overlap(wset)` / `Log_Overlap(wset, Ov)` | **Phase 2a ✓ (static limit):** `Ov[w] = (1/P) Σ_p ⟨ψ_p\|φ_w⟩`, a cross overlap between inner walkers `ψ_p` and each outer walker `φ_w` (Eq. 24 of arXiv:2505.18519 with `B̂_T = 𝟙`). Matches NOMSD at the single-determinant delegate limit; diverges for multi-determinant trials by design. Consumed by **hybrid** propagation. | **Phase 3b:** replace `1/P` with the phase factor `S_p` (Eq. 26) and drive inner propagation (relax the `inner_nsteps > 0` guard). **Phase 3c:** the importance-sampled propagate-then-resample leapfrog for the exact Eq. 25 `𝒩(φ)` cancellation. |
-| `Energy(wset)` / `Energy(wset, E, Ov)` | **Phase 2b ✓ (static limit):** `E[w] = Σ_p ⟨ψ_p\|Ĥ\|φ_w⟩ / Σ_p ⟨ψ_p\|φ_w⟩` (E1, EXX, EJ) and `Ov[w] = (1/P) Σ_p ⟨ψ_p\|φ_w⟩`, the same inner/outer cross pairs as Phase 2a (Eq. 27 of arXiv:2505.18519 with `B̂_T = 𝟙`). `Ov` matches the Phase 2a `Log_Overlap`; matches NOMSD at the single-determinant delegate limit, diverges for multi-determinant trials by design. Consumed by **local-energy** propagation. | **Phase 3b:** `S_p` phase weight (Eq. 26) and inner propagation, including the **per-inner-walker** `nd` half-rotation once `ψ_p ≠` anchor (replacing the `nd = 0` static-anchor assumption); relax the `inner_nsteps > 0` and `NGroupsPerTG > 1` guards. **Phase 3c:** the leapfrog (Eq. 25). |
+**All Tier 1 methods are complete through Phase 3c** (the column below records the status; the dynamic
+detail is in [Phase 3](#phase-3--propagator-hot-path-completion-and-the-dynamic-ensemble)).
+
+| Method | Status |
+|--------|--------|
+| `MixedDensityMatrix_for_vbias(wset, G)` | **✓ stochastic.** Reduces per-pair cross mixed DMs over the inner ensemble, `G[w] = Σ_p ⟨ψ_p\|c†c\|φ_w⟩ · w_p / Σ_p w_p` (estimator 3 of arXiv:2505.18519), in the outer `nomsd_` `vbias` layout; cross DM built via `nomsd_.DensityMatrix(…, herm=false)` on the **True Ham**. Weight `w_p` is `1/P` at the static limit (3a), the phase `S_p` once dynamic (3b), and the generalized importance weight under conditioning/leapfrog (3c). Matches NOMSD at the single-determinant delegate limit. See [Phase 3a](#stochastic-mixed-dm--force-bias-phase-3a). |
+| `vbias(G, v, dt)` | **✓ permanent delegate to `nomsd_.vbias`**, fed the stochastic `G[w]`. The `L·G` contraction (estimator 4, `x̄_γ[w] = L_γ · G[w]`) is trial-independent given `G`, scored against the **True Ham**; off the anchor it reaches the un-rotated full-G layout via `Real3IndexFactorization::vbias` dispatch. `√Δτ` prefactor stays in the propagator. |
+| `vHS(X, v, dt)` | **✓ permanent delegate** (no override). Trial-independent: `v = √Δτ · Σ_γ X_γ L_γ` uses only the fields `X` and the Cholesky `L` — no half-rotation, no inner-ensemble quantity. |
+| `Log_Overlap(wset)` / `Log_Overlap(wset, Ov)` | **✓ stochastic.** `Ov[w] = (1/P) Σ_p ⟨ψ_p\|φ_w⟩` (Eq. 24, static/3b); under the leapfrog (3c-ii) the importance-reweighted `Σ_p ⟨ψ_p\|φ_w⟩/\|⟨ψ_p\|φ_cond⟩\|`, so the hybrid step ratio `new/old` is exactly Eq. 25. Consumed by **hybrid** propagation. Matches NOMSD at the delegate limit. |
+| `Energy(wset)` / `Energy(wset, E, Ov)` | **✓ stochastic.** `E[w] = Σ_p ⟨ψ_p\|Ĥ\|φ_w⟩ · w_p / Σ_p w_p` (E1, EXX, EJ) with the same weight progression as the mixed DM (Eq. 27); off-anchor inner walkers scored with the un-rotated full-G kernel (`energy_from_fullG`). `Ov` consistent with `Log_Overlap`. Consumed by **local-energy** propagation; matches NOMSD at the delegate limit. |
 
 ---
 
@@ -995,7 +994,7 @@ inside each `NOMSD`; Phase 1b adds a second `NOMSD` with its own moved-in infras
 than splitting `HamOps` out of `NOMSD` globally.
 
 > **Placeholder:** the inner `HamOps` is currently a **clone of the True Hamiltonian**. Under the
-> [dual-Hamiltonian end goal](#dual-hamiltonian-architecture-true-vs-variational--the-end-goal) it
+> [dual-Hamiltonian end goal](#dual-hamiltonian-architecture-true-vs-variational) it
 > becomes the **Variational** Hamiltonian at Phase 3b. The independence Phase 1b establishes is what
 > makes that swap a localized change; the inner-vs-outer layout-parity assertions below hold only
 > while the inner Ham is a True clone.
@@ -1095,8 +1094,8 @@ Phase 4); **with Phase 3a complete (`MixedDensityMatrix_for_vbias` stochastic, `
 stochastic `G`), every hot-path quantity now has a stochastic implementation** — so the static-limit
 propagator is feature-complete at the method level (each override unit-verified against NOMSD at the
 delegate limit; an end-to-end `step()` run was an integration follow-up until Phase 3b's
-`stochastic_propagator_step`). The remaining Phase 3 work
-(3b/3c) turns the static ensemble dynamic.
+`stochastic_propagator_step`). Phases 3b/3c then turned the static ensemble dynamic (free projection →
+walker-conditioning → leapfrog), all complete.
 
 #### Phase 3a — Static stochastic mixed DM + force bias (**complete**, CPU-verified [overhaul])
 
@@ -1114,7 +1113,7 @@ delegate limit; an end-to-end `step()` run was an integration follow-up until Ph
 | Tests | ✓ `stochastic_vbias_matches_nomsd` (mirrors `stochastic_energy_matches_nomsd`): `inner_nwalkers` invariance + delegate-limit `G` / `vbias` (`x̄`) equality vs NOMSD at `ndet == 1`. `stochastic_wfn_matches_nomsd` gates its `MixedDensityMatrix_for_vbias` / `vbias` assertions on `ndet == 1`. |
 | Guards | `inner_nsteps > 0` stays rejected (still static); `NGroupsPerTG > 1` aborts in `MixedDensityMatrix_for_vbias`, deferred as in 2b. |
 
-#### Phase 3b — Dynamic ensemble + phase weights (**complete**, CPU-verified [overhaul]; Ĥ_var deferred)
+#### Phase 3b — Dynamic ensemble + phase weights (**complete**, CPU-verified [overhaul]; `Ĥ_var` added in 3b-var)
 
 **Goal:** make the inner ensemble genuinely stochastic by turning on `B̂_T`: the inner propagator
 field-samples `{ψ_p = B̂_T(Y^[p])\|φ_T⟩}` (free projection), every reduction upgrades from `(1/P) Σ_p`
@@ -1362,10 +1361,12 @@ reduction latch (as in 3b); hybrid overlap ratios are **not** Eq.-25-exact until
 | Tests | ✓ **`stochastic_conditioned_propagator_step`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — a real OUTER `AFQMCBasePropagator::Propagate()` over the conditioned dynamic trial (`inner_conditioning=true`, `inner_nsteps=1`, `inner_nwalkers=4`, `nwalk=11` ⇒ `44` inner walkers); asserts finite weights/energies/overlaps over 3 steps. The internal `inner.size() == nwalk·P` checks in the reductions validate the resize. CLOSED+CPU; `inner_conditioning=false` leaves the 3b cases bit-identical. **[overhaul] CPU-verified** Jun 2026: passes in the full tag (**11 cases / 5831 assertions**, `mpirun -np 1`, `Ne_cc-pvdz`). |
 
 **Leapfrog (3c-ii):** landed in [Phase 3c-ii](#phase-3c-ii--propagate-then-resample-leapfrog-complete-cpu-verified-overhaul)
-via top-of-step `begin_inner_step(wset)` refresh (not the original end-of-step hook). **Still open at the
-research level:** driver-level energy vs analytic-trial AFQMC within combined error bars; variance
-reduction vs 3b; `inner_nsteps > 1` reuses the anchor-based bias each step (canonical trial is
-`inner_nsteps = 1`); a moving-bra bias would be a follow-up.
+via top-of-step `begin_inner_step(wset)` refresh (not the original end-of-step hook), with the
+generalized-`w_p` weight making the measurement / local-energy estimators exact. Driver-validated at
+smoke scale (Ne Stage E: unbiased energy, weight stability — see
+[Phase 3c comparison](#phase-3c-comparison--conditioning--leapfrog-jun-2026-leapfrog-validation)).
+**Still open:** a production-scale energy-variance-reduction-vs-3b claim (more walkers + longer trial),
+and the `inner_nsteps > 1` moving-bra bias (canonical trial is `inner_nsteps = 1`).
 
 ##### Phase 3c-ii — Propagate-then-resample leapfrog (**complete**, CPU-verified [overhaul])
 
