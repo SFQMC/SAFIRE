@@ -1289,30 +1289,38 @@ static (deterministic NOMSD-trial) anchor.
 | **A** | static anchor (analytic trial) | **−128.671** | 0.081 | 3.55 / 4.08 / 5.03 | 50 / 0 |
 | **C** | 3b free-projection | **−128.733** | 0.161 | 1.75 / 4.29 / 8.36 | 50 / 0 |
 | **D** | 3c-i conditioning (no leapfrog) | **−128.774** | 0.151 | 1.80 / 4.48 / **11.58** | 50 / 0 |
-| **E** | **3c-ii leapfrog** | **−128.738** | **0.118** | **3.50 / 4.07 / 5.04** | 50 / 0 |
+| **E** | **3c-ii leapfrog** (measurement-`Energy` fix) | **−128.785** | 0.157 | **3.50 / 4.07 / 5.04** | 50 / 0 |
+
+(Stage E numbers are **after** the generalized-`w_p` measurement-`Energy` fix; see [Phase 3c-ii](#phase-3c-ii--propagate-then-resample-leapfrog-complete-cpu-verified-overhaul). Pre-fix Stage E mis-scored the
+observable as `−128.738 / std 0.118` — biased low with artificially small variance because the
+old-conditioned ensemble was weighted with the scored-walker phase `S_p` instead of `w_p`.)
 
 **Findings (3c-ii acceptance met at smoke scale):**
-- **Energy consistency.** The three dynamic stages (C/D/E) agree to ≈ **−128.74 Ha** within block error
-  bars (block-std/√50 ≈ 0.02), all ≈ 0.07 Ha below the static anchor — the physical `B̂_T` trial
-  improvement, *not* an inconsistency. 3c-i and 3c-ii sample the same stochastic trial as 3b and
-  reproduce its energy, confirming the conditioning/leapfrog are unbiased here.
-- **Variance reduction (the leapfrog payoff).** The leapfrog (E) cuts the energy block-std vs 3b
-  (0.161 → **0.118**, ≈ 27%) and **tightens the weight band to 3.50–5.04 — matching the deterministic
-  anchor's 3.55–5.03.** The exact `𝒩(φ)` cancellation in the Eq. 25 ratio makes the importance sampling
-  as well-behaved as a deterministic trial.
+- **Weight stability is the leapfrog payoff.** The leapfrog (E) holds the weight band at **3.50–5.04 —
+  matching the deterministic anchor's 3.55–5.03** — because the exact `𝒩(φ)` cancellation in the Eq. 25
+  ratio makes the step-to-step overlap ratio as well-behaved as a deterministic trial. This is the clear,
+  robust signal at smoke scale, and it is *unaffected* by the measurement-energy fix (the propagation
+  ratio is a separate code path).
 - **Why the leapfrog (not just conditioning) matters.** 3c-i (conditioning **without** the leapfrog, D)
   has the **widest** weight band (1.80–11.58) — conditioning the sampling while the step ratio still
-  divides overlaps from two *differently* conditioned ensembles (old from the previous step) is noisier,
-  not better. The leapfrog is what delivers the stability/variance win.
+  divides overlaps from two *differently* conditioned ensembles (old from the previous step) is noisier
+  than even 3b. The leapfrog's shared-ensemble ratio is what delivers the stability.
+- **Energy consistency (unbiased).** The conditioned stages now agree: D (directly conditioned on the
+  scored walker) **−128.774** and E (leapfrog, reweighted to the scored walker via `w_p`) **−128.785**
+  — both ≈ 0.04–0.05 Ha below 3b's −128.733, and ≈ 0.1 below the static anchor (the physical `B̂_T`
+  trial improvement). The measurement-`Energy` fix bringing E into agreement with the
+  directly-conditioned D is the validation that the generalized estimator is unbiased.
+- **Energy block-variance is comparable across the conditioned stages** (D 0.151, E 0.157) at this scale;
+  the leapfrog does **not** visibly reduce the *energy* block-variance with only `P = 4` / 4 walkers on a
+  500-iter trial — its demonstrated win here is weight stability. A clean energy-variance-reduction claim
+  needs more walkers + a longer trial.
 - All stages complete 500 steps with **no NaN and no population collapse** (unlike Stage B's True-Ham
   clone); Stage E ran cleanly with `inner_conditioning: true` + `inner_leapfrog: true` echoed in the
   `StochasticWfn input` log.
 
-**Caveats (smoke scale).** Short VAFQMC trial (500 iters) and low statistics (`P = 4`, 4 outer walkers);
-the absolute energy also carries the deferred **measurement-`Energy` conditioning** caveat (the
-observable energy of a walker is scored against the old-walker-conditioned ensemble). The
-**variance/stability comparison is the robust signal**; a production claim needs more walkers, a longer
-trial, and the measurement-energy reweighting. Files: `qmc.s002/s003/s004.scalar.dat`,
+**Caveats (smoke scale).** Short VAFQMC trial (500 iters) and low statistics (`P = 4`, 4 outer walkers).
+The measurement-`Energy` conditioning is now **exact** (generalized `w_p`); a production claim still needs
+more walkers + a longer trial. Files: `qmc.s002/s003/s004.scalar.dat`,
 `afqmc_var.json` / `afqmc_cond.json` / `afqmc_leapfrog.json` in `~/development/run_ne_stochastic`.
 
 **Harmless log noise:** OpenMPI `oob_tcp_if_exclude` subnet message; spdlog `string pointer is null` at
@@ -1331,7 +1339,8 @@ ensemble) and **3c-ii** (the propagate-then-resample leapfrog — *complete*, ex
 importance-reweighted overlap + top-of-step refresh). The two pieces 3c bundles are: **(A)**
 importance-sample the inner fields conditioned on each outer walker (Eq. 23), and **(B)** the leapfrog
 so the step-to-step overlap-ratio `𝒩(φ)` cancellation (Eq. 25) is exact. 3c-i lands (A); 3c-ii lands (B)
-(hybrid propagation; local-energy/measurement-energy conditioning is a follow-up).
+— exact for both hybrid and local-energy propagation (the generalized `w_p` weight also makes the
+measurement energy unbiased); only the `inner_nsteps > 1` moving-bra bias remains a follow-up.
 
 ##### Phase 3c-i — Walker-conditioned inner sampling (**complete**, CPU-verified [overhaul])
 
@@ -1374,11 +1383,12 @@ old overlap (`χ = φ_cond`) is `Σ_p S_p` and `new/old` is exactly Eq. 25 (`�
 | Item | Status |
 |------|--------|
 | Conditioning / force bias | ✓ done in 3c-i (`𝒫(Y;φ_w)`, `x̄ ∝ √Δτ·L^var·⟨φ_T\|c†c\|φ_w⟩/⟨φ_T\|φ_w⟩`). |
-| Reweighted overlap | ✓ `Log_Overlap` leapfrog branch accumulates `Σ_p ⟨ψ_p\|χ⟩/\|⟨ψ_p\|φ_w^cond⟩\|` (per-sample reweight by the conditioning-walker magnitude `inner_cond_mag_`, computed by `compute_inner_cond_mag` right after each conditioned resample via the batched `det_ops::Log_Overlap`, slot-major `q = ip·nwalk + w`). Energy/`MixedDensityMatrix_for_vbias` (the `S_p`-weighted Eq. 27, conditioned on the scored walker) are unchanged. |
+| Reweighted overlap | ✓ `Log_Overlap` leapfrog branch accumulates `Σ_p ⟨ψ_p\|χ⟩/\|⟨ψ_p\|φ_w^cond⟩\|` (per-sample reweight by the conditioning-walker magnitude `inner_cond_mag_`, computed by `compute_inner_cond_mag` right after each conditioned resample via the batched `det_ops::Log_Overlap`, slot-major `q = ip·nwalk + w`). |
+| Generalized weight (Energy / DM) | ✓ `reduce_inner_cross_dm` (used by `Energy` and `MixedDensityMatrix_for_vbias`) weights each sample by the **generalized importance weight** `w_p = ⟨ψ_p\|χ⟩/\|⟨ψ_p\|φ_cond⟩\|` in leapfrog mode (vs the scored-walker phase `S_p`). This is the exact Eq. 27 estimator when the scored walker `χ ≠ φ_cond` (measurement `Energy` after propagation; local-energy mode step-5). At the top of the step `χ = φ_cond` so `w_p = S_p` and the force-bias DM / 3c-i are unchanged. Resolves the deferred **measurement-`Energy`** and **local-energy-mode** conditioning. |
 | Leapfrog (top-of-step refresh) | ✓ Instead of the doc's original end-of-step hook, `begin_inner_step(wset)` (now taking the walker set, dispatched through the `Wavefunction` variant; the single call site is the top of `AFQMCBasePropagator::Propagate`) **resamples conditioned on the current (old) walker and refreshes `OVLP = Õv(φ)` against that ensemble**. The post-propagation `Log_Overlap` reuses the SAME ensemble (latch consumed), so `ratioOverlaps = exp(new_ovlp − old_ovlp)` (`hybrid_walker_update`) is exactly Eq. 25. Mathematically identical to end-of-step (ensemble conditioned on the old walker either way) but robust to between-step orthogonalization — everything is recomputed fresh against the current walker, so the LogOverlapFactor never drifts. |
-| Scope | **Hybrid propagation** (the default + tested path): only the overlap ratio is needed, and it is exact. **Local-energy mode + leapfrog** and the **measurement `Energy` conditioning** (the energy of a walker scored against an ensemble conditioned on a *different* walker needs extra reweighting) are follow-ups, not yet exact. `inner_nsteps > 1` reuses the anchor-based bias each step (canonical trial is `inner_nsteps = 1`). |
-| Tests | ✓ **`stochastic_leapfrog_propagator_step`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — a real OUTER hybrid `AFQMCBasePropagator::Propagate()` over the leapfrog trial (`inner_conditioning = inner_leapfrog = true`, `inner_nsteps = 1`, `inner_nwalkers = 4`); asserts finite weights/energies/overlaps over 3 steps (finiteness smoke). CLOSED+CPU; `inner_leapfrog = false` leaves 3c-i/3b bit-identical. **[overhaul] CPU-verified** Jun 2026: passes in the full tag (**11 cases / 5831 assertions**, `mpirun -np 1`, `Ne_cc-pvdz`). |
-| Driver validation | ✓ **Ne cc-pVDZ Stage E** (Jun 2026, `worker7014`, `mpirun -np 1`) — leapfrog (`inner_conditioning + inner_leapfrog`) on the VAFQMC `ham_var.h5` trial. Energy consistent with 3b/3c-i (≈ **−128.74 Ha**, within block error bars) and the leapfrog **reduces variance** (energy block-std 0.161 → **0.118** vs 3b; weight band tightened to **3.50–5.04**, matching the deterministic anchor's 3.55–5.03). No NaN / collapse. See [Phase 3c comparison](#phase-3c-comparison--conditioning--leapfrog-jun-2026-leapfrog-validation). Smoke scale (`P = 4`); production scale + the measurement-`Energy` conditioning remain follow-ups. |
+| Scope | **Hybrid and local-energy** propagation are both exact (the overlap ratio via the reweighted `Log_Overlap`; the local energy / measurement energy via the generalized `w_p`). The only remaining limitation: `inner_nsteps > 1` reuses the anchor-based bias each step (canonical trial is `inner_nsteps = 1`; a moving-bra bias is a follow-up). |
+| Tests | ✓ **`stochastic_leapfrog_propagator_step`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — a real OUTER hybrid `AFQMCBasePropagator::Propagate()` over the leapfrog trial (`inner_conditioning = inner_leapfrog = true`, `inner_nsteps = 1`, `inner_nwalkers = 4`); calls `Energy(wset)` after each step (exercising the `χ ≠ φ_cond` measurement path); asserts finite weights/energies/overlaps over 3 steps. CLOSED+CPU; `inner_leapfrog = false` leaves 3c-i/3b bit-identical. **[overhaul] CPU-verified** Jun 2026: passes in the full tag (**11 cases / 5831 assertions**, `mpirun -np 1`, `Ne_cc-pvdz`). |
+| Driver validation | ✓ **Ne cc-pVDZ Stage E** (Jun 2026, `worker7014`, `mpirun -np 1`) — leapfrog on the VAFQMC `ham_var.h5` trial. The leapfrog's robust win is **weight stability**: the band holds at **3.50–5.04**, matching the deterministic anchor's 3.55–5.03 (vs 3b 1.75–8.36 and 3c-i 1.80–11.58) — the exact `𝒩(φ)` cancellation in the ratio. With the generalized-`w_p` fix the **measurement energy is unbiased** (**−128.785**, agreeing with the directly-conditioned 3c-i −128.774; pre-fix `S_p` mis-scored it as −128.738). No NaN / collapse. Energy *block-variance* is comparable across conditioned stages at smoke scale (not a visible reduction with `P = 4`). See [Phase 3c comparison](#phase-3c-comparison--conditioning--leapfrog-jun-2026-leapfrog-validation). |
 
 **Sequencing note:** 3a alone delivers a working (static) stochastic-trial propagator, delegate-limit
 verified. 3b/3c can follow once 3a is stable; the observable/mean-field phases below reuse the same
@@ -1616,7 +1626,7 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 
 **Both code lines (`stochastic-wfn-develop` and `main`; longer term):**
 
-- ✅ Full production driver run with `stochastic: true` and `inner_nsteps > 0` — **Ne cc-pVDZ Stages A/C** (3b-var) and **Stages D/E** (3c-i conditioning / 3c-ii leapfrog; the leapfrog reduces variance and tightens the weight band to deterministic-anchor quality) (Jun 2026); Stage B unstable at smoke parameters — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026).
+- ✅ Full production driver run with `stochastic: true` and `inner_nsteps > 0` — **Ne cc-pVDZ Stages A/C** (3b-var) and **Stages D/E** (3c-i conditioning / 3c-ii leapfrog; the leapfrog tightens the weight band to deterministic-anchor quality and, with the generalized-`w_p` fix, gives an unbiased measurement energy) (Jun 2026); Stage B unstable at smoke parameters — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026).
 - Static-limit outer propagator step matching NOMSD at the delegate limit (dynamic path covered by `stochastic_propagator_step`; static delegate parity remains unit-tested per method, not through `Propagate()`).
 - Mixed estimator (`MixedObsHandler`) forces and densities remain consistent.
 - GPU build: all `[stochastic_wfn]` tests pass with `ENABLE_CUDA=ON`.

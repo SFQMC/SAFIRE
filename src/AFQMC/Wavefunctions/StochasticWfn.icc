@@ -476,10 +476,21 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
   // via the batched-reference MixedDensityMatrix. Without conditioning (Phase 3b) the ensemble is P
   // shared walkers, each paired against all outer walkers with a single reference.
   const bool conditioned = (inner_conditioning_ && inner_nsteps_ > 0);
+  // Phase 3c-ii leapfrog: weight each sample by the GENERALIZED importance weight
+  //   w_p = <psi_p|chi> / |<psi_p|phi_cond>|   (phi_cond = the walker the ensemble was conditioned on)
+  // rather than the phase S_p = <psi_p|chi>/|<psi_p|chi>|. This is the exact Eq. 27 estimator when the
+  // scored walker chi differs from phi_cond (measurement Energy after propagation, and local-energy mode
+  // step-5) -- the samples come from P(.;phi_cond), so the reweighting divides by the SAMPLING density's
+  // magnitude. At the top of the step chi == phi_cond, so w_p == S_p and the force-bias DM / 3c-i are
+  // unchanged. |<psi_p|phi_cond>| is inner_cond_mag_, set at the conditioned resample.
+  const bool leapfrog    = (conditioned && inner_leapfrog_);
   const int P            = (conditioned ? inner_nwalkers_ : int(inner.size()));
   utils::check(P >= 1, "inner ensemble must be non-empty");
   if (conditioned)
     utils::check(inner.size() == long(nwalk) * P, "conditioned inner ensemble size mismatch (expect nwalk*P)");
+  if (leapfrog)
+    utils::check(inner_cond_mag_.size() == long(nwalk) * P,
+                 "leapfrog inner_cond_mag_ not sized -- conditioned resample must run first");
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   const ComplexType zero(0.0);
   const ComplexType inv_P(1.0 / static_cast<double>(P), 0.0);
@@ -573,11 +584,24 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
     for (int w = 0; w < nwalk; ++w)
     {
       ComplexType lin_ov = std::exp(ov_(w));
-      double mag         = std::abs(lin_ov);
-      ComplexType s      = (mag > 0.0) ? (lin_ov / ComplexType(mag, 0.0)) : zero;
-      Sp(w)              = s;
-      D(w)               = D(w) + s;
-      Ov(w)              = Ov(w) + inv_P * lin_ov;
+      ComplexType s;
+      if (leapfrog)
+      {
+        // generalized importance weight w_p = <psi_p|chi> / |<psi_p|phi_cond>|; the effective overlap
+        // is Sum_p w_p (same quantity the leapfrog Log_Overlap accumulates -- keeps Energy's Ov and the
+        // local-energy-mode ratio consistent with the hybrid path).
+        double magc = double(inner_cond_mag_(long(ip) * nwalk + w));
+        s           = (magc > 0.0) ? (lin_ov / ComplexType(magc, 0.0)) : zero;
+        Ov(w)       = Ov(w) + s;
+      }
+      else
+      {
+        double mag = std::abs(lin_ov);
+        s          = (mag > 0.0) ? (lin_ov / ComplexType(mag, 0.0)) : zero;
+        Ov(w)      = Ov(w) + inv_P * lin_ov;
+      }
+      Sp(w) = s;
+      D(w)  = D(w) + s;
     }
     accumulate(Gp, ov_, Sp, ip, 0, Gsize);
     mpi_->comm.barrier();
