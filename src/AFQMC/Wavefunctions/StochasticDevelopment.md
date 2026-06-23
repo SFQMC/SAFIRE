@@ -33,10 +33,10 @@ that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Over
 | Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only**; **full `DriverFactory` run with VAFQMC-exported Ne cc-pVDZ HDF5 (Stages A/C 3b-var; Stages D/E 3c-i/3c-ii leapfrog, Jun 2026)** — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026) |
 | GPU build | CPU-only gate in dynamic path | **Not tested** |
 
-**The full `[stochastic_wfn]` tag passes on overhaul (11 cases, 5831 assertions, `mpirun -np 1`,
-`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
+**The full `[stochastic_wfn]` tag passes on overhaul (13 cases, 5843 assertions, `mpirun -np 1`,
+`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`; the 12th is the Phase 5 observable-DM case `stochastic_mixed_density_matrix_matches_nomsd`; the 13th is the Phase 5 `accumulate_estimators` case `stochastic_accumulate_estimators_matches_nomsd`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
 parity + Phases 2a/2b/3a static reductions + the 3b full-G dynamic trio + 3c-i conditioned sampling + 3c-ii
-leapfrog). Porting them surfaced and
+leapfrog + the Phase 5 observable mixed DM + accumulate_estimators). Porting them surfaced and
 fixed three real overhaul-only bugs — see
 [Port bugs surfaced by the test port](#port-bugs-surfaced-by-the-test-port-overhaul).
 
@@ -876,10 +876,10 @@ Called from `MixedObsHandler`, `FullObsHandler`, force estimators, and related c
 
 | Method | Current behavior | Desired functionality |
 |--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| `MixedDensityMatrix(wset, G, ...)` | Delegates to `nomsd_`; full analytic mixed DM for outer walkers. | Stochastic mixed DM for **observable evaluation** (may differ in layout/options from the `for_vbias` variant). Average inner ensemble contributions; support `compact` and `transpose` flags as today. |
-| `MixedDensityMatrix(wset, G, Ov, ...)` | Same as above, also returns overlaps per determinant/walker. | As above, plus return the overlap vector needed for weighted accumulation in multi-determinant or multi-reference estimators. |
-| `DensityMatrix(wset, RefA, RefB, G, Ov, ...)` | Delegates to `nomsd_`; DM w.r.t. a specific reference determinant. | Stochastic DM relative to a chosen reference orbital set. Needed by `MixedObsHandler` for reference-resolved force and density estimators. |
-| `accumulate_estimators(...)` | Delegates to `nomsd_`; analytic back-prop / correlated accumulation. | Accumulate estimator contributions using **stochastic** DMs and energies from the inner ensemble. Must remain consistent with `TimeEvolvedObsHandler` call signature. |
+| `MixedDensityMatrix(wset, G, ...)` | **✓ stochastic (Phase 5).** Inner-ensemble reduction `G[w] = Σ_p w_p G_{p,w}/Σ_p w_p` (estimator 3) in the caller's observable layout — the observable analogue of `MixedDensityMatrix_for_vbias`. Honors `compact` at the static limit; rejects `compact && inner_nsteps>0` (off-anchor compact DMs are bra-basis-dependent, only the full layout averages). Delegates to `nomsd_` at the delegate limit. |
+| `MixedDensityMatrix(wset, G, Ov, ...)` | **✓ stochastic (Phase 5).** As above; the 3-arg workhorse, also returns the per-walker **log** effective overlap (linear `(1/P) Σ_p ⟨ψ_p\|φ_w⟩` reduced then `log`-converted, matching NOMSD's observable-DM overlap convention). |
+| `DensityMatrix(wset, Ref, G, Ov, ...)` | **✓ delegate is exact (Phase 5).** The bra is the externally supplied `Ref`, not the stochastic trial — pure orbital algebra, trial- and Hamiltonian-independent (NOMSD never touches `OrbMats`). Delegating to `nomsd_` is exact; no stochastic reduction applies. (Which references a stochastic trial *exposes* is the open Tier 6 question.) |
+| `accumulate_estimators(...)` | **✓ stochastic (Phase 5).** Feeds the inner-ensemble-reduced full mixed Green's function (the Phase 5 `MixedDensityMatrix`, full layout) to the observables via NOMSD's identical accumulate loop. Delegates at the delegate limit. Time-evolved / back-propagated (X/Yc/M) observables are supported too: the `M + T(X)·G_full·Yc` transform is linear in the DM, so the inner-ensemble average commutes with it (X/Yc/M are trial-independent operator state). |
 
 ---
 
@@ -932,7 +932,7 @@ superseded.
 | `getHamType()` | Returns `nomsd_.HamOp.getHamType()`. | **Keep on `nomsd_` (True Ham)** — the outer-facing Hamiltonian type. (The inner Variational `HamOps` has its own type, used only by the inner propagator.) |
 | `getFieldTypes(...)` | Delegates to outer `HamOp`. | **Keep on `nomsd_` (True Ham)** for the outer driver's field layout. The inner Variational field layout is consumed separately by the inner `PropagatorFactory` (already handled inside the inner stack). |
 | `update_potentials(...)` | Delegates to outer `HamOp`. | Update the True-Ham potentials (`nomsd_`) for the outer loop; the inner stack updates `Ĥ_var` independently if grids/ions move. |
-| `generalizedFockMatrix(...)` | Delegates to outer `HamOp`. | Used by `generalizedFockMatrix` observable; must use stochastic DM inputs (Phase 5) against the True Ham. |
+| `generalizedFockMatrix(...)` | **✓ True-Ham delegate (Phase 5).** Now declared on `StochasticWfn` as a delegate to `nomsd_` (True Ham), mirroring NOMSD/PHMSD. Contracts a *supplied* DM against the Ham (no trial reduction); the supplied DM comes from the stochastic `MixedDensityMatrix`/`accumulate_estimators`. Reached only via the `generalizedFockMatrix` observable (commented out in all handlers today). |
 | `getOneBodyPropagatorMatrix(...)` | Delegates to outer `HamOp`. | **Keep on `nomsd_` (True Ham)** — the outer propagator's one-body matrix. (`B̂_T`'s one-body matrix comes from `Ĥ_var` inside the inner stack.) |
 | `vHS_sparse(...)` | Delegates to outer `HamOp`. | Sparse `vHS` of the **True** Ham for the outer propagator (`vHS` itself is a permanent delegate — Phase 4). |
 | `getSlaterDetOperations()` | Returns `nomsd_` SlaterDetOperations pointer. | **Keep returning the outer `nomsd_` SDetOp** — it is Hamiltonian-independent (orbital algebra), so the reductions can use it for the cross DM regardless of which Ham scores the contraction. |
@@ -967,8 +967,8 @@ Not wavefunction visitor methods, but required for a full-fledged type.
 ## Implementation phases (status and plan)
 
 The per-phase reference for the whole feature: what each phase delivers, its key members/factory
-wiring/reductions, its tests, and what it defers. **Phases 1a–3c (3c-i + 3c-ii) are complete and CPU-verified on
-overhaul** (`Ne_cc-pvdz`); Phases 4–8 are the remaining plan. (Phases 1a–1c decompose the
+wiring/reductions, its tests, and what it defers. **Phases 1a–3c (3c-i + 3c-ii), Phase 4, and Phase 5 are
+complete and CPU-verified on overhaul** (`Ne_cc-pvdz`); Phases 6–8 are the remaining plan. (Phases 1a–1c decompose the
 original "own the full inner stack" step — walker set, `NOMSD`, `HamOps`, and propagator — which
 should *not* be implemented as a single monolith.)
 
@@ -1402,11 +1402,96 @@ reductions and inherit whichever depth (static after 3a, dynamic after 3b/3c) is
 in `Real3IndexFactorization::vHS`). `StochasticWfn` delegates to `nomsd_` permanently; there is no
 stochastic `vHS` work. Recorded here so the hot path is fully accounted for (see Phase 3a).
 
-### Phase 5 — `MixedDensityMatrix` / `DensityMatrix` / `accumulate_estimators`
+### Phase 5 — `MixedDensityMatrix` / `DensityMatrix` / `accumulate_estimators` (**complete**)
 
 Mixed and back-propagated observables. The observable `MixedDensityMatrix` reuses the Phase 3a
-mixed-DM reduction (estimator 3) with the observable layout/options; `DensityMatrix` and
-`accumulate_estimators` extend it to reference-resolved and back-propagated estimators.
+mixed-DM reduction (estimator 3) with the observable layout/options; `accumulate_estimators` feeds that
+stochastic full mixed DM to the observable handlers — including the **time-evolved** (`TimeEvolvedObsHandler`)
+path, where the X/Yc/M operator transform is linear in the DM and so commutes with the inner-ensemble
+average; `DensityMatrix` (reference-parameterized) and `generalizedFockMatrix` (DM-in contraction)
+resolve to exact True-Ham delegates. The only Phase-5-adjacent item left is the back-propagation
+*reference* semantics for a stochastic trial (which references it exposes), which is Tier 6. Status
+detail below.
+
+#### Phase 5 — observable `MixedDensityMatrix` (**complete**, CPU-verified [overhaul])
+
+The two observable `MixedDensityMatrix` overloads (`(wset, G, compact)` and `(wset, G, Ov, compact)`)
+were the pre-Phase-5 pure delegates to `nomsd_`; they are now the **observable analogue of
+`MixedDensityMatrix_for_vbias`**. Both route through one 3-arg workhorse
+(`StochasticWfn.icc`) that, away from the delegate limit, calls the shared `reduce_inner_cross_dm`
+to form `G[w] = Σ_p w_p G_{p,w} / Σ_p w_p` (estimator 3 of arXiv:2505.18519) — the **same** inner-
+ensemble reduction and weight progression (`1/P` static → `S_p` dynamic → generalized under
+conditioning/leapfrog) as the force-bias DM — but returned in the **caller's observable layout** and
+with the **log** overlap convention NOMSD's observable DM reports (the linear effective overlap
+`(1/P) Σ_p ⟨ψ_p|φ_w⟩` is `std::log`-converted at the end, exactly as `Energy`/`Log_Overlap` do). The
+2-arg overload mirrors NOMSD: it builds a scratch overlap vector and calls the 3-arg form. Delegates
+to `nomsd_` at the single-determinant delegate limit; matches NOMSD there.
+
+**Compact vs. full off the anchor.** The per-pair *compact* mixed DM (`[nel × NMO]`) has its `nel`
+rows in the **bra `ψ_p`'s own occupied basis** (`det_ops::MixedDensityMatrix` compact layout), so
+once the inner walkers leave the anchor (`inner_nsteps > 0`) each `ψ_p` lives in a different basis and
+the compact DMs cannot be averaged across the ensemble — only the basis-independent full `NMO × NMO`
+layout can. At the static limit every `ψ_p ≡` anchor, so compact is well-defined (anchor basis) and
+equals NOMSD. The override therefore reduces in the caller's layout at the static limit and **rejects
+`compact && inner_nsteps > 0`** with a `utils::check` (request the full layout for a dynamic ensemble).
+This is the observable counterpart of `MixedDensityMatrix_for_vbias` *forcing* the full layout off the
+anchor. `accumulate_estimators` always builds the full mixed DM (`compact = false`) through its own
+override, so it never requests a compact observable layout off the anchor; at the delegate limit both
+methods delegate to `nomsd_`.
+
+Test: `stochastic_mixed_density_matrix_matches_nomsd` (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`).
+Unlike `vbias`, the observable mixed DM **is** exposed on the `Wavefunction` variant, so it compares
+`G` directly in **both** the compact and full layouts (plus `exp(Ov)`): (1) `inner_nwalkers` invariance
+via a static replicated ensemble (1 vs 3), (2) delegate-limit equality vs NOMSD gated on `ndet == 1`.
+Built + CPU-verified on `worker6049` (`Ne_cc-pvdz`, `mpirun -np 1`): the new case passes (8 assertions)
+and the full `[stochastic_wfn]` tag is **13 cases / 5843 assertions** (was 11 / 5831).
+
+#### Phase 5 — `accumulate_estimators` (**complete**, CPU-verified [overhaul])
+
+`accumulate_estimators` is the real observable-handler entry point — `MixedObsHandler` calls the 5-arg
+form, `TimeEvolvedObsHandler` the 10-arg (X/Yc/M) form. NOMSD's `ndet == 1` path builds the **full**
+mixed Green's function of its trial (compact `DensityMatrix` against `OrbMats(0)`, un-compacted via
+`T(OrbMats)·Gc`) and feeds it to the observables. The stochastic override builds that full mixed DM
+from the **inner ensemble instead** — it is exactly the Phase 5 `MixedDensityMatrix(compact = false)`
+(estimator 3, full `[nw][nspin][npol·NMO][npol·NMO]` layout) — then runs NOMSD's identical observable
+loop (`v.accumulate(iav, Gfull, Gfull_h, wgt, importanceSampling)` over both property lists). Delegates
+to `nomsd_` at the delegate limit.
+
+**Time-evolved / back-propagated observables (X/Yc/M, `TimeEvolvedObsHandler`).** NOMSD's `ndet == 1`
+transform is `Gfull[is] ← M[is] + T(X[is])·T(OrbMats)·Gc[is]·Yc[is]`. Grouping it as
+`M + T(X)·(T(OrbMats)·Gc)·Yc = M + T(X)·G_full·Yc`, the transform is **linear in the mixed DM `G_full`**
+and `X`/`Yc`/`M` are trial-independent operator/walker quantities (from `PropagateOperators`). So the
+inner-ensemble average (estimator 3) **commutes** with the transform: feeding the *stochastic* full
+mixed DM and applying the **same** `M + T(X)·G_full·Yc` per spin (`M` added once) equals averaging the
+per-inner-walker transforms `Σ_p w_p[M + T(X)·G_{full,p,w}·Yc]/Σ_p w_p`. The override therefore builds
+the stochastic full mixed DM, then applies NOMSD's identical X/Yc/M gemms — no anchor-specific
+back-propagation reference is needed for this *mixed* (importance-sampled) estimator. (Full
+back-propagation *reference* semantics for a stochastic trial — which reference set it exposes — remain
+the open [Tier 6](#tier-6--back-propagation) question; they do not affect this transform.)
+
+Test: `stochastic_accumulate_estimators_matches_nomsd` (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`).
+A real `full1rdm` (one-body RDM, no rotation) observable is driven through `accumulate_estimators` — the
+identical code path the `Observable` variant takes, since `accumulate_estimators` is templated on the
+observable type and only calls `v.accumulate(...)`, so a `std::vector<full1rdm>` exercises it directly.
+The accumulated 1-RDM is read back via the observable's HDF5 `print()` (its `DMAverage` is private) and
+compared against NOMSD, **both for the mixed path and the time-evolved path** (with deterministic
+non-trivial X/Yc/M operators): `inner_nwalkers` invariance (static replicated 1 vs 3) and delegate-limit
+equality at `ndet == 1`. CPU-verified on `worker6049` (`Ne_cc-pvdz`, `mpirun -np 1`).
+
+#### Phase 5 — `DensityMatrix` and `generalizedFockMatrix` (resolved as True-Ham delegates)
+
+Neither needs an inner-ensemble reduction:
+
+- `DensityMatrix(wset, Ref, G, Ov, compact, herm)` — the bra is an **externally supplied reference**
+  `Ref`, the ket the walker; it is pure orbital algebra **independent of both the trial and the
+  Hamiltonian** (NOMSD's implementation never touches its own `OrbMats`). The stochastic trial plays no
+  role, so the delegate to `nomsd_` is **exact** (documented inline). Which reference set a stochastic
+  trial *exposes* for back-propagation is the separate, open Tier 6 question — it does not change the
+  meaning of this `Ref`-parameterized method. (No production caller today; reached only via Tier 6.)
+- `generalizedFockMatrix(...)` — now declared on `StochasticWfn` as a delegate to `nomsd_` (the True
+  Ham), mirroring NOMSD/PHMSD. It contracts a **supplied** DM against the Ham (no trial reduction), and
+  the True Ham is the correct operator. Reached only via the `generalizedFockMatrix` observable, which is
+  currently commented out in all handlers; the delegate completes the API so it compiles if re-enabled.
 
 ### Phase 6 — `G_MF` / `vMF`
 
@@ -1582,6 +1667,19 @@ other inputs skip silently. `inner_leapfrog = false` leaves 3c-i/3b bit-identica
 |-----------|------------|
 | `stochastic_leapfrog_propagator_step` | Real outer **hybrid** `AFQMCBasePropagator::Propagate()` over the leapfrog trial (`inner_conditioning = inner_leapfrog = true`, `inner_nsteps = 1`, `inner_nwalkers = 4`); `begin_inner_step(wset)` resamples conditioned on the old walker + refreshes the importance-reweighted old overlap, so the step ratio `new/old` is exactly Eq. 25 (`𝒩(φ)` cancels). Asserts finite weights/energies/overlaps over 3 steps (finiteness smoke; energy-vs-analytic-AFQMC + variance reduction are the driver-level research validation). |
 
+### Phase 5-specific tests (implemented)
+
+***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
+`wfn_rhf.h5`). Requires a **NOMSD** input; other inputs skip silently. Covers the observable
+`MixedDensityMatrix` and `accumulate_estimators` (`DensityMatrix` / `generalizedFockMatrix` are exact
+True-Ham delegates needing no test — see [Phase 5](#phase-5--mixeddensitymatrix--densitymatrix--accumulate_estimators)).
+Passes in the full `[stochastic_wfn]` tag (**13 cases / 5843 assertions**, `mpirun -np 1`, Jun 2026).
+
+| Test case | Checkpoint |
+|-----------|------------|
+| `stochastic_mixed_density_matrix_matches_nomsd` | The observable `MixedDensityMatrix(wset, G, Ov, compact)` in **both** layouts (compact `[nel·NMO]` and full `[NMO·NMO]`): (1) `inner_nwalkers` invariance — a static replicated ensemble (1 vs 3) gives an `inner_nwalkers`-independent `G` and `exp(Ov)`; (2) delegate limit — stochastic `G` and `exp(Ov)` equal NOMSD at `ndet == 1`. The DM is exposed on the `Wavefunction` variant, so `G` is compared directly (unlike `vbias`, where only the contracted force bias is observable). |
+| `stochastic_accumulate_estimators_matches_nomsd` | `accumulate_estimators` driving a real `full1rdm` (one-body RDM, no rotation) observable — fed directly as `std::vector<full1rdm>` (the same `v.accumulate(...)` path the `Observable` variant takes). The accumulated 1-RDM is read back via the observable's HDF5 `print()` and compared to NOMSD for **both the mixed and the time-evolved path** (deterministic non-trivial X/Yc/M operators): (1) `inner_nwalkers` invariance (static replicated 1 vs 3); (2) delegate-limit equality at `ndet == 1`. |
+
 ### Running the stochastic test suite
 
 All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD wavefunction input
@@ -1589,7 +1687,7 @@ All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD
 
 **`main` (overhaul API)** — target binary is the consolidated `test_afqmc`
 (`tests/test_wfn_factory.cpp`); output under `${BUILD_DIR}/tests/bin/`. The static + 3b cases are
-**ported and CPU-verified** (11 cases, 5831 assertions — incl. the Phase 3b-var anchor, 3c-i, and 3c-ii smokes) on the
+**ported and CPU-verified** (13 cases, 5843 assertions — incl. the Phase 3b-var anchor, 3c-i and 3c-ii smokes, and the two Phase 5 observable cases) on the
 `Ne_cc-pvdz` dense+RHF fixture (the develop `ham_chol_sc.h5` / `wfn_msd.h5` fixtures are gone). Build is driven via `cmake --build` (Ninja
 generator); on the Flatiron cluster build on a compute node, not the gateway:
 
@@ -1610,10 +1708,11 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 **Overhaul port — done (Jun 2026):**
 
 - ✅ Ported the static (1a–3a) + 3b `[stochastic_wfn]` cases to `tests/test_wfn_factory.cpp`; built
-  `test_afqmc` and ran the full tag on a compute node (now 11 cases, 5831 assertions, `Ne_cc-pvdz`,
+  `test_afqmc` and ran the full tag on a compute node (now 13 cases, 5843 assertions, `Ne_cc-pvdz`,
   incl. the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`, the Phase 3c-i smoke
-  `stochastic_conditioned_propagator_step`, and the Phase 3c-ii leapfrog smoke
-  `stochastic_leapfrog_propagator_step`).
+  `stochastic_conditioned_propagator_step`, the Phase 3c-ii leapfrog smoke
+  `stochastic_leapfrog_propagator_step`, and the two Phase 5 observable cases
+  `stochastic_mixed_density_matrix_matches_nomsd` / `stochastic_accumulate_estimators_matches_nomsd`).
 - ✅ Fixed the three overhaul-only bugs the port surfaced (log-overlap convention; full-G one-body
   rank mismatch; full-G EXX/EJ slice axis + `dotc`→`dot`).
 - ✅ Full-G validated against the compact path on the dense `Real3IndexFactorization` route
