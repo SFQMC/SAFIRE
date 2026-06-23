@@ -1303,6 +1303,117 @@ TEST_CASE("stochastic_propagator_step", "[wfn_factory][stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
+// Phase 3c-i: walker-conditioned inner sampling. With inner_conditioning = true the inner field paths
+// are importance-sampled conditioned on each outer walker phi_w (Eq. 23 of arXiv:2505.18519): the inner
+// ensemble is grown to nwalk*inner_nwalkers (block w conditioned on phi_w via the custom force bias
+// x_bar(phi_w) = sqrt(dt)*L^var.<phi_T|c+c|phi_w>/<phi_T|phi_w>, built by reusing the inner NOMSD's
+// vbias on the OUTER wset). Run a real OUTER AFQMCBasePropagator over the dynamic conditioned trial and
+// assert the walkers stay finite. The internal block-structure size checks (inner.size() == nwalk*P) in
+// reduce_inner_cross_dm / Log_Overlap validate the nw*P resize. The leapfrog / exact N(phi) cancellation
+// is Phase 3c-ii; this is a finiteness smoke, not NOMSD parity.
+template<MEMORY_SPACE MEM>
+void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                            std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // Phase 3c-i conditioned sampling is CPU-only this phase (full-G kernels CPU-only).
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk = 11;
+    const int inner_nwalkers = 4;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
+        std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(13));
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    ptree pt;
+    pt.put("name", "wfn_stoch_cond");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    pt.put("stochastic", true);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_cond", pt);
+    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_cond", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_cond", type, wlk_pt);
+
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_cond"));
+
+    // Prime overlaps/energies and pick an energy shift so the hybrid weights stay well-scaled.
+    wfn.Log_Overlap(wset);
+    wfn.Energy(wset);
+    ComplexType eav(0.0), ow(0.0);
+    for (auto it = wset.begin(); it != wset.end(); ++it)
+    {
+      eav += it->get_property(WEIGHT) * it->energy();
+      ow += it->get_property(WEIGHT);
+    }
+    RealType Eshift = (std::abs(ow) > 1e-12) ? real(eav / ow) : RealType(0);
+
+    // Build the OUTER propagator (default hybrid) bound to the conditioned stochastic trial.
+    ptree prop_pt;
+    prop_pt.put("name", "prop_stoch_cond");
+    prop_pt.put("system", "info0");
+    PropagatorFactory<MEM> PropgFac(InfoMap);
+    PropgFac.push("prop_stoch_cond", prop_pt);
+    auto& prop = PropgFac.getPropagator(mpi, "prop_stoch_cond", wfn, rng_dev);
+
+    RealType dt = 0.01;
+    for (int step = 0; step < 3; ++step)
+    {
+      prop.Propagate(wset, Eshift, dt); // hot-path step; inner ensemble resampled (nw*P, conditioned)
+      prop.Orthogonalize(wset);
+      wfn.Energy(wset);
+      for (auto it = wset.begin(); it != wset.end(); ++it)
+      {
+        REQUIRE(std::isfinite(real(it->get_property(WEIGHT))));
+        REQUIRE(std::isfinite(real(it->energy())));
+        REQUIRE(std::isfinite(imag(it->energy())));
+        REQUIRE(std::isfinite(real(it->get_property(OVLP))));
+      }
+    }
+  }
+}
+
+TEST_CASE("stochastic_conditioned_propagator_step", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn walker-conditioned inner sampling over a real outer propagator (Phase 3c-i).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_conditioned_propagator_step<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
 // Phase 3b-var regression anchor: the stochastic inner (Variational) stack can be built from a
 // SEPARATE Hamiltonian named by the `inner_hamiltonian` input key, which the WavefunctionFactory
 // builds on demand through the HamiltonianFactory passed to its two-argument constructor. Two trials
