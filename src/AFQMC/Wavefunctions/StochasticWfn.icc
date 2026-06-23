@@ -20,6 +20,7 @@
 #include "IO/ptree/ptree_utilities.hpp"
 #include "utilities/FairDivide.hpp"
 #include "utilities/check.hpp"
+#include "numerics/operations/product.hpp"
 #include "AFQMC/SlaterDeterminantOperations/density_matrix.hpp"
 
 namespace sfqmc
@@ -641,6 +642,134 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix_for_vbias(const WlkSet& wse
   for (int w = 0; w < nwalk; ++w)
     Gnum(w, nda::range::all) /= D(w);
   G() = Gnum();
+}
+
+// Phase 5 (Tier 2 observable): stochastic mixed density matrix for observable evaluation. Same inner-
+// ensemble reduction as MixedDensityMatrix_for_vbias (estimator 3 of arXiv:2505.18519,
+// G[w] = sum_p w_p G_{p,w} / sum_p w_p with the 1/P -> S_p -> generalized weight progression), but
+// returned in the caller's observable layout and with the LOG overlap NOMSD's observable DM reports.
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet, class MatG, class TVec>
+void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact)
+{
+  if (at_delegate_limit())
+  {
+    nomsd_.MixedDensityMatrix(wset, std::forward<MatG>(G), std::forward<TVec>(Ov), compact);
+    return;
+  }
+  memory::check_memory_space<MEM>(G, Ov);
+  const int nwalk = wset.size();
+  const ComplexType zero(0.0);
+
+  // Off the anchor (inner_nsteps > 0) each inner walker psi_p occupies a different orbital space, so its
+  // per-pair COMPACT mixed DM has its nel rows in psi_p's own occupied basis -- a p-dependent basis that
+  // cannot be averaged across the ensemble. Only the full NMO x NMO layout is basis-independent there.
+  // At the static limit every psi_p == anchor, so the compact layout is well-defined (anchor basis) and
+  // matches NOMSD. This mirrors MixedDensityMatrix_for_vbias forcing the full layout once inner_nsteps>0.
+  utils::check(not(compact and inner_nsteps_ > 0),
+               "StochasticWfn::MixedDensityMatrix: a compact observable density matrix is only "
+               "supported for the static inner ensemble (inner_nsteps == 0); request the full "
+               "(compact == false) layout for a dynamic ensemble.");
+
+  const int Gsize = dm_size(not compact);
+  utils::check(G.shape() == std::array<long, 2>{nwalk, Gsize}, "Size mismatch");
+  utils::check(Ov.size() == nwalk, "Size mismatch");
+
+  memory::buffered_array<MEM, ComplexType, 2> Gnum(nwalk, Gsize);
+  Gnum() = zero;
+  memory::buffered_array<MEM, ComplexType, 1> D(nwalk, zero);
+  Ov() = zero;
+
+  reduce_inner_cross_dm(
+      wset, compact, Gsize, D, Ov,
+      [&](auto& Gp, auto& /*ov_*/, auto& Sp, int /*ip*/, int /*r0*/, int /*rN*/) {
+        for (int w = 0; w < nwalk; ++w)
+          Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+      });
+
+  for (int w = 0; w < nwalk; ++w)
+    Gnum(w, nda::range::all) /= D(w);
+  G() = Gnum();
+
+  // reduce_inner_cross_dm fills Ov with the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; NOMSD's
+  // MixedDensityMatrix returns the LOG overlap (det_ops convention, matching the OVLP property), so
+  // convert back here -- exactly as the Energy / Log_Overlap overrides do.
+  for (int w = 0; w < nwalk; ++w)
+    Ov(w) = std::log(Ov(w));
+}
+
+// Phase 5 (Tier 2 observable): accumulate observable contributions using the stochastic mixed Green's
+// function. NOMSD (ndet == 1) builds the full mixed DM of its trial -- compact `DensityMatrix` against
+// OrbMats(0), un-compacted via `T(OrbMats) * Gc` -- and feeds it to the observables. Here that full DM
+// is instead the inner-ensemble reduction `G[w] = Σ_p w_p G_{p,w}/Σ_p w_p` (estimator 3, full layout),
+// i.e. the stochastic `MixedDensityMatrix(compact = false)`, then fed to the same observable loop.
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet, class Observable>
+void StochasticWfn<MEM, devPsiT>::accumulate_estimators(int iav, WlkSet& wset,
+    nda::MemoryVector auto const& wgt, std::vector<Observable>& properties_1body,
+    std::vector<Observable>& properties, nda::MemoryArrayOfRank<4> auto* X,
+    nda::MemoryArrayOfRank<4> auto* Yc, nda::MemoryArrayOfRank<4> auto* M, bool time_evolved,
+    bool importanceSampling)
+{
+  // Delegate limit: behave exactly as NOMSD (exact for a single-determinant trial; the usual multi-
+  // determinant caveat of every stochastic override applies).
+  if (at_delegate_limit())
+  {
+    nomsd_.accumulate_estimators(iav, wset, wgt, properties_1body, properties, X, Yc, M, time_evolved,
+                                 importanceSampling);
+    return;
+  }
+  utils::check(importanceSampling, "Finish"); // mirror NOMSD: the non-importance-sampled path is unfinished
+
+  using nda::range;
+  auto all              = range::all;
+  const int nwalk       = int(wset.size());
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  const int nspin       = (wt == COLLINEAR ? 2 : 1);
+  const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
+  const ComplexType zero(0.0);
+
+  // Stochastic full mixed Green's function, laid out [nw][nspin][npol*NMO][npol*NMO] as the observables
+  // expect. dm_size(true) == nspin*npol*NMO*npol*NMO, so the 4D buffer reshapes to the [nw, Gsize] view
+  // MixedDensityMatrix writes (full layout; valid for both the static and dynamic ensemble).
+  const int Gsize = dm_size(true);
+  memory::buffered_array<MEM, ComplexType, 4> Gfull(nwalk, nspin, npol * NMO, npol * NMO);
+  memory::buffered_array<MEM, ComplexType, 1> Ov(nwalk, zero);
+  {
+    auto Gflat = nda::reshape(Gfull, std::array<long, 2>{nwalk, Gsize});
+    MixedDensityMatrix(wset, Gflat, Ov, false);
+  }
+
+  if (time_evolved)
+  {
+    // Time-evolved / back-propagated observables: transform the mixed Green's function through the
+    // evolved one-body operators X (-> c+) and Yc (= conj(Y), -> c) and the operator state M, exactly as
+    // NOMSD's ndet==1 path does -- per spin, G[w] <- M[w] + T(X[w]) . G_full[w] . Yc[w]. The transform is
+    // LINEAR in the mixed DM, so the inner-ensemble average (estimator 3) commutes with it: feeding the
+    // stochastic full mixed DM is equivalent to averaging the per-inner-walker transforms. M and X/Yc are
+    // trial-independent operator/walker quantities (from PropagateOperators), so M is added once.
+    utils::check(X != nullptr and Yc != nullptr and M != nullptr,
+                 "Error in StochasticWfn::accumulate_estimators: null X/Yc/M pointers with time_evolved.");
+    const std::array<long, 4> op_shape{nwalk, nspin, npol * NMO, npol * NMO};
+    utils::check(X->shape() == op_shape and Yc->shape() == op_shape and M->shape() == op_shape,
+                 "Error in StochasticWfn::accumulate_estimators: X/Yc/M shape mismatch.");
+
+    // GY[is] = G_full[is] . Yc[is]  (use the stochastic full DM before it is overwritten by M).
+    memory::buffered_array<MEM, ComplexType, 4> GY(nwalk, nspin, npol * NMO, npol * NMO);
+    for (int is = 0; is < nspin; ++is)
+      math::product(Gfull(all, is, all, all), (*Yc)(all, is, all, all), GY(all, is, all, all));
+    // G_full no longer needed; start from the operator state M and add T(X) . GY.
+    Gfull() = (*M)();
+    for (int is = 0; is < nspin; ++is)
+      math::product<'T'>(ComplexType(1.0), (*X)(all, is, all, all), GY(all, is, all, all), ComplexType(1.0),
+                         Gfull(all, is, all, all));
+  }
+
+  auto Gfull_h = nda::to_host(Gfull());
+  for (auto& v : properties_1body)
+    v.accumulate(iav, Gfull, Gfull_h, wgt, importanceSampling);
+  for (auto& v : properties)
+    v.accumulate(iav, Gfull, Gfull_h, wgt, importanceSampling);
 }
 
 } // namespace afqmc

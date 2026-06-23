@@ -158,18 +158,30 @@ public:
     Energy(wset);
   }
 
+  // Phase 5 (Tier 2 observable): stochastic mixed density matrix for observable evaluation -- estimator
+  // 3 of arXiv:2505.18519, G[w] = (sum_p w_p <psi_p|c+c|phi_w>/<psi_p|phi_w>) / sum_p w_p, reduced over
+  // the inner ensemble and scored against the True Ham. This is the observable analogue of
+  // MixedDensityMatrix_for_vbias: the same inner-ensemble reduction, but returned in the caller's
+  // observable layout (and with the LOG overlap convention NOMSD's observable DM uses). Delegates to
+  // nomsd_ at the single-determinant delegate limit. The 2-arg overload mirrors NOMSD -- it builds a
+  // scratch overlap vector and routes through the 3-arg workhorse.
   template<class WlkSet, class MatG>
   void MixedDensityMatrix(const WlkSet& wset, MatG&& G, bool compact = true)
   {
-    nomsd_.MixedDensityMatrix(wset, std::forward<MatG>(G), compact);
+    int nw = wset.size();
+    memory::buffered_array<MEM, ComplexType, 1> Ov(nw, ComplexType(0.0));
+    MixedDensityMatrix(wset, std::forward<MatG>(G), Ov, compact);
   }
 
   template<class WlkSet, class MatG, class TVec>
-  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true)
-  {
-    nomsd_.MixedDensityMatrix(wset, std::forward<MatG>(G), std::forward<TVec>(Ov), compact);
-  }
+  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true);
 
+  // Phase 5 (Tier 2): DM w.r.t. an EXTERNALLY supplied reference orbital set `Ref`. The bra is `Ref`
+  // (not the stochastic trial) and the ket is the walker, so this is pure orbital algebra independent
+  // of both the trial wavefunction and the Hamiltonian -- NOMSD's implementation never touches its own
+  // OrbMats. The stochastic trial therefore plays no role, and delegating to `nomsd_` is exact. (Which
+  // reference set a stochastic trial *exposes* for back-propagation is the separate, open Tier 6
+  // question; it does not change the meaning of this Ref-parameterized method.)
   template<class WlkSet, class RVec, class MatG, class TVec>
   void DensityMatrix(const WlkSet& wset,
                      RVec&& Ref,
@@ -191,10 +203,36 @@ public:
   template<class WlkSet>
   void Log_Overlap(WlkSet& wset);
 
-  template<class... Args>
-  void accumulate_estimators(Args&&... args)
+  // Phase 5 (Tier 2): accumulate observable contributions from the inner-ensemble-reduced (stochastic)
+  // Green's function. The full mixed Green's function fed to the observables is the stochastic
+  // `MixedDensityMatrix` (estimator 3, full NMO x NMO layout). For time-evolved / back-propagated
+  // observables (X/Yc/M != null) that DM is transformed through the evolved operators exactly as NOMSD
+  // does (`M + T(X) . G_full . Yc`); the transform is linear in the DM, so the inner-ensemble average
+  // commutes with it. Delegates to `nomsd_` at the delegate limit. The 5-arg overload mirrors NOMSD
+  // (null X/Yc/M, time_evolved = false) and routes through the full one.
+  template<class WlkSet, class Observable>
+  void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
+                             std::vector<Observable>& properties_1body, std::vector<Observable>& properties,
+                             nda::MemoryArrayOfRank<4> auto* X, nda::MemoryArrayOfRank<4> auto* Yc,
+                             nda::MemoryArrayOfRank<4> auto* M, bool time_evolved,
+                             bool importanceSampling = true);
+
+  template<class WlkSet, class Observable>
+  void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
+                             std::vector<Observable>& properties_1body, std::vector<Observable>& properties,
+                             bool importanceSampling = true)
   {
-    nomsd_.accumulate_estimators(std::forward<Args>(args)...);
+    memory::buffered_array<MEM, ComplexType, 4>* X = nullptr;
+    accumulate_estimators(iav, wset, wgt, properties_1body, properties, X, X, X, false, importanceSampling);
+  }
+
+  // Phase 5 (Tier 5 observable): generalized Fock matrix of a SUPPLIED density matrix against the True
+  // Ham. Like NOMSD, this is a `HamOp` contraction on a caller-provided G (no trial reduction), so it
+  // delegates to `nomsd_` (the True Ham). Reached only via the `generalizedFockMatrix` observable.
+  template<class... Args>
+  void generalizedFockMatrix(Args&&... args)
+  {
+    nomsd_.generalizedFockMatrix(std::forward<Args>(args)...);
   }
 
   int total_number_of_references() const { return nomsd_.total_number_of_references(); }
