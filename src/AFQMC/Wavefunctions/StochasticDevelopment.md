@@ -12,7 +12,8 @@ rather than a thin delegate wrapper around `NOMSD`.
 
 | Branch | Role |
 |--------|------|
-| **`main`** | Active development — overhaul API + ported stochastic (Phases 1a–3b). Cut feature branches here and merge back after review. |
+| **`main`** | Active development — overhaul API + ported stochastic (Phases 1a–3b-var merged Jun 2026). Cut feature branches here and merge back after review. |
+| **`stochastic-wfn-phase-3c`** | Active feature branch for Phase 3c (walker-conditioned sampling + leapfrog). |
 | **`stochastic-wfn-develop`** | Frozen develop-line reference (Phases 1a–3b complete on the old `boost::variant` stack). Kept for comparison and fixture history; not the integration target. |
 | **`upstream/overhaul`** | Upstream architecture base; rebase `main` onto it periodically while upstream settles. |
 
@@ -27,7 +28,7 @@ that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Over
 | `test_afqmc` build + `wfn_factory: sdet` | N/A | **Pass — 10 assertions, Ne_cc-pvdz fixture (Jun 2026)** |
 | `[stochastic_wfn]` static suite (1a–3a) | Pass on CPU compute node | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** |
 | `[stochastic_wfn]` dynamic suite (3b full-G) | Pass on CPU compute node | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** |
-| Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only** |
+| Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only**; **full `DriverFactory` run with VAFQMC-exported Ne cc-pVDZ HDF5 (Stages A/C, Jun 2026)** — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026) |
 | GPU build | CPU-only gate in dynamic path | **Not tested** |
 
 **The full `[stochastic_wfn]` tag passes on overhaul (9 cases, 5567 assertions, `mpirun -np 1`,
@@ -1119,11 +1120,11 @@ end-to-end outer propagator integration (`stochastic_propagator_step`). **Deferr
 **Variational Hamiltonian `Ĥ_var`** — the inner stack stayed a True-Ham clone, so `B̂_T` was generated
 by the cloned True Cholesky; the machinery is fully exercised, only the generator differed from the
 paper's intent. The **factory plumbing for a *second* `Hamiltonian`** is now done in
-[Phase 3b-var](#phase-3b-var--variational-hamiltonian-factory-plumbing-complete-factory-plumbing-research-validation-deferred)
+[Phase 3b-var](#phase-3b-var--variational-hamiltonian-factory-plumbing-complete)
 (input key **`inner_hamiltonian`**, built on demand by `WavefunctionFactory` through the
-`HamiltonianFactory` it now holds). What remains is the **variational-Hamiltonian HDF5 file**, which
-does not exist in the repo — until it is generated (quantum-chemistry side), the inner stack still runs
-as a True-Ham clone in practice and the "different `Ĥ_var` ⇒ different `B̂_T`" validation is deferred.
+`HamiltonianFactory` it now holds). A distinct **variational HDF5 fixture** is now generated from
+VAFQMC (see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026)); the
+same-file unit-test anchor remains in `stochastic_inner_hamiltonian_same_as_true`.
 
 | Item | Status |
 |------|--------|
@@ -1134,7 +1135,7 @@ as a True-Ham clone in practice and the "different `Ĥ_var` ⇒ different `B̂_T
 | Half-rotation | ✓ Resolved via the **un-rotated full-G contraction** (not per-walker re-rotation): once `ψ_p ≠` anchor the reductions form the **full** NMO×NMO cross `G` and contract it with the full (un-rotated) Cholesky/bare `hij`. The EXX/EJ/E1 kernel is a single shared `full_g::energy_closed` (`HamiltonianOperations/full_g_estimators.hpp`, reusing the proven `energy_impl` structure with an identity-rotated Cholesky), written HamOp-agnostically (G requested as `[nwalk][NMO*NMO]` transposed). On overhaul only the dense `Real3IndexFactorization` route is live (`THCOps`, `ModelHamOps`, `KPTHCOps`, `KP3IndexFactorization` carry `energy_fullG` stubs pending coverage); the sparse `SparseTensor` route existed only on develop (`Likn` densified via `Matrix2MA`, exercised there by `ham_chol_sc.h5`). `ma_rotate::getLank` could not be reused (it reinterprets a real `Likn` as complex). **The full-G force bias has no separate `vbias_fullG` seam** — `Real3IndexFactorization::vbias` dispatches on the G layout (compact vs full NMO×NMO), so the un-rotated contraction is reached through the ordinary `vbias`/`vbias_from_G` path; only `energy_fullG` remains a dedicated seam (`energy_from_fullG` on NOMSD). **CLOSED (RHF) trials only this phase** (rejected at `StochasticWfn` construction otherwise; also CPU-only); COLLINEAR/NONCOLLINEAR full-G are a follow-up. |
 | Tests | ✓ **`stochastic_full_g_matches_compact`** — full-G at the anchor == compact `nd = 0` == NOMSD (new-kernel validation). ✓ **`stochastic_dynamic_ensemble_smoke`** — resample + **all four** stochastic overrides (`MixedDensityMatrix_for_vbias`/`vbias`, `Energy`/`energy_fullG`, `Log_Overlap`) on the moved ensemble; asserts finite. ✓ **`stochastic_propagator_step`** — real OUTER `AFQMCBasePropagator::Propagate()` on a dynamic trial (`inner_nsteps = 1`, `inner_nwalkers = 4`); full hot path through the propagator (`begin_inner_step` → resample → `MixedDensityMatrix_for_vbias`/`vbias` (full-G via layout dispatch) → `vHS` → apply → `Log_Overlap`), including G-buffer sizing from `size_of_G_for_vbias()`; asserts finite weights/energies/overlaps over 3 steps (smoke, not NOMSD parity). All three gated on **CLOSED (RHF)**. **[develop]** CPU-verified with `C_1x1x1_dzvp/wfn_rhf.h5` + `ham_chol_sc.h5` (also passes with `wfn_msd.h5`). **[overhaul] Ported + CPU-verified** on `Ne_cc-pvdz` (`ham_chol_dense.h5` + `wfn_rhf.h5`), after fixing the full-G kernel bugs (see [Port bugs](#port-bugs-surfaced-by-the-test-port-overhaul)). Remaining (research-level): `P → ∞` convergence and `inner_seed` stability. |
 
-#### Phase 3b-var — Variational Hamiltonian factory plumbing (**complete**, factory plumbing; research validation deferred)
+#### Phase 3b-var — Variational Hamiltonian factory plumbing (**complete**)
 
 **Goal:** let the inner (Variational) stack be built from a **separate** Cholesky Hamiltonian `Ĥ_var`
 read from its own HDF5 file, instead of cloning the True Ham. This is the factory-plumbing follow-up
@@ -1161,9 +1162,115 @@ sites); concentrating it in `WavefunctionFactory` keeps the feature in one layer
 | Driver | ✓ **`DriverFactory` call sites unchanged.** `AFQMCFactory` constructs `WfnFac(InfoMap, HamFac)` so production input decks can name `inner_hamiltonian`; `DriverFactory::getWavefunction` is untouched. |
 | Layout queries | ✓ No change. All outer-facing Tier-4/5 metadata (Cholesky counts, transpose flags, `size_of_G_for_vbias`, Ham type) stay on `nomsd_` (True Ham), exactly as the dual-Hamiltonian rule requires. `Ĥ_var`'s (generally different) Cholesky count is internal to the inner propagator. |
 | Tests | ✓ **`stochastic_inner_hamiltonian_same_as_true`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — one factory builds two trials: `wfn_clone` (no `inner_hamiltonian` → inner clones the True Ham) and `wfn_hvar` (`inner_hamiltonian` = the **same** integral file → factory builds a second Ham and uses it for the inner stack). On the dynamic path (`inner_nsteps = 1`, so the inner Ham drives `B̂_T`) the two must agree to `1e-9` on `Energy`/`Log_Overlap`/`vbias` over 3 resampled steps. A `HamFac.has_input("wfn_hvar__inner_hamiltonian__")` check proves the factory actually traversed the `inner_hamiltonian` path (built + registered the Ham) rather than silently ignoring the key. Gated on CLOSED (RHF) + CPU. **CPU-verified** on a compute node (`Ne_cc-pvdz`, `mpirun -np 1`): passes in isolation (2675 assertions) and as part of the full `[stochastic_wfn]` tag (9 cases, 5567 assertions). The build also confirmed the constructor overload is non-breaking — the untouched estimator/propagator/phmsd test TUs recompile and link against the new header unchanged. |
-| Deferred (research) | The **variational HDF5 file does not exist in the repo** — so proving that a *different* `Ĥ_var` changes `B̂_T` (and that the stochastic-trial energy is still correct) is deferred to when that fixture is generated (quantum-chemistry side). The same-file anchor proves the plumbing is wired (the `inner_hamiltonian` path runs and registers a real second Ham) and behavior-preserving when `Ĥ_var ≡` True Ham. COLLINEAR/NONCOLLINEAR, GPU, and the non-`Real3IndexFactorization` HamOps stubs remain follow-ups as in Phase 3b. |
+| Driver validation | ✓ **Ne cc-pVDZ end-to-end driver runs** (Jun 2026, compute node, `mpirun -np 1`) with VAFQMC-exported `ham.h5` / `wfn.h5` / `ham_var.h5` — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026). Stage C confirms a *different* `Ĥ_var` is loaded for the inner stack (`enuc` shift, smaller inner mean-field subtraction, `H1 is not hermitian` warning on the inner propagator only) while outer energies stay on the True Ham. |
+| Follow-ups | COLLINEAR/NONCOLLINEAR, GPU, and the non-`Real3IndexFactorization` HamOps stubs remain as in Phase 3b. Stage B (dynamic path, True Ham inner clone) showed **walker population collapse** at `P = 4` on the smoke trial — retry with larger `inner_nwalkers` / outer walker count before treating as a regression. Longer VAFQMC training (`train_ne_smoke.py --iterations 5000+`) for production-quality trials. |
+
+##### Ne cc-pVDZ driver experiments (Jun 2026)
+
+First **production `DriverFactory` / `safire` executable** runs with a stochastic trial built from
+**VAFQMC-optimized** HDF5 (not the in-repo `Ne_cc-pvdz` RHF fixture). Validates the full
+dual-Hamiltonian input path merged to `main` with Phase 3b-var.
+
+**VAFQMC side** (branch `safire/ne-cc-pvdz-smoke` on `beevus77/vafqmc`; tools live under `tools/`):
+
+```bash
+# From the vafqmc repo root (Python 3.11 venv; see that branch's uv.lock / README)
+python tools/build_ne_hamiltonian.py
+# → hamiltonian.pkl  (PySCF Ne cc-pVDZ RHF, chol_cut=1e-6)
+
+python tools/train_ne_smoke.py
+# → checkpoints/checkpoint.pkl  (500 iterations by default; spin_mixing=false, init_tsteps=[0.01])
+
+python tools/export_safire.py \
+    --hamiltonian hamiltonian.pkl \
+    --checkpoint checkpoints/checkpoint.pkl \
+    --out-dir safire_export \
+    --variational
+# → safire_export/ham.h5      (True Ham: physical hcore/ceri/enuc)
+# → safire_export/wfn.h5      (NOMSD anchor: optimized orbitals, ci_coeffs=[1])
+# → safire_export/ham_var.h5  (Variational Ham: optimized hmf/vhs + projection-shifted enuc)
+```
+
+| Script | Role |
+|--------|------|
+| `tools/build_ne_hamiltonian.py` | PySCF RHF Ne cc-pVDZ → `hamiltonian.pkl` |
+| `tools/train_ne_smoke.py` | Short VAFQMC optimization (`cfg.seed = 1`, `spin_mixing: false`, `mf_subtract: false`) |
+| `tools/export_safire.py` | Writes SAFIRE `/Hamiltonian/DenseFactorized` + `/Wavefunction/NOMSD` HDF5 (`--variational` adds `ham_var.h5`) |
+
+**SAFIRE side** — create a run directory, copy the three HDF5 files, and use three staged input decks
+(`project.series` 0/1/2 → `qmc.s000` / `qmc.s001` / `qmc.s002` scalar output):
+
+```bash
+RUN=~/development/run_ne_stochastic
+mkdir -p "$RUN" && cd "$RUN"
+cp /path/to/vafqmc/safire_export/{ham.h5,wfn.h5,ham_var.h5} .
+
+module load openmpi   # Flatiron: match the OpenMPI used at SAFIRE configure time
+SAFIRE=~/development/SAFIRE/build/bin/safire
+
+# Stage A — static anchor (inner_nsteps = 0)
+mpirun -np 1 "$SAFIRE" afqmc_static.json 2>&1 | tee afqmc_static.out
+
+# Stage B — dynamic inner loop, True Ham clone (inner_nsteps = 1, no inner_hamiltonian)
+mpirun -np 1 "$SAFIRE" afqmc_dynamic_clone.json 2>&1 | tee afqmc_dynamic_clone.out
+
+# Stage C — dynamic inner loop + Variational Ham (inner_hamiltonian → ham_var.h5)
+mpirun -np 1 "$SAFIRE" afqmc_var.json 2>&1 | tee afqmc_var.out
+```
+
+**Input deck skeleton** (all stages: `walker_type: CLOSED`, outer `hamiltonian: ham.h5`,
+`wavefunction: wfn.h5`, `stochastic: true`, `timestep: 0.01`, `steps: 500`,
+`n_walkers_per_mpi_task: 4`, `seed: 12345`). Stage-specific wavefunction keys:
+
+| Stage | `project.series` | `inner_nsteps` | `inner_hamiltonian` | Purpose |
+|-------|------------------|----------------|---------------------|---------|
+| **A** | 0 | `0` | *(absent)* | Static stochastic anchor; no inner `B̂_T` |
+| **B** | 1 | `1` | *(absent)* | Dynamic `B̂_T` with inner stack cloning True Ham |
+| **C** | 2 | `1` | `{ "filename": "ham_var.h5" }` | Dynamic `B̂_T` from VAFQMC variational Cholesky |
+
+Common stochastic block (example Stage C):
+
+```json
+"wavefunction": {
+  "filename": "wfn.h5",
+  "stochastic": true,
+  "inner_nwalkers": 4,
+  "inner_nsteps": 1,
+  "inner_seed": 777,
+  "inner_hamiltonian": { "filename": "ham_var.h5" },
+  "inner_propagator": { "timestep": 0.01 }
+}
+```
+
+(`inner_propagator.timestep` is read by `StochasticWfn` for the inner `B̂_T` step; the propagator
+factory warns `Unknown key: timestep` — harmless.)
+
+**Results (Jun 2026, `stochastic-wfn-phase-3b-var` → merged to `main`, commit `9a85ee6`, compute node
+`worker7332`):**
+
+| Stage | Driver | Scalar file | Outcome |
+|-------|--------|-------------|---------|
+| **A** | Completed 500 steps | `qmc.s000.scalar.dat` | **Healthy.** `StochasticWfn`, CLOSED, local energy at init ≈ **−128.48 Ha**. Weight ≈ 4 throughout; mean `EnergyEstim__nume_real` ≈ **−128.66 Ha** over 50 measurement blocks. |
+| **B** | Completed (no crash) | `qmc.s001.scalar.dat` | **Population collapse.** Weight → 0 after block 2; energies / `Eshift` → NaN for the remainder. First block energy ≈ −128.63 Ha; unstable dynamic path with True Ham inner at `P = 4` on the smoke trial. |
+| **C** | Completed 500 steps | `qmc.s002.scalar.dat` | **Healthy — main integration result.** Log shows **two** Hamiltonian inits: outer `ham.h5` (`enuc = 0`) and inner `ham_var.h5` (`enuc ≈ −65.94`). Inner mean-field subtraction **0.02** vs **0.95** in Stage B (confirms distinct `Ĥ_var`). Warning `H1 is not hermitian!` on inner propagator only. Weight ≈ 2.8–4.1; mean energy ≈ **−128.74 Ha**. |
+
+**Interpretation:** Stages A and C validate the VAFQMC → SAFIRE export and the `inner_hamiltonian`
+factory path in a real driver run. Stage C is the first demonstration that a **different** variational
+Hamiltonian drives inner `B̂_T` while outer scoring stays on the True Ham. Stage B's collapse is likely
+a **small-ensemble / short-smoke-trial** instability (not a driver init failure); re-run with larger
+`inner_nwalkers` and `n_walkers_per_mpi_task` before filing a code bug.
+
+**Harmless log noise:** OpenMPI `oob_tcp_if_exclude` subnet message; spdlog `string pointer is null` at
+startup; HDF5 `type mismatch long != int` when reading exported `wfn.h5` dims.
+
+**Executable note:** the driver binary is `${BUILD_DIR}/bin/safire` (not `build/src/safire`). Build on a
+compute node with the same toolchain/MPI as `test_afqmc`; if linking `safire` fails on `main.cpp` with
+system Boost headers, add `-isystem` for the nix Boost 1.87 include path at configure time or link
+`Boost::headers` on the `safire` target.
 
 #### Phase 3c — Walker-conditioned sampling + propagate-then-resample leapfrog
+
+**Status:** active development on branch **`stochastic-wfn-phase-3c`** (cut from `main` after 3b-var merge).
 
 **Goal:** importance-sample the inner fields conditioned on each outer walker (Eq. 23) and add the
 leapfrog so the step-to-step overlap-ratio `𝒩(φ)` cancellation (Eq. 25) is exact — the variance
@@ -1390,7 +1497,7 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 
 **Both code lines (`stochastic-wfn-develop` and `main`; longer term):**
 
-- Full production driver run (`DriverFactory` / input deck) with `stochastic: true` and `inner_nsteps > 0`.
+- ✅ Full production driver run with `stochastic: true` and `inner_nsteps > 0` — **Ne cc-pVDZ Stages A/C** (Jun 2026); Stage B unstable at smoke parameters — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026).
 - Static-limit outer propagator step matching NOMSD at the delegate limit (dynamic path covered by `stochastic_propagator_step`; static delegate parity remains unit-tested per method, not through `Propagate()`).
 - Mixed estimator (`MixedObsHandler`) forces and densities remain consistent.
 - GPU build: all `[stochastic_wfn]` tests pass with `ENABLE_CUDA=ON`.
