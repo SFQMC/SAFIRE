@@ -278,8 +278,17 @@ public:
   template<class WlkSet>
   void Propagate(WlkSet& wset, RealType E1, RealType dt, int nt = 0);
 
+  // Phase 3c-i (StochasticWfn): drive ONE conditioned field-sampling step on the inner ensemble.
+  // Seeds the auxiliary fields with an externally supplied per-walker bias Xbias(nwalk,nCV) (the
+  // walker-conditioned force bias x_bar(phi_w)), then runs assemble_X -> vHS -> apply_propagators.
+  // Deliberately omits the local-energy/overlap and walker-weight update: the resulting determinants
+  // are field samples whose weights are not consumed by the StochasticWfn reductions. Requires the
+  // propagator to be built with free_projection = false so assemble_X applies the supplied bias.
   template<class WlkSet>
-  void BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset, 
+  void Propagate_conditioned(WlkSet& wset, nda::MemoryArrayOfRank<2> auto const& Xbias, RealType dt, int nt = 0);
+
+  template<class WlkSet>
+  void BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset,
         nda::MemoryArrayOfRank<4> auto&& Refs, nda::MemoryArrayOfRank<2> auto&& logdetR);           
   template<class WlkSet> 
   void PropagateOperators(int steps, WlkSet& wset,  
