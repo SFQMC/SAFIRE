@@ -93,6 +93,7 @@ public:
     if (inner_nwalkers < 1)
       APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
     int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
+    bool inner_conditioning = pt0.get<bool>("inner_conditioning", false);
     int inner_seed   = pt0.get<int>("inner_seed", 777);
     auto inner_propagator_block = pt0.get_child_optional("inner_propagator");
     // inner_hamiltonian: optional block naming the second (Variational) Hamiltonian HDF5 file for the
@@ -100,7 +101,9 @@ public:
     // HamFac_); it is deliberately NOT forwarded into pt1, so it never reaches the wavefunction's own
     // ptree (StochasticWfn::interpret_inputs does not know it). interpret_inputs only (a) rejects it
     // when stochastic is off and (b) lists it as a known pass-through key for compare_known_keys.
-    for (auto const& key : {"inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator", "inner_hamiltonian"})
+    for (auto const& key :
+         {"inner_nwalkers", "inner_nsteps", "inner_conditioning", "inner_seed", "inner_propagator",
+          "inner_hamiltonian"})
       if (not stochastic && pt0.get_child_optional(key))
         APP_ABORT("Error in WavefunctionFactory::interpret_inputs: " + std::string(key) +
                   " requires stochastic: true.");
@@ -109,6 +112,7 @@ public:
     {
       pt1.put("inner_nwalkers", inner_nwalkers);
       pt1.put("inner_nsteps", inner_nsteps);
+      pt1.put("inner_conditioning", inner_conditioning);
       pt1.put("inner_seed", inner_seed);
       if (inner_propagator_block)
         pt1.put_child("inner_propagator", *inner_propagator_block);
@@ -118,6 +122,7 @@ public:
       "stochastic",
       "inner_nwalkers",
       "inner_nsteps",
+      "inner_conditioning",
       "inner_seed",
       "inner_propagator",
       "inner_hamiltonian",

@@ -37,7 +37,8 @@ class Propagator;
 
 inline ptree strip_stochastic_input_keys(ptree pt)
 {
-  for (auto const& key : {"stochastic", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator"})
+  for (auto const& key :
+       {"stochastic", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator", "inner_conditioning"})
     pt.erase(key);
   return pt;
 }
@@ -89,6 +90,7 @@ public:
   bool inner_walkers_initialized() const { return inner_ensemble_.initialized; }
   int inner_nwalkers() const { return inner_nwalkers_; }
   int inner_nsteps() const { return inner_nsteps_; }
+  bool inner_conditioning() const { return inner_conditioning_; }
 
   WalkerSet<MEM>& inner_wset();
   WalkerSet<MEM> const& inner_wset() const;
@@ -253,11 +255,23 @@ private:
   int inner_nsteps_{0};
   double inner_timestep_{0.01};
   bool inner_step_pending_{false};
+  bool inner_conditioning_{false};
   nda::array<ComplexType, 3> inner_anchor_;
   NOMSD<MEM, devPsiT> nomsd_;
   std::unique_ptr<StochasticInnerStack<MEM, devPsiT>> inner_stack_;
 
   void maybe_advance_inner_ensemble();
+
+  // Phase 3c-i: resample the inner ensemble conditioned on each outer walker phi_w. Computes the
+  // custom inner force bias x_bar(phi_w) = sqrt(dt)*L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (the inner
+  // trial IS the anchor phi_T, so this reuses inner_nomsd()'s mixed DM + vbias on the OUTER wset) and
+  // drives the nw*P inner ensemble through the inner propagator's conditioned field-sampling seam.
+  void advance_inner_ensemble_conditioned(memory::array<MEM, ComplexType, 2> const& X_bias, int nw);
+
+  // Resample dispatch: conditioned (Phase 3c-i) when inner_conditioning_, else the walker-independent
+  // free-projection path (Phase 3b). Honors the per-step latch armed by begin_inner_step().
+  template<class WlkSet>
+  void conditioned_resample(const WlkSet& wset);
 
   template<class WlkSet, class TVecD, class TVecOv, class Accumulate>
   void reduce_inner_cross_dm(const WlkSet& wset,

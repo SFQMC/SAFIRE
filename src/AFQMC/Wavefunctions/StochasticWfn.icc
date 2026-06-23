@@ -47,9 +47,10 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
   if (inner_stack_ == nullptr)
     APP_ABORT("Error in StochasticWfn: inner stack must be provided (see WavefunctionFactory).");
   ptree pt = interpret_inputs(pt_in);
-  inner_nwalkers_ = pt.get<int>("inner_nwalkers");
-  inner_nsteps_   = pt.get<int>("inner_nsteps");
-  int inner_seed  = pt.get<int>("inner_seed");
+  inner_nwalkers_    = pt.get<int>("inner_nwalkers");
+  inner_nsteps_      = pt.get<int>("inner_nsteps");
+  inner_conditioning_ = pt.get<bool>("inner_conditioning");
+  int inner_seed     = pt.get<int>("inner_seed");
   inner_ensemble_.rng =
       std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(inner_seed, mpi_->comm));
   if (auto prop_pt = pt.get_child_optional("inner_propagator"))
@@ -64,6 +65,9 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
               "un-rotated full-G kernels are not yet implemented for device builds.");
 #endif
   }
+  if (inner_conditioning_ && inner_nsteps_ <= 0)
+    APP_ABORT("Error in StochasticWfn: inner_conditioning = true (Phase 3c-i, walker-conditioned "
+              "inner sampling) requires inner_nsteps > 0; it has no effect on the static ensemble.");
   app_log(2, "\nStochasticWfn input:\n{}\n", io::to_string(pt));
 }
 
@@ -77,9 +81,11 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
   int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
   if (inner_nsteps < 0)
     APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_nsteps must be >= 0.");
+  bool inner_conditioning = pt0.get<bool>("inner_conditioning", false);
   int inner_seed = pt0.get<int>("inner_seed", 777);
   pt1.put("inner_nwalkers", inner_nwalkers);
   pt1.put("inner_nsteps", inner_nsteps);
+  pt1.put("inner_conditioning", inner_conditioning);
   pt1.put("inner_seed", inner_seed);
   if (auto prop_pt = pt0.get_child_optional("inner_propagator"))
     pt1.put_child("inner_propagator", *prop_pt);
@@ -92,6 +98,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "stochastic",
       "inner_nwalkers",
       "inner_nsteps",
+      "inner_conditioning",
       "inner_seed",
       "inner_propagator",
   };
@@ -160,13 +167,19 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
     nomsd_.Log_Overlap(wset, std::forward<TVec>(Ov), nt);
     return;
   }
-  maybe_advance_inner_ensemble();
+  conditioned_resample(wset);
 
-  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
-  const int nw          = wset.size();
-  const int P           = inner.size();
+  WalkerSet<MEM>& inner  = *inner_ensemble_.wset;
+  const int nw           = wset.size();
+  // Phase 3c-i: with conditioning, inner is block-structured (nw*P walkers, slot-major q = ip*nw + w);
+  // pair tk maps to outer walker iw = tk % nw and inner walker q = tk (its own conditioned sample).
+  // Without conditioning (Phase 3b), inner has P shared walkers paired against all outer walkers.
+  const bool conditioned = (inner_conditioning_ && inner_nsteps_ > 0);
+  const int P            = (conditioned ? inner_nwalkers_ : int(inner.size()));
   utils::check(Ov.size() >= nw, "Size mismatch");
   utils::check(P >= 1, "inner ensemble must be non-empty");
+  if (conditioned)
+    utils::check(inner.size() == long(nw) * P, "conditioned inner ensemble size mismatch (expect nw*P)");
   const ComplexType inv_P(1.0 / static_cast<double>(P), 0.0);
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   auto all              = nda::range::all;
@@ -182,8 +195,8 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
 
   for (int tk = tk0; tk < tkN; ++tk)
   {
-    const int iw = tk / P;
-    const int ip = tk % P;
+    const int iw = (conditioned ? tk % nw : tk / P);
+    const int ip = (conditioned ? tk : tk % P);
     inner_one(0, all, all) = inner.SlaterMatrices(Alpha)(ip, all, all);
     outer_one(0, all, all) = wset.SlaterMatrices(Alpha)(iw, all, all);
     log_ov(0)              = ComplexType(0.0);
@@ -317,6 +330,47 @@ void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int n
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet>
+void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
+{
+  if (inner_conditioning_ && inner_nsteps_ > 0)
+  {
+    const int nw = int(wset.size());
+    // Resample when the per-step latch is armed (the first reduction of an outer step owns the
+    // resample; later reductions in the same step reuse the ensemble), OR when the ensemble is not yet
+    // sized/conditioned for the current outer-walker count (bootstrap: priming overlap/energy calls
+    // before the propagator arms the latch, and any change in the outer walker count). Otherwise the
+    // ensemble is already conditioned for this configuration -- reuse it.
+    const bool need_resample =
+        inner_step_pending_ || (inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_);
+    if (not need_resample)
+      return;
+    // Phase 3c-i: importance-sample the inner fields conditioned on each outer walker phi_w (Eq. 23 of
+    // arXiv:2505.18519). The inner trial IS the anchor phi_T, so the inner NOMSD's own mixed DM + vbias
+    // on the OUTER walker set yields the conditioning force bias
+    //   x_bar(phi_w) = sqrt(dt) * L^var . <phi_T|c+c|phi_w> / <phi_T|phi_w>
+    // (the sqrt(dt)*[2 for CLOSED] prefactor and the overlap normalization come from HamOp.vbias /
+    // MixedDensityMatrix, matching the field-shift convention assemble_X expects). No bespoke contraction.
+    const int nc  = inner_nomsd().dm_size(false); // compact cross-DM size (inner trial is single-det)
+    const int nCV = inner_nomsd().number_of_cholesky_vectors();
+    memory::buffered_array<MEM, ComplexType, 2> Gcross(nw, nc);
+    memory::buffered_array<MEM, ComplexType, 1> ovcross(nw);
+    Gcross()  = ComplexType(0.0);
+    ovcross() = ComplexType(0.0);
+    inner_nomsd().MixedDensityMatrix(wset, Gcross, ovcross, true);
+    memory::array<MEM, ComplexType, 2> X_bias(nw, nCV);
+    X_bias() = ComplexType(0.0);
+    inner_nomsd().vbias_from_G(Gcross, X_bias, inner_timestep_);
+    advance_inner_ensemble_conditioned(X_bias, nw);
+  }
+  else
+  {
+    // Phase 3b: walker-independent free-projection resample (honors the latch + static no-op).
+    maybe_advance_inner_ensemble();
+  }
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet, class TVecD, class TVecOv, class Accumulate>
 void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
                                                          bool compact,
@@ -331,12 +385,20 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
               "(inner_nwalkers=1, inner_nsteps=0); use nomsd_ reductions instead.");
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::reduce_inner_cross_dm: inner walkers not initialized.");
-  maybe_advance_inner_ensemble();
+  conditioned_resample(wset);
 
-  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
-  const int nwalk       = wset.size();
-  const int P           = inner.size();
+  WalkerSet<MEM>& inner  = *inner_ensemble_.wset;
+  const int nwalk        = wset.size();
+  // Phase 3c-i: when conditioning, the inner ensemble is block-structured (nwalk*P walkers, slot-major
+  // index q = ip*nwalk + w, block w conditioned on outer walker phi_w). The loop runs over the P
+  // per-walker samples; slot ip pairs its nwalk inner walkers diagonally with the nwalk outer walkers
+  // via the batched-reference MixedDensityMatrix. Without conditioning (Phase 3b) the ensemble is P
+  // shared walkers, each paired against all outer walkers with a single reference.
+  const bool conditioned = (inner_conditioning_ && inner_nsteps_ > 0);
+  const int P            = (conditioned ? inner_nwalkers_ : int(inner.size()));
   utils::check(P >= 1, "inner ensemble must be non-empty");
+  if (conditioned)
+    utils::check(inner.size() == long(nwalk) * P, "conditioned inner ensemble size mismatch (expect nwalk*P)");
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   const ComplexType zero(0.0);
   const ComplexType inv_P(1.0 / static_cast<double>(P), 0.0);
@@ -362,9 +424,42 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
   {
     Gp()  = zero;
     ov_() = zero;
-    ref_alpha() = inner.SlaterMatrices(Alpha)(ip, all, all);
-    if (compact)
+    if (conditioned)
     {
+      // slot ip: inner walkers [ip*nwalk, (ip+1)*nwalk) paired element-wise with the outer walkers.
+      auto inner_a = inner.SlaterMatrices(Alpha)(nda::range(long(ip) * nwalk, long(ip + 1) * nwalk), all, all);
+      if (compact)
+      {
+        auto G3d = nda::reshape(Gp, std::array<long, 3>{nwalk, nel, npol * NMO});
+        det_ops::MixedDensityMatrix(inner_a, wset.SlaterMatrices(Alpha), G3d(all, nda::range(nup), all), ov_,
+                                    compact);
+        if (wt == CLOSED)
+          nda::tensor::scale(ComplexType(2.0), ov_);
+        else if (wt == COLLINEAR)
+        {
+          auto inner_b = inner.SlaterMatrices(Beta)(nda::range(long(ip) * nwalk, long(ip + 1) * nwalk), all, all);
+          det_ops::MixedDensityMatrix(inner_b, wset.SlaterMatrices(Beta), G3d(all, nda::range(nup, nel), all), ov_,
+                                      compact);
+        }
+      }
+      else
+      {
+        auto G3d = nda::reshape(Gp, std::array<long, 3>{nwalk, nspin * npol * NMO, npol * NMO});
+        det_ops::MixedDensityMatrix(inner_a, wset.SlaterMatrices(Alpha), G3d(all, nda::range(npol * NMO), all),
+                                    ov_, compact);
+        if (wt == CLOSED)
+          nda::tensor::scale(ComplexType(2.0), ov_);
+        else if (wt == COLLINEAR)
+        {
+          auto inner_b = inner.SlaterMatrices(Beta)(nda::range(long(ip) * nwalk, long(ip + 1) * nwalk), all, all);
+          det_ops::MixedDensityMatrix(inner_b, wset.SlaterMatrices(Beta),
+                                      G3d(all, nda::range(npol * NMO, nspin * npol * NMO), all), ov_, compact);
+        }
+      }
+    }
+    else if (compact)
+    {
+      ref_alpha() = inner.SlaterMatrices(Alpha)(ip, all, all);
       auto G3d = nda::reshape(Gp, std::array<long, 3>{nwalk, nel, npol * NMO});
       det_ops::MixedDensityMatrix(ref_alpha, wset.SlaterMatrices(Alpha), G3d(all, nda::range(nup), all), ov_,
                                   compact, false);
@@ -379,6 +474,7 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
     }
     else
     {
+      ref_alpha() = inner.SlaterMatrices(Alpha)(ip, all, all);
       auto G3d = nda::reshape(Gp, std::array<long, 3>{nwalk, nspin * npol * NMO, npol * NMO});
       det_ops::MixedDensityMatrix(ref_alpha, wset.SlaterMatrices(Alpha), G3d(all, nda::range(npol * NMO), all),
                                   ov_, compact, false);

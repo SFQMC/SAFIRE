@@ -105,10 +105,25 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
 
   if (pt.get<int>("inner_nsteps", 0) > 0)
   {
-    prop_pt.put("free_projection", true);
-    prop_pt.put("hybrid", true);
-    prop_pt.put("importance_sampling", false);
-    prop_pt.put("apply_constrain", false);
+    if (pt.get<bool>("inner_conditioning", false))
+    {
+      // Phase 3c-i: walker-conditioned sampling. Build the inner propagator in importance-sampling
+      // mode (free_projection = false) so assemble_X applies the per-walker conditioning force bias.
+      // The bias is supplied externally and the walker-weight update is skipped via
+      // StochasticWfn -> Propagator::Propagate_conditioned, so hybrid/apply_constrain are inert here.
+      prop_pt.put("free_projection", false);
+      prop_pt.put("hybrid", true);
+      prop_pt.put("importance_sampling", true);
+      prop_pt.put("apply_constrain", false);
+    }
+    else
+    {
+      // Phase 3b: walker-independent free projection (bare Gaussian fields).
+      prop_pt.put("free_projection", true);
+      prop_pt.put("hybrid", true);
+      prop_pt.put("importance_sampling", false);
+      prop_pt.put("apply_constrain", false);
+    }
   }
 
   int inner_seed = pt.get<int>("inner_seed", 777);
