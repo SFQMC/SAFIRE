@@ -37,8 +37,8 @@ class Propagator;
 
 inline ptree strip_stochastic_input_keys(ptree pt)
 {
-  for (auto const& key :
-       {"stochastic", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator", "inner_conditioning"})
+  for (auto const& key : {"stochastic", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
+                          "inner_conditioning", "inner_leapfrog"})
     pt.erase(key);
   return pt;
 }
@@ -91,6 +91,7 @@ public:
   int inner_nwalkers() const { return inner_nwalkers_; }
   int inner_nsteps() const { return inner_nsteps_; }
   bool inner_conditioning() const { return inner_conditioning_; }
+  bool inner_leapfrog() const { return inner_leapfrog_; }
 
   WalkerSet<MEM>& inner_wset();
   WalkerSet<MEM> const& inner_wset() const;
@@ -108,7 +109,11 @@ public:
   Propagator<MEM>& inner_propagator();
   Propagator<MEM> const& inner_propagator() const;
 
-  void begin_inner_step() { inner_step_pending_ = true; }
+  // Arms the per-outer-step inner-resample latch. In leapfrog mode (Phase 3c-ii) it also refreshes the
+  // stored OVLP = ⟨Ψ_T|φ⟩ against the ensemble freshly resampled conditioned on the current (old)
+  // walker φ, so the step's overlap RATIO new/old (Eq. 25) shares one ensemble and 𝒩(φ) cancels.
+  template<class WlkSet>
+  void begin_inner_step(WlkSet& wset);
 
   bool at_delegate_limit() const { return inner_nwalkers_ == 1 && inner_nsteps_ == 0; }
 
@@ -256,7 +261,12 @@ private:
   double inner_timestep_{0.01};
   bool inner_step_pending_{false};
   bool inner_conditioning_{false};
+  bool inner_leapfrog_{false};
   nda::array<ComplexType, 3> inner_anchor_;
+  // Phase 3c-ii (leapfrog): per inner walker q (slot-major q = ip*nwalk + w), the magnitude
+  // |⟨ψ_q|φ_w^cond⟩| of its cross overlap with the walker its block was conditioned on. Set at each
+  // conditioned resample; the leapfrog overlap reweights by 1/inner_cond_mag_ so the step ratio is Eq. 25.
+  nda::array<RealType, 1> inner_cond_mag_;
   NOMSD<MEM, devPsiT> nomsd_;
   std::unique_ptr<StochasticInnerStack<MEM, devPsiT>> inner_stack_;
 
@@ -272,6 +282,11 @@ private:
   // free-projection path (Phase 3b). Honors the per-step latch armed by begin_inner_step().
   template<class WlkSet>
   void conditioned_resample(const WlkSet& wset);
+
+  // Phase 3c-ii: fill inner_cond_mag_ with |⟨ψ_q|φ_w^cond⟩| after a conditioned resample (φ_cond = the
+  // outer walkers the inner blocks were just conditioned on). The leapfrog overlap divides by this.
+  template<class WlkSet>
+  void compute_inner_cond_mag(const WlkSet& wset);
 
   template<class WlkSet, class TVecD, class TVecOv, class Accumulate>
   void reduce_inner_cross_dm(const WlkSet& wset,

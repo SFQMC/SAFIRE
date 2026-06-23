@@ -50,6 +50,7 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
   inner_nwalkers_    = pt.get<int>("inner_nwalkers");
   inner_nsteps_      = pt.get<int>("inner_nsteps");
   inner_conditioning_ = pt.get<bool>("inner_conditioning");
+  inner_leapfrog_    = pt.get<bool>("inner_leapfrog");
   int inner_seed     = pt.get<int>("inner_seed");
   inner_ensemble_.rng =
       std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(inner_seed, mpi_->comm));
@@ -68,6 +69,9 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
   if (inner_conditioning_ && inner_nsteps_ <= 0)
     APP_ABORT("Error in StochasticWfn: inner_conditioning = true (Phase 3c-i, walker-conditioned "
               "inner sampling) requires inner_nsteps > 0; it has no effect on the static ensemble.");
+  if (inner_leapfrog_ && not inner_conditioning_)
+    APP_ABORT("Error in StochasticWfn: inner_leapfrog = true (Phase 3c-ii, propagate-then-resample "
+              "leapfrog for exact N(phi) cancellation) requires inner_conditioning = true.");
   app_log(2, "\nStochasticWfn input:\n{}\n", io::to_string(pt));
 }
 
@@ -82,10 +86,12 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
   if (inner_nsteps < 0)
     APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_nsteps must be >= 0.");
   bool inner_conditioning = pt0.get<bool>("inner_conditioning", false);
+  bool inner_leapfrog = pt0.get<bool>("inner_leapfrog", false);
   int inner_seed = pt0.get<int>("inner_seed", 777);
   pt1.put("inner_nwalkers", inner_nwalkers);
   pt1.put("inner_nsteps", inner_nsteps);
   pt1.put("inner_conditioning", inner_conditioning);
+  pt1.put("inner_leapfrog", inner_leapfrog);
   pt1.put("inner_seed", inner_seed);
   if (auto prop_pt = pt0.get_child_optional("inner_propagator"))
     pt1.put_child("inner_propagator", *prop_pt);
@@ -99,6 +105,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "inner_nwalkers",
       "inner_nsteps",
       "inner_conditioning",
+      "inner_leapfrog",
       "inner_seed",
       "inner_propagator",
   };
@@ -175,11 +182,18 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
   // pair tk maps to outer walker iw = tk % nw and inner walker q = tk (its own conditioned sample).
   // Without conditioning (Phase 3b), inner has P shared walkers paired against all outer walkers.
   const bool conditioned = (inner_conditioning_ && inner_nsteps_ > 0);
+  // Phase 3c-ii leapfrog: reweight each per-sample term by 1/|<psi_q|phi_q^cond>| (computed at the
+  // resample), so old_ovlp = Sum_p S_p and the step overlap RATIO new/old is exactly Eq. 25 (N(phi)
+  // cancels). Without leapfrog (3c-i/3b), the absolute (1/P) Sum_p <psi_p|phi_w> reduction is kept.
+  const bool leapfrog    = (conditioned && inner_leapfrog_);
   const int P            = (conditioned ? inner_nwalkers_ : int(inner.size()));
   utils::check(Ov.size() >= nw, "Size mismatch");
   utils::check(P >= 1, "inner ensemble must be non-empty");
   if (conditioned)
     utils::check(inner.size() == long(nw) * P, "conditioned inner ensemble size mismatch (expect nw*P)");
+  if (leapfrog)
+    utils::check(inner_cond_mag_.size() == long(nw) * P,
+                 "leapfrog inner_cond_mag_ not sized -- conditioned resample must run first");
   const ComplexType inv_P(1.0 / static_cast<double>(P), 0.0);
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   auto all              = nda::range::all;
@@ -214,13 +228,22 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
       det_ops::Log_Overlap(inner_beta, outer_beta, log_ov);
       ov *= std::exp(log_ov(0));
     }
-    Ov(iw) += inv_P * ov;
+    if (leapfrog)
+    {
+      // q == tk in conditioned (slot-major) layout; reweight by the conditioning-walker magnitude.
+      double mag = double(inner_cond_mag_(tk));
+      if (mag > 0.0)
+        Ov(iw) += ov / ComplexType(mag, 0.0);
+    }
+    else
+      Ov(iw) += inv_P * ov;
   }
 
   if (mpi_->comm.size() > 1)
     mpi_->comm.all_reduce_in_place_n(Ov().data(), nw, std::plus<>{});
 
-  // The pair loop accumulates the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; the OVLP
+  // The pair loop accumulates the LINEAR effective overlap: (1/P) sum_p <psi_p|phi_w> normally, or the
+  // leapfrog-reweighted sum_p <psi_p|phi_w>/|<psi_p|phi_cond>| (so new/old reproduces Eq. 25). The OVLP
   // property convention (matching NOMSD::Log_Overlap) is the LOG overlap, so convert back here.
   for (int iw = 0; iw < nw; ++iw)
     Ov(iw) = std::log(Ov(iw));
@@ -331,6 +354,20 @@ void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int n
 
 template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet>
+void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
+{
+  inner_step_pending_ = true;
+  // Phase 3c-ii leapfrog: resample conditioned on the current (old) walker phi and refresh the stored
+  // OVLP = <Psi_T|phi> against that just-sampled ensemble. Log_Overlap(wset) consumes the latch just
+  // armed (driving the conditioned resample + inner_cond_mag_), then stores the importance-reweighted
+  // old overlap. The post-propagation Log_Overlap reuses the SAME ensemble, so the step's overlap RATIO
+  // new/old is exactly Eq. 25 and N(phi) cancels.
+  if (inner_leapfrog_ && inner_conditioning_ && inner_nsteps_ > 0)
+    Log_Overlap(wset);
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet>
 void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
 {
   if (inner_conditioning_ && inner_nsteps_ > 0)
@@ -362,11 +399,55 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
     X_bias() = ComplexType(0.0);
     inner_nomsd().vbias_from_G(Gcross, X_bias, inner_timestep_);
     advance_inner_ensemble_conditioned(X_bias, nw);
+    if (inner_leapfrog_)
+      compute_inner_cond_mag(wset); // |<psi_q|phi_w^cond>| for the leapfrog overlap reweighting (Eq. 25)
   }
   else
   {
     // Phase 3b: walker-independent free-projection resample (honors the latch + static no-op).
     maybe_advance_inner_ensemble();
+  }
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet>
+void StochasticWfn<MEM, devPsiT>::compute_inner_cond_mag(const WlkSet& wset)
+{
+  // |<psi_q | phi_w^cond>| for each inner walker q = ip*nw + w (slot-major), where phi_w^cond is the
+  // outer walker its block was conditioned on in the resample just completed. The leapfrog overlap
+  // (Log_Overlap below) divides each per-sample term by this, so old_ovlp = Sum_p S_p and the step
+  // ratio new/old is exactly Eq. 25 of arXiv:2505.18519 (N(phi) cancels). Same det(A^dag B) /
+  // CLOSED-doubling convention as the Log_Overlap reduction. Replicated across ranks (cheap; the
+  // FairDivided Log_Overlap reads it per pair). CLOSED-only in practice (leapfrog gate), beta included
+  // for completeness.
+  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
+  const int nw          = int(wset.size());
+  const int P           = inner_nwalkers_;
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  auto all              = nda::range::all;
+  inner_cond_mag_       = nda::array<RealType, 1>(long(nw) * P);
+  memory::buffered_array<MEM, ComplexType, 1> logov(nw);
+  memory::buffered_array<MEM, ComplexType, 1> logov_b(nw);
+  for (int ip = 0; ip < P; ++ip)
+  {
+    auto inner_a = inner.SlaterMatrices(Alpha)(nda::range(long(ip) * nw, long(ip + 1) * nw), all, all);
+    logov() = ComplexType(0.0);
+    det_ops::Log_Overlap(inner_a, wset.SlaterMatrices(Alpha), logov);
+    if (wt == CLOSED)
+      nda::tensor::scale(ComplexType(2.0), logov);
+    else if (wt == COLLINEAR)
+    {
+      auto inner_b = inner.SlaterMatrices(Beta)(nda::range(long(ip) * nw, long(ip + 1) * nw), all, all);
+      logov_b()    = ComplexType(0.0);
+      det_ops::Log_Overlap(inner_b, wset.SlaterMatrices(Beta), logov_b);
+    }
+    for (int w = 0; w < nw; ++w)
+    {
+      ComplexType lo = logov(w);
+      if (wt == COLLINEAR)
+        lo += logov_b(w);
+      inner_cond_mag_(long(ip) * nw + w) = std::abs(std::exp(lo));
+    }
   }
 }
 
