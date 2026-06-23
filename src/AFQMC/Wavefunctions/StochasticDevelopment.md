@@ -28,13 +28,15 @@ that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Over
 | `test_afqmc` build + `wfn_factory: sdet` | N/A | **Pass — 10 assertions, Ne_cc-pvdz fixture (Jun 2026)** |
 | `[stochastic_wfn]` static suite (1a–3a) | Pass on CPU compute node | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** |
 | `[stochastic_wfn]` dynamic suite (3b full-G) | Pass on CPU compute node | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** |
-| `[stochastic_wfn]` 3c-i (`stochastic_conditioned_propagator_step`) | — | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** — finiteness smoke; exactness is 3c-ii |
+| `[stochastic_wfn]` 3c-i (`stochastic_conditioned_propagator_step`) | — | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** — walker-conditioned inner sampling; finiteness smoke |
+| `[stochastic_wfn]` 3c-ii (`stochastic_leapfrog_propagator_step`) | — | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** — hybrid leapfrog + importance-reweighted overlap; finiteness smoke (driver-level energy parity is a follow-up) |
 | Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only**; **full `DriverFactory` run with VAFQMC-exported Ne cc-pVDZ HDF5 (Stages A/C, Jun 2026)** — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026) |
 | GPU build | CPU-only gate in dynamic path | **Not tested** |
 
-**The full `[stochastic_wfn]` tag passes on overhaul (10 cases, 5699 assertions, `mpirun -np 1`,
-`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
-parity + Phases 2a/2b/3a static reductions + the 3b full-G dynamic trio + 3c-i conditioned sampling). Porting them surfaced and
+**The full `[stochastic_wfn]` tag passes on overhaul (11 cases, 5831 assertions, `mpirun -np 1`,
+`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
+parity + Phases 2a/2b/3a static reductions + the 3b full-G dynamic trio + 3c-i conditioned sampling + 3c-ii
+leapfrog). Porting them surfaced and
 fixed three real overhaul-only bugs — see
 [Port bugs surfaced by the test port](#port-bugs-surfaced-by-the-test-port-overhaul).
 
@@ -47,14 +49,15 @@ build/run is untested (the full-G dynamic path is CPU-only gated this phase); (3
 `stochastic_overlap_matches_nomsd` (2a), `stochastic_energy_matches_nomsd` (2b),
 `stochastic_vbias_matches_nomsd` (3a), and the 3b trio (`stochastic_full_g_matches_compact`,
 `stochastic_dynamic_ensemble_smoke`, `stochastic_propagator_step`,
-`stochastic_conditioned_propagator_step` [3c-i]), alongside the pre-existing
-`stochastic_wfn_matches_nomsd` / `stochastic_build_smoke`. The develop **infrastructure** tests
+`stochastic_conditioned_propagator_step` [3c-i], `stochastic_leapfrog_propagator_step` [3c-ii]), alongside
+the pre-existing `stochastic_wfn_matches_nomsd` / `stochastic_build_smoke`. The develop **infrastructure**
+tests
 (`stochastic_inner_walkers_init`, `stochastic_inner_outer_infrastructure_independent`,
 `stochastic_inner_propagator_construction`, `stochastic_inner_walkers_uninitialized_smoke`) are
 **not yet ported**: they reach into the typed `StochasticWfn` (`inner_nomsd()`, `outer_nomsd()`,
 `inner_propagator()`, `inner_wset()`) via `boost::apply_visitor`, but the overhaul `Wavefunction`
 keeps its `std::variant` **private** and exposes only `is_stochastic_wavefunction()`,
-`stochastic_inner_walkers_initialized()`, `initialize_stochastic_inner_walkers()`, `begin_inner_step()`.
+`stochastic_inner_walkers_initialized()`, `initialize_stochastic_inner_walkers()`, `begin_inner_step(wset)`.
 Porting them faithfully needs new accessors on the `Wavefunction` variant (at minimum the documented
 `stochastic_inner_wset()`, plus typed inner/outer NOMSD + inner-propagator access) — a production-API
 decision left open.
@@ -738,6 +741,7 @@ delegates to it). All stochastic keys require `stochastic: true` in `Wavefunctio
 | `inner_nwalkers` | `1` | 1a | Size of the owned inner `WalkerSet`. Must be ≥ 1. |
 | `inner_nsteps` | `0` | 1c/3b | Number of free-projection `B̂_T` steps applied (from the anchor) per outer step. `0` = static anchor (Phases 1c–3a). **`> 0` (Phase 3b)** drives the inner free-projection propagator; forces free-projection mode in `buildStochasticInnerStack` and the un-rotated full-G True-Ham scoring (CLOSED trials only this phase). |
 | `inner_conditioning` | `false` | 3c-i ✓ | When `true`, importance-sample the inner fields **conditioned on each outer walker** `φ_w` (Eq. 23) instead of the walker-independent free projection of 3b. The inner ensemble becomes block-structured `nwalk·P` (block `w` conditioned on `φ_w` via the custom force bias `x̄(φ_w)=√Δτ·L^var·⟨φ_T\|c†c\|φ_w⟩/⟨φ_T\|φ_w⟩`), and `buildStochasticInnerStack` builds the inner propagator in **importance-sampling** mode so `assemble_X` applies that bias. Requires `inner_nsteps > 0` (CLOSED/CPU, as 3b). See [Phase 3c-i](#phase-3c-i--walker-conditioned-inner-sampling-complete-cpu-verified-overhaul). |
+| `inner_leapfrog` | `false` | 3c-ii ✓ | When `true`, the propagate-then-resample **leapfrog**: each outer step resamples the inner ensemble conditioned on the **old** walker and uses it for both the old and new effective overlap, so the hybrid step ratio `new/old` is exactly Eq. 25 and `𝒩(φ)` cancels. Switches `Log_Overlap` to the **importance-reweighted** `Σ_p⟨ψ_p\|χ⟩/\|⟨ψ_p\|φ_cond⟩\|` and refreshes the stored old overlap in `begin_inner_step(wset)`. Requires `inner_conditioning: true`. Hybrid propagation (CLOSED/CPU). See [Phase 3c-ii](#phase-3c-ii--propagate-then-resample-leapfrog-complete-cpu-verified-overhaul). |
 | `inner_seed` | `777` | 1c | Seed for the inner propagator device RNG. `0` selects a time-based seed (same convention as the driver `seed`). Rank-decorrelated via `split_seed`. |
 | `inner_propagator` | *(optional subtree)* | 1c/3b | Propagator input block for `PropagatorFactory`. If omitted, factory defaults apply. `system` and `name` are injected when missing (`name` suffix `_inner_propagator`). At `inner_nsteps > 0` the free-projection mode flags are forced; `timestep` (default `0.01`) sets the `B̂_T` step `dt`. |
 | `inner_hamiltonian` | *(optional sub-block; `filename` required, `system` inherited)* | 3b-var ✓ | Sub-block of the stochastic wfn block naming the pre-optimized **Variational** Cholesky Hamiltonian `Ĥ_var` that defines `B̂_T` (same basis/NMO as the True Ham). **Parsed and built (3b-var):** `WavefunctionFactory` builds it on demand through the `HamiltonianFactory` it holds; absent ⇒ the inner stack clones the True Ham. The remaining deferred piece is the variational HDF5 *file* (none in the repo yet). See [Phase 3b-var](#phase-3b-var--variational-hamiltonian-factory-plumbing-complete-factory-plumbing-research-validation-deferred) and [Dual-Hamiltonian architecture](#dual-hamiltonian-architecture-true-vs-variational--the-end-goal). |
@@ -964,8 +968,8 @@ Not wavefunction visitor methods, but required for a full-fledged type.
 ## Implementation phases (status and plan)
 
 The per-phase reference for the whole feature: what each phase delivers, its key members/factory
-wiring/reductions, its tests, and what it defers. **Phases 1a–3b and 3c-i are complete and CPU-verified on
-overhaul** (`Ne_cc-pvdz`); **Phase 3c-ii** (leapfrog) and Phases 4–8 are the remaining plan. (Phases 1a–1c decompose the
+wiring/reductions, its tests, and what it defers. **Phases 1a–3c (3c-i + 3c-ii) are complete and CPU-verified on
+overhaul** (`Ne_cc-pvdz`); Phases 4–8 are the remaining plan. (Phases 1a–1c decompose the
 original "own the full inner stack" step — walker set, `NOMSD`, `HamOps`, and propagator — which
 should *not* be implemented as a single monolith.)
 
@@ -1131,7 +1135,7 @@ same-file unit-test anchor remains in `stochastic_inner_hamiltonian_same_as_true
 
 | Item | Status |
 |------|--------|
-| Sampling | ✓ Inner propagator forced to **free-projection** mode (`buildStochasticInnerStack`) when `inner_nsteps > 0`; the `inner_nsteps > 0` guard is relaxed. Each outer step the ensemble is **reset to the anchor `\|φ_T⟩` then advanced `inner_nsteps` free-projection `B̂_T` steps** (`maybe_advance_inner_ensemble`), driven by a per-step latch `begin_inner_step()` armed at the top of **every propagator `step()` entry point** (`AFQMCBasePropagator`, `AFQMCModelPropagator` dense/sparse, and the distributed variants — no-op for non-stochastic trials). Reset-then-resample (not a continuous free walk): the single-step trial is `B̂_T` applied to the anchor; recovers 3a exactly at `inner_nsteps = 0`. The `B̂_T` `dt` is `inner_propagator.timestep` (default 0.01); the inner propagator rebuilds its one-body/CV scaling for this `dt` on first `Propagate` (so it is the single effective source — no build-vs-runtime drift). |
+| Sampling | ✓ Inner propagator forced to **free-projection** mode (`buildStochasticInnerStack`) when `inner_nsteps > 0` and `inner_conditioning = false`; conditioned trials use importance sampling (3c-i). Each outer step the ensemble is **reset to the anchor `\|φ_T⟩` then advanced `inner_nsteps` `B̂_T` steps** (`maybe_advance_inner_ensemble` or `advance_inner_ensemble_conditioned`), driven by a per-step latch `begin_inner_step(wset)` at the top of `AFQMCBasePropagator::Propagate` (leapfrog mode also refreshes the stored `OVLP` there). Reset-then-resample (not a continuous free walk): the single-step trial is `B̂_T` applied to the anchor; recovers 3a exactly at `inner_nsteps = 0`. The `B̂_T` `dt` is `inner_propagator.timestep` (default 0.01); the inner propagator rebuilds its one-body/CV scaling for this `dt` on first `Propagate` (so it is the single effective source — no build-vs-runtime drift). |
 | Fail-fast / limits | ✓ `inner_nsteps > 0` is rejected **at `StochasticWfn` construction** unless the trial is **CLOSED (RHF)** and the build is **CPU** (`!ENABLE_DEVICE`) — the un-rotated full-G kernels are CLOSED/CPU-only this phase, so misuse fails immediately, not deep in the first reduction's HamOp dispatch. |
 | Phase weight | ✓ `⟨Ô⟩_w = Σ_p ⟨Ô⟩_{p,w} S_p / Σ_p S_p` with `S_p[w] = ⟨ψ_p\|φ_w⟩/\|⟨ψ_p\|φ_w⟩\|` (Eq. 26) in `Energy`/`MixedDensityMatrix_for_vbias`; degenerate `S_p` recovers 3a. **`Log_Overlap` stays the absolute `(1/P) Σ_p ⟨ψ_p\|φ_w⟩`** (Eq. 24's normalization) — dropping the magnitude would break `Log_Overlap == NOMSD` at the delegate limit, and the exact `𝒩(φ)` cancellation is the Phase 3c leapfrog. (The earlier Tier-1 "Overlap: replace 1/P with `S_p`" note was imprecise.) |
 | Refactor | ✓ The shared per-inner-walker cross-DM loop is now a private `reduce_inner_cross_dm(wset, compact, transposed, Gsize, D, Ov, accumulate)` (the callback folds `G_{p,w}` into each estimator's `S_p`-weighted numerator); it also owns the `maybe_advance_inner_ensemble()` resample. `Log_Overlap` keeps its own `nw×P` FairDivide loop. |
@@ -1164,7 +1168,7 @@ sites); concentrating it in `WavefunctionFactory` keeps the feature in one layer
 | Factory wiring | ✓ The `WavefunctionFactory` constructor is **overloaded**: the original `WavefunctionFactory(InfoMap)` is preserved (member `HamFac_` is a `HamiltonianFactory*` defaulting to `nullptr`), and a new `WavefunctionFactory(InfoMap, HamiltonianFactory&)` sets `HamFac_`. So every existing call site (all in tests) compiles **unchanged**; only callers that need an inner Hamiltonian use the two-arg form. `fromHDF5` resolves `Hamiltonian& inner_ham`: if the wfn block has `inner_hamiltonian`, it builds/fetches that Ham via `HamFac_` (registered under the namespaced ID `<wfn>__inner_hamiltonian__`, idempotent via the new `HamiltonianFactory::has_input`) — aborting with a clear message if `HamFac_` is null (single-arg-constructed factory); otherwise `inner_ham = h` (the True Ham, clone path). It passes `inner_ham` to `buildStochasticNomsdWavefunction`, whose inner HamOps now come from `inner_ham.getHamiltonianOperations(...)` (outer `nomsd_` HamOps still from `h`). Both half-rotated with the **same** trial orbitals; only the integrals differ. |
 | Driver | ✓ **`DriverFactory` call sites unchanged.** `AFQMCFactory` constructs `WfnFac(InfoMap, HamFac)` so production input decks can name `inner_hamiltonian`; `DriverFactory::getWavefunction` is untouched. |
 | Layout queries | ✓ No change. All outer-facing Tier-4/5 metadata (Cholesky counts, transpose flags, `size_of_G_for_vbias`, Ham type) stay on `nomsd_` (True Ham), exactly as the dual-Hamiltonian rule requires. `Ĥ_var`'s (generally different) Cholesky count is internal to the inner propagator. |
-| Tests | ✓ **`stochastic_inner_hamiltonian_same_as_true`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — one factory builds two trials: `wfn_clone` (no `inner_hamiltonian` → inner clones the True Ham) and `wfn_hvar` (`inner_hamiltonian` = the **same** integral file → factory builds a second Ham and uses it for the inner stack). On the dynamic path (`inner_nsteps = 1`, so the inner Ham drives `B̂_T`) the two must agree to `1e-9` on `Energy`/`Log_Overlap`/`vbias` over 3 resampled steps. A `HamFac.has_input("wfn_hvar__inner_hamiltonian__")` check proves the factory actually traversed the `inner_hamiltonian` path (built + registered the Ham) rather than silently ignoring the key. Gated on CLOSED (RHF) + CPU. **CPU-verified** on a compute node (`Ne_cc-pvdz`, `mpirun -np 1`): passes in isolation (2675 assertions) and as part of the full `[stochastic_wfn]` tag (10 cases, 5699 assertions). The build also confirmed the constructor overload is non-breaking — the untouched estimator/propagator/phmsd test TUs recompile and link against the new header unchanged. |
+| Tests | ✓ **`stochastic_inner_hamiltonian_same_as_true`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — one factory builds two trials: `wfn_clone` (no `inner_hamiltonian` → inner clones the True Ham) and `wfn_hvar` (`inner_hamiltonian` = the **same** integral file → factory builds a second Ham and uses it for the inner stack). On the dynamic path (`inner_nsteps = 1`, so the inner Ham drives `B̂_T`) the two must agree to `1e-9` on `Energy`/`Log_Overlap`/`vbias` over 3 resampled steps. A `HamFac.has_input("wfn_hvar__inner_hamiltonian__")` check proves the factory actually traversed the `inner_hamiltonian` path (built + registered the Ham) rather than silently ignoring the key. Gated on CLOSED (RHF) + CPU. **CPU-verified** on a compute node (`Ne_cc-pvdz`, `mpirun -np 1`): passes in isolation (2675 assertions) and as part of the full `[stochastic_wfn]` tag (11 cases, 5831 assertions). The build also confirmed the constructor overload is non-breaking — the untouched estimator/propagator/phmsd test TUs recompile and link against the new header unchanged. |
 | Driver validation | ✓ **Ne cc-pVDZ end-to-end driver runs** (Jun 2026, compute node, `mpirun -np 1`) with VAFQMC-exported `ham.h5` / `wfn.h5` / `ham_var.h5` — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026). Stage C confirms a *different* `Ĥ_var` is loaded for the inner stack (`enuc` shift, smaller inner mean-field subtraction, `H1 is not hermitian` warning on the inner propagator only) while outer energies stay on the True Ham. |
 | Follow-ups | COLLINEAR/NONCOLLINEAR, GPU, and the non-`Real3IndexFactorization` HamOps stubs remain as in Phase 3b. Stage B (dynamic path, True Ham inner clone) showed **walker population collapse** at `P = 4` on the smoke trial — retry with larger `inner_nwalkers` / outer walker count before treating as a regression. Longer VAFQMC training (`train_ne_smoke.py --iterations 5000+`) for production-quality trials. |
 
@@ -1273,12 +1277,13 @@ system Boost headers, add `-isystem` for the nix Boost 1.87 include path at conf
 
 #### Phase 3c — Walker-conditioned sampling + propagate-then-resample leapfrog
 
-**Status:** active development on branch **`stochastic-wfn-phase-3c`** (cut from `main` after 3b-var
-merge). Decomposed into **3c-i** (walker-conditioned sampling — *complete*, the custom force bias +
-`nw·P` block-structured ensemble) and **3c-ii** (the propagate-then-resample leapfrog — *remaining*).
-The two pieces 3c bundles are: **(A)** importance-sample the inner fields conditioned on each outer
-walker (Eq. 23), and **(B)** the leapfrog so the step-to-step overlap-ratio `𝒩(φ)` cancellation (Eq. 25)
-is exact. 3c-i lands (A); 3c-ii lands (B).
+**Status:** branch **`stochastic-wfn-phase-3c`** (cut from `main` after 3b-var merge). Decomposed into
+**3c-i** (walker-conditioned sampling — *complete*, the custom force bias + `nw·P` block-structured
+ensemble) and **3c-ii** (the propagate-then-resample leapfrog — *complete*, exact Eq. 25 ratio via the
+importance-reweighted overlap + top-of-step refresh). The two pieces 3c bundles are: **(A)**
+importance-sample the inner fields conditioned on each outer walker (Eq. 23), and **(B)** the leapfrog
+so the step-to-step overlap-ratio `𝒩(φ)` cancellation (Eq. 25) is exact. 3c-i lands (A); 3c-ii lands (B)
+(hybrid propagation; local-energy/measurement-energy conditioning is a follow-up).
 
 ##### Phase 3c-i — Walker-conditioned inner sampling (**complete**, CPU-verified [overhaul])
 
@@ -1286,8 +1291,9 @@ is exact. 3c-i lands (A); 3c-ii lands (B).
 **conditioned on each outer walker** `φ_w` (Eq. 23 of arXiv:2505.18519), using the **force-biased
 Gaussian** route SAFIRE chose (reuse `assemble_X → vHS → apply_propagators`; *not* the paper's
 Metropolis MCMC). Opt-in via the **`inner_conditioning`** key (default `false` ⇒ exact Phase 3b
-fallback). The leapfrog / exact `𝒩` cancellation stays in 3c-ii: within-step the resample is still at
-the latch and the "old" overlap is the stored `OVLP` from the previous step (as in 3b).
+fallback). With `inner_leapfrog = false` (default), the within-step resample stays at the first
+reduction latch (as in 3b); hybrid overlap ratios are **not** Eq.-25-exact until 3c-ii is enabled
+(see [Phase 3c-ii](#phase-3c-ii--propagate-then-resample-leapfrog-complete-cpu-verified-overhaul)).
 
 | Item | Status |
 |------|--------|
@@ -1296,27 +1302,34 @@ the latch and the "old" overlap is the stored `OVLP` from the previous step (as 
 | Propagator seam | ✓ `AFQMCBasePropagator::Propagate_conditioned(wset, Xbias, dt)` seeds the fields with the external per-walker bias, runs `assemble_X → vHS → apply_propagators`, and **skips** the inner energy/overlap/walker-weight update (the inner determinants are field samples; their weights are not consumed — the reductions weight by `1/P` and the phase `S_p`). Exposed through the `Propagator<MEM>` variant. **No `assemble_X` signature change:** the conditioned inner propagator is built `free_projection = false` (importance sampling) so `assemble_X` applies the bias; `Propagate_conditioned` asserts `not free_projection`. |
 | Block-structured reductions | ✓ `reduce_inner_cross_dm` and `Log_Overlap` gain a conditioned branch: loop the `P` per-walker samples; for slot `ip` pair its `nwalk` inner walkers **diagonally** with the `nwalk` outer walkers via the **batched-reference** `det_ops::MixedDensityMatrix(A_rank3, B_rank3, …)` / `Log_Overlap` (one inner reference per outer walker). Same `det(A†B)` convention as the existing `herm=false` single-reference path. Phase `S_p(w)`, denominator `D(w)=Σ_p S_p`, and the `accumulate` callback are unchanged; `Energy`/`MixedDensityMatrix_for_vbias`/`vbias` above the reduction are untouched. |
 | Factory | ✓ `buildStochasticInnerStack` builds the inner propagator in **importance-sampling** mode (`free_projection=false`, `importance_sampling=true`) when `inner_conditioning`, else the 3b free-projection mode. `inner_conditioning` threaded through `WavefunctionFactory::interpret_inputs` (+ `StochasticWfn::interpret_inputs` / `strip_stochastic_input_keys`); rejected unless `stochastic: true`; construction aborts if `inner_conditioning && inner_nsteps == 0`. |
-| Tests | ✓ **`stochastic_conditioned_propagator_step`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — a real OUTER `AFQMCBasePropagator::Propagate()` over the conditioned dynamic trial (`inner_conditioning=true`, `inner_nsteps=1`, `inner_nwalkers=4`, `nwalk=11` ⇒ `44` inner walkers); asserts finite weights/energies/overlaps over 3 steps. The internal `inner.size() == nwalk·P` checks in the reductions validate the resize. CLOSED+CPU; `inner_conditioning=false` leaves the 3b cases bit-identical. **[overhaul] CPU-verified** Jun 2026: passes in the full tag (**10 cases / 5699 assertions**, `mpirun -np 1`, `Ne_cc-pvdz`). |
+| Tests | ✓ **`stochastic_conditioned_propagator_step`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — a real OUTER `AFQMCBasePropagator::Propagate()` over the conditioned dynamic trial (`inner_conditioning=true`, `inner_nsteps=1`, `inner_nwalkers=4`, `nwalk=11` ⇒ `44` inner walkers); asserts finite weights/energies/overlaps over 3 steps. The internal `inner.size() == nwalk·P` checks in the reductions validate the resize. CLOSED+CPU; `inner_conditioning=false` leaves the 3b cases bit-identical. **[overhaul] CPU-verified** Jun 2026: passes in the full tag (**11 cases / 5831 assertions**, `mpirun -np 1`, `Ne_cc-pvdz`). |
 
-**Deferred to 3c-ii (leapfrog):** end-of-step resample conditioned on the **new** walkers + re-store
-`OVLP=⟨Ψ_T\|φ'⟩` against that ensemble, so the next step's `ratioOverlaps = exp(new_ovlp − old_ovlp)`
-shares one ensemble between numerator and denominator → exact `𝒩(φ)` cancellation (Eq. 25). Bootstrap
-the initial conditioned ensemble + `OVLP`. Acceptance: total energy matches analytic-trial AFQMC within
-combined error bars; variance reduced vs 3b. Also: `inner_nsteps > 1` reuses the anchor-based bias each
-step (the canonical trial is `inner_nsteps = 1`); a moving-bra bias would be a follow-up.
+**Leapfrog (3c-ii):** landed in [Phase 3c-ii](#phase-3c-ii--propagate-then-resample-leapfrog-complete-cpu-verified-overhaul)
+via top-of-step `begin_inner_step(wset)` refresh (not the original end-of-step hook). **Still open at the
+research level:** driver-level energy vs analytic-trial AFQMC within combined error bars; variance
+reduction vs 3b; `inner_nsteps > 1` reuses the anchor-based bias each step (canonical trial is
+`inner_nsteps = 1`); a moving-bra bias would be a follow-up.
 
-##### Phase 3c-ii — Propagate-then-resample leapfrog (remaining)
+##### Phase 3c-ii — Propagate-then-resample leapfrog (**complete**, CPU-verified [overhaul])
 
-**Goal:** add the leapfrog so the `𝒩(φ)` cancellation in the Eq. 25 overlap ratio is exact — the
-exactness/variance reduction the paper relies on.
+**Goal:** make the `𝒩(φ)` cancellation in the Eq. 25 overlap ratio exact — the variance reduction /
+exactness the paper relies on. Opt-in via **`inner_leapfrog`** (default `false`; requires
+`inner_conditioning`, hence `inner_nsteps > 0`, CLOSED/CPU). Off ⇒ exact 3c-i behavior.
 
-| Item | Plan |
-|------|------|
-| Conditioning | ✓ done in 3c-i: `𝒫(Y; φ_w) = \|⟨φ_T\| p_T(Y) B̂_T(Y) \|φ_w⟩\| / 𝒩(φ_w)` (Eq. 23); the inner ensemble and `S_p` are `φ_w`-dependent. |
-| Force bias | ✓ done in 3c-i (`x̄ ∝ √Δτ · L_γ^var · ⟨φ_T\|c†c\|φ_w⟩/⟨φ_T\|φ_w⟩`). |
-| Leapfrog | Propagate-then-resample so numerator/denominator of the step-to-step overlap ratio share inner samples conditioned on the old walker, making the `𝒩(φ_w)` cancellation exact. Resample at the **end** of the outer step (conditioned on the new walker) and re-store `OVLP`; add an end-of-step `Propagate` hook (no-op for non-stochastic trials). |
-| Coupling | Deepest integration into `AFQMCBasePropagator::step` — the inner walk is interleaved with the outer walk, not a standalone evolution. The most novel and propagator-invasive subphase. |
-| Tests | Full stochastic-trial AFQMC run: total energy matches analytic-trial AFQMC within combined error bars; importance sampling reduces variance vs 3b. |
+**Key correctness point (refines the original "re-store OVLP" plan):** with a shared conditioned
+ensemble, the *absolute* `(1/P)Σ_p⟨ψ_p|χ⟩` reduction does **not** reproduce Eq. 25 — `Σ_p⟨ψ_p|φ'⟩ /
+Σ_p⟨ψ_p|φ⟩` differs from `Σ_p(⟨ψ_p|φ'⟩/⟨ψ_p|φ⟩)S_p / Σ_p S_p` unless every `|⟨ψ_p|φ⟩|` is equal. The
+leapfrog overlap must be **importance-reweighted**, `Õv(χ) = Σ_p ⟨ψ_p|χ⟩/|⟨ψ_p|φ_cond⟩|`, so the
+old overlap (`χ = φ_cond`) is `Σ_p S_p` and `new/old` is exactly Eq. 25 (`𝒩(φ)` cancels via Eq. 24
+`⟨Ψ̄_T|φ⟩ = (𝒩(φ)/P)Σ_p S_p`).
+
+| Item | Status |
+|------|--------|
+| Conditioning / force bias | ✓ done in 3c-i (`𝒫(Y;φ_w)`, `x̄ ∝ √Δτ·L^var·⟨φ_T\|c†c\|φ_w⟩/⟨φ_T\|φ_w⟩`). |
+| Reweighted overlap | ✓ `Log_Overlap` leapfrog branch accumulates `Σ_p ⟨ψ_p\|χ⟩/\|⟨ψ_p\|φ_w^cond⟩\|` (per-sample reweight by the conditioning-walker magnitude `inner_cond_mag_`, computed by `compute_inner_cond_mag` right after each conditioned resample via the batched `det_ops::Log_Overlap`, slot-major `q = ip·nwalk + w`). Energy/`MixedDensityMatrix_for_vbias` (the `S_p`-weighted Eq. 27, conditioned on the scored walker) are unchanged. |
+| Leapfrog (top-of-step refresh) | ✓ Instead of the doc's original end-of-step hook, `begin_inner_step(wset)` (now taking the walker set, dispatched through the `Wavefunction` variant; the single call site is the top of `AFQMCBasePropagator::Propagate`) **resamples conditioned on the current (old) walker and refreshes `OVLP = Õv(φ)` against that ensemble**. The post-propagation `Log_Overlap` reuses the SAME ensemble (latch consumed), so `ratioOverlaps = exp(new_ovlp − old_ovlp)` (`hybrid_walker_update`) is exactly Eq. 25. Mathematically identical to end-of-step (ensemble conditioned on the old walker either way) but robust to between-step orthogonalization — everything is recomputed fresh against the current walker, so the LogOverlapFactor never drifts. |
+| Scope | **Hybrid propagation** (the default + tested path): only the overlap ratio is needed, and it is exact. **Local-energy mode + leapfrog** and the **measurement `Energy` conditioning** (the energy of a walker scored against an ensemble conditioned on a *different* walker needs extra reweighting) are follow-ups, not yet exact. `inner_nsteps > 1` reuses the anchor-based bias each step (canonical trial is `inner_nsteps = 1`). |
+| Tests | ✓ **`stochastic_leapfrog_propagator_step`** (`tests/test_wfn_factory.cpp`, `[stochastic_wfn]`) — a real OUTER hybrid `AFQMCBasePropagator::Propagate()` over the leapfrog trial (`inner_conditioning = inner_leapfrog = true`, `inner_nsteps = 1`, `inner_nwalkers = 4`); asserts finite weights/energies/overlaps over 3 steps (finiteness smoke). CLOSED+CPU; `inner_leapfrog = false` leaves 3c-i/3b bit-identical. **[overhaul] CPU-verified** Jun 2026: passes in the full tag (**11 cases / 5831 assertions**, `mpirun -np 1`, `Ne_cc-pvdz`). **Research-level validation** (energy vs analytic-trial AFQMC within combined error bars; variance reduction vs 3b) is the driver-level follow-up. |
 
 **Sequencing note:** 3a alone delivers a working (static) stochastic-trial propagator, delegate-limit
 verified. 3b/3c can follow once 3a is stable; the observable/mean-field phases below reuse the same
@@ -1481,7 +1494,7 @@ the dynamic/full-G checks silently. On overhaul the tests also `return` for `DEV
 
 ***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
 `wfn_rhf.h5`), CPU/CLOSED only (passes in isolation, 2675 assertions, and in the full
-`[stochastic_wfn]` tag, 10 cases / 5699 assertions). Requires a **NOMSD** + **CLOSED (RHF)** input;
+`[stochastic_wfn]` tag, 11 cases / 5831 assertions). Requires a **NOMSD** + **CLOSED (RHF)** input;
 other inputs skip silently.
 
 | Test case | Checkpoint |
@@ -1493,11 +1506,21 @@ other inputs skip silently.
 ***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
 `wfn_rhf.h5`), CPU/CLOSED only. Requires a **NOMSD** + **CLOSED (RHF)** input; other inputs skip
 silently. `inner_conditioning = false` leaves all Phase 3b cases bit-identical (exact fallback). Passes
-in the full `[stochastic_wfn]` tag (**10 cases / 5699 assertions**, `mpirun -np 1`, Jun 2026).
+in the full `[stochastic_wfn]` tag (**11 cases / 5831 assertions**, `mpirun -np 1`, Jun 2026).
 
 | Test case | Checkpoint |
 |-----------|------------|
-| `stochastic_conditioned_propagator_step` | Real outer `AFQMCBasePropagator::Propagate()` over the **walker-conditioned** dynamic trial (`inner_conditioning = true`, `inner_nsteps = 1`, `inner_nwalkers = 4`, `nwalk = 11` ⇒ `nwalk·P = 44` inner walkers); the inner ensemble resizes to `nwalk·P` and is sampled with the per-walker conditioning bias; asserts finite weights/energies/overlaps over 3 steps. The internal `inner.size() == nwalk·P` checks in `reduce_inner_cross_dm` / `Log_Overlap` validate the block-structured resize. Finiteness smoke, not NOMSD parity (exactness is 3c-ii). |
+| `stochastic_conditioned_propagator_step` | Real outer `AFQMCBasePropagator::Propagate()` over the **walker-conditioned** dynamic trial (`inner_conditioning = true`, `inner_nsteps = 1`, `inner_nwalkers = 4`, `nwalk = 11` ⇒ `nwalk·P = 44` inner walkers); the inner ensemble resizes to `nwalk·P` and is sampled with the per-walker conditioning bias; asserts finite weights/energies/overlaps over 3 steps. The internal `inner.size() == nwalk·P` checks in `reduce_inner_cross_dm` / `Log_Overlap` validate the block-structured resize. Finiteness smoke; hybrid Eq.-25 overlap exactness requires `inner_leapfrog` (3c-ii). |
+
+### Phase 3c-ii-specific tests (implemented)
+
+***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
+`wfn_rhf.h5`), CPU/CLOSED only, hybrid propagation. Requires a **NOMSD** + **CLOSED (RHF)** input;
+other inputs skip silently. `inner_leapfrog = false` leaves 3c-i/3b bit-identical (exact fallback).
+
+| Test case | Checkpoint |
+|-----------|------------|
+| `stochastic_leapfrog_propagator_step` | Real outer **hybrid** `AFQMCBasePropagator::Propagate()` over the leapfrog trial (`inner_conditioning = inner_leapfrog = true`, `inner_nsteps = 1`, `inner_nwalkers = 4`); `begin_inner_step(wset)` resamples conditioned on the old walker + refreshes the importance-reweighted old overlap, so the step ratio `new/old` is exactly Eq. 25 (`𝒩(φ)` cancels). Asserts finite weights/energies/overlaps over 3 steps (finiteness smoke; energy-vs-analytic-AFQMC + variance reduction are the driver-level research validation). |
 
 ### Running the stochastic test suite
 
@@ -1506,7 +1529,7 @@ All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD
 
 **`main` (overhaul API)** — target binary is the consolidated `test_afqmc`
 (`tests/test_wfn_factory.cpp`); output under `${BUILD_DIR}/tests/bin/`. The static + 3b cases are
-**ported and CPU-verified** (10 cases, 5699 assertions — incl. the Phase 3b-var anchor and 3c-i smoke) on the
+**ported and CPU-verified** (11 cases, 5831 assertions — incl. the Phase 3b-var anchor, 3c-i, and 3c-ii smokes) on the
 `Ne_cc-pvdz` dense+RHF fixture (the develop `ham_chol_sc.h5` / `wfn_msd.h5` fixtures are gone). Build is driven via `cmake --build` (Ninja
 generator); on the Flatiron cluster build on a compute node, not the gateway:
 
@@ -1527,9 +1550,10 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 **Overhaul port — done (Jun 2026):**
 
 - ✅ Ported the static (1a–3a) + 3b `[stochastic_wfn]` cases to `tests/test_wfn_factory.cpp`; built
-  `test_afqmc` and ran the full tag on a compute node (now 10 cases, 5699 assertions, `Ne_cc-pvdz`,
-  incl. the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true` and the Phase 3c-i smoke
-  `stochastic_conditioned_propagator_step`).
+  `test_afqmc` and ran the full tag on a compute node (now 11 cases, 5831 assertions, `Ne_cc-pvdz`,
+  incl. the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`, the Phase 3c-i smoke
+  `stochastic_conditioned_propagator_step`, and the Phase 3c-ii leapfrog smoke
+  `stochastic_leapfrog_propagator_step`).
 - ✅ Fixed the three overhaul-only bugs the port surfaced (log-overlap convention; full-G one-body
   rank mismatch; full-G EXX/EJ slice axis + `dotc`→`dot`).
 - ✅ Full-G validated against the compact path on the dense `Real3IndexFactorization` route
@@ -1548,5 +1572,5 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 - Mixed estimator (`MixedObsHandler`) forces and densities remain consistent.
 - GPU build: all `[stochastic_wfn]` tests pass with `ENABLE_CUDA=ON`.
 - GPU memory and task-group load acceptable with the additional inner ensemble and propagator.
-- Research-level: dynamic-trial energies/overlaps vs analytic NOMSD within stochastic error bars; `P → ∞` convergence and `inner_seed` stability.
+- Research-level: dynamic-trial energies/overlaps vs analytic NOMSD within stochastic error bars; `P → ∞` convergence and `inner_seed` stability; **3c-ii leapfrog** energy parity and variance reduction vs 3b (unit tests are finiteness-only today).
 - `KP3IndexFactorization` / other HamOps full-G stubs on overhaul until tests exercise those paths.
