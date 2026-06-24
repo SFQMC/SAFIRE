@@ -192,8 +192,8 @@ public:
   // (not the stochastic trial) and the ket is the walker, so this is pure orbital algebra independent
   // of both the trial wavefunction and the Hamiltonian -- NOMSD's implementation never touches its own
   // OrbMats. The stochastic trial therefore plays no role, and delegating to `nomsd_` is exact. (Which
-  // reference set a stochastic trial *exposes* for back-propagation is the separate, open Tier 6
-  // question; it does not change the meaning of this Ref-parameterized method.)
+  // reference set a stochastic trial *exposes* for back-propagation was the Tier 6 question, resolved in
+  // Phase 7: the outer-NOMSD set, inner-ensemble-agnostic; it does not change this Ref-parameterized method.)
   template<class WlkSet, class RVec, class MatG, class TVec>
   void DensityMatrix(const WlkSet& wset,
                      RVec&& Ref,
@@ -247,6 +247,24 @@ public:
     nomsd_.generalizedFockMatrix(std::forward<Args>(args)...);
   }
 
+  // Phase 7 (Tier 6): back-propagation reference set. CHOSEN SEMANTICS = OUTER-NOMSD DELEGATE,
+  // INNER-ENSEMBLE-AGNOSTIC: the stochastic trial exposes exactly the OUTER nomsd_'s reference set (the
+  // True-Ham trial's references) and ignores the inner ensemble entirely -- so these stay delegates to
+  // nomsd_. For the paper's intended SINGLE-determinant anchor (Eq. 21) that set is {phi_T} = OrbMats(0)
+  // with weight 1; for a multi-determinant outer trial it is the full CI expansion (nrefs=ndet, weights
+  // ci[i]) -- i.e. identical to plain NOMSD in BOTH cases, hence the test asserts equality unconditionally
+  // (no ndet==1 gate). Rationale:
+  //  - The BP estimator (BackPropagatedEstimator/FullObsHandler) fills references for ONE walker and
+  //    broadcasts them to ALL walkers (Refs(iw)=Refs(0)), so references MUST be walker-INDEPENDENT, and
+  //    it captures them once per BP block and back-propagates over a FIXED window. The outer trial's
+  //    references are walker-independent and time-stable (frozen while the inner ensemble resamples).
+  //  - EXACT vs plain NOMSD by construction; the SCIENTIFIC caveat is that for a genuine inner_nsteps>0
+  //    trial back-propagation is scored against the OUTER trial, NOT the field-sampled stochastic spread
+  //    {psi_p} -- a documented approximation, consistent with vMF/G_MF collapsing to the anchor (Phase 6).
+  // The faithful inner-ensemble reference set {psi_p} (nrefs=P, weights 1/P) is DEFERRED research: it is
+  // incompatible with the walker-dependent conditioned/leapfrog ensemble, conflicts with BP's fixed
+  // reference window (the ensemble resamples every step), and multiplies the back-propagation cost by P.
+  // See Phase 7 in StochasticDevelopment.md.
   int total_number_of_references() const { return nomsd_.total_number_of_references(); }
   ComplexType getReferenceWeight(int i) const { return nomsd_.getReferenceWeight(i); }
 
