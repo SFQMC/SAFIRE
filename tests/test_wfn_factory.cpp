@@ -1908,7 +1908,10 @@ void stochastic_accumulate_estimators_matches_nomsd(
     else
       wfn.accumulate_estimators(0, wset, wgt, props1, props);
 
-    const std::string fname = "stochastic_accumulate_" + tag + ".h5";
+    // Rank-unique temp filename: at -np > 1 every rank runs this round-trip, and a shared filename
+    // makes the ranks collide on the same HDF5 file (file-lock error: "unable to lock the file").
+    const std::string fname =
+        "stochastic_accumulate_" + tag + "_r" + std::to_string(mpi->comm.rank()) + ".h5";
     std::remove(fname.c_str());
     nda::array<ComplexType, 1> Wsum(1);
     Wsum(0) = ComplexType(double(nwalk), 0.0);
@@ -1917,7 +1920,11 @@ void stochastic_accumulate_estimators_matches_nomsd(
       h5::group grp(file);
       props1[0].print(0, &grp, Wsum);
     }
+    // full1rdm::print writes only on mpi->comm.root(), so only root's file has the RDM. Read it back
+    // (and compare, below) on root only; non-root ranks still called accumulate_estimators + print
+    // (the code under test) but skip the read-back. Returns empty on non-root.
     nda::array<ComplexType, 1> data;
+    if (mpi->comm.root())
     {
       h5::file file(fname, 'r');
       h5::group grp(file);
@@ -1934,19 +1941,22 @@ void stochastic_accumulate_estimators_matches_nomsd(
   auto rdm_ref = collect_one_rdm(wfn_nomsd, "nomsd", false);
   auto rdm_s1  = collect_one_rdm(wfn_s1, "s1", false);
   auto rdm_s3  = collect_one_rdm(wfn_s3, "s3", false);
-  // (1) inner_nwalkers invariance: a static replicated ensemble gives an inner_nwalkers-independent 1RDM.
-  CHECK_THAT(rdm_s3, utils::Approx(rdm_s1));
-  // (2) delegate limit: single-determinant trial => stochastic accumulated 1RDM == NOMSD.
-  if (single_det)
-    CHECK_THAT(rdm_s1, utils::Approx(rdm_ref));
-
   // Time-evolved (back-propagated operators) 1RDM -- same parity, exercising the M + T(X).G_full.Yc path.
   auto trdm_ref = collect_one_rdm(wfn_nomsd, "nomsd_te", true);
   auto trdm_s1  = collect_one_rdm(wfn_s1, "s1_te", true);
   auto trdm_s3  = collect_one_rdm(wfn_s3, "s3_te", true);
-  CHECK_THAT(trdm_s3, utils::Approx(trdm_s1));
-  if (single_det)
-    CHECK_THAT(trdm_s1, utils::Approx(trdm_ref));
+  // Comparisons only on root, where the 1RDM was read back (full1rdm::print is root-only).
+  if (mpi->comm.root())
+  {
+    // (1) inner_nwalkers invariance: a static replicated ensemble gives an inner_nwalkers-independent 1RDM.
+    CHECK_THAT(rdm_s3, utils::Approx(rdm_s1));
+    // (2) delegate limit: single-determinant trial => stochastic accumulated 1RDM == NOMSD.
+    if (single_det)
+      CHECK_THAT(rdm_s1, utils::Approx(rdm_ref));
+    CHECK_THAT(trdm_s3, utils::Approx(trdm_s1));
+    if (single_det)
+      CHECK_THAT(trdm_s1, utils::Approx(trdm_ref));
+  }
 }
 
 TEST_CASE("stochastic_accumulate_estimators_matches_nomsd", "[wfn_factory][stochastic_wfn]")

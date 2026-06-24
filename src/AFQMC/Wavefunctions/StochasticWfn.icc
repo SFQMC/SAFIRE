@@ -302,8 +302,13 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
           E(w, nda::range::all) += Sp(w) * eloc2(w, nda::range::all);
       });
 
-  if (mpi_->comm.size() > 1)
-    mpi_->comm.all_reduce_in_place_n(E().data(), 3 * nwalk, std::plus<>{});
+  // NO all_reduce over E here. nomsd_.energy_from_G / energy_from_fullG (-> HamOp.energy) returns the
+  // COMPLETE per-walker energy on every rank -- it performs any internal Cholesky-distribution reduction
+  // itself, exactly as NOMSD::Energy relies on (NOMSD does no external all_reduce). reduce_inner_cross_dm
+  // also replicates the full inner-walker loop on every rank (it is NOT FairDivided -- unlike the pair
+  // loop in Log_Overlap), so both the numerator E and the denominator D are already complete on each
+  // rank. An all_reduce here would double-count E by comm.size() (a latent bug invisible at -np 1; it
+  // doubled the energy at -np 2 while the matching un-reduced D left s3 != s1 == NOMSD).
   for (int w = 0; w < nwalk; ++w)
     E(w, nda::range::all) /= D(w);
 
