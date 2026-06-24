@@ -247,32 +247,44 @@ public:
     nomsd_.generalizedFockMatrix(std::forward<Args>(args)...);
   }
 
-  // Phase 7 (Tier 6): back-propagation reference set. CHOSEN SEMANTICS = OUTER-NOMSD DELEGATE,
-  // INNER-ENSEMBLE-AGNOSTIC: the stochastic trial exposes exactly the OUTER nomsd_'s reference set (the
-  // True-Ham trial's references) and ignores the inner ensemble entirely -- so these stay delegates to
-  // nomsd_. For the paper's intended SINGLE-determinant anchor (Eq. 21) that set is {phi_T} = OrbMats(0)
-  // with weight 1; for a multi-determinant outer trial it is the full CI expansion (nrefs=ndet, weights
-  // ci[i]) -- i.e. identical to plain NOMSD in BOTH cases, hence the test asserts equality unconditionally
-  // (no ndet==1 gate). Rationale:
-  //  - The BP estimator (BackPropagatedEstimator/FullObsHandler) fills references for ONE walker and
-  //    broadcasts them to ALL walkers (Refs(iw)=Refs(0)), so references MUST be walker-INDEPENDENT, and
-  //    it captures them once per BP block and back-propagates over a FIXED window. The outer trial's
-  //    references are walker-independent and time-stable (frozen while the inner ensemble resamples).
-  //  - EXACT vs plain NOMSD by construction; the SCIENTIFIC caveat is that for a genuine inner_nsteps>0
-  //    trial back-propagation is scored against the OUTER trial, NOT the field-sampled stochastic spread
-  //    {psi_p} -- a documented approximation, consistent with vMF/G_MF collapsing to the anchor (Phase 6).
-  // The faithful inner-ensemble reference set {psi_p} (nrefs=P, weights 1/P) is DEFERRED research: it is
-  // incompatible with the walker-dependent conditioned/leapfrog ensemble, conflicts with BP's fixed
-  // reference window (the ensemble resamples every step), and multiplies the back-propagation cost by P.
-  // See Phase 7 in StochasticDevelopment.md.
-  int total_number_of_references() const { return nomsd_.total_number_of_references(); }
-  ComplexType getReferenceWeight(int i) const { return nomsd_.getReferenceWeight(i); }
-
-  template<class... Args>
-  void getReferences(Args&&... args)
+  // Phase 7 (Tier 6) back-propagation reference set. Two regimes, selected by bp_uses_inner_ensemble():
+  //  - OUTER-NOMSD DELEGATE (the default / Option A): expose the OUTER nomsd_'s reference set -- the
+  //    anchor {phi_T} = OrbMats(0) (weight 1) for the intended single-determinant trial, or its full CI
+  //    expansion otherwise. Used at the static limit (inner_nsteps==0) and for conditioned/leapfrog
+  //    trials (whose nwalk*P ensemble is walker-DEPENDENT, incompatible with the estimator broadcasting
+  //    one walker's references to all). Identical to plain NOMSD.
+  //  - INNER-ENSEMBLE (Option B): for a genuinely field-sampled, walker-INDEPENDENT free-projection inner
+  //    ensemble (inner_nsteps>0, P>1, not conditioned), expose the P inner samples {psi_p} as references
+  //    with uniform weight 1/P, so back-propagation scores against the true stochastic trial
+  //    <Psi_T| ~ (1/P) sum_p <psi_p| (Eq. 24 of arXiv:2505.18519). The estimator already carries the
+  //    complex per-reference overlap exp(Ov_p)=<psi_p|phi_BP>, so the phase S_p is folded in and uniform
+  //    1/P is correct (and cancels in the estimator's normalization ratio); the explicit S_p/(1/|O_p|)
+  //    reweighting of the forward path is the importance-sampling correction for WALKER-CONDITIONED draws
+  //    (Eq. 23), absent here because these are free-projection (bare p_T(Y)) samples. The estimator
+  //    freezes the references it reads (copies them) for the BP window. Reduces to Option A at
+  //    inner_nsteps==0. See the Option B design note in StochasticDevelopment.md.
+  bool bp_uses_inner_ensemble() const
   {
-    nomsd_.getReferences(std::forward<Args>(args)...);
+    return inner_nsteps_ > 0 && inner_nwalkers_ > 1 && not inner_conditioning_
+           && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr
+           && int(inner_ensemble_.wset->size()) == inner_nwalkers_;
   }
+
+  int total_number_of_references() const
+  {
+    return bp_uses_inner_ensemble() ? inner_nwalkers_ : nomsd_.total_number_of_references();
+  }
+  ComplexType getReferenceWeight(int i) const
+  {
+    return bp_uses_inner_ensemble() ? ComplexType(1.0 / static_cast<double>(inner_nwalkers_), 0.0)
+                                    : nomsd_.getReferenceWeight(i);
+  }
+
+  // Fills the [nref, npol*NMO, nel] reference Slater matrices (H-conjugated bras), as
+  // BackPropagatedEstimator requests. Option B (bp_uses_inner_ensemble()) fills them from the inner
+  // free-projection samples; otherwise delegates to nomsd_. Defined in the .icc.
+  template<class RefMat>
+  void getReferences(int number_of_references, RefMat&& Refs);
 
   HamiltonianTypes getHamType() const { return nomsd_.getHamType(); }
   auto getFieldTypes() { return nomsd_.getFieldTypes(); }

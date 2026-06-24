@@ -931,5 +931,46 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
   nomsd_.vbias_from_G(Gsum, v2d, dt);
 }
 
+// Phase 7 Option B (Tier 6): back-propagation reference Slater matrices. At the OUTER-NOMSD-delegate
+// regime (static limit / conditioned trials) this forwards to nomsd_ (the anchor / CI expansion). For a
+// walker-independent free-projection inner ensemble (bp_uses_inner_ensemble()) the references are the P
+// inner samples {psi_p}: the inner walker Slater matrix is stored as [npol*NMO, nup] (the transpose of
+// NOMSD's OrbMats [nup, npol*NMO]), so the bra Refs(p,:,:) is conj(SM) directly -- a conjugate with NO
+// transpose, vs NOMSD's conj+transpose of OrbMats. The estimator (FullObsHandler) supplies the per-
+// reference overlap exp(Ov_p) and uniform weight 1/P (getReferenceWeight), reproducing the stochastic
+// trial bra <Psi_T| ~ (1/P) sum_p <psi_p|. See the Option B design note in StochasticDevelopment.md.
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class RefMat>
+void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat&& Refs)
+{
+  if (not bp_uses_inner_ensemble())
+  {
+    nomsd_.getReferences(number_of_references, std::forward<RefMat>(Refs));
+    return;
+  }
+  using nda::range;
+  auto all = range::all;
+  memory::check_memory_space<MEM>(Refs);
+  const WALKER_TYPES wt       = nomsd_.getWalkerType();
+  const int nel               = nup + (wt == COLLINEAR ? ndown : 0);
+  const int npol              = (wt == NONCOLLINEAR ? 2 : 1);
+  WalkerSet<MEM> const& inner = inner_wset();
+  if (number_of_references == 0)
+    return;
+  if (number_of_references < 0)
+    number_of_references = inner_nwalkers_;
+  utils::check(number_of_references > 0 and number_of_references <= inner_nwalkers_ and
+                   number_of_references <= int(Refs.extent(0)),
+               "Invalid number_of_references: {}", number_of_references);
+  utils::check(Refs.extent(1) == npol * NMO and Refs.extent(2) == nel, "Size mismatch");
+  for (int p = 0; p < number_of_references; ++p)
+  {
+    nda::tensor::add(nda::conj(inner.SlaterMatrices(Alpha)(p, all, all)), "ij", Refs(p, all, range(nup)), "ij");
+    if (wt == COLLINEAR)
+      nda::tensor::add(nda::conj(inner.SlaterMatrices(Beta)(p, all, all)), "ij", Refs(p, all, range(nup, nel)),
+                       "ij");
+  }
+}
+
 } // namespace afqmc
 } // namespace sfqmc
