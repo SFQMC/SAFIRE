@@ -43,10 +43,9 @@ fixed three real overhaul-only bugs — see
 **Remaining gates:** (1) the Phase 1a/1b/1c **infrastructure** tests are still unported (need new
 `Wavefunction`-variant accessors — see the *Ported vs. deferred* note below); (2) **GPU**
 build/run is untested (the full-G dynamic path is CPU-only gated this phase); (3) multi-rank
-(`-np > 1`) is **validated for the stochastic reductions** (Jun 2026) — **all 18 stochastic cases pass at
-`-np 2`** after fixing three bugs (stochastic `Energy` double-count; accumulate-test HDF5;
-`full_g::energy_closed` kernel). The only remaining `-np 2` failure is the foreign
-`back_propagation_driver_smoke` integration smoke (driver path, separate triage). See
+(`-np > 1`) is **validated (Jun 2026)** — **the full `[stochastic_wfn]` suite passes at `-np 2`** (all 19
+cases) after fixing four bugs (stochastic `Energy` double-count; accumulate-test HDF5;
+`full_g::energy_closed` kernel; stochastic `Log_Overlap` cross-rank reduce on distributed walkers). See
 [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).
 
 **Ported vs. deferred.** The ported cases test through the **public `Wavefunction` API only**:
@@ -1862,9 +1861,8 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 
 The whole feature was developed and verified at **`-np 1`**; a `-np 2` sweep of `[stochastic_wfn]`
 (`Ne_cc-pvdz`) surfaced latent multi-rank bugs (a single `MPI_ABORT` kills the whole tag, so cases were
-run individually). Three were fixed (below); `-np 1` remains fully green (**19 cases / 6657 assertions**),
-and **all 18 stochastic cases now pass at `-np 2`** — the only remaining `-np 2` failure is the foreign
-`back_propagation_driver_smoke` deadlock. At `-np 2`:
+run individually). **Four bugs were found and fixed (below); `-np 1` remains fully green (19 cases / 6657
+assertions) and ALL 19 cases now pass at `-np 2`.** At `-np 2`:
 
 | Case | `-np 2` | Note |
 |------|---------|------|
@@ -1872,7 +1870,7 @@ and **all 18 stochastic cases now pass at `-np 2`** — the only remaining `-np 
 | `energy_matches_nomsd` | ✅ pass **(after fix 1)** | see fix 1 |
 | `accumulate_estimators_matches_nomsd` | ✅ pass **(after fix 2)** | see fix 2 |
 | `full_g_matches_compact` | ✅ pass **(after fix 3)** | see fix 3 |
-| `back_propagation_driver_smoke` | ❌ **deadlock** | full BP driver path; separate triage |
+| `back_propagation_driver_smoke` | ✅ pass **(after fix 4)** | see fix 4 |
 
 **Fix 1 (real production bug) — `StochasticWfn::Energy` double-counted at `-np > 1`.** `NOMSD::Energy`
 does **no external `all_reduce`** — `HamOp.energy` returns the complete per-walker energy (any
@@ -1910,10 +1908,23 @@ with no reduction, matching the compact path and consistent with fix 1 (the over
 the `inner_nsteps > 0` full-G energy path is affected. Verified: `full_g_matches_compact` passes at `-np 1`
 (no regression) and `-np 2`.
 
-**Open — `stochastic_back_propagation_driver_smoke` deadlocks at `-np 2`.** This is a full
-`AFQMCDriver`/`BackPropagatedEstimator` integration smoke (one of two BP integration tests added to the
-tree outside the Phase 7 reference work); the deadlock is in the driver/estimator path, not the stochastic
-reductions, and needs separate triage.
+**Fix 4 (real production bug) — `StochasticWfn::Log_Overlap` corrupted overlaps for DISTRIBUTED walkers.**
+`stochastic_back_propagation_driver_smoke` (a full `DriverFactory`/`AFQMCDriver` run) aborted at `-np 2`
+inside `pair_branch` (`WalkerControl.hpp`) with *"Found 1 walkers with zero weight after branch"* — which,
+because one rank `APP_ABORT`s mid-collective, manifests as a hang. **Not a generic population-control issue:
+the manual `estimator_smoke` (same reductions, replicated walkers) passed.** Root cause: the stochastic
+`Log_Overlap` distributed the `nw·P` pairs across `mpi_->comm` (`FairDivideBoundary`) and then
+`all_reduce`d the per-walker `Ov(nw)`. That is correct only when every rank holds the **same** `wset`
+(the unit tests, where the outer walkers are replicated). In the **real driver the outer walkers are
+DISTRIBUTED** across ranks, so all-reducing `Ov(iw)` summed *different physical walkers* across ranks →
+corrupted effective overlaps → bad hybrid step ratios → a walker collapsed to zero weight → `pair_branch`
+abort. `NOMSD::Log_Overlap` is per-rank-local (no `all_reduce`); `Energy` (fix 1) and `vbias`
+(`reduce_inner_cross_dm`) already are too — `Log_Overlap` was the last reduction still cross-reducing a
+per-walker quantity. **Fixed**: `Log_Overlap` now loops the full `nw·P` pairs on every rank and does **no**
+`all_reduce` — each rank computes the complete effective overlap for its **own** walkers, exactly like
+`NOMSD::Log_Overlap`. (At the static inner ensemble used here the inner walkers are the replicated anchor,
+so each rank scores its walkers against the same trial.) Verified: `driver_smoke` passes at `-np 2`, the
+full `-np 1` tag stays 19 / 6657, and the full `-np 2` sweep is **all 19 cases passing**.
 
 ### Integration follow-ups (not yet validated)
 
@@ -1940,7 +1951,7 @@ reductions, and needs separate triage.
 **Overhaul port — still open:**
 
 - Port the Phase 1a/1b/1c **infrastructure** tests (need new `Wavefunction`-variant accessors).
-- **`-np > 1`: stochastic reductions validated (Jun 2026) — see [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).** **All 18 stochastic cases pass at `-np 2`** after fixing three bugs (stochastic `Energy` double-count; accumulate-test HDF5; `full_g::energy_closed` kernel). Still open: the foreign `back_propagation_driver_smoke` deadlock (driver path).
+- **`-np > 1`: validated (Jun 2026) — see [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).** **The full `[stochastic_wfn]` suite passes at `-np 2`** (all 19 cases) after fixing four bugs (stochastic `Energy` double-count; accumulate-test HDF5; `full_g::energy_closed` kernel; stochastic `Log_Overlap` cross-rank reduce). Remaining: GPU and the develop-only Phase 1 infrastructure tests.
 
 **Both code lines (`stochastic-wfn-develop` and `main`; longer term):**
 

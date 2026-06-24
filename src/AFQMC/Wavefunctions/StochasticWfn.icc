@@ -201,8 +201,14 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
 
   Ov() = ComplexType(0.0);
 
-  int tk0, tkN;
-  std::tie(tk0, tkN) = FairDivideBoundary(mpi_->comm.rank(), nw * P, mpi_->comm.size());
+  // Per-rank-local, exactly like NOMSD::Log_Overlap: each rank scores its OWN nw outer walkers against
+  // the full inner ensemble (loop the full nw*P pairs) with NO cross-rank distribution / all_reduce. The
+  // earlier FairDivide-of-pairs-across-the-comm + all_reduce(Ov, nw) was correct only for REPLICATED outer
+  // walkers (the unit tests, where every rank holds the same wset); in the real driver the outer walkers
+  // are DISTRIBUTED across ranks, so all-reducing per-walker Ov(iw) summed DIFFERENT physical walkers
+  // across ranks -> corrupted overlaps -> bad hybrid weights -> zero-weight walkers tripping pair_branch.
+  // Same per-rank-complete contract as the Energy override.
+  const int tk0 = 0, tkN = nw * P;
 
   memory::buffered_array<MEM, ComplexType, 1> log_ov(1, ComplexType(0.0));
   memory::buffered_array<MEM, ComplexType, 3> inner_one(1, NMO, nup);
@@ -240,9 +246,8 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
       Ov(iw) += inv_P * ov;
   }
 
-  if (mpi_->comm.size() > 1)
-    mpi_->comm.all_reduce_in_place_n(Ov().data(), nw, std::plus<>{});
-
+  // NO cross-rank all_reduce of Ov (see the per-rank-local note above): each rank already holds the
+  // complete effective overlap for its own walkers.
   // The pair loop accumulates the LINEAR effective overlap: (1/P) sum_p <psi_p|phi_w> normally, or the
   // leapfrog-reweighted sum_p <psi_p|phi_w>/|<psi_p|phi_cond>| (so new/old reproduces Eq. 25). The OVLP
   // property convention (matching NOMSD::Log_Overlap) is the LOG overlap, so convert back here.
