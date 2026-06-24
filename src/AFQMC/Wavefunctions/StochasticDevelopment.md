@@ -30,11 +30,11 @@ that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Over
 | `[stochastic_wfn]` dynamic suite (3b full-G) | Pass on CPU compute node | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** |
 | `[stochastic_wfn]` 3c-i (`stochastic_conditioned_propagator_step`) | — | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** — walker-conditioned inner sampling; finiteness smoke |
 | `[stochastic_wfn]` 3c-ii (`stochastic_leapfrog_propagator_step`) | — | **Ported + CPU-verified [overhaul], Ne_cc-pvdz (Jun 2026)** — hybrid leapfrog + importance-reweighted overlap; finiteness smoke (driver-level energy parity is a follow-up) |
-| Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only**; **full `DriverFactory` run with VAFQMC-exported Ne cc-pVDZ HDF5 (Stages A/C 3b-var; Stages D/E 3c-i/3c-ii leapfrog, Jun 2026)** — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026) |
+| Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only**; **Phase 7 BP integration smokes** (`stochastic_back_propagation_estimator_smoke`, `stochastic_back_propagation_driver_smoke`) at the static delegate limit; **full `DriverFactory` run with VAFQMC-exported Ne cc-pVDZ HDF5 (Stages A/C 3b-var; Stages D/E 3c-i/3c-ii leapfrog, Jun 2026)** — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026) |
 | GPU build | CPU-only gate in dynamic path | **Not tested** |
 
-**The full `[stochastic_wfn]` tag passes on overhaul (17 cases, 5866 assertions, `mpirun -np 1`,
-`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`; the 12th is the Phase 5 observable-DM case `stochastic_mixed_density_matrix_matches_nomsd`; the 13th is the Phase 5 `accumulate_estimators` case `stochastic_accumulate_estimators_matches_nomsd`; the 14th is the Phase 6 mean-field case `stochastic_mean_field_matches_nomsd`; the 15th is the Phase 6 call-order regression `stochastic_mean_field_production_order`; the 16th is the Phase 7 back-prop-reference case `stochastic_back_propagation_matches_nomsd`; the 17th is the Phase 7 call-order regression `stochastic_back_propagation_production_order`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
+**The full `[stochastic_wfn]` tag passes on overhaul (19 cases, 6657 assertions, `mpirun -np 1`,
+`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`; the 12th is the Phase 5 observable-DM case `stochastic_mixed_density_matrix_matches_nomsd`; the 13th is the Phase 5 `accumulate_estimators` case `stochastic_accumulate_estimators_matches_nomsd`; the 14th is the Phase 6 mean-field case `stochastic_mean_field_matches_nomsd`; the 15th is the Phase 6 call-order regression `stochastic_mean_field_production_order`; the 16th is the Phase 7 back-prop-reference case `stochastic_back_propagation_matches_nomsd`; the 17th is the Phase 7 call-order regression `stochastic_back_propagation_production_order`; the 18th is the Phase 7 BP estimator integration smoke `stochastic_back_propagation_estimator_smoke`; the 19th is the Phase 7 BP driver integration smoke `stochastic_back_propagation_driver_smoke`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
 parity + Phases 2a/2b/3a static reductions + the 3b full-G dynamic trio + 3c-i conditioned sampling + 3c-ii
 leapfrog + the Phase 5 observable mixed DM + accumulate_estimators + the Phase 6 mean field). Porting them surfaced and
 fixed three real overhaul-only bugs — see
@@ -1468,7 +1468,7 @@ Unlike `vbias`, the observable mixed DM **is** exposed on the `Wavefunction` var
 via a static replicated ensemble (1 vs 3), (2) delegate-limit equality vs NOMSD gated on `ndet == 1`.
 Built + CPU-verified on `worker6049` (`Ne_cc-pvdz`, `mpirun -np 1`): the new case passes (8 assertions)
 and at Phase 5 completion the full `[stochastic_wfn]` tag stood at **13 cases / 5843 assertions** (from
-11 / 5831; the current suite is **17 / 5866** after Phase 7).
+11 / 5831; the current suite is **19 / 6657** after Phase 7).
 
 #### Phase 5 — `accumulate_estimators` (**complete**, CPU-verified [overhaul])
 
@@ -1611,7 +1611,12 @@ field-sampled spread `{ψ_p}`, consistent with `vMF`/`G_MF` (Phase 6). Tests:
 Slater matrices, and Tier 4–5 layout parity all equal plain NOMSD's **unconditionally** and **independent
 of `inner_nwalkers`**; `stochastic_back_propagation_production_order` pins the dynamic case — after
 leapfrog `begin_inner_step` expands the inner ensemble to `nwalk·P`, the references stay frozen at the
-outer trial.
+outer trial; `stochastic_back_propagation_estimator_smoke` and
+`stochastic_back_propagation_driver_smoke` exercise `BackPropagatedEstimator` end to end at the
+**static delegate limit** (`inner_nsteps = 0`) through `EstimatorHandler` and `DriverFactory`
+respectively (finiteness of the accumulated back-propagated one-RDM only). A dynamic
+(`inner_nsteps > 0`) BP integration smoke currently accumulates **NaN** — numerical stability off the
+static limit is a follow-up.
 
 **Deferred (Option B — faithful inner-ensemble references).** The faithful expansion would set
 `nrefs = P`, references = the inner samples `{ψ_p}`, weights `1/P` (→ `S_p`). It is **deferred research**,
@@ -1791,7 +1796,7 @@ other inputs skip silently. `inner_leapfrog = false` leaves 3c-i/3b bit-identica
 `wfn_rhf.h5`). Requires a **NOMSD** input; other inputs skip silently. Covers the observable
 `MixedDensityMatrix` and `accumulate_estimators` (`DensityMatrix` / `generalizedFockMatrix` are exact
 True-Ham delegates needing no test — see [Phase 5](#phase-5--mixeddensitymatrix--densitymatrix--accumulate_estimators)).
-Passed in the full `[stochastic_wfn]` tag at Phase 5 completion (**13 cases / 5843 assertions**, `mpirun -np 1`, Jun 2026; the current suite is **17 / 5866** after Phase 7).
+Passed in the full `[stochastic_wfn]` tag at Phase 5 completion (**13 cases / 5843 assertions**, `mpirun -np 1`, Jun 2026; the current suite is **19 / 6657** after Phase 7).
 
 | Test case | Checkpoint |
 |-----------|------------|
@@ -1802,7 +1807,7 @@ Passed in the full `[stochastic_wfn]` tag at Phase 5 completion (**13 cases / 58
 
 ***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
 `wfn_rhf.h5`). Requires a **NOMSD** input (the production-order case also **CLOSED**/CPU); other inputs
-skip silently. Passes in the full `[stochastic_wfn]` tag (**17 cases / 5866 assertions**, `mpirun -np 1`,
+skip silently. Passes in the full `[stochastic_wfn]` tag (**19 cases / 6657 assertions**, `mpirun -np 1`,
 worker6035, Jun 2026; was 13 / 5843).
 
 | Test case | Checkpoint |
@@ -1814,15 +1819,17 @@ worker6035, Jun 2026; was 13 / 5843).
 
 ***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
 `wfn_rhf.h5`). Requires a **NOMSD** input (the production-order case also **CLOSED**/CPU); other inputs
-skip silently. Part of the full `[stochastic_wfn]` tag (**17 cases / 5866 assertions**, `mpirun -np 1`,
-worker6035, Jun 2026). **Scope:** reference-API + layout parity, not a full `BackPropagatedEstimator` /
-`FullObsHandler` integration run (backward propagation, path restoration, multi-ref CI weighting,
-`resize_bp`) — a driver/estimator integration smoke with `stochastic: true` is a documented follow-up.
+skip silently. Part of the full `[stochastic_wfn]` tag (**19 cases / 6657 assertions**, `mpirun -np 1`,
+worker6035, Jun 2026). **Scope:** reference-API + layout parity, plus static-limit BP integration
+smokes through `EstimatorHandler` and `DriverFactory` (see table below). Dynamic (`inner_nsteps > 0`)
+BP numerical stability remains a follow-up.
 
 | Test case | Checkpoint |
 |-----------|------------|
 | `stochastic_back_propagation_matches_nomsd` | The Tier 6 back-propagation reference API under the **outer-NOMSD-delegate** semantics, plus a Tier 4–5 layout check. Verifies that for a stochastic trial the reference COUNT (`total_number_of_references`), per-reference WEIGHT (`getReferenceWeight`), and the reference Slater matrices themselves (`getReferences`, shape `[nrefs, npol·NMO, nel]`) all equal plain NOMSD's — **unconditionally** (not just `ndet==1`) and **independent of `inner_nwalkers`** (1 vs 3), since the delegate is inner-ensemble-agnostic. Also asserts Tier 4–5 parity (Cholesky count, Ham type, walker type). This is API + layout parity, *necessary but not sufficient* for full BP correctness (the estimator path beyond these methods is unexercised). |
 | `stochastic_back_propagation_production_order` | **Call-order regression** (CLOSED/CPU), the Phase 6 lesson applied to Tier 6. BP captures references *during* the run; this builds a **leapfrog** trial (`inner_conditioning = inner_leapfrog = true`, `inner_nsteps = 1`), snapshots the references, calls `begin_inner_step(wset)` — which advances **and** expands the inner ensemble to `nwalk·P` (`REQUIRE`d) — and asserts the references (count, weights, Slater matrices) are **frozen at the outer trial**, unchanged by the inner resample and still `== NOMSD`. This pins the documented approximation: BP scores against the outer trial, not the evolving stochastic spread. |
+| `stochastic_back_propagation_estimator_smoke` | **BP integration smoke** (CLOSED/CPU). Builds a **static** stochastic trial (`inner_nsteps = 0`, `inner_nwalkers = 4`), wires `BackPropagatedEstimator` through `EstimatorHandler` with a `back_propagation` / `onerdm` block, runs real hybrid `Propagate()` steps (BP history advanced by the propagator), and asserts the accumulated back-propagated one-RDM in `.stat.h5` is **finite**. Exercises backward propagation, `resize_bp`, path-restoration weighting, and `FullObsHandler` accumulation — not just the Tier 6 reference API. |
+| `stochastic_back_propagation_driver_smoke` | **Driver integration smoke** (CLOSED/CPU). Minimal `DriverFactory::executeDriver` with inline `stochastic: true` (`inner_nsteps = 0`), `walker_type: closed`, and a `back_propagation` estimator child; asserts `executeDriver` succeeds, `.scalar.dat` is written, and the back-propagated one-RDM in `.stat.h5` is finite. Same static-limit scope as the estimator smoke; dynamic (`inner_nsteps > 0`) BP currently yields NaN accumulations (research follow-up). |
 
 ### Running the stochastic test suite
 
@@ -1831,7 +1838,7 @@ All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD
 
 **`main` (overhaul API)** — target binary is the consolidated `test_afqmc`
 (`tests/test_wfn_factory.cpp`); output under `${BUILD_DIR}/tests/bin/`. The static + 3b cases are
-**ported and CPU-verified** (17 cases, 5866 assertions — incl. the Phase 3b-var anchor, 3c-i and 3c-ii smokes, the two Phase 5 observable cases, the two Phase 6 mean-field cases, and the two Phase 7 back-prop-reference cases) on the
+**ported and CPU-verified** (19 cases, 6657 assertions — incl. the Phase 3b-var anchor, 3c-i and 3c-ii smokes, the two Phase 5 observable cases, the two Phase 6 mean-field cases, and the four Phase 7 back-prop cases) on the
 `Ne_cc-pvdz` dense+RHF fixture (the develop `ham_chol_sc.h5` / `wfn_msd.h5` fixtures are gone). Build is driven via `cmake --build` (Ninja
 generator); on the Flatiron cluster build on a compute node, not the gateway:
 
@@ -1852,15 +1859,17 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 **Overhaul port — done (Jun 2026):**
 
 - ✅ Ported the static (1a–3a) + 3b `[stochastic_wfn]` cases to `tests/test_wfn_factory.cpp`; built
-  `test_afqmc` and ran the full tag on a compute node (now 17 cases, 5866 assertions, `Ne_cc-pvdz`,
+  `test_afqmc` and ran the full tag on a compute node (now 19 cases, 6657 assertions, `Ne_cc-pvdz`,
   incl. the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`, the Phase 3c-i smoke
   `stochastic_conditioned_propagator_step`, the Phase 3c-ii leapfrog smoke
   `stochastic_leapfrog_propagator_step`, the two Phase 5 observable cases
   `stochastic_mixed_density_matrix_matches_nomsd` / `stochastic_accumulate_estimators_matches_nomsd`,
   the two Phase 6 mean-field cases `stochastic_mean_field_matches_nomsd` /
-  `stochastic_mean_field_production_order`, and the two Phase 7 back-prop-reference cases
+  `stochastic_mean_field_production_order`, and the four Phase 7 back-prop cases
   `stochastic_back_propagation_matches_nomsd` /
-  `stochastic_back_propagation_production_order`).
+  `stochastic_back_propagation_production_order` /
+  `stochastic_back_propagation_estimator_smoke` /
+  `stochastic_back_propagation_driver_smoke`).
 - ✅ Fixed the three overhaul-only bugs the port surfaced (log-overlap convention; full-G one-body
   rank mismatch; full-G EXX/EJ slice axis + `dotc`→`dot`).
 - ✅ Full-G validated against the compact path on the dense `Real3IndexFactorization` route

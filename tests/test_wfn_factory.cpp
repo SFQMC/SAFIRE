@@ -33,6 +33,8 @@
 #include <vector>
 #include <complex>
 #include <iomanip>
+#include <fstream>
+#include <format>
 #include <random>
 
 #include "utilities/Timer.hpp"
@@ -47,6 +49,11 @@
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Propagators/PropagatorFactory.h"
 #include "AFQMC/Estimators/Observables/full1rdm.hpp"
+#include "AFQMC/Estimators/EstimatorHandler.h"
+#include "AFQMC/Estimators/BackPropagatedEstimator.hpp"
+#include "AFQMC/Walkers/WalkerSetFactory.hpp"
+#include "AFQMC/Drivers/DriverFactory.h"
+#include "AFQMC/Utilities/AFQMCTimer.h"
 
 #include <cstdio>
 
@@ -1307,10 +1314,9 @@ TEST_CASE("stochastic_mean_field_production_order", "[wfn_factory][stochastic_wf
 // total_number_of_references / getReferenceWeight / getReferences equal plain NOMSD's UNCONDITIONALLY
 // (not just at ndet==1) and INDEPENDENT of inner_nwalkers. This test verifies that reference parity
 // (COUNT, per-reference WEIGHT, reference Slater matrices) plus Tier 4-5 layout/metadata parity (Cholesky
-// count, Ham type, walker type). NOTE: this is reference-API + layout parity only -- it does NOT exercise
-// BackPropagatedEstimator / FullObsHandler end to end (backward propagation, path restoration, multi-ref
-// CI weighting, resize_bp); a full driver/estimator integration run with stochastic:true is a documented
-// follow-up. The production-order companion test below covers the dynamic (post-begin_inner_step) case.
+// count, Ham type, walker type). NOTE: parity/production-order cases are reference-API + layout only;
+// the integration smokes below exercise the full estimator/driver BP path at the static delegate limit
+// (inner_nsteps = 0). The production-order companion test covers the dynamic (post-begin_inner_step) case.
 template<MEMORY_SPACE MEM>
 void stochastic_back_propagation_matches_nomsd(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1519,6 +1525,281 @@ TEST_CASE("stochastic_back_propagation_production_order", "[wfn_factory][stochas
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_production_order<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+namespace
+{
+template<MEMORY_SPACE MEM>
+void require_finite_bp_one_rdm(h5::file const& file, std::string const& avg_path, int iblock)
+{
+  std::string suffix = std::format("{:09d}", iblock);
+  nda::array<ComplexType, 1> read_data;
+  ComplexType denom{};
+  {
+    h5::group root(file);
+    utils::h5_read(root, avg_path + "/one_rdm_" + suffix, read_data);
+    h5::read(root, avg_path + "/denominator_" + suffix, denom);
+  }
+  REQUIRE(read_data.size() > 0);
+  REQUIRE(std::abs(denom) > 0.0);
+  for (auto v : read_data)
+  {
+    REQUIRE(std::isfinite(real(v)));
+    REQUIRE(std::isfinite(imag(v)));
+  }
+}
+} // namespace
+
+// Phase 7 integration smoke: exercise BackPropagatedEstimator through EstimatorHandler on a
+// stochastic trial at the static delegate limit (inner_nsteps = 0). Drives real Propagate() steps so
+// the propagator advances the BP history, then accumulate_block runs backward propagation +
+// FullObsHandler. (Dynamic inner_nsteps > 0 currently yields NaN BP accumulations in this smoke --
+// the outer-NOMSD reference approximation is exercised structurally but not numerically stable off
+// the static limit.) Finiteness only.
+template<MEMORY_SPACE MEM>
+void stochastic_back_propagation_estimator_smoke(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return;
+  else
+  {
+    const auto info   = read_info_from_wfn(wfn_file, "any");
+    const int  NMO    = std::get<0>(info);
+    const int  nup    = std::get<1>(info);
+    const int  ndown  = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const std::string title               = "stoch_bp_est_smoke";
+    const int nwalk                       = 11;
+    const int population_control_interval = DEFAULT_POPULATION_CONTROL_INTERVAL;
+    const int bp_measure_multiplier       = 2;
+    const int nStep                       = bp_measure_multiplier * population_control_interval * 2;
+    const float dt                        = 0.01f;
+
+    if (mpi->comm.root())
+    {
+      std::remove((title + ".stat.h5").c_str());
+      std::remove((title + ".scalar.dat").c_str());
+    }
+    mpi->comm.barrier();
+
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
+        std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(919));
+
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+
+    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    ptree wfn_pt;
+    wfn_pt.put("name", "wfn_stoch_bp_est");
+    wfn_pt.put("system", "info0");
+    wfn_pt.put("filename", wfn_file);
+    wfn_pt.put("stochastic", true);
+    wfn_pt.put("inner_nwalkers", 4);
+    wfn_pt.put("inner_nsteps", 0);
+    WfnFac.push("wfn_stoch_bp_est", wfn_pt);
+    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_bp_est", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_bp_est", type, wlk_pt);
+
+    ptree prop_pt;
+    prop_pt.put("name", "prop_stoch_bp_est");
+    prop_pt.put("system", "info0");
+    PropagatorFactory<MEM> PropgFac(InfoMap);
+    PropgFac.push("prop_stoch_bp_est", prop_pt);
+    auto& prop = PropgFac.getPropagator(mpi, "prop_stoch_bp_est", wfn, rng_dev);
+
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_bp_est"));
+    wfn.Energy(wset);
+
+    ptree one_rdm;
+    one_rdm.put("name", "one_rdm");
+    ptree est_pt_bp;
+    est_pt_bp.put("name", "back_propagation");
+    est_pt_bp.put("measure_interval_multiplier", bp_measure_multiplier);
+    est_pt_bp.put("equil_multiplier", 0);
+    est_pt_bp.put("bp_walker_ortho_interval", 1);
+    est_pt_bp.put("path_restoration", "no");
+    est_pt_bp.put("onerdm.nskip_output", 0);
+    est_pt_bp.add_child("onerdm", one_rdm);
+
+    ptree exec_pt;
+    exec_pt.put("population_control_interval", population_control_interval);
+    exec_pt.put("measure_interval_multiplier", bp_measure_multiplier);
+    exec_pt.add_child("estimator", est_pt_bp);
+
+    EstimatorHandler<MEM> estim(mpi, InfoMap["info0"], title, exec_pt, wset, WfnFac, wfn, prop, type,
+                                HamFac, "ham0", dt);
+
+    const int measure_interval = estim.get_max_common_interval();
+    std::vector<ComplexType> curData;
+    float total_time = 0.0f;
+    double Eshift    = 0.0;
+    int iBlock       = 0;
+
+    for (int iStep = 0; iStep < nStep; ++iStep)
+    {
+      prop.Propagate(wset, Eshift, dt);
+      total_time += dt;
+
+      if (iStep == 0 || (iStep + 1) % population_control_interval == 0)
+      {
+        wset.processWalkerData(curData);
+        wset.popControl();
+        estim.accumulate_step(total_time, wset, curData);
+      }
+
+      if ((iStep + 1) % measure_interval == 0)
+      {
+        estim.accumulate_block(total_time, wset);
+        estim.print(iBlock + 1, total_time, Eshift, wset);
+        ++iBlock;
+      }
+    }
+
+    REQUIRE(iBlock >= 1);
+    if (mpi->comm.root())
+    {
+      h5::file h5file(title + ".stat.h5", 'r');
+      require_finite_bp_one_rdm<MEM>(h5file, "Observables/BackPropagated/FullOneRDM/Average_0", 1);
+      std::remove((title + ".stat.h5").c_str());
+      std::remove((title + ".scalar.dat").c_str());
+    }
+    mpi->comm.barrier();
+  }
+}
+
+TEST_CASE("stochastic_back_propagation_estimator_smoke", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "BackPropagatedEstimator + EstimatorHandler on a static stochastic trial (Phase 7 smoke).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Phase 7 integration smoke: minimal DriverFactory run with stochastic: true (static delegate limit,
+// inner_nsteps = 0) and a back_propagation estimator block.
+template<MEMORY_SPACE MEM>
+void stochastic_back_propagation_driver_smoke(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return;
+  else
+  {
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+
+    const int population_control_interval = DEFAULT_POPULATION_CONTROL_INTERVAL;
+    const int bp_measure_multiplier       = 2;
+    const int nStep                       = bp_measure_multiplier * population_control_interval * 2;
+    const std::string title               = "stoch_bp_drv_smoke";
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    HamiltonianFactory HamFac(InfoMap);
+    WalkerSetFactory<MEM> WSetFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    PropagatorFactory<MEM> PropFac(InfoMap);
+    DriverFactory<MEM> DriverFac(mpi, InfoMap, WSetFac, PropFac, WfnFac, HamFac);
+
+    ptree wfn_min;
+    wfn_min.put("filename", wfn_file);
+    wfn_min.put("stochastic", true);
+    wfn_min.put("inner_nwalkers", 4);
+    wfn_min.put("inner_nsteps", 0);
+
+    ptree ham_min;
+    ham_min.put("filename", hamil_file);
+
+    ptree wlk_min;
+    wlk_min.put("max_weight", "4.0");
+    wlk_min.put("walker_type", walkerTypeToString(CLOSED));
+
+    ptree prop_min;
+    prop_min.put("hybrid", "true");
+
+    ptree one_rdm;
+    one_rdm.put("name", "one_rdm");
+    ptree est_bp;
+    est_bp.put("name", "back_propagation");
+    est_bp.put("measure_interval_multiplier", bp_measure_multiplier);
+    est_bp.put("equil_multiplier", 0);
+    est_bp.put("bp_walker_ortho_interval", 1);
+    est_bp.put("path_restoration", "no");
+    est_bp.put("onerdm.nskip_output", 0);
+    est_bp.add_child("onerdm", one_rdm);
+
+    ptree exec;
+    exec.put("seed", 463);
+    exec.put("steps", nStep);
+    exec.put("timestep", 0.01);
+    exec.put("population_control_interval", population_control_interval);
+    exec.put("measure_interval_multiplier", bp_measure_multiplier);
+    exec.put("n_walkers_per_mpi_task", 11);
+    exec.put_child("wavefunction", wfn_min);
+    exec.put_child("hamiltonian", ham_min);
+    exec.put_child("propagator", prop_min);
+    exec.put_child("walker_set", wlk_min);
+    exec.add_child("estimator", est_bp);
+
+    if (mpi->comm.root())
+    {
+      std::remove((title + ".stat.h5").c_str());
+      std::remove((title + ".scalar.dat").c_str());
+    }
+    mpi->comm.barrier();
+
+    CHECK(DriverFac.executeDriver("afqmc", title, 0, exec));
+
+    mpi->comm.barrier();
+    if (mpi->comm.root())
+    {
+      std::string scalar_file = title + ".scalar.dat";
+      std::ifstream in(scalar_file.c_str());
+      CHECK(in.good());
+      in.close();
+      h5::file h5file(title + ".stat.h5", 'r');
+      require_finite_bp_one_rdm<MEM>(h5file, "Observables/BackPropagated/FullOneRDM/Average_0", 1);
+      std::remove(scalar_file.c_str());
+      std::remove((title + ".stat.h5").c_str());
+    }
+    mpi->comm.barrier();
+  }
+}
+
+TEST_CASE("stochastic_back_propagation_driver_smoke", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "DriverFactory AFQMC run with stochastic trial + back_propagation estimator (Phase 7 smoke).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_back_propagation_driver_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
