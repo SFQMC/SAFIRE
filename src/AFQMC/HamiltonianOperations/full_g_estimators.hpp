@@ -17,7 +17,6 @@
 #pragma once
 
 #include "AFQMC/config.h"
-#include "utilities/FairDivide.hpp"
 #include "utilities/mpi_context.h"
 #include "numerics/operations/product.hpp"
 #include "numerics/nda_functions.hpp"
