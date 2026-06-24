@@ -772,5 +772,154 @@ void StochasticWfn<MEM, devPsiT>::accumulate_estimators(int iav, WlkSet& wset,
     v.accumulate(iav, Gfull, Gfull_h, wgt, importanceSampling);
 }
 
+// Phase 6 (Tier 3): stochastic trial mean-field one-body Green's function. This is the trial's OWN
+// expectation <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T> (no outer walker), so it reduces the inner ensemble
+// {psi_p} against ITSELF as a double sum over inner-walker pairs -- the inner-ensemble analogue of
+// NOMSD's multi-determinant G_MF/vMF, with each inner walker a "determinant" of uniform weight 1/P.
+// det_ops::MixedDensityMatrix returns the per-pair mixed DM ALREADY normalized by its pair overlap, so
+//   G_MF = [sum_{p,q} <psi_p|psi_q> (G_{p,q})] / [sum_{p,q} <psi_p|psi_q>]
+// with linear pair overlaps <psi_p|psi_q> = exp(ov_pq) supplying the weights (CLOSED doubles the alpha
+// log-overlap to get the full overlap, exactly as the Tier 1/2 reductions do). At the static replicated
+// limit every psi_p == anchor, so every G_{p,q} == the anchor density and the double sum collapses to
+// it -- i.e. NOMSD::G_MF's ndet==1 result. Bras p are FairDivide'd across the comm (full ket batch per
+// bra), then Gsum/Osum are all-reduced. Multi-rank consistency of the per-rank-decorrelated dynamic
+// ensemble is part of the deferred -np>1 gate; at the static limit (and -np 1) it is exact.
+//
+// P is inner_nwalkers_ (the walker-INDEPENDENT sample count), NOT inner.size(): the caller gates on
+// mean_field_uses_inner_ensemble() so this only runs when the ensemble is in its P-sample form (a
+// conditioned/leapfrog-expanded nwalk*P ensemble delegates to nomsd_ instead -- the trial mean field has
+// no outer-walker dependence, so the conditioned ensemble must not be summed with a 1/(nwalk*P)^2 weight).
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::reduce_inner_mean_field_dm(memory::buffered_array<MEM, ComplexType, 2>& Gsum)
+{
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::reduce_inner_mean_field_dm: inner walkers not initialized.");
+  using nda::range;
+  auto all              = range::all;
+  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  const int nspin       = (wt == COLLINEAR ? 2 : 1);
+  const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
+  const int P           = inner_nwalkers_;
+  const long full_size  = long(nspin) * npol * NMO * npol * NMO;
+  const ComplexType zero(0.0);
+  const double invP2    = 1.0 / (static_cast<double>(P) * static_cast<double>(P));
+  utils::check(P >= 1, "inner ensemble must be non-empty");
+  utils::check(int(inner.size()) == P,
+               "StochasticWfn::reduce_inner_mean_field_dm: inner ensemble not in the walker-independent "
+               "P-sample form (gate on mean_field_uses_inner_ensemble before calling)");
+  utils::check(Gsum.shape() == std::array<long, 2>{1, full_size}, "Gsum size mismatch");
+
+  Gsum() = zero;
+  RealType Osum(0.0);
+
+  int p0, pN;
+  std::tie(p0, pN) = FairDivideBoundary(mpi_->comm.rank(), P, mpi_->comm.size());
+
+  {
+    memory::buffered_array<MEM, ComplexType, 1> ov_(P, zero);
+    memory::buffered_array<MEM, ComplexType, 2> Gpq(P, full_size);
+    auto Gpq3d = nda::reshape(Gpq, std::array<long, 3>{P, nspin * npol * NMO, npol * NMO});
+    memory::array<MEM, ComplexType, 2> ref_alpha(npol * NMO, nup);
+    memory::array<MEM, ComplexType, 2> ref_beta(npol * NMO, ndown);
+
+    for (int p = p0; p < pN; ++p)
+    {
+      ov_()       = zero;
+      Gpq()       = zero;
+      // bra = inner walker p, ket = the whole inner ensemble (one batched MixedDensityMatrix per bra);
+      // herm = false because the inner walkers are stored as Slater matrices (det_ops conjugate-
+      // transposes the bra reference internally), exactly as reduce_inner_cross_dm does.
+      ref_alpha() = inner.SlaterMatrices(Alpha)(p, all, all);
+      det_ops::MixedDensityMatrix(ref_alpha, inner.SlaterMatrices(Alpha), Gpq3d(all, range(npol * NMO), all),
+                                  ov_, false, false);
+      if (wt == CLOSED)
+        nda::tensor::scale(ComplexType(2.0), ov_);
+      else if (wt == COLLINEAR)
+      {
+        ref_beta() = inner.SlaterMatrices(Beta)(p, all, all);
+        det_ops::MixedDensityMatrix(ref_beta, inner.SlaterMatrices(Beta),
+                                    Gpq3d(all, range(npol * NMO, nspin * npol * NMO), all), ov_, false, false);
+      }
+      auto ov_h = nda::to_host(ov_);
+      for (int q = 0; q < P; ++q)
+      {
+        RealType scl = std::real(ComplexType(invP2) * std::exp(ov_h(q)));
+        Osum += scl;
+        Gsum(0, all) += ComplexType(scl) * Gpq(q, all);
+      }
+    }
+  }
+
+  if (mpi_->comm.size() > 1)
+  {
+    mpi_->all_reduce(Gsum, std::plus<>{});
+    mpi_->comm.all_reduce_in_place_n(&Osum, 1, std::plus<>{});
+  }
+  utils::check(std::abs(Osum) > 0.0,
+               "StochasticWfn::reduce_inner_mean_field_dm: trial self-overlap vanished (orthogonal "
+               "inner ensemble)");
+  nda::tensor::scale(ComplexType(1.0 / Osum), Gsum);
+}
+
+// Phase 6 (Tier 3): mean-field Green's function of the stochastic trial. Delegates to nomsd_ (the anchor
+// mean field) at the single-determinant delegate limit AND whenever the inner ensemble is not in its
+// walker-independent P-sample form (see mean_field_uses_inner_ensemble) -- both exact at the
+// static-limit-first scope; otherwise reduces the inner ensemble against itself and returns the full
+// [nspin][npol*NMO][npol*NMO] DM (same shape/return type as NOMSD::G_MF). Only used by the
+// discrete/model-Hamiltonian propagator setup (continuous Cholesky propagators use vMF only).
+template<MEMORY_SPACE MEM, class devPsiT>
+auto StochasticWfn<MEM, devPsiT>::G_MF()
+{
+  if (not mean_field_uses_inner_ensemble())
+    return nomsd_.G_MF();
+
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  const int nspin       = (wt == COLLINEAR ? 2 : 1);
+  const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
+  const long full_size  = long(nspin) * npol * NMO * npol * NMO;
+
+  memory::buffered_array<MEM, ComplexType, 2> Gsum(1, full_size);
+  reduce_inner_mean_field_dm(Gsum);
+  auto Gv = nda::reshape(Gsum, std::array<long, 3>{nspin, npol * NMO, npol * NMO});
+  return memory::share_from_root(*mpi_, [&] {
+    nda::array<ComplexType, 3> gMF(nspin, npol * NMO, npol * NMO);
+    gMF() = Gv();
+    return gMF;
+  });
+}
+
+// Phase 6 (Tier 3): mean-field expectation of the Cholesky/HS potentials for the stochastic trial,
+// v_n = L_n . G_MF (estimator 4 applied to the trial's own mean-field DM). Delegates to nomsd_ at the
+// delegate limit. Off it, builds the stochastic mean-field DM (full layout) and contracts it against
+// the True Ham via nomsd_.vbias_from_G -- the SAME full-G contraction the off-anchor force bias uses
+// (Phase 3b), which equals NOMSD::vMF's compact-G HamOp.vbias at the static limit (full-G == compact at
+// the anchor, per stochastic_full_g_matches_compact). Consumed once per timestep in generateP1, which
+// runs AFTER begin_inner_step in Propagate -- so it delegates to nomsd_ (the anchor mean field) at the
+// delegate limit AND whenever the inner ensemble is not in its walker-independent P-sample form (e.g. a
+// leapfrog begin_inner_step has already expanded it to nwalk*P); see mean_field_uses_inner_ensemble.
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
+{
+  if (not mean_field_uses_inner_ensemble())
+  {
+    nomsd_.vMF(v, dt);
+    return;
+  }
+  utils::check(v.size() == number_of_cholesky_vectors(), "Size mismatch");
+  utils::check(v.strides()[0] == 1, "Strides mismatch");
+
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  const int nspin       = (wt == COLLINEAR ? 2 : 1);
+  const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
+  const long full_size  = long(nspin) * npol * NMO * npol * NMO;
+
+  v() = ComplexType(0.0);
+  memory::buffered_array<MEM, ComplexType, 2> Gsum(1, full_size);
+  reduce_inner_mean_field_dm(Gsum);
+  auto v2d = nda::reshape(v, std::array<long, 2>{1, v.size()});
+  nomsd_.vbias_from_G(Gsum, v2d, dt);
+}
+
 } // namespace afqmc
 } // namespace sfqmc

@@ -1079,6 +1079,227 @@ TEST_CASE("stochastic_mixed_density_matrix_matches_nomsd", "[wfn_factory][stocha
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
+// Phase 6 (Tier 3): StochasticWfn::vMF / G_MF are the trial's OWN mean-field quantities
+// <Psi_T|.|Psi_T>/<Psi_T|Psi_T>, built by reducing the inner ensemble against ITSELF (a double sum over
+// inner-walker pairs -- the inner-ensemble analogue of NOMSD's multi-determinant mean field). Unlike the
+// Tier 1/2 mixed estimators there is no outer walker. At the static replicated limit every inner walker
+// == the anchor, so both collapse to the anchor mean field == plain NOMSD::vMF / G_MF. We compare the
+// mean-field bias vMF (= L . G_MF, a [nCV] vector) and the mean-field DM G_MF directly: inner_nwalkers
+// invariance (static replicated 1 vs 3) and delegate-limit equality (ndet==1).
+template<MEMORY_SPACE MEM>
+void stochastic_mean_field_matches_nomsd(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+
+  const auto info   = read_info_from_wfn(wfn_file, "any");
+  const int  NMO    = std::get<0>(info);
+  const int  nup    = std::get<1>(info);
+  const int  ndown  = std::get<2>(info);
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+    return;
+  const double dt(0.01);
+
+  std::map<std::string, AFQMCInfo> InfoMap;
+  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+  ptree ham_pt;
+  ham_pt.put("name", "ham0");
+  ham_pt.put("system", "info0");
+  ham_pt.put("filename", hamil_file);
+  HamiltonianFactory HamFac(InfoMap);
+  HamFac.push("ham0", ham_pt);
+  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  const int nwalk = 11;
+  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+  ptree wlk_pt;
+  wlk_pt.put("name", "wset0");
+  wlk_pt.put("walker_type", walkerTypeToString(type));
+
+  WavefunctionFactory<MEM> WfnFac(InfoMap);
+
+  ptree nomsd_pt;
+  nomsd_pt.put("name", "wfn_nomsd_mf");
+  nomsd_pt.put("system", "info0");
+  nomsd_pt.put("filename", wfn_file);
+  WfnFac.push("wfn_nomsd_mf", nomsd_pt);
+  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_mf", type, &ham, nwalk);
+
+  auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
+    ptree pt;
+    pt.put("name", name);
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    pt.put("stochastic", true);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    WfnFac.push(name, pt);
+    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
+    return w;
+  };
+  auto& wfn_s1 = build_stoch("wfn_stoch_mf1", 1);
+  auto& wfn_s3 = build_stoch("wfn_stoch_mf3", 3);
+
+  // Mean-field bias vMF = L . G_MF (a [nCV] vector).
+  auto collect_vMF = [&](Wavefunction<MEM>& wfn) {
+    // Discrete (model) propagators must initialize potentials before the L.G contraction.
+    if (wfn.getHamType() == ModelHamiltonian)
+    {
+      const long ncv = wfn.number_of_cholesky_vectors();
+      memory::array<MEM, ComplexType, 1> vMF_discrete(ncv, ComplexType(0.0, 0.0));
+      memory::host_array<ComplexType, 1> nMF(2 * NMO, ComplexType(0.0, 0.0));
+      wfn.update_potentials(dt, nMF, vMF_discrete, false);
+    }
+    memory::array<MEM, ComplexType, 1> v(wfn.number_of_cholesky_vectors(), ComplexType(0.0, 0.0));
+    wfn.vMF(v, dt);
+    return nda::to_host(v);
+  };
+  auto v_ref = collect_vMF(wfn_nomsd);
+  auto v_s1  = collect_vMF(wfn_s1);
+  auto v_s3  = collect_vMF(wfn_s3);
+
+  // (1) inner_nwalkers invariance of the mean-field bias.
+  CHECK_THAT(v_s3, utils::Approx(v_s1));
+  // (2) delegate limit: single-determinant trial => stochastic vMF == NOMSD.
+  if (wfn_nomsd.total_number_of_references() == 1)
+    CHECK_THAT(v_s1, utils::Approx(v_ref));
+
+  // Mean-field one-body Green's function G_MF ([nspin][npol*NMO][npol*NMO]).
+  auto collect_GMF = [&](Wavefunction<MEM>& wfn) {
+    auto Gshm = wfn.G_MF();
+    return nda::to_host(Gshm());
+  };
+  auto G_ref = collect_GMF(wfn_nomsd);
+  auto G_s1  = collect_GMF(wfn_s1);
+  auto G_s3  = collect_GMF(wfn_s3);
+
+  CHECK_THAT(G_s3, utils::Approx(G_s1));
+  if (wfn_nomsd.total_number_of_references() == 1)
+    CHECK_THAT(G_s1, utils::Approx(G_ref));
+}
+
+TEST_CASE("stochastic_mean_field_matches_nomsd", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn vMF / G_MF mean-field delegate-limit parity (Phase 6).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_mean_field_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Phase 6 production-order regression: vMF / G_MF are trial-only, but in the real Propagate loop
+// begin_inner_step(wset) runs BEFORE generateP1 calls vMF, and in leapfrog mode begin_inner_step
+// eagerly resamples -- expanding the inner ensemble to nwalk*P walker-CONDITIONED samples. The mean
+// field must NOT then be a 1/(nwalk*P)^2-weighted double sum over that conditioned ensemble; it must
+// still be the trial (anchor) mean field == NOMSD. This test reproduces that call order (build a
+// leapfrog trial, call begin_inner_step to expand the ensemble, then vMF/G_MF) and asserts equality
+// with NOMSD. Without the inner.size()==inner_nwalkers_ gate (mean_field_uses_inner_ensemble) the
+// expanded ensemble would be reduced with the wrong normalization and this would fail. CLOSED+CPU
+// (leapfrog/conditioning is CPU-only this phase).
+template<MEMORY_SPACE MEM>
+void stochastic_mean_field_production_order(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // leapfrog / conditioned inner sampling is CPU-only this phase.
+  else
+  {
+    const auto info   = read_info_from_wfn(wfn_file, "any");
+    const int  NMO    = std::get<0>(info);
+    const int  nup    = std::get<1>(info);
+    const int  ndown  = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    const double dt(0.01);
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk = 11;
+    const int inner_nwalkers = 3;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac(InfoMap);
+
+    ptree nomsd_pt;
+    nomsd_pt.put("name", "wfn_nomsd_mfp");
+    nomsd_pt.put("system", "info0");
+    nomsd_pt.put("filename", wfn_file);
+    WfnFac.push("wfn_nomsd_mfp", nomsd_pt);
+    auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_mfp", type, &ham, nwalk);
+
+    // Leapfrog stochastic trial: begin_inner_step will conditioned-resample (expand to nwalk*P).
+    ptree pt;
+    pt.put("name", "wfn_stoch_mfp");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    pt.put("stochastic", true);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    pt.put("inner_leapfrog", true);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_mfp", pt);
+    auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_mfp", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_mfp", type, wlk_pt);
+
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_mfp"));
+
+    // Reproduce the Propagate ordering: begin_inner_step (leapfrog => conditioned resample to nwalk*P)
+    // BEFORE the mean-field calls. With the fix, vMF/G_MF detect the non-P-sample ensemble and delegate
+    // to the anchor mean field == NOMSD.
+    wfn_s.begin_inner_step(wset);
+
+    // The leapfrog begin_inner_step must actually have expanded the ensemble to nwalk*P (otherwise the
+    // NOMSD parity below could pass for the wrong reason -- a still-P-sample anchor ensemble would also
+    // match). This pins the scenario the gate is meant to handle.
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+
+    memory::array<MEM, ComplexType, 1> v_ref(wfn_nomsd.number_of_cholesky_vectors(), ComplexType(0.0, 0.0));
+    memory::array<MEM, ComplexType, 1> v_s(wfn_s.number_of_cholesky_vectors(), ComplexType(0.0, 0.0));
+    wfn_nomsd.vMF(v_ref, dt);
+    wfn_s.vMF(v_s, dt);
+    CHECK_THAT(nda::to_host(v_s), utils::Approx(nda::to_host(v_ref)));
+
+    auto Gmf_ref = wfn_nomsd.G_MF();
+    auto Gmf_s   = wfn_s.G_MF();
+    CHECK_THAT(nda::to_host(Gmf_s()), utils::Approx(nda::to_host(Gmf_ref())));
+  }
+}
+
+TEST_CASE("stochastic_mean_field_production_order", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn vMF / G_MF survive the begin_inner_step-before-generateP1 order (Phase 6).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_mean_field_production_order<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
 // Phase 5 (Tier 2 observable): StochasticWfn::accumulate_estimators feeds the inner-ensemble-reduced
 // full mixed Green's function (the stochastic MixedDensityMatrix, full layout) to the observables. We
 // drive a real one-body-RDM observable (full1rdm, no rotation) through accumulate_estimators -- this is

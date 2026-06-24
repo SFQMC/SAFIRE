@@ -33,10 +33,10 @@ that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Over
 | Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only**; **full `DriverFactory` run with VAFQMC-exported Ne cc-pVDZ HDF5 (Stages A/C 3b-var; Stages D/E 3c-i/3c-ii leapfrog, Jun 2026)** — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026) |
 | GPU build | CPU-only gate in dynamic path | **Not tested** |
 
-**The full `[stochastic_wfn]` tag passes on overhaul (13 cases, 5843 assertions, `mpirun -np 1`,
-`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`; the 12th is the Phase 5 observable-DM case `stochastic_mixed_density_matrix_matches_nomsd`; the 13th is the Phase 5 `accumulate_estimators` case `stochastic_accumulate_estimators_matches_nomsd`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
+**The full `[stochastic_wfn]` tag passes on overhaul (15 cases, 5850 assertions, `mpirun -np 1`,
+`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`; the 12th is the Phase 5 observable-DM case `stochastic_mixed_density_matrix_matches_nomsd`; the 13th is the Phase 5 `accumulate_estimators` case `stochastic_accumulate_estimators_matches_nomsd`; the 14th is the Phase 6 mean-field case `stochastic_mean_field_matches_nomsd`; the 15th is the Phase 6 call-order regression `stochastic_mean_field_production_order`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
 parity + Phases 2a/2b/3a static reductions + the 3b full-G dynamic trio + 3c-i conditioned sampling + 3c-ii
-leapfrog + the Phase 5 observable mixed DM + accumulate_estimators). Porting them surfaced and
+leapfrog + the Phase 5 observable mixed DM + accumulate_estimators + the Phase 6 mean field). Porting them surfaced and
 fixed three real overhaul-only bugs — see
 [Port bugs surfaced by the test port](#port-bugs-surfaced-by-the-test-port-overhaul).
 
@@ -183,8 +183,11 @@ overhaul `Wavefunction` variant does not expose).
 propagation uses the Phase 2a `Log_Overlap` override, local-energy the Phase 2b `Energy` override, and
 the force bias the Phase 3a `MixedDensityMatrix_for_vbias` override — each reduces the inner ensemble
 (Eq. 27 of arXiv:2505.18519) and reproduces plain `NOMSD` at the single-determinant delegate limit.
-`vbias` and `vHS` are trial-independent and **delegate permanently** to `nomsd_`; all other Tier 2–6
-methods delegate too, so outer-facing behavior matches plain `NOMSD` at the delegate limit.
+`vbias` and `vHS` are trial-independent and **delegate permanently** to `nomsd_`. The Tier 2 observable
+mixed DM / `accumulate_estimators` (Phase 5) and the Tier 3 mean field `G_MF` / `vMF` (Phase 6) are
+**also stochastic** — the observable mixed DM reduces the ensemble against the outer walkers, while the
+mean field reduces it **against itself** (`⟨Ψ_T|Ô|Ψ_T⟩`, no walker). The remaining Tier 2–6 methods
+delegate, so outer-facing behavior matches plain `NOMSD` at the delegate limit.
 
 **Inner-ensemble sampling** is static at `inner_nsteps = 0`; at `inner_nsteps > 0` the inner propagator
 field-samples `{ψ_p = B̂_T(Y^[p])|φ_T⟩}` from the anchor, in one of three modes (CLOSED/CPU only this
@@ -889,8 +892,8 @@ Called during propagator setup and mean-field initialization.
 
 | Method | Current behavior | Desired functionality |
 |--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| `G_MF(G)` | Delegates to `nomsd_`; builds mean-field Green's function from CI-weighted determinant DMs. | Build the **stochastic** mean-field Green's function used to subtract the trial mean-field potential. Average inner-walker MF contributions from the owned inner stack. |
-| `vMF(v, dt)` | Delegates to `nomsd_`; mean-field contribution of Cholesky vectors. | Compute mean-field bias from the stochastic trial. May require inner `HamOps` and inner walker sampling. |
+| `G_MF()` | **✓ stochastic (Phase 6).** Builds the trial's OWN mean-field Green's function `⟨Ψ_T\|c†c\|Ψ_T⟩/⟨Ψ_T\|Ψ_T⟩` by reducing the inner ensemble **against itself** — a double sum over inner-walker pairs `[Σ_{p,q}⟨ψ_p\|c†c\|ψ_q⟩]/[Σ_{p,q}⟨ψ_p\|ψ_q⟩]` (uniform weight `1/P`), the inner-ensemble analogue of NOMSD's multi-determinant `G_MF`. No outer walker. Collapses to the anchor density (= NOMSD's `ndet==1` result) at the static replicated limit. **Delegates to `nomsd_` (the anchor mean field)** unless the inner ensemble is in its walker-independent `P`-sample form (`inner.size() == inner_nwalkers_ > 1`) — i.e. delegates at `inner_nwalkers == 1` and whenever a conditioned/leapfrog resample has expanded it to `nwalk·P`. Used by the **discrete/model** propagator setup only. |
+| `vMF(v, dt)` | **✓ stochastic (Phase 6).** Mean-field bias `v_n = L_n·G_MF` (estimator 4 on the trial's own mean-field DM), scored against the **True** Ham. Builds the stochastic `G_MF` (full layout) and contracts it via `nomsd_.vbias_from_G` — the same full-G contraction the off-anchor force bias uses, equal to NOMSD's compact-G `vMF` at the static limit (full-G == compact at the anchor). **Same `P`-sample gate as `G_MF`** (delegates at `inner_nwalkers == 1` and for a conditioned/expanded ensemble). Computed once per timestep in `generateP1`, which runs *after* `begin_inner_step` in `Propagate`. |
 
 ---
 
@@ -967,8 +970,8 @@ Not wavefunction visitor methods, but required for a full-fledged type.
 ## Implementation phases (status and plan)
 
 The per-phase reference for the whole feature: what each phase delivers, its key members/factory
-wiring/reductions, its tests, and what it defers. **Phases 1a–3c (3c-i + 3c-ii), Phase 4, and Phase 5 are
-complete and CPU-verified on overhaul** (`Ne_cc-pvdz`); Phases 6–8 are the remaining plan. (Phases 1a–1c decompose the
+wiring/reductions, its tests, and what it defers. **Phases 1a–3c (3c-i + 3c-ii), Phase 4, Phase 5, and Phase 6 are
+complete and CPU-verified on overhaul** (`Ne_cc-pvdz`); Phases 7–8 are the remaining plan. (Phases 1a–1c decompose the
 original "own the full inner stack" step — walker set, `NOMSD`, `HamOps`, and propagator — which
 should *not* be implemented as a single monolith.)
 
@@ -1444,7 +1447,8 @@ Unlike `vbias`, the observable mixed DM **is** exposed on the `Wavefunction` var
 `G` directly in **both** the compact and full layouts (plus `exp(Ov)`): (1) `inner_nwalkers` invariance
 via a static replicated ensemble (1 vs 3), (2) delegate-limit equality vs NOMSD gated on `ndet == 1`.
 Built + CPU-verified on `worker6049` (`Ne_cc-pvdz`, `mpirun -np 1`): the new case passes (8 assertions)
-and the full `[stochastic_wfn]` tag is **13 cases / 5843 assertions** (was 11 / 5831).
+and at Phase 5 completion the full `[stochastic_wfn]` tag stood at **13 cases / 5843 assertions** (from
+11 / 5831; the current suite is **15 / 5850** after Phase 6).
 
 #### Phase 5 — `accumulate_estimators` (**complete**, CPU-verified [overhaul])
 
@@ -1493,10 +1497,70 @@ Neither needs an inner-ensemble reduction:
   the True Ham is the correct operator. Reached only via the `generalizedFockMatrix` observable, which is
   currently commented out in all handlers; the delegate completes the API so it compiles if re-enabled.
 
-### Phase 6 — `G_MF` / `vMF`
+### Phase 6 — `G_MF` / `vMF` (**complete**, CPU-verified [overhaul])
 
-Mean-field subtraction consistency: build the stochastic mean-field Green's function / Cholesky
-contribution from the inner ensemble. Static-limit-first, like 3a.
+Mean-field subtraction consistency: the stochastic mean-field Green's function / Cholesky contribution,
+built from the inner ensemble. **Done static-limit-first, like 3a.**
+
+**The key structural difference from every prior phase:** `G_MF` / `vMF` are **trial-against-itself**
+quantities — the trial's own expectation `⟨Ψ_T|Ô|Ψ_T⟩/⟨Ψ_T|Ψ_T⟩` with **no outer walker**. The Tier 1/2
+estimators (Phases 2–5) are *mixed* (`⟨Ψ_T|Ô|φ_w⟩`, inner ensemble against the OUTER walkers); the
+mean-field reduces the inner ensemble **against itself**. So this is the inner-ensemble analogue of
+**NOMSD's *multi-determinant* `G_MF`/`vMF`** (a double sum over the determinant expansion), with the
+inner ensemble `{ψ_p}` playing the role of the determinants and a uniform weight `1/P`:
+
+```
+G_MF = ⟨Ψ_T|c†c|Ψ_T⟩/⟨Ψ_T|Ψ_T⟩ = [Σ_{p,q} ⟨ψ_p|c†c|ψ_q⟩] / [Σ_{p,q} ⟨ψ_p|ψ_q⟩]
+```
+
+This is the *exact* mean field of the sampled trial state `|Ψ_T⟩ ≈ (1/P) Σ_p |ψ_p⟩` (the double sum,
+**not** a diagonal `(1/P) Σ_p ⟨ψ_p|·|ψ_p⟩` average — that would drop the interference between samples
+and is a different object), and it mirrors NOMSD's existing multi-determinant code structure (cross-pair
+double sum, `det_ops::MixedDensityMatrix` per pair already normalized by its pair overlap, the linear
+pair overlaps `exp(ov_pq)` supplying the weights, CLOSED doubling the alpha log-overlap). Implementation:
+a private `reduce_inner_mean_field_dm` (`StochasticWfn.icc`) reduces the **`P = inner_nwalkers_`
+walker-independent samples** into the normalized full `[1, nspin·npol·NMO·npol·NMO]` mean-field DM (bras
+FairDivide'd across the comm with a full ket batch per bra, then `Gsum`/`Osum` all-reduced); `G_MF`
+reshapes/`share_from_root`s it (same return type/shape as `NOMSD::G_MF`), and `vMF` contracts it through
+`nomsd_.vbias_from_G` (True Ham, full-G layout). Both **delegate to `nomsd_` (the anchor mean field)**
+unless `mean_field_uses_inner_ensemble()` is true — i.e. when `inner_nwalkers_ > 1` **and**
+`inner.size() == inner_nwalkers_` (walker-independent `P`-sample form). They delegate when
+`inner_nwalkers_ == 1` (a single sample is degenerate; subsumes the usual delegate limit) **or** whenever
+a conditioned/leapfrog resample has expanded the ensemble to `nwalk·P` (see the call-order note below).
+
+**Call order in `Propagate` (the reason for the `P`-sample gate).** `AFQMCBasePropagator::Propagate`
+calls `begin_inner_step(wset)` **first**, then `generateP1(dt)` (→ `vMF`, and `G_MF` for discrete Hams)
+only if `dt` changed. `begin_inner_step` differs by mode: in the **non-leapfrog** paths (static, 3b free
+projection, 3c-i) it only *arms a latch* — the actual resample happens later inside the force-bias
+reduction — so the inner ensemble is still in its `P`-sample form when `vMF` runs (at the static limit it
+is the anchor; `vMF` reduces it to the anchor mean field). In the **leapfrog** path (3c-ii)
+`begin_inner_step` *eagerly* resamples (to refresh the importance-reweighted old overlap), **expanding the
+ensemble to `nwalk·P` walker-conditioned samples before `vMF` runs**. The trial mean field has no
+outer-walker dependence, so that conditioned ensemble must **not** be summed (a `1/(nwalk·P)²`-weighted
+double sum over walker-conditioned samples is the wrong object); `vMF`/`G_MF` detect the non-`P`-sample
+size and delegate to the anchor mean field instead. Regression-tested by
+`stochastic_mean_field_production_order` (reproduces the `begin_inner_step`-before-`vMF` order under
+leapfrog and asserts `vMF`/`G_MF` still equal NOMSD). Because `vMF` is recomputed only when `dt` changes,
+getting the **first** value right is what matters.
+
+**Static-limit-first / what's deferred.** At the static replicated limit every `ψ_p ≡` anchor, so the
+reduction's double sum collapses to the anchor density `⟨φ_T|c†c|φ_T⟩` — exactly NOMSD's `ndet==1`
+`G_MF`/`vMF` — the verified regression (the `inner_nwalkers = 3` static case runs the full reduction;
+`= 1` delegates). **Note that in the current call structure the reduction in practice always sees the
+anchor:** `vMF` is computed once, at the first `generateP1` (when `dt` first changes), which runs *before*
+the force-bias reduction that fires the non-conditioned (3b) free-projection resample — so the `P`-sample
+ensemble has not yet left the anchor, and the conditioned (3c) ensemble is delegated. The reduction
+machinery is therefore in place and statically verified, but a **genuine dynamic mean field** (recomputing
+`vMF` on a `B̂_T`-advanced, non-anchor `P`-sample ensemble) is **not reached by the present plumbing and is
+intentionally deferred** — off the anchor the inner samples are single determinants whose double sum is a
+*different object* from NOMSD's analytic trial mean field, and `vMF` is variance-reduction-only so it need
+not be exact. That dynamic mean field, the conditioned/leapfrog case (delegated to the anchor today), and
+multi-rank (`-np > 1`) consistency of the per-rank-decorrelated ensemble are **deferred** (the same
+`-np > 1` gate open for every stochastic reduction). **Phase 6 is complete at the unit-test bar —
+static-limit parity plus delegate robustness across the production call order; production/driver validation
+of a dynamic mean field is a follow-up.** (The reduction sums the **full** `P²` pair grid — the exact
+`⟨Ψ_T|Ô|Ψ_T⟩/⟨Ψ_T|Ψ_T⟩` for the sampled state — rather than NOMSD's multi-det upper-triangle convention;
+both agree at the static limit, and the full grid is unambiguous.)
 
 ### Phase 7 — Layout queries and back-prop references
 
@@ -1673,12 +1737,24 @@ other inputs skip silently. `inner_leapfrog = false` leaves 3c-i/3b bit-identica
 `wfn_rhf.h5`). Requires a **NOMSD** input; other inputs skip silently. Covers the observable
 `MixedDensityMatrix` and `accumulate_estimators` (`DensityMatrix` / `generalizedFockMatrix` are exact
 True-Ham delegates needing no test — see [Phase 5](#phase-5--mixeddensitymatrix--densitymatrix--accumulate_estimators)).
-Passes in the full `[stochastic_wfn]` tag (**13 cases / 5843 assertions**, `mpirun -np 1`, Jun 2026).
+Passed in the full `[stochastic_wfn]` tag at Phase 5 completion (**13 cases / 5843 assertions**, `mpirun -np 1`, Jun 2026; the current suite is **15 / 5850** after Phase 6).
 
 | Test case | Checkpoint |
 |-----------|------------|
 | `stochastic_mixed_density_matrix_matches_nomsd` | The observable `MixedDensityMatrix(wset, G, Ov, compact)` in **both** layouts (compact `[nel·NMO]` and full `[NMO·NMO]`): (1) `inner_nwalkers` invariance — a static replicated ensemble (1 vs 3) gives an `inner_nwalkers`-independent `G` and `exp(Ov)`; (2) delegate limit — stochastic `G` and `exp(Ov)` equal NOMSD at `ndet == 1`. The DM is exposed on the `Wavefunction` variant, so `G` is compared directly (unlike `vbias`, where only the contracted force bias is observable). |
 | `stochastic_accumulate_estimators_matches_nomsd` | `accumulate_estimators` driving a real `full1rdm` (one-body RDM, no rotation) observable — fed directly as `std::vector<full1rdm>` (the same `v.accumulate(...)` path the `Observable` variant takes). The accumulated 1-RDM is read back via the observable's HDF5 `print()` and compared to NOMSD for **both the mixed and the time-evolved path** (deterministic non-trivial X/Yc/M operators): (1) `inner_nwalkers` invariance (static replicated 1 vs 3); (2) delegate-limit equality at `ndet == 1`. |
+
+### Phase 6-specific tests (implemented)
+
+***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
+`wfn_rhf.h5`). Requires a **NOMSD** input (the production-order case also **CLOSED**/CPU); other inputs
+skip silently. Passes in the full `[stochastic_wfn]` tag (**15 cases / 5850 assertions**, `mpirun -np 1`,
+worker6035, Jun 2026; was 13 / 5843).
+
+| Test case | Checkpoint |
+|-----------|------------|
+| `stochastic_mean_field_matches_nomsd` | The **trial-only** mean-field quantities. Compares the mean-field bias `vMF` (= `L·G_MF`, a `[nCV]` vector) **and** the mean-field DM `G_MF` (`[nspin][npol·NMO][npol·NMO]`) directly against plain NOMSD: (1) `inner_nwalkers` invariance — a static replicated ensemble (1 vs 3) gives an `inner_nwalkers`-independent `vMF`/`G_MF`; (2) delegate-limit equality vs NOMSD at `ndet == 1`. There is no outer walker (these are `⟨Ψ_T|·|Ψ_T⟩/⟨Ψ_T|Ψ_T⟩`), so the test exercises the inner-ensemble-against-itself double-sum reduction; the `inner_nwalkers = 3` case runs it while `= 1` delegates, so the invariance check is the substantive one. |
+| `stochastic_mean_field_production_order` | **Call-order regression** (CLOSED/CPU). Builds a **leapfrog** trial (`inner_conditioning = inner_leapfrog = true`, `inner_nsteps = 1`), calls `begin_inner_step(wset)` — which, in leapfrog mode, conditioned-resamples and **expands the inner ensemble to `nwalk·P`** — and only *then* calls `vMF`/`G_MF`, exactly as `Propagate` orders them (`begin_inner_step` before `generateP1`). **`REQUIRE`s `stochastic_inner_ensemble_size() == nwalk·P`** so the scenario is pinned (parity alone could pass on a still-`P` anchor ensemble). Asserts `vMF`/`G_MF` still equal NOMSD: with the ensemble out of `P`-sample form they must delegate to the anchor mean field, not reduce the conditioned `nwalk·P` block with the wrong `1/(nwalk·P)²` normalization. Guards `mean_field_uses_inner_ensemble` against the leapfrog timing bug. |
 
 ### Running the stochastic test suite
 
@@ -1687,7 +1763,7 @@ All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD
 
 **`main` (overhaul API)** — target binary is the consolidated `test_afqmc`
 (`tests/test_wfn_factory.cpp`); output under `${BUILD_DIR}/tests/bin/`. The static + 3b cases are
-**ported and CPU-verified** (13 cases, 5843 assertions — incl. the Phase 3b-var anchor, 3c-i and 3c-ii smokes, and the two Phase 5 observable cases) on the
+**ported and CPU-verified** (15 cases, 5850 assertions — incl. the Phase 3b-var anchor, 3c-i and 3c-ii smokes, the two Phase 5 observable cases, and the two Phase 6 mean-field cases) on the
 `Ne_cc-pvdz` dense+RHF fixture (the develop `ham_chol_sc.h5` / `wfn_msd.h5` fixtures are gone). Build is driven via `cmake --build` (Ninja
 generator); on the Flatiron cluster build on a compute node, not the gateway:
 
@@ -1708,11 +1784,13 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 **Overhaul port — done (Jun 2026):**
 
 - ✅ Ported the static (1a–3a) + 3b `[stochastic_wfn]` cases to `tests/test_wfn_factory.cpp`; built
-  `test_afqmc` and ran the full tag on a compute node (now 13 cases, 5843 assertions, `Ne_cc-pvdz`,
+  `test_afqmc` and ran the full tag on a compute node (now 15 cases, 5850 assertions, `Ne_cc-pvdz`,
   incl. the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`, the Phase 3c-i smoke
   `stochastic_conditioned_propagator_step`, the Phase 3c-ii leapfrog smoke
-  `stochastic_leapfrog_propagator_step`, and the two Phase 5 observable cases
-  `stochastic_mixed_density_matrix_matches_nomsd` / `stochastic_accumulate_estimators_matches_nomsd`).
+  `stochastic_leapfrog_propagator_step`, the two Phase 5 observable cases
+  `stochastic_mixed_density_matrix_matches_nomsd` / `stochastic_accumulate_estimators_matches_nomsd`,
+  and the two Phase 6 mean-field cases `stochastic_mean_field_matches_nomsd` /
+  `stochastic_mean_field_production_order`).
 - ✅ Fixed the three overhaul-only bugs the port surfaced (log-overlap convention; full-G one-body
   rank mismatch; full-G EXX/EJ slice axis + `dotc`→`dot`).
 - ✅ Full-G validated against the compact path on the dense `Real3IndexFactorization` route

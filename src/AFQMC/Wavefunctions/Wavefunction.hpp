@@ -242,6 +242,21 @@ public:
         var);
   }
 
+  // Current inner trial-ensemble walker count: P (= inner_nwalkers) in the walker-independent P-sample
+  // form, or nwalk*P after a conditioned/leapfrog resample (Phase 3c); -1 for a non-stochastic or
+  // uninitialized wavefunction. Read-only diagnostic (used by the Phase 6 mean-field call-order test).
+  long stochastic_inner_ensemble_size() const
+  {
+    return std::visit(
+        [](auto&& a) -> long {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.inner_walkers_initialized() ? long(a.inner_wset().size()) : -1L;
+          return -1L;
+        },
+        var);
+  }
+
   void initialize_stochastic_inner_walkers(
       ptree const& walker_pt,
       memory::const_shared_array<HOST_MEMORY, ComplexType, 3> const& initial_guess,

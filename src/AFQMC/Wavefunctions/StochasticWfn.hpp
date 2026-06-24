@@ -128,13 +128,25 @@ public:
   WALKER_TYPES getWalkerType() const { return nomsd_.getWalkerType(); }
   constexpr auto get_memory_space() const { return MEM; }
 
-  template<class... Args>
-  void vMF(Args&&... args)
-  {
-    nomsd_.vMF(std::forward<Args>(args)...);
-  }
+  // Phase 6 (Tier 3): stochastic mean-field subtraction. vMF / G_MF are TRIAL-AGAINST-ITSELF
+  // quantities (no outer walker), so -- unlike the Tier 1/2 mixed estimators that pair the inner
+  // ensemble against the OUTER walkers -- they reduce the inner ensemble against ITSELF:
+  //   G_MF = <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T>
+  //        = [sum_{p,q} <psi_p|c+c|psi_q>] / [sum_{p,q} <psi_p|psi_q>]
+  // over the P = inner_nwalkers_ walker-INDEPENDENT inner samples {psi_p} (uniform weight 1/P) -- the
+  // inner-ensemble analogue of NOMSD's multi-determinant mean field, with the inner walkers playing the
+  // role of the determinant expansion. vMF contracts that mean-field DM against the True Ham (estimator
+  // 4, L.G_MF). Both collapse to the anchor density -- i.e. plain NOMSD::G_MF / vMF -- at the static
+  // replicated limit (every psi_p == anchor). They DELEGATE to nomsd_ (the anchor mean field) (a) at the
+  // single-determinant delegate limit, and (b) whenever the inner ensemble is NOT in its
+  // walker-independent P-sample form -- i.e. after a conditioned/leapfrog resample (Phase 3c) has
+  // expanded it to nwalk*P walker-CONDITIONED samples, which `begin_inner_step` can trigger BEFORE
+  // `generateP1` calls vMF (see Propagate ordering). A conditioned ensemble has no walker-independent
+  // subset to average for the trial mean field, and the anchor mean field is exact at the
+  // static-limit-first scope (and a valid variance-reduction choice). See `mean_field_uses_inner_ensemble`.
+  void vMF(nda::MemoryVector auto&& v, double dt);
 
-  auto G_MF() { return nomsd_.G_MF(); }
+  auto G_MF();
 
   template<class WlkSet, nda::MemoryMatrix MatA>
   void vbias(WlkSet& wset, MatA&& v, double dt, int nt = 0);
@@ -333,6 +345,30 @@ private:
                              TVecD&& D,
                              TVecOv&& Ov,
                              Accumulate&& accumulate);
+
+  // Phase 6 (Tier 3): whether vMF / G_MF should reduce the inner ensemble (true) or delegate to nomsd_'s
+  // anchor mean field (false). The mean field <Psi_T|.|Psi_T> is trial-only (walker-independent), so it
+  // is reduced ONLY when the inner ensemble is in its walker-INDEPENDENT P-sample form
+  // (inner.size() == inner_nwalkers_) with P > 1. It is false (delegate) when:
+  //  - inner_nwalkers_ == 1: a single sample is degenerate (its self-DM is the anchor at setup), so the
+  //    P=1 reduction equals nomsd_ -- delegate rather than run it redundantly. This subsumes the
+  //    single-determinant delegate limit (inner_nwalkers_==1 && inner_nsteps_==0) AND inner_nwalkers_==1
+  //    with inner_nsteps_>0.
+  //  - the ensemble has been expanded by a conditioned/leapfrog resample (Phase 3c) to nwalk*P
+  //    walker-CONDITIONED samples (inner.size() != inner_nwalkers_): no walker-independent subset to
+  //    average, so delegate to the anchor mean field.
+  bool mean_field_uses_inner_ensemble() const
+  {
+    return inner_nwalkers_ > 1 && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr
+           && int(inner_ensemble_.wset->size()) == inner_nwalkers_;
+  }
+
+  // Phase 6 (Tier 3): build the normalized stochastic trial mean-field one-body Green's function
+  // <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T> into `Gsum` (full [1, nspin*npol*NMO*npol*NMO] layout) by reducing
+  // the P = inner_nwalkers_ walker-independent inner samples against each other (the double sum above).
+  // Shared by vMF (contracts it) and G_MF (returns it). Trial-only -- no outer walker set, no conditioned
+  // resample. The caller MUST gate on mean_field_uses_inner_ensemble() (inner.size() == inner_nwalkers_).
+  void reduce_inner_mean_field_dm(memory::buffered_array<MEM, ComplexType, 2>& Gsum);
 
   int dm_size(bool full) const;
   bool compact_G_for_vbias() const;
