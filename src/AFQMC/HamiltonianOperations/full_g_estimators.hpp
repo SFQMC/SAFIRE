@@ -32,7 +32,14 @@ namespace full_g
 {
 
 // Phase 3b (StochasticWfn): un-rotated full-G local-energy contraction for CLOSED (RHF) trials.
-// G layout: [nwalk][NMO*NMO]. E is partial per MPI rank; the caller all-reduces.
+// G layout: [nwalk][NMO*NMO]. The Cholesky (Lankf) is REPLICATED on every rank -- exactly as the compact
+// Real3IndexFactorization::energy_impl path is (it iterates the full nCV with no MPI reduction, which is
+// why NOMSD::Energy needs no external all_reduce). So this kernel computes the COMPLETE E for ALL walkers
+// on every rank (redundant across ranks) and the caller does NOT reduce. (Earlier it distributed BOTH the
+// walker loop [n % comm.size()] AND the (i,nc) index [FairDivide] across the comm with no reduction --
+// correct only at -np 1; at -np > 1 that left EXX/EJ walker-incomplete and CV-partial -> garbage, while
+// the ungated E1 was already complete, so no single caller all_reduce could fix it. See
+// StochasticDevelopment.md "Multi-rank (-np > 1) status".)
 template<MEMORY_SPACE MEM, class MatE, class MatG, class MatLan, class VecHij>
 void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> const& mpi,
                    MatE&& E,
@@ -74,37 +81,27 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
   if (not addEXX)
     return;
 
+  // Cholesky (Lankf) is replicated, so each rank computes the COMPLETE EXX/EJ for ALL walkers (no
+  // walker round-robin, no (i,nc) FairDivide, no all_reduce). mpi is unused here.
+  (void)mpi;
+
   memory::buffered_array<MEM, ComplexType, 2> GF(nwalk * NMO, NMO);
   for (int n = 0; n < nwalk; ++n)
   {
-    if (n % mpi->comm.size() != mpi->comm.rank())
-      continue;
     auto Gn = Gfull(n, all);
     for (int i = 0; i < NMO; ++i)
       for (int k = 0; k < NMO; ++k)
         GF(n * NMO + i, k) = Gn(i * NMO + k);
   }
-  mpi->comm.barrier();
 
+  // Twban[(n,i)][(i',nc)] = sum_k GF[(n,i)][k] * Lankf[(i',nc)][k], over the FULL (i',nc) range.
   memory::buffered_array<MEM, ComplexType, 2> Twban(nwalk * NMO, NMO * local_nCV);
-  long i0, iN;
-  std::tie(i0, iN) = FairDivideBoundary(long(mpi->comm.rank()), long(NMO) * local_nCV, long(mpi->comm.size()));
-  if (iN > i0)
-  {
-    // Lankf is [NMO*local_nCV][NMO] indexed at row (i*local_nCV + nc); the (i,nc) combined index
-    // (== Twban's column index) is what FairDivide partitions, so slice Lankf's ROWS, not its columns.
-    auto Lslice = Lankf(range(i0, iN), all);
-    auto Tslice = Twban(all, range(i0, iN));
-    nda::blas::gemm(ComplexType(1.0), GF, nda::transpose(Lslice), ComplexType(0.0), Tslice);
-  }
-  mpi->comm.barrier();
+  nda::blas::gemm(ComplexType(1.0), GF, nda::transpose(Lankf), ComplexType(0.0), Twban);
 
   auto T4D = nda::reshape(Twban, std::array<long, 4>{nwalk, NMO, NMO, local_nCV});
 
   for (int n = 0; n < nwalk; ++n)
   {
-    if (n % mpi->comm.size() != mpi->comm.rank())
-      continue;
     ComplexType exx(0.0);
     for (int a = 0; a < NMO; ++a)
       for (int b = 0; b < NMO; ++b)
@@ -118,27 +115,16 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
     memory::buffered_array<MEM, ComplexType, 2> Kl(nwalk, local_nCV);
     Kl() = ComplexType(0.0);
     for (int n = 0; n < nwalk; ++n)
-    {
-      if (n % mpi->comm.size() != mpi->comm.rank())
-        continue;
       for (int a = 0; a < NMO; ++a)
         Kl(n, all) += T4D(n, a, a, all);
-    }
-    mpi->comm.barrier();
     for (int n = 0; n < nwalk; ++n)
-    {
-      if (n % mpi->comm.size() != mpi->comm.rank())
-        continue;
       E(n, 2) += ComplexType(0.5) * scl * scl *
                  static_cast<ComplexType>(nda::blas::dot(Kl(n, all), Kl(n, all)));
-    }
   }
   else
   {
     utils::check(false, "full_g::energy_closed: addEXX without addEJ not implemented");
   }
-
-  mpi->comm.barrier();
 }
 
 } // namespace full_g

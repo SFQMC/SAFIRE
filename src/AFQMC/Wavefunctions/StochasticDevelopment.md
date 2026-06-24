@@ -43,9 +43,10 @@ fixed three real overhaul-only bugs — see
 **Remaining gates:** (1) the Phase 1a/1b/1c **infrastructure** tests are still unported (need new
 `Wavefunction`-variant accessors — see the *Ported vs. deferred* note below); (2) **GPU**
 build/run is untested (the full-G dynamic path is CPU-only gated this phase); (3) multi-rank
-(`-np > 1`) is **partially validated** (Jun 2026) — most cases pass at `-np 2` and two bugs were fixed
-(stochastic `Energy` double-count; accumulate-test HDF5), but the `full_g::energy_closed` kernel and the
-`back_propagation_driver_smoke` driver path are still broken at `-np > 1`. See
+(`-np > 1`) is **validated for the stochastic reductions** (Jun 2026) — **all 18 stochastic cases pass at
+`-np 2`** after fixing three bugs (stochastic `Energy` double-count; accumulate-test HDF5;
+`full_g::energy_closed` kernel). The only remaining `-np 2` failure is the foreign
+`back_propagation_driver_smoke` integration smoke (driver path, separate triage). See
 [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).
 
 **Ported vs. deferred.** The ported cases test through the **public `Wavefunction` API only**:
@@ -1861,14 +1862,16 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 
 The whole feature was developed and verified at **`-np 1`**; a `-np 2` sweep of `[stochastic_wfn]`
 (`Ne_cc-pvdz`) surfaced latent multi-rank bugs (a single `MPI_ABORT` kills the whole tag, so cases were
-run individually). `-np 1` remains fully green (**19 cases / 6657 assertions**). At `-np 2`:
+run individually). Three were fixed (below); `-np 1` remains fully green (**19 cases / 6657 assertions**),
+and **all 18 stochastic cases now pass at `-np 2`** — the only remaining `-np 2` failure is the foreign
+`back_propagation_driver_smoke` deadlock. At `-np 2`:
 
 | Case | `-np 2` | Note |
 |------|---------|------|
 | `overlap`, `vbias`, `mixed_density_matrix`, `mean_field`, `back_propagation_matches`/`production_order`, `wfn_matches_nomsd`, `build_smoke`, `inner_hamiltonian_same_as_true`, `dynamic_ensemble_smoke`, `propagator_step`, `conditioned`/`leapfrog_propagator_step`, `back_propagation_estimator_smoke` | ✅ pass | reductions/observables complete per rank |
-| `energy_matches_nomsd` | ✅ pass **(after fix)** | see fix 1 |
-| `accumulate_estimators_matches_nomsd` | ✅ pass **(after fix)** | see fix 2 |
-| `full_g_matches_compact` | ❌ **fail** | pre-existing full-G **kernel** bug (below) |
+| `energy_matches_nomsd` | ✅ pass **(after fix 1)** | see fix 1 |
+| `accumulate_estimators_matches_nomsd` | ✅ pass **(after fix 2)** | see fix 2 |
+| `full_g_matches_compact` | ✅ pass **(after fix 3)** | see fix 3 |
 | `back_propagation_driver_smoke` | ❌ **deadlock** | full BP driver path; separate triage |
 
 **Fix 1 (real production bug) — `StochasticWfn::Energy` double-counted at `-np > 1`.** `NOMSD::Energy`
@@ -1888,19 +1891,24 @@ filename (`H5Fopen … unable to lock the file, errno=11`), and `full1rdm::print
 The **production** accumulate path was always multi-rank-safe (it uses the real observable HDF5 machinery);
 only the test's manual round-trip wasn't.
 
-**Open bug — `full_g::energy_closed` (`HamiltonianOperations/full_g_estimators.hpp`) is multi-rank-broken
-(pre-existing Phase 3b, NOT Phase 6/7).** The kernel **double-distributes** with no reduction: walkers by
-`n % comm.size() == comm.rank()` (the GF build + the EXX/EJ loops) **and** the combined `(i,nc)` index by
-`FairDivideBoundary` (only `Twban(:, i0:iN)` is filled per rank). So at `-np 2` the one-body `E1` is
-complete (its contraction is ungated, over all walkers) but **EXX/EJ are both walker-incomplete and
-CV-partial → garbage** (`full_g_matches_compact` failed on `full.exx`/`full.ej` with values ~`2.5e4` vs the
-correct small numbers; `full.e1` matched). No single external `all_reduce` can fix this — it would double
-the already-complete `E1` while only completing EXX/EJ (which is exactly why the case failed on `e1`
-*before* fix 1's `all_reduce` removal and on `exx`/`ej` *after*). **Proposed fix** (a real kernel change,
-deferred): make `energy_closed` return a complete result — `all_reduce` `Twban` over the `(i,nc)`
-FairDivide so each rank's owned walkers are CV-complete, then `all_reduce` `E(:,1:2)` (EXX/EJ) over the
-walker round-robin, leaving the already-complete `E1` untouched — after which the override (fix 1) still
-needs no external reduce. This only affects the `inner_nsteps > 0` full-G energy path at `-np > 1`.
+**Fix 3 (pre-existing Phase 3b kernel bug) — `full_g::energy_closed`
+(`HamiltonianOperations/full_g_estimators.hpp`) was multi-rank-broken.** The kernel **double-distributed**
+with no reduction: walkers by `n % comm.size() == comm.rank()` (the GF build + the EXX/EJ loops) **and**
+the combined `(i,nc)` index by `FairDivideBoundary` (only `Twban(:, i0:iN)` filled per rank). So at `-np 2`
+the one-body `E1` was complete (its contraction is ungated, over all walkers) but **EXX/EJ came out both
+walker-incomplete and CV-partial → garbage** (`full_g_matches_compact` failed on `full.exx`/`full.ej` with
+values ~`2.5e4` vs the correct small numbers; `full.e1` matched). No single external `all_reduce` could fix
+it — it would double the already-complete `E1` while only completing EXX/EJ (which is exactly why the case
+failed on `e1` *before* fix 1's `all_reduce` removal and on `exx`/`ej` *after*). **Root cause:** the
+distribution was spurious — the Cholesky (`Lank_full_flat_`) is **replicated** per rank (the caller passes
+the full `nCV`, and `ensure_full_cholesky` builds the complete `[NMO·nCV][NMO]` un-rotated Cholesky on every
+rank), exactly as the compact `Real3IndexFactorization::energy_impl` is (it iterates the full `nCV` with no
+MPI reduction, which is why `NOMSD::Energy` needs none). **Fixed**: `energy_closed` now computes the
+**complete** EXX/EJ for **all** walkers redundantly on every rank — removed the walker round-robin, the
+`(i,nc)` `FairDivide`, and the barriers; the gemm contracts the full `Lankf` — so it returns a complete `E`
+with no reduction, matching the compact path and consistent with fix 1 (the override does no reduce). Only
+the `inner_nsteps > 0` full-G energy path is affected. Verified: `full_g_matches_compact` passes at `-np 1`
+(no regression) and `-np 2`.
 
 **Open — `stochastic_back_propagation_driver_smoke` deadlocks at `-np 2`.** This is a full
 `AFQMCDriver`/`BackPropagatedEstimator` integration smoke (one of two BP integration tests added to the
@@ -1932,7 +1940,7 @@ reductions, and needs separate triage.
 **Overhaul port — still open:**
 
 - Port the Phase 1a/1b/1c **infrastructure** tests (need new `Wavefunction`-variant accessors).
-- **`-np > 1`: partially validated (Jun 2026) — see [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).** Most cases pass at `-np 2`; the stochastic `Energy` double-count and the accumulate-test HDF5 round-trip were **fixed**. Still open: the `full_g::energy_closed` multi-rank kernel bug (`full_g_matches_compact` fails at `-np 2`) and the `back_propagation_driver_smoke` deadlock.
+- **`-np > 1`: stochastic reductions validated (Jun 2026) — see [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).** **All 18 stochastic cases pass at `-np 2`** after fixing three bugs (stochastic `Energy` double-count; accumulate-test HDF5; `full_g::energy_closed` kernel). Still open: the foreign `back_propagation_driver_smoke` deadlock (driver path).
 
 **Both code lines (`stochastic-wfn-develop` and `main`; longer term):**
 
