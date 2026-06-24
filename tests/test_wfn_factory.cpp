@@ -1300,6 +1300,228 @@ TEST_CASE("stochastic_mean_field_production_order", "[wfn_factory][stochastic_wf
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
+// Phase 7 (Tier 6 + Tier 4-5): back-propagation reference set and outer-facing layout queries. The Tier
+// 6 semantics is OUTER-NOMSD DELEGATE, INNER-ENSEMBLE-AGNOSTIC -- the stochastic trial exposes exactly
+// the outer nomsd_'s reference set (= {phi_T}, weight 1, for the intended single-determinant anchor; the
+// full CI expansion for a multi-det outer trial), ignoring the inner ensemble. So
+// total_number_of_references / getReferenceWeight / getReferences equal plain NOMSD's UNCONDITIONALLY
+// (not just at ndet==1) and INDEPENDENT of inner_nwalkers. This test verifies that reference parity
+// (COUNT, per-reference WEIGHT, reference Slater matrices) plus Tier 4-5 layout/metadata parity (Cholesky
+// count, Ham type, walker type). NOTE: this is reference-API + layout parity only -- it does NOT exercise
+// BackPropagatedEstimator / FullObsHandler end to end (backward propagation, path restoration, multi-ref
+// CI weighting, resize_bp); a full driver/estimator integration run with stochastic:true is a documented
+// follow-up. The production-order companion test below covers the dynamic (post-begin_inner_step) case.
+template<MEMORY_SPACE MEM>
+void stochastic_back_propagation_matches_nomsd(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+
+  const auto info   = read_info_from_wfn(wfn_file, "any");
+  const int  NMO    = std::get<0>(info);
+  const int  nup    = std::get<1>(info);
+  const int  ndown  = std::get<2>(info);
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+    return;
+
+  const int npol = (type == NONCOLLINEAR ? 2 : 1);
+  const int nel  = (type == COLLINEAR ? nup + ndown : nup);
+
+  std::map<std::string, AFQMCInfo> InfoMap;
+  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+  ptree ham_pt;
+  ham_pt.put("name", "ham0");
+  ham_pt.put("system", "info0");
+  ham_pt.put("filename", hamil_file);
+  HamiltonianFactory HamFac(InfoMap);
+  HamFac.push("ham0", ham_pt);
+  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  const int nwalk = 11;
+  ptree wlk_pt;
+  wlk_pt.put("name", "wset0");
+  wlk_pt.put("walker_type", walkerTypeToString(type));
+
+  WavefunctionFactory<MEM> WfnFac(InfoMap);
+
+  ptree nomsd_pt;
+  nomsd_pt.put("name", "wfn_nomsd_bp");
+  nomsd_pt.put("system", "info0");
+  nomsd_pt.put("filename", wfn_file);
+  WfnFac.push("wfn_nomsd_bp", nomsd_pt);
+  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_bp", type, &ham, nwalk);
+
+  auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
+    ptree pt;
+    pt.put("name", name);
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    pt.put("stochastic", true);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    WfnFac.push(name, pt);
+    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
+    return w;
+  };
+  auto& wfn_s1 = build_stoch("wfn_stoch_bp1", 1);
+  auto& wfn_s3 = build_stoch("wfn_stoch_bp3", 3);
+
+  // (1) reference COUNT: anchor-only => matches NOMSD regardless of inner_nwalkers.
+  const int nrefs = wfn_nomsd.total_number_of_references();
+  CHECK(wfn_s1.total_number_of_references() == nrefs);
+  CHECK(wfn_s3.total_number_of_references() == nrefs);
+
+  // (2) per-reference WEIGHT matches NOMSD.
+  for (int i = 0; i < nrefs; ++i)
+  {
+    CHECK_THAT(wfn_s1.getReferenceWeight(i), utils::Approx(wfn_nomsd.getReferenceWeight(i)));
+    CHECK_THAT(wfn_s3.getReferenceWeight(i), utils::Approx(wfn_nomsd.getReferenceWeight(i)));
+  }
+
+  // (3) the reference Slater matrices themselves match NOMSD (shape [nrefs, npol*NMO, nel], as
+  // BackPropagatedEstimator requests them).
+  auto collect_refs = [&](Wavefunction<MEM>& wfn) {
+    const int n = wfn.total_number_of_references();
+    memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
+    Refs() = ComplexType(0.0);
+    wfn.getReferences(n, Refs);
+    return nda::to_host(Refs);
+  };
+  auto R_ref = collect_refs(wfn_nomsd);
+  CHECK_THAT(collect_refs(wfn_s1), utils::Approx(R_ref));
+  CHECK_THAT(collect_refs(wfn_s3), utils::Approx(R_ref));
+
+  // (4) Tier 4-5 layout/metadata parity (Phase 7 targeted check, not merely "by construction"): the
+  // outer-facing queries stay on nomsd_ (True Ham) and so equal NOMSD's, independent of inner_nwalkers.
+  CHECK(wfn_s1.number_of_cholesky_vectors() == wfn_nomsd.number_of_cholesky_vectors());
+  CHECK(wfn_s3.number_of_cholesky_vectors() == wfn_nomsd.number_of_cholesky_vectors());
+  CHECK(wfn_s1.getHamType() == wfn_nomsd.getHamType());
+  CHECK(wfn_s3.getHamType() == wfn_nomsd.getHamType());
+  CHECK(wfn_s1.getWalkerType() == wfn_nomsd.getWalkerType());
+  CHECK(wfn_s3.getWalkerType() == wfn_nomsd.getWalkerType());
+}
+
+TEST_CASE("stochastic_back_propagation_matches_nomsd", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn back-propagation reference API (outer-NOMSD delegate) parity (Phase 7).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_back_propagation_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Phase 7 production-order regression (the Phase 6 lesson applied to Tier 6). The BP references are
+// captured DURING the run -- after begin_inner_step has resampled the inner ensemble. This test pins the
+// documented approximation: the back-propagation references must stay FROZEN at the outer trial while the
+// inner ensemble evolves. It builds a leapfrog trial (inner_conditioning = inner_leapfrog = true,
+// inner_nsteps = 1), calls begin_inner_step(wset) -- which advances AND expands the inner ensemble to
+// nwalk*P -- and then asserts total_number_of_references / getReferenceWeight / getReferences STILL equal
+// pre-step NOMSD's (inner-ensemble-agnostic), unaffected by the resample. REQUIREs the ensemble actually
+// expanded so the scenario is pinned. CLOSED+CPU (leapfrog/conditioning is CPU-only this phase).
+template<MEMORY_SPACE MEM>
+void stochastic_back_propagation_production_order(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // leapfrog / conditioned inner sampling is CPU-only this phase.
+  else
+  {
+    const auto info   = read_info_from_wfn(wfn_file, "any");
+    const int  NMO    = std::get<0>(info);
+    const int  nup    = std::get<1>(info);
+    const int  ndown  = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+
+    const int npol = (type == NONCOLLINEAR ? 2 : 1);
+    const int nel  = (type == COLLINEAR ? nup + ndown : nup);
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk = 11;
+    const int inner_nwalkers = 3;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac(InfoMap);
+
+    ptree nomsd_pt;
+    nomsd_pt.put("name", "wfn_nomsd_bpp");
+    nomsd_pt.put("system", "info0");
+    nomsd_pt.put("filename", wfn_file);
+    WfnFac.push("wfn_nomsd_bpp", nomsd_pt);
+    auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_bpp", type, &ham, nwalk);
+
+    ptree pt;
+    pt.put("name", "wfn_stoch_bpp");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    pt.put("stochastic", true);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    pt.put("inner_leapfrog", true);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_bpp", pt);
+    auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_bpp", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpp", type, wlk_pt);
+
+    // Reference snapshot BEFORE any inner-ensemble evolution.
+    auto collect_refs = [&](Wavefunction<MEM>& wfn) {
+      const int n = wfn.total_number_of_references();
+      memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
+      Refs() = ComplexType(0.0);
+      wfn.getReferences(n, Refs);
+      return nda::to_host(Refs);
+    };
+    auto R_ref = collect_refs(wfn_nomsd);
+
+    // Drive the inner ensemble: leapfrog begin_inner_step resamples + expands it to nwalk*P.
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_bpp"));
+    wfn_s.begin_inner_step(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+
+    // The BP references must be FROZEN at the outer trial -- unchanged by the inner resample, == NOMSD.
+    CHECK(wfn_s.total_number_of_references() == wfn_nomsd.total_number_of_references());
+    for (int i = 0; i < wfn_nomsd.total_number_of_references(); ++i)
+      CHECK_THAT(wfn_s.getReferenceWeight(i), utils::Approx(wfn_nomsd.getReferenceWeight(i)));
+    CHECK_THAT(collect_refs(wfn_s), utils::Approx(R_ref));
+  }
+}
+
+TEST_CASE("stochastic_back_propagation_production_order", "[wfn_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn BP references stay frozen at the outer trial after begin_inner_step (Phase 7).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_back_propagation_production_order<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
 // Phase 5 (Tier 2 observable): StochasticWfn::accumulate_estimators feeds the inner-ensemble-reduced
 // full mixed Green's function (the stochastic MixedDensityMatrix, full layout) to the observables. We
 // drive a real one-body-RDM observable (full1rdm, no rotation) through accumulate_estimators -- this is
