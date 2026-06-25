@@ -112,13 +112,15 @@ void NOMSD<MEM,devPsiT>::DensityMatrix(const WlkSet& wset, RVec&& Ref, MatG&& G,
   utils::check(Ov.size() == nw, "Size mismatch");
   utils::check(Ref.size() == nspin,"Size mismatch");
   if(herm) {
-    utils::check(Ref(0).shape() == std::array<long,2>{nup,npol*NMO}, "Size mismatch");
-    if(nspin>1)
-      utils::check(Ref(1).shape() == std::array<long,2>{ndown,npol*NMO}, "Size mismatch");
+    utils::check_shape(Ref(0), "Ref(0)", nup,npol*NMO);
+    if(nspin>1) {
+      utils::check_shape(Ref(1), "Ref(1)", ndown,npol*NMO);
+    }
   } else {
-    utils::check(Ref(0).shape() == std::array<long,2>{npol*NMO,nup}, "Size mismatch");
-    if(nspin>1)
-      utils::check(Ref(1).shape() == std::array<long,2>{npol*NMO,ndown}, "Size mismatch");
+    utils::check_shape(Ref(0), "Ref(0)", npol*NMO, nup);
+    if(nspin>1) {
+      utils::check_shape(Ref(1), "Ref(1)", npol*NMO, ndown);
+    }
   }
   G() = ComplexType(0.0);
   Ov() = ComplexType(0.0);

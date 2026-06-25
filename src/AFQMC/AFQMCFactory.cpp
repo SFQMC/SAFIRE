@@ -112,21 +112,15 @@ bool AFQMCFactory<MEM>::parse(const ptree pt_in)
 template<MEMORY_SPACE MEM>
 bool AFQMCFactory<MEM>::execute(std::string type, const ptree pt_in)
 {
-  char fileroot[256];
-
-  for(auto& it : pt_in)
+  for(auto& [cname, pt] : pt_in)
   {
-    std::string cname = it.first;
-    ptree pt = it.second;
     if (cname == "execute")
     {
-      snprintf(fileroot, sizeof(fileroot), "%s.s%03d", project_title.c_str(), m_series);
-      	
       // execute driver
-      if (!DriverFac.executeDriver(type, std::string(fileroot), m_series, pt))
+      if (!DriverFac.executeDriver(type, std::format("{}.s{:03d}", project_title, m_series), m_series, pt))
       {
         app_error("Error in DriverFactory::executeDriver::run()");
- 	app_error_flush();
+        app_error_flush();
         return false;
       }
 

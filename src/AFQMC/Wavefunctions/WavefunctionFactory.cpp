@@ -15,8 +15,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <random>
+#include <numeric>
 #include <boost/optional.hpp>
 #include "utilities/h5_utils.hpp"
+#include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
 
 #include "AFQMC/Utilities/readWfn.h"
 #include "WavefunctionFactory.h"
@@ -29,6 +31,35 @@ namespace sfqmc
 {
 namespace afqmc
 {
+
+namespace
+{
+
+// Convert an array of numbers of electrons per flavor ({nup, ndown}) from one walker type to another.
+// Most of the time, this is is an identity. However, in the noncollinear case, only
+// the first component contains all electrons and the rest is supposed to be zero.
+template<std::size_t N = 2>
+auto broadcast_number_of_electrons(const std::array<int, N>& nel, WALKER_TYPES from, WALKER_TYPES to)
+{
+  static_assert(N > 0, "Cannot have no electron flavors");
+  utils::check(walkerTypeIsConvertible(from, to), "Cannot convert {} wavefunction to {} walker type",
+               walkerTypeToString(from), walkerTypeToString(to));
+  if (from == CLOSED)
+  {
+    utils::check(!nel.empty() && std::all_of(nel.begin(), nel.end(), [&](auto n) { return n == nel.front(); }),
+                 "Closed wavefunction does not have uniform number of electrons: {}", nel);
+  }
+
+  if (to == NONCOLLINEAR)
+  {
+    std::array<int, N> result{};
+    result[0] = std::accumulate(nel.begin(), nel.end(), 0);
+    return result;
+  }
+  return nel;
+}
+
+} // namespace
 
 namespace wavefunction_detail
 {
@@ -78,7 +109,9 @@ struct InnerPropagatorBuilderDevice : PropagatorFactory<DEVICE_MEMORY>
 template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
 std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
     std::map<std::string, AFQMCInfo>& InfoMap,
-    AFQMCInfo& info,
+    int NMO,
+    int nup,
+    int ndown,
     ptree const& pt,
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
     HamiltonianOperations<MEM>&& inner_hop,
@@ -92,7 +125,7 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
 
   ptree nomsd_pt = NOMSD<MEM, MType>::interpret_inputs(strip_stochastic_input_keys(pt));
   stack->wfn_    = std::make_unique<Wavefunction<MEM>>(
-      NOMSD<MEM, MType>(info, std::move(nomsd_pt), walker_type, mpi, std::move(inner_hop), std::move(inner_ci),
+      NOMSD<MEM, MType>(std::move(nomsd_pt), NMO, nup, ndown, walker_type, mpi, std::move(inner_hop), std::move(inner_ci),
                         std::forward<OrbsContainer>(inner_orbs), NCE, targetNW));
 
   ptree prop_pt;
@@ -168,6 +201,9 @@ Wavefunction<MEM> buildStochasticNomsdWavefunction(
     Hamiltonian& h,
     Hamiltonian& h_var,
     WALKER_TYPES walker_type,
+    int NMO,
+    int nup,
+    int ndown,
     nda::array<ComplexType, 1> ci,
     OrbsContainer orbs,
     ComplexType NCE,
@@ -179,7 +215,7 @@ Wavefunction<MEM> buildStochasticNomsdWavefunction(
   auto inner_ci   = ci;
   auto inner_orbs = orbs;
   auto inner_stack =
-      buildStochasticInnerStack<MEM, MType>(InfoMap, AFinfo, pt, mpi, std::move(inner_HOps), std::move(inner_ci),
+      buildStochasticInnerStack<MEM, MType>(InfoMap, NMO, nup, ndown, pt, mpi, std::move(inner_HOps), std::move(inner_ci),
                                             std::move(inner_orbs), walker_type, NCE, targetNW);
   return Wavefunction<MEM>(StochasticWfn<MEM, MType>(AFinfo, std::move(pt), mpi, std::move(outer_HOps), std::move(ci),
                                                      std::move(orbs), std::move(inner_stack), walker_type, NCE,
@@ -189,7 +225,6 @@ Wavefunction<MEM> buildStochasticNomsdWavefunction(
 } // namespace wavefunction_detail
 
 using wavefunction_detail::buildStochasticNomsdWavefunction;
-
 template<MEMORY_SPACE MEM>
 Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                            ptree pt_in,
@@ -199,32 +234,21 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 {
   ptree pt = interpret_inputs(pt_in);
 
-  std::string info = pt.get<std::string>("system");
-  if (InfoMap.find(info) == InfoMap.end())
-    utils::check(false,"ERROR: Undefined system in WavefunctionFactory. ");
-
   bool dense_trial;
   std::string name          = pt.get<std::string>("name");
   std::string filename      = pt.get<std::string>("filename");
   bool recompute_ci  = pt.get<bool>("rediag");
-  bool stochastic    = pt.get<bool>("stochastic", false);
   int ndets_to_read  = pt.get<int>("ndets_to_read");
   boost::optional<bool> dense_trial_opt;// = pt.get_optional<bool>("dense_trial");
   if( auto node = pt.get_child_optional("dense_trial") )
     dense_trial_opt = node->get_value_optional<bool>(); 
 
-  AFQMCInfo& AFinfo = InfoMap[info];
   ComplexType NCE     = 0.0;
 
-  int NMO  = AFinfo.NMO;
-  int nup = AFinfo.nup;
-  int ndown = AFinfo.ndown;
-  int ntau = AFinfo.ntau;
+  const auto [NMO, nup_in_wfn, ndown_in_wfn] = read_info_from_wfn(filename,"any");
+
   int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
   int npol = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-  // FIX : add check for finite-T
-  utils::check((walker_type != NONCOLLINEAR) or (ndown == 0),
-    " Error in Wavefunctions/WavefunctionFactory::fromHDF5: noncollinear && ndown!=0. ndown: {}\n\n\n ", ndown);
 
   WAVEFUNCTION_TYPES wfn_type; 
   if(mpi->comm.root()) { 
@@ -237,28 +261,36 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     wfn_type = WAVEFUNCTION_TYPES(itype);
   }
 
+  bool build_stochastic = (wfn_type == STOCHASTIC_WFN) || is_stochastic_wavefunction_input(pt_in);
+
   // everyone reading for now, change it problematic
   h5::file file(filename,'r');
   h5::group grp(file);
   h5::group wgrp = grp.open_group("Wavefunction");
 
   
-  if (wfn_type == NOMSD_WFN)
-  {
-    if (walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT){
-      app_log(1," Wavefunction type: {}", stochastic ? "StochasticWfn (wrapping NOMSD)" : "NOMSD");
-      h5::group ngrp = wgrp.open_group("NOMSD");
-      nda::array<ComplexType,1> ci;
+  utils::check(not (build_stochastic && wfn_type == PHMSD_WFN),
+               "Error in WavefunctionFactory::fromHDF5: stochastic trials require NOMSD trial HDF5 data.");
 
-      // Read common trial wavefunction input options.
-      WALKER_TYPES input_wtype;
-      getCommonInput(ngrp, NMO, nup, ndown, ndets_to_read, ci, input_wtype);
-      
+  if (wfn_type == NOMSD_WFN || wfn_type == STOCHASTIC_WFN)
+  {
+    app_log(1, " Wavefunction type: {}", build_stochastic ? "StochasticWfn" : "NOMSD");
+    nda::array<ComplexType, 1> ci;
+    h5::group ngrp = wgrp.open_group("NOMSD");
+    // Read common trial wavefunction input options.
+    WALKER_TYPES input_wtype{};
+    getCommonInput(ngrp, ndets_to_read, ci, input_wtype);
+
+    if (walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT) {
       // validation blocks
       utils::check(input_wtype != NONCOLLINEAR or walker_type == NONCOLLINEAR,
           "Error: Trial wavefunction is NONCOLLINEAR and requires NONCOLLINEAR walkers. walker_type: {}", walkerTypeToString(walker_type));
       
+      auto [nup, ndown] = broadcast_number_of_electrons({nup_in_wfn, ndown_in_wfn}, input_wtype, walker_type);
+
       NCE = h.getNuclearCoulombEnergy();
+      std::string system = pt.get<std::string>("system");
+      AFQMCInfo AFinfo{system, NMO, nup, ndown};
 
       //mpi->comm.broadcast_n(ci.data(), ci.size());
       //mpi->comm.broadcast_value(NCE);
@@ -267,7 +299,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       auto PsiT = read_nomsd_wavefunction<MEM>(ngrp,ndets_to_read,walker_type,NMO,nup,ndown);
 
       // Set initial walker's Slater matrix.
-      getInitialGuess(ngrp, mpi, name, NMO, nup, ndown, walker_type);
+      getInitialGuess(ngrp, *mpi, name, NMO, nup, ndown, walker_type);
 
       // if not set, get default based on HamTYpe
       // use sparse trial only on KP runs
@@ -280,8 +312,11 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
         dense_trial = *dense_trial_opt;
       }
 
-      if (stochastic)
+      if (build_stochastic)
       {
+        utils::check(walker_type != COLLINEAR_FT && walker_type != NONCOLLINEAR_FT,
+                     "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
+                     "finite-temperature walkers.");
         // Resolve the inner (Variational) Hamiltonian (Phase 3b-var). If the wfn block names one via
         // `inner_hamiltonian` (read from the raw pt_in -- it is a factory-level key, never forwarded
         // into the wavefunction ptree), build it on demand through HamFac_ and use it for the inner
@@ -297,13 +332,14 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
                        "constructor).");
           ptree var_pt = *var_block;
           if (not var_pt.get_child_optional("system"))
-            var_pt.put("system", info);
+            var_pt.put("system", system);
           std::string var_id = name + "__inner_hamiltonian__";
           if (not HamFac_->has_input(var_id))
             HamFac_->push(var_id, var_pt);
           inner_ham_ptr = &HamFac_->getHamiltonian(mpi, var_id);
         }
         Hamiltonian& inner_ham = *inner_ham_ptr;
+        std::map<std::string, AFQMCInfo> stochastic_info_map{{system, AFinfo}};
         if (dense_trial)
         {
           using MType = memory::const_shared_array<MEM,ComplexType,2>;
@@ -315,12 +351,18 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
               });
             }
           }
-          return buildStochasticNomsdWavefunction<MEM, MType>(InfoMap, AFinfo, std::move(pt), mpi, h, inner_ham,
-                                                              walker_type, ci, PsiT_dense, NCE, targetNW, PsiT);
+          return buildStochasticNomsdWavefunction<MEM, MType>(stochastic_info_map, AFinfo, std::move(pt), mpi, h,
+                                                              inner_ham, walker_type, NMO, nup, ndown, ci, PsiT_dense,
+                                                              NCE, targetNW, PsiT);
         }
-        return buildStochasticNomsdWavefunction<MEM, PsiT_Matrix<MEM>>(InfoMap, AFinfo, std::move(pt), mpi, h, inner_ham,
-                                                                       walker_type, ci, PsiT, NCE, targetNW, PsiT);
+        return buildStochasticNomsdWavefunction<MEM, PsiT_Matrix<MEM>>(stochastic_info_map, AFinfo, std::move(pt), mpi,
+                                                                       h, inner_ham, walker_type, NMO, nup, ndown, ci,
+                                                                       PsiT, NCE, targetNW, PsiT);
       }
+
+      utils::check(wfn_type == NOMSD_WFN,
+                   "Error in WavefunctionFactory::fromHDF5: Wavefunction/StochasticWfn HDF5 requires "
+                   "type: stochasticwfn (or deprecated stochastic: true).");
 
       auto HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT);
 
@@ -335,30 +377,26 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
             });
           }
         }
-        return Wavefunction(NOMSD<MEM,MType>(AFinfo, pt, walker_type, mpi, std::move(HOps), 
+        return Wavefunction(NOMSD<MEM,MType>(pt, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT_dense),NCE,targetNW)); 
       }
       else
       {
-        return Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>>(AFinfo, pt, walker_type, mpi, std::move(HOps), 
+        return Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>>(pt, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT),NCE,targetNW)); 
       }
     }
     else
-    {     
-      app_log(1," Wavefunction type: NOMSD");
-      h5::group ngrp = wgrp.open_group("NOMSD");
-      nda::array<ComplexType,1> ci;
-
-      // Read common trial wavefunction input options.
-      WALKER_TYPES input_wtype;
-      //ndown not used for finite-T
-      getCommonInput(ngrp, NMO, ntau, 0, ndets_to_read, ci, input_wtype);
-      
+    {
+      utils::check(wfn_type != STOCHASTIC_WFN && not build_stochastic,
+                   "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
+                   "finite-temperature walkers.");
       // validation blocks
       utils::check(input_wtype != NONCOLLINEAR_FT or walker_type == NONCOLLINEAR_FT,
           "Error: Trial wavefunction is NONCOLLINEAR and requires NONCOLLINEAR walkers. walker_type: {}", walkerTypeToString(walker_type));
       
+      int ntau = nup_in_wfn;
+      utils::check(ndown_in_wfn == 0, "expected ndown dimension to be 0 at finite temperature");
       NCE = h.getNuclearCoulombEnergy();
 
       //mpi->comm.broadcast_n(ci.data(), ci.size());
@@ -368,7 +406,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       auto PsiT = read_nomsd_wavefunction<MEM>(ngrp,ndets_to_read,walker_type,NMO,ntau);
 
       // Set initial walker's Slater matrix.
-      getInitialGuess(ngrp, mpi, name, NMO, nup, ndown, walker_type);
+      getInitialGuess_ft(ngrp, *mpi, name, NMO, walker_type);
 
       // if not set, get default based on HamTYpe
       // use sparse trial only on KP runs
@@ -403,12 +441,12 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
             }
           }
         }
-        return Wavefunction(NOMSD_FT<MEM,MType>(AFinfo, pt, walker_type, mpi, std::move(HOps), 
+        return Wavefunction(NOMSD_FT<MEM,MType>(pt, NMO, ntau, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT_dense),NCE,targetNW)); 
       }
       else
       {
-        return Wavefunction(NOMSD_FT<MEM,PsiT_Matrix<MEM>>(AFinfo, pt, walker_type, mpi, std::move(HOps), 
+        return Wavefunction(NOMSD_FT<MEM,PsiT_Matrix<MEM>>(pt, NMO, ntau, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT),NCE,targetNW));
       }
 
@@ -429,6 +467,10 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     //
 
     nda::array<PsiT_Matrix<HOST_MEMORY>, 1> PsiT_MO;
+    
+    // phmsd does not support conversion to noncollinear
+    int nup = nup_in_wfn;
+    int ndown = ndown_in_wfn;
 
     std::string orb_type;
     h5::group ngrp = wgrp.open_group("PHMSD");
@@ -581,7 +623,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       }
     }
 
-    getInitialGuess(ngrp, mpi, name, NMO, nup, ndown, walker_type);
+    getInitialGuess(ngrp, *mpi, name, NMO, nup, ndown, walker_type);
 
     auto n_unique(abij.number_of_unique_excitations());
     app_log(1," Number of unique determinants per spin channel: {} {} ",
@@ -620,18 +662,27 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     det_coupling_matrix(0) = unsorted_det_coupling[0];
     det_coupling_matrix(1) = unsorted_det_coupling[1];
 
-    // move to 2d version just for getHamiltonianOperations
-    nda::array<PsiT_Matrix<MEM>, 2> PsiT_2d(1,PsiT_MO.extent(0));
-    for(int i=0; i<PsiT_MO.extent(0); i++)
-      PsiT_2d(0,i) = std::move(PsiT_MO(i));
+    // PsiT carries n_ref reference(s): 1 for RHF/GHF (combined), 2 for UHF.
+    // The Hamiltonian expects one entry per spin channel (nspin), so for a single
+    // combined reference under COLLINEAR we duplicate it across both spins -- the
+    // same walker-type conversion every other wavefunction path performs on read.
+    int const n_ref = PsiT_MO.extent(0);
+    int const nspin = (walker_type == COLLINEAR ? 2 : 1);
+
+    // 2d version just for getHamiltonianOperations (copy, so PsiT_MO survives)
+    nda::array<PsiT_Matrix<MEM>, 2> PsiT_2d(1, nspin);
+    for(int i=0; i<nspin; i++) {
+      PsiT_2d(0,i) = PsiT_MO(i % n_ref);
+    }
     auto HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_2d);
 
-    // move to 1-d array for PHMSD
-    nda::array<PsiT_Matrix<MEM>, 1> PsiT_1d(PsiT_2d.extent(1));
-    for(int i=0; i<PsiT_2d.extent(1); i++)
-      PsiT_1d(i) = std::move(PsiT_2d(0,i));
+    // 1-d array for PHMSD keeps the original reference count (1 or 2)
+    nda::array<PsiT_Matrix<MEM>, 1> PsiT_1d(n_ref);
+    for(int i=0; i<n_ref; i++) {
+      PsiT_1d(i) = std::move(PsiT_MO(i));
+    }
 
-    return Wavefunction<MEM>(PHMSD<MEM>(AFinfo, pt, walker_type, mpi, std::move(HOps),
+    return Wavefunction<MEM>(PHMSD<MEM>(pt, walker_type, NMO, nup, ndown, mpi, std::move(HOps),
                     std::move(abij), std::move(det_coupling_matrix),
                     std::move(PsiT_1d), NCE, targetNW));
   }
@@ -647,84 +698,116 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
  * Read Initial walker from file. Needs all mpi tasks, since it allocates on shared memory.
 */
 template<MEMORY_SPACE MEM>
-void WavefunctionFactory<MEM>::getInitialGuess(h5::group grp,
-         std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
-         std::string& name, int NMO, int nup, int ndown, WALKER_TYPES walker_type)
+void WavefunctionFactory<MEM>::getInitialGuess_ft(h5::group grp,
+         utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+         const std::string& name, int NMO, WALKER_TYPES walker_type)
 {
+  using nda::range;
   int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
   int npol = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
   nda::array<int,1> dims(5);
   nda::h5_read(grp,"dims",dims);
+  
   WALKER_TYPES wtype(initWALKER_TYPES(dims[3]));
-  if(walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT){
-    auto guess = initial_guess.find(name);
-    utils::check(guess == initial_guess.end(), 
-               "Error: Problems adding new initial guess, already exists.");
-    auto newg = initial_guess.insert(std::make_pair(name, memory::share_from_root(*mpi, [&] {
-      nda::array<ComplexType,3> M(nspin, npol * NMO, nup);
-      M() = ComplexType(0.0, 0.0);
-      auto Mup = M(0,nda::ellipsis{});
-      utils::h5_read(grp,"Psi0_alpha",Mup);
-      if (walker_type == COLLINEAR)
+  utils::check(walkerTypeIsConvertible(wtype, walker_type), "Initial guess ({}) not convertible to walker_type {}", walkerTypeToString(wtype), walkerTypeToString(walker_type));
+  
+  auto guess = initial_guess_ft.find(name);
+  utils::check(guess == initial_guess_ft.end(), 
+             "Error: Problems adding new initial guess, already exists.");
+  auto newg = initial_guess_ft.insert(std::make_pair(name, memory::share_from_root(mpi, [&] {
+    nda::array<ComplexType,4> M(3, nspin, npol * NMO, NMO);
+    M() = ComplexType(0.0, 0.0);
+    auto URup = M(0,0,nda::ellipsis{});
+    utils::h5_read(grp,"UR_alpha",URup);
+    auto DRup = M(1,0,nda::ellipsis{});
+    utils::h5_read(grp,"DR_alpha",DRup);
+    auto VRup = M(2,0,nda::ellipsis{});
+    utils::h5_read(grp,"VR_alpha",VRup);
+    if (walker_type == COLLINEAR_FT)
+    {
+      if (wtype == COLLINEAR_FT)
       {
-        if (wtype == COLLINEAR)
-        {
-          auto Mdn = M(1,nda::range::all,nda::range(ndown));
-          utils::h5_read(grp,"Psi0_beta",Mdn);
-        }
-        else if (wtype == CLOSED)
-        {
-          utils::check(nup == ndown, "Error: wfn_type:Closed with nup != ndown.");
-          M(1,nda::ellipsis{}) = Mup();
-        }
-        else
-          utils::check(false," Error: Unknown wtype. ");
+        auto URdn = M(0,1,nda::range::all,nda::range(NMO));
+        utils::h5_read(grp,"UR_beta",URdn);
+        auto DRdn = M(1,1,nda::range::all,nda::range(NMO));
+        utils::h5_read(grp,"DR_beta",DRdn);
+        auto VRdn = M(2,1,nda::range::all,nda::range(NMO));
+        utils::h5_read(grp,"VR_beta",VRdn);
       }
-      return M;
-    })));
-    utils::check(newg.second, " Error: Problems adding new initial guess. ");
-  }
-  else
-  {
-    auto guess = initial_guess_ft.find(name);
-    utils::check(guess == initial_guess_ft.end(), 
-               "Error: Problems adding new initial guess, already exists.");
-    auto newg = initial_guess_ft.insert(std::make_pair(name, memory::share_from_root(*mpi, [&] {
-      nda::array<ComplexType,4> M(3, nspin, npol * NMO, NMO);
-      M() = ComplexType(0.0, 0.0);
-      auto URup = M(0,0,nda::ellipsis{});
-      utils::h5_read(grp,"UR_alpha",URup);
-      auto DRup = M(1,0,nda::ellipsis{});
-      utils::h5_read(grp,"DR_alpha",DRup);
-      auto VRup = M(2,0,nda::ellipsis{});
-      utils::h5_read(grp,"VR_alpha",VRup);
-      if (walker_type == COLLINEAR_FT)
+      else if (wtype == CLOSED)
       {
-        if (wtype == COLLINEAR_FT)
-        {
-          auto URdn = M(0,1,nda::range::all,nda::range(NMO));
-          utils::h5_read(grp,"UR_beta",URdn);
-          auto DRdn = M(1,1,nda::range::all,nda::range(NMO));
-          utils::h5_read(grp,"DR_beta",DRdn);
-          auto VRdn = M(2,1,nda::range::all,nda::range(NMO));
-          utils::h5_read(grp,"VR_beta",VRdn);
-        }
-        else if (wtype == CLOSED)
-        {
-          //utils::check(nup == ndown, "Error: wfn_type:Closed with nup != ndown.");
-          M(0,1,nda::ellipsis{}) = URup();
-          M(1,1,nda::ellipsis{}) = DRup();
-          M(2,1,nda::ellipsis{}) = VRup();
-        }
-        else
-          utils::check(false," Error: Unknown wtype. ");
+        //utils::check(nup == ndown, "Error: wfn_type:Closed with nup != ndown.");
+        M(0,1,nda::ellipsis{}) = URup();
+        M(1,1,nda::ellipsis{}) = DRup();
+        M(2,1,nda::ellipsis{}) = VRup();
       }
-      return M;
-    })));
-    utils::check(newg.second, " Error: Problems adding new initial guess. ");
-  }
+      else
+        utils::check(false," Error: Unknown wtype. ");
+    }
+    return M;
+  })));
+  utils::check(newg.second, " Error: Problems adding new initial guess. ");
 }
 
+/*
+ * Read Initial walker from file. Needs all mpi tasks, since it allocates on shared memory.
+*/
+template<MEMORY_SPACE MEM>
+void WavefunctionFactory<MEM>::getInitialGuess(h5::group grp,
+         utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+         const std::string& name, int NMO, int nup, int ndown, WALKER_TYPES walker_type)
+{
+  using nda::range;
+  auto all = range::all;
+
+  nda::array<int,1> dims(5);
+  nda::h5_read(grp,"dims",dims);
+  
+  auto nel_in_guess = std::to_array({dims[1],dims[2]});
+
+  WALKER_TYPES wtype(initWALKER_TYPES(dims[3]));
+  utils::check(walkerTypeIsConvertible(wtype, walker_type), "Initial guess ({}) not convertible to walker_type {}", walkerTypeToString(wtype), walkerTypeToString(walker_type));
+  utils::check(walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT, "called ground state function on finite temperature");
+  auto guess = initial_guess.find(name);
+  utils::check(guess == initial_guess.end(), 
+             "Error: Problems adding new initial guess, already exists.");
+  auto newg = initial_guess.insert(std::make_pair(name, memory::share_from_root(mpi, [&] {
+    auto [nspin_in_guess, npol_in_guess] = walkerTypeToDims(wtype);
+    nda::array<ComplexType,3> M(nspin_in_guess, npol_in_guess * NMO, *std::ranges::max_element(nel_in_guess));
+    M() = 0;
+
+    std::array<std::string,2> dataset_names{{"Psi0_alpha", "Psi0_beta"}};
+
+    for(int is = 0; is < nspin_in_guess; is++) {
+      utils::check(nup >= nel_in_guess[is], "initial guess contains more electrons of spin {} than walker nup ({})", nel_in_guess[is], nup);
+      auto Mspin = M(is, all, range(nel_in_guess[is]));
+      utils::h5_read(grp, dataset_names[is], Mspin);
+    }
+    auto [nspin, npol] = walkerTypeToDims(walker_type);
+
+    if(walker_type == wtype) {
+      return M;
+    } else if(walker_type == NONCOLLINEAR) {
+      nda::array<ComplexType,3> Mfull(nspin, npol * NMO, nup);
+      Mfull() = 0;
+      auto Mfull4d = reshape(Mfull, nspin, npol, NMO, Mfull.extent(2));
+      int offset = 0;
+      for(int ip = 0; ip < npol; ip++) {
+        Mfull4d(0, ip, all, range(offset, offset + nel_in_guess[ip])) = M(ip % nspin_in_guess, all, range(nel_in_guess[ip])); 
+        offset += nel_in_guess[ip];
+      }
+      return Mfull;
+    } else { // CLOSED -> COLLINEAR
+      nda::array<ComplexType,3> Mfull(nspin, npol * NMO, std::max(nup,ndown));
+      Mfull() = 0;
+      for(int is = 0; is < nspin; is++) {
+        Mfull(is, all, all) = M(is % nspin_in_guess, all, all); 
+      }
+      return Mfull;
+    }
+  })));
+  utils::check(newg.second, " Error: Problems adding new initial guess. ");
+}
 
 /*
 void WavefunctionFactory::computeVariationalEnergyPHMSD(TaskGroup_& TG,

@@ -33,17 +33,15 @@ namespace sfqmc
 {
 namespace afqmc
 {
-class KPFactorizedHamiltonian : public AFQMCInfo 
+class KPFactorizedHamiltonian
 {
 public:
 
-  KPFactorizedHamiltonian(AFQMCInfo const& info,
-                          ptree pt_in,
+  KPFactorizedHamiltonian(ptree pt_in,
                           ComplexType nucE = 0,
                           ComplexType fzcE = 0)
-      : AFQMCInfo(info),
-	NuclearCoulombEnergy(nucE),
-	FrozenCoreEnergy(fzcE),	
+      : NuclearCoulombEnergy(nucE),
+      	FrozenCoreEnergy(fzcE),	
         fileName("")
   {
     // convert user input to verbose input
@@ -52,7 +50,6 @@ public:
     app_log(2, "{}", io::to_string(pt));
     // initialize using verbose input
     fileName  = pt.get<std::string>("filename");
-    name      = pt.get<std::string>("name");
     buffer_size = pt.get<int>("buffer_size");
   }
 

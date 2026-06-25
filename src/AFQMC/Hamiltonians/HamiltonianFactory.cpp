@@ -139,32 +139,32 @@ Hamiltonian HamiltonianFactory::fromHDF5(std::shared_ptr<utils::mpi_context_t<mp
   {
     if(mpi->comm.root())
       utils::check(format == "coqui", "Error: format: {} not yet implemented with this hamiltonian type.", format);
-    return Hamiltonian(KPTHCHamiltonian(AFinfo, pt, NuclearCoulombEnergy, FrozenCoreEnergy));
+    return Hamiltonian(KPTHCHamiltonian(pt, NuclearCoulombEnergy, FrozenCoreEnergy));
   }
   else if (htype == KPFactorized)
   {
     if(mpi->comm.root())
       utils::check(format == "coqui" or format == "std", "Error: format: {} not yet implemented with this hamiltonian type.", format);
-    return Hamiltonian(KPFactorizedHamiltonian(AFinfo, pt, NuclearCoulombEnergy, FrozenCoreEnergy));
+    return Hamiltonian(KPFactorizedHamiltonian(pt, NuclearCoulombEnergy, FrozenCoreEnergy));
   }
   else if (htype == RealDenseFactorized)
   {
     // CoQui does not generate real cholesky yet, it is hardwired to be complex
     if(mpi->comm.root())
       utils::check(format == "std", "Error: format: {} not yet implemented with this hamiltonian type.", format);
-    return Hamiltonian(RealDenseHamiltonian(AFinfo, pt, NuclearCoulombEnergy, FrozenCoreEnergy));
+    return Hamiltonian(RealDenseHamiltonian(pt, NuclearCoulombEnergy, FrozenCoreEnergy));
   }
   else if ( htype == ModelHamiltonian ) 
   {
     if(mpi->comm.root())
       utils::check(format == "std", "Error: format: {} not yet implemented with this hamiltonian type.", format);
-    return Hamiltonian(ModelHamOpsGenerator(AFinfo, pt, NuclearCoulombEnergy, FrozenCoreEnergy));
+    return Hamiltonian(ModelHamOpsGenerator(pt, NuclearCoulombEnergy, FrozenCoreEnergy));
   }
   else if ( htype == THC )
   {
     if(mpi->comm.root())
       utils::check(format == "coqui", "Error: format: {} not yet implemented with this hamiltonian type.", format);
-    return Hamiltonian(THCHamiltonian(AFinfo, pt, NuclearCoulombEnergy, FrozenCoreEnergy));
+    return Hamiltonian(THCHamiltonian(pt, NuclearCoulombEnergy, FrozenCoreEnergy));
   }
 
   utils::check(false, " Error in HamiltonianFactory::fromHDF5(): Unknown Hamiltonian Type. ");

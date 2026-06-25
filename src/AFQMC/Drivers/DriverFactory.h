@@ -129,7 +129,7 @@ public:
           pt1.put_child("cs_system_"+std::to_string(i),*sys_pt);
         } else {
           utils::check(false," wavefunction definition or declaration required in cs_system_N.");
-	}
+        }
       } else {
         utils::check(false,"cs_system_N not found."); 
       }

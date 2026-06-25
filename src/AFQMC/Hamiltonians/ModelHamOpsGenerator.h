@@ -13,17 +13,13 @@
 
 #pragma once
 
-#include <iostream>
 #include <vector>
-#include <map>
-#include <fstream>
 
 #include "IO/ptree/ptree_utilities.hpp"
 #include "IO/app_loggers.h"
 #include "utilities/mpi_context.h"
     
 #include "AFQMC/config.h"
-#include "nda/h5.hpp"
 
 #include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
 
@@ -31,15 +27,13 @@ namespace sfqmc
 {
 namespace afqmc
 {
-class ModelHamOpsGenerator : public AFQMCInfo 
+class ModelHamOpsGenerator
 {
 public:
-  ModelHamOpsGenerator(AFQMCInfo const& info,
-                       ptree pt_in,
+  ModelHamOpsGenerator(ptree pt_in,
                        ComplexType nucE = 0,
                        ComplexType fzcE = 0)
-      : AFQMCInfo(info), 
-        NuclearCoulombEnergy(nucE), 
+      : NuclearCoulombEnergy(nucE), 
         FrozenCoreEnergy(fzcE)
   {
     // convert user input to verbose input
@@ -48,7 +42,6 @@ public:
     app_log(2, "{}", io::to_string(pt));
     // initialize using verbose input
     fileName  = pt.get<std::string>("filename");
-    name      = pt.get<std::string>("name");
     shift_1body = pt.get<bool>("shift_1body");
   }
 

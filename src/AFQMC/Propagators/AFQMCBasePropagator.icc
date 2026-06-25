@@ -218,6 +218,66 @@ void AFQMCBasePropagator<MEM>::Propagate_conditioned(WlkSet& wset,
 }
 
 /*
+ * Free-projection field-sampling step, decoupled from the propagator's build mode. Draws bare auxiliary
+ * fields Y ~ p_T(Y) (no force bias, no vMF shift) and applies B_T(Y) = exp(vHS) to the walkers, then
+ * stops. Used by StochasticWfn to draw walker-INDEPENDENT free-projection trial samples
+ * {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references, regardless of whether the (forward) inner
+ * propagator was built for free projection (3b) or importance sampling (3c conditioning/leapfrog). Forces
+ * bare field assembly by toggling free_projection around assemble_X (which reads that member), then
+ * restores it: construct_X then ignores the zero vbias and vMF and produces X = sqrtdt * Gaussian noise.
+ * Like Propagate_conditioned, skips the energy/overlap and walker-weight update -- the propagated
+ * determinants are field samples, not weighted walkers.
+ */
+template<MEMORY_SPACE MEM>
+template<class WlkSet>
+void AFQMCBasePropagator<MEM>::Propagate_free(WlkSet& wset, RealType dt, int nt)
+{
+  (void)nt;
+  auto walker_type = wset.getWalkerType();
+  int nwalk        = wset.size();
+  int npol  = ( walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1 );
+  SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
+  int nCV     = wfn->number_of_cholesky_vectors();
+
+  // if timestep changed, recalculate one body propagator and vMF
+  if (std::abs(dt - old_dt) > 1e-6)
+    generateP1(dt, walker_type);
+
+  memory::buffered_array<MEM,ComplexType,1> MFfactor(nwalk,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,1> hybrid_weight(nwalk,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,2> X(nwalk, nCV);
+  X() = ComplexType(0.0);
+
+  // Force bare (free-projection) field assembly regardless of build mode. The free_projection member is
+  // toggled only for the assemble_X call and restored on scope exit by the RAII guard (robust to an early
+  // return / abort inside assemble_X). NOTE: this assumes a single-threaded call on this propagator
+  // instance -- true today (one Propagator variant alternative, no intra-propagator threading); if a
+  // future propagator type mutates shared state across threads this toggle would need revisiting.
+  {
+    struct FreeProjGuard
+    {
+      bool& flag;
+      bool  saved;
+      explicit FreeProjGuard(bool& f) : flag(f), saved(f) { flag = true; }
+      ~FreeProjGuard() { flag = saved; }
+    } fp_guard(free_projection);
+    assemble_X(sqrtdt, X, MFfactor, hybrid_weight);
+  }
+
+  if(denseP2) {
+    auto vHS = wfn->vHS(X, dt);
+    utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
+                 "Size mismatch");
+    apply_propagators<'N'>(wset,vHS);
+  } else {
+    auto vHS = wfn->vHS_sparse(X, dt);
+    apply_propagators<'N'>(wset,vHS);
+  }
+  (void)npol;
+  mpi->comm.barrier();
+}
+
+/*
  * This routine assumes that the 1 body propagator does not need updating
  * Input:
  *  - nbsteps: # of back propagation steps to perform.

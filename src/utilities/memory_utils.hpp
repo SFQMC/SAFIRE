@@ -17,6 +17,18 @@
 #include "utilities/check.hpp"
 
 namespace sfqmc::utils {
+inline std::string format_bytes(double bytes) {
+  constexpr std::array units = {
+    "B  ", "KiB", "MiB", "GiB", "TiB",
+  };
+
+  int unit = 0;
+  for(; unit + 1 < units.size() && bytes > 1024; unit++) {
+    bytes /= 1024;
+  }
+
+  return std::format("{:6.1f} {}", bytes, units[unit]);
+}
 
 inline void resize_nda_static_allocator(double x = 0.05)
 {
@@ -26,10 +38,9 @@ inline void resize_nda_static_allocator(double x = 0.05)
     size_t oldsz = static_alloc_host.get_primary()->size(); 
     size_t maxm  = static_alloc_host.get_primary()->maximum_memory();
     if(maxm > oldsz) {
-      double gb = 1.0 / (1024.0*1024.0*1024.0);
-      size_t newsz = size_t( double(maxm) * (1.0+x) ); 
-      app_log(2, "Increasing host buffer size, old:{} GB new:{} GB",
-        double(oldsz)*gb, double(newsz)*gb);
+      size_t newsz = static_cast<size_t>(maxm * (1.0+x)); 
+      app_log(2, "Increasing host buffer size: {} -> {}",
+        format_bytes(oldsz), format_bytes(newsz));
       static_alloc_host.get_primary()->resize(newsz);
     }
   } 
@@ -39,10 +50,9 @@ inline void resize_nda_static_allocator(double x = 0.05)
     size_t oldsz = static_alloc_dev.get_primary()->size();
     size_t maxm  = static_alloc_dev.get_primary()->maximum_memory();
     if(maxm > oldsz) {
-      double gb = 1.0 / (1024.0*1024.0*1024.0);
       size_t newsz = size_t( double(maxm) * (1.0+x) ); 
-      app_log(2, "Increasing device buffer size, old:{} GB new:{} GB",
-        double(oldsz)*gb, double(newsz)*gb);
+      app_log(2, "Increasing device buffer size: {} -> {}",
+        format_bytes(oldsz), format_bytes(newsz));
       static_alloc_dev.get_primary()->resize(newsz);
     }
   }

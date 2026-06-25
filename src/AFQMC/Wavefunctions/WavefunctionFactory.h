@@ -26,36 +26,41 @@
 #include "AFQMC/config.h"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "AFQMC/Hamiltonians/HamiltonianFactory.h"
+#include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
+#include "IO/app_loggers.h"
 
 namespace sfqmc
 {
 namespace afqmc
 {
 
+// Phase 8: first-class stochastic trial input. Accepts type: stochasticwfn (preferred) or the
+// deprecated stochastic: true flag on a plain NOMSD block.
+inline bool is_stochastic_wavefunction_input(ptree const& pt0)
+{
+  if (auto type_opt = pt0.get_optional<std::string>("type"))
+  {
+    std::string const type = *type_opt;
+    if (type == "stochasticwfn" || type == "stochastic_wfn" || type == "stochastic")
+      return true;
+    if (type == "nomsd" || type == "phmsd")
+      return false;
+    APP_ABORT("Error in WavefunctionFactory: unknown wavefunction type: " + type);
+  }
+  return pt0.get<bool>("stochastic", false);
+}
+
 template<MEMORY_SPACE MEM>
 class WavefunctionFactory
 {
 public:
-  // Original constructor (no inner-Hamiltonian support): kept so every existing call site stays valid.
-  // A stochastic trial that names `inner_hamiltonian` under a factory built this way aborts in fromHDF5
-  // with a clear message.
-  WavefunctionFactory(std::map<std::string, AFQMCInfo>& info) : InfoMap(info)
-  {
-    // initialize in fromHDF5
-  }
+  WavefunctionFactory() = default;
 
-  // Overload that additionally takes the HamiltonianFactory used to build the StochasticWfn inner
-  // (Variational) Hamiltonian `Ĥ_var` on demand when a stochastic trial names one via
-  // `inner_hamiltonian` (Phase 3b-var). WavefunctionFactory remains a Hamiltonian *consumer* — it does
-  // not own Hamiltonians, it asks hamfac to build the second one. Non-stochastic and clone-path trials
-  // never touch it.
-  WavefunctionFactory(std::map<std::string, AFQMCInfo>& info, HamiltonianFactory& hamfac)
-      : InfoMap(info), HamFac_(&hamfac)
-  {
-    // initialize in fromHDF5
-  }
+  // Optional HamiltonianFactory for StochasticWfn `inner_hamiltonian` (Phase 3b-var). Null when
+  // default-constructed; fromHDF5 aborts if a stochastic trial then requests inner_hamiltonian.
+  explicit WavefunctionFactory(HamiltonianFactory& hamfac) : HamFac_(&hamfac) {}
 
   static ptree interpret_inputs(const ptree pt0)
   {
@@ -88,7 +93,9 @@ public:
     // set default later, since it depends on HamiltonianOperations type
     if( auto val = pt0.get_optional<bool>("dense_trial") )
       pt1.put("dense_trial", *val);
-    bool stochastic    = pt0.get<bool>("stochastic", false);
+    bool stochastic = is_stochastic_wavefunction_input(pt0);
+    if (pt0.get<bool>("stochastic", false) && not pt0.get_child_optional("type"))
+      app_warning("WavefunctionFactory: stochastic: true is deprecated; use type: stochasticwfn.");
     int inner_nwalkers = pt0.get<int>("inner_nwalkers", 1);
     if (inner_nwalkers < 1)
       APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
@@ -107,8 +114,7 @@ public:
           "inner_propagator", "inner_hamiltonian"})
       if (not stochastic && pt0.get_child_optional(key))
         APP_ABORT("Error in WavefunctionFactory::interpret_inputs: " + std::string(key) +
-                  " requires stochastic: true.");
-    pt1.put("stochastic", stochastic);
+                  " requires type: stochasticwfn.");
     if (stochastic)
     {
       pt1.put("inner_nwalkers", inner_nwalkers);
@@ -121,6 +127,7 @@ public:
     }
     std::unordered_set<std::string> pass_through_keys = {
       "system",
+      "type",
       "stochastic",
       "inner_nwalkers",
       "inner_nsteps",
@@ -133,8 +140,6 @@ public:
     io::compare_known_keys("Wavefunction Factory",pt1, pt0,pass_through_keys);
     return pt1;
   }
-
-  ~WavefunctionFactory() {}
 
   bool is_constructed(const std::string& ID)
   {
@@ -184,17 +189,12 @@ public:
     auto xml = wfnBlocks.find(ID);
     if (xml == wfnBlocks.end())
       APP_ABORT(" Error in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers: Missing wfn block. ");
-    ptree pt = interpret_inputs(xml->second);
-    if (not pt.get<bool>("stochastic"))
-      return;
     if (not wfn.is_stochastic_wavefunction())
       return;
     if (wfn.stochastic_inner_walkers_initialized())
       return;
-    std::string info = pt.get<std::string>("system");
-    if (InfoMap.find(info) == InfoMap.end())
-      APP_ABORT("ERROR: Undefined system in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers.");
-    int ndown = InfoMap[info].ndown;
+    ptree pt = interpret_inputs(xml->second);
+    int ndown = std::get<2>(read_info_from_wfn(pt.get<std::string>("filename"), "any"));
     (void)walker_type;
     auto ig = initial_guess.find(ID);
     if (ig == initial_guess.end())
@@ -284,12 +284,6 @@ public:
   }
 
 protected:
-  // reference to container of AFQMCInfo objects
-  std::map<std::string, AFQMCInfo>& InfoMap;
-
-  // HamiltonianFactory used to build the inner (Variational) Hamiltonian on demand (Phase 3b-var).
-  // Null when constructed via the original single-arg constructor; fromHDF5 aborts if a stochastic
-  // trial then requests an inner_hamiltonian.
   HamiltonianFactory* HamFac_ = nullptr;
 
   // generates a new Wavefunction and returns the pointer to the base class
@@ -312,7 +306,8 @@ protected:
                         Hamiltonian& h,
                         int targetNW);
 
-  void getInitialGuess(h5::group grp, std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string& name, int NMO, int nup, int ndown, WALKER_TYPES walker_type);
+  void getInitialGuess(h5::group grp, utils::mpi_context_t<boost::mpi3::communicator>& mpi, const std::string& name, int NMO, int nup, int ndown, WALKER_TYPES walker_type);
+  void getInitialGuess_ft(h5::group grp, utils::mpi_context_t<boost::mpi3::communicator>& mpi, const std::string& name, int NMO, WALKER_TYPES walker_type);
 /*
   int getExcitation(nda::MemoryVector& deti,
                     nda::MemoryVector& detj,

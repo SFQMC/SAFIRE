@@ -93,7 +93,7 @@ void estimator_handler_measure_schedule(std::shared_ptr<utils::mpi_context_t<boo
   wfn_pt.put("dense_trial",true);
 
   int nwalk = 11;
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
 

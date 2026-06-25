@@ -98,6 +98,9 @@ inline WALKER_TYPES walkerTypeFromDims(int nspin, int npol) {
 }
 
 inline bool walkerTypeIsConvertible(WALKER_TYPES from, WALKER_TYPES to) {
+  if(from == to) {
+    return true;
+  }
   if(from < CLOSED || from > NONCOLLINEAR || to < CLOSED || to > NONCOLLINEAR) {
     // hopefully we can get rid of FULLYPOLARIZED and use a smarter scheme to work with FT
     return false;
@@ -152,7 +155,8 @@ enum INTEGRAL_TYPES
 enum WAVEFUNCTION_TYPES
 {
   NOMSD_WFN,
-  PHMSD_WFN
+  PHMSD_WFN,
+  STOCHASTIC_WFN
 };
 
 inline INTEGRAL_TYPES initINTEGRAL_TYPES(int i)

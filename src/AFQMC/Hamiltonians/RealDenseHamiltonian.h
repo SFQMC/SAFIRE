@@ -34,15 +34,13 @@ namespace sfqmc
 {
 namespace afqmc
 {
-class RealDenseHamiltonian : public AFQMCInfo 
+class RealDenseHamiltonian
 {
 public:
-  RealDenseHamiltonian(AFQMCInfo const& info,
-                          ptree pt_in,
-                          ComplexType nucE = 0,
-                          ComplexType fzcE = 0)
-      : AFQMCInfo(info),
-        NuclearCoulombEnergy(nucE),
+  RealDenseHamiltonian(ptree pt_in,
+                       ComplexType nucE = 0,
+                       ComplexType fzcE = 0)
+      : NuclearCoulombEnergy(nucE),
         FrozenCoreEnergy(fzcE),
         fileName(""),
         max_memory_MB(2000)
@@ -53,7 +51,6 @@ public:
     app_log(2, "{}", io::to_string(pt));
     // initialize using verbose input
     fileName  = pt.get<std::string>("filename");
-    name      = pt.get<std::string>("name");
     max_memory_MB = pt.get<int>("max_memory");
   }
 

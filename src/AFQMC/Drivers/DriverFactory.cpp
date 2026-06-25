@@ -288,7 +288,7 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, ptr
     Hamiltonian& ham0 = HamFac.getHamiltonian(mpi, ham_name);
 
     // build wavefunction
-    [[maybe_unused]] auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, &ham0, nWalkers);
+    WfnFac.getWavefunction(mpi, wfn_name, walker_type, &ham0, nWalkers);
   }
 
   // wfn builder should not use Hamiltonian pointer now

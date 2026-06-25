@@ -44,12 +44,16 @@ std::tuple<int,int,int,int> getWavefunctionDims(std::string filename)
   h5::group grp(file);
   h5::group wgrp = grp.open_group("Wavefunction");
   std::string name;
-  if (wgrp.has_key("NOMSD")) {
+  if (wgrp.has_key("StochasticWfn")) {
+    utils::check(wgrp.has_key("NOMSD"),
+                 "StochasticWfn HDF5 requires a sibling Wavefunction/NOMSD block for trial data.");
+    name = std::string("NOMSD");
+  } else if (wgrp.has_key("NOMSD")) {
     name = std::string("NOMSD");
   } else if (wgrp.has_key("PHMSD")) {
     name = std::string("PHMSD");
   } else {
-    utils::check(false, "Missing NOMSD/PHMSD block."); 
+    utils::check(false, "Missing NOMSD/PHMSD/StochasticWfn block.");
   }
   h5::group ngrp = wgrp.open_group(name);
   std::vector<int> dims(5);
@@ -63,9 +67,15 @@ WAVEFUNCTION_TYPES getWavefunctionType(std::string filename)
   h5::file file(filename,'r');
   h5::group grp(file);
   h5::group wgrp = grp.open_group("Wavefunction");
+  if (wgrp.has_key("StochasticWfn")) {
+    utils::check(wgrp.has_key("NOMSD"),
+                 "StochasticWfn HDF5 requires a sibling Wavefunction/NOMSD block for trial data.");
+    return STOCHASTIC_WFN;
+  }
   if (wgrp.has_key("NOMSD")) {
     return NOMSD_WFN;
-  } else if (wgrp.has_key("PHMSD")) {
+  }
+  if (wgrp.has_key("PHMSD")) {
     return PHMSD_WFN;
   }
   utils::check(false, "Unknown wavefunction type in getWavefunctionType.");
@@ -78,12 +88,16 @@ WALKER_TYPES getWalkerType(std::string filename, std::string type)
   h5::group grp(file);
   h5::group wgrp = grp.open_group("Wavefunction");
   if(type == "any") {
-    if( wgrp.has_key("NOMSD") )
+    if( wgrp.has_key("StochasticWfn") ) {
+      utils::check(wgrp.has_key("NOMSD"),
+                   "StochasticWfn HDF5 requires a sibling Wavefunction/NOMSD block for trial data.");
+      type = "NOMSD";
+    } else if( wgrp.has_key("NOMSD") )
       type = "NOMSD";
     else if( wgrp.has_key("PHMSD") )
       type = "PHMSD";
     else
-      utils::check(false,"Missing NOMSD/PHMSD datasets in Wavefunction.");
+      utils::check(false,"Missing NOMSD/PHMSD/StochasticWfn datasets in Wavefunction.");
   }
   
   utils::check(wgrp.has_key(type), "Missing wfn type:{}",type);
@@ -120,7 +134,7 @@ void read_ph_wavefunction_hdf(h5::group& grp,
    *   - 1: excitations out of a UHF reference (not yet working)
    */
   WALKER_TYPES wtype;
-  getCommonInput(grp, NMO, nup, ndown, ndets, ci_coeff, wtype);
+  getCommonInput(grp, ndets, ci_coeff, wtype);
   // make first coefficient positive (or maybe largest???)
   ci_coeff() *= ( std::real(ci_coeff(0)) < 0.0 ? -1.0 : 1.0 );  
   utils::check(wtype != CLOSED, " walker_type==CLOSED not yet implemented for PHMSD Trial wavefunctions.");
@@ -297,25 +311,21 @@ ph_excitations<int, ComplexType, MEM> build_ph_struct(nda::array<ComplexType,1> 
 }
 
 
-void checkCommonDims(std::vector<int> const& dims, int NMO, int nup, int ndown, int& ndets_to_read) {
-  utils::check(NMO==dims[0], "Inconsistent NMO: given {} != {} in file", NMO, dims[0]);
-  std::array nels = {nup, ndown};
-  utils::check(nels == std::array{dims[1],dims[2]}, "Inconsistent (nup,ndown): given {} != {} in file", nels, std::array{dims[1], dims[2]});
-
-  if(ndets_to_read < 1) ndets_to_read = dims[4];
-  if(ndets_to_read > dims[4]) {
-    app_warning("Found less determinants than requested, adjusting request: requested {} > {} in file.", ndets_to_read, dims[4]);
-    ndets_to_read = dims[4];
+int get_number_of_determinants(std::vector<int> const& dims, int requested) {
+  if(requested < 1) {
+    return dims[4];
   }
+  if(requested > dims[4]) {
+    app_warning("Found less determinants than requested, adjusting request: requested {} > {} in file.", requested, dims[4]);
+    return dims[4];
+  }
+  return requested;
 }
 
 /*
  * Read trial wavefunction information from file.
  */
 void getCommonInput(h5::group& grp,
-                    int NMO,
-                    int nup,
-                    int ndown,
                     int& ndets_to_read,
                     nda::array<ComplexType,1>& ci,
                     WALKER_TYPES& walker_type)
@@ -323,7 +333,7 @@ void getCommonInput(h5::group& grp,
   // check for consistency in parameters
   std::vector<int> dims(5);
   h5::read(grp,"dims",dims);
-  checkCommonDims(dims, NMO, nup, ndown, ndets_to_read);
+  ndets_to_read = get_number_of_determinants(dims, ndets_to_read);
   app_log(1," - Number of determinants in trial wavefunction: {} ", ndets_to_read);
   ci.resize(ndets_to_read);
   nda::array<ComplexType,1> ci_t(dims[4]);

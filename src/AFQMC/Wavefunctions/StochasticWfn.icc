@@ -41,8 +41,8 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
                                              [[maybe_unused]] int targetNW)
     : AFQMCInfo(info),
       mpi_(std::move(mpi_in)),
-      nomsd_(info, nomsd_inputs(pt_in), wlk, mpi_, std::move(outer_hop_), std::move(ci_), std::move(orbs_), nce,
-             targetNW),
+      nomsd_(nomsd_inputs(pt_in), info.NMO, info.nup, info.ndown, wlk, mpi_, std::move(outer_hop_), std::move(ci_),
+             std::move(orbs_), nce, targetNW),
       inner_stack_(std::move(inner_stack_in))
 {
   if (inner_stack_ == nullptr)
@@ -102,6 +102,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "ndets_to_read",
       "restart_file",
       "filename",
+      "type",
       "stochastic",
       "inner_nwalkers",
       "inner_nsteps",
@@ -201,8 +202,14 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
 
   Ov() = ComplexType(0.0);
 
-  int tk0, tkN;
-  std::tie(tk0, tkN) = FairDivideBoundary(mpi_->comm.rank(), nw * P, mpi_->comm.size());
+  // Per-rank-local, exactly like NOMSD::Log_Overlap: each rank scores its OWN nw outer walkers against
+  // the full inner ensemble (loop the full nw*P pairs) with NO cross-rank distribution / all_reduce. The
+  // earlier FairDivide-of-pairs-across-the-comm + all_reduce(Ov, nw) was correct only for REPLICATED outer
+  // walkers (the unit tests, where every rank holds the same wset); in the real driver the outer walkers
+  // are DISTRIBUTED across ranks, so all-reducing per-walker Ov(iw) summed DIFFERENT physical walkers
+  // across ranks -> corrupted overlaps -> bad hybrid weights -> zero-weight walkers tripping pair_branch.
+  // Same per-rank-complete contract as the Energy override.
+  const int tk0 = 0, tkN = nw * P;
 
   memory::buffered_array<MEM, ComplexType, 1> log_ov(1, ComplexType(0.0));
   memory::buffered_array<MEM, ComplexType, 3> inner_one(1, NMO, nup);
@@ -240,9 +247,8 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
       Ov(iw) += inv_P * ov;
   }
 
-  if (mpi_->comm.size() > 1)
-    mpi_->comm.all_reduce_in_place_n(Ov().data(), nw, std::plus<>{});
-
+  // NO cross-rank all_reduce of Ov (see the per-rank-local note above): each rank already holds the
+  // complete effective overlap for its own walkers.
   // The pair loop accumulates the LINEAR effective overlap: (1/P) sum_p <psi_p|phi_w> normally, or the
   // leapfrog-reweighted sum_p <psi_p|phi_w>/|<psi_p|phi_cond>| (so new/old reproduces Eq. 25). The OVLP
   // property convention (matching NOMSD::Log_Overlap) is the LOG overlap, so convert back here.
@@ -302,8 +308,13 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
           E(w, nda::range::all) += Sp(w) * eloc2(w, nda::range::all);
       });
 
-  if (mpi_->comm.size() > 1)
-    mpi_->comm.all_reduce_in_place_n(E().data(), 3 * nwalk, std::plus<>{});
+  // NO all_reduce over E here. nomsd_.energy_from_G / energy_from_fullG (-> HamOp.energy) returns the
+  // COMPLETE per-walker energy on every rank -- it performs any internal Cholesky-distribution reduction
+  // itself, exactly as NOMSD::Energy relies on (NOMSD does no external all_reduce). reduce_inner_cross_dm
+  // also replicates the full inner-walker loop on every rank (it is NOT FairDivided -- unlike the pair
+  // loop in Log_Overlap), so both the numerator E and the denominator D are already complete on each
+  // rank. An all_reduce here would double-count E by comm.size() (a latent bug invisible at -np 1; it
+  // doubled the energy at -np 2 while the matching un-reduced D left s3 != s1 == NOMSD).
   for (int w = 0; w < nwalk; ++w)
     E(w, nda::range::all) /= D(w);
 
@@ -358,6 +369,10 @@ template<class WlkSet>
 void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
 {
   inner_step_pending_ = true;
+  // A forward step closes the current BP window: invalidate any cached BP reference draw so the next
+  // back-propagation block draws a fresh free-projection ensemble (and so getReferences sees the forward
+  // ensemble, not a stale draw, after a resample).
+  bp_refs_drawn_ = false;
   // Phase 3c-ii leapfrog: resample conditioned on the current (old) walker phi and refresh the stored
   // OVLP = <Psi_T|phi> against that just-sampled ensemble. Log_Overlap(wset) consumes the latch just
   // armed (driving the conditioned resample + inner_cond_mag_), then stores the importance-reweighted
@@ -919,6 +934,51 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
   reduce_inner_mean_field_dm(Gsum);
   auto v2d = nda::reshape(v, std::array<long, 2>{1, v.size()});
   nomsd_.vbias_from_G(Gsum, v2d, dt);
+}
+
+// Phase 7 (Tier 6): back-propagation reference Slater matrices. At the OUTER-NOMSD-delegate regime
+// (static limit / P==1) this forwards to nomsd_ (the anchor / CI expansion). For a dynamic trial
+// (bp_uses_inner_ensemble()) it first DRAWS a fresh, walker-independent free-projection ensemble of P
+// samples {psi_p = B_T(Y^[p])|phi_T>} (draw_bp_reference_ensemble(), decoupled from the forward inner
+// ensemble -- works for free-projection AND conditioned/leapfrog forward walks), then fills the
+// references from those P samples: the inner walker Slater matrix is stored as [npol*NMO, nup] (the
+// transpose of NOMSD's OrbMats [nup, npol*NMO]), so the bra Refs(p,:,:) is conj(SM) directly -- a
+// conjugate with NO transpose, vs NOMSD's conj+transpose of OrbMats. The estimator (FullObsHandler)
+// supplies the per-reference overlap exp(Ov_p) and uniform weight 1/P (getReferenceWeight), reproducing
+// the stochastic trial bra <Psi_T| ~ (1/P) sum_p <psi_p|. See StochasticDevelopment.md, Phase 7.
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class RefMat>
+void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat&& Refs)
+{
+  if (not bp_uses_inner_ensemble())
+  {
+    nomsd_.getReferences(number_of_references, std::forward<RefMat>(Refs));
+    return;
+  }
+  // Dedicated free-projection draw of the P reference samples (walker-independent), fresh per BP block.
+  draw_bp_reference_ensemble();
+  using nda::range;
+  auto all = range::all;
+  memory::check_memory_space<MEM>(Refs);
+  const WALKER_TYPES wt       = nomsd_.getWalkerType();
+  const int nel               = nup + (wt == COLLINEAR ? ndown : 0);
+  const int npol              = (wt == NONCOLLINEAR ? 2 : 1);
+  WalkerSet<MEM> const& inner = inner_wset();
+  if (number_of_references == 0)
+    return;
+  if (number_of_references < 0)
+    number_of_references = inner_nwalkers_;
+  utils::check(number_of_references > 0 and number_of_references <= inner_nwalkers_ and
+                   number_of_references <= int(Refs.extent(0)),
+               "Invalid number_of_references: {}", number_of_references);
+  utils::check(Refs.extent(1) == npol * NMO and Refs.extent(2) == nel, "Size mismatch");
+  for (int p = 0; p < number_of_references; ++p)
+  {
+    nda::tensor::add(nda::conj(inner.SlaterMatrices(Alpha)(p, all, all)), "ij", Refs(p, all, range(nup)), "ij");
+    if (wt == COLLINEAR)
+      nda::tensor::add(nda::conj(inner.SlaterMatrices(Beta)(p, all, all)), "ij", Refs(p, all, range(nup, nel)),
+                       "ij");
+  }
 }
 
 } // namespace afqmc

@@ -29,12 +29,12 @@ SparseEnergy<MEM,REAL> ModelHamOpsGenerator::make_SparseEnergy(
   using csrM = math::sparse::csr_matrix<ValueType, HOST_MEMORY, int, int>;
   auto all = range::all;
   int npol = (type == NONCOLLINEAR or type == NONCOLLINEAR_FT ? 2 : 1 );
+  int NMO = hij.extent(0)/2;
   long M = NMO;
   long M2 = npol*M; 
   long Madd = M2-M; 
 
-  utils::check(hij.extent(0) == 2*NMO, "Size mismaych");
-  utils::check(hij.extent(1) == M2, "Size mismatch");
+  utils::check_shape(hij, "hij", 2*NMO, M2);
 
   nda::array<long,1> n2IJ;
 
@@ -453,16 +453,17 @@ nda::array<long,1> ModelHamOpsGenerator::find_occupied_pairs(WALKER_TYPES type,
   utils::check(type != CLOSED, " Error: Model Hamiltonians not allowed with CLOSED walkers. ");
   using nda::range;
   int npol = (type == NONCOLLINEAR or type == NONCOLLINEAR_FT ? 2 : 1 );
-  long M = long(NMO);
+  utils::check(not U.empty() or not J.empty(), "Error: both U and J empty.");
+  long M = U.empty() ? long(J[0].shape(1)) : long(U[0].shape(1));
   long M2 = npol*M;
   long Madd = M2-M;
 
   nda::array<long,1> n2IJ;
   {
     std::vector<long> IJ;
-    IJ.reserve(20*NMO);
+    IJ.reserve(20*M);
     // to avoid adding too many copies
-    std::vector<bool> Idone(2*NMO, false);
+    std::vector<bool> Idone(2*M, false);
 
     // General formula for COLLINEAR and NONCOLLINEAR
     // IJ = i*M2+j            for up/up
@@ -588,7 +589,7 @@ void ModelHamOpsGenerator::addComponent( WALKER_TYPES wtype, PropagatorTypes pty
   RealType sign = (ChargePropg) ? RealType(1.0) : RealType(-1.0);
   int nIJ = n2IJ.extent(0);
   int nFields = 0;
-  long M = long(NMO);
+  long M = long(U.extent(1));
 
   // count number of fields. +2 for (i!=j) and +1 for (i==j) terms.
   {
