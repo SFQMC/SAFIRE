@@ -1307,16 +1307,43 @@ TEST_CASE("stochastic_mean_field_production_order", "[wfn_factory][stochastic_wf
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 7 (Tier 6 + Tier 4-5): back-propagation reference set and outer-facing layout queries. The Tier
-// 6 semantics is OUTER-NOMSD DELEGATE, INNER-ENSEMBLE-AGNOSTIC -- the stochastic trial exposes exactly
-// the outer nomsd_'s reference set (= {phi_T}, weight 1, for the intended single-determinant anchor; the
-// full CI expansion for a multi-det outer trial), ignoring the inner ensemble. So
-// total_number_of_references / getReferenceWeight / getReferences equal plain NOMSD's UNCONDITIONALLY
-// (not just at ndet==1) and INDEPENDENT of inner_nwalkers. This test verifies that reference parity
-// (COUNT, per-reference WEIGHT, reference Slater matrices) plus Tier 4-5 layout/metadata parity (Cholesky
-// count, Ham type, walker type). NOTE: parity/production-order cases are reference-API + layout only;
-// the integration smokes below exercise the full estimator/driver BP path at the static delegate limit
-// (inner_nsteps = 0). The production-order companion test covers the dynamic (post-begin_inner_step) case.
+namespace
+{
+// Shared helpers for the Phase 7 back-propagation reference cases: max |A-B| over two 2D views, and a
+// finiteness check over a 3D [nref, npol*NMO, nel] reference array (operator()-based, layout-agnostic).
+template<class A, class B>
+double max_abs_diff2d(A const& X, B const& Y)
+{
+  double m = 0.0;
+  for (long i = 0; i < X.extent(0); ++i)
+    for (long j = 0; j < X.extent(1); ++j)
+      m = std::max(m, std::abs(X(i, j) - Y(i, j)));
+  return m;
+}
+template<class A>
+bool all_finite3d(A const& X)
+{
+  for (long p = 0; p < X.extent(0); ++p)
+    for (long i = 0; i < X.extent(1); ++i)
+      for (long j = 0; j < X.extent(2); ++j)
+        if (not std::isfinite(X(p, i, j).real()) or not std::isfinite(X(p, i, j).imag()))
+          return false;
+  return true;
+}
+} // namespace
+
+// Phase 7 (Tier 6 + Tier 4-5): back-propagation reference set and outer-facing layout queries AT THE
+// STATIC LIMIT (inner_nsteps = 0 -- the default in this test). There bp_uses_inner_ensemble() is false, so
+// the stochastic trial DELEGATES its reference set to the outer nomsd_ (= {phi_T}, weight 1, for the
+// single-determinant anchor; the full CI expansion for a multi-det outer trial), ignoring the inner
+// ensemble. So total_number_of_references / getReferenceWeight / getReferences equal plain NOMSD's
+// UNCONDITIONALLY (not just at ndet==1) and INDEPENDENT of inner_nwalkers (1 and 3 both delegate). (For a
+// DYNAMIC trial, inner_nsteps > 0 with P > 1, getReferences instead performs a dedicated free-projection
+// draw -- exercised by stochastic_back_propagation_inner_refs and _production_order.) This test verifies
+// that static-limit reference parity (COUNT, per-reference WEIGHT, reference Slater matrices) plus Tier
+// 4-5 layout/metadata parity (Cholesky count, Ham type, walker type). NOTE: reference-API + layout only;
+// the integration smokes below exercise the full estimator/driver BP path (static at inner_nsteps = 0;
+// dynamic, with the conditioned+leapfrog forward walk + dedicated draw, in _dynamic_smoke).
 template<MEMORY_SPACE MEM>
 void stochastic_back_propagation_matches_nomsd(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1421,14 +1448,16 @@ TEST_CASE("stochastic_back_propagation_matches_nomsd", "[wfn_factory][stochastic
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 7 production-order regression (the Phase 6 lesson applied to Tier 6). The BP references are
-// captured DURING the run -- after begin_inner_step has resampled the inner ensemble. This test pins the
-// documented approximation: the back-propagation references must stay FROZEN at the outer trial while the
-// inner ensemble evolves. It builds a leapfrog trial (inner_conditioning = inner_leapfrog = true,
-// inner_nsteps = 1), calls begin_inner_step(wset) -- which advances AND expands the inner ensemble to
-// nwalk*P -- and then asserts total_number_of_references / getReferenceWeight / getReferences STILL equal
-// pre-step NOMSD's (inner-ensemble-agnostic), unaffected by the resample. REQUIREs the ensemble actually
-// expanded so the scenario is pinned. CLOSED+CPU (leapfrog/conditioning is CPU-only this phase).
+// Phase 7 production-order regression (the Phase 6 lesson applied to Tier 6): the BP references are drawn
+// DURING the run -- after begin_inner_step has resampled and EXPANDED the (conditioned/leapfrog) inner
+// ensemble to nwalk*P. This pins that the dedicated free-projection reference draw is DECOUPLED from that
+// walker-conditioned forward ensemble. It builds a leapfrog trial (inner_conditioning = inner_leapfrog =
+// true, inner_nsteps = 1), calls begin_inner_step(wset) -- which advances AND expands the inner ensemble
+// to nwalk*P -- then asserts the BP draw still returns P walker-INDEPENDENT references at weight 1/P (NOT
+// the anchor, NOT the conditioned ensemble), each propagated off the anchor; and that the next
+// begin_inner_step RE-EXPANDS the forward ensemble to nwalk*P (the draw reused it as scratch but left the
+// forward walk unharmed). REQUIREs the expansion so the scenario is pinned. CLOSED+CPU (leapfrog is
+// CPU-only this phase).
 template<MEMORY_SPACE MEM>
 void stochastic_back_propagation_production_order(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1494,15 +1523,14 @@ void stochastic_back_propagation_production_order(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_bpp", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpp", type, wlk_pt);
 
-    // Reference snapshot BEFORE any inner-ensemble evolution.
-    auto collect_refs = [&](Wavefunction<MEM>& wfn) {
-      const int n = wfn.total_number_of_references();
+    auto get_refs = [&](Wavefunction<MEM>& wfn, int n) {
       memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
       Refs() = ComplexType(0.0);
       wfn.getReferences(n, Refs);
       return nda::to_host(Refs);
     };
-    auto R_ref = collect_refs(wfn_nomsd);
+    auto all = nda::range::all;
+    auto R_anchor = get_refs(wfn_nomsd, 1); // NOMSD delegate -> the single anchor reference
 
     // Drive the inner ensemble: leapfrog begin_inner_step resamples + expands it to nwalk*P.
     auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
@@ -1510,32 +1538,55 @@ void stochastic_back_propagation_production_order(
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
 
-    // The BP references must be FROZEN at the outer trial -- unchanged by the inner resample, == NOMSD.
-    CHECK(wfn_s.total_number_of_references() == wfn_nomsd.total_number_of_references());
-    for (int i = 0; i < wfn_nomsd.total_number_of_references(); ++i)
-      CHECK_THAT(wfn_s.getReferenceWeight(i), utils::Approx(wfn_nomsd.getReferenceWeight(i)));
-    CHECK_THAT(collect_refs(wfn_s), utils::Approx(R_ref));
+    // The BP references are DECOUPLED from the (walker-conditioned, nwalk*P) forward ensemble: even for a
+    // conditioned + leapfrog trial, back-propagation exposes a dedicated walker-INDEPENDENT
+    // free-projection draw of the P trial samples at weight 1/P (Option B), NOT the anchor.
+    CHECK(wfn_s.total_number_of_references() == inner_nwalkers);
+    for (int p = 0; p < inner_nwalkers; ++p)
+      CHECK_THAT(wfn_s.getReferenceWeight(p), utils::Approx(ComplexType(1.0 / inner_nwalkers, 0.0)));
+
+    auto R_draw1 = get_refs(wfn_s, inner_nwalkers);
+    CHECK(all_finite3d(R_draw1));
+    for (int p = 0; p < inner_nwalkers; ++p) // each sample is propagated off the anchor (one B_T step)
+      CHECK(max_abs_diff2d(R_draw1(p, all, all), R_anchor(0, all, all)) > 1e-6);
+
+    // The dedicated draw left the forward ensemble at size P, but the next begin_inner_step re-expands it
+    // to nwalk*P (the forward walk is unharmed by the BP reference draw).
+    wfn_s.begin_inner_step(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+
+    // Across windows: begin_inner_step opened a new BP window (resetting the idempotency guard), so
+    // getReferences now draws a FRESH free-projection ensemble -- different from the previous window's.
+    auto R_draw2 = get_refs(wfn_s, inner_nwalkers);
+    CHECK(all_finite3d(R_draw2));
+    double cross_window = 0.0;
+    for (int p = 0; p < inner_nwalkers; ++p)
+      cross_window = std::max(cross_window, max_abs_diff2d(R_draw1(p, all, all), R_draw2(p, all, all)));
+    CHECK(cross_window > 1e-6);
   }
 }
 
 TEST_CASE("stochastic_back_propagation_production_order", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn BP references stay frozen at the outer trial after begin_inner_step (Phase 7).");
+  app_log(0, "StochasticWfn BP references are a dedicated free-projection draw, decoupled from a "
+             "conditioned/leapfrog forward ensemble (Phase 7).");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_production_order<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 7 Option B: for a walker-independent FREE-PROJECTION inner ensemble (inner_nsteps > 0, P > 1, not
-// conditioned), back-propagation exposes the P inner samples {psi_p} as references with weight 1/P,
-// rather than the anchor. This test (CLOSED/CPU) builds such a trial; BEFORE any propagation the inner
-// ensemble is P copies of the anchor, so the P references must (1) number P, (2) each weigh 1/P, and
-// (3) each equal NOMSD's single anchor reference -- verifying Option B activates AND fills the reference
-// Slater matrices in the right conjugated form. (At inner_nsteps == 0, or for conditioned trials, Option
-// B is off and BP delegates to the anchor == NOMSD -- covered by stochastic_back_propagation_matches_nomsd
-// and _production_order.)
+// Phase 7 (dedicated free-projection BP references): for a dynamic trial (inner_nsteps > 0, P > 1)
+// back-propagation draws a FRESH, walker-independent free-projection ensemble {psi_p = B_T(Y^[p])|phi_T>}
+// and exposes those P samples as references with weight 1/P, rather than the anchor. This test (CLOSED/
+// CPU) builds a non-conditioned dynamic trial and verifies (1) P references each at weight 1/P, (2) the
+// references are a finite free-projection draw, each PROPAGATED off the anchor (one B_T step), and (3)
+// the draw is IDEMPOTENT within a BP window (a repeated getReferences reuses the same ensemble; cross-
+// window freshness after begin_inner_step is checked in _production_order). (At inner_nsteps == 0 / P == 1,
+// BP delegates to the anchor == NOMSD -- covered by
+// stochastic_back_propagation_matches_nomsd; the conditioned/leapfrog decoupling is covered by
+// _production_order.)
 template<MEMORY_SPACE MEM>
 void stochastic_back_propagation_inner_refs(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1599,32 +1650,41 @@ void stochastic_back_propagation_inner_refs(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_bpir", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpir", type, wlk_pt);
 
-    // (1) Option B active: P references at weight 1/P (vs NOMSD's single anchor reference).
+    // (1) Option B active for a dynamic trial: P references at weight 1/P (vs NOMSD's single anchor).
     CHECK(wfn_s.total_number_of_references() == P);
     CHECK(wfn_nomsd.total_number_of_references() == 1);
     for (int p = 0; p < P; ++p)
       CHECK_THAT(wfn_s.getReferenceWeight(p), utils::Approx(ComplexType(1.0 / P, 0.0)));
 
-    // (2) the references themselves: unpropagated inner ensemble = P anchor copies, so each stochastic
-    // reference equals NOMSD's single anchor reference (and they are mutually identical).
     auto get_refs = [&](Wavefunction<MEM>& wfn, int n) {
       memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
       Refs() = ComplexType(0.0);
       wfn.getReferences(n, Refs);
       return nda::to_host(Refs);
     };
-    auto R_nomsd = get_refs(wfn_nomsd, 1);
-    auto R_s     = get_refs(wfn_s, P);
+    auto all = nda::range::all;
+
+    // (2) getReferences performs a fresh free-projection draw {psi_p = B_T(Y^[p])|phi_T>}: P finite
+    // references, each PROPAGATED off the anchor (inner_nsteps = 1 bare B_T step).
+    auto R_anchor = get_refs(wfn_nomsd, 1); // NOMSD delegate -> the single anchor reference
+    auto R_draw1  = get_refs(wfn_s, P);
+    CHECK(all_finite3d(R_draw1));
     for (int p = 0; p < P; ++p)
-      CHECK_THAT(R_s(p, nda::range::all, nda::range::all),
-                 utils::Approx(R_nomsd(0, nda::range::all, nda::range::all)));
+      CHECK(max_abs_diff2d(R_draw1(p, all, all), R_anchor(0, all, all)) > 1e-6);
+
+    // (3) IDEMPOTENT within a BP window: a repeated getReferences with no intervening forward step
+    // (begin_inner_step) reuses the SAME draw -- the guard prevents a silent re-draw within a window
+    // (cross-window freshness, after begin_inner_step, is checked in _production_order).
+    auto R_draw2 = get_refs(wfn_s, P);
+    CHECK(all_finite3d(R_draw2));
+    CHECK_THAT(R_draw2, utils::Approx(R_draw1));
   }
 }
 
 TEST_CASE("stochastic_back_propagation_inner_refs", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn back-propagation exposes inner free-projection samples as references (Phase 7 Option B).");
+  app_log(0, "StochasticWfn back-propagation draws a fresh free-projection reference ensemble (Phase 7).");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_inner_refs<MEM>(mpi, hamil_file, wfn_file);

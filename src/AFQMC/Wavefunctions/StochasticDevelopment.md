@@ -33,7 +33,7 @@ that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Over
 | Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only**; **Phase 7 BP integration smokes** (`stochastic_back_propagation_estimator_smoke`, `stochastic_back_propagation_driver_smoke`) at the static delegate limit; **full `DriverFactory` run with VAFQMC-exported Ne cc-pVDZ HDF5 (Stages A/C 3b-var; Stages D/E 3c-i/3c-ii leapfrog, Jun 2026)** — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026) |
 | GPU build | CPU-only gate in dynamic path | **Not tested** |
 
-**The full `[stochastic_wfn]` tag passes on overhaul (21 cases, 7060 assertions, `mpirun -np 1`,
+**The full `[stochastic_wfn]` tag passes on overhaul (21 cases, 7071 assertions, `mpirun -np 1`,
 `Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`; the 12th is the Phase 5 observable-DM case `stochastic_mixed_density_matrix_matches_nomsd`; the 13th is the Phase 5 `accumulate_estimators` case `stochastic_accumulate_estimators_matches_nomsd`; the 14th is the Phase 6 mean-field case `stochastic_mean_field_matches_nomsd`; the 15th is the Phase 6 call-order regression `stochastic_mean_field_production_order`; the 16th is the Phase 7 back-prop-reference case `stochastic_back_propagation_matches_nomsd`; the 17th is the Phase 7 call-order regression `stochastic_back_propagation_production_order`; the 18th is the Phase 7 BP estimator integration smoke `stochastic_back_propagation_estimator_smoke`; the 19th is the Phase 7 BP driver integration smoke `stochastic_back_propagation_driver_smoke`; the 20th is the Phase 7 Option B inner-reference case `stochastic_back_propagation_inner_refs`; the 21st is the Phase 7 dynamic (conditioned+leapfrog) BP integration smoke `stochastic_back_propagation_dynamic_smoke`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
 parity + Phases 2a/2b/3a static reductions + the 3b full-G dynamic trio + 3c-i conditioned sampling + 3c-ii
 leapfrog + the Phase 5 observable mixed DM + accumulate_estimators + the Phase 6 mean field). Porting them surfaced and
@@ -984,28 +984,28 @@ are walker-independent — so Option B is just Motta–Zhang BP with the trial r
 `φ_T` instead of the full spread `{ψ_p}` (its bias grows as the trial spreads from the anchor,
 consistent with how `vMF`/`G_MF` collapse to the anchor in Phase 6).
 
-**Corrected plan — a dedicated free-projection reference draw, decoupled from the forward ensemble.**
-Because the references represent the walker-independent trial, draw them **independently of the forward
-inner ensemble**: at each BP block, draw `P` fresh free-projection samples from the anchor and use them
-as references *regardless of whether the forward walk is free-projection, conditioned, or leapfrog*. This
-combines the **faithful BP bra** (free projection, walker-independent) with a **stable forward walk**
-(conditioned + leapfrog), resolving the tension that previously forced an either/or. The currently
-*implemented* Option B reads the **live** `inner_wset()` instead of a dedicated draw — which coincides
-with a valid reference set only when the forward walk is itself free-projection (the unstable regime).
-The dedicated decoupled draw is therefore the work that remains; see the
+**Dedicated free-projection reference draw, decoupled from the forward ensemble (IMPLEMENTED, CPU-verified
+[overhaul], 2026-06-25).** Because the references represent the walker-independent trial, they are drawn
+**independently of the forward inner ensemble**: at each BP block `getReferences` draws `P` fresh
+free-projection samples `{ψ_p = B̂_T(Y^[p])|φ_T⟩}` from the anchor and exposes them as references
+*regardless of whether the forward walk is free-projection, conditioned, or leapfrog*. This combines the
+**faithful BP bra** (free projection, walker-independent) with a **stable forward walk** (conditioned +
+leapfrog), resolving the tension that previously forced an either/or. The draw uses
+`Propagator::Propagate_free` (a bare-field step that forces free-projection assembly regardless of the
+forward propagator's build mode) on `inner_ensemble_.wset` as scratch — safe because every forward
+resample resets it to the anchor. See the
 [Phase 7 follow-up](#phase-7-follow-up--option-b-faithful-inner-ensemble-back-propagation-references-design-note--implementation)
-for the theory grounding, the path-restoration subtlety, and the finite-`P` bias.
+for the theory grounding, the path-restoration confirmation, and the finite-`P` bias.
 
-`bp_uses_inner_ensemble()` selects the regime *today*: **Option A (outer-NOMSD anchor delegate)** at the
-static limit, for `P = 1`, and for conditioned/leapfrog trials; **Option B (live free-projection inner
-samples `{ψ_p}`, weight `1/P`)** for a non-conditioned dynamic trial (`inner_nsteps>0`, `P>1`). The
-decoupled dedicated-draw plan would extend Option B to conditioned/leapfrog forward walks too.
+`bp_uses_inner_ensemble()` selects the regime: **outer-NOMSD anchor delegate** at the static limit and for
+`P = 1` (identical to plain NOMSD); **dedicated free-projection draw** (`{ψ_p}`, weight `1/P`) for **any**
+dynamic trial (`inner_nsteps>0`, `P>1`) — free-projection, conditioned, **and** leapfrog alike.
 
 | Method (overhaul name) | Status |
 |--------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| `total_number_of_references()` | **✓ Phase 7.** Option B: `inner_nwalkers` (= `P`); Option A: `nomsd_.total_number_of_references()` (independent of `inner_nwalkers`; `ndet` for multi-det outer trials). |
-| `getReferenceWeight(i)` | **✓ Phase 7.** Option B: `1/P`; Option A: `nomsd_.getReferenceWeight(i)` (= `ci[i]`). |
-| `getReferences(n, Refs)` | **✓ Phase 7.** Option B: fills the `P` inner free-projection samples (`conj` of the inner walker Slater matrix). Option A: the outer trial's references from `nomsd_` (`OrbMats`, H-conjugated). Walker-independent + time-stable (frozen by the estimator's copy), as the BP estimator requires. |
+| `total_number_of_references()` | **✓ Phase 7.** Dynamic trial: `inner_nwalkers` (= `P`); static limit / `P=1`: `nomsd_.total_number_of_references()` (`ndet` for multi-det outer trials). |
+| `getReferenceWeight(i)` | **✓ Phase 7.** Dynamic trial: `1/P`; static limit / `P=1`: `nomsd_.getReferenceWeight(i)` (= `ci[i]`). |
+| `getReferences(n, Refs)` | **✓ Phase 7 (dedicated draw, 2026-06-25).** Dynamic trial: draws `P` fresh free-projection samples `{ψ_p}` (`draw_bp_reference_ensemble()` → `Propagate_free`) and fills them (`conj` of the inner walker Slater matrix, no transpose); decoupled from the forward inner ensemble, so it works for free-projection AND conditioned/leapfrog forward walks. Static limit / `P=1`: the outer trial's references from `nomsd_` (`OrbMats`, H-conjugated). Walker-independent + time-stable (frozen by the estimator's copy), as the BP estimator requires. |
 
 ---
 
@@ -1666,16 +1666,16 @@ validation note.
 
 #### Phase 7 follow-up — Option B: faithful inner-ensemble back-propagation references (design note + implementation)
 
-**Status: PARTIALLY IMPLEMENTED (live-ensemble Option B), corrected plan below (dedicated draw, NOT yet
-implemented).** The implemented reference API (CPU-verified [overhaul]) reads the **live** `inner_wset()`
-as references for a walker-independent free-projection inner ensemble (`inner_nsteps > 0`, `P > 1`,
-**not** conditioned), weight `1/P`; otherwise it delegates to the outer-NOMSD anchor (Option A). Gated by
-`bp_uses_inner_ensemble()`. **This is correct only where the live ensemble is already a walker-independent
-free-projection draw — i.e. exactly the forward-unstable regime.** Grounding this section in the BP
-literature ([Motta–Zhang, arXiv:1707.02684](https://arxiv.org/abs/1707.02684)) shows the correct general
-design is a **dedicated free-projection reference draw decoupled from the forward inner ensemble**
-(*Corrected plan* below), which combines faithful references with the stable conditioned/leapfrog forward
-walk and is **not yet implemented**.
+**Status: IMPLEMENTED (dedicated free-projection draw), CPU-verified [overhaul] at `-np 1` and `-np 2`
+(2026-06-25).** For any dynamic trial (`inner_nsteps > 0`, `P > 1`) `getReferences` draws a fresh,
+walker-independent free-projection ensemble of `P` trial samples and exposes them with weight `1/P`
+(`bp_uses_inner_ensemble()`); the static limit / `P = 1` delegates to the outer-NOMSD anchor (== plain
+NOMSD). The draw is **decoupled from the forward inner ensemble** — it uses `Propagator::Propagate_free`
+(bare-field sampling regardless of the forward propagator's build mode), so it combines faithful
+references with the stable conditioned/leapfrog forward walk. This replaces the earlier live-`inner_wset()`
+read (which was only valid in the forward-*unstable* free-projection regime). Grounded in the BP
+literature ([Motta–Zhang, arXiv:1707.02684](https://arxiv.org/abs/1707.02684)); **not a novel method** —
+standard Motta–Zhang BP with the trial represented stochastically.
 
 **Grounding in standard back-propagation (Motta–Zhang).** AFQMC BP propagates the *trial* backward
 through the **recorded outer (True-`Ĥ`) fields** of the forward walk and contracts the result against the
@@ -1717,42 +1717,59 @@ for samples drawn **conditioned on a walker** (Eq. 23); it is **absent** here pr
 references must be drawn from the **bare** `p_T(Y)` (free projection), giving an *unweighted* `(1/P) Σ_p`
 average. ⇒ **uniform `1/P` weights are correct, and the references must be the free-projection ensemble.**
 
-**Corrected plan — dedicated free-projection reference draw, decoupled from the forward ensemble.** The BP
-references should be a **walker-independent free-projection sample `{ψ_p}`** (weight `1/P`) drawn
-**specifically for back-propagation, independently of the forward inner ensemble**, at the start of each
-BP block — *whatever sampling mode the forward walk uses*.
+**Implementation — dedicated free-projection reference draw, decoupled from the forward ensemble
+(2026-06-25).** The BP references are a **walker-independent free-projection sample `{ψ_p}`** (weight
+`1/P`) drawn **specifically for back-propagation, independently of the forward inner ensemble**, at each
+`getReferences` call — *whatever sampling mode the forward walk uses*.
 
-1. **Walker-independence (corrected).** The references represent the walker-independent trial, so the
-   correct source is a dedicated `P`-sample free-projection draw `{ψ_p = B̂_T(Y^[p])|φ_T⟩}` from the
-   anchor — never the walker-conditioned forward ensemble. The *implemented* code instead reads the live
-   `inner_wset()`, which happens to be a valid (free-projection, walker-independent) reference set **only**
-   when the forward walk is non-conditioned — i.e. the unstable 3b regime. For the stable
-   conditioned/leapfrog walk the live `nwalk·P` ensemble is walker-specific (incompatible with the
-   estimator's broadcast-to-all-walkers `Refs(iw)=Refs(0)`), so the code falls back to the anchor (Option
-   A) and loses faithfulness. The dedicated draw removes this coupling: it is walker-independent by
-   construction regardless of the forward mode, so it pairs the faithful bra with a stable forward walk.
-2. **Fixed-window vs. resample** — the estimator **copies** the references it reads into its own buffer at
-   block start, so reading the live `inner_wset()` snapshot is automatically frozen for that BP window; the
-   next block reads a fresh snapshot. Each block is thus a Monte-Carlo draw of the trial.
+1. **Walker-independence (done).** The references represent the walker-independent trial, so the source is
+   a dedicated `P`-sample free-projection draw `{ψ_p = B̂_T(Y^[p])|φ_T⟩}` from the anchor — never the
+   walker-conditioned forward ensemble. `StochasticWfn::draw_bp_reference_ensemble()` (in
+   `StochasticWfn.cpp`) resets `inner_ensemble_.wset` to the anchor, sizes it to `P`, and advances
+   `inner_nsteps` bare steps via `inner_propagator().Propagate_free(...)`. **`Propagate_free`**
+   (`AFQMCBasePropagator`, sibling to `Propagate_conditioned`) forces free-projection field assembly by
+   toggling `free_projection` around `assemble_X`, so it draws bare `p_T(Y)` fields **regardless of the
+   forward propagator's build mode** (the 3c forward propagator is importance-sampling). Reusing
+   `inner_ensemble_.wset` as scratch is safe: every forward resample resets it to the anchor and resizes
+   it back to `nwalk·P`, so the transient `P`-sized BP draw is overwritten on the next `begin_inner_step`.
+2. **One draw per window, fresh across windows (guarded).** `getReferences` draws at most ONCE per BP
+   window: a `bp_refs_drawn_` latch (set by `draw_bp_reference_ensemble`, reset by `begin_inner_step`)
+   makes a repeated `getReferences` within the same window REUSE the same draw — idempotent, no silent
+   re-draw if anything ever calls it twice in a window. `begin_inner_step` (the forward walk advancing)
+   opens the next window, so the next BP block draws a fresh Monte-Carlo sample of the trial. (Verified:
+   `stochastic_back_propagation_inner_refs` checks two successive draws in one window are IDENTICAL;
+   `stochastic_back_propagation_production_order` checks a draw after `begin_inner_step` is DIFFERENT.)
 3. **Cost / weights** — `P` references at weight `1/P`, via the existing `nrefs > 1` estimator path (the
    `1/P` cancels in the estimator's normalization ratio, so any uniform weight is equivalent).
+4. **Per-rank draws** — at `-np > 1` each rank draws its own ensemble from its own propagator RNG
+   (per-rank-local, like the Tier-1 reductions; the estimator broadcasts one walker's references to all
+   walkers *within* a rank). Verified clean at `-np 2`. Consumes the inner propagator's field RNG, so the
+   BP draw and the forward field stream are interleaved (a dedicated BP RNG is a possible refinement —
+   open question 2/3 below).
 
 **Reduction to Option A (safety).** At `inner_nsteps = 0` (and for conditioned trials) `bp_uses_inner_ensemble()`
 is false → delegate to the anchor → Option B ≡ Option A ≡ NOMSD. The existing
 `stochastic_back_propagation_matches_nomsd` / `_production_order` parity tests are unchanged.
 
-**Implementation (chosen).** Gated by `bp_uses_inner_ensemble()` = `inner_nsteps > 0 && inner_nwalkers > 1
-&& !inner_conditioning && initialized && inner.size() == inner_nwalkers`. When true:
-`total_number_of_references() → P`, `getReferenceWeight(i) → 1/P`, and `getReferences` fills
-`Refs(p,:,:) = conj(inner_wset().SlaterMatrices(p))` — a conjugate with **no transpose** (the inner walker
-matrix is stored `[npol·NMO, nup]`, the transpose of NOMSD's `OrbMats [nup, npol·NMO]`, so it lands in the
-same bra form NOMSD produces). When false, all three delegate to `nomsd_`. **Two Phase-7 wrinkles
-dissolved by reading the live ensemble:** no fresh sampling is needed, so `getReferences` stays
-mutation-free (no `const` problem); and across ranks each rank simply uses its **own** inner ensemble (the
-references are filled per-rank, consistent with the per-rank-local Tier-1 reductions — verified clean at
-`-np 2`). Test: `stochastic_back_propagation_inner_refs` (`[stochastic_wfn]`, CLOSED/CPU) — a
-non-conditioned `inner_nsteps = 1`, `P = 3` trial reports `total_number_of_references() == 3`,
-`getReferenceWeight == 1/3`, and (unpropagated) `P` references each equal NOMSD's single anchor reference.
+**Implementation (final, 2026-06-25).** Gated by `bp_uses_inner_ensemble()` = `inner_nsteps > 0 &&
+inner_nwalkers > 1 && initialized && wset != nullptr` (note: the old `!inner_conditioning` and
+`inner.size() == inner_nwalkers` conditions are **gone** — the dedicated draw works for any forward mode
+and resizes the scratch ensemble itself). When true: `total_number_of_references() → P`,
+`getReferenceWeight(i) → 1/P`, and `getReferences` calls `draw_bp_reference_ensemble()` (fresh
+free-projection draw via `Propagate_free`) then fills `Refs(p,:,:) = conj(inner_wset().SlaterMatrices(p))`
+— a conjugate with **no transpose** (the inner walker matrix is stored `[npol·NMO, nup]`, the transpose of
+NOMSD's `OrbMats [nup, npol·NMO]`, so it lands in the same bra form NOMSD produces). When false, all three
+delegate to `nomsd_`. `getReferences` is non-`const` (it samples); the draw is captured once per BP
+window (idempotent if called again before `begin_inner_step`) and the estimator copies it, so it is
+time-stable for the window. Tests (`[stochastic_wfn]`, CLOSED/CPU):
+`stochastic_back_propagation_inner_refs` (non-conditioned `inner_nsteps = 1`, `P = 3`) checks
+`total_number_of_references() == 3`, `getReferenceWeight == 1/3`, the `P` references are a finite
+free-projection draw each propagated off the anchor, and two successive `getReferences` calls in the same
+window are IDENTICAL; `stochastic_back_propagation_production_order` builds a conditioned + leapfrog trial,
+expands the forward ensemble to `nwalk·P` via `begin_inner_step`, checks the BP draw still returns `P`
+walker-independent references (decoupled from the conditioning), that the next `begin_inner_step`
+re-expands the forward ensemble to `nwalk·P` (forward walk unharmed), and that a draw after the second
+`begin_inner_step` is DIFFERENT from the first window's (fresh across windows).
 
 **Validation plan.** Static/unpropagated: covered by the test above. **Dynamic-BP stability — RESOLVED
 (Jun 2026):** a propagated **free-projection** (non-conditioned) `inner_nsteps > 0` BP run accumulated
@@ -1761,15 +1778,19 @@ overlap `Σ_p S_p` collapses toward zero (a known 3b variance pathology), blowin
 NaN within the first population-control block; the BP RDM is NaN only because it is built from NaN-weighted
 walkers. The **conditioned + leapfrog (3c)** sampling keeps the forward weights well-scaled (`max|weight|`
 ≈ 1.0–1.1 over a full run), so dynamic BP is finite — verified by `stochastic_back_propagation_dynamic_smoke`
-(passes at `-np 1` and `-np 2`). **Tension — resolved in principle by the decoupled draw.** The
-live-ensemble Option B couples the BP references to the forward sampling mode, so the stable forward walk
-(3c) was stuck with Option A (anchor) references while faithful Option B references were available only in
-the forward-*unstable* free-projection regime. The **dedicated free-projection reference draw** breaks
-that coupling: the references are walker-independent by construction, so they can be drawn alongside a
-stable conditioned/leapfrog forward walk. The remaining work is to *implement* the dedicated draw (a
-per-BP-block `P`-sample `B̂_T` free-projection from the anchor, replacing the live-`inner_wset()` read) and
-then run the quantitative validation — the back-propagated 1-RDM converging (as `P → ∞`, over blocks) to
-the deterministic-AFQMC **pure** 1-RDM.
+(passes at `-np 1` and `-np 2`). **Tension — RESOLVED by the dedicated draw (2026-06-25).** The
+live-ensemble Option B coupled the BP references to the forward sampling mode, so the stable forward walk
+(3c) was stuck with anchor references while faithful references were available only in the
+forward-*unstable* free-projection regime. The **dedicated free-projection reference draw** breaks that
+coupling — the references are walker-independent by construction (drawn via `Propagate_free`, decoupled
+from the forward propagator's mode), so they pair with a stable conditioned/leapfrog forward walk.
+Implemented and unit-verified. **Status distinction:** Phase 7 BP is now *architecturally complete* (the
+reference API, the dedicated free-projection draw, the decoupling from the forward walk, and end-to-end
+finiteness through `BackPropagatedEstimator`/the driver are implemented and unit-tested at `-np 1`/`-np 2`)
+but **not yet scientifically validated**. The remaining work is the **quantitative validation**: a full BP
+driver run on the stable 3c trial, checking the back-propagated 1-RDM converges (as `P → ∞`, over blocks)
+to the deterministic-AFQMC **pure** 1-RDM. The unit tests cover the reference API and finiteness, **not**
+the converged observable value.
 
 **Key considerations (grounded in the BP theory).**
 
@@ -1821,10 +1842,10 @@ walker-independence of the trial):**
    the `P×` back-propagation cost?
 2. Correlate the dedicated reference draw with the forward inner ensemble (common random numbers, for
    variance reduction) or draw it fully independently?
-3. Per-rank-independent reference draws vs. a broadcast common draw at `-np > 1`?
-4. `getReferences` must now *sample* (the dedicated draw) rather than read a stored ensemble, so it can no
-   longer be `const`/mutation-free — needs a `mutable` scratch ensemble or a non-const path, captured once
-   per BP block to stay time-stable.
+3. Per-rank-independent reference draws vs. a broadcast common draw at `-np > 1`? (Currently per-rank.)
+4. A dedicated RNG for the BP draw (vs. the inner propagator's field RNG, which it currently shares — so
+   the BP draw and the forward field stream interleave)? Resolved structurally: `getReferences` is
+   non-`const` and draws into the reused `inner_ensemble_.wset` scratch, captured once per call.
 
 ### Phase 8 — Factory / HDF5 first-class treatment
 
