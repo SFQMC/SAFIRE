@@ -955,24 +955,51 @@ superseded.
 
 Called from `BackPropagatedEstimator` and related reference-tracking code.
 
-**Resolution (Phase 7): outer-NOMSD delegate, inner-ensemble-agnostic** — the stochastic trial exposes
-exactly the outer `nomsd_`'s reference set (the True-Ham trial's weighted determinant expansion) and
-ignores the inner ensemble entirely; all three methods stay `nomsd_` delegates. For the intended
-single-determinant anchor (Eq. 21) that set is `{φ_T} = OrbMats(0)` with weight 1; for a
-multi-determinant outer trial it is the full CI expansion (`nrefs = ndet`, weights `ci[i]`) — identical
-to plain NOMSD in both cases. The `BackPropagatedEstimator`/`FullObsHandler` fill references for one
-walker and **broadcast them to all walkers** (so references must be walker-INDEPENDENT) and capture them
-once per BP block over a fixed window (so they must be time-stable) — the outer trial's references
-satisfy both (frozen while the inner ensemble resamples). Exact vs plain NOMSD by construction; the
-scientific caveat for a genuine `inner_nsteps>0` trial is that back-propagation is scored against the
-**outer** trial, not the field-sampled spread `{ψ_p}`, consistent with how `vMF`/`G_MF` collapse to the
-anchor (Phase 6). The faithful inner-ensemble reference set (Option B) is now **implemented** for
-free-projection dynamic trials — see the
-[Phase 7 Option B](#phase-7--layout-queries-and-back-prop-references) follow-up.
+**This is standard Motta–Zhang back-propagation ([arXiv:1707.02684](https://arxiv.org/abs/1707.02684),
+J. Chem. Theory Comput. 2017, 13, 5367); the only stochastic-trial-specific choice is which determinants
+represent `⟨Ψ_T|`.** In AFQMC BP the *trial* is propagated backward through the **recorded outer
+(True-`Ĥ`) fields** of the forward walk and the result is contracted against the **stored forward
+walker** at the measurement point:
 
-`bp_uses_inner_ensemble()` selects the regime: **Option A (outer-NOMSD delegate)** at the static limit and
-for conditioned/leapfrog trials; **Option B (inner samples `{ψ_p}`, weight `1/P`)** for a walker-independent
-free-projection dynamic trial (`inner_nsteps>0`, `P>1`, not conditioned).
+```
+|Φ_m⟩ = B̂†((x−x̄)_n) … B̂†((x−x̄)_{n+m−1}) |Ψ_T⟩                       (Motta–Zhang Eq. 19/23)
+A_BP  ≈ [Σ_k W_k ⟨Φ_{m,k}|Â|Ψ_{n,k}⟩ / ⟨Φ_{m,k}|Ψ_{n,k}⟩] / Σ_k W_k    (Eq. 21)
+```
+
+SAFIRE's `BackPropagatedEstimator`/`FullObsHandler` implement exactly this: a trial is a weighted
+determinant expansion `Ψ_T = Σ_iref ci_iref |Ref_iref⟩`; each **reference** is back-propagated through
+the recorded fields (filled for one walker then **broadcast to all walkers**, so references must be
+walker-INDEPENDENT, and captured once per BP block over a fixed window, so time-stable), then contracted
+against `φ_BP`. The BP machinery already lines up with the literature — the stochastic trial changes
+*nothing* about the algorithm. The single open choice is **which determinants stand in for `⟨Ψ_T|`**.
+
+**The trial is walker-independent, so its BP references must be too — this is not a new method.**
+`|Ψ_T⟩ = ∫ dY p_T(Y) B̂_T(Y)|φ_T⟩` carries no walker dependence; the walker-conditioning/leapfrog of
+Phase 3c is a *forward-only* importance-sampling device for evaluating the forward overlaps, not a
+property of the trial. The faithful BP reference set is therefore a **walker-independent free-projection
+sample** `{ψ_p = B̂_T(Y^[p])|φ_T⟩}` of the bare `p_T(Y)`, weight `1/P` (Option B). Free-projection
+references are *forced* by the trial's walker-independence, exactly as a fixed NOMSD trial's references
+are walker-independent — so Option B is just Motta–Zhang BP with the trial represented stochastically,
+**not** a publishable increment. Option A (anchor-only) is the approximation that back-propagates only
+`φ_T` instead of the full spread `{ψ_p}` (its bias grows as the trial spreads from the anchor,
+consistent with how `vMF`/`G_MF` collapse to the anchor in Phase 6).
+
+**Corrected plan — a dedicated free-projection reference draw, decoupled from the forward ensemble.**
+Because the references represent the walker-independent trial, draw them **independently of the forward
+inner ensemble**: at each BP block, draw `P` fresh free-projection samples from the anchor and use them
+as references *regardless of whether the forward walk is free-projection, conditioned, or leapfrog*. This
+combines the **faithful BP bra** (free projection, walker-independent) with a **stable forward walk**
+(conditioned + leapfrog), resolving the tension that previously forced an either/or. The currently
+*implemented* Option B reads the **live** `inner_wset()` instead of a dedicated draw — which coincides
+with a valid reference set only when the forward walk is itself free-projection (the unstable regime).
+The dedicated decoupled draw is therefore the work that remains; see the
+[Phase 7 follow-up](#phase-7-follow-up--option-b-faithful-inner-ensemble-back-propagation-references-design-note--implementation)
+for the theory grounding, the path-restoration subtlety, and the finite-`P` bias.
+
+`bp_uses_inner_ensemble()` selects the regime *today*: **Option A (outer-NOMSD anchor delegate)** at the
+static limit, for `P = 1`, and for conditioned/leapfrog trials; **Option B (live free-projection inner
+samples `{ψ_p}`, weight `1/P`)** for a non-conditioned dynamic trial (`inner_nsteps>0`, `P>1`). The
+decoupled dedicated-draw plan would extend Option B to conditioned/leapfrog forward walks too.
 
 | Method (overhaul name) | Status |
 |--------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
@@ -1639,14 +1666,28 @@ validation note.
 
 #### Phase 7 follow-up — Option B: faithful inner-ensemble back-propagation references (design note + implementation)
 
-**Status: IMPLEMENTED (reference API), CPU-verified [overhaul].** For a walker-independent free-projection
-inner ensemble (`inner_nsteps > 0`, `P > 1`, **not** conditioned) `StochasticWfn` exposes the `P` inner
-samples `{ψ_p}` as back-propagation references with weight `1/P`; otherwise (static limit, conditioned/
-leapfrog trials) it delegates to the outer-NOMSD anchor (Option A). Gated by `bp_uses_inner_ensemble()`.
-Implementation choices below were made to match how the code already works (see *Chosen resolution*). The
-remaining open items are the **method-semantics questions** for the authors and **dynamic-BP numerical
-validation** (a dynamic `inner_nsteps > 0` BP *integration* run is separately unstable — accumulates NaN —
-independent of the reference choice).
+**Status: PARTIALLY IMPLEMENTED (live-ensemble Option B), corrected plan below (dedicated draw, NOT yet
+implemented).** The implemented reference API (CPU-verified [overhaul]) reads the **live** `inner_wset()`
+as references for a walker-independent free-projection inner ensemble (`inner_nsteps > 0`, `P > 1`,
+**not** conditioned), weight `1/P`; otherwise it delegates to the outer-NOMSD anchor (Option A). Gated by
+`bp_uses_inner_ensemble()`. **This is correct only where the live ensemble is already a walker-independent
+free-projection draw — i.e. exactly the forward-unstable regime.** Grounding this section in the BP
+literature ([Motta–Zhang, arXiv:1707.02684](https://arxiv.org/abs/1707.02684)) shows the correct general
+design is a **dedicated free-projection reference draw decoupled from the forward inner ensemble**
+(*Corrected plan* below), which combines faithful references with the stable conditioned/leapfrog forward
+walk and is **not yet implemented**.
+
+**Grounding in standard back-propagation (Motta–Zhang).** AFQMC BP propagates the *trial* backward
+through the **recorded outer (True-`Ĥ`) fields** of the forward walk and contracts the result against the
+stored forward walker — `|Φ_m⟩ = B̂†((x−x̄)_n) … B̂†((x−x̄)_{n+m−1}) |Ψ_T⟩` (Eq. 19/23),
+`A_BP ≈ [Σ_k W_k ⟨Φ_{m,k}|Â|Ψ_{n,k}⟩/⟨Φ_{m,k}|Ψ_{n,k}⟩]/Σ_k W_k` (Eq. 21). Two facts fix the design:
+**(1)** the references are determinants of the trial, back-propagated through the *outer* fields —
+SAFIRE's `FullObsHandler`/`BackPropagatedEstimator` already do exactly this, so the BP machinery lines up
+with the literature and the stochastic trial changes nothing about it; **(2)** the trial is
+walker-independent, so its references must be a walker-independent **free-projection** sample of the bare
+`p_T(Y)` (Option B). This is **textbook BP with a stochastically-represented trial, not a novel method** —
+the conditioning/leapfrog of the forward walk is an importance-sampling device for the *forward* overlaps
+and is irrelevant to the trial's identity for BP.
 
 **Goal.** Phase 7's anchor-only references (Option A) score back-propagated *pure*-estimator observables
 (e.g. the back-propagated 1-RDM) against the **anchor** `φ_T`, not against the field-sampled stochastic
@@ -1676,14 +1717,20 @@ for samples drawn **conditioned on a walker** (Eq. 23); it is **absent** here pr
 references must be drawn from the **bare** `p_T(Y)` (free projection), giving an *unweighted* `(1/P) Σ_p`
 average. ⇒ **uniform `1/P` weights are correct, and the references must be the free-projection ensemble.**
 
-**Recommended resolution of the three Phase-7 concerns — all from one coherent choice:** the BP references
-should be the **walker-independent free-projection inner samples `{ψ_p}`** (weight `1/P`), used when the
-inner ensemble is in that form and delegating to the anchor otherwise.
+**Corrected plan — dedicated free-projection reference draw, decoupled from the forward ensemble.** The BP
+references should be a **walker-independent free-projection sample `{ψ_p}`** (weight `1/P`) drawn
+**specifically for back-propagation, independently of the forward inner ensemble**, at the start of each
+BP block — *whatever sampling mode the forward walk uses*.
 
-1. **Walker-independence** — for a non-conditioned trial the **live `inner_wset()` *is* the free-projection
-   `P`-sample ensemble** (walker-independent), so the implementation reads it directly; no dedicated draw
-   is needed. The conditioned/leapfrog `nwalk·P` ensemble is walker-specific (incompatible with the
-   estimator's broadcast-to-all-walkers `Refs(iw)=Refs(0)`), so those trials delegate to the anchor.
+1. **Walker-independence (corrected).** The references represent the walker-independent trial, so the
+   correct source is a dedicated `P`-sample free-projection draw `{ψ_p = B̂_T(Y^[p])|φ_T⟩}` from the
+   anchor — never the walker-conditioned forward ensemble. The *implemented* code instead reads the live
+   `inner_wset()`, which happens to be a valid (free-projection, walker-independent) reference set **only**
+   when the forward walk is non-conditioned — i.e. the unstable 3b regime. For the stable
+   conditioned/leapfrog walk the live `nwalk·P` ensemble is walker-specific (incompatible with the
+   estimator's broadcast-to-all-walkers `Refs(iw)=Refs(0)`), so the code falls back to the anchor (Option
+   A) and loses faithfulness. The dedicated draw removes this coupling: it is walker-independent by
+   construction regardless of the forward mode, so it pairs the faithful bra with a stable forward walk.
 2. **Fixed-window vs. resample** — the estimator **copies** the references it reads into its own buffer at
    block start, so reading the live `inner_wset()` snapshot is automatically frozen for that BP window; the
    next block reads a fresh snapshot. Each block is thus a Monte-Carlo draw of the trial.
@@ -1707,22 +1754,77 @@ references are filled per-rank, consistent with the per-rank-local Tier-1 reduct
 non-conditioned `inner_nsteps = 1`, `P = 3` trial reports `total_number_of_references() == 3`,
 `getReferenceWeight == 1/3`, and (unpropagated) `P` references each equal NOMSD's single anchor reference.
 
-**Validation plan (still open).** Static/unpropagated: covered by the test above. The remaining dynamic
-validation: the back-propagated 1-RDM with a propagated stochastic trial should converge — as `P → ∞` and
-over blocks — to the deterministic-AFQMC **pure** 1-RDM (Option A/anchor as the biased floor). This needs
-the dynamic-BP integration to be numerically stable first (a propagated `inner_nsteps > 0` BP run currently
-accumulates NaN — a separate stability issue, not the reference choice).
+**Validation plan.** Static/unpropagated: covered by the test above. **Dynamic-BP stability — RESOLVED
+(Jun 2026):** a propagated **free-projection** (non-conditioned) `inner_nsteps > 0` BP run accumulated
+**NaN**, but this was diagnosed to be the **forward walk**, not the BP path — the free-projection effective
+overlap `Σ_p S_p` collapses toward zero (a known 3b variance pathology), blowing the hybrid weight ratio to
+NaN within the first population-control block; the BP RDM is NaN only because it is built from NaN-weighted
+walkers. The **conditioned + leapfrog (3c)** sampling keeps the forward weights well-scaled (`max|weight|`
+≈ 1.0–1.1 over a full run), so dynamic BP is finite — verified by `stochastic_back_propagation_dynamic_smoke`
+(passes at `-np 1` and `-np 2`). **Tension — resolved in principle by the decoupled draw.** The
+live-ensemble Option B couples the BP references to the forward sampling mode, so the stable forward walk
+(3c) was stuck with Option A (anchor) references while faithful Option B references were available only in
+the forward-*unstable* free-projection regime. The **dedicated free-projection reference draw** breaks
+that coupling: the references are walker-independent by construction, so they can be drawn alongside a
+stable conditioned/leapfrog forward walk. The remaining work is to *implement* the dedicated draw (a
+per-BP-block `P`-sample `B̂_T` free-projection from the anchor, replacing the live-`inner_wset()` read) and
+then run the quantitative validation — the back-propagated 1-RDM converging (as `P → ∞`, over blocks) to
+the deterministic-AFQMC **pure** 1-RDM.
 
-**Open questions for the method authors (arXiv:2505.18519):**
+**Key considerations (grounded in the BP theory).**
 
-1. Is the **free-projection (unweighted)** BP reference the intended semantics, or should back-propagation
-   reuse the same **walker-conditioned, importance-sampled** ensemble as the forward walk? The latter would
-   need per-walker references + `1/|O_p|` reweighting — a much larger change (the estimator's
-   broadcast-to-all-walkers reference structure would have to be generalized).
-2. How many BP reference samples — reuse `inner_nwalkers`, or a separate (likely smaller) count given the
-   `P×` cost?
-3. Should the BP reference draw be **independent** of the forward inner ensemble, or correlated with it?
-4. Per-rank-independent reference draws vs. a broadcast common draw at `-np > 1`?
+1. **Two field sets, by design.** The references are generated by the **inner/Variational** fields
+   `Y^[p]` (`B̂_T`); they are back-propagated through the **outer/True** fields `(x−x̄)` recorded along the
+   forward walk (Motta–Zhang Eq. 23). This is the standard BP structure, not a stochastic-trial quirk.
+2. **Path restoration — CONFIRMED BP-PRes, default on (verified 2026-06-25).** SAFIRE's
+   `BackPropagatedEstimator` defaults to `path_restoration = true` + `extra_path_restoration = true`
+   (`BackPropagatedEstimator.hpp:135-136,370-371`); over the BP window it multiplies each walker weight by
+   the stored per-step `weight_factor = exp(−i·dt·Im(eloc)) / scale` (`WalkerSetUpdate.hpp:198-200,299-301`,
+   saved only inside the BP window at `:216-222`), where `scale = max(0, cos(Δθ))` is the cosine/phaseless
+   projection (`:279`). Since `weight_factor` is the reciprocal of the forward phaseless modifications, the
+   restoration recovers **both** the real-local-energy approximation (the `Im(eloc)` phase) **and** the
+   cosine projection over the window — exactly Motta–Zhang Eq. 25 (`extra_path_restoration` doubles the
+   restored window to `2·bp_step`). BP-PhL is the `path_restoration = false` fallback. **The
+   stochastic-trial mismatch is benign (confirmed):** path restoration reads the *recorded* forward
+   `weight_factor`s (`BackPropagatedEstimator.hpp:254`), so it is self-consistent with whatever trial the
+   forward walk used — no re-derivation at BP time; the references enter via a *separate* input
+   (`getReferences`, `:240`); and the recorded force bias `x̄` is a pure importance-sampling shift whose
+   value never biases the expectation (standard AFQMC free-force-bias result). So `x̄` from the forward
+   (conditioned/leapfrog) realization and references from a separate free-projection draw of the *same*
+   `|Ψ_T⟩` are consistent in expectation — **no** new constraint-vs-bra cross bias; the only finite-`P`
+   residuals are the standard forward-segment phaseless bias (present for energy too) and the `O(1/P)`
+   ratio bias in item 3. (References are filled once for walker 0 and broadcast `Refs(iw)=Refs(0)` at
+   `BackPropagatedEstimator.hpp:241-242`, so the dedicated free-projection draw drops in as one shared
+   `P`-determinant draw per block.)
+3. **Finite-`P` ratio bias.** The BP estimate is a ratio `Σ_p⟨ψ_p|Â|φ_BP⟩ / Σ_p⟨ψ_p|φ_BP⟩` of two
+   stochastic sums, so it carries an `O(1/P)` ratio bias **on top of** the back-propagation-window (`m`)
+   bias. A fixed NOMSD trial has no such inner-sampling bias; the faithful refs trade trial-quality bias
+   for sampling bias + variance. Control with `P` and block averaging.
+4. **Why free-projection refs are safe in BP though fatal in the forward walk.** Forward instability is
+   the *multiplicative* collapse of the effective-overlap ratio `Σ_p S_p` accumulated over thousands of
+   steps (→ NaN weight → killed walker). The references enter the BP estimator **linearly, contracted once
+   at the measurement point**, so their phase noise is estimator variance (averages down over blocks), not
+   weight collapse. Free projection is therefore the *correct* choice for the bra precisely where it is the
+   *wrong* choice for the walk.
+5. **Short BP window aligns with where refs matter.** Motta–Zhang keep `β_BP = m·δβ` small for population
+   stability; long windows also wash out the seed (the backward projection drives the bra toward the
+   ground state regardless of the seed). So faithful references pay off precisely in the short-window
+   regime that is required anyway.
+6. **Short inner projection.** The faithfulness gain (how far `{ψ_p}` spread from the anchor) is bounded by
+   free-projection variance growth with `inner_nsteps`; a single step is a weak dressing, and pushing it
+   up reintroduces phase noise in the refs themselves.
+
+**Open implementation questions (no longer "is free projection intended" — that is settled by the
+walker-independence of the trial):**
+
+1. How many BP reference samples — reuse `inner_nwalkers = P`, or a separate (likely smaller) count given
+   the `P×` back-propagation cost?
+2. Correlate the dedicated reference draw with the forward inner ensemble (common random numbers, for
+   variance reduction) or draw it fully independently?
+3. Per-rank-independent reference draws vs. a broadcast common draw at `-np > 1`?
+4. `getReferences` must now *sample* (the dedicated draw) rather than read a stored ensemble, so it can no
+   longer be `const`/mutation-free — needs a `mutable` scratch ensemble or a non-const path, captured once
+   per BP block to stay time-stable.
 
 ### Phase 8 — Factory / HDF5 first-class treatment
 
@@ -1917,8 +2019,7 @@ worker6035, Jun 2026; was 13 / 5843).
 skip silently. Part of the full `[stochastic_wfn]` tag (**21 cases / 7060 assertions**, `mpirun -np 1`,
 worker6035, Jun 2026). **Scope:** reference-API + layout parity, plus static-limit BP integration
 smokes through `EstimatorHandler` and `DriverFactory` (see table below). Dynamic (`inner_nsteps > 0`)
-BP finiteness is covered by `stochastic_back_propagation_dynamic_smoke` (conditioned+leapfrog; passes at
-`-np 1` and `-np 2`); free-projection dynamic forward walks remain unstable (3b variance pathology).
+BP numerical stability remains a follow-up.
 
 | Test case | Checkpoint |
 |-----------|------------|
