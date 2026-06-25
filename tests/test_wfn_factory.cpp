@@ -73,7 +73,8 @@ using namespace afqmc;
 
 template<MEMORY_SPACE MEM>
 void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
-             std::string hamil_file, std::string wfn_file, bool dense_trial, bool write_reference)
+             std::string hamil_file, std::string wfn_file, WALKER_TYPES type,
+             bool dense_trial, bool write_reference)
 {
   using nda::range;
   auto all = range::all;
@@ -88,11 +89,28 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   auto [NMO,nup,ndown] = read_info_from_wfn(wfn_file, "any");
   utils::check(NMO == reference_data.NMO, "Incompatible NMO.");
 
-  WALKER_TYPES type    = afqmc::getWalkerType(wfn_file, "any");
+  // 'type' is the *target* walker type. The wavefunction file has its own native type,
+  // which the factory may convert to any compatible target.
+  WALKER_TYPES from    = afqmc::getWalkerType(wfn_file, "any");
+  bool native          = (type == from);
+  // For now, only do reference testing on the native-type run. Refine to full combinations later.
+  write_reference      = write_reference && native;
+  bool compare         = native && reference_data.available && !write_reference;
+
+  // Broadcast the electron counts from the native type to the target walker type,
+  // mirroring broadcast_number_of_electrons() in the WavefunctionFactory.
+  if(type == NONCOLLINEAR) {
+    nup   = nup + ndown;
+    ndown = 0;
+  }
+
   int nspin            = (type == COLLINEAR or type == COLLINEAR_FT) ? 2 : 1;
   int npol             = (type == NONCOLLINEAR or type == NONCOLLINEAR_FT) ? 2 : 1;
-  int nel              = (type == COLLINEAR or type == COLLINEAR_FT) ? nup+ndown : nup;  
+  int nel              = (type == COLLINEAR or type == COLLINEAR_FT) ? nup+ndown : nup;
   double dt(0.01);
+
+  app_log(1, "wfn_factory_sdet: native type {} -> walker type {} (dense_trial={})",
+          walkerTypeToString(from), walkerTypeToString(type), dense_trial);
 
   int ntau(0);
   if(type == COLLINEAR_FT or type == NONCOLLINEAR_FT){
@@ -126,7 +144,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   wfn_pt.put("filename",wfn_file);
   wfn_pt.put("dense_trial",dense_trial);
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
 
@@ -194,12 +212,12 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
 
   if (!write_reference)
   {
-    if(reference_data.available) {
+    if(compare) {
       CHECK_THAT(e1_w, utils::Approx(reference_data.E1));
       CHECK_THAT(ej_w, utils::Approx(reference_data.EJ));
       CHECK_THAT(exx_w, utils::Approx(reference_data.EXX));
     }
-  } 
+  }
   else
   {
     reference_data.E1 = e1_w;
@@ -253,7 +271,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   {
     auto X_h = nda::to_host(X);
     if (!write_reference) {
-      if(reference_data.available) {
+      if(compare) {
         CHECK_THAT(X_h, utils::Approx(reference_data.vbias));
       }
     } else {
@@ -278,7 +296,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
 
     if (!write_reference)
     {
-      if(reference_data.available) {
+      if(compare) {
         CHECK_THAT(vHS_h, utils::Approx(reference_data.VHS));
       }
     }
@@ -296,7 +314,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
     utils::check((vHS_sp(0).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}) and
                  (vHS_sp(nspin-1).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}),
                  "Size mismatch");
-    if (!write_reference && reference_data.available) {
+    if (compare) {
       auto vHS_sp_dense = math::sparse::to_array<'N'>(vHS_sp(0));
       auto[vHS_nspin, vHS_npol] = wfn.vHS_dims();
       CHECK_THAT(vHS_sp_dense(range(vHS_npol*NMO), range(NMO)), utils::Approx(reference_data.VHS(0,0,nda::ellipsis{})));
@@ -319,8 +337,13 @@ TEST_CASE("wfn_factory: sdet", "[wfn_factory]")
   bool write_reference = WRITE_REFERENCE;
 
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
-    wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, true, write_reference && MEM == HOST_MEMORY);
-    wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, false, false);
+    WALKER_TYPES from = afqmc::getWalkerType(wfn_file, "any");
+    // Test the wfn's native walker type plus every walker type it can be converted to.
+    for(auto to : {CLOSED, COLLINEAR, NONCOLLINEAR, FULLYPOLARIZED, COLLINEAR_FT, NONCOLLINEAR_FT}) {
+      if(!walkerTypeIsConvertible(from, to)) continue;
+      wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, to, true,  write_reference && MEM == HOST_MEMORY);
+      wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, to, false, false);
+    }
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
 
 }
@@ -385,7 +408,7 @@ void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mp
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
 
   // Plain NOMSD reference.
   ptree nomsd_pt;
@@ -551,7 +574,7 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
   ptree stoch_pt;
   stoch_pt.put("name", "wfn_stoch");
   stoch_pt.put("system", "info0");
@@ -671,7 +694,7 @@ void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
 
   ptree nomsd_pt;
   nomsd_pt.put("name", "wfn_nomsd_ov");
@@ -764,7 +787,7 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
 
   ptree nomsd_pt;
   nomsd_pt.put("name", "wfn_nomsd_en");
@@ -913,7 +936,7 @@ void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
 
   ptree nomsd_pt;
   nomsd_pt.put("name", "wfn_nomsd_vb");
@@ -1017,7 +1040,7 @@ void stochastic_mixed_density_matrix_matches_nomsd(
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
 
   ptree nomsd_pt;
   nomsd_pt.put("name", "wfn_nomsd_dm");
@@ -1133,7 +1156,7 @@ void stochastic_mean_field_matches_nomsd(
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
 
   ptree nomsd_pt;
   nomsd_pt.put("name", "wfn_nomsd_mf");
@@ -1252,7 +1275,7 @@ void stochastic_mean_field_production_order(
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
 
     ptree nomsd_pt;
     nomsd_pt.put("name", "wfn_nomsd_mfp");
@@ -1358,7 +1381,7 @@ void stochastic_back_propagation_matches_nomsd(
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
 
   ptree nomsd_pt;
   nomsd_pt.put("name", "wfn_nomsd_bp");
@@ -1475,7 +1498,7 @@ void stochastic_back_propagation_production_order(
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
 
     ptree nomsd_pt;
     nomsd_pt.put("name", "wfn_nomsd_bpp");
@@ -1581,7 +1604,7 @@ void stochastic_back_propagation_inner_refs(
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
 
     ptree nomsd_pt;
     nomsd_pt.put("name", "wfn_nomsd_bpir");
@@ -1726,7 +1749,7 @@ void stochastic_back_propagation_estimator_smoke(
     wlk_pt.put("walker_type", walkerTypeToString(type));
     auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
     ptree wfn_pt;
     wfn_pt.put("name", "wfn_stoch_bp_est");
     wfn_pt.put("system", "info0");
@@ -1869,7 +1892,7 @@ void stochastic_back_propagation_driver_smoke(
     std::map<std::string, AFQMCInfo> InfoMap;
     HamiltonianFactory HamFac(InfoMap);
     WalkerSetFactory<MEM> WSetFac(InfoMap);
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
     PropagatorFactory<MEM> PropFac(InfoMap);
     DriverFactory<MEM> DriverFac(mpi, InfoMap, WSetFac, PropFac, WfnFac, HamFac);
 
@@ -1989,7 +2012,7 @@ void stochastic_accumulate_estimators_matches_nomsd(
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
 
   ptree nomsd_pt;
   nomsd_pt.put("name", "wfn_nomsd_ae");
@@ -2165,7 +2188,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
 
     ptree nomsd_pt;
     nomsd_pt.put("name", "wfn_nomsd_fg");
@@ -2293,7 +2316,7 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_dyn");
     pt.put("system", "info0");
@@ -2394,7 +2417,7 @@ void stochastic_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_prop");
     pt.put("system", "info0");
@@ -2505,7 +2528,7 @@ void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_cond");
     pt.put("system", "info0");
@@ -2644,7 +2667,7 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
 
     // The two-argument WavefunctionFactory constructor wires in HamFac so the factory can build the
     // inner (Variational) Hamiltonian on demand.
-    WavefunctionFactory<MEM> WfnFac(InfoMap, HamFac);
+    WavefunctionFactory<MEM> WfnFac(HamFac);
     auto build_pt = [&](std::string id, bool with_inner_ham) {
       ptree pt;
       pt.put("name", id);
@@ -2767,7 +2790,7 @@ void stochastic_deprecated_stochastic_flag_smoke(
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
     ptree stoch_pt;
     stoch_pt.put("name", "wfn_stoch");
     stoch_pt.put("system", "info0");
@@ -2840,7 +2863,7 @@ void stochastic_hdf5_type_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac(InfoMap);
+    WavefunctionFactory<MEM> WfnFac{};
     ptree wfn_pt;
     wfn_pt.put("name", "wfn_marked");
     wfn_pt.put("system", "info0");

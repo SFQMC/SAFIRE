@@ -58,7 +58,7 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   std::map<std::string, AFQMCInfo> InfoMap;
   HamiltonianFactory HamFac(InfoMap);
   WalkerSetFactory<MEM> WSetFac(InfoMap);
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
   PropagatorFactory<MEM> PropFac(InfoMap);
   DriverFactory<MEM> DriverFac(mpi, InfoMap, WSetFac, PropFac, WfnFac, HamFac);
 

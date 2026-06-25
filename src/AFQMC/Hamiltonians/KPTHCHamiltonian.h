@@ -28,18 +28,16 @@ namespace sfqmc
 {
 namespace afqmc
 {
-class KPTHCHamiltonian : public AFQMCInfo 
+class KPTHCHamiltonian
 {
 public:
 
-  KPTHCHamiltonian(AFQMCInfo const& info,
-                 ptree pt_in,
-                 ComplexType nucE = 0,
-                 ComplexType fzcE = 0)
-      : AFQMCInfo(info), 
-        NuclearCoulombEnergy(nucE),
+  KPTHCHamiltonian(ptree pt_in,
+                   ComplexType nucE = 0,
+                   ComplexType fzcE = 0)
+      : NuclearCoulombEnergy(nucE),
         FrozenCoreEnergy(fzcE),
-	fileName("")
+      	fileName("")
   {
     // convert user input to verbose input
     ptree pt = interpret_inputs(pt_in);
@@ -47,7 +45,6 @@ public:
     app_log(2, "{}", io::to_string(pt));
     // initialize using verbose input
     fileName  = pt.get<std::string>("filename");
-    name      = pt.get<std::string>("name");
   }
 
   ~KPTHCHamiltonian() {}

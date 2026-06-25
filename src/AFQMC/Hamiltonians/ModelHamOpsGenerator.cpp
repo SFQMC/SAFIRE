@@ -98,6 +98,7 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
   int ndet   = PsiT.extent(0); 
   int nspin  = ((type == COLLINEAR or type == COLLINEAR_FT) ? 2 : 1);
   int npol   = ((type == NONCOLLINEAR or type == NONCOLLINEAR_FT) ? 2 : 1);
+  int NMO = PsiT(0, 0).extent(1)/npol;
   int nel_up = PsiT(0,0).extent(0); 
   int nel_dn = ( type == COLLINEAR or type == COLLINEAR_FT ? PsiT(0,1).extent(0) : 0 ); 
   int nspin_in_PsiT = PsiT.extent(1);

@@ -18,6 +18,8 @@
 
 #include <cassert>
 #include <cstdlib>
+#include "utilities/check_shape.hpp"
+#include "utilities/parser.h"
 
 namespace sfqmc
 {
@@ -46,104 +48,31 @@ void WalkerSetBase<_M_>::parse(ptree pt_in)
   max_weight        = pt.get<double>("max_weight");
 
   if constexpr (_M_ == HOST_MEMORY)
-    app_log(1, " Walker resides in CPU memory");
+    app_log(1, "Walker resides in CPU memory");
   else
-    app_log(1, " Walker resides in GPU memory");
-  io::tolower(walker_type);
-  if (walker_type.find("closed") != std::string::npos)
-  {
-    app_log(1," Using a closed-shell (closed-shell RHF) walker. ");
-    walkerType = CLOSED;
-  }
-  else if (walker_type.find("non-collinear-ft") != std::string::npos)
-  {
-    app_log(1," Using a non-collinear (GHF) finite temperature walker. ");
-    walkerType = NONCOLLINEAR_FT;
-  }
-  else if (walker_type.find("noncollinear-ft") != std::string::npos)
-  {
-    app_log(1," Using a non-collinear (GHF) finite temperature walker. ");
-    walkerType = NONCOLLINEAR_FT;
-  }
-  else if (walker_type.find("collinear-ft") != std::string::npos)
-  {
-    app_log(1," Using a collinear (UHF/ROHF) finite temperature walker. ");
-    walkerType = COLLINEAR_FT;
-  }
-  else if (walker_type.find("non-collinear") != std::string::npos)
-  {
-    app_log(1," Using a non-collinear (GHF) walker. ");
-    walkerType = NONCOLLINEAR;
-  }
-  else if (walker_type.find("noncollinear") != std::string::npos)
-  {
-    app_log(1," Using a non-collinear (GHF) walker. ");
-    walkerType = NONCOLLINEAR;
-  }
-  else if (walker_type.find("collinear") != std::string::npos)
-  {
-    app_log(1," Using a collinear (UHF/ROHF) walker. ");
-    walkerType = COLLINEAR;
-  }
-  else if (walker_type.find("fullypolarized") != std::string::npos)
-  {
-    app_log(1," Using a fully spin-polarized (beta-sector identically 0) walker. ");
-    walkerType = FULLYPOLARIZED;
-  }
-  else if (walker_type.find("fully-polarized") != std::string::npos)
-  {
-    app_log(1," Using a fully spin-polarized (beta-sector identically 0) walker. ");
-    walkerType = FULLYPOLARIZED;
-  }
-  else
-  {
-    app_error(" Error: Unknown walker type: {} ", walker_type);
-    APP_ABORT("");
-  }
+    app_log(1, "Walker resides in GPU memory");
 
-  io::tolower(load_balance_type);
-  if (load_balance_type.find("simple") != std::string::npos)
-  {
-    app_log(1," Using blocking (1-1) swap load balancing algorithm. ");
-    load_balance = SIMPLE;
-  }
-  else if (load_balance_type.find("async") != std::string::npos)
-  {
-    app_log(1," Using asynchronous non-blocking swap load balancing algorithm. ");
-    load_balance = ASYNC;
-  }
-  else
-  {
-    app_error(" Error: Unknown load balancing algorithm: {} ", load_balance_type);
-    APP_ABORT("");
-  }
+    
+  walkerType = utils::parse_enum<WALKER_TYPES>(walker_type, {
+    {CLOSED, "closed-shell RHF", {"closed"}},
+    {NONCOLLINEAR_FT, "GHF finite-temperature", {"noncollinear-ft", "non-collinear-ft"}},
+    {COLLINEAR_FT, "UHF/ROHF finite-temperature", {"collinear-ft"}},
+    {NONCOLLINEAR, "GHF", {"non-collinear", "noncollinear"}},
+    {COLLINEAR, "UHF/ROHF", {"collinear"}},
+    {FULLYPOLARIZED, "beta sector identically 0", {"fullypolarized", "fully-polarized"}},
+  }, "walker");
 
-  io::tolower(pop_control_type);
-  if (pop_control_type.find("pair") != std::string::npos)
-  {
-    app_log(1," Using population control algorithm based on paired walker branching. ");
-    pop_control = PAIR;
-  }
-  else if (pop_control_type.find("serial_comb") != std::string::npos)
-  {
-    app_log(1," Using population control algorithm based on comb method (See Booth, Gubernatis, PRE 2009). ");
-    pop_control = SERIAL_COMB;
-  }
-  else if (pop_control_type.find("comb") != std::string::npos)
-  {
-    app_log(1," Using population control algorithm based on comb method (See Booth, Gubernatis, PRE 2009). ");
-    pop_control = COMB;
-  }
-  else if (pop_control_type.find("min") != std::string::npos)
-  {
-    app_log(1," Using population control algorithm based on minimum reconfiguration (Caffarel et al., 2000). ");
-    pop_control = MIN_BRANCH;
-  }
-  else
-  {
-    app_error(" Error: Unknown population control algorithm: {}", pop_control_type);
-    APP_ABORT("");
-  }
+  load_balance = utils::parse_enum<LOAD_BALANCE_ALGORITHM>(load_balance_type, {
+    {SIMPLE, "blocking 1-1 swap", {"simple"}},
+    {ASYNC, "nonblocking swap", {"async"}},
+  }, "load balancing algorithm");
+  
+  pop_control = utils::parse_enum<BRANCHING_ALGORITHM>(pop_control_type, {
+    {PAIR, "paired walker branching", {"pair"}},
+    {SERIAL_COMB, "comb method [Booth, Gubernatis, PRE 2009]", {"serial_comb"}},
+    {COMB, "comb method [Booth, Gubernatis, PRE 2009]", {"comb"}},
+    {MIN_BRANCH, "minimum reconfiguration [Caffarel et al., 2000]", {"min"}},
+  }, "population control algorithm");
 
   app_log(1, "");
 }
@@ -461,7 +390,7 @@ void WalkerSetBase<_M_>::popControl(std::vector<ComplexType>& curData, bool skip
  * Adds/removes the number of walkers in the set to match the requested value.
  * Walkers are removed from the end of the set 
  *      and buffer capacity remains unchanged in this case.
- * New walkers are initialized from the supplied matrix. 
+ * New walkers are initialized from the supplied array A. 
  * Capacity is increased if necessary.
  * Target Populations are set to n.
 */
@@ -470,7 +399,7 @@ void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& A)
 { 
   auto all = nda::range::all;
   int nspin = (walkerType == COLLINEAR ? 2 : 1);
-  utils::check(A.shape() == std::array<long,3>{nspin,wlk_desc[0],wlk_desc[1]} , "Size mismatch.");
+  utils::check_shape(A, "A", nspin, wlk_desc[0], wlk_desc[1]);
   reserve(n);
   if (n > tot_num_walkers)
   { 

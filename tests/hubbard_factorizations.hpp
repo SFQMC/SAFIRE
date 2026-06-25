@@ -591,8 +591,8 @@ HamiltonianOperations<MEM> build_kpthc(
 /// counterterm lands in H1, matching the Real3 / THC / KP* convention.
 class HubbardModelHamOpsAccess : public ModelHamOpsGenerator {
 public:
-  explicit HubbardModelHamOpsAccess(AFQMCInfo const& info)
-      : ModelHamOpsGenerator(info, dummy_pt(), ComplexType(0), ComplexType(0)) {}
+  explicit HubbardModelHamOpsAccess()
+      : ModelHamOpsGenerator(dummy_pt(), ComplexType(0), ComplexType(0)) {}
 
   using ModelHamOpsGenerator::addComponent;
   using ModelHamOpsGenerator::find_occupied_pairs;
@@ -705,8 +705,7 @@ HamiltonianOperations<MEM> build_modelhamops(
     Jvec.emplace_back(csrM({long(NMO), long(NMO)}, 0));
   }
 
-  AFQMCInfo info{"hubbard_test", int(NMO), s.nup, s.ndown};
-  HubbardModelHamOpsAccess gen(info);
+  HubbardModelHamOpsAccess gen;
 
   nda::array<long, 1> n2IJ =
       gen.find_occupied_pairs<RealType>(s.walker_type, Uvec, Jvec);

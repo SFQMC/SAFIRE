@@ -41,8 +41,8 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
                                              [[maybe_unused]] int targetNW)
     : AFQMCInfo(info),
       mpi_(std::move(mpi_in)),
-      nomsd_(info, nomsd_inputs(pt_in), wlk, mpi_, std::move(outer_hop_), std::move(ci_), std::move(orbs_), nce,
-             targetNW),
+      nomsd_(nomsd_inputs(pt_in), info.NMO, info.nup, info.ndown, wlk, mpi_, std::move(outer_hop_), std::move(ci_),
+             std::move(orbs_), nce, targetNW),
       inner_stack_(std::move(inner_stack_in))
 {
   if (inner_stack_ == nullptr)

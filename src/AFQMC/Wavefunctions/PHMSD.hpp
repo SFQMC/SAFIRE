@@ -43,36 +43,36 @@ namespace afqmc
  * by a list of single particle excitations.
  */
 template<MEMORY_SPACE MEM>
-class PHMSD : public AFQMCInfo
+class PHMSD
 {
 
 public:
   // temporary
-  PHMSD(AFQMCInfo& info,
-        ptree pt_in,
+  PHMSD(ptree pt_in,
         WALKER_TYPES wlk,
-        std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,
+        int NMO_, int nup_, int ndown_,
+        std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_,
         HamiltonianOperations<MEM>&& hop_)
-      : AFQMCInfo(info),
-        mpi(_mpi),
+      : mpi(mpi_),
         walker_type(wlk),
+        NMO{NMO_}, nup{nup_}, ndown{ndown_},
         HamOp(std::move(hop_))
   {}
 
   template<class csrM>
-  PHMSD(AFQMCInfo& info,
-        ptree pt_in,
+  PHMSD(ptree pt_in,
         WALKER_TYPES wlk,
-        std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,
+        int NMO_, int nup_, int ndown_,
+        std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_,
         HamiltonianOperations<MEM>&& hop_,
         ph_excitations<int, ComplexType, MEM>&& abij_,
         nda::array<csrM,1>&& op_spin_det_coupling_,
         nda::array<csrM,1>&& orbs_,
         ComplexType nce,
         [[maybe_unused]] int targetNW = 1)
-      : AFQMCInfo(info),
-        mpi(_mpi),
+      : mpi(mpi_),
         walker_type(wlk),
+        NMO{NMO_}, nup{nup_}, ndown{ndown_},
         HamOp(std::move(hop_)),
         abij(std::move(abij_)),
         OpSpinDetCouplings(std::move(op_spin_det_coupling_)),
@@ -152,13 +152,6 @@ public:
     io::compare_known_keys("particle-hole multi-Slater det. (PHMSD) Wavefunction", pt1, pt0,pass_through_keys);
     return pt1;
   }
-
-  ~PHMSD() = default; 
-
-  PHMSD(PHMSD const& other) = default;
-  PHMSD& operator=(PHMSD const& other) = default;
-  PHMSD(PHMSD&& other)                 = default;
-  PHMSD& operator=(PHMSD&& other) = default;
 
   int number_of_cholesky_vectors() const { return HamOp.number_of_cholesky_vectors(); }
 
@@ -431,7 +424,10 @@ protected:
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
   // type of walker/wfn
-  WALKER_TYPES walker_type;  
+  WALKER_TYPES walker_type{};
+  int NMO{};
+  int nup{};
+  int ndown{};
 
   HamiltonianOperations<MEM> HamOp;
 

@@ -107,7 +107,7 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   wfn_pt.put("filename",wfn_file);
   wfn_pt.put("dense_trial",dense_trial);
 
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
 

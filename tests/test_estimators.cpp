@@ -148,7 +148,7 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   wfn_pt.put("filename",wfn_file);
 
   int nwalk = 2;
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
 

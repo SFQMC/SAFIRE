@@ -365,20 +365,17 @@ void NOMSD_FT<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Me
   auto all = range::all;
   const int ndet   = ci.size();
   const int nw     = wset.size();
-  const int neltot = (walker_type==COLLINEAR ? nup+ndown : nup );
   const int nspin  = (walker_type==COLLINEAR ? 2 : 1 );
   const int npol   = (walker_type==NONCOLLINEAR ? 2 : 1 );
 
   // this is wrong without importanceSampling!!!
   utils::check(importanceSampling, "Finish");
 
-  memory::buffered_array<MEM,ComplexType,2> Gc(nw,neltot*npol*NMO); 
+  memory::buffered_array<MEM,ComplexType,2> Gc(nw,npol*NMO*npol*NMO); 
   //auto Gc3d = nda::reshape(Gc,std::array<long,3>{nw,neltot,npol*NMO});
   
   if(ndet == 1) {
 
-    // for finite-T, nup = ndn = NMO
-    utils::check(neltot == npol*NMO, "size mismatch");
     auto Gfull = nda::reshape(Gc,std::array<long,4>{nw,nspin,npol*NMO,npol*NMO});
     //memory::buffered_array<MEM,ComplexType,4> Gfull(nw,nspin,npol*NMO,npol*NMO); 
     memory::buffered_array<MEM,ComplexType,1> LogOv(nw); 
