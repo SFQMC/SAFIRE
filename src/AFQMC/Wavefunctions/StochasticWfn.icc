@@ -369,6 +369,10 @@ template<class WlkSet>
 void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
 {
   inner_step_pending_ = true;
+  // A forward step closes the current BP window: invalidate any cached BP reference draw so the next
+  // back-propagation block draws a fresh free-projection ensemble (and so getReferences sees the forward
+  // ensemble, not a stale draw, after a resample).
+  bp_refs_drawn_ = false;
   // Phase 3c-ii leapfrog: resample conditioned on the current (old) walker phi and refresh the stored
   // OVLP = <Psi_T|phi> against that just-sampled ensemble. Log_Overlap(wset) consumes the latch just
   // armed (driving the conditioned resample + inner_cond_mag_), then stores the importance-reweighted
@@ -932,14 +936,16 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
   nomsd_.vbias_from_G(Gsum, v2d, dt);
 }
 
-// Phase 7 Option B (Tier 6): back-propagation reference Slater matrices. At the OUTER-NOMSD-delegate
-// regime (static limit / conditioned trials) this forwards to nomsd_ (the anchor / CI expansion). For a
-// walker-independent free-projection inner ensemble (bp_uses_inner_ensemble()) the references are the P
-// inner samples {psi_p}: the inner walker Slater matrix is stored as [npol*NMO, nup] (the transpose of
-// NOMSD's OrbMats [nup, npol*NMO]), so the bra Refs(p,:,:) is conj(SM) directly -- a conjugate with NO
-// transpose, vs NOMSD's conj+transpose of OrbMats. The estimator (FullObsHandler) supplies the per-
-// reference overlap exp(Ov_p) and uniform weight 1/P (getReferenceWeight), reproducing the stochastic
-// trial bra <Psi_T| ~ (1/P) sum_p <psi_p|. See the Option B design note in StochasticDevelopment.md.
+// Phase 7 (Tier 6): back-propagation reference Slater matrices. At the OUTER-NOMSD-delegate regime
+// (static limit / P==1) this forwards to nomsd_ (the anchor / CI expansion). For a dynamic trial
+// (bp_uses_inner_ensemble()) it first DRAWS a fresh, walker-independent free-projection ensemble of P
+// samples {psi_p = B_T(Y^[p])|phi_T>} (draw_bp_reference_ensemble(), decoupled from the forward inner
+// ensemble -- works for free-projection AND conditioned/leapfrog forward walks), then fills the
+// references from those P samples: the inner walker Slater matrix is stored as [npol*NMO, nup] (the
+// transpose of NOMSD's OrbMats [nup, npol*NMO]), so the bra Refs(p,:,:) is conj(SM) directly -- a
+// conjugate with NO transpose, vs NOMSD's conj+transpose of OrbMats. The estimator (FullObsHandler)
+// supplies the per-reference overlap exp(Ov_p) and uniform weight 1/P (getReferenceWeight), reproducing
+// the stochastic trial bra <Psi_T| ~ (1/P) sum_p <psi_p|. See StochasticDevelopment.md, Phase 7.
 template<MEMORY_SPACE MEM, class devPsiT>
 template<class RefMat>
 void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat&& Refs)
@@ -949,6 +955,8 @@ void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat
     nomsd_.getReferences(number_of_references, std::forward<RefMat>(Refs));
     return;
   }
+  // Dedicated free-projection draw of the P reference samples (walker-independent), fresh per BP block.
+  draw_bp_reference_ensemble();
   using nda::range;
   auto all = range::all;
   memory::check_memory_space<MEM>(Refs);

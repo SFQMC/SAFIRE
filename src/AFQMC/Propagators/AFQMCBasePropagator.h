@@ -287,6 +287,16 @@ public:
   template<class WlkSet>
   void Propagate_conditioned(WlkSet& wset, nda::MemoryArrayOfRank<2> auto const& Xbias, RealType dt, int nt = 0);
 
+  // Free-projection field-sampling step, INDEPENDENT of the propagator's build mode. Draws bare
+  // auxiliary fields Y ~ p_T(Y) (no force bias, no vMF shift -- toggles free_projection around
+  // assemble_X) and applies B_T(Y) = exp(vHS) to the walkers, then stops. Like Propagate_conditioned it
+  // skips the energy/overlap and walker-weight update: the results are field samples, not weighted
+  // walkers. Used by StochasticWfn to draw walker-INDEPENDENT free-projection trial samples
+  // {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references, regardless of whether the forward inner
+  // propagator was built for free projection (3b) or importance sampling (3c conditioning/leapfrog).
+  template<class WlkSet>
+  void Propagate_free(WlkSet& wset, RealType dt, int nt = 0);
+
   template<class WlkSet>
   void BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset,
         nda::MemoryArrayOfRank<4> auto&& Refs, nda::MemoryArrayOfRank<2> auto&& logdetR);           
