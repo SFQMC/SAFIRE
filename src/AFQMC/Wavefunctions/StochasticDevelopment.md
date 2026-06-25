@@ -33,8 +33,8 @@ that port is **`main`** (`std::variant`, `memory::const_shared_array`, `Log_Over
 | Runtime / driver smoke | Partial (`stochastic_propagator_step`) | **`stochastic_propagator_step` ported + CPU-verified [overhaul] (CLOSED); finiteness only**; **Phase 7 BP integration smokes** (`stochastic_back_propagation_estimator_smoke`, `stochastic_back_propagation_driver_smoke`) at the static delegate limit; **full `DriverFactory` run with VAFQMC-exported Ne cc-pVDZ HDF5 (Stages A/C 3b-var; Stages D/E 3c-i/3c-ii leapfrog, Jun 2026)** — see [Ne cc-pVDZ driver experiments](#ne-cc-pvdz-driver-experiments-jun-2026) |
 | GPU build | CPU-only gate in dynamic path | **Not tested** |
 
-**The full `[stochastic_wfn]` tag passes on overhaul (21 cases, 7071 assertions, `mpirun -np 1`,
-`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`; the 12th is the Phase 5 observable-DM case `stochastic_mixed_density_matrix_matches_nomsd`; the 13th is the Phase 5 `accumulate_estimators` case `stochastic_accumulate_estimators_matches_nomsd`; the 14th is the Phase 6 mean-field case `stochastic_mean_field_matches_nomsd`; the 15th is the Phase 6 call-order regression `stochastic_mean_field_production_order`; the 16th is the Phase 7 back-prop-reference case `stochastic_back_propagation_matches_nomsd`; the 17th is the Phase 7 call-order regression `stochastic_back_propagation_production_order`; the 18th is the Phase 7 BP estimator integration smoke `stochastic_back_propagation_estimator_smoke`; the 19th is the Phase 7 BP driver integration smoke `stochastic_back_propagation_driver_smoke`; the 20th is the Phase 7 Option B inner-reference case `stochastic_back_propagation_inner_refs`; the 21st is the Phase 7 dynamic (conditioned+leapfrog) BP integration smoke `stochastic_back_propagation_dynamic_smoke`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
+**The full `[stochastic_wfn]` tag passes on overhaul (23 cases, 7076 assertions, `mpirun -np 1`,
+`Ne_cc-pvdz`, Jun 2026; the 9th case is the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`; the 10th is the Phase 3c-i smoke `stochastic_conditioned_propagator_step`; the 11th is the Phase 3c-ii leapfrog smoke `stochastic_leapfrog_propagator_step`; the 12th is the Phase 5 observable-DM case `stochastic_mixed_density_matrix_matches_nomsd`; the 13th is the Phase 5 `accumulate_estimators` case `stochastic_accumulate_estimators_matches_nomsd`; the 14th is the Phase 6 mean-field case `stochastic_mean_field_matches_nomsd`; the 15th is the Phase 6 call-order regression `stochastic_mean_field_production_order`; the 16th is the Phase 7 back-prop-reference case `stochastic_back_propagation_matches_nomsd`; the 17th is the Phase 7 call-order regression `stochastic_back_propagation_production_order`; the 18th is the Phase 7 BP estimator integration smoke `stochastic_back_propagation_estimator_smoke`; the 19th is the Phase 7 BP driver integration smoke `stochastic_back_propagation_driver_smoke`; the 20th is the Phase 7 Option B inner-reference case `stochastic_back_propagation_inner_refs`; the 21st is the Phase 7 dynamic (conditioned+leapfrog) BP integration smoke `stochastic_back_propagation_dynamic_smoke`; the 22nd is the Phase 8 deprecated-flag compat smoke `stochastic_deprecated_stochastic_flag_smoke`; the 23rd is the Phase 8 HDF5 type-detection smoke `stochastic_hdf5_type_smoke`).** The Catch2 cases were ported to `tests/test_wfn_factory.cpp` (delegate-limit
 parity + Phases 2a/2b/3a static reductions + the 3b full-G dynamic trio + 3c-i conditioned sampling + 3c-ii
 leapfrog + the Phase 5 observable mixed DM + accumulate_estimators + the Phase 6 mean field). Porting them surfaced and
 fixed three real overhaul-only bugs — see
@@ -43,7 +43,7 @@ fixed three real overhaul-only bugs — see
 **Remaining gates:** (1) the Phase 1a/1b/1c **infrastructure** tests are still unported (need new
 `Wavefunction`-variant accessors — see the *Ported vs. deferred* note below); (2) **GPU**
 build/run is untested (the full-G dynamic path is CPU-only gated this phase); (3) multi-rank
-(`-np > 1`) is **validated (Jun 2026)** — **the full `[stochastic_wfn]` suite passes at `-np 2`** (all 21
+(`-np > 1`) is **validated (Jun 2026)** — **the full `[stochastic_wfn]` suite passes at `-np 2`** (all 23
 cases) after fixing four bugs (stochastic `Energy` double-count; accumulate-test HDF5;
 `full_g::energy_closed` kernel; stochastic `Log_Overlap` cross-rank reduce on distributed walkers). See
 [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).
@@ -1512,7 +1512,7 @@ Unlike `vbias`, the observable mixed DM **is** exposed on the `Wavefunction` var
 via a static replicated ensemble (1 vs 3), (2) delegate-limit equality vs NOMSD gated on `ndet == 1`.
 Built + CPU-verified on `worker6049` (`Ne_cc-pvdz`, `mpirun -np 1`): the new case passes (8 assertions)
 and at Phase 5 completion the full `[stochastic_wfn]` tag stood at **13 cases / 5843 assertions** (from
-11 / 5831; the current suite is **21 / 7060** after Phase 7).
+11 / 5831; the current suite is **23 / 7076** after Phase 8).
 
 #### Phase 5 — `accumulate_estimators` (**complete**, CPU-verified [overhaul])
 
@@ -2025,7 +2025,7 @@ other inputs skip silently. `inner_leapfrog = false` leaves 3c-i/3b bit-identica
 `wfn_rhf.h5`). Requires a **NOMSD** input; other inputs skip silently. Covers the observable
 `MixedDensityMatrix` and `accumulate_estimators` (`DensityMatrix` / `generalizedFockMatrix` are exact
 True-Ham delegates needing no test — see [Phase 5](#phase-5--mixeddensitymatrix--densitymatrix--accumulate_estimators)).
-Passed in the full `[stochastic_wfn]` tag at Phase 5 completion (**13 cases / 5843 assertions**, `mpirun -np 1`, Jun 2026; the current suite is **21 / 7060** after Phase 7).
+Passed in the full `[stochastic_wfn]` tag at Phase 5 completion (**13 cases / 5843 assertions**, `mpirun -np 1`, Jun 2026; the current suite is **23 / 7076** after Phase 8).
 
 | Test case | Checkpoint |
 |-----------|------------|
@@ -2036,8 +2036,8 @@ Passed in the full `[stochastic_wfn]` tag at Phase 5 completion (**13 cases / 58
 
 ***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
 `wfn_rhf.h5`). Requires a **NOMSD** input (the production-order case also **CLOSED**/CPU); other inputs
-skip silently. Passes in the full `[stochastic_wfn]` tag (**21 cases / 7060 assertions**, `mpirun -np 1`,
-worker6035, Jun 2026; was 13 / 5843).
+skip silently. Passes in the full `[stochastic_wfn]` tag (**23 cases / 7076 assertions**, `mpirun -np 1`,
+worker6035, Jun 2026; was 13 / 5843 at Phase 5 completion).
 
 | Test case | Checkpoint |
 |-----------|------------|
@@ -2048,7 +2048,7 @@ worker6035, Jun 2026; was 13 / 5843).
 
 ***[overhaul] CPU-verified*** in `tests/test_wfn_factory.cpp` on `Ne_cc-pvdz` (`ham_chol_dense.h5` +
 `wfn_rhf.h5`). Requires a **NOMSD** input (the production-order case also **CLOSED**/CPU); other inputs
-skip silently. Part of the full `[stochastic_wfn]` tag (**21 cases / 7060 assertions**, `mpirun -np 1`,
+skip silently. Part of the full `[stochastic_wfn]` tag (**23 cases / 7076 assertions**, `mpirun -np 1`,
 worker6035, Jun 2026). **Scope:** reference-API + layout parity, plus static-limit BP integration
 smokes through `EstimatorHandler` and `DriverFactory` (see table below). Dynamic (`inner_nsteps > 0`)
 BP numerical stability remains a follow-up.
@@ -2068,7 +2068,7 @@ All stochastic tests share the Catch2 tag `[stochastic_wfn]` and require a NOMSD
 
 **`main` (overhaul API)** — target binary is the consolidated `test_afqmc`
 (`tests/test_wfn_factory.cpp`); output under `${BUILD_DIR}/tests/bin/`. The static + 3b cases are
-**ported and CPU-verified** (21 cases, 7060 assertions — incl. the Phase 3b-var anchor, 3c-i and 3c-ii smokes, the two Phase 5 observable cases, the two Phase 6 mean-field cases, and the six Phase 7 back-prop cases) on the
+**ported and CPU-verified** (23 cases, 7076 assertions — incl. the Phase 3b-var anchor, 3c-i and 3c-ii smokes, the two Phase 5 observable cases, the two Phase 6 mean-field cases, the six Phase 7 back-prop cases, and the two Phase 8 factory/HDF5 smokes) on the
 `Ne_cc-pvdz` dense+RHF fixture (the develop `ham_chol_sc.h5` / `wfn_msd.h5` fixtures are gone). Build is driven via `cmake --build` (Ninja
 generator); on the Flatiron cluster build on a compute node, not the gateway:
 
@@ -2088,8 +2088,8 @@ mpirun -np 1 ./tests/bin/test_afqmc \
 
 The whole feature was developed and verified at **`-np 1`**; a `-np 2` sweep of `[stochastic_wfn]`
 (`Ne_cc-pvdz`) surfaced latent multi-rank bugs (a single `MPI_ABORT` kills the whole tag, so cases were
-run individually). **Four bugs were found and fixed (below); `-np 1` remains fully green (21 cases / 7060
-assertions) and ALL 21 cases now pass at `-np 2`.** At `-np 2`:
+run individually). **Four bugs were found and fixed (below); `-np 1` remains fully green (23 cases / 7076
+assertions) and ALL 23 cases now pass at `-np 2`.** At `-np 2`:
 
 | Case | `-np 2` | Note |
 |------|---------|------|
@@ -2151,27 +2151,29 @@ per-walker quantity. **Fixed**: `Log_Overlap` now loops the full `nw·P` pairs o
 `all_reduce` — each rank computes the complete effective overlap for its **own** walkers, exactly like
 `NOMSD::Log_Overlap`. (At the static inner ensemble used here the inner walkers are the replicated anchor,
 so each rank scores its walkers against the same trial.) Verified: `driver_smoke` passes at `-np 2`, and
-the full suite passes at both `-np 1` and `-np 2` (the current suite is **21 cases / 7060 assertions**,
-including the later dynamic-BP smoke).
+the full suite passes at both `-np 1` and `-np 2` (the current suite is **23 cases / 7076 assertions**,
+including the Phase 7 dynamic-BP smoke and the Phase 8 factory/HDF5 smokes).
 
 ### Integration follow-ups (not yet validated)
 
 **Overhaul port — done (Jun 2026):**
 
 - ✅ Ported the static (1a–3a) + 3b `[stochastic_wfn]` cases to `tests/test_wfn_factory.cpp`; built
-  `test_afqmc` and ran the full tag on a compute node (now 21 cases, 7060 assertions, `Ne_cc-pvdz`,
+  `test_afqmc` and ran the full tag on a compute node (now 23 cases, 7076 assertions, `Ne_cc-pvdz`,
   incl. the Phase 3b-var anchor `stochastic_inner_hamiltonian_same_as_true`, the Phase 3c-i smoke
   `stochastic_conditioned_propagator_step`, the Phase 3c-ii leapfrog smoke
   `stochastic_leapfrog_propagator_step`, the two Phase 5 observable cases
   `stochastic_mixed_density_matrix_matches_nomsd` / `stochastic_accumulate_estimators_matches_nomsd`,
   the two Phase 6 mean-field cases `stochastic_mean_field_matches_nomsd` /
-  `stochastic_mean_field_production_order`, and the six Phase 7 back-prop cases
+  `stochastic_mean_field_production_order`, the six Phase 7 back-prop cases
   `stochastic_back_propagation_matches_nomsd` /
   `stochastic_back_propagation_production_order` /
   `stochastic_back_propagation_estimator_smoke` /
   `stochastic_back_propagation_driver_smoke` /
   `stochastic_back_propagation_inner_refs` (Option B) /
-  `stochastic_back_propagation_dynamic_smoke` (dynamic conditioned+leapfrog BP)).
+  `stochastic_back_propagation_dynamic_smoke` (dynamic conditioned+leapfrog BP), and the two Phase 8
+  factory/HDF5 smokes `stochastic_deprecated_stochastic_flag_smoke` /
+  `stochastic_hdf5_type_smoke`).
 - ✅ Fixed the three overhaul-only bugs the port surfaced (log-overlap convention; full-G one-body
   rank mismatch; full-G EXX/EJ slice axis + `dotc`→`dot`).
 - ✅ Full-G validated against the compact path on the dense `Real3IndexFactorization` route
@@ -2181,7 +2183,7 @@ including the later dynamic-BP smoke).
 **Overhaul port — still open:**
 
 - Port the Phase 1a/1b/1c **infrastructure** tests (need new `Wavefunction`-variant accessors).
-- **`-np > 1`: validated (Jun 2026) — see [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).** **The full `[stochastic_wfn]` suite passes at `-np 2`** (all 21 cases) after fixing four bugs (stochastic `Energy` double-count; accumulate-test HDF5; `full_g::energy_closed` kernel; stochastic `Log_Overlap` cross-rank reduce). Remaining: GPU and the develop-only Phase 1 infrastructure tests.
+- **`-np > 1`: validated (Jun 2026) — see [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035).** **The full `[stochastic_wfn]` suite passes at `-np 2`** (all 23 cases) after fixing four bugs (stochastic `Energy` double-count; accumulate-test HDF5; `full_g::energy_closed` kernel; stochastic `Log_Overlap` cross-rank reduce). Remaining: GPU and the develop-only Phase 1 infrastructure tests.
 
 **Both code lines (`stochastic-wfn-develop` and `main`; longer term):**
 

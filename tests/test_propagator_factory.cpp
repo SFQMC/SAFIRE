@@ -255,7 +255,7 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   wfn_pt.put("name", "wfn0");
   wfn_pt.put("system", "info0");
   wfn_pt.put("filename", wfn_file);
-  WavefunctionFactory<MEM> WfnFac(InfoMap);
+  WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
   wset.resize(nwalk, WfnFac.getInitialGuess("wfn0"));
