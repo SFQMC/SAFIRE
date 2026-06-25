@@ -247,27 +247,31 @@ public:
     nomsd_.generalizedFockMatrix(std::forward<Args>(args)...);
   }
 
-  // Phase 7 (Tier 6) back-propagation reference set. Two regimes, selected by bp_uses_inner_ensemble():
-  //  - OUTER-NOMSD DELEGATE (the default / Option A): expose the OUTER nomsd_'s reference set -- the
-  //    anchor {phi_T} = OrbMats(0) (weight 1) for the intended single-determinant trial, or its full CI
-  //    expansion otherwise. Used at the static limit (inner_nsteps==0) and for conditioned/leapfrog
-  //    trials (whose nwalk*P ensemble is walker-DEPENDENT, incompatible with the estimator broadcasting
-  //    one walker's references to all). Identical to plain NOMSD.
-  //  - INNER-ENSEMBLE (Option B): for a genuinely field-sampled, walker-INDEPENDENT free-projection inner
-  //    ensemble (inner_nsteps>0, P>1, not conditioned), expose the P inner samples {psi_p} as references
-  //    with uniform weight 1/P, so back-propagation scores against the true stochastic trial
-  //    <Psi_T| ~ (1/P) sum_p <psi_p| (Eq. 24 of arXiv:2505.18519). The estimator already carries the
-  //    complex per-reference overlap exp(Ov_p)=<psi_p|phi_BP>, so the phase S_p is folded in and uniform
-  //    1/P is correct (and cancels in the estimator's normalization ratio); the explicit S_p/(1/|O_p|)
-  //    reweighting of the forward path is the importance-sampling correction for WALKER-CONDITIONED draws
-  //    (Eq. 23), absent here because these are free-projection (bare p_T(Y)) samples. The estimator
-  //    freezes the references it reads (copies them) for the BP window. Reduces to Option A at
-  //    inner_nsteps==0. See the Option B design note in StochasticDevelopment.md.
+  // Phase 7 (Tier 6) back-propagation reference set. This is standard Motta-Zhang back-propagation
+  // (arXiv:1707.02684): the trial is back-propagated through the recorded OUTER fields and contracted
+  // against the stored forward walker; the references are the determinants that represent <Psi_T|. Two
+  // regimes, selected by bp_uses_inner_ensemble():
+  //  - OUTER-NOMSD DELEGATE (static limit / P==1): expose the OUTER nomsd_'s reference set -- the anchor
+  //    {phi_T} = OrbMats(0) (weight 1) for the single-determinant trial, or its CI expansion otherwise.
+  //    Identical to plain NOMSD. Used at inner_nsteps==0 and inner_nwalkers==1.
+  //  - DEDICATED FREE-PROJECTION DRAW (the faithful set): for a dynamic trial (inner_nsteps>0, P>1),
+  //    getReferences draws a FRESH, walker-INDEPENDENT free-projection ensemble {psi_p = B_T(Y^[p])|phi_T>}
+  //    (bare p_T(Y)) and exposes those P samples with uniform weight 1/P, so back-propagation scores
+  //    against the true stochastic trial <Psi_T| ~ (1/P) sum_p <psi_p| (Eq. 24 of arXiv:2505.18519). The
+  //    trial |Psi_T> is walker-INDEPENDENT, so its references must be too -- the forward walk's
+  //    conditioning/leapfrog (Phase 3c) is a forward-only importance-sampling device, IRRELEVANT to the
+  //    BP references; hence this draw is DECOUPLED from the forward inner ensemble and works for BOTH
+  //    free-projection and conditioned/leapfrog forward walks. The estimator already carries the complex
+  //    per-reference overlap exp(Ov_p)=<psi_p|phi_BP> (phase folded in) and uniform 1/P cancels in its
+  //    normalization ratio; the explicit S_p/(1/|O_p|) reweighting of the forward path is the
+  //    importance-sampling correction for WALKER-CONDITIONED draws (Eq. 23), absent here because these
+  //    are bare free-projection samples. getReferences performs the draw and the estimator copies the
+  //    references it reads, freezing them for the BP window (a fresh Monte-Carlo draw of the trial per
+  //    block). Reduces to the delegate at inner_nsteps==0 / P==1. See StochasticDevelopment.md, Phase 7.
   bool bp_uses_inner_ensemble() const
   {
-    return inner_nsteps_ > 0 && inner_nwalkers_ > 1 && not inner_conditioning_
-           && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr
-           && int(inner_ensemble_.wset->size()) == inner_nwalkers_;
+    return inner_nsteps_ > 0 && inner_nwalkers_ > 1
+           && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr;
   }
 
   int total_number_of_references() const
@@ -281,8 +285,9 @@ public:
   }
 
   // Fills the [nref, npol*NMO, nel] reference Slater matrices (H-conjugated bras), as
-  // BackPropagatedEstimator requests. Option B (bp_uses_inner_ensemble()) fills them from the inner
-  // free-projection samples; otherwise delegates to nomsd_. Defined in the .icc.
+  // BackPropagatedEstimator requests. For a dynamic trial (bp_uses_inner_ensemble()) it first performs a
+  // dedicated free-projection draw (draw_bp_reference_ensemble()) and fills from those P samples;
+  // otherwise it delegates to nomsd_ (the anchor / CI expansion). Defined in the .icc.
   template<class RefMat>
   void getReferences(int number_of_references, RefMat&& Refs);
 
@@ -340,6 +345,11 @@ private:
   int inner_nsteps_{0};
   double inner_timestep_{0.01};
   bool inner_step_pending_{false};
+  // Phase 7 (Tier 6): guards the back-propagation reference draw so it happens at most ONCE per BP window.
+  // Set true by draw_bp_reference_ensemble() after a draw; a repeated getReferences in the same window
+  // then reuses that draw (idempotent -- no silent re-draw). Reset to false by begin_inner_step(), i.e.
+  // when the forward walk advances to the next step (the next BP window draws fresh).
+  bool bp_refs_drawn_{false};
   bool inner_conditioning_{false};
   bool inner_leapfrog_{false};
   nda::array<ComplexType, 3> inner_anchor_;
@@ -351,6 +361,21 @@ private:
   std::unique_ptr<StochasticInnerStack<MEM, devPsiT>> inner_stack_;
 
   void maybe_advance_inner_ensemble();
+
+  // Phase 7 (Tier 6): draw a FRESH, walker-INDEPENDENT free-projection ensemble of P trial samples
+  // {psi_p = B_T(Y^[p])|phi_T>} into inner_ensemble_.wset for use as back-propagation references. Resets
+  // to the anchor, sizes the ensemble to P, then advances inner_nsteps_ BARE free-projection steps via
+  // inner_propagator().Propagate_free (which forces bare field sampling regardless of the forward
+  // propagator's build mode -- so this is decoupled from any 3c conditioning/leapfrog of the forward
+  // walk). Reuses inner_ensemble_.wset as scratch: every forward resample resets it to the anchor, so
+  // transiently overwriting it here is safe (the next begin_inner_step resamples from scratch). Called
+  // by getReferences. Defined in StochasticWfn.cpp (does not depend on the RefMat template).
+  void draw_bp_reference_ensemble();
+
+  // Reset the first `count` inner walkers in `inner` to the anchor |phi_T> (the per-spin Slater matrices
+  // cached in inner_anchor_; handles CLOSED/COLLINEAR). The single place that knows the anchor/collinear
+  // layout -- shared by the free-projection advance, the conditioned resample, and the BP reference draw.
+  void reset_inner_to_anchor(WalkerSet<MEM>& inner, int count);
 
   // Phase 3c-i: resample the inner ensemble conditioned on each outer walker phi_w. Computes the
   // custom inner force bias x_bar(phi_w) = sqrt(dt)*L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (the inner
