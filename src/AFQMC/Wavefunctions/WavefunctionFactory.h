@@ -28,11 +28,28 @@
 #include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
+#include "IO/app_loggers.h"
 
 namespace sfqmc
 {
 namespace afqmc
 {
+
+// Phase 8: first-class stochastic trial input. Accepts type: stochasticwfn (preferred) or the
+// deprecated stochastic: true flag on a plain NOMSD block.
+inline bool is_stochastic_wavefunction_input(ptree const& pt0)
+{
+  if (auto type_opt = pt0.get_optional<std::string>("type"))
+  {
+    std::string const type = *type_opt;
+    if (type == "stochasticwfn" || type == "stochastic_wfn" || type == "stochastic")
+      return true;
+    if (type == "nomsd" || type == "phmsd")
+      return false;
+    APP_ABORT("Error in WavefunctionFactory: unknown wavefunction type: " + type);
+  }
+  return pt0.get<bool>("stochastic", false);
+}
 
 template<MEMORY_SPACE MEM>
 class WavefunctionFactory
@@ -88,7 +105,9 @@ public:
     // set default later, since it depends on HamiltonianOperations type
     if( auto val = pt0.get_optional<bool>("dense_trial") )
       pt1.put("dense_trial", *val);
-    bool stochastic    = pt0.get<bool>("stochastic", false);
+    bool stochastic = is_stochastic_wavefunction_input(pt0);
+    if (pt0.get<bool>("stochastic", false) && not pt0.get_child_optional("type"))
+      app_warning("WavefunctionFactory: stochastic: true is deprecated; use type: stochasticwfn.");
     int inner_nwalkers = pt0.get<int>("inner_nwalkers", 1);
     if (inner_nwalkers < 1)
       APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
@@ -107,8 +126,7 @@ public:
           "inner_propagator", "inner_hamiltonian"})
       if (not stochastic && pt0.get_child_optional(key))
         APP_ABORT("Error in WavefunctionFactory::interpret_inputs: " + std::string(key) +
-                  " requires stochastic: true.");
-    pt1.put("stochastic", stochastic);
+                  " requires type: stochasticwfn.");
     if (stochastic)
     {
       pt1.put("inner_nwalkers", inner_nwalkers);
@@ -121,6 +139,7 @@ public:
     }
     std::unordered_set<std::string> pass_through_keys = {
       "system",
+      "type",
       "stochastic",
       "inner_nwalkers",
       "inner_nsteps",
@@ -184,13 +203,11 @@ public:
     auto xml = wfnBlocks.find(ID);
     if (xml == wfnBlocks.end())
       APP_ABORT(" Error in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers: Missing wfn block. ");
-    ptree pt = interpret_inputs(xml->second);
-    if (not pt.get<bool>("stochastic"))
-      return;
     if (not wfn.is_stochastic_wavefunction())
       return;
     if (wfn.stochastic_inner_walkers_initialized())
       return;
+    ptree pt = interpret_inputs(xml->second);
     std::string info = pt.get<std::string>("system");
     if (InfoMap.find(info) == InfoMap.end())
       APP_ABORT("ERROR: Undefined system in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers.");

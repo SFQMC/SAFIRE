@@ -102,6 +102,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "ndets_to_read",
       "restart_file",
       "filename",
+      "type",
       "stochastic",
       "inner_nwalkers",
       "inner_nsteps",

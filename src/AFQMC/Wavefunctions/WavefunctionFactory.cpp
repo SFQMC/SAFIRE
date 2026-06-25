@@ -207,7 +207,6 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
   std::string name          = pt.get<std::string>("name");
   std::string filename      = pt.get<std::string>("filename");
   bool recompute_ci  = pt.get<bool>("rediag");
-  bool stochastic    = pt.get<bool>("stochastic", false);
   int ndets_to_read  = pt.get<int>("ndets_to_read");
   boost::optional<bool> dense_trial_opt;// = pt.get_optional<bool>("dense_trial");
   if( auto node = pt.get_child_optional("dense_trial") )
@@ -237,16 +236,21 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     wfn_type = WAVEFUNCTION_TYPES(itype);
   }
 
+  bool build_stochastic = (wfn_type == STOCHASTIC_WFN) || is_stochastic_wavefunction_input(pt_in);
+
   // everyone reading for now, change it problematic
   h5::file file(filename,'r');
   h5::group grp(file);
   h5::group wgrp = grp.open_group("Wavefunction");
 
   
-  if (wfn_type == NOMSD_WFN)
+  utils::check(not (build_stochastic && wfn_type == PHMSD_WFN),
+               "Error in WavefunctionFactory::fromHDF5: stochastic trials require NOMSD trial HDF5 data.");
+
+  if (wfn_type == NOMSD_WFN || wfn_type == STOCHASTIC_WFN)
   {
     if (walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT){
-      app_log(1," Wavefunction type: {}", stochastic ? "StochasticWfn (wrapping NOMSD)" : "NOMSD");
+      app_log(1," Wavefunction type: {}", build_stochastic ? "StochasticWfn" : "NOMSD");
       h5::group ngrp = wgrp.open_group("NOMSD");
       nda::array<ComplexType,1> ci;
 
@@ -280,8 +284,11 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
         dense_trial = *dense_trial_opt;
       }
 
-      if (stochastic)
+      if (build_stochastic)
       {
+        utils::check(walker_type != COLLINEAR_FT && walker_type != NONCOLLINEAR_FT,
+                     "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
+                     "finite-temperature walkers.");
         // Resolve the inner (Variational) Hamiltonian (Phase 3b-var). If the wfn block names one via
         // `inner_hamiltonian` (read from the raw pt_in -- it is a factory-level key, never forwarded
         // into the wavefunction ptree), build it on demand through HamFac_ and use it for the inner
@@ -322,6 +329,10 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
                                                                        walker_type, ci, PsiT, NCE, targetNW, PsiT);
       }
 
+      utils::check(wfn_type == NOMSD_WFN,
+                   "Error in WavefunctionFactory::fromHDF5: Wavefunction/StochasticWfn HDF5 requires "
+                   "type: stochasticwfn (or deprecated stochastic: true).");
+
       auto HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT);
 
       if (dense_trial)
@@ -345,7 +356,10 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       }
     }
     else
-    {     
+    {
+      utils::check(wfn_type != STOCHASTIC_WFN && not build_stochastic,
+                   "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
+                   "finite-temperature walkers.");
       app_log(1," Wavefunction type: NOMSD");
       h5::group ngrp = wgrp.open_group("NOMSD");
       nda::array<ComplexType,1> ci;

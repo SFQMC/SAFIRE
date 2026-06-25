@@ -37,7 +37,7 @@ class Propagator;
 
 inline ptree strip_stochastic_input_keys(ptree pt)
 {
-  for (auto const& key : {"stochastic", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
+  for (auto const& key : {"type", "stochastic", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
                           "inner_conditioning", "inner_leapfrog"})
     pt.erase(key);
   return pt;

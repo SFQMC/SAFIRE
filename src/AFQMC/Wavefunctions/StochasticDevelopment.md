@@ -733,7 +733,8 @@ walker-conditioning, and the leapfrog are added by **Phases 3b/3c** — see
 
 Stochastic-specific keys are stripped from plain `NOMSD` input via `strip_stochastic_input_keys()`
 (single source of truth in `StochasticWfn.hpp`; `WavefunctionFactory::strip_stochastic_factory_keys`
-delegates to it). All stochastic keys require `stochastic: true` in `WavefunctionFactory::interpret_inputs`.
+delegates to it). All stochastic keys require `type: stochasticwfn` (or deprecated `stochastic: true`) in
+`WavefunctionFactory::interpret_inputs`.
 
 | Key | Default | Phase | Description |
 |-----|---------|-------|-------------|
@@ -751,8 +752,7 @@ Example wavefunction block fragment:
 ```json
 {
   "name": "wfn0",
-  "type": "nomsd",
-  "stochastic": true,
+  "type": "stochasticwfn",
   "inner_nwalkers": 3,
   "inner_nsteps": 0,
   "inner_seed": 777,
@@ -760,6 +760,13 @@ Example wavefunction block fragment:
   "system": "default"
 }
 ```
+
+The deprecated `stochastic: true` flag on a plain NOMSD block still works but logs a warning.
+
+HDF5 files may declare the trial type explicitly with a `Wavefunction/StochasticWfn` marker group
+(sibling to `Wavefunction/NOMSD`, which still holds the orbital data). Such files are detected by
+`getWavefunctionType()` as `STOCHASTIC_WFN` and always build `StochasticWfn` even without
+`type: stochasticwfn` in the input.
 
 Optional explicit inner propagator settings:
 
@@ -774,11 +781,12 @@ Optional explicit inner propagator settings:
 
 ## Factory integration
 
-- Selected via `stochastic: true` inside the existing `type == "nomsd"` path in
-  `WavefunctionFactory::fromHDF5`.
-- Reads the same NOMSD HDF5 data (`Wavefunction/NOMSD`, `PsiT_*`, CI coefficients, etc.).
-- When `stochastic: true`, `fromHDF5` builds a `NomsdSdetPair` upfront and routes through
-  `buildStochasticNomsdWavefunctionWithPrecision()` (separate from the plain `NOMSD` path).
+- Selected via **`type: stochasticwfn`** in the wavefunction input block (Phase 8), or the deprecated
+  `stochastic: true` on a NOMSD HDF5 file, or a `Wavefunction/StochasticWfn` HDF5 marker.
+- `WavefunctionFactory::fromHDF5` routes stochastic trials through a dedicated branch (like `PHMSD`),
+  reading the same NOMSD HDF5 data (`Wavefunction/NOMSD`, `PsiT_*`, CI coefficients, etc.).
+- When building a stochastic trial, `fromHDF5` routes through
+  `buildStochasticNomsdWavefunction*` (separate from the plain `NOMSD` path).
 - Plain `NOMSD` builds use `buildNomsdWavefunctionWithPrecision()`; the `stochastic` flag is
   not threaded through those templates.
 - Registered as explicit instantiations in the `Wavefunction` `std::variant` **[overhaul]** (was `boost::variant` on develop).
@@ -1017,8 +1025,8 @@ Not wavefunction visitor methods, but required for a full-fledged type.
 |--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `StochasticWfn` constructor | Builds outer `nomsd_`; accepts pre-built `StochasticInnerStack` (inner NOMSD + propagator + RNG). Parses `inner_nwalkers`, `inner_nsteps`, `inner_seed`, `inner_propagator`. Defers inner `WalkerSet` resize. | **Builds two `HamOps`** (3b-var ✓): the True Ham for `nomsd_` (from `h`) and the **Variational** Ham for the inner stack — `WavefunctionFactory` builds the second Cholesky Hamiltonian from `inner_hamiltonian` through the `HamiltonianFactory` it holds (absent ⇒ clones the True Ham). Remaining: population control, first-class HDF5 type (Phase 8). |
 | `interpret_inputs(pt)` | Validates NOMSD keys plus all stochastic keys listed above. Rejects `inner_nsteps > 0`. | Relax the `inner_nsteps` guard when Phase 3b invokes `inner_propagator()`. |
-| `WavefunctionFactory` | `stochastic: true` on NOMSD HDF5 path; `buildStochasticInnerStack()` + `buildStochasticNomsdWavefunction*`; `maybe_initialize_stochastic_inner_walkers()` after build. | First-class `stochasticwfn` type with its own `fromHDF5` branch (Phase 8). |
-| `getWavefunctionType()` | Not aware of `StochasticWfn`. | Detect stochastic trial wavefunction files on disk. |
+| `WavefunctionFactory` | `type: stochasticwfn` input + dedicated `fromHDF5` branch; `buildStochasticInnerStack()` + `buildStochasticNomsdWavefunction*`; `maybe_initialize_stochastic_inner_walkers()` after build. | **Complete (Phase 8).** |
+| `getWavefunctionType()` | Detects `Wavefunction/StochasticWfn` HDF5 marker (`STOCHASTIC_WFN`). | **Complete (Phase 8).** |
 
 ---
 
@@ -1026,7 +1034,8 @@ Not wavefunction visitor methods, but required for a full-fledged type.
 
 The per-phase reference for the whole feature: what each phase delivers, its key members/factory
 wiring/reductions, its tests, and what it defers. **Phases 1a–3c (3c-i + 3c-ii), Phase 4, Phase 5, Phase 6, and Phase 7 are
-complete and CPU-verified on overhaul** (`Ne_cc-pvdz`); Phase 8 is the remaining plan. (Phases 1a–1c decompose the
+complete and CPU-verified on overhaul** (`Ne_cc-pvdz`); **Phase 8 (factory/HDF5 first-class treatment) is
+complete** on `stochastic-wfn-phase8`. (Phases 1a–1c decompose the
 original "own the full inner stack" step — walker set, `NOMSD`, `HamOps`, and propagator — which
 should *not* be implemented as a single monolith.)
 
@@ -1826,9 +1835,11 @@ walker-independence of the trial):**
    longer be `const`/mutation-free — needs a `mutable` scratch ensemble or a non-const path, captured once
    per BP block to stay time-stable.
 
-### Phase 8 — Factory / HDF5 first-class treatment
+### Phase 8 — Factory / HDF5 first-class treatment (**complete**)
 
-Remove the `stochastic` boolean flag hack; dedicated `fromHDF5` branch like `PHMSD`.
+First-class `type: stochasticwfn` input; dedicated `fromHDF5` branch; `getWavefunctionType()` recognizes
+`Wavefunction/StochasticWfn` HDF5 markers. The deprecated `stochastic: true` flag remains for backward
+compatibility.
 
 ### What to avoid as an early step
 
