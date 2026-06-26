@@ -36,7 +36,7 @@ namespace sfqmc
 namespace afqmc
 {
 
-// Phase 8: first-class stochastic trial input. Accepts type: stochasticwfn (preferred) or the
+// First-class stochastic trial input. Accepts type: stochasticwfn (preferred) or the
 // deprecated stochastic: true flag on a plain NOMSD block.
 inline bool is_stochastic_wavefunction_input(ptree const& pt0)
 {
@@ -58,7 +58,7 @@ class WavefunctionFactory
 public:
   WavefunctionFactory() = default;
 
-  // Optional HamiltonianFactory for StochasticWfn `inner_hamiltonian` (Phase 3b-var). Null when
+  // Optional HamiltonianFactory for StochasticWfn `inner_hamiltonian`. Null when
   // default-constructed; fromHDF5 aborts if a stochastic trial then requests inner_hamiltonian.
   explicit WavefunctionFactory(HamiltonianFactory& hamfac) : HamFac_(&hamfac) {}
 

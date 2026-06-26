@@ -109,8 +109,7 @@ public:
   Propagator<MEM>& inner_propagator();
   Propagator<MEM> const& inner_propagator() const;
 
-  // Arms the per-outer-step inner-resample latch. In leapfrog mode (Phase 3c-ii) it also refreshes the
-  // stored OVLP = ⟨Ψ_T|φ⟩ against the ensemble freshly resampled conditioned on the current (old)
+  // Arms the per-outer-step inner-resample latch. In leapfrog mode it also refreshes the stored OVLP = ⟨Ψ_T|φ⟩ against the ensemble freshly resampled conditioned on the current (old)
   // walker φ, so the step's overlap RATIO new/old (Eq. 25) shares one ensemble and 𝒩(φ) cancels.
   template<class WlkSet>
   void begin_inner_step(WlkSet& wset);
@@ -128,8 +127,8 @@ public:
   WALKER_TYPES getWalkerType() const { return nomsd_.getWalkerType(); }
   constexpr auto get_memory_space() const { return MEM; }
 
-  // Phase 6 (Tier 3): stochastic mean-field subtraction. vMF / G_MF are TRIAL-AGAINST-ITSELF
-  // quantities (no outer walker), so -- unlike the Tier 1/2 mixed estimators that pair the inner
+  // Stochastic mean-field subtraction. vMF / G_MF are TRIAL-AGAINST-ITSELF quantities (no outer walker),
+  // so -- unlike the propagator hot-path mixed estimators that pair the inner ensemble against the OUTER
   // ensemble against the OUTER walkers -- they reduce the inner ensemble against ITSELF:
   //   G_MF = <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T>
   //        = [sum_{p,q} <psi_p|c+c|psi_q>] / [sum_{p,q} <psi_p|psi_q>]
@@ -139,7 +138,7 @@ public:
   // 4, L.G_MF). Both collapse to the anchor density -- i.e. plain NOMSD::G_MF / vMF -- at the static
   // replicated limit (every psi_p == anchor). They DELEGATE to nomsd_ (the anchor mean field) (a) at the
   // single-determinant delegate limit, and (b) whenever the inner ensemble is NOT in its
-  // walker-independent P-sample form -- i.e. after a conditioned/leapfrog resample (Phase 3c) has
+  // walker-independent P-sample form -- i.e. after a conditioned/leapfrog resample has expanded it to
   // expanded it to nwalk*P walker-CONDITIONED samples, which `begin_inner_step` can trigger BEFORE
   // `generateP1` calls vMF (see Propagate ordering). A conditioned ensemble has no walker-independent
   // subset to average for the trial mean field, and the anchor mean field is exact at the
@@ -170,8 +169,7 @@ public:
     Energy(wset);
   }
 
-  // Phase 5 (Tier 2 observable): stochastic mixed density matrix for observable evaluation -- estimator
-  // 3 of arXiv:2505.18519, G[w] = (sum_p w_p <psi_p|c+c|phi_w>/<psi_p|phi_w>) / sum_p w_p, reduced over
+  // Stochastic mixed density matrix for observable evaluation -- estimator 3 of arXiv:2505.18519, G[w] = (sum_p w_p <psi_p|c+c|phi_w>/<psi_p|phi_w>) / sum_p w_p, reduced over
   // the inner ensemble and scored against the True Ham. This is the observable analogue of
   // MixedDensityMatrix_for_vbias: the same inner-ensemble reduction, but returned in the caller's
   // observable layout (and with the LOG overlap convention NOMSD's observable DM uses). Delegates to
@@ -188,12 +186,12 @@ public:
   template<class WlkSet, class MatG, class TVec>
   void MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true);
 
-  // Phase 5 (Tier 2): DM w.r.t. an EXTERNALLY supplied reference orbital set `Ref`. The bra is `Ref`
-  // (not the stochastic trial) and the ket is the walker, so this is pure orbital algebra independent
-  // of both the trial wavefunction and the Hamiltonian -- NOMSD's implementation never touches its own
-  // OrbMats. The stochastic trial therefore plays no role, and delegating to `nomsd_` is exact. (Which
-  // reference set a stochastic trial *exposes* for back-propagation was the Tier 6 question, resolved in
-  // Phase 7: the outer-NOMSD set, inner-ensemble-agnostic; it does not change this Ref-parameterized method.)
+  // DM w.r.t. an EXTERNALLY supplied reference orbital set `Ref`. The bra is `Ref` (not the stochastic
+  // trial) and the ket is the walker, so this is pure orbital algebra independent of both the trial
+  // wavefunction and the Hamiltonian -- NOMSD's implementation never touches its own OrbMats. The
+  // stochastic trial therefore plays no role, and delegating to `nomsd_` is exact. (Which reference set
+  // a stochastic trial exposes for back-propagation is the outer-NOMSD set, inner-ensemble-agnostic; it
+  // does not change this Ref-parameterized method.)
   template<class WlkSet, class RVec, class MatG, class TVec>
   void DensityMatrix(const WlkSet& wset,
                      RVec&& Ref,
@@ -215,8 +213,7 @@ public:
   template<class WlkSet>
   void Log_Overlap(WlkSet& wset);
 
-  // Phase 5 (Tier 2): accumulate observable contributions from the inner-ensemble-reduced (stochastic)
-  // Green's function. The full mixed Green's function fed to the observables is the stochastic
+  // Accumulate observable contributions from the inner-ensemble-reduced (stochastic) Green's function. The full mixed Green's function fed to the observables is the stochastic
   // `MixedDensityMatrix` (estimator 3, full NMO x NMO layout). For time-evolved / back-propagated
   // observables (X/Yc/M != null) that DM is transformed through the evolved operators exactly as NOMSD
   // does (`M + T(X) . G_full . Yc`); the transform is linear in the DM, so the inner-ensemble average
@@ -238,8 +235,7 @@ public:
     accumulate_estimators(iav, wset, wgt, properties_1body, properties, X, X, X, false, importanceSampling);
   }
 
-  // Phase 5 (Tier 5 observable): generalized Fock matrix of a SUPPLIED density matrix against the True
-  // Ham. Like NOMSD, this is a `HamOp` contraction on a caller-provided G (no trial reduction), so it
+  // Generalized Fock matrix of a SUPPLIED density matrix against the True Ham. Like NOMSD, this is a `HamOp` contraction on a caller-provided G (no trial reduction), so it
   // delegates to `nomsd_` (the True Ham). Reached only via the `generalizedFockMatrix` observable.
   template<class... Args>
   void generalizedFockMatrix(Args&&... args)
@@ -247,8 +243,7 @@ public:
     nomsd_.generalizedFockMatrix(std::forward<Args>(args)...);
   }
 
-  // Phase 7 (Tier 6) back-propagation reference set. This is standard Motta-Zhang back-propagation
-  // (arXiv:1707.02684): the trial is back-propagated through the recorded OUTER fields and contracted
+  // Back-propagation reference set. This is standard Motta-Zhang back-propagation (arXiv:1707.02684): the trial is back-propagated through the recorded OUTER fields and contracted
   // against the stored forward walker; the references are the determinants that represent <Psi_T|. Two
   // regimes, selected by bp_uses_inner_ensemble():
   //  - OUTER-NOMSD DELEGATE (static limit / P==1): expose the OUTER nomsd_'s reference set -- the anchor
@@ -259,7 +254,7 @@ public:
   //    (bare p_T(Y)) and exposes those P samples with uniform weight 1/P, so back-propagation scores
   //    against the true stochastic trial <Psi_T| ~ (1/P) sum_p <psi_p| (Eq. 24 of arXiv:2505.18519). The
   //    trial |Psi_T> is walker-INDEPENDENT, so its references must be too -- the forward walk's
-  //    conditioning/leapfrog (Phase 3c) is a forward-only importance-sampling device, IRRELEVANT to the
+  //    conditioning/leapfrog is a forward-only importance-sampling device, IRRELEVANT to the BP
   //    BP references; hence this draw is DECOUPLED from the forward inner ensemble and works for BOTH
   //    free-projection and conditioned/leapfrog forward walks. The estimator already carries the complex
   //    per-reference overlap exp(Ov_p)=<psi_p|phi_BP> (phase folded in) and uniform 1/P cancels in its
@@ -267,7 +262,7 @@ public:
   //    importance-sampling correction for WALKER-CONDITIONED draws (Eq. 23), absent here because these
   //    are bare free-projection samples. getReferences performs the draw and the estimator copies the
   //    references it reads, freezing them for the BP window (a fresh Monte-Carlo draw of the trial per
-  //    block). Reduces to the delegate at inner_nsteps==0 / P==1. See StochasticDevelopment.md, Phase 7.
+  //    block). Reduces to the delegate at inner_nsteps==0 / P==1.
   bool bp_uses_inner_ensemble() const
   {
     return inner_nsteps_ > 0 && inner_nwalkers_ > 1
@@ -345,7 +340,7 @@ private:
   int inner_nsteps_{0};
   double inner_timestep_{0.01};
   bool inner_step_pending_{false};
-  // Phase 7 (Tier 6): guards the back-propagation reference draw so it happens at most ONCE per BP window.
+  // Guards the back-propagation reference draw so it happens at most ONCE per BP window.
   // Set true by draw_bp_reference_ensemble() after a draw; a repeated getReferences in the same window
   // then reuses that draw (idempotent -- no silent re-draw). Reset to false by begin_inner_step(), i.e.
   // when the forward walk advances to the next step (the next BP window draws fresh).
@@ -353,8 +348,7 @@ private:
   bool inner_conditioning_{false};
   bool inner_leapfrog_{false};
   nda::array<ComplexType, 3> inner_anchor_;
-  // Phase 3c-ii (leapfrog): per inner walker q (slot-major q = ip*nwalk + w), the magnitude
-  // |⟨ψ_q|φ_w^cond⟩| of its cross overlap with the walker its block was conditioned on. Set at each
+  // Leapfrog: per inner walker q (slot-major q = ip*nwalk + w), the magnitude |⟨ψ_q|φ_w^cond⟩| of its cross overlap with the walker its block was conditioned on. Set at each
   // conditioned resample; the leapfrog overlap reweights by 1/inner_cond_mag_ so the step ratio is Eq. 25.
   nda::array<RealType, 1> inner_cond_mag_;
   NOMSD<MEM, devPsiT> nomsd_;
@@ -362,8 +356,7 @@ private:
 
   void maybe_advance_inner_ensemble();
 
-  // Phase 7 (Tier 6): draw a FRESH, walker-INDEPENDENT free-projection ensemble of P trial samples
-  // {psi_p = B_T(Y^[p])|phi_T>} into inner_ensemble_.wset for use as back-propagation references. Resets
+  // Draw a FRESH, walker-INDEPENDENT free-projection ensemble of P trial samples {psi_p = B_T(Y^[p])|phi_T>} into inner_ensemble_.wset for use as back-propagation references. Resets
   // to the anchor, sizes the ensemble to P, then advances inner_nsteps_ BARE free-projection steps via
   // inner_propagator().Propagate_free (which forces bare field sampling regardless of the forward
   // propagator's build mode -- so this is decoupled from any 3c conditioning/leapfrog of the forward
@@ -377,19 +370,18 @@ private:
   // layout -- shared by the free-projection advance, the conditioned resample, and the BP reference draw.
   void reset_inner_to_anchor(WalkerSet<MEM>& inner, int count);
 
-  // Phase 3c-i: resample the inner ensemble conditioned on each outer walker phi_w. Computes the
-  // custom inner force bias x_bar(phi_w) = sqrt(dt)*L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (the inner
+  // Resample the inner ensemble conditioned on each outer walker phi_w. Computes the custom inner force bias x_bar(phi_w) = sqrt(dt)*L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (the inner
   // trial IS the anchor phi_T, so this reuses inner_nomsd()'s mixed DM + vbias on the OUTER wset) and
   // drives the nw*P inner ensemble through the inner propagator's conditioned field-sampling seam.
   void advance_inner_ensemble_conditioned(memory::array<MEM, ComplexType, 2> const& X_bias, int nw);
 
-  // Resample dispatch: conditioned (Phase 3c-i) when inner_conditioning_, else the walker-independent
-  // free-projection path (Phase 3b). Honors the per-step latch armed by begin_inner_step().
+  // Resample dispatch: walker-conditioned when inner_conditioning_, else the walker-independent
+  // free-projection path. Honors the per-step latch armed by begin_inner_step().
   template<class WlkSet>
   void conditioned_resample(const WlkSet& wset);
 
-  // Phase 3c-ii: fill inner_cond_mag_ with |⟨ψ_q|φ_w^cond⟩| after a conditioned resample (φ_cond = the
-  // outer walkers the inner blocks were just conditioned on). The leapfrog overlap divides by this.
+  // Fill inner_cond_mag_ with |⟨ψ_q|φ_w^cond⟩| after a conditioned resample (φ_cond = the outer walker
+  // its block was conditioned on). The leapfrog overlap divides by this.
   template<class WlkSet>
   void compute_inner_cond_mag(const WlkSet& wset);
 
@@ -401,7 +393,7 @@ private:
                              TVecOv&& Ov,
                              Accumulate&& accumulate);
 
-  // Phase 6 (Tier 3): whether vMF / G_MF should reduce the inner ensemble (true) or delegate to nomsd_'s
+  // Whether vMF / G_MF should reduce the inner ensemble (true) or delegate to nomsd_'s anchor mean field
   // anchor mean field (false). The mean field <Psi_T|.|Psi_T> is trial-only (walker-independent), so it
   // is reduced ONLY when the inner ensemble is in its walker-INDEPENDENT P-sample form
   // (inner.size() == inner_nwalkers_) with P > 1. It is false (delegate) when:
@@ -409,7 +401,7 @@ private:
   //    P=1 reduction equals nomsd_ -- delegate rather than run it redundantly. This subsumes the
   //    single-determinant delegate limit (inner_nwalkers_==1 && inner_nsteps_==0) AND inner_nwalkers_==1
   //    with inner_nsteps_>0.
-  //  - the ensemble has been expanded by a conditioned/leapfrog resample (Phase 3c) to nwalk*P
+  //  - the ensemble has been expanded by a conditioned/leapfrog resample to nwalk*P walker-CONDITIONED
   //    walker-CONDITIONED samples (inner.size() != inner_nwalkers_): no walker-independent subset to
   //    average, so delegate to the anchor mean field.
   bool mean_field_uses_inner_ensemble() const
@@ -418,8 +410,7 @@ private:
            && int(inner_ensemble_.wset->size()) == inner_nwalkers_;
   }
 
-  // Phase 6 (Tier 3): build the normalized stochastic trial mean-field one-body Green's function
-  // <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T> into `Gsum` (full [1, nspin*npol*NMO*npol*NMO] layout) by reducing
+  // Build the normalized stochastic trial mean-field one-body Green's function <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T> into `Gsum` (full [1, nspin*npol*NMO*npol*NMO] layout) by reducing
   // the P = inner_nwalkers_ walker-independent inner samples against each other (the double sum above).
   // Shared by vMF (contracts it) and G_MF (returns it). Trial-only -- no outer walker set, no conditioned
   // resample. The caller MUST gate on mean_field_uses_inner_ensemble() (inner.size() == inner_nwalkers_).

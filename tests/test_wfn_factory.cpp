@@ -349,26 +349,24 @@ TEST_CASE("wfn_factory: sdet", "[wfn_factory]")
 }
 
 
-// Phase 8: first-class stochastic trial input (type: stochasticwfn).
+// Helper for first-class stochastic trial input (type: stochasticwfn).
 namespace {
 void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
 } // namespace
 
 // ----------------------------------------------------------------------------
-// StochasticWfn delegate-limit parity (Phases 1a-3a, tag [stochastic_wfn]).
+// StochasticWfn delegate-limit parity (static inner ensemble, tag [stochastic_wfn]).
 //
-// At the delegate limit (inner_nwalkers = 1, inner_nsteps = 0) the inner trial
-// ensemble collapses to the single trial-determinant anchor, so every stochastic
-// override (Log_Overlap, Energy, MixedDensityMatrix_for_vbias -> vbias) must
-// reproduce a plain NOMSD on the same outer walkers, for a single-determinant
-// (ndet == 1) trial. A multi-determinant trial diverges by design (a single-det
-// inner ensemble cannot reproduce a CI-weighted NOMSD); see StochasticDevelopment.md.
+// At the delegate limit (inner_nwalkers = 1, inner_nsteps = 0) the inner trial ensemble collapses to the
+// single trial-determinant anchor, so every stochastic override (Log_Overlap, Energy,
+// MixedDensityMatrix_for_vbias -> vbias) must reproduce a plain NOMSD on the same outer walkers, for a
+// single-determinant (ndet == 1) trial. A multi-determinant trial diverges by design (a single-det inner
+// ensemble cannot reproduce a CI-weighted NOMSD).
 //
-// This check is HamOp-agnostic: at inner_nsteps = 0 the stochastic vbias uses the
-// *compact* path, so it runs on any cholesky/THC NOMSD fixture (including the
-// harness's built-in utils/tests/functional/ files). Full-G (inner_nsteps > 0)
-// parity is a separate test that needs the Ne_cc-pvdz DenseFactorized + RHF
-// fixture (-> Real3IndexFactorization); see the fixture note in StochasticDevelopment.md.
+// This check is HamOp-agnostic: at inner_nsteps = 0 the stochastic vbias uses the *compact* path, so it
+// runs on any cholesky/THC NOMSD fixture (including the harness's built-in utils/tests/functional/ files).
+// Full-G (inner_nsteps > 0) parity is a separate test that needs the Ne_cc-pvdz DenseFactorized + RHF
+// fixture (-> Real3IndexFactorization).
 // ----------------------------------------------------------------------------
 template<MEMORY_SPACE MEM>
 void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
@@ -608,19 +606,17 @@ TEST_CASE("stochastic_build_smoke", "[wfn_factory][stochastic_wfn]")
 
 
 // ============================================================================
-// Stochastic hot-path overrides: delegate-limit parity (Phases 2a/2b/3a) and the
-// dynamic ensemble (Phase 3b), tag [stochastic_wfn].
+// Stochastic hot-path overrides: static delegate-limit parity (Log_Overlap, Energy, vbias) and the
+// dynamic free-projection ensemble (inner_nsteps > 0), tag [stochastic_wfn].
 //
-// These exercise the StochasticWfn reductions through the public Wavefunction API
-// only (the overhaul variant keeps its typed internals private): Log_Overlap (2a),
-// Energy (2b), and vbias (3a) on the OUTER walkers, plus the dynamic free-projection
-// drive (3b). Two invariants are checked, mirroring the develop reference suite:
-//   (1) inner_nwalkers invariance -- a static replicated ensemble (inner_nsteps = 0)
-//       gives observables independent of inner_nwalkers (holds for ANY trial);
-//   (2) delegate limit -- for a single-determinant trial the stochastic reduction
-//       equals the plain NOMSD result. Multi-determinant trials diverge by design (a
-//       single-determinant inner ensemble cannot reproduce a CI-weighted NOMSD), so
-//       (2) is gated on ndet == 1. See StochasticDevelopment.md.
+// These exercise the StochasticWfn reductions through the public Wavefunction API only (the overhaul
+// variant keeps its typed internals private): Log_Overlap, Energy, and vbias on the OUTER walkers, plus
+// the dynamic free-projection drive. Two invariants are checked, mirroring the develop reference suite:
+//   (1) inner_nwalkers invariance -- a static replicated ensemble (inner_nsteps = 0) gives observables
+//       independent of inner_nwalkers (holds for ANY trial);
+//   (2) delegate limit -- for a single-determinant trial the stochastic reduction equals the plain NOMSD
+//       result. Multi-determinant trials diverge by design (a single-determinant inner ensemble cannot
+//       reproduce a CI-weighted NOMSD), so (2) is gated on ndet == 1.
 // ============================================================================
 
 // Deterministic, reproducible perturbation of the outer walker Slater matrices, identical to the
@@ -659,7 +655,7 @@ inline nda::array<ComplexType, 1> linear_overlap(nda::array<ComplexType, 1> cons
   return lin;
 }
 
-// Phase 2a: StochasticWfn::Log_Overlap reduces the inner ensemble into an effective trial overlap
+// StochasticWfn::Log_Overlap reduces the inner ensemble into an effective trial overlap
 // (Eq. 24 of arXiv:2505.18519, static-ensemble limit). Overlap is read WITHOUT a following Energy
 // call -- Energy overwrites the OVLP walker property and would otherwise mask the override.
 template<MEMORY_SPACE MEM>
@@ -746,14 +742,14 @@ void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost
 TEST_CASE("stochastic_overlap_matches_nomsd", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn Log_Overlap delegate-limit parity (Phase 2a).");
+  app_log(0, "StochasticWfn Log_Overlap delegate-limit parity.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_overlap_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 2b: StochasticWfn::Energy reduces the inner ensemble into an effective local energy
+// StochasticWfn::Energy reduces the inner ensemble into an effective local energy
 // (E1, EXX, EJ) and overlap per outer walker (Eq. 27 of arXiv:2505.18519, static-ensemble limit).
 template<MEMORY_SPACE MEM>
 void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
@@ -850,7 +846,7 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
     CHECK_THAT(s1.ej, utils::Approx(ref.ej));
   }
 
-  // (3) Overlap/Energy consistency: Energy's Ov is the same reduction as the Phase 2a Log_Overlap,
+  // (3) Overlap/Energy consistency: Energy's Ov is the same reduction as Log_Overlap,
   // computed through a different code path, so the two must agree.
   {
     auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
@@ -891,14 +887,14 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
 TEST_CASE("stochastic_energy_matches_nomsd", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn Energy delegate-limit parity (Phase 2b).");
+  app_log(0, "StochasticWfn Energy delegate-limit parity.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_energy_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 3a: StochasticWfn::MixedDensityMatrix_for_vbias reduces the inner ensemble into the mixed
+// StochasticWfn::MixedDensityMatrix_for_vbias reduces the inner ensemble into the mixed
 // density matrix the force bias contracts against (estimator 3 of arXiv:2505.18519, static limit),
 // and vbias contracts it (estimator 4, x_gamma[w] = L_gamma . G[w]) against the True-Ham Cholesky.
 // The overhaul vbias(wset, X, dt) drives MixedDensityMatrix_for_vbias internally, so we compare the
@@ -990,15 +986,14 @@ void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::
 TEST_CASE("stochastic_vbias_matches_nomsd", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn vbias delegate-limit parity (Phase 3a).");
+  app_log(0, "StochasticWfn vbias delegate-limit parity.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_vbias_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 5 (Tier 2 observable): StochasticWfn::MixedDensityMatrix reduces the inner ensemble into the
-// observable mixed density matrix (estimator 3 of arXiv:2505.18519, static limit) -- the observable
+// StochasticWfn::MixedDensityMatrix reduces the inner ensemble into the observable mixed density matrix (estimator 3 of arXiv:2505.18519, static limit) -- the observable
 // analogue of MixedDensityMatrix_for_vbias. Unlike vbias, the observable mixed DM IS exposed on the
 // Wavefunction variant, so we compare G directly (both the compact [nel*NMO] and full [NMO*NMO]
 // layouts) plus the effective overlap against plain NOMSD: delegate-limit parity (ndet==1) and
@@ -1108,17 +1103,17 @@ void stochastic_mixed_density_matrix_matches_nomsd(
 TEST_CASE("stochastic_mixed_density_matrix_matches_nomsd", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn observable MixedDensityMatrix delegate-limit parity (Phase 5).");
+  app_log(0, "StochasticWfn observable MixedDensityMatrix delegate-limit parity.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_mixed_density_matrix_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 6 (Tier 3): StochasticWfn::vMF / G_MF are the trial's OWN mean-field quantities
-// <Psi_T|.|Psi_T>/<Psi_T|Psi_T>, built by reducing the inner ensemble against ITSELF (a double sum over
-// inner-walker pairs -- the inner-ensemble analogue of NOMSD's multi-determinant mean field). Unlike the
-// Tier 1/2 mixed estimators there is no outer walker. At the static replicated limit every inner walker
+// StochasticWfn::vMF / G_MF are the trial's OWN mean-field quantities <Psi_T|.|Psi_T>/<Psi_T|Psi_T>,
+// built by reducing the inner ensemble against ITSELF (a double sum over inner-walker pairs -- the
+// inner-ensemble analogue of NOMSD's multi-determinant mean field). Unlike the propagator hot-path mixed
+// estimators there is no outer walker. At the static replicated limit every inner walker
 // == the anchor, so both collapse to the anchor mean field == plain NOMSD::vMF / G_MF. We compare the
 // mean-field bias vMF (= L . G_MF, a [nCV] vector) and the mean-field DM G_MF directly: inner_nwalkers
 // invariance (static replicated 1 vs 3) and delegate-limit equality (ndet==1).
@@ -1221,14 +1216,14 @@ void stochastic_mean_field_matches_nomsd(
 TEST_CASE("stochastic_mean_field_matches_nomsd", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn vMF / G_MF mean-field delegate-limit parity (Phase 6).");
+  app_log(0, "StochasticWfn vMF / G_MF mean-field delegate-limit parity.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_mean_field_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 6 production-order regression: vMF / G_MF are trial-only, but in the real Propagate loop
+// Production-order regression: vMF / G_MF are trial-only, but in the real Propagate loop
 // begin_inner_step(wset) runs BEFORE generateP1 calls vMF, and in leapfrog mode begin_inner_step
 // eagerly resamples -- expanding the inner ensemble to nwalk*P walker-CONDITIONED samples. The mean
 // field must NOT then be a 1/(nwalk*P)^2-weighted double sum over that conditioned ensemble; it must
@@ -1236,7 +1231,7 @@ TEST_CASE("stochastic_mean_field_matches_nomsd", "[wfn_factory][stochastic_wfn]"
 // leapfrog trial, call begin_inner_step to expand the ensemble, then vMF/G_MF) and asserts equality
 // with NOMSD. Without the inner.size()==inner_nwalkers_ gate (mean_field_uses_inner_ensemble) the
 // expanded ensemble would be reduced with the wrong normalization and this would fail. CLOSED+CPU
-// (leapfrog/conditioning is CPU-only this phase).
+// (leapfrog/conditioning is CPU-only today).
 template<MEMORY_SPACE MEM>
 void stochastic_mean_field_production_order(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1245,7 +1240,7 @@ void stochastic_mean_field_production_order(
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
   if constexpr (MEM != HOST_MEMORY)
-    return; // leapfrog / conditioned inner sampling is CPU-only this phase.
+    return; // leapfrog / conditioned inner sampling is CPU-only today.
   else
   {
     const auto info   = read_info_from_wfn(wfn_file, "any");
@@ -1329,7 +1324,7 @@ void stochastic_mean_field_production_order(
 TEST_CASE("stochastic_mean_field_production_order", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn vMF / G_MF survive the begin_inner_step-before-generateP1 order (Phase 6).");
+  app_log(0, "StochasticWfn vMF / G_MF survive the begin_inner_step-before-generateP1 order.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_mean_field_production_order<MEM>(mpi, hamil_file, wfn_file);
@@ -1338,7 +1333,7 @@ TEST_CASE("stochastic_mean_field_production_order", "[wfn_factory][stochastic_wf
 
 namespace
 {
-// Shared helpers for the Phase 7 back-propagation reference cases: max |A-B| over two 2D views, and a
+// Shared helpers for back-propagation reference tests: max |A-B| over two 2D views, and a finiteness
 // finiteness check over a 3D [nref, npol*NMO, nel] reference array (operator()-based, layout-agnostic).
 template<class A, class B>
 double max_abs_diff2d(A const& X, B const& Y)
@@ -1361,16 +1356,15 @@ bool all_finite3d(A const& X)
 }
 } // namespace
 
-// Phase 7 (Tier 6 + Tier 4-5): back-propagation reference set and outer-facing layout queries AT THE
-// STATIC LIMIT (inner_nsteps = 0 -- the default in this test). There bp_uses_inner_ensemble() is false, so
+// Back-propagation reference set and outer-facing layout queries AT THE STATIC LIMIT (inner_nsteps = 0 -- the default in this test). There bp_uses_inner_ensemble() is false, so
 // the stochastic trial DELEGATES its reference set to the outer nomsd_ (= {phi_T}, weight 1, for the
 // single-determinant anchor; the full CI expansion for a multi-det outer trial), ignoring the inner
 // ensemble. So total_number_of_references / getReferenceWeight / getReferences equal plain NOMSD's
 // UNCONDITIONALLY (not just at ndet==1) and INDEPENDENT of inner_nwalkers (1 and 3 both delegate). (For a
 // DYNAMIC trial, inner_nsteps > 0 with P > 1, getReferences instead performs a dedicated free-projection
 // draw -- exercised by stochastic_back_propagation_inner_refs and _production_order.) This test verifies
-// that static-limit reference parity (COUNT, per-reference WEIGHT, reference Slater matrices) plus Tier
-// 4-5 layout/metadata parity (Cholesky count, Ham type, walker type). NOTE: reference-API + layout only;
+// that static-limit reference parity (COUNT, per-reference WEIGHT, reference Slater matrices) plus
+// layout/metadata parity (Cholesky count, Ham type, walker type). NOTE: reference-API + layout only;
 // the integration smokes below exercise the full estimator/driver BP path (static at inner_nsteps = 0;
 // dynamic, with the conditioned+leapfrog forward walk + dedicated draw, in _dynamic_smoke).
 template<MEMORY_SPACE MEM>
@@ -1457,8 +1451,7 @@ void stochastic_back_propagation_matches_nomsd(
   CHECK_THAT(collect_refs(wfn_s1), utils::Approx(R_ref));
   CHECK_THAT(collect_refs(wfn_s3), utils::Approx(R_ref));
 
-  // (4) Tier 4-5 layout/metadata parity (Phase 7 targeted check, not merely "by construction"): the
-  // outer-facing queries stay on nomsd_ (True Ham) and so equal NOMSD's, independent of inner_nwalkers.
+  // (4) Layout/metadata parity (not merely "by construction"): the outer-facing queries stay on nomsd_ (True Ham) and so equal NOMSD's, independent of inner_nwalkers.
   CHECK(wfn_s1.number_of_cholesky_vectors() == wfn_nomsd.number_of_cholesky_vectors());
   CHECK(wfn_s3.number_of_cholesky_vectors() == wfn_nomsd.number_of_cholesky_vectors());
   CHECK(wfn_s1.getHamType() == wfn_nomsd.getHamType());
@@ -1470,14 +1463,14 @@ void stochastic_back_propagation_matches_nomsd(
 TEST_CASE("stochastic_back_propagation_matches_nomsd", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn back-propagation reference API (outer-NOMSD delegate) parity (Phase 7).");
+  app_log(0, "StochasticWfn back-propagation reference API (outer-NOMSD delegate) parity.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 7 production-order regression (the Phase 6 lesson applied to Tier 6): the BP references are drawn
+// Production-order regression: the BP references are drawn DURING the run -- after begin_inner_step has
 // DURING the run -- after begin_inner_step has resampled and EXPANDED the (conditioned/leapfrog) inner
 // ensemble to nwalk*P. This pins that the dedicated free-projection reference draw is DECOUPLED from that
 // walker-conditioned forward ensemble. It builds a leapfrog trial (inner_conditioning = inner_leapfrog =
@@ -1486,7 +1479,7 @@ TEST_CASE("stochastic_back_propagation_matches_nomsd", "[wfn_factory][stochastic
 // the anchor, NOT the conditioned ensemble), each propagated off the anchor; and that the next
 // begin_inner_step RE-EXPANDS the forward ensemble to nwalk*P (the draw reused it as scratch but left the
 // forward walk unharmed). REQUIREs the expansion so the scenario is pinned. CLOSED+CPU (leapfrog is
-// CPU-only this phase).
+// CPU-only today).
 template<MEMORY_SPACE MEM>
 void stochastic_back_propagation_production_order(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1495,7 +1488,7 @@ void stochastic_back_propagation_production_order(
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
   if constexpr (MEM != HOST_MEMORY)
-    return; // leapfrog / conditioned inner sampling is CPU-only this phase.
+    return; // leapfrog / conditioned inner sampling is CPU-only today.
   else
   {
     const auto info   = read_info_from_wfn(wfn_file, "any");
@@ -1569,7 +1562,7 @@ void stochastic_back_propagation_production_order(
 
     // The BP references are DECOUPLED from the (walker-conditioned, nwalk*P) forward ensemble: even for a
     // conditioned + leapfrog trial, back-propagation exposes a dedicated walker-INDEPENDENT
-    // free-projection draw of the P trial samples at weight 1/P (Option B), NOT the anchor.
+    // free-projection draw of the P trial samples at weight 1/P (dedicated reference draw), NOT the anchor.
     CHECK(wfn_s.total_number_of_references() == inner_nwalkers);
     for (int p = 0; p < inner_nwalkers; ++p)
       CHECK_THAT(wfn_s.getReferenceWeight(p), utils::Approx(ComplexType(1.0 / inner_nwalkers, 0.0)));
@@ -1599,14 +1592,14 @@ TEST_CASE("stochastic_back_propagation_production_order", "[wfn_factory][stochas
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn BP references are a dedicated free-projection draw, decoupled from a "
-             "conditioned/leapfrog forward ensemble (Phase 7).");
+             "conditioned/leapfrog forward ensemble.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_production_order<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 7 (dedicated free-projection BP references): for a dynamic trial (inner_nsteps > 0, P > 1)
+// Dedicated free-projection BP references: for a dynamic trial (inner_nsteps > 0, P > 1) back-propagation
 // back-propagation draws a FRESH, walker-independent free-projection ensemble {psi_p = B_T(Y^[p])|phi_T>}
 // and exposes those P samples as references with weight 1/P, rather than the anchor. This test (CLOSED/
 // CPU) builds a non-conditioned dynamic trial and verifies (1) P references each at weight 1/P, (2) the
@@ -1624,7 +1617,7 @@ void stochastic_back_propagation_inner_refs(
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
   if constexpr (MEM != HOST_MEMORY)
-    return; // free-projection inner sampling (inner_nsteps > 0) is CPU-only this phase.
+    return; // free-projection inner sampling (inner_nsteps > 0) is CPU-only today.
   else
   {
     const auto info   = read_info_from_wfn(wfn_file, "any");
@@ -1664,7 +1657,7 @@ void stochastic_back_propagation_inner_refs(
     WfnFac.push("wfn_nomsd_bpir", nomsd_pt);
     auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_bpir", type, &ham, nwalk);
 
-    // Non-conditioned, free-projection, dynamic (inner_nsteps = 1) trial -> Option B is active.
+    // Non-conditioned, free-projection, dynamic (inner_nsteps = 1) trial -> dedicated reference draw active.
     ptree pt;
     pt.put("name", "wfn_stoch_bpir");
     pt.put("system", "info0");
@@ -1679,7 +1672,7 @@ void stochastic_back_propagation_inner_refs(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_bpir", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpir", type, wlk_pt);
 
-    // (1) Option B active for a dynamic trial: P references at weight 1/P (vs NOMSD's single anchor).
+    // (1) Dedicated reference draw active for a dynamic trial: P references at weight 1/P (vs NOMSD's single anchor).
     CHECK(wfn_s.total_number_of_references() == P);
     CHECK(wfn_nomsd.total_number_of_references() == 1);
     for (int p = 0; p < P; ++p)
@@ -1713,7 +1706,7 @@ void stochastic_back_propagation_inner_refs(
 TEST_CASE("stochastic_back_propagation_inner_refs", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn back-propagation draws a fresh free-projection reference ensemble (Phase 7).");
+  app_log(0, "StochasticWfn back-propagation draws a fresh free-projection reference ensemble.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_inner_refs<MEM>(mpi, hamil_file, wfn_file);
@@ -1743,15 +1736,14 @@ void require_finite_bp_one_rdm(h5::file const& file, std::string const& avg_path
 }
 } // namespace
 
-// Phase 7 integration smoke: exercise BackPropagatedEstimator through EstimatorHandler on a stochastic
-// trial. Drives real Propagate() steps so the propagator advances the BP history, then accumulate_block
+// Integration smoke: exercise BackPropagatedEstimator through EstimatorHandler on a stochastic trial. Drives real Propagate() steps so the propagator advances the BP history, then accumulate_block
 // runs backward propagation + FullObsHandler; asserts the accumulated 1-RDM is finite. Two regimes (one
 // function, `dynamic_leapfrog`):
 //   - static (default): inner_nsteps = 0 -- the static delegate limit.
-//   - dynamic: inner_nsteps = 1 with conditioned + leapfrog (3c) sampling -- a genuinely field-sampled
+//   - dynamic: inner_nsteps = 1 with conditioned + leapfrog sampling -- a genuinely field-sampled trial
 //     trial whose forward walk is numerically stable. (Plain free-projection, inner_nsteps > 0 +
 //     non-conditioned, is NOT exercised: its effective overlap Sum_p S_p collapses toward zero, blowing
-//     the hybrid weight ratio to NaN within the first population-control block -- a known 3b variance
+//     the hybrid weight ratio to NaN within the first population-control block -- a known free-projection
 //     pathology of the forward walk, not a back-propagation bug. The NaN is in the forward weights; the
 //     BP RDM is NaN only because it is built from them. Conditioned/leapfrog importance sampling is what
 //     stabilizes it -- verified: max|weight| stays ~1.0-1.1 over the run and the BP RDM is finite.)
@@ -1817,9 +1809,9 @@ void stochastic_back_propagation_estimator_smoke(
     mark_stochastic_wfn_input(wfn_pt);
     wfn_pt.put("inner_nwalkers", 4);
     // Static delegate limit (inner_nsteps = 0) by default; the dynamic variant uses the STABLE
-    // conditioned + leapfrog (3c) sampling. Plain free-projection (inner_nsteps > 0, non-conditioned)
+    // conditioned + leapfrog sampling. Plain free-projection (inner_nsteps > 0, non-conditioned) is
     // is intentionally NOT used here -- its effective-overlap collapse makes the forward walk's hybrid
-    // weights blow up to NaN over a full run (a known 3b variance pathology, not a BP-path bug).
+    // weights blow up to NaN over a full run (a known free-projection variance pathology, not a BP-path bug).
     wfn_pt.put("inner_nsteps", dynamic_leapfrog ? 1 : 0);
     if (dynamic_leapfrog)
     {
@@ -1903,31 +1895,31 @@ void stochastic_back_propagation_estimator_smoke(
 TEST_CASE("stochastic_back_propagation_estimator_smoke", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "BackPropagatedEstimator + EstimatorHandler on a static stochastic trial (Phase 7 smoke).");
+  app_log(0, "BackPropagatedEstimator + EstimatorHandler on a static stochastic trial.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 7 dynamic BP integration smoke: the SAME BackPropagatedEstimator path on a genuinely
-// field-sampled (inner_nsteps = 1) stochastic trial, using the STABLE conditioned + leapfrog (3c)
-// sampling. This is the resolution of the earlier "dynamic BP -> NaN" footnote: the NaN was the
-// free-projection forward-walk instability, not a BP-path bug; 3c importance sampling keeps the forward
-// weights well-scaled (~1) over a full run, so the back-propagated 1-RDM is finite. (With conditioned
-// sampling the BP references are the outer-NOMSD anchor -- Option A; Option B inner-ensemble references
-// apply to the forward-unstable free-projection regime.) CLOSED/CPU. Finiteness only.
+// Dynamic BP integration smoke: the SAME BackPropagatedEstimator path on a genuinely field-sampled
+// (inner_nsteps = 1) stochastic trial, using conditioned + leapfrog sampling. This is the resolution of
+// the earlier "dynamic BP -> NaN" footnote: the NaN was the free-projection forward-walk instability, not
+// a BP-path bug; importance sampling keeps the forward weights well-scaled (~1) over a full run, so the
+// back-propagated 1-RDM is finite. (With conditioned sampling the BP references are the outer-NOMSD
+// anchor; the dedicated free-projection reference draw applies to the forward-unstable free-projection
+// regime.) CLOSED/CPU. Finiteness only.
 TEST_CASE("stochastic_back_propagation_dynamic_smoke", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "BackPropagatedEstimator on a DYNAMIC conditioned+leapfrog stochastic trial (Phase 7 smoke).");
+  app_log(0, "BackPropagatedEstimator on a DYNAMIC conditioned+leapfrog stochastic trial.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file, /*dynamic_leapfrog=*/true);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 7 integration smoke: minimal DriverFactory run with type: stochasticwfn (static delegate limit,
+// Integration smoke: minimal DriverFactory run with type: stochasticwfn (static delegate limit,
 // inner_nsteps = 0) and a back_propagation estimator block.
 template<MEMORY_SPACE MEM>
 void stochastic_back_propagation_driver_smoke(
@@ -2024,15 +2016,15 @@ void stochastic_back_propagation_driver_smoke(
 TEST_CASE("stochastic_back_propagation_driver_smoke", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "DriverFactory AFQMC run with stochastic trial + back_propagation estimator (Phase 7 smoke).");
+  app_log(0, "DriverFactory AFQMC run with stochastic trial + back_propagation estimator.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_back_propagation_driver_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 5 (Tier 2 observable): StochasticWfn::accumulate_estimators feeds the inner-ensemble-reduced
-// full mixed Green's function (the stochastic MixedDensityMatrix, full layout) to the observables. We
+// StochasticWfn::accumulate_estimators feeds the inner-ensemble-reduced full mixed Green's function
+// (the stochastic MixedDensityMatrix, full layout) to the observables. We drive a real one-body-RDM
 // drive a real one-body-RDM observable (full1rdm, no rotation) through accumulate_estimators -- this is
 // the identical code path the Observable variant takes, since accumulate_estimators is templated on the
 // observable type and only calls v.accumulate(...). full1rdm's DMAverage is private, so we read the
@@ -2190,7 +2182,7 @@ void stochastic_accumulate_estimators_matches_nomsd(
 TEST_CASE("stochastic_accumulate_estimators_matches_nomsd", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn accumulate_estimators (one_rdm) delegate-limit parity (Phase 5).");
+  app_log(0, "StochasticWfn accumulate_estimators (one_rdm) delegate-limit parity.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_accumulate_estimators_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
@@ -2201,7 +2193,7 @@ TEST_CASE("stochastic_accumulate_estimators_matches_nomsd", "[wfn_factory][stoch
 // ============================================================================
 
 
-// Phase 3b: the dynamic ensemble + un-rotated full-G kernels (CLOSED/CPU only this phase).
+// Dynamic ensemble + un-rotated full-G kernels (CLOSED/CPU only today).
 //
 // inner_nsteps > 0 routes the reductions through the un-rotated full-G energy/force-bias kernels
 // (energy_from_fullG / the full-G layout in vbias_from_G) instead of the compact nd = 0 half-rotated
@@ -2219,7 +2211,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
   if constexpr (MEM != HOST_MEMORY)
-    return; // Phase 3b un-rotated full-G kernels are CPU-only this phase.
+    return; // Un-rotated full-G kernels are CPU-only today.
   else
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
@@ -2228,7 +2220,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
-      return; // Phase 3b un-rotated full-G kernels support CLOSED (RHF) trials only.
+      return; // Un-rotated full-G kernels support CLOSED (RHF) trials only.
     const double dt(0.01);
 
     std::map<std::string, AFQMCInfo> InfoMap;
@@ -2329,7 +2321,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
 TEST_CASE("stochastic_full_g_matches_compact", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn un-rotated full-G vs compact at the anchor (Phase 3b).");
+  app_log(0, "StochasticWfn un-rotated full-G vs compact at the anchor.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_full_g_matches_compact<MEM>(mpi, hamil_file, wfn_file);
@@ -2347,7 +2339,7 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
   if constexpr (MEM != HOST_MEMORY)
-    return; // Phase 3b un-rotated full-G kernels are CPU-only this phase.
+    return; // Un-rotated full-G kernels are CPU-only today.
   else
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
@@ -2429,7 +2421,7 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
 TEST_CASE("stochastic_dynamic_ensemble_smoke", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn dynamic free-projection ensemble smoke (Phase 3b).");
+  app_log(0, "StochasticWfn dynamic free-projection ensemble smoke.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_dynamic_ensemble_smoke<MEM>(mpi, hamil_file, wfn_file);
@@ -2447,7 +2439,7 @@ void stochastic_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
   if constexpr (MEM != HOST_MEMORY)
-    return; // Phase 3b un-rotated full-G kernels are CPU-only this phase.
+    return; // Un-rotated full-G kernels are CPU-only today.
   else
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
@@ -2535,21 +2527,21 @@ void stochastic_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 TEST_CASE("stochastic_propagator_step", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn end-to-end outer propagator step on a dynamic trial (Phase 3b).");
+  app_log(0, "StochasticWfn end-to-end outer propagator step on a dynamic trial.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_propagator_step<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 3c-i: walker-conditioned inner sampling. With inner_conditioning = true the inner field paths
-// are importance-sampled conditioned on each outer walker phi_w (Eq. 23 of arXiv:2505.18519): the inner
+// Walker-conditioned inner sampling. With inner_conditioning = true the inner field paths are
+// importance-sampled conditioned on each outer walker phi_w (Eq. 23 of arXiv:2505.18519): the inner
 // ensemble is grown to nwalk*inner_nwalkers (block w conditioned on phi_w via the custom force bias
 // x_bar(phi_w) = sqrt(dt)*L^var.<phi_T|c+c|phi_w>/<phi_T|phi_w>, built by reusing the inner NOMSD's
 // vbias on the OUTER wset). Run a real OUTER AFQMCBasePropagator over the dynamic conditioned trial and
 // assert the walkers stay finite. The internal block-structure size checks (inner.size() == nwalk*P) in
-// reduce_inner_cross_dm / Log_Overlap validate the nw*P resize. The leapfrog / exact N(phi) cancellation
-// is Phase 3c-ii; this is a finiteness smoke, not NOMSD parity.
+// reduce_inner_cross_dm / Log_Overlap validate the nw*P resize. Leapfrog overlap cancellation is tested
+// separately; this is a finiteness smoke, not NOMSD parity.
 template<MEMORY_SPACE MEM>
 void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                             std::string hamil_file, std::string wfn_file, bool leapfrog = false)
@@ -2557,7 +2549,7 @@ void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
   if constexpr (MEM != HOST_MEMORY)
-    return; // Phase 3c-i conditioned sampling is CPU-only this phase (full-G kernels CPU-only).
+    return; // Walker-conditioned sampling is CPU-only today (full-G kernels CPU-only).
   else
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
@@ -2647,20 +2639,20 @@ void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t
 TEST_CASE("stochastic_conditioned_propagator_step", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn walker-conditioned inner sampling over a real outer propagator (Phase 3c-i).");
+  app_log(0, "StochasticWfn walker-conditioned inner sampling over a real outer propagator.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_conditioned_propagator_step<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 3c-ii: the propagate-then-resample leapfrog (inner_conditioning + inner_leapfrog). At each
+// Propagate-then-resample leapfrog (inner_conditioning + inner_leapfrog). At each outer step,
 // outer step, begin_inner_step(wset) resamples the inner ensemble conditioned on the OLD walker and
 // stores the importance-reweighted old overlap (Sum_p S_p) against it; the post-propagation Log_Overlap
 // scores the NEW walker against the SAME ensemble, so the hybrid ratio new/old reproduces Eq. 25 of
 // arXiv:2505.18519 exactly and N(phi) cancels. Drives a real OUTER hybrid AFQMCBasePropagator and
 // asserts the walkers stay finite over several steps (finiteness smoke; energy-vs-analytic-AFQMC and
-// variance reduction vs 3b are the research-level validation). CLOSED+CPU; reuses the conditioned
+// variance reduction vs free projection are the research-level validation). CLOSED+CPU; reuses the conditioned
 // driver above with leapfrog = true.
 template<MEMORY_SPACE MEM>
 void stochastic_leapfrog_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
@@ -2672,19 +2664,19 @@ void stochastic_leapfrog_propagator_step(std::shared_ptr<utils::mpi_context_t<bo
 TEST_CASE("stochastic_leapfrog_propagator_step", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn propagate-then-resample leapfrog over a real outer propagator (Phase 3c-ii).");
+  app_log(0, "StochasticWfn propagate-then-resample leapfrog over a real outer propagator.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_leapfrog_propagator_step<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 3b-var regression anchor: the stochastic inner (Variational) stack can be built from a
-// SEPARATE Hamiltonian named by the `inner_hamiltonian` input key, which the WavefunctionFactory
-// builds on demand through the HamiltonianFactory passed to its two-argument constructor. Two trials
-// are built in one factory: wfn_clone (no inner_hamiltonian -> inner stack clones the True Ham, the
-// pre-3b-var path) and wfn_hvar (inner_hamiltonian = the SAME integral file -> factory builds a second
-// Hamiltonian and uses it for the inner stack). With identical inputs (so identical inner_seed) and
+// inner_hamiltonian factory anchor: the stochastic inner (Variational) stack can be built from a separate
+// Hamiltonian named by the `inner_hamiltonian` input key, which the WavefunctionFactory builds on demand
+// through the HamiltonianFactory passed to its two-argument constructor. Two trials are built in one
+// factory: wfn_clone (no inner_hamiltonian -> inner stack clones the True Ham) and wfn_hvar
+// (inner_hamiltonian = the SAME integral file -> factory builds a second Hamiltonian and uses it for the
+// inner stack). With identical inputs (so identical inner_seed) and identical integrals, running the
 // identical integrals, running the dynamic path (inner_nsteps = 1, so the inner Ham actually drives
 // B_T) must give identical Energy/Log_Overlap/vbias. The has_input checks prove the factory actually
 // traversed the inner_hamiltonian path (built + registered the second Ham) rather than silently
@@ -2697,7 +2689,7 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
   if constexpr (MEM != HOST_MEMORY)
-    return; // Phase 3b un-rotated full-G kernels are CPU-only this phase.
+    return; // Un-rotated full-G kernels are CPU-only today.
   else
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
@@ -2808,14 +2800,14 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
 TEST_CASE("stochastic_inner_hamiltonian_same_as_true", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn inner_hamiltonian (same integral file) reproduces the clone path (Phase 3b-var).");
+  app_log(0, "StochasticWfn inner_hamiltonian (same integral file) reproduces the clone path.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_inner_hamiltonian_same_as_true<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 8: deprecated stochastic: true still builds a stochastic trial (backward compatibility).
+// Deprecated stochastic: true still builds a stochastic trial (backward compatibility).
 template<MEMORY_SPACE MEM>
 void stochastic_deprecated_stochastic_flag_smoke(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -2868,14 +2860,14 @@ void stochastic_deprecated_stochastic_flag_smoke(
 TEST_CASE("stochastic_deprecated_stochastic_flag_smoke", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "Deprecated stochastic: true still builds StochasticWfn (Phase 8 compat).");
+  app_log(0, "Deprecated stochastic: true still builds StochasticWfn.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_deprecated_stochastic_flag_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Phase 8: Wavefunction/StochasticWfn HDF5 marker is detected and builds StochasticWfn without input type.
+// Wavefunction/StochasticWfn HDF5 marker is detected and builds StochasticWfn without input type.
 template<MEMORY_SPACE MEM>
 void stochastic_hdf5_type_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                 std::string hamil_file, std::string wfn_file)
@@ -2943,7 +2935,7 @@ void stochastic_hdf5_type_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 TEST_CASE("stochastic_hdf5_type_smoke", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "Wavefunction/StochasticWfn HDF5 marker builds StochasticWfn (Phase 8).");
+  app_log(0, "Wavefunction/StochasticWfn HDF5 marker builds StochasticWfn.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_hdf5_type_smoke<MEM>(mpi, hamil_file, wfn_file);

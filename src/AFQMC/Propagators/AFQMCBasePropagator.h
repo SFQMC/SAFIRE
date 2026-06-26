@@ -278,7 +278,7 @@ public:
   template<class WlkSet>
   void Propagate(WlkSet& wset, RealType E1, RealType dt, int nt = 0);
 
-  // Phase 3c-i (StochasticWfn): drive ONE conditioned field-sampling step on the inner ensemble.
+  // StochasticWfn: drive ONE walker-conditioned field-sampling step on the inner ensemble.
   // Seeds the auxiliary fields with an externally supplied per-walker bias Xbias(nwalk,nCV) (the
   // walker-conditioned force bias x_bar(phi_w)), then runs assemble_X -> vHS -> apply_propagators.
   // Deliberately omits the local-energy/overlap and walker-weight update: the resulting determinants
@@ -293,7 +293,7 @@ public:
   // skips the energy/overlap and walker-weight update: the results are field samples, not weighted
   // walkers. Used by StochasticWfn to draw walker-INDEPENDENT free-projection trial samples
   // {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references, regardless of whether the forward inner
-  // propagator was built for free projection (3b) or importance sampling (3c conditioning/leapfrog).
+  // propagator was built for walker-independent free projection or walker-conditioned importance sampling.
   template<class WlkSet>
   void Propagate_free(WlkSet& wset, RealType dt, int nt = 0);
 

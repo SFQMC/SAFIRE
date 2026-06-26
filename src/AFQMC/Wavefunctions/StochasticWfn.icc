@@ -68,11 +68,11 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
 #endif
   }
   if (inner_conditioning_ && inner_nsteps_ <= 0)
-    APP_ABORT("Error in StochasticWfn: inner_conditioning = true (Phase 3c-i, walker-conditioned "
-              "inner sampling) requires inner_nsteps > 0; it has no effect on the static ensemble.");
+    APP_ABORT("Error in StochasticWfn: inner_conditioning = true (walker-conditioned inner sampling) "
+              "requires inner_nsteps > 0; it has no effect on the static ensemble.");
   if (inner_leapfrog_ && not inner_conditioning_)
-    APP_ABORT("Error in StochasticWfn: inner_leapfrog = true (Phase 3c-ii, propagate-then-resample "
-              "leapfrog for exact N(phi) cancellation) requires inner_conditioning = true.");
+    APP_ABORT("Error in StochasticWfn: inner_leapfrog = true (propagate-then-resample leapfrog for exact "
+              "N(phi) cancellation) requires inner_conditioning = true.");
   app_log(2, "\nStochasticWfn input:\n{}\n", io::to_string(pt));
 }
 
@@ -180,13 +180,13 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
 
   WalkerSet<MEM>& inner  = *inner_ensemble_.wset;
   const int nw           = wset.size();
-  // Phase 3c-i: with conditioning, inner is block-structured (nw*P walkers, slot-major q = ip*nw + w);
-  // pair tk maps to outer walker iw = tk % nw and inner walker q = tk (its own conditioned sample).
-  // Without conditioning (Phase 3b), inner has P shared walkers paired against all outer walkers.
+  // With conditioning, inner is block-structured (nw*P walkers, slot-major q = ip*nw + w); pair tk maps
+  // to outer walker iw = tk % nw and inner walker q = tk (its own conditioned sample). Without
+  // conditioning, inner has P shared walkers paired against all outer walkers.
   const bool conditioned = (inner_conditioning_ && inner_nsteps_ > 0);
-  // Phase 3c-ii leapfrog: reweight each per-sample term by 1/|<psi_q|phi_q^cond>| (computed at the
-  // resample), so old_ovlp = Sum_p S_p and the step overlap RATIO new/old is exactly Eq. 25 (N(phi)
-  // cancels). Without leapfrog (3c-i/3b), the absolute (1/P) Sum_p <psi_p|phi_w> reduction is kept.
+  // Leapfrog: reweight each per-sample term by 1/|<psi_q|phi_q^cond>| (computed at the resample), so
+  // old_ovlp = Sum_p S_p and the step overlap RATIO new/old is exactly Eq. 25 (N(phi) cancels). Without
+  // leapfrog, the absolute (1/P) Sum_p <psi_p|phi_w> reduction is kept.
   const bool leapfrog    = (conditioned && inner_leapfrog_);
   const int P            = (conditioned ? inner_nwalkers_ : int(inner.size()));
   utils::check(Ov.size() >= nw, "Size mismatch");
@@ -373,8 +373,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // back-propagation block draws a fresh free-projection ensemble (and so getReferences sees the forward
   // ensemble, not a stale draw, after a resample).
   bp_refs_drawn_ = false;
-  // Phase 3c-ii leapfrog: resample conditioned on the current (old) walker phi and refresh the stored
-  // OVLP = <Psi_T|phi> against that just-sampled ensemble. Log_Overlap(wset) consumes the latch just
+  // Leapfrog: resample conditioned on the current (old) walker phi and refresh the stored OVLP = <Psi_T|phi> against that just-sampled ensemble. Log_Overlap(wset) consumes the latch just
   // armed (driving the conditioned resample + inner_cond_mag_), then stores the importance-reweighted
   // old overlap. The post-propagation Log_Overlap reuses the SAME ensemble, so the step's overlap RATIO
   // new/old is exactly Eq. 25 and N(phi) cancels.
@@ -398,7 +397,7 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
         inner_step_pending_ || (inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_);
     if (not need_resample)
       return;
-    // Phase 3c-i: importance-sample the inner fields conditioned on each outer walker phi_w (Eq. 23 of
+    // Importance-sample the inner fields conditioned on each outer walker phi_w (Eq. 23 of
     // arXiv:2505.18519). The inner trial IS the anchor phi_T, so the inner NOMSD's own mixed DM + vbias
     // on the OUTER walker set yields the conditioning force bias
     //   x_bar(phi_w) = sqrt(dt) * L^var . <phi_T|c+c|phi_w> / <phi_T|phi_w>
@@ -420,7 +419,7 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
   }
   else
   {
-    // Phase 3b: walker-independent free-projection resample (honors the latch + static no-op).
+    // Walker-independent free-projection resample (honors the latch + static no-op).
     maybe_advance_inner_ensemble();
   }
 }
@@ -486,19 +485,18 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
 
   WalkerSet<MEM>& inner  = *inner_ensemble_.wset;
   const int nwalk        = wset.size();
-  // Phase 3c-i: when conditioning, the inner ensemble is block-structured (nwalk*P walkers, slot-major
-  // index q = ip*nwalk + w, block w conditioned on outer walker phi_w). The loop runs over the P
-  // per-walker samples; slot ip pairs its nwalk inner walkers diagonally with the nwalk outer walkers
-  // via the batched-reference MixedDensityMatrix. Without conditioning (Phase 3b) the ensemble is P
-  // shared walkers, each paired against all outer walkers with a single reference.
+  // With conditioning, the inner ensemble is block-structured (nwalk*P walkers, slot-major index q =
+  // ip*nwalk + w, block w conditioned on outer walker phi_w). The loop runs over the P per-walker samples;
+  // slot ip pairs its nwalk inner walkers diagonally with the nwalk outer walkers via the batched-
+  // reference MixedDensityMatrix. Without conditioning the ensemble is P shared walkers, each paired
+  // against all outer walkers with a single reference.
   const bool conditioned = (inner_conditioning_ && inner_nsteps_ > 0);
-  // Phase 3c-ii leapfrog: weight each sample by the GENERALIZED importance weight
-  //   w_p = <psi_p|chi> / |<psi_p|phi_cond>|   (phi_cond = the walker the ensemble was conditioned on)
+  // Leapfrog: weight each sample by the GENERALIZED importance weight w_p = <psi_p|chi> / |<psi_p|phi_cond>|   (phi_cond = the walker the ensemble was conditioned on)
   // rather than the phase S_p = <psi_p|chi>/|<psi_p|chi>|. This is the exact Eq. 27 estimator when the
   // scored walker chi differs from phi_cond (measurement Energy after propagation, and local-energy mode
   // step-5) -- the samples come from P(.;phi_cond), so the reweighting divides by the SAMPLING density's
-  // magnitude. At the top of the step chi == phi_cond, so w_p == S_p and the force-bias DM / 3c-i are
-  // unchanged. |<psi_p|phi_cond>| is inner_cond_mag_, set at the conditioned resample.
+  // magnitude. At the top of the step chi == phi_cond, so w_p == S_p and the force-bias DM / conditioned
+  // sampling path are unchanged. |<psi_p|phi_cond>| is inner_cond_mag_, set at the conditioned resample.
   const bool leapfrog    = (conditioned && inner_leapfrog_);
   const int P            = (conditioned ? inner_nwalkers_ : int(inner.size()));
   utils::check(P >= 1, "inner ensemble must be non-empty");
@@ -659,7 +657,7 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix_for_vbias(const WlkSet& wse
   G() = Gnum();
 }
 
-// Phase 5 (Tier 2 observable): stochastic mixed density matrix for observable evaluation. Same inner-
+// Stochastic mixed density matrix for observable evaluation. Same inner-ensemble reduction as
 // ensemble reduction as MixedDensityMatrix_for_vbias (estimator 3 of arXiv:2505.18519,
 // G[w] = sum_p w_p G_{p,w} / sum_p w_p with the 1/P -> S_p -> generalized weight progression), but
 // returned in the caller's observable layout and with the LOG overlap NOMSD's observable DM reports.
@@ -713,8 +711,7 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix(const WlkSet& wset, MatG&& 
     Ov(w) = std::log(Ov(w));
 }
 
-// Phase 5 (Tier 2 observable): accumulate observable contributions using the stochastic mixed Green's
-// function. NOMSD (ndet == 1) builds the full mixed DM of its trial -- compact `DensityMatrix` against
+// Accumulate observable contributions using the stochastic mixed Green's function. NOMSD (ndet == 1) builds the full mixed DM of its trial -- compact `DensityMatrix` against
 // OrbMats(0), un-compacted via `T(OrbMats) * Gc` -- and feeds it to the observables. Here that full DM
 // is instead the inner-ensemble reduction `G[w] = Σ_p w_p G_{p,w}/Σ_p w_p` (estimator 3, full layout),
 // i.e. the stochastic `MixedDensityMatrix(compact = false)`, then fed to the same observable loop.
@@ -787,14 +784,14 @@ void StochasticWfn<MEM, devPsiT>::accumulate_estimators(int iav, WlkSet& wset,
     v.accumulate(iav, Gfull, Gfull_h, wgt, importanceSampling);
 }
 
-// Phase 6 (Tier 3): stochastic trial mean-field one-body Green's function. This is the trial's OWN
+// Stochastic trial mean-field one-body Green's function. This is the trial's OWN expectation
 // expectation <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T> (no outer walker), so it reduces the inner ensemble
 // {psi_p} against ITSELF as a double sum over inner-walker pairs -- the inner-ensemble analogue of
 // NOMSD's multi-determinant G_MF/vMF, with each inner walker a "determinant" of uniform weight 1/P.
 // det_ops::MixedDensityMatrix returns the per-pair mixed DM ALREADY normalized by its pair overlap, so
 //   G_MF = [sum_{p,q} <psi_p|psi_q> (G_{p,q})] / [sum_{p,q} <psi_p|psi_q>]
 // with linear pair overlaps <psi_p|psi_q> = exp(ov_pq) supplying the weights (CLOSED doubles the alpha
-// log-overlap to get the full overlap, exactly as the Tier 1/2 reductions do). At the static replicated
+// log-overlap to get the full overlap, exactly as the propagator hot-path reductions do). At the static
 // limit every psi_p == anchor, so every G_{p,q} == the anchor density and the double sum collapses to
 // it -- i.e. NOMSD::G_MF's ndet==1 result. Bras p are FairDivide'd across the comm (full ket batch per
 // bra), then Gsum/Osum are all-reduced. Multi-rank consistency of the per-rank-decorrelated dynamic
@@ -877,7 +874,7 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_mean_field_dm(memory::buffered_ar
   nda::tensor::scale(ComplexType(1.0 / Osum), Gsum);
 }
 
-// Phase 6 (Tier 3): mean-field Green's function of the stochastic trial. Delegates to nomsd_ (the anchor
+// Mean-field Green's function of the stochastic trial. Delegates to nomsd_ (the anchor mean field) at
 // mean field) at the single-determinant delegate limit AND whenever the inner ensemble is not in its
 // walker-independent P-sample form (see mean_field_uses_inner_ensemble) -- both exact at the
 // static-limit-first scope; otherwise reduces the inner ensemble against itself and returns the full
@@ -904,11 +901,10 @@ auto StochasticWfn<MEM, devPsiT>::G_MF()
   });
 }
 
-// Phase 6 (Tier 3): mean-field expectation of the Cholesky/HS potentials for the stochastic trial,
-// v_n = L_n . G_MF (estimator 4 applied to the trial's own mean-field DM). Delegates to nomsd_ at the
+// Mean-field expectation of the Cholesky/HS potentials for the stochastic trial, v_n = L_n . G_MF (estimator 4 applied to the trial's own mean-field DM). Delegates to nomsd_ at the
 // delegate limit. Off it, builds the stochastic mean-field DM (full layout) and contracts it against
-// the True Ham via nomsd_.vbias_from_G -- the SAME full-G contraction the off-anchor force bias uses
-// (Phase 3b), which equals NOMSD::vMF's compact-G HamOp.vbias at the static limit (full-G == compact at
+// the True Ham via nomsd_.vbias_from_G -- the SAME full-G contraction the off-anchor force bias uses when
+// inner_nsteps > 0, which equals NOMSD::vMF's compact-G HamOp.vbias at the static limit (full-G == compact at
 // the anchor, per stochastic_full_g_matches_compact). Consumed once per timestep in generateP1, which
 // runs AFTER begin_inner_step in Propagate -- so it delegates to nomsd_ (the anchor mean field) at the
 // delegate limit AND whenever the inner ensemble is not in its walker-independent P-sample form (e.g. a
@@ -936,8 +932,7 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
   nomsd_.vbias_from_G(Gsum, v2d, dt);
 }
 
-// Phase 7 (Tier 6): back-propagation reference Slater matrices. At the OUTER-NOMSD-delegate regime
-// (static limit / P==1) this forwards to nomsd_ (the anchor / CI expansion). For a dynamic trial
+// Back-propagation reference Slater matrices. At the OUTER-NOMSD-delegate regime (static limit / P==1) this forwards to nomsd_ (the anchor / CI expansion). For a dynamic trial
 // (bp_uses_inner_ensemble()) it first DRAWS a fresh, walker-independent free-projection ensemble of P
 // samples {psi_p = B_T(Y^[p])|phi_T>} (draw_bp_reference_ensemble(), decoupled from the forward inner
 // ensemble -- works for free-projection AND conditioned/leapfrog forward walks), then fills the
@@ -945,7 +940,7 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
 // transpose of NOMSD's OrbMats [nup, npol*NMO]), so the bra Refs(p,:,:) is conj(SM) directly -- a
 // conjugate with NO transpose, vs NOMSD's conj+transpose of OrbMats. The estimator (FullObsHandler)
 // supplies the per-reference overlap exp(Ov_p) and uniform weight 1/P (getReferenceWeight), reproducing
-// the stochastic trial bra <Psi_T| ~ (1/P) sum_p <psi_p|. See StochasticDevelopment.md, Phase 7.
+// the stochastic trial bra <Psi_T| ~ (1/P) sum_p <psi_p|.
 template<MEMORY_SPACE MEM, class devPsiT>
 template<class RefMat>
 void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat&& Refs)

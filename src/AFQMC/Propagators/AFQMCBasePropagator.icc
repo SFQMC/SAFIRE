@@ -163,7 +163,7 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
 }
 
 /*
- * Phase 3c-i (StochasticWfn): one walker-conditioned field-sampling step on the inner ensemble.
+ * StochasticWfn: one walker-conditioned field-sampling step on the inner ensemble.
  * Seeds the fields with the externally supplied per-walker conditioning bias Xbias(nwalk,nCV), then
  * runs assemble_X -> vHS -> apply_propagators. Skips the energy/overlap and walker-weight update: the
  * propagated determinants are field samples; the StochasticWfn reductions weight them by 1/P and the
@@ -222,7 +222,7 @@ void AFQMCBasePropagator<MEM>::Propagate_conditioned(WlkSet& wset,
  * fields Y ~ p_T(Y) (no force bias, no vMF shift) and applies B_T(Y) = exp(vHS) to the walkers, then
  * stops. Used by StochasticWfn to draw walker-INDEPENDENT free-projection trial samples
  * {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references, regardless of whether the (forward) inner
- * propagator was built for free projection (3b) or importance sampling (3c conditioning/leapfrog). Forces
+ * propagator was built for walker-independent free projection or walker-conditioned importance sampling. Forces
  * bare field assembly by toggling free_projection around assemble_X (which reads that member), then
  * restores it: construct_X then ignores the zero vbias and vMF and produces X = sqrtdt * Gaussian noise.
  * Like Propagate_conditioned, skips the energy/overlap and walker-weight update -- the propagated
