@@ -36,20 +36,19 @@ namespace sfqmc
 namespace afqmc
 {
 
-// First-class stochastic trial input. Accepts type: stochasticwfn (preferred) or the
-// deprecated stochastic: true flag on a plain NOMSD block.
+// First-class stochastic trial input via type: stochasticwfn.
 inline bool is_stochastic_wavefunction_input(ptree const& pt0)
 {
   if (auto type_opt = pt0.get_optional<std::string>("type"))
   {
     std::string const type = *type_opt;
-    if (type == "stochasticwfn" || type == "stochastic_wfn" || type == "stochastic")
+    if (type == "stochasticwfn" || type == "stochastic_wfn")
       return true;
     if (type == "nomsd" || type == "phmsd")
       return false;
     APP_ABORT("Error in WavefunctionFactory: unknown wavefunction type: " + type);
   }
-  return pt0.get<bool>("stochastic", false);
+  return false;
 }
 
 template<MEMORY_SPACE MEM>
@@ -95,7 +94,7 @@ public:
       pt1.put("dense_trial", *val);
     bool stochastic = is_stochastic_wavefunction_input(pt0);
     if (pt0.get<bool>("stochastic", false) && not pt0.get_child_optional("type"))
-      app_warning("WavefunctionFactory: stochastic: true is deprecated; use type: stochasticwfn.");
+      APP_ABORT("Error in WavefunctionFactory: stochastic: true is no longer supported; use type: stochasticwfn.");
     int inner_nwalkers = pt0.get<int>("inner_nwalkers", 1);
     if (inner_nwalkers < 1)
       APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
@@ -128,7 +127,6 @@ public:
     std::unordered_set<std::string> pass_through_keys = {
       "system",
       "type",
-      "stochastic",
       "inner_nwalkers",
       "inner_nsteps",
       "inner_conditioning",

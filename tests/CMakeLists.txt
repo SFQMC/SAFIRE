@@ -23,6 +23,7 @@ add_executable(test_afqmc
   test_sdet_ops.cpp
   test_sharedwset.cpp
   test_tensor_ops.cpp
+  test_stochastic_wfn.cpp
   test_wfn_factory.cpp
 )
 set_target_properties(test_afqmc PROPERTIES

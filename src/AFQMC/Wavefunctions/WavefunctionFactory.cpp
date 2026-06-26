@@ -361,7 +361,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 
       utils::check(wfn_type == NOMSD_WFN,
                    "Error in WavefunctionFactory::fromHDF5: Wavefunction/StochasticWfn HDF5 requires "
-                   "type: stochasticwfn (or deprecated stochastic: true).");
+                   "type: stochasticwfn.");
 
       auto HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT);
 
