@@ -1023,7 +1023,7 @@ Not wavefunction visitor methods, but required for a full-fledged type.
 
 | Component | Current behavior | Desired functionality |
 |--------------------------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| `StochasticWfn` constructor | Builds outer `nomsd_`; accepts pre-built `StochasticInnerStack` (inner NOMSD + propagator + RNG). Parses `inner_nwalkers`, `inner_nsteps`, `inner_seed`, `inner_propagator`. Defers inner `WalkerSet` resize. | **Builds two `HamOps`** (3b-var ✓): the True Ham for `nomsd_` (from `h`) and the **Variational** Ham for the inner stack — `WavefunctionFactory` builds the second Cholesky Hamiltonian from `inner_hamiltonian` through the `HamiltonianFactory` it holds (absent ⇒ clones the True Ham). Remaining: population control, first-class HDF5 type (Phase 8). |
+| `StochasticWfn` constructor | Builds outer `nomsd_`; accepts pre-built `StochasticInnerStack` (inner NOMSD + propagator + RNG). Parses `inner_nwalkers`, `inner_nsteps`, `inner_seed`, `inner_propagator`. Defers inner `WalkerSet` resize. | **Builds two `HamOps`** (3b-var ✓): the True Ham for `nomsd_` (from `h`) and the **Variational** Ham for the inner stack — `WavefunctionFactory` builds the second Cholesky Hamiltonian from `inner_hamiltonian` through the `HamiltonianFactory` it holds (absent ⇒ clones the True Ham). Remaining: [Phase 9](#phase-9--inner-ensemble-permutation-after-outer-population-control-planned) (outer pop-control / inner-slot coupling for conditioned trials); inner-ensemble population control deferred (`inner_nsteps > 1` only). |
 | `interpret_inputs(pt)` | Validates NOMSD keys plus all stochastic keys listed above. Rejects `inner_nsteps > 0`. | Relax the `inner_nsteps` guard when Phase 3b invokes `inner_propagator()`. |
 | `WavefunctionFactory` | `type: stochasticwfn` input + dedicated `fromHDF5` branch; `buildStochasticInnerStack()` + `buildStochasticNomsdWavefunction*`; `maybe_initialize_stochastic_inner_walkers()` after build. | **Complete (Phase 8).** |
 | `getWavefunctionType()` | Detects `Wavefunction/StochasticWfn` HDF5 marker (`STOCHASTIC_WFN`). | **Complete (Phase 8).** |
@@ -1433,7 +1433,9 @@ generalized-`w_p` weight making the measurement / local-energy estimators exact.
 smoke scale (Ne Stage E: unbiased energy, weight stability — see
 [Phase 3c comparison](#phase-3c-comparison--conditioning--leapfrog-jun-2026-leapfrog-validation)).
 **Still open:** a production-scale energy-variance-reduction-vs-3b claim (more walkers + longer trial),
-and the `inner_nsteps > 1` moving-bra bias (canonical trial is `inner_nsteps = 1`).
+the `inner_nsteps > 1` moving-bra bias (canonical trial is `inner_nsteps = 1`), and
+[Phase 9](#phase-9--inner-ensemble-permutation-after-outer-population-control-planned) (inner-slot
+permutation after outer `popControl()` for conditioned trials).
 
 ##### Phase 3c-ii — Propagate-then-resample leapfrog (**complete**, CPU-verified [overhaul])
 
@@ -1862,6 +1864,338 @@ First-class `type: stochasticwfn` input; dedicated `fromHDF5` branch; `getWavefu
 `Wavefunction/StochasticWfn` HDF5 markers. The deprecated `stochastic: true` flag remains for backward
 compatibility.
 
+### Phase 9 — Inner-ensemble permutation after outer population control (**planned**)
+
+**Status:** not implemented (design only; Jun 2026).
+
+**Goal:** keep the conditioned dynamic inner ensemble (`inner_conditioning && inner_nsteps > 0`,
+slot-major `nw·P` layout) aligned with the outer `WalkerSet` across outer population-control events,
+so observable reductions between `popControl()` and the next `begin_inner_step()` — notably
+`MixedObsHandler::accumulate` / `accumulate_estimators` on the same step as population control when
+`measure_interval == population_control_interval` (the default commensurate setup) — score the correct
+inner/outer pairs.
+
+#### Problem statement
+
+For conditioned dynamic trials, the inner ensemble uses **slot-major** indexing: outer slot `w` owns inner
+indices `q = ip·nw + w` for `ip ∈ [0, P)`. Each block is conditioned on the outer walker `φ_w` at that
+slot (Eq. 23; see [Phase 3c-i](#phase-3c-i--walker-conditioned-inner-sampling-complete-cpu-verified-overhaul)).
+
+Outer `popControl()` copies/shuffles walkers via `branch()` + `loadBalance()`, but the inner
+`WalkerSet` (`inner_ensemble_.wset`) and `inner_cond_mag_` live **outside** the outer walker buffer and
+are **not** updated. The per-step resample latch (`inner_step_pending_`, armed only by
+`begin_inner_step()` at the top of `Propagate`) is consumed during the propagation step; after
+`popControl()` on the same iteration:
+
+```cpp
+const bool need_resample =
+    inner_step_pending_ || (inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_);
+if (not need_resample)
+  return;   // conditioned_resample — stale inner blocks reused
+```
+
+So reductions that run **after** `popControl()` but **before** the next `Propagate` can pair
+post-branch outer walkers with pre-branch inner blocks. Example: outer slot `0` is a clone of what was
+slot `3`; inner block `0` is still conditioned on the old `φ_0`, not the cloned `φ_3`.
+
+**Modes that do *not* need this:** static (`inner_nsteps = 0`); 3b free projection (no per-slot
+conditioning — `P` inner walkers pair with all outer walkers); delegate limit (`inner_nwalkers = 1`);
+back-propagation reference draw (decoupled free-projection ensemble; see [Phase 7](#phase-7--back-propagation-references-complete-cpu-verified-overhaul)).
+
+#### Analogy to back propagation (what to copy vs. what to index)
+
+BP does **not** store a parent index. It stores full per-walker auxiliary state in `bp_buffer`, and
+`branch()` copies it with the walker (`WalkerSetBase.icc`):
+
+```cpp
+walker_buffer(tot_num_walkers, all) = walker_buffer(pos, all);
+if (wlk_desc[3] > 0)
+  bp_buffer(tot_num_walkers, all) = bp_buffer(pos, all);
+```
+
+`bp_buffer` holds:
+
+| Region | Role |
+|--------|------|
+| `FIELDS` | stored HS fields per BP step |
+| `WEIGHT_FAC` / `WEIGHT_HISTORY` | circular weight history for path restoration |
+
+Path restoration walks that history on the **same walker index** after branching; walker identity
+travels with the buffer copy.
+
+For the stochastic trial, embedding `P` inner Slater configs per outer walker inside `walker_buffer` /
+`bp_buffer` is too heavy. The BP-like pattern here is:
+
+| Back propagation | Stochastic (conditioned) |
+|----------------|--------------------------|
+| Full history in `bp_buffer` | Full inner block in `inner_ensemble_.wset` (separate storage) |
+| Copied during `branch()` | **Not** copied today |
+| Same walker index ⇒ same history | Need `parent[w]` ⇒ which old slot's inner block belongs at new `w` |
+
+**Design:** a **scalar lineage field** on the outer walker that branches like `bp_buffer`, plus a
+post-`popControl()` permutation of the separate inner storage.
+
+#### Recommended design: `SLOT_LINEAGE` metadata + inner permutation hook
+
+##### 1. Add a per-walker lineage scalar to the outer walker set
+
+**Option A (recommended): extend `walker_buffer` layout**
+
+Add to `walker_data` in `WalkerConfig.hpp`:
+
+```cpp
+enum walker_data {
+  // ... existing ...
+  SLOT_LINEAGE,   // pre-branch local slot index; meaningful for stochastic conditioned trials
+};
+```
+
+Wire into `setup()` / `data_displ` like `WEIGHT`, `OVLP`, etc. Store as `ComplexType` with the
+integer lineage in the real part (existing scalar convention).
+
+| | |
+|---|---|
+| **Pros** | Copied automatically in every `branch()` replication path; swapped during dead-walker compaction; no dependency on BP being enabled; same pattern as other per-walker scalars |
+| **Cons** | One extra scalar per outer walker (negligible) |
+
+**Option B: tail of `bp_buffer`**
+
+Add `data_displ[SLOT_LINEAGE]` after `WEIGHT_HISTORY` in `resize_bp()`.
+
+| | |
+|---|---|
+| **Pros** | Conceptually "auxiliary propagation metadata" alongside fields/history |
+| **Cons** | Only allocated when `resize_bp()` ran; mixed estimators need lineage even without BP |
+
+**Option C: parallel `nda::array<int,1> slot_lineage_` on `WalkerSetBase`**
+
+Explicit copy in `branch()` / `loadBalance()` / `push_walkers()`.
+
+| | |
+|---|---|
+| **Pros** | Clean integer typing |
+| **Cons** | Must mirror every buffer copy site (easy to miss) |
+
+**Recommendation:** Option A — always present, branches for free.
+
+Initialize on walker creation / `resize()`:
+
+```cpp
+walker_buffer(r, data_displ[SLOT_LINEAGE]) = ComplexType(float(r), 0.0);
+```
+
+##### 2. Maintain lineage inside `branch()`
+
+Track a `std::vector<int> lineage(nwalk)` in lockstep with buffer moves:
+
+```cpp
+// Before dead-walker compaction
+lineage[i] = i;
+
+// On kill/keep swap (mirrors walker_buffer swap):
+std::swap(lineage[kill_pos], lineage[keep_pos]);
+
+// On replication pos -> tot_num_walkers:
+lineage.push_back(lineage[pos]);
+
+// On copy to Wexcess for load balance:
+Wexcess_lineage[cnt] = lineage[pos];   // see MPI section below
+```
+
+After `branch()`, write back:
+
+```cpp
+walker_buffer(w, data_displ[SLOT_LINEAGE]) = ComplexType(float(lineage[w]), 0.0);
+```
+
+**Semantics:** `lineage[w]` = **local slot index before this pop-control event** whose inner block
+should stay attached to outer slot `w` after branching.
+
+- Survivor with no replication: `lineage[w] == w` (identity).
+- Clone of old slot `s`: `lineage[w] == s`.
+
+This is the same information as the vafqmc `stochastic_reconfiguration_state` resampling index
+(`idx`), but recorded incrementally during `branch()` rather than computed from a systematic-resampling
+CDF.
+
+##### 3. `StochasticWfn::permute_inner_blocks_after_pop(WlkSet const& wset)`
+
+New method, gated:
+
+```cpp
+bool needs_inner_slot_tracking() const {
+  return inner_conditioning_ && inner_nsteps_ > 0
+      && inner_ensemble_.initialized
+      && inner_ensemble_.wset->size() == long(wset.size()) * inner_nwalkers_;
+}
+```
+
+Read lineage from outer walkers (via `getProperty(SLOT_LINEAGE, …)` or a dedicated getter), build
+`parent[w] = int(real(lineage[w]))`, then permute slot-major blocks for each `ip`:
+
+```cpp
+// inner_old, inner_new scratch; same for inner_cond_mag_
+for (int w = 0; w < nw; ++w) {
+  int src = parent(w);
+  for (int ip = 0; ip < P; ++ip) {
+    inner_new[ip*nw + w] = inner_old[ip*nw + src];
+    inner_cond_mag_new[ip*nw + w] = inner_cond_mag_old[ip*nw + src];
+  }
+}
+```
+
+Use `WalkerSet` row copy (Slater matrices + weights), **not** a full conditioned resample. Cost:
+`O(nw·P·walker_size)` — cheap relative to `advance_inner_ensemble_conditioned`.
+
+**Do not** set `inner_step_pending_`; the ensemble remains valid for the current outer configuration
+(only the slot indexing changed).
+
+Expose via `Wavefunction`:
+
+```cpp
+void permute_inner_blocks_after_pop(WlkSet& wset) {
+  std::visit([&](auto& a) {
+    if constexpr (requires { a.permute_inner_blocks_after_pop(wset); })
+      a.permute_inner_blocks_after_pop(wset);
+  }, var);
+}
+```
+
+`NOMSD` / `PHMSD`: no-op.
+
+##### 4. Driver hook (mirror BP's pop-control commensurability)
+
+In `AFQMCDriver` (and `CSAFQMCDriver`), immediately after `popControl()`:
+
+```cpp
+wset.popControl();
+wfn.permute_inner_blocks_after_pop(wset);   // no-op unless stochastic + conditioned
+estim0.accumulate_step(...);
+```
+
+Placement matches where BP history already travels with the walker copy inside `branch()`; this hook
+fixes `accumulate_block` on pop-control steps without waiting for the next `Propagate`.
+
+#### MPI / load balance: the hard part
+
+Outer walkers are **distributed**; inner blocks are **per-rank local** (`nw_local × P`). Stochastic
+reductions already assume each rank scores its **own** outer walkers against its **own** inner ensemble
+(per-rank-complete contract; see [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035)).
+
+**Local branching (replication within rank):** lineage + permutation is sufficient (common case).
+
+**Cross-rank `loadBalance()` (`swapWalkersSimple` / `Async`):** when rank B receives a walker from
+rank A via `Wexcess`:
+
+- `walker_buffer` + `bp_buffer` arrive (MPI payload is `single_walker_size() + single_walker_bp_size()`),
+- `lineage` says "this walker came from slot `s` on rank A",
+- rank B has **no** inner block for `(A, s)`.
+
+| Approach | Mechanism | Cost | Accuracy |
+|----------|-----------|------|----------|
+| **D1 — ship inner block** | Extend MPI payload: `Wexcess` rows include `P` inner Slater rows + `P` cond magnitudes | High bandwidth | Exact |
+| **D2 — invalidate slots** | Mark received slots `needs_resample[w]=true`; partial conditioned resample only for those `w` | Medium compute | Exact |
+| **D3 — force full resample** | Set `inner_step_pending_=true` (or `inner_valid_=false`) if any cross-rank move occurred | Easiest | Exact; more RNG |
+
+**Recommendation for v1:** **D3 with a cheap local fast path**
+
+```cpp
+if (only_local_permutation(parent))   // parent is a permutation of 0..nw-1 on this rank
+  permute_inner_blocks(parent);
+else
+  inner_step_pending_ = true;   // next reduction does full conditioned_resample
+```
+
+Detect cross-rank moves via existing `nwalk_counts_old` / `nwalk_counts_new` deltas in `popControl()`
+(if `swapWalkersSimple` reports `nswap > 0`, or equivalent, fall back to resample). **D2** (partial
+resample for flagged slots only) is the right v2 if cross-rank moves are frequent and full resample cost
+matters.
+
+#### Alternative: invalidation-only (no permutation)
+
+Minimal fix without `SLOT_LINEAGE`:
+
+```cpp
+// StochasticWfn hook after popControl (driver):
+inner_step_pending_ = true;
+```
+
+Forces `conditioned_resample` on the next `MixedDensityMatrix` / `accumulate_estimators` call even if
+the latch was consumed.
+
+| | |
+|---|---|
+| **Pros** | ~10 lines; no `WalkerSet` changes |
+| **Cons** | full `nw×P` resample after every pop event; discards good inner samples on clones |
+
+Permutation is the right long-term design; invalidation is a reasonable **Phase 9a** stopgap.
+
+#### What does *not* need Phase 9
+
+| Mode | Why |
+|------|-----|
+| Static (`inner_nsteps = 0`) | Inner samples shared, not slot-conditioned |
+| 3b free (`inner_nsteps > 0`, no conditioning) | `P` inner walkers pair with all outer walkers |
+| Delegate limit (`inner_nwalkers = 1`) | No block structure |
+| BP reference draw | Fresh free-projection ensemble; decoupled from forward slot structure |
+
+#### Implementation sub-phases
+
+| Sub-phase | Deliverable | Notes |
+|-----------|-------------|-------|
+| **9a — correctness stopgap** | Driver hook: `inner_step_pending_ = true` after `popControl()` for conditioned stochastic trials | Unblocks correctness immediately; no `WalkerSet` changes |
+| **9b — lineage metadata** | `SLOT_LINEAGE` in `walker_data` / `data_displ`; initialize in `resize()`; maintain in `branch()`, `push_walkers()`, `pop_walkers()`, dead-walker swap | Unit test: `pair_branch` counts `{0,2,1,…}` ⇒ lineage matches expected parent map |
+| **9c — inner permutation** | `StochasticWfn::permute_inner_blocks_after_pop`; permute `inner_ensemble_.wset` + `inner_cond_mag_`; `Wavefunction` visitor; driver hook replaces 9a on local-only paths | Test: known `φ_w` conditioning; branch clone; assert inner block at new slot matches old source |
+| **9d — MPI fallback** | Detect cross-rank exchange; fall back to `inner_step_pending_` when inner blocks were not shipped; optional D2 partial resample | Extends [Multi-rank status](#multi-rank--np--1-status-validated-jun-2026-worker6035) |
+
+**Suggested first PR sequence:** 9a → 9b + 9c (local permutation, `-np 1`) → 9d.
+
+#### API sketch
+
+```cpp
+// WalkerConfig.hpp
+SLOT_LINEAGE,
+
+// StochasticWfn.hpp
+template<class WlkSet>
+void permute_inner_blocks_after_pop(const WlkSet& wset);
+
+// AFQMCDriver.cpp (and CSAFQMCDriver.cpp)
+wset.popControl();
+prop0.wfn()->permute_inner_blocks_after_pop(wset);
+```
+
+#### Tests (planned)
+
+| Test case | Checkpoint |
+|-----------|------------|
+| `stochastic_branch_lineage_metadata` | `branch()` / `pair_branch` replication ⇒ `SLOT_LINEAGE` parent map matches hand-derived expectation |
+| `stochastic_inner_permute_after_pop_control` | Conditioned ensemble; `popControl()` without intervening `Propagate`; `accumulate_estimators` / `MixedDensityMatrix` use permuted inner blocks (overlap with known source slot) |
+| `stochastic_inner_permute_production_order` | Extend the `stochastic_mean_field_production_order` / `stochastic_back_propagation_production_order` pattern: `popControl()` between propagation and `accumulate_block` on a leapfrog trial |
+
+#### Design notes
+
+1. **Why not store inner blocks in `bp_buffer`?** BP fields are `O(nbp·nCV)` per walker; inner blocks
+   are `O(P·NMO·nel)` and exist only for stochastic trials. A single integer lineage is the right
+   compression.
+
+2. **Relation to `inner_step_pending_`:** the latch means "fresh resample for a new propagation step."
+   Post-pop permutation means "same inner samples, new outer indexing." Keep those semantics separate.
+
+3. **Orthogonalization between pop and measure:** `Orthogonalize` runs before pop; inner blocks remain
+   tied to pre-ortho outer walkers at resample time. Post-pop permutation only fixes **index** mismatch,
+   not orbital gauge — consistent with the leapfrog contract (everything recomputed at
+   `begin_inner_step`).
+
+4. **Correlated multi-system (`CSAFQMCDriver`):** verify whether each system has its own outer
+   `WalkerSet` but shares one `StochasticWfn` before implementing; lineage is per-system if so. Single-
+   system `AFQMCDriver` is the immediate target.
+
+5. **Tier 7 "Remaining: population control":** this phase addresses **outer** pop-control / inner-slot
+   coupling for the conditioned single-step trial. Separate **inner-ensemble population control** (only
+   relevant if `inner_nsteps > 1`) remains out of scope per [`inner_nsteps` and the single-step
+   goal](#inner_nsteps-and-the-single-step-goal).
+
 ### What to avoid as an early step
 
 - **Overriding `Overlap`/`Energy` before 1a** — without an owned inner ensemble, this only
@@ -2193,4 +2527,5 @@ including the Phase 7 dynamic-BP smoke and the Phase 8 factory/HDF5 smokes).
 - GPU build: all `[stochastic_wfn]` tests pass with `ENABLE_CUDA=ON`.
 - GPU memory and task-group load acceptable with the additional inner ensemble and propagator.
 - Research-level: dynamic-trial energies/overlaps vs analytic NOMSD within stochastic error bars; `P → ∞` convergence and `inner_seed` stability; **3c-ii leapfrog** energy parity and variance reduction vs 3b (unit tests are finiteness-only today).
+- [Phase 9](#phase-9--inner-ensemble-permutation-after-outer-population-control-planned): inner-ensemble permutation after outer population control (conditioned dynamic trials).
 - `KP3IndexFactorization` / other HamOps full-G stubs on overhaul until tests exercise those paths.
