@@ -114,6 +114,21 @@ public:
   template<class WlkSet>
   void begin_inner_step(WlkSet& wset);
 
+  // Realign the conditioned inner ensemble with the outer walker set after an outer population-control
+  // event (branch + load balance); the driver calls this immediately after wset.popControl(). The
+  // slot-major inner ensemble (index q = ip*nw + w, block w conditioned on outer walker phi_w) lives
+  // OUTSIDE the outer walker buffer, so popControl's clone/shuffle would otherwise leave block w attached
+  // to the OLD phi_w -- a reduction between popControl and the next propagation step (e.g.
+  // accumulate_estimators when the measure and population-control intervals coincide) would then pair
+  // post-branch outer walkers with pre-branch inner blocks. This permutes the inner blocks to follow the
+  // walkers (via the per-walker SLOT_LINEAGE map recorded through branch/load-balance), or -- when a
+  // walker arrived from another rank, whose inner block this rank does not hold -- rebuilds them with a
+  // fresh conditioned resample on the next reduction.
+  // No-op unless this is a conditioned dynamic trial (inner_conditioning_ && inner_nsteps_ > 0); static,
+  // free-projection, and delegate-limit trials carry no slot-conditioned inner blocks.
+  template<class WlkSet>
+  void permute_inner_blocks_after_pop(const WlkSet& wset);
+
   bool at_delegate_limit() const { return inner_nwalkers_ == 1 && inner_nsteps_ == 0; }
 
   NOMSD<MEM, devPsiT>& outer_nomsd() { return nomsd_; }

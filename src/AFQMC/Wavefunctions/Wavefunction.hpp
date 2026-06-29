@@ -283,6 +283,21 @@ public:
         var);
   }
 
+  // Realign the conditioned inner ensemble with the outer walker set after an outer population-control
+  // event. The driver calls this immediately after wset.popControl(). No-op for non-stochastic
+  // wavefunctions and for stochastic trials that carry no slot-conditioned blocks.
+  template<class WlkSet>
+  void permute_inner_blocks_after_pop(const WlkSet& wset)
+  {
+    std::visit(
+        [&](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            a.permute_inner_blocks_after_pop(wset);
+        },
+        var);
+  }
+
   template<MEMORY_SPACE MEM2, class MType2>
   friend struct wavefunction_detail::StochasticInnerStackImpl;
 

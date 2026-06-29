@@ -382,6 +382,96 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
 
 template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet>
+void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& wset)
+{
+  // Only conditioned dynamic trials carry a slot-major (q = ip*nw + w) inner ensemble whose block w is
+  // conditioned on outer walker phi_w; static / free-projection / delegate modes have nothing to realign.
+  if (not(inner_conditioning_ && inner_nsteps_ > 0))
+    return;
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    return;
+
+  const int nw          = int(wset.size());
+  const int P           = inner_nwalkers_;
+  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
+
+  // The ensemble must be in its slot-major nw*P conditioned form to permute coherently. If it is not (the
+  // walker-independent P-sample form, a transient back-propagation reference draw, or the outer count
+  // changed) a fresh conditioned resample is needed anyway: the size-mismatch guard in
+  // conditioned_resample already forces it, and arming the latch makes a count-preserving reduction
+  // resample too.
+  if (inner.size() != long(nw) * P)
+  {
+    inner_step_pending_ = true;
+    return;
+  }
+
+  // parent[w] = pre-branch local slot whose conditioned inner block belongs at new outer slot w.
+  // A walker received from another rank during load balancing carries the SLOT_LINEAGE sentinel -1 (set
+  // in WalkerSetBase::push_walkers) because this rank holds no inner block for the slot it came from. If
+  // ANY slot is foreign (sentinel, or -- defensively -- out of the local [0,nw) range), this rank cannot
+  // permute coherently, so it falls back to a full conditioned resample on the next reduction; otherwise
+  // every slot has a valid LOCAL source and we take the permutation fast path. A pure local rebalance --
+  // including the entire single-rank case -- has no sentinels and always permutes.
+  //
+  // The fallback is all-or-nothing: one imported walker forces resampling all nw*P inner fields on this
+  // rank, even slots that branched locally and could have been permuted. Correct, but a possible future
+  // optimization is a per-slot hybrid -- permute the locally-sourced slots and resample only the foreign
+  // ones -- which would need a conditioned resample restricted to a subset of slots.
+  nda::array<int, 1> parent(nw);
+  {
+    nda::array<ComplexType, 1> lin(nw);
+    wset.getProperty(SLOT_LINEAGE, lin);
+    for (int w = 0; w < nw; ++w)
+    {
+      const int s = int(std::lround(real(lin(w)))); // sentinel -1 rounds to -1, not 0
+      if (s < 0 || s >= nw)
+      {
+        inner_step_pending_ = true; // cross-rank move: rebuild conditioned blocks on the next reduction
+        return;
+      }
+      parent(w) = s;
+    }
+  }
+
+  // Permute the slot-major inner Slater matrices so block w holds the samples conditioned on the walker
+  // now at outer slot w. Clones (several w sharing one parent) read the same source block -- correct: a
+  // cloned outer walker inherits a copy of its parent's inner block. Snapshot-then-write (NOT in place)
+  // because of those shared sources; the snapshot uses a pooled buffer (no fresh allocation per pop
+  // event). Cost O(nw*P*walker_size); cheap vs. a full conditioned resample.
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  auto all              = nda::range::all;
+  auto permute_sm       = [&](SpinTypes sp) {
+    auto SM = inner.SlaterMatrices(sp); // [nw*P, npol*NMO, nc]
+    memory::buffered_array<MEM, ComplexType, 3> old_sm(SM.extent(0), SM.extent(1), SM.extent(2));
+    old_sm() = SM();
+    for (int ip = 0; ip < P; ++ip)
+      for (int w = 0; w < nw; ++w)
+        SM(long(ip) * nw + w, all, all) = old_sm(long(ip) * nw + parent(w), all, all);
+  };
+  permute_sm(Alpha);
+  if (wt == COLLINEAR)
+    permute_sm(Beta);
+
+  // Leapfrog reweighting magnitude |<psi_q|phi_cond>| is slot-major too; permute it alongside (set only
+  // when a leapfrog conditioned resample has run, hence the size guard).
+  if (inner_leapfrog_ && inner_cond_mag_.size() == long(nw) * P)
+  {
+    nda::array<RealType, 1> old_mag(inner_cond_mag_);
+    for (int ip = 0; ip < P; ++ip)
+      for (int w = 0; w < nw; ++w)
+        inner_cond_mag_(long(ip) * nw + w) = old_mag(long(ip) * nw + parent(w));
+  }
+
+  // Do NOT arm inner_step_pending_: these are the SAME samples, only the slot indexing changed -- the
+  // ensemble stays valid for the re-indexed outer configuration (the next begin_inner_step resamples
+  // fresh). The post-permute ensemble is still conditioned on the PRE-pop walker geometry; permutation
+  // fixes only the index mismatch, not orbital gauge, which is consistent with the resample-everything
+  // contract at the next propagation step.
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet>
 void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
 {
   if (inner_conditioning_ && inner_nsteps_ > 0)
