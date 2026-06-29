@@ -1836,6 +1836,281 @@ TEST_CASE("stochastic_dynamic_ensemble_smoke", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
+// Outer population-control / inner-slot realignment by lineage permutation. A conditioned dynamic trial
+// keeps a slot-major inner ensemble (q = ip*nwalk + w, block w conditioned on outer walker phi_w) OUTSIDE
+// the outer walker buffer. An outer popControl that clones/shuffles walkers WITHOUT changing the per-rank
+// count leaves block w attached to the OLD phi_w, so a reduction run after popControl but before the next
+// begin_inner_step (e.g. accumulate_estimators when measure_interval == population_control_interval) would
+// pair post-branch walkers with pre-branch blocks. The driver calls
+// Wavefunction::permute_inner_blocks_after_pop right after popControl, which permutes the slot-major inner
+// blocks (and inner_cond_mag_) by the SLOT_LINEAGE parent map so block w follows the walker now at w.
+//
+// EXACT check: condition a leapfrog ensemble on distinct walkers and record per-walker overlaps Ov_before.
+// Then simulate a pop-control CLONE -- outer slot 0 becomes a copy of slot 3 (phi_0 := phi_3) with
+// SLOT_LINEAGE(0) = 3, all other slots identity -- and permute. Because permutation REUSES the samples
+// (no resample) and the next Log_Overlap does not resample (latch consumed, size unchanged), the overlaps
+// are deterministic functions of (inner block, outer walker):
+//   Ov_after[0] == Ov_before[3]  (block 3 moved to slot 0, paired with phi_0 == phi_3)
+//   Ov_after[3] == Ov_before[3]  (slot 3 unchanged: block 3 vs phi_3)
+//   Ov_after[w] == Ov_before[w]  (untouched slots: block + walker unchanged)
+// This FAILS if the permutation is a no-op/incorrect (Ov_after[0] would be the stale block 0 vs phi_3).
+// Linear overlaps are compared to avoid the log-branch ambiguity (see linear_overlap). Also pins the
+// no-op contract for plain NOMSD.
+template<MEMORY_SPACE MEM>
+void stochastic_inner_permute_after_pop_control(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // conditioned inner sampling is CPU-only today.
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    // The permutation is per-rank-local and rank-count-independent, so single-rank fully validates it.
+    // The exact cross-slot overlap equalities below assume no cross-rank reduction mixing; cross-rank
+    // realignment (the sentinel fallback path) is covered by the multi-rank suite run, not this equality.
+    if (mpi->comm.size() != 1)
+      return;
+    const double dt(0.01);
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk          = 6;
+    const int inner_nwalkers = 3;
+    const int clone_src      = 3; // outer slot 3 is cloned into slot 0 below
+    const int clone_dst      = 0;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac{};
+
+    // Plain NOMSD -- the no-op target for the visitor.
+    ptree nomsd_pt;
+    nomsd_pt.put("name", "wfn_nomsd_pp");
+    nomsd_pt.put("system", "info0");
+    nomsd_pt.put("filename", wfn_file);
+    WfnFac.push("wfn_nomsd_pp", nomsd_pt);
+    auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_pp", type, &ham, nwalk);
+
+    // Conditioned + leapfrog dynamic stochastic trial -> slot-major nwalk*P inner ensemble (exercises the
+    // inner_cond_mag_ permutation too).
+    ptree pt;
+    pt.put("name", "wfn_stoch_pp");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    mark_stochastic_wfn_input(pt);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    pt.put("inner_leapfrog", true);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_pp", pt);
+    auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_pp", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_pp", type, wlk_pt);
+
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_pp"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown); // distinct outer walkers
+
+    // Contract: the hook is a no-op for a non-stochastic wavefunction (callable, no crash/side effect).
+    wfn_nomsd.permute_inner_blocks_after_pop(wset);
+
+    // Condition the inner ensemble on the current distinct walkers (leapfrog begin_inner_step resamples
+    // to nwalk*P), then record the per-walker effective overlaps.
+    wfn_s.begin_inner_step(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+    nda::array<ComplexType, 1> ov_before(nwalk);
+    wfn_s.Log_Overlap(wset, ov_before); // latch consumed by begin_inner_step -> reuses the conditioned ensemble
+
+    // Simulate an outer popControl clone that preserves the per-rank count (the case the size-mismatch
+    // guard in conditioned_resample does NOT catch): outer slot clone_dst becomes a copy of clone_src.
+    {
+      auto all = nda::range::all;
+      auto SM  = wset.SlaterMatrices(Alpha);
+      SM(clone_dst, all, all) = SM(clone_src, all, all);
+    }
+    // SLOT_LINEAGE parent map: clone_dst <- clone_src, every other slot identity.
+    {
+      nda::array<ComplexType, 1> lin(nwalk);
+      for (int w = 0; w < nwalk; ++w)
+        lin(w) = ComplexType(double(w), 0.0);
+      lin(clone_dst) = ComplexType(double(clone_src), 0.0);
+      wset.setProperty(SLOT_LINEAGE, lin);
+    }
+
+    // permute the inner blocks by the lineage map (no resample). Block clone_dst now holds clone_src's.
+    wfn_s.permute_inner_blocks_after_pop(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+
+    // Reduce again -- latch consumed + size unchanged => NO resample, so this scores the PERMUTED ensemble
+    // against the cloned walkers.
+    nda::array<ComplexType, 1> ov_after(nwalk);
+    wfn_s.Log_Overlap(wset, ov_after);
+
+    // Exact block identity via linear overlaps (branch-independent).
+    auto lin_before = linear_overlap(ov_before);
+    auto lin_after  = linear_overlap(ov_after);
+    // Block clone_src moved to slot clone_dst, paired with phi_clone_dst == phi_clone_src.
+    CHECK_THAT(lin_after(clone_dst), utils::Approx(lin_before(clone_src)));
+    // Slot clone_src itself is unchanged (identity parent, walker untouched).
+    CHECK_THAT(lin_after(clone_src), utils::Approx(lin_before(clone_src)));
+    // All untouched slots are unchanged (block + walker identical).
+    for (int w = 0; w < nwalk; ++w)
+      if (w != clone_dst)
+        CHECK_THAT(lin_after(w), utils::Approx(lin_before(w)));
+    (void)dt;
+  }
+}
+
+TEST_CASE("stochastic_inner_permute_after_pop_control", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn permute_inner_blocks_after_pop realigns inner blocks after population control.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_inner_permute_after_pop_control<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Cross-rank fallback for permute_inner_blocks_after_pop. A walker received from another rank during load
+// balancing carries the SLOT_LINEAGE sentinel -1 (this rank holds no inner block for the slot it came
+// from), so the realignment must REBUILD the conditioned ensemble with a fresh resample rather than
+// permute. Validated synthetically at single rank (no MPI needed): contrast an identity lineage (permute
+// reuses the ensemble -> overlaps unchanged) against a lineage with one sentinel (fallback resamples ->
+// overlaps change). This pins the fallback branch deterministically.
+template<MEMORY_SPACE MEM>
+void stochastic_inner_permute_cross_rank_fallback(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // conditioned inner sampling is CPU-only today.
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    if (mpi->comm.size() != 1)
+      return; // synthetic single-rank sentinel check (real cross-rank moves need no special harness)
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk          = 6;
+    const int inner_nwalkers = 3;
+    const int sentinel_slot  = 2; // pretend outer slot 2 was imported from another rank
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac{};
+    ptree pt;
+    pt.put("name", "wfn_stoch_xr");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    mark_stochastic_wfn_input(pt);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_xr", pt);
+    auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_xr", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_xr", type, wlk_pt);
+
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_xr"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+
+    // Condition on the current walkers and record the baseline overlaps (first reduction resamples to
+    // the slot-major nwalk*P form and consumes the latch).
+    wfn_s.begin_inner_step(wset);
+    nda::array<ComplexType, 1> ov_before(nwalk);
+    wfn_s.Log_Overlap(wset, ov_before);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+    auto lin_before = linear_overlap(ov_before);
+
+    auto set_lineage = [&](int sentinel) {
+      nda::array<ComplexType, 1> lin(nwalk);
+      for (int w = 0; w < nwalk; ++w)
+        lin(w) = ComplexType(double(w), 0.0); // identity
+      if (sentinel >= 0)
+        lin(sentinel) = ComplexType(-1.0, 0.0); // mark as foreign-rank arrival
+      wset.setProperty(SLOT_LINEAGE, lin);
+    };
+
+    // (A) Identity lineage: permute is a no-op reuse, so the next reduction does NOT resample and the
+    // overlaps are unchanged.
+    set_lineage(-1);
+    wfn_s.permute_inner_blocks_after_pop(wset);
+    nda::array<ComplexType, 1> ov_id(nwalk);
+    wfn_s.Log_Overlap(wset, ov_id);
+    auto lin_id = linear_overlap(ov_id);
+    for (int w = 0; w < nwalk; ++w)
+      CHECK_THAT(lin_id(w), utils::Approx(lin_before(w)));
+
+    // (B) One sentinel: the realignment must fall back to a full conditioned resample, so the next
+    // reduction draws a fresh ensemble and the overlaps change.
+    set_lineage(sentinel_slot);
+    wfn_s.permute_inner_blocks_after_pop(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+    nda::array<ComplexType, 1> ov_fb(nwalk);
+    wfn_s.Log_Overlap(wset, ov_fb);
+    auto lin_fb = linear_overlap(ov_fb);
+    double max_diff = 0.0;
+    for (int w = 0; w < nwalk; ++w)
+      max_diff = std::max(max_diff, std::abs(lin_fb(w) - lin_before(w)));
+    REQUIRE(max_diff > 1e-6); // a fresh resample drew new fields -> ensemble (and overlaps) changed
+  }
+}
+
+TEST_CASE("stochastic_inner_permute_cross_rank_fallback", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn permute_inner_blocks_after_pop resamples on a foreign-rank (sentinel) slot.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_inner_permute_cross_rank_fallback<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
 // End-to-end propagator integration: build a real OUTER AFQMCBasePropagator (default hybrid) bound to
 // the dynamic stochastic trial (inner_nsteps = 1) and run Propagate() steps. Drives the full hot path
 // THROUGH the propagator (vbias -> vHS -> apply -> Log_Overlap), validating that the stochastic
