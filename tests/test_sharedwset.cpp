@@ -425,4 +425,85 @@ TEST_CASE("sharedwset: walker io", "[sharedwset]")
   sharedwset_walker_io<DEVICE_MEMORY>("fullypolarized");
 #endif
 }
+
+// SLOT_LINEAGE tracking through WalkerSetBase::branch(). After branch() replicates each walker according
+// to its branching count (dead-walker compaction then replication), SLOT_LINEAGE(w) must hold the
+// PRE-branch local slot index of the walker now at slot w, so a conditioned stochastic trial can realign
+// its slot-major inner ensemble with the post-branch outer walkers. branch() resets the column to identity
+// (set_slot_lineage_identity()) BEFORE any reordering, and the per-walker whole-row copies then carry it
+// through both phases -- no per-site bookkeeping. Algorithm-independent invariant: the multiset of
+// post-branch lineage values equals { i repeated count[i] times }, since each surviving walker (and every
+// clone) traces to its origin slot i, which is replicated exactly count[i] times.
+template<MEMORY_SPACE MEM>
+void stochastic_branch_lineage_metadata()
+{
+  using Type = std::complex<double>;
+  auto& mpi  = utils::make_unit_test_mpi_context();
+  if (mpi->comm.size() != 1)
+    return; // single-rank lineage check; the cross-rank path is covered separately
+
+  const int NMO = 6, nup = 2, ndown = 2, nwalk = 6;
+  AFQMCInfo info;
+  info.NMO   = NMO;
+  info.nup   = nup;
+  info.ndown = ndown;
+  info.name  = "walker";
+  ptree wlk_pt;
+  wlk_pt.put("name", "wset0");
+  wlk_pt.put("walker_type", "closed");
+  auto rng  = std::make_shared<utils::RandomGenerator_t<>>();
+  auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, info, rng);
+
+  nda::array<Type, 3> initA_h(1, NMO, nup);
+  initA_h() = Type(0.0);
+  for (int i = 0; i < nup; ++i)
+    initA_h(0, i, i) = Type(0.22);
+  auto initA = memory::to_memory_space<MEM>(initA_h);
+  wset.resize(nwalk, initA);
+  REQUIRE(wset.size() == nwalk);
+
+  auto lineage_of = [&](int w) {
+    nda::array<ComplexType, 1> lin(nwalk);
+    wset.getProperty(SLOT_LINEAGE, lin);
+    return int(real(lin(w)) + 0.5); // values are exact small non-negative integers
+  };
+
+  // resize() initializes SLOT_LINEAGE to identity.
+  for (int w = 0; w < nwalk; ++w)
+    REQUIRE(lineage_of(w) == w);
+
+  // Hand-crafted branching counts (sum == nwalk == targetN_per_rank, so nothing spills to Wexcess):
+  // slot 0 -> 2 copies, slot 1 killed, slot 2 -> 1, slot 3 -> 3, slots 4 and 5 killed.
+  std::vector<int> counts = {2, 0, 1, 3, 0, 0};
+  int total               = 0;
+  for (int c : counts)
+    total += c;
+  REQUIRE(total == nwalk);
+
+  std::vector<std::pair<double, int>> buffer(nwalk);
+  for (int i = 0; i < nwalk; ++i)
+    buffer[i] = {1.0, counts[i]};
+
+  memory::array<MEM, ComplexType, 2> Wexcess(0, wset.single_walker_size());
+  wset.branch(buffer.begin(), buffer.end(), Wexcess);
+  REQUIRE(wset.size() == nwalk);
+
+  // The multiset of post-branch lineage values must equal the branching counts.
+  std::vector<int> hist(nwalk, 0);
+  for (int w = 0; w < nwalk; ++w)
+  {
+    int parent = lineage_of(w);
+    REQUIRE(parent >= 0);
+    REQUIRE(parent < nwalk);
+    hist[parent]++;
+  }
+  for (int i = 0; i < nwalk; ++i)
+    REQUIRE(hist[i] == counts[i]);
+}
+
+TEST_CASE("stochastic_branch_lineage_metadata", "[stochastic_wfn]")
+{
+  app_log(0, "WalkerSetBase::branch() carries SLOT_LINEAGE through compaction + replication.");
+  stochastic_branch_lineage_metadata<HOST_MEMORY>();
+}
 } // namespace sfqmc

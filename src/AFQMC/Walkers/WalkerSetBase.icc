@@ -187,6 +187,8 @@ void WalkerSetBase<_M_>::setup()
   cnt += 1; // flag to track if UR is unitary
   data_displ[THETA] = cnt;
   cnt += 1; // theta
+  data_displ[SLOT_LINEAGE] = cnt;
+  cnt += 1; // pre-branch local slot index (stochastic conditioned inner-block realignment)
   walker_size                = cnt;
   walker_memory_usage        = walker_size * sizeof(ComplexType);
   data_displ[SMN]            = -1;
@@ -197,6 +199,21 @@ void WalkerSetBase<_M_>::setup()
   bp_walker_memory_usage     = bp_walker_size * sizeof(ComplexType);
 
   tot_num_walkers = 0;
+}
+
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::set_slot_lineage_identity()
+{
+  if (tot_num_walkers <= 0)
+    return;
+  // Stage the identity index list on host, then copy to the walker memory space and write the
+  // SLOT_LINEAGE column (mirrors the host->MEM staging used elsewhere, e.g. scaleWeightsByOverlap).
+  nda::array<ComplexType, 1> lin_h(tot_num_walkers);
+  for (int i = 0; i < tot_num_walkers; ++i)
+    lin_h(i) = ComplexType(double(i), 0.0);
+  memory::array<_M_, ComplexType, 1> lin(tot_num_walkers);
+  lin() = lin_h();
+  setProperty(SLOT_LINEAGE, lin);
 }
 
 template<MEMORY_SPACE _M_>
@@ -269,6 +286,7 @@ void WalkerSetBase<_M_>::resize(int n)
     }
   }
   tot_num_walkers  = n;
+  set_slot_lineage_identity(); // well-defined lineage before the first population-control event
   targetN_per_rank = tot_num_walkers;
   targetN          = GlobalPopulation();
   utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
@@ -424,6 +442,7 @@ void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& A)
     walker_buffer(r,data_displ[THETA]) = ComplexType(0.0);
   }
   tot_num_walkers = n;
+  set_slot_lineage_identity(); // well-defined lineage before the first population-control event
   targetN_per_rank  = tot_num_walkers;
   targetN         = GlobalPopulation();
   utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
@@ -480,6 +499,7 @@ void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& U,
     walker_buffer(r,data_displ[THETA]) = ComplexType(0.0);
   }
   tot_num_walkers = n;
+  set_slot_lineage_identity(); // well-defined lineage before the first population-control event
   targetN_per_rank  = tot_num_walkers;
   targetN         = GlobalPopulation();
   utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
@@ -526,6 +546,7 @@ void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<4> auto const& UDV
     walker_buffer(r,data_displ[THETA]) = ComplexType(0.0);
   }
   tot_num_walkers = n;
+  set_slot_lineage_identity(); // well-defined lineage before the first population-control event
   targetN_per_rank  = tot_num_walkers;
   targetN         = GlobalPopulation();
   utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
@@ -606,6 +627,13 @@ void WalkerSetBase<_M_>::push_walkers(nda::MemoryArrayOfRank<2> auto&& M)
     walker_buffer(tot_num_walkers, all) = M(i, nda::range(walker_size));
     if (wlk_desc[3] > 0)
       bp_buffer(tot_num_walkers,all) = M(i, nda::range(walker_size,walker_size+bp_walker_size));
+    // A pushed walker arrived from another rank during load balancing; its copied SLOT_LINEAGE refers to
+    // a slot on the SENDING rank, for which this rank holds no conditioned inner block. Overwrite it with
+    // the sentinel -1 so a stochastic conditioned trial's inner-ensemble realignment detects the
+    // cross-rank arrival and rebuilds with a fresh resample instead of permuting. Harmless for every
+    // other walker type (only that path reads SLOT_LINEAGE).
+    nda::tensor::set(ComplexType(-1.0, 0.0),
+                     walker_buffer(tot_num_walkers, nda::range(data_displ[SLOT_LINEAGE], data_displ[SLOT_LINEAGE] + 1)));
     tot_num_walkers++;
   }
 }
@@ -652,6 +680,13 @@ void WalkerSetBase<_M_>::branch(It itbegin, It itend, nda::MemoryArrayOfRank<2> 
     tot_num_walkers = 0;
     return;
   }
+
+  // Record each live walker's pre-branch local slot index in SLOT_LINEAGE BEFORE any reordering, so the
+  // whole-row copies below carry it through compaction (a walker pulled from the tail into a dead slot
+  // keeps its ORIGINAL index) and replication (a clone inherits its source's index). After branch(),
+  // SLOT_LINEAGE(w) is the pre-branch slot whose conditioned inner block belongs at new slot w. Only a
+  // stochastic conditioned trial reads it; the scalar itself is always maintained.
+  set_slot_lineage_identity();
 
   //1. push/swap all dead walkers to the end and adjust tot_num_walkers
   {

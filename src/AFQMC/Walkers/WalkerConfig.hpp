@@ -24,7 +24,7 @@ namespace afqmc
 {
 // wlk_descriptor: [ nmo, naea, naeb, nback_prop, nCV, nRefs, nHist]
 using wlk_descriptor = std::array<int, 8>;
-using wlk_indices    = std::array<int, 22>;
+using wlk_indices    = std::array<int, 23>;
 enum walker_data
 {
   SM,
@@ -49,6 +49,15 @@ enum walker_data
   WEIGHT_FAC,
   WEIGHT_HISTORY,
   THETA,
+  // Per-walker BOOKKEEPING scalar (stochastic conditioned trials only), NOT a physical walker quantity:
+  // the pre-branch local slot index, used to realign a stochastic trial's conditioned inner ensemble with
+  // the outer walkers after a population-control event. Stored as the real part of this ComplexType slot
+  // because walker_buffer is a single homogeneous ComplexType array, and that homogeneity is exactly what
+  // lets branch()/loadBalance() carry this index for free via whole-row copies -- a native int would have
+  // to live in a separate parallel array mirrored by hand at every walker-move site. Integer values are
+  // exact in the double mantissa. Appended after THETA so it stays outside the walkerSizeIO() checkpoint
+  // window.
+  SLOT_LINEAGE,
 };
 
 } // namespace afqmc
