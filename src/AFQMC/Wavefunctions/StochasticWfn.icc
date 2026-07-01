@@ -59,9 +59,9 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
     inner_timestep_ = prop_pt->get<double>("timestep", 0.01);
   if (inner_nsteps_ > 0)
   {
-    if (wlk != CLOSED)
+    if (wlk != CLOSED && wlk != COLLINEAR)
       APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) currently supports "
-                "CLOSED (RHF) trials only -- COLLINEAR/NONCOLLINEAR full-G is a follow-up.");
+                "CLOSED (RHF) and COLLINEAR (UHF) trials only -- NONCOLLINEAR full-G is a follow-up.");
 #if defined(ENABLE_DEVICE)
     APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) is CPU-only; the "
               "un-rotated full-G kernels are not yet implemented for device builds.");
