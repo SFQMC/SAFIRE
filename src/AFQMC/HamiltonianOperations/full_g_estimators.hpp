@@ -35,13 +35,16 @@ namespace full_g
 // E, and accumulates the RAW per-spin Coulomb vector K_n = sum_a (sum_k G[a][k] L[a][k][n]) into Kl.
 // The caller owns zeroing E, adding E0, and the EJ finalization 0.5*scl^2*|Kl|^2 -- so for COLLINEAR
 // the two spin calls share one Kl and the EJ finalization contracts the TOTAL (alpha+beta) density.
-//   scl = 2 (CLOSED, doubles the single alpha spin) or 1 (COLLINEAR, per spin).
-//   Gspin : [nwalk][NMO*NMO] contiguous, row-major G_sigma[i][k].
+//   scl : 2 (CLOSED, doubles the single alpha spin) or 1 (COLLINEAR, per spin).
+//   G3  : [nwalk][NMO][NMO] view of G_sigma[i][k]. MAY BE STRIDED -- e.g. a COLLINEAR spin block of a
+//         [nwalk][2*NMO*NMO] buffer -- since it is only element-accessed (contract + the GF repack),
+//         never reshaped. The EXX gemm still needs the contiguous [nwalk*NMO][NMO] GF, so one repack is
+//         unavoidable; this avoids a *separate* per-spin block copy in energy_collinear.
 //   Lankf : [NMO*local_nCV][NMO], Lankf(i*local_nCV + n, k) = L(i,k,n) (bare, spin-independent Cholesky).
 //   hijf  : [NMO*NMO], bare (spin-independent) one-body h_ik.
 template<MEMORY_SPACE MEM, class MatE, class MatG, class MatLan, class VecHij, class MatK>
 void accumulate_spin_full_g(MatE&& E,
-                            MatG const& Gspin,
+                            MatG const& G3,
                             MatLan const& Lankf,
                             VecHij const& hijf,
                             int local_nCV,
@@ -53,12 +56,12 @@ void accumulate_spin_full_g(MatE&& E,
 {
   using nda::range;
   auto all = range::all;
-  memory::check_memory_space<MEM>(E, Gspin, Lankf, hijf);
+  memory::check_memory_space<MEM>(E, G3, Lankf, hijf);
 
-  int const nwalk = int(Gspin.extent(0));
+  int const nwalk = int(G3.extent(0));
   int const NMO   = int(Lankf.extent(1));
 
-  utils::check(Gspin.extent(1) == long(NMO) * NMO, "full_g::accumulate_spin_full_g: G shape mismatch");
+  utils::check(G3.extent(1) == NMO && G3.extent(2) == NMO, "full_g::accumulate_spin_full_g: G shape mismatch");
   utils::check(Lankf.extent(0) == long(NMO) * local_nCV, "full_g::accumulate_spin_full_g: Lankf shape mismatch");
   utils::check(hijf.extent(0) == long(NMO) * NMO, "full_g::accumulate_spin_full_g: hijf shape mismatch");
 
@@ -66,22 +69,19 @@ void accumulate_spin_full_g(MatE&& E,
   {
     // E[w][0] += scl * sum_ik h_ik G[w][ik]
     auto hij2 = nda::reshape(hijf, std::array<long, 2>{NMO, NMO});
-    auto G3   = nda::reshape(Gspin, std::array<long, 3>{nwalk, NMO, NMO});
     nda::tensor::contract(scl, hij2, "ik", G3, "wik", ComplexType(1.0), E(all, 0), "w");
   }
 
   if (not addEXX)
     return;
 
-  // GF[(n,i)][k] = G[n][i][k].
+  // GF[(n,i)][k] = G[n][i][k] -- repack into contiguous [nwalk*NMO][NMO] for the gemm (handles a
+  // strided G3, e.g. a collinear spin block).
   memory::buffered_array<MEM, ComplexType, 2> GF(nwalk * NMO, NMO);
   for (int n = 0; n < nwalk; ++n)
-  {
-    auto Gn = Gspin(n, all);
     for (int i = 0; i < NMO; ++i)
       for (int k = 0; k < NMO; ++k)
-        GF(n * NMO + i, k) = Gn(i * NMO + k);
-  }
+        GF(n * NMO + i, k) = G3(n, i, k);
 
   // Twban[(n,i)][(i',nc)] = sum_k GF[(n,i)][k] * Lankf[(i',nc)][k], over the FULL (i',nc) range.
   memory::buffered_array<MEM, ComplexType, 2> Twban(nwalk * NMO, NMO * local_nCV);
@@ -155,7 +155,8 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
   if (addEJ)
     Kl() = ComplexType(0.0);
 
-  accumulate_spin_full_g<MEM>(E, Gfull, Lankf, hijf, local_nCV, scl, Kl(), addH1, addEJ, addEXX);
+  auto G3 = nda::reshape(Gfull, std::array<long, 3>{nwalk, NMO, NMO});
+  accumulate_spin_full_g<MEM>(E, G3, Lankf, hijf, local_nCV, scl, Kl(), addH1, addEJ, addEXX);
 
   if (addEXX and addEJ)
     for (int n = 0; n < nwalk; ++n)
@@ -167,8 +168,9 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
 // G layout: [nwalk][2*NMO*NMO] = alpha block [0, NMO*NMO) followed by beta block [NMO*NMO, 2*NMO*NMO),
 // each row-major G_sigma[i][k] (the layout reduce_inner_cross_dm builds for COLLINEAR). Mirrors the
 // compact COLLINEAR energy: per-spin E1 and EXX with scl=1 (no closed doubling), and a single EJ on the
-// TOTAL (alpha+beta) density. Same bare (spin-independent) Cholesky/one-body for both spins, exactly as
-// the collinear full-G vbias branch contracts Likn(0) for both spins. Replicated per rank, no all_reduce.
+// TOTAL (alpha+beta) density. Both spins reuse the bare spin-independent Cholesky/one-body from
+// ensure_full_cholesky() (Likn(0)); spin-dependent integrals (Likn.extent(0)>1) are rejected upstream.
+// Replicated per rank, no all_reduce.
 template<MEMORY_SPACE MEM, class MatE, class MatG, class MatLan, class VecHij>
 void energy_collinear(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> const& mpi,
                       MatE&& E,
@@ -202,16 +204,20 @@ void energy_collinear(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> 
   if (addEJ)
     Kl() = ComplexType(0.0);
 
-  // The alpha/beta blocks are strided sub-views of Gfull (row stride 2*NMO*NMO); copy each into a
-  // contiguous buffer so accumulate_spin_full_g can reshape it. E0 is added once above; both spin calls
-  // accumulate their one-body/exchange into E and their Coulomb vector into the shared Kl.
-  memory::buffered_array<MEM, ComplexType, 2> Gspin(nwalk, long(NMO) * NMO);
+  // View the alpha block [0, NMO*NMO) and beta block [NMO*NMO, 2*NMO*NMO) of each contiguous Gfull row
+  // as STRIDED [nwalk][NMO][NMO] arrays (row stride 2*NMO*NMO) and pass them straight to the per-spin
+  // kernel -- no per-block copy (the kernel element-accesses G3 and repacks into its own gemm buffer).
+  // E0 is added once above; both spin calls accumulate one-body/exchange into E and Coulomb into shared Kl.
+  utils::check(Gfull.is_contiguous(), "full_g::energy_collinear: Gfull must be contiguous");
+  std::array<long, 3> const shp{nwalk, NMO, NMO};
+  std::array<long, 3> const strd{2L * NMO * NMO, long(NMO), 1L};
+  nda::idx_map<3, 0, nda::C_stride_order<3>, nda::layout_prop_e::none> const idxm(shp, strd);
 
-  Gspin() = Gfull(all, range(0L, long(NMO) * NMO));
-  accumulate_spin_full_g<MEM>(E, Gspin, Lankf, hijf, local_nCV, scl, Kl(), addH1, addEJ, addEXX);
+  auto Ga3 = memory::array_view<MEM, const ComplexType, 3>(idxm, Gfull.data());
+  accumulate_spin_full_g<MEM>(E, Ga3, Lankf, hijf, local_nCV, scl, Kl(), addH1, addEJ, addEXX);
 
-  Gspin() = Gfull(all, range(long(NMO) * NMO, 2L * NMO * NMO));
-  accumulate_spin_full_g<MEM>(E, Gspin, Lankf, hijf, local_nCV, scl, Kl(), addH1, addEJ, addEXX);
+  auto Gb3 = memory::array_view<MEM, const ComplexType, 3>(idxm, Gfull.data() + long(NMO) * NMO);
+  accumulate_spin_full_g<MEM>(E, Gb3, Lankf, hijf, local_nCV, scl, Kl(), addH1, addEJ, addEXX);
 
   if (addEXX and addEJ)
     for (int n = 0; n < nwalk; ++n)
