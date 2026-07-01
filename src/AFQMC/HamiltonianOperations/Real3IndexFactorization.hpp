@@ -754,11 +754,23 @@ public:
                     bool addEJ = true,
                     bool addEXX = true)
   {
-    if (walker_type != CLOSED)
-      APP_ABORT("Real3IndexFactorization::energy_fullG supports CLOSED trials only.");
+    if (walker_type == NONCOLLINEAR)
+      APP_ABORT("Real3IndexFactorization::energy_fullG: NONCOLLINEAR full-G is not implemented.");
+    // The un-rotated full-G kernels contract the bare (spin-independent) Cholesky built by
+    // ensure_full_cholesky() from Likn(0). A COLLINEAR trial reuses it for both spins, which requires
+    // the Cholesky to be spin-independent (Likn.extent(0)==1, as for a standard molecular Hamiltonian);
+    // this matches the collinear full-G vbias branch, which also contracts Likn(0) for both spins.
+    if (walker_type == COLLINEAR)
+      utils::check(Likn.extent(0) == 1,
+                   "Real3IndexFactorization::energy_fullG: COLLINEAR full-G requires a spin-independent "
+                   "Cholesky (Likn.extent(0)==1).");
     ensure_full_cholesky();
-    full_g::energy_closed<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_, hij_full_flat_,
-                               int(nCV), E0, addH1, addEJ, addEXX);
+    if (walker_type == COLLINEAR)
+      full_g::energy_collinear<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_,
+                                    hij_full_flat_, int(nCV), E0, addH1, addEJ, addEXX);
+    else
+      full_g::energy_closed<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_,
+                                 hij_full_flat_, int(nCV), E0, addH1, addEJ, addEXX);
   }
 
 private:
