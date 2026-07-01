@@ -756,14 +756,23 @@ public:
   {
     if (walker_type == NONCOLLINEAR)
       APP_ABORT("Real3IndexFactorization::energy_fullG: NONCOLLINEAR full-G is not implemented.");
-    // The un-rotated full-G kernels contract the bare (spin-independent) Cholesky built by
-    // ensure_full_cholesky() from Likn(0). A COLLINEAR trial reuses it for both spins, which requires
-    // the Cholesky to be spin-independent (Likn.extent(0)==1, as for a standard molecular Hamiltonian);
-    // this matches the collinear full-G vbias branch, which also contracts Likn(0) for both spins.
+    // The un-rotated full-G energy kernels contract the bare Cholesky built by ensure_full_cholesky()
+    // from Likn(0). For COLLINEAR both spins reuse that single block, so the Cholesky must be
+    // spin-independent (Likn.extent(0)==1 -- the case for a standard molecular UHF Hamiltonian, and the
+    // only case that reaches this stochastic single-determinant full-G path in practice). vbias's full-G
+    // branch DOES handle a spin-dependent Cholesky (Likn(is%nstot) per spin) because it is shared with
+    // the multi-determinant NOMSD trial; the stochastic energy kernel does not yet, so a spin-dependent
+    // COLLINEAR Hamiltonian (Likn.extent(0)==2, e.g. spin-resolved integrals) is rejected here rather
+    // than silently scoring both spins with the alpha block. Fail-fast: this fires on the first energy
+    // evaluation, before any measurement, so no incorrect physics is reported. Lifting it needs per-spin
+    // Cholesky densification in energy_collinear (mirroring energy_impl / vbias) -- deferred as it is
+    // untestable without a spin-dependent DenseFactorized fixture (none exists) and unneeded for
+    // molecular UHF.
     if (walker_type == COLLINEAR)
       utils::check(Likn.extent(0) == 1,
-                   "Real3IndexFactorization::energy_fullG: COLLINEAR full-G requires a spin-independent "
-                   "Cholesky (Likn.extent(0)==1).");
+                   "Real3IndexFactorization::energy_fullG: COLLINEAR full-G currently requires a "
+                   "spin-independent Cholesky (Likn.extent(0)==1); spin-dependent (per-spin) Cholesky "
+                   "in the stochastic energy kernel is a follow-up.");
     ensure_full_cholesky();
     if (walker_type == COLLINEAR)
       full_g::energy_collinear<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_,
