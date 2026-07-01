@@ -92,10 +92,9 @@ void StochasticWfn<MEM, devPsiT>::maybe_advance_inner_ensemble()
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::draw_bp_reference_ensemble()
 {
-  // Phase 7 (Tier 6): a FRESH, walker-INDEPENDENT free-projection draw of P trial samples
-  // {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references (standard Motta-Zhang BP with the trial
+  // A FRESH, walker-INDEPENDENT free-projection draw of P trial samples {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references (standard Motta-Zhang BP with the trial
   // represented stochastically). Decoupled from the forward inner ensemble: the trial |Psi_T> is
-  // walker-independent, and the forward walk's 3c conditioning/leapfrog is only a forward-overlap
+  // walker-independent, and the forward walk's conditioning/leapfrog is only a forward-overlap
   // importance-sampling device -- irrelevant to the references. So we always draw BARE free-projection
   // samples here via Propagate_free (which forces bare field sampling regardless of the forward
   // propagator's build mode). inner_ensemble_.wset is reused as scratch and sized to P: every forward
@@ -145,8 +144,7 @@ template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::advance_inner_ensemble_conditioned(
     memory::array<MEM, ComplexType, 2> const& X_bias, int nw)
 {
-  // Phase 3c-i: walker-conditioned resample. The inner ensemble is grown to nw*P walkers (slot-major
-  // index q = ip*nw + w), every walker reset to the anchor |phi_T>, then advanced inner_nsteps_
+  // Walker-conditioned resample. The inner ensemble is grown to nw*P walkers (slot-major index q = ip*nw + w), every walker reset to the anchor |phi_T>, then advanced inner_nsteps_
   // conditioned field-sampling steps. Block w shares the conditioning bias x_bar(phi_w) = X_bias(w,:)
   // (computed by the caller from the anchor-to-outer-walker cross DM), so its P samples are
   // importance-sampled toward phi_w. Recovers the static anchor exactly at inner_nsteps_ == 0.

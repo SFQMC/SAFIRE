@@ -83,6 +83,9 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
       AFQMCTimer.start(popcont_timer);
       wset.processWalkerData(curData);
       wset.popControl(); // make this a call to actual pop control
+      // Realign the conditioned stochastic-trial inner ensemble with the post-branch outer walkers
+      // before any reduction runs on them (no-op unless a conditioned dynamic stochastic trial).
+      wfn0.permute_inner_blocks_after_pop(wset);
       AFQMCTimer.stop(popcont_timer);
       estim0.accumulate_step(total_time, wset, curData);
     }

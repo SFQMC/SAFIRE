@@ -140,7 +140,7 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
   {
     if (pt.get<bool>("inner_conditioning", false))
     {
-      // Phase 3c-i: walker-conditioned sampling. Build the inner propagator in importance-sampling
+      // Walker-conditioned sampling: build the inner propagator in importance-sampling mode
       // mode (free_projection = false) so assemble_X applies the per-walker conditioning force bias.
       // The bias is supplied externally and the walker-weight update is skipped via
       // StochasticWfn -> Propagator::Propagate_conditioned, so hybrid/apply_constrain are inert here.
@@ -151,7 +151,7 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
     }
     else
     {
-      // Phase 3b: walker-independent free projection (bare Gaussian fields).
+      // Walker-independent free projection (bare Gaussian fields).
       prop_pt.put("free_projection", true);
       prop_pt.put("hybrid", true);
       prop_pt.put("importance_sampling", false);
@@ -189,8 +189,8 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
 }
 
 // h scores the outer (True Ham) nomsd_; h_var builds the inner (Variational) stack that generates the
-// stochastic trial samples. The factory passes h_var == h to clone the True Ham (pre-Phase-3b-var
-// behavior); a distinct h_var routes the inner stack to a separate Variational Hamiltonian. Both
+// stochastic trial samples. The factory passes h_var == h to clone the True Ham when no inner_hamiltonian
+// is named; a distinct h_var routes the inner stack to a separate Variational Hamiltonian. Both
 // HamOps are half-rotated with the same trial orbitals (PsiT_for_ham); only the integrals differ.
 template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
 Wavefunction<MEM> buildStochasticNomsdWavefunction(
@@ -317,11 +317,10 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
         utils::check(walker_type != COLLINEAR_FT && walker_type != NONCOLLINEAR_FT,
                      "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
                      "finite-temperature walkers.");
-        // Resolve the inner (Variational) Hamiltonian (Phase 3b-var). If the wfn block names one via
-        // `inner_hamiltonian` (read from the raw pt_in -- it is a factory-level key, never forwarded
-        // into the wavefunction ptree), build it on demand through HamFac_ and use it for the inner
-        // stack; otherwise clone the True Ham h (pre-3b-var behavior). The var Ham inherits the wfn's
-        // `system` unless its block sets one, and is registered under a namespaced ID that cannot
+        // Resolve the inner (Variational) Hamiltonian. If the wfn block names one via `inner_hamiltonian`
+        // (read from the raw pt_in -- it is a factory-level key, never forwarded into the wavefunction
+        // ptree), build it on demand through HamFac_ and use it for the inner stack; otherwise clone the
+        // True Ham h. The var Ham inherits the wfn's `system` unless its block sets one, and is registered under a namespaced ID that cannot
         // collide with a user Hamiltonian.
         Hamiltonian* inner_ham_ptr = &h;
         if (auto var_block = pt_in.get_child_optional("inner_hamiltonian"))
@@ -362,7 +361,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 
       utils::check(wfn_type == NOMSD_WFN,
                    "Error in WavefunctionFactory::fromHDF5: Wavefunction/StochasticWfn HDF5 requires "
-                   "type: stochasticwfn (or deprecated stochastic: true).");
+                   "type: stochasticwfn.");
 
       auto HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT);
 

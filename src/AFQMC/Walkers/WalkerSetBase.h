@@ -668,6 +668,13 @@ protected:
   void parse(ptree cur);
   void setup();
 
+  // Set SLOT_LINEAGE(w) = w over the current [0, tot_num_walkers) (identity). Called at the top of
+  // branch() so the per-walker whole-row copies carry each walker's pre-branch slot index through
+  // dead-walker compaction and replication, and on resize() so the column is well-defined before the
+  // first population-control event. Only consumed by a stochastic conditioned trial's inner-ensemble
+  // realignment.
+  void set_slot_lineage_identity();
+
   // load balance algorithm
   LOAD_BALANCE_ALGORITHM load_balance;
 

@@ -30,15 +30,14 @@ namespace afqmc
 namespace full_g
 {
 
-// Phase 3b (StochasticWfn): un-rotated full-G local-energy contraction for CLOSED (RHF) trials.
+// StochasticWfn: un-rotated full-G local-energy contraction for CLOSED (RHF) trials (inner_nsteps > 0).
 // G layout: [nwalk][NMO*NMO]. The Cholesky (Lankf) is REPLICATED on every rank -- exactly as the compact
 // Real3IndexFactorization::energy_impl path is (it iterates the full nCV with no MPI reduction, which is
 // why NOMSD::Energy needs no external all_reduce). So this kernel computes the COMPLETE E for ALL walkers
 // on every rank (redundant across ranks) and the caller does NOT reduce. (Earlier it distributed BOTH the
 // walker loop [n % comm.size()] AND the (i,nc) index [FairDivide] across the comm with no reduction --
 // correct only at -np 1; at -np > 1 that left EXX/EJ walker-incomplete and CV-partial -> garbage, while
-// the ungated E1 was already complete, so no single caller all_reduce could fix it. See
-// StochasticDevelopment.md "Multi-rank (-np > 1) status".)
+// the ungated E1 was already complete, so no single caller all_reduce could fix it.)
 template<MEMORY_SPACE MEM, class MatE, class MatG, class MatLan, class VecHij>
 void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> const& mpi,
                    MatE&& E,
