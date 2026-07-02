@@ -1836,6 +1836,124 @@ TEST_CASE("stochastic_dynamic_ensemble_smoke", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
+// Persistent (tethered) inner pool under production conditioning + leapfrog. Instead of the
+// reset-then-redraw of the Gaussian-shift conditioned path, the pool is kept across outer steps and
+// re-equilibrated by a short independence-Metropolis MCMC (proposal ~ bare free projection; accept on
+// |<psi|phi_w>|, targeting the exact conditioned distribution p_T(Y)*|<psi|phi_w>|). Drives several outer
+// steps through all four hot-path overrides and asserts finiteness (values are stochastic, not fixed),
+// that the slot-major nw*P pool layout is preserved across steps (persistence, not a resize to P or a
+// collapse), and -- via the equil_steps = 0 leg -- that the zero-equilibration prime path is well-behaved.
+// Regression for the default-off path is byte-identical inner_persistence = false (every other
+// [stochastic_wfn] case).
+template<MEMORY_SPACE MEM>
+void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                      std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // conditioned inner sampling + un-rotated full-G kernels are CPU-only today.
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    const double dt(0.01);
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk          = 7;
+    const int inner_nwalkers = 4;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    // Two persistent decks: (1) equil_steps = 1 + burn_in = 1 (a genuine short MCMC), and (2) equil_steps
+    // = 0 (zero equilibration after prime -- pool reset to the anchor once, then frozen).
+    auto run_persistent = [&](const std::string& name, int equil_steps, int burn_in) {
+      WavefunctionFactory<MEM> WfnFac{};
+      ptree pt;
+      pt.put("name", name);
+      pt.put("system", "info0");
+      pt.put("filename", wfn_file);
+      mark_stochastic_wfn_input(pt);
+      pt.put("inner_nwalkers", inner_nwalkers);
+      pt.put("inner_nsteps", 1);
+      pt.put("inner_conditioning", true);
+      pt.put("inner_leapfrog", true);
+      pt.put("inner_persistence", true);
+      pt.put("inner_equil_steps", equil_steps);
+      pt.put("inner_pool_burn_in", burn_in);
+      ptree inner_prop;
+      inner_prop.put("timestep", 0.01);
+      pt.put_child("inner_propagator", inner_prop);
+      WfnFac.push(name, pt);
+      auto& wfn = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
+      WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, name, type, wlk_pt);
+
+      auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+      wset.resize(nwalk, WfnFac.getInitialGuess(name));
+      perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+
+      for (int step = 0; step < 4; ++step)
+      {
+        wfn.begin_inner_step(wset); // leapfrog: equilibrates the persistent pool + stores the old overlap
+        memory::array<MEM, ComplexType, 2> X(nwalk, wfn.number_of_cholesky_vectors());
+        wfn.vbias(wset, X, dt);
+        wfn.Energy(wset);
+        wfn.Log_Overlap(wset);
+        // Persistence: the pool must stay in the slot-major nw*P conditioned layout across steps (it is
+        // re-equilibrated in place, never resized to P or collapsed).
+        REQUIRE(wfn.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+        nda::array<ComplexType, 1> ov(nwalk), e1(nwalk), exx(nwalk), ej(nwalk);
+        wset.getProperty(OVLP, ov);
+        wset.getProperty(E1_, e1);
+        wset.getProperty(EXX_, exx);
+        wset.getProperty(EJ_, ej);
+        auto X_h = nda::to_host(X);
+        for (int w = 0; w < nwalk; ++w)
+        {
+          REQUIRE(std::isfinite(real(ov(w))));
+          REQUIRE(std::isfinite(imag(ov(w))));
+          REQUIRE(std::isfinite(real(e1(w))));
+          REQUIRE(std::isfinite(real(exx(w))));
+          REQUIRE(std::isfinite(real(ej(w))));
+        }
+        for (int w = 0; w < nwalk; ++w)
+          for (int g = 0; g < X_h.extent(1); ++g)
+            REQUIRE(std::isfinite(real(X_h(w, g))));
+      }
+    };
+
+    run_persistent("wfn_stoch_persist", 1, 1);
+    run_persistent("wfn_stoch_persist_noequil", 0, 0);
+  }
+}
+
+TEST_CASE("stochastic_persistent_pool_smoke", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn persistent conditioned/leapfrog inner pool smoke.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_persistent_pool_smoke<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
 // Outer population-control / inner-slot realignment by lineage permutation. A conditioned dynamic trial
 // keeps a slot-major inner ensemble (q = ip*nwalk + w, block w conditioned on outer walker phi_w) OUTSIDE
 // the outer walker buffer. An outer popControl that clones/shuffles walkers WITHOUT changing the per-rank
