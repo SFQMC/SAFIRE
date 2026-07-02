@@ -101,6 +101,10 @@ public:
     int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
     bool inner_conditioning = pt0.get<bool>("inner_conditioning", false);
     bool inner_leapfrog = pt0.get<bool>("inner_leapfrog", false);
+    bool inner_persistence = pt0.get<bool>("inner_persistence", false);
+    int inner_equil_steps = pt0.get<int>("inner_equil_steps", 1);
+    int inner_pool_burn_in = pt0.get<int>("inner_pool_burn_in", 0);
+    std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "metropolis");
     int inner_seed   = pt0.get<int>("inner_seed", 777);
     auto inner_propagator_block = pt0.get_child_optional("inner_propagator");
     // inner_hamiltonian: optional block naming the second (Variational) Hamiltonian HDF5 file for the
@@ -109,8 +113,9 @@ public:
     // ptree (StochasticWfn::interpret_inputs does not know it). interpret_inputs only (a) rejects it
     // when stochastic is off and (b) lists it as a known pass-through key for compare_known_keys.
     for (auto const& key :
-         {"inner_nwalkers", "inner_nsteps", "inner_conditioning", "inner_leapfrog", "inner_seed",
-          "inner_propagator", "inner_hamiltonian"})
+         {"inner_nwalkers", "inner_nsteps", "inner_conditioning", "inner_leapfrog", "inner_persistence",
+          "inner_equil_steps", "inner_pool_burn_in", "inner_mcmc", "inner_seed", "inner_propagator",
+          "inner_hamiltonian"})
       if (not stochastic && pt0.get_child_optional(key))
         APP_ABORT("Error in WavefunctionFactory::interpret_inputs: " + std::string(key) +
                   " requires type: stochasticwfn.");
@@ -120,6 +125,10 @@ public:
       pt1.put("inner_nsteps", inner_nsteps);
       pt1.put("inner_conditioning", inner_conditioning);
       pt1.put("inner_leapfrog", inner_leapfrog);
+      pt1.put("inner_persistence", inner_persistence);
+      pt1.put("inner_equil_steps", inner_equil_steps);
+      pt1.put("inner_pool_burn_in", inner_pool_burn_in);
+      pt1.put("inner_mcmc", inner_mcmc);
       pt1.put("inner_seed", inner_seed);
       if (inner_propagator_block)
         pt1.put_child("inner_propagator", *inner_propagator_block);
@@ -131,6 +140,10 @@ public:
       "inner_nsteps",
       "inner_conditioning",
       "inner_leapfrog",
+      "inner_persistence",
+      "inner_equil_steps",
+      "inner_pool_burn_in",
+      "inner_mcmc",
       "inner_seed",
       "inner_propagator",
       "inner_hamiltonian",
