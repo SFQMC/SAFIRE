@@ -52,6 +52,10 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
   inner_nsteps_      = pt.get<int>("inner_nsteps");
   inner_conditioning_ = pt.get<bool>("inner_conditioning");
   inner_leapfrog_    = pt.get<bool>("inner_leapfrog");
+  inner_persistence_ = pt.get<bool>("inner_persistence");
+  inner_equil_steps_ = pt.get<int>("inner_equil_steps");
+  inner_pool_burn_in_ = pt.get<int>("inner_pool_burn_in");
+  inner_mcmc_        = pt.get<std::string>("inner_mcmc");
   int inner_seed     = pt.get<int>("inner_seed");
   inner_ensemble_.rng =
       std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(inner_seed, mpi_->comm));
@@ -73,6 +77,25 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
   if (inner_leapfrog_ && not inner_conditioning_)
     APP_ABORT("Error in StochasticWfn: inner_leapfrog = true (propagate-then-resample leapfrog for exact "
               "N(phi) cancellation) requires inner_conditioning = true.");
+  // Persistent-pool input validation.
+  if (inner_persistence_)
+  {
+    if (inner_nsteps_ <= 0)
+      APP_ABORT("Error in StochasticWfn: inner_persistence = true (persistent tethered inner pool) "
+                "requires inner_nsteps > 0; a static anchor ensemble has nothing to persist.");
+    if (not inner_conditioning_)
+      APP_ABORT("Error in StochasticWfn: inner_persistence = true currently requires inner_conditioning = "
+                "true. Persistent FREE-projection pools need local (pCN/HMC) proposals with stored field "
+                "draws (deferred); the conditioned path uses an independence Metropolis "
+                "accept/reject that needs no field storage.");
+    if (inner_equil_steps_ < 0)
+      APP_ABORT("Error in StochasticWfn: inner_equil_steps must be >= 0.");
+    if (inner_pool_burn_in_ < 0)
+      APP_ABORT("Error in StochasticWfn: inner_pool_burn_in must be >= 0.");
+    if (inner_mcmc_ != "metropolis")
+      APP_ABORT("Error in StochasticWfn: inner_mcmc = '" + inner_mcmc_ +
+                "' is not implemented; only 'metropolis' is available (HMC deferred).");
+  }
   app_log(2, "\nStochasticWfn input:\n{}\n", io::to_string(pt));
 }
 
@@ -88,11 +111,19 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
     APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_nsteps must be >= 0.");
   bool inner_conditioning = pt0.get<bool>("inner_conditioning", false);
   bool inner_leapfrog = pt0.get<bool>("inner_leapfrog", false);
+  bool inner_persistence = pt0.get<bool>("inner_persistence", false);
+  int inner_equil_steps = pt0.get<int>("inner_equil_steps", 1);
+  int inner_pool_burn_in = pt0.get<int>("inner_pool_burn_in", 0);
+  std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "metropolis");
   int inner_seed = pt0.get<int>("inner_seed", 777);
   pt1.put("inner_nwalkers", inner_nwalkers);
   pt1.put("inner_nsteps", inner_nsteps);
   pt1.put("inner_conditioning", inner_conditioning);
   pt1.put("inner_leapfrog", inner_leapfrog);
+  pt1.put("inner_persistence", inner_persistence);
+  pt1.put("inner_equil_steps", inner_equil_steps);
+  pt1.put("inner_pool_burn_in", inner_pool_burn_in);
+  pt1.put("inner_mcmc", inner_mcmc);
   pt1.put("inner_seed", inner_seed);
   if (auto prop_pt = pt0.get_child_optional("inner_propagator"))
     pt1.put_child("inner_propagator", *prop_pt);
@@ -107,6 +138,10 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "inner_nsteps",
       "inner_conditioning",
       "inner_leapfrog",
+      "inner_persistence",
+      "inner_equil_steps",
+      "inner_pool_burn_in",
+      "inner_mcmc",
       "inner_seed",
       "inner_propagator",
   };
@@ -403,6 +438,7 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& w
   if (inner.size() != long(nw) * P)
   {
     inner_step_pending_ = true;
+    inner_pool_primed_  = false; // pool not in slot-major form -> re-prime on the next resample
     return;
   }
 
@@ -428,6 +464,7 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& w
       if (s < 0 || s >= nw)
       {
         inner_step_pending_ = true; // cross-rank move: rebuild conditioned blocks on the next reduction
+        inner_pool_primed_  = false; // foreign block -> re-prime the persistent pool from anchor
         return;
       }
       parent(w) = s;
@@ -486,6 +523,22 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
         inner_step_pending_ || (inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_);
     if (not need_resample)
       return;
+    if (inner_persistence_)
+    {
+      // Persistent (tethered) pool: keep the previous samples across outer steps and
+      // re-equilibrate them in place with a short Metropolis MCMC, instead of the reset-to-anchor +
+      // Gaussian-shift resample below. Prime (fresh-from-anchor + burn-in) on first use, an outer-walker
+      // count change, or after a pool invalidation (inner_pool_primed_ cleared by the BP draw /
+      // cross-rank pop-control move); otherwise persist.
+      const bool prime =
+          (not inner_pool_primed_) || (inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_);
+      persistent_conditioned_resample(wset, prime);
+      inner_pool_primed_  = true;
+      inner_step_pending_ = false;
+      if (inner_leapfrog_)
+        compute_inner_cond_mag(wset); // |<psi_q|phi_w^cond>| for the leapfrog overlap reweighting (Eq. 25)
+      return;
+    }
     // Importance-sample the inner fields conditioned on each outer walker phi_w (Eq. 23 of
     // arXiv:2505.18519). The inner trial IS the anchor phi_T, so the inner NOMSD's own mixed DM + vbias
     // on the OUTER walker set yields the conditioning force bias
@@ -523,13 +576,23 @@ void StochasticWfn<MEM, devPsiT>::compute_inner_cond_mag(const WlkSet& wset)
   // ratio new/old is exactly Eq. 25 of arXiv:2505.18519 (N(phi) cancels). Same det(A^dag B) /
   // CLOSED-doubling convention as the Log_Overlap reduction. Replicated across ranks (cheap; the
   // FairDivided Log_Overlap reads it per pair). CLOSED-only in practice (leapfrog gate), beta included
-  // for completeness.
-  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
+  // for completeness. The magnitude loop is shared with the Metropolis accept/reject via
+  // cross_overlap_magnitudes; this method just sizes the member and delegates.
+  inner_cond_mag_ = nda::array<RealType, 1>(long(wset.size()) * inner_nwalkers_);
+  cross_overlap_magnitudes(wset, *inner_ensemble_.wset, inner_cond_mag_);
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet>
+void StochasticWfn<MEM, devPsiT>::cross_overlap_magnitudes(const WlkSet& wset, WalkerSet<MEM>& inner,
+                                                           nda::array<RealType, 1>& mag)
+{
   const int nw          = int(wset.size());
   const int P           = inner_nwalkers_;
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   auto all              = nda::range::all;
-  inner_cond_mag_       = nda::array<RealType, 1>(long(nw) * P);
+  utils::check(mag.size() == long(nw) * P, "cross_overlap_magnitudes: mag must be sized nw*P.");
+  utils::check(inner.size() == long(nw) * P, "cross_overlap_magnitudes: inner must be slot-major nw*P.");
   memory::buffered_array<MEM, ComplexType, 1> logov(nw);
   memory::buffered_array<MEM, ComplexType, 1> logov_b(nw);
   for (int ip = 0; ip < P; ++ip)
@@ -550,9 +613,105 @@ void StochasticWfn<MEM, devPsiT>::compute_inner_cond_mag(const WlkSet& wset)
       ComplexType lo = logov(w);
       if (wt == COLLINEAR)
         lo += logov_b(w);
-      inner_cond_mag_(long(ip) * nw + w) = std::abs(std::exp(lo));
+      mag(long(ip) * nw + w) = std::abs(std::exp(lo));
     }
   }
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet>
+void StochasticWfn<MEM, devPsiT>::metropolis_sweep_conditioned(const WlkSet& wset)
+{
+  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
+  const int nw          = int(wset.size());
+  const int P           = inner_nwalkers_;
+  const long ntot       = long(nw) * P;
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  const bool coll       = (wt == COLLINEAR);
+  auto all              = nda::range::all;
+
+  // 1. current-pool acceptance magnitudes |<psi_cur_q | phi_w>| (w = q % nw, slot-major).
+  nda::array<RealType, 1> mag_cur(ntot);
+  cross_overlap_magnitudes(wset, inner, mag_cur);
+
+  // 2. snapshot the current pool -- rejected proposals restore from here (pooled buffers, matching the
+  //    permute_inner_blocks_after_pop snapshot idiom). Beta extents are read only when COLLINEAR (the
+  //    ternary short-circuits, so SlaterMatrices(Beta) is never touched for a CLOSED walker set).
+  auto SMa = inner.SlaterMatrices(Alpha);
+  memory::buffered_array<MEM, ComplexType, 3> old_a(SMa.extent(0), SMa.extent(1), SMa.extent(2));
+  old_a() = SMa();
+  const long b0 = coll ? inner.SlaterMatrices(Beta).extent(0) : 1;
+  const long b1 = coll ? inner.SlaterMatrices(Beta).extent(1) : 1;
+  const long b2 = coll ? inner.SlaterMatrices(Beta).extent(2) : 1;
+  memory::buffered_array<MEM, ComplexType, 3> old_b(b0, b1, b2);
+  if (coll)
+    old_b() = inner.SlaterMatrices(Beta)();
+
+  // 3. propose: a fresh BARE free-projection draw psi* = B_T(Y*)|phi_T> for every slot. The proposal
+  //    density is the trial's own p_T(Y), INDEPENDENT of the current pool. Delegated to the .cpp (needs the
+  //    complete Propagator type; Propagate_free forces bare field assembly even though the conditioned
+  //    inner propagator was built with free_projection = false).
+  propose_free_projection_pool();
+
+  // 4. proposal acceptance magnitudes |<psi*_q | phi_w>|.
+  nda::array<RealType, 1> mag_prop(ntot);
+  cross_overlap_magnitudes(wset, inner, mag_prop);
+
+  // 5. Metropolis accept/reject per slot. Target ∝ p_T(Y)·|<psi|phi_w>| -- the EXACT conditioned trial
+  //    distribution (Eq. 23 of arXiv:2505.18519) WITHOUT the linear Gaussian-shift approximation of Phase
+  //    3c-i. With an independence proposal drawn from p_T(Y), the Metropolis-Hastings ratio reduces to
+  //    min(1, |<psi*|phi_w>| / |<psi_cur|phi_w>|). Rejected slots keep psi_cur -> persistence across outer
+  //    steps. A zero current magnitude (walker orthogonal to the stale sample) always accepts, moving off
+  //    it. Per-rank-local: each rank owns its nw local outer walkers and their nw*P inner blocks; the
+  //    accept uniforms come from the rank-decorrelated inner_ensemble_.rng.
+  nda::array<double, 1> u(ntot);
+  utils::sampleUniformFields(u, *inner_ensemble_.rng);
+  auto SMa_now = inner.SlaterMatrices(Alpha);
+  auto SMb_now = coll ? inner.SlaterMatrices(Beta) : inner.SlaterMatrices(Alpha);
+  for (long q = 0; q < ntot; ++q)
+  {
+    const double acc = (mag_cur(q) > RealType(0)) ? double(mag_prop(q) / mag_cur(q)) : 1.0;
+    if (u(q) < acc)
+      continue; // accept: keep the proposal already in `inner`
+    SMa_now(q, all, all) = old_a(q, all, all); // reject: restore psi_cur
+    if (coll)
+      SMb_now(q, all, all) = old_b(q, all, all);
+  }
+  mpi_->comm.barrier();
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet>
+void StochasticWfn<MEM, devPsiT>::persistent_conditioned_resample(const WlkSet& wset, bool prime)
+{
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::persistent_conditioned_resample: inner walkers not initialized.");
+  if (not inner_stack_->has_propagator())
+    APP_ABORT("Error in StochasticWfn::persistent_conditioned_resample: inner propagator not built.");
+
+  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
+  const long ntot       = long(wset.size()) * inner_nwalkers_;
+
+  // Shape the pool to the slot-major nw*P conditioned layout. A size change (e.g. a prior BP draw resized
+  // it to P, or the outer-walker count changed) forces a prime -- the previous samples cannot be reused.
+  if (inner.size() != ntot)
+  {
+#if defined(ENABLE_DEVICE)
+    if constexpr (MEM == DEVICE_MEMORY)
+      inner.resize(int(ntot), nda::to_device(inner_anchor_));
+    else
+#endif
+      inner.resize(int(ntot), inner_anchor_);
+    prime = true;
+  }
+  // On prime, start every slot at the anchor |phi_T> (nonzero target density -> a valid Markov-chain
+  // start) and burn in; a persisted pool skips the reset and keeps its samples.
+  if (prime)
+    reset_inner_to_anchor(inner, int(ntot));
+
+  const int n_sweeps = prime ? (inner_pool_burn_in_ + inner_equil_steps_) : inner_equil_steps_;
+  for (int s = 0; s < n_sweeps; ++s)
+    metropolis_sweep_conditioned(wset);
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>

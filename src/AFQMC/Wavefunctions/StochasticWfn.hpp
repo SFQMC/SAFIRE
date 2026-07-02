@@ -17,6 +17,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 #include "IO/ptree/ptree_utilities.hpp"
 #include "utilities/Random.hpp"
@@ -38,7 +39,8 @@ class Propagator;
 inline ptree strip_stochastic_input_keys(ptree pt)
 {
   for (auto const& key : {"type", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
-                          "inner_conditioning", "inner_leapfrog"})
+                          "inner_conditioning", "inner_leapfrog", "inner_persistence", "inner_equil_steps",
+                          "inner_mcmc", "inner_pool_burn_in"})
     pt.erase(key);
   return pt;
 }
@@ -92,6 +94,10 @@ public:
   int inner_nsteps() const { return inner_nsteps_; }
   bool inner_conditioning() const { return inner_conditioning_; }
   bool inner_leapfrog() const { return inner_leapfrog_; }
+  // Persistent (tethered) inner sampling. When on, the inner pool is kept across outer steps and
+  // re-equilibrated by a short Metropolis MCMC instead of reset-then-redraw with Gaussian-shift resampling.
+  bool inner_persistence() const { return inner_persistence_; }
+  int inner_equil_steps() const { return inner_equil_steps_; }
 
   WalkerSet<MEM>& inner_wset();
   WalkerSet<MEM> const& inner_wset() const;
@@ -362,6 +368,18 @@ private:
   bool bp_refs_drawn_{false};
   bool inner_conditioning_{false};
   bool inner_leapfrog_{false};
+  // Persistent-pool controls (default OFF => reset-then-redraw conditioned resample is byte-for-byte
+  // unchanged). inner_persistence_: keep the inner pool across outer steps and re-equilibrate it in place.
+  // inner_equil_steps_: Metropolis sweeps per outer step once the pool is primed. inner_pool_burn_in_:
+  // extra sweeps at the one-time prime (fresh-from-anchor). inner_mcmc_: proposal kernel ("metropolis"
+  // only for now; "hmc" reserved). inner_pool_primed_: latched true once the pool has been initialized so
+  // subsequent steps persist rather than re-draw; cleared whenever the pool is invalidated (BP draw,
+  // cross-rank pop-control move).
+  bool inner_persistence_{false};
+  int inner_equil_steps_{1};
+  int inner_pool_burn_in_{0};
+  std::string inner_mcmc_{"metropolis"};
+  bool inner_pool_primed_{false};
   nda::array<ComplexType, 3> inner_anchor_;
   // Leapfrog: per inner walker q (slot-major q = ip*nwalk + w), the magnitude |⟨ψ_q|φ_w^cond⟩| of its cross overlap with the walker its block was conditioned on. Set at each
   // conditioned resample; the leapfrog overlap reweights by 1/inner_cond_mag_ so the step ratio is Eq. 25.
@@ -385,6 +403,13 @@ private:
   // layout -- shared by the free-projection advance, the conditioned resample, and the BP reference draw.
   void reset_inner_to_anchor(WalkerSet<MEM>& inner, int count);
 
+  // Propose a fresh bare free-projection sample psi* = B_T(Y*)|phi_T> into every inner walker
+  // of the current (slot-major nw*P) pool -- reset to the anchor, then inner_nsteps_ Propagate_free steps.
+  // Walker-INDEPENDENT (the proposal density is the trial's own p_T(Y)); the walker conditioning enters
+  // only through the Metropolis accept/reject in metropolis_sweep_conditioned. Defined in StochasticWfn.cpp
+  // (the propagator call needs the complete Propagator type, unavailable to the .icc templates).
+  void propose_free_projection_pool();
+
   // Resample the inner ensemble conditioned on each outer walker phi_w. Computes the custom inner force bias x_bar(phi_w) = sqrt(dt)*L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (the inner
   // trial IS the anchor phi_T, so this reuses inner_nomsd()'s mixed DM + vbias on the OUTER wset) and
   // drives the nw*P inner ensemble through the inner propagator's conditioned field-sampling seam.
@@ -399,6 +424,29 @@ private:
   // its block was conditioned on). The leapfrog overlap divides by this.
   template<class WlkSet>
   void compute_inner_cond_mag(const WlkSet& wset);
+
+  // Fill mag(q) = |⟨inner_q | φ_w⟩| for the slot-major (q = ip*nw + w) inner ensemble against the outer
+  // walker set (same det(A^dag B) / CLOSED-doubling / COLLINEAR-product convention as the Log_Overlap
+  // reduction). Shared by compute_inner_cond_mag (leapfrog reweight denominator) and the Metropolis
+  // accept/reject (conditioned target ∝ p_T(Y)·|⟨ψ|φ_w⟩|). Per-rank-local. `mag` must be
+  // sized nw*P; `inner` must be in the slot-major nw*P conditioned form.
+  template<class WlkSet>
+  void cross_overlap_magnitudes(const WlkSet& wset, WalkerSet<MEM>& inner, nda::array<RealType, 1>& mag);
+
+  // Persistent conditioned resample. Replaces reset-then-redraw with a persistent pool:
+  // on `prime` (first use / outer-count change / after invalidation) reset every slot to the anchor and
+  // burn in; otherwise KEEP the previous pool and re-equilibrate. Runs inner_equil_steps_ (+ burn-in on
+  // prime) Metropolis sweeps. Conditioned path only (inner_conditioning_ && inner_nsteps_ > 0).
+  template<class WlkSet>
+  void persistent_conditioned_resample(const WlkSet& wset, bool prime);
+
+  // One Metropolis sweep over all nw*P inner slots for the persistent conditioned pool. Independence
+  // proposal: a fresh bare free-projection draw ψ* = B̂_T(Y*)|φ_T⟩ (reset-to-anchor + inner_nsteps_
+  // Propagate_free steps); per-slot accept with probability min(1, |⟨ψ*|φ_w⟩| / |⟨ψ_cur|φ_w⟩|), which
+  // targets the EXACT conditioned distribution ∝ p_T(Y)·|⟨ψ|φ_w⟩| (no linear Gaussian-shift approximation,
+  // unlike Phase 3c-i's force-biased draw). Rejected slots keep their previous sample -> persistence.
+  template<class WlkSet>
+  void metropolis_sweep_conditioned(const WlkSet& wset);
 
   template<class WlkSet, class TVecD, class TVecOv, class Accumulate>
   void reduce_inner_cross_dm(const WlkSet& wset,

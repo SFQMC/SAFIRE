@@ -134,9 +134,33 @@ void StochasticWfn<MEM, devPsiT>::draw_bp_reference_ensemble()
   for (int step = 0; step < inner_nsteps_; ++step)
     inner_propagator().Propagate_free(inner, dt, 0);
   // Mark this window as drawn (idempotency guard) and force a fresh forward resample on the next outer
-  // step so the reductions never see this transient P-sized draw.
+  // step so the reductions never see this transient P-sized draw. The draw overwrote the persistent
+  // persistent pool, so clear the prime latch -- the next conditioned resample re-primes from the anchor.
   bp_refs_drawn_      = true;
   inner_step_pending_ = true;
+  inner_pool_primed_  = false;
+  mpi_->comm.barrier();
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::propose_free_projection_pool()
+{
+  // Metropolis proposal: draw psi* = B_T(Y*)|phi_T> into every walker of the current pool via a
+  // BARE free-projection step (reset to the anchor, then inner_nsteps_ Propagate_free steps). Propagate_free
+  // forces bare field assembly regardless of the (conditioned) inner propagator's build mode -- same kernel
+  // draw_bp_reference_ensemble uses. Lives here (not the .icc) because it touches the complete Propagator
+  // type. Operates in place on inner_ensemble_.wset at its CURRENT size (persistent_conditioned_resample
+  // shapes it to nw*P first); does NOT resize or set any latch. The caller snapshots the prior pool and
+  // restores rejected slots after scoring the proposal.
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::propose_free_projection_pool: inner walkers not initialized.");
+  if (not inner_stack_->has_propagator())
+    APP_ABORT("Error in StochasticWfn::propose_free_projection_pool: inner propagator not built.");
+  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
+  reset_inner_to_anchor(inner, int(inner.size()));
+  RealType dt(inner_timestep_);
+  for (int step = 0; step < inner_nsteps_; ++step)
+    inner_propagator().Propagate_free(inner, dt, 0);
   mpi_->comm.barrier();
 }
 
