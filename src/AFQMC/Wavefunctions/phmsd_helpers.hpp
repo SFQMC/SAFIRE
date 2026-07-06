@@ -263,7 +263,6 @@ void get_compact_ph_R_matrices(nda::MemoryVector auto const& iexcit,
           // R[nex,nact] for diagonal term    
           for (int p = 0; p < nex; ++p)
           {
-            auto Ip = Q(p,all);
             for (int q = 0; q < nex; ++q)
             {
               auto Ipq = Q(p,q);

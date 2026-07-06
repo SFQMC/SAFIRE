@@ -5,6 +5,7 @@ target_sources(safire_lib
     AFQMCFactory.cpp
     Drivers/DriverFactory.cpp
     Drivers/AFQMCDriver.cpp
+    Drivers/FTAFQMCDriver.cpp
   #  Drivers/CSAFQMCDriver.cpp
     Propagators/AFQMCBasePropagator.cpp
   #  Propagators/AFQMCModelPropagator.cpp

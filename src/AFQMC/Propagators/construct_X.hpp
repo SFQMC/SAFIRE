@@ -81,10 +81,14 @@ struct construct_X_impl
       auto P = wm/(wp+wm);
       if( RNs(iw,m) < P ) {
         X(iw,m) = -1.0;
-        arch::atomic_add(&HWs(iw), stdx::log(1.0/P));
+        //arch::atomic_add(&HWs(iw), stdx::log(1.0/P));
+        // discrete HS transformation has factor (1/2)^NMO
+        arch::atomic_add(&HWs(iw), stdx::log(0.5/P));
       } else {
         X(iw,m) = 1.0;
-        arch::atomic_add(&HWs(iw), stdx::log(1.0/(1.0-P)));
+        //arch::atomic_add(&HWs(iw), stdx::log(1.0/(1.0-P)));
+        // discrete HS transformation has factor (1/2)^NMO
+        arch::atomic_add(&HWs(iw), stdx::log(0.5/(1.0-P)));
       }
       // W_MSsub = exp(-MF), careful with sign convention
       arch::atomic_add(&MF(iw), im * X(iw,m) * vmf_0);

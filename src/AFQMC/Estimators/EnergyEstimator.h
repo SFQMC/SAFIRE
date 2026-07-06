@@ -125,12 +125,13 @@ public:
     } else {
       nda::array<ComplexType,2> eloc(nwalk,3);
       nda::array<ComplexType,1> ovlp(nwalk);
+      int nt = wset.getTauStep();
       if constexpr (MEM == HOST_MEMORY) {  
-        wfn0->Energy(wset, eloc, ovlp);
+        wfn0->Energy(wset, eloc, ovlp, nt);
       } else {
         memory::buffered_array<MEM,ComplexType,2> eloc_d(nwalk,3);
         memory::buffered_array<MEM,ComplexType,1> ovlp_d(nwalk);
-        wfn0->Energy(wset, eloc_d, ovlp_d);
+        wfn0->Energy(wset, eloc_d, ovlp_d, nt);
         eloc() = eloc_d(); 
         ovlp() = ovlp_d(); 
       }

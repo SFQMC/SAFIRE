@@ -50,8 +50,8 @@ public:
     //   CLOSED       -> (aaaa), (aabb)                 : 2
     //   COLLINEAR    -> (aaaa), (aabb), (bbbb)         : 3
     //   NONCOLLINEAR -> (aaaa) over 2*NMO x 2*NMO       : 1
-    int nspin = (walker_type == COLLINEAR ? 3 : (walker_type == CLOSED ? 2 : 1));
-    int M     = (walker_type == NONCOLLINEAR ? 2 * NMO : NMO);
+    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT ? 3 : (walker_type == CLOSED ? 2 : 1));
+    int M     = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 * NMO : NMO);
     dm_average.resize(nave_, nspin, M, M);
     nda::tensor::set(0, dm_average());
   }
@@ -140,7 +140,7 @@ private:
     memory::host_array<ComplexType, 2> result(full_average.shape(0), out_size);
     for(int iav = 0; iav < result.shape(0); iav++) {
       int idx{};
-      if (walker_type == CLOSED || walker_type == COLLINEAR) {
+      if (walker_type == CLOSED || walker_type == COLLINEAR || walker_type == COLLINEAR_FT) {
         for (int i = 0; i < NMO; i++)
         {
           for (int j = i + 1; j < NMO; j++, idx++) {
@@ -150,14 +150,14 @@ private:
             result(iav, idx) = host_full_average(iav, 1, i, j); 
           }
         }      
-        if (walker_type == COLLINEAR) {
+        if (walker_type == COLLINEAR || walker_type == COLLINEAR_FT) {
           for (int i = 0; i < NMO; i++) { 
             for (int j = i + 1; j < NMO; j++, idx++) {
               result(iav, idx) = (host_full_average(iav, 2, i, j) + host_full_average(iav, 2, j, i)) / 2;
             }
           }
         }
-      } else if (walker_type == NONCOLLINEAR) {
+      } else if (walker_type == NONCOLLINEAR || walker_type == NONCOLLINEAR_FT) {
         for (int i = 0; i < 2 * NMO; i++) {
           for (int j = i + 1; j < 2 * NMO; j++, idx++) {
             result(iav, idx) = (host_full_average(iav, 0, i, j) + host_full_average(iav, 0, j, i)) / 2;

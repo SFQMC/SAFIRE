@@ -36,14 +36,14 @@ void NOMSD_FT<MEM,devPsiT>::Energy(const WlkSet& wset, TMat&& E, TVec&& Ov, int 
   const int ndet = ci.size();
   const int nw   = wset.size();
   const int nspin = (walker_type==COLLINEAR_FT ? 2 : 1 ); 
-  const int npol = (walker_type==NONCOLLINEAR_FT ? 2 : 1 ); 
+  const int npol = (walker_type==NONCOLLINEAR_FT ? 2 : 1 );
+  nt = nt < 0 ? wset.getTauStep() : nt; // if time-slice is (default nt = -1) not given, use current time-slice 
   utils::check(Ov.size() == nw, "Size mismatch");
   utils::check(E.shape() == std::array<long,2>{nw,3}, "Size mismatch");
   // Log_Overlap accumulates!!!
   Ov() = ComplexType(0.0);
   E() = ComplexType(0.0);
 
-  ComplexType zero(0.0);
   memory::buffered_array<MEM,ComplexType,2> G(nw,nspin*npol*NMO*npol*NMO); 
 
   if( ndet == 1) {
@@ -124,7 +124,7 @@ void NOMSD_FT<MEM,devPsiT>::DensityMatrix(const WlkSet& wset, RMat&& Ref, MatG&&
   memory::buffered_array<MEM,ComplexType,2> sclR(nspin,nw);
   wset.getProperty(LOGSCL_UP, sclR(0,nda::range::all));
 
-  memory::buffered_array<MEM,ComplexType,1> sclL_up(1,ComplexType(getLogScale(Alpha)));
+  memory::buffered_array<MEM,ComplexType,1> sclL_up(1,sclL(0));
 
   using T = typename std::decay<decltype(Ref(0,1))>::type;
   // MixedDensityMatrix does not accept sparse trial wavefunctions
@@ -151,7 +151,7 @@ void NOMSD_FT<MEM,devPsiT>::DensityMatrix(const WlkSet& wset, RMat&& Ref, MatG&&
   if (walker_type == COLLINEAR_FT){
 
     wset.getProperty(LOGSCL_DN, sclR(1,nda::range::all));
-    memory::buffered_array<MEM,ComplexType,1> sclL_dn(1,ComplexType(getLogScale(Beta)));
+    memory::buffered_array<MEM,ComplexType,1> sclL_dn(1,sclL(1));
 
     // MixedDensityMatrix does not accept sparse trial wavefunctions
     if constexpr (math::sparse::CSRMatrix<T>){
@@ -256,6 +256,7 @@ void NOMSD_FT<MEM,devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt)
   memory::check_memory_space<MEM>(Ov);
   const int ndet = ci.size();
   const int nw   = wset.size();
+  nt = nt < 0 ? wset.getTauStep() : nt; // if time-slice is not given (default nt = -1), use current time-slice
   utils::check(Ov.size() == nw, "Size mismatch");
   // Log_Overlap accumulates!!!
   Ov() = ComplexType(0.0);
@@ -265,7 +266,7 @@ void NOMSD_FT<MEM,devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt)
     memory::buffered_array<MEM,ComplexType,1> sclR_up(nw);
     wset.getProperty(LOGSCL_UP, sclR_up(nda::range::all));
 
-    memory::buffered_array<MEM,ComplexType,1> sclL_up(1,ComplexType(getLogScale(Alpha)));
+    memory::buffered_array<MEM,ComplexType,1> sclL_up(1,sclL(0));
 
     using T = typename std::decay<decltype(OrbMats(0,0,0))>::type;
     // MixedDensityMatrix does not accept sparse trial wavefunctions
@@ -283,7 +284,7 @@ void NOMSD_FT<MEM,devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt)
         memory::buffered_array<MEM,ComplexType,1> sclR_dn(nw);
         wset.getProperty(LOGSCL_DN, sclR_dn(nda::range::all));
 
-        memory::buffered_array<MEM,ComplexType,1> sclL_dn(1,ComplexType(getLogScale(Beta)));
+        memory::buffered_array<MEM,ComplexType,1> sclL_dn(1,sclL(1));
 
         auto ULdn_dense(math::sparse::to_array<'N'>(OrbMats(0,1,0)()));
         auto DLdn_dense(math::sparse::to_array<'N'>(OrbMats(0,1,1)()));
@@ -305,12 +306,12 @@ void NOMSD_FT<MEM,devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt)
                         wset.UMatrices(Alpha),wset.DMatrices(Alpha),wset.VMatrices(Alpha),
                         sclL_up, sclR_up, Ov);
       if(walker_type == CLOSED) utils::check(false, "Closed walkers not implemented for finite-T");
-      //  nda::tensor::scale(ComplexType(2.0),Ov);
+
       if (walker_type == COLLINEAR_FT)  {
         memory::buffered_array<MEM,ComplexType,1> sclR_dn(nw);
         wset.getProperty(LOGSCL_DN, sclR_dn(nda::range::all));
 
-        memory::buffered_array<MEM,ComplexType,1> sclL_dn(1,ComplexType(getLogScale(Beta)));
+        memory::buffered_array<MEM,ComplexType,1> sclL_dn(1,sclL(1));
 
         // FIX: how to pass a view of OrbMats(0,0,1), instead of copying to DLdn?
         auto ULdn(OrbMats(0,1,0)());
@@ -359,19 +360,20 @@ template<class WlkSet, class Observable>
 void NOMSD_FT<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
       std::vector<Observable>& properties_1body, std::vector<Observable>& properties,
       nda::MemoryArrayOfRank<4> auto* X, nda::MemoryArrayOfRank<4> auto* Yc, 
-      nda::MemoryArrayOfRank<4> auto* M, bool time_evolved, bool importanceSampling, int nt)
+      nda::MemoryArrayOfRank<4> auto* M, bool time_evolved, bool importanceSampling)
 {
   using nda::range;
   auto all = range::all;
   const int ndet   = ci.size();
   const int nw     = wset.size();
-  const int nspin  = (walker_type==COLLINEAR ? 2 : 1 );
-  const int npol   = (walker_type==NONCOLLINEAR ? 2 : 1 );
+  const int nspin  = (walker_type==COLLINEAR_FT ? 2 : 1 );
+  const int npol   = (walker_type==NONCOLLINEAR_FT ? 2 : 1 );
 
+  int nt = wset.getTauStep();
   // this is wrong without importanceSampling!!!
   utils::check(importanceSampling, "Finish");
 
-  memory::buffered_array<MEM,ComplexType,2> Gc(nw,npol*NMO*npol*NMO); 
+  memory::buffered_array<MEM,ComplexType,2> Gc(nw,nspin*npol*NMO*npol*NMO); 
   //auto Gc3d = nda::reshape(Gc,std::array<long,3>{nw,neltot,npol*NMO});
   
   if(ndet == 1) {
@@ -837,8 +839,7 @@ auto NOMSD_FT<MEM,devPsiT>::G_MF()
       //PsiT(0,all,all) = nda::dagger(math::sparse::to_array<ComplexType>(OrbMats(0,0)()));
 
       memory::buffered_array<MEM,ComplexType,1> sclR(1,ComplexType(0.0));
-      memory::buffered_array<MEM,ComplexType,1> sclL(1,ComplexType(0.0));
-      //ComplexType sclL(ComplexType(0.0));
+      memory::buffered_array<MEM,ComplexType,1> sclL0_up(1,sclL(0));
 
       auto ULup = math::sparse::to_array<'N'>(OrbMats(0,0,0)());
       auto ULdn = math::sparse::to_array<'N'>(OrbMats(0,1,0)());
@@ -856,20 +857,22 @@ auto NOMSD_FT<MEM,devPsiT>::G_MF()
 
       if constexpr (MEM==HOST_MEMORY){
         auto G3d = nda::reshape(gMF,std::array<long,3>{1,nspin*npol*NMO,npol*NMO});
-        det_ops::MixedDensityMatrix(ULup, DLup(0,all), VLup, IMat3D, IVec2D,
-            IMat3D, G3d(all,range(npol*NMO),all), Ov, sclL, sclR, true, true);
+        det_ops::MixedDensityMatrix(ULup, DLup(0,all), VLup, IMat3D, IVec2D, 
+            IMat3D, G3d(all,range(npol*NMO),all), Ov, sclL0_up, sclR, true, true);
         if( walker_type == COLLINEAR_FT ) {
-          det_ops::MixedDensityMatrix(ULdn, DLdn(0,all), VLdn, IMat3D, IVec2D,
-               IMat3D, G3d(all,nda::range(npol*NMO,nspin*npol*NMO),all), Ov, sclL, sclR, true, true);
+          memory::buffered_array<MEM,ComplexType,1> sclL0_dn(1,sclL(1));
+          det_ops::MixedDensityMatrix(ULdn, DLdn(0,all), VLdn, IMat3D, IVec2D, 
+               IMat3D, G3d(all,nda::range(npol*NMO,nspin*npol*NMO),all), Ov, sclL0_dn, sclR, true, true);
         }
       } else {
         memory::array<MEM,ComplexType,3> gt(1,npol*NMO,npol*NMO);
-        det_ops::MixedDensityMatrix(ULup, DLup(0,all), VLup, IMat3D, IVec2D,
-                IMat3D, gt, Ov, sclL, sclR, true, true);
+        det_ops::MixedDensityMatrix(ULup, DLup(0,all), VLup, IMat3D, IVec2D, 
+                IMat3D, gt, Ov, sclL0_up, sclR, true, true);
         gMF(0,all,all) = gt(0,all,all);
-        if( walker_type == COLLINEAR_FT ) {
-          det_ops::MixedDensityMatrix(ULdn, DLdn(0,all), VLdn, IMat3D, IVec2D,
-                IMat3D, gt, Ov, sclL, sclR, true, true);
+        if( walker_type == COLLINEAR_FT ) { 
+          memory::buffered_array<MEM,ComplexType,1> sclL0_dn(1,sclL(1));
+          det_ops::MixedDensityMatrix(ULdn, DLdn(0,all), VLdn, IMat3D, IVec2D, 
+                IMat3D, gt, Ov, sclL0_dn, sclR, true, true);
           gMF(1,all,all) = gt(0,all,all);
         }
       }
@@ -965,8 +968,7 @@ void NOMSD_FT<MEM,devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
 
 
     memory::buffered_array<MEM,ComplexType,1> sclR(1,ComplexType(0.0));
-    memory::buffered_array<MEM,ComplexType,1> sclL(1,ComplexType(0.0));
-    //ComplexType sclL(ComplexType(0.0));
+    memory::buffered_array<MEM,ComplexType,1> sclL0_up(1,sclL(0));
 
     auto ULup = math::sparse::to_array<'N'>(OrbMats(0,0,0)());
     auto ULdn = math::sparse::to_array<'N'>(OrbMats(0,1,0)());
@@ -983,11 +985,12 @@ void NOMSD_FT<MEM,devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
     IVec2D(0,all) = ComplexType(1.0);
     
     det_ops::MixedDensityMatrix(ULup, DLup(0,all), VLup, IMat3D, IVec2D, 
-            IMat3D, G3d(all,range(npol*NMO),all), Ov, sclL, sclR, true, true);
+            IMat3D, G3d(all,range(npol*NMO),all), Ov, sclL0_up, sclR, true, true);
     
-    if( walker_type == COLLINEAR_FT ) { 
+    if( walker_type == COLLINEAR_FT ) {
+        memory::buffered_array<MEM,ComplexType,1> sclL0_dn(1,sclL(1)); 
         det_ops::MixedDensityMatrix(ULdn, DLdn(0,all), VLdn, IMat3D, IVec2D, 
-               IMat3D, G3d(all,nda::range(npol*NMO,nspin*npol*NMO),all), Ov, sclL, sclR, true, true);
+               IMat3D, G3d(all,nda::range(npol*NMO,nspin*npol*NMO),all), Ov, sclL0_dn, sclR, true, true);
     }
 
     HamOp.vbias(G, v2d, dt);

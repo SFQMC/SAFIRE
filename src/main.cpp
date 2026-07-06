@@ -57,7 +57,18 @@ int main_impl(int argc, char** argv)
   using namespace sfqmc;
   auto world = mpi3::environment::get_world_instance();
   bool root(world.root());
-  std::string compute="default";
+
+  
+  #if defined(ENABLE_DEVICE)
+  std::vector<std::string> allowed_devices = {"gpu", "cpu"};
+  std::string allowed_devices_str = std::format("{}, {}", allowed_devices[0], allowed_devices[1]);
+  std::string default_compute = "gpu";
+  #else
+  std::vector<std::string> allowed_devices = {"cpu"};
+  std::string allowed_devices_str = "cpu";
+  std::string default_compute = "cpu";
+  #endif
+  std::string compute;
 
   constexpr const char *welcome{
     "███████╗ █████╗ ███████╗██╗██████╗ ███████╗\n"
@@ -80,9 +91,9 @@ int main_impl(int argc, char** argv)
   options.add_options()
     ("h,help", "print help message")
     ("v,version", "print version message")
-    ("verbosity", "0, 1, 2, 3: higher means more", cxxopts::value<int>()->default_value("2"))
-    ("debug", "0, 1, 2, 3: higher means more", cxxopts::value<int>()->default_value("0"))
-    ("compute", "where to execute: cpu, gpu, default", cxxopts::value<std::string>()->default_value("default"))
+    ("verbosity", "higher means more (allowed: 0, 1, 2, 3)", cxxopts::value<int>()->default_value("2"))
+    ("debug", "higher means more (allowed: 0, 1, 2, 3)", cxxopts::value<int>()->default_value("0"))
+    ("compute", std::format("where to execute (allowed: {})", allowed_devices_str), cxxopts::value<std::string>()->default_value(default_compute))
     ("filenames", "input filenames", cxxopts::value<std::vector<std::string>>())
   ;
   options.parse_positional({"filenames"});
@@ -121,9 +132,13 @@ int main_impl(int argc, char** argv)
     return 0;
   }
   compute = args["compute"].as<std::string>();
-  if (compute != "cpu" and compute != "gpu" and compute != "default")
+  if (std::ranges::find(allowed_devices, compute) == allowed_devices.end())
   {
-    throw AppAbortException{std::format("Invalid compute: {} (allowed values: \"cpu\", \"gpu\", \"default\")", compute)};
+    if(compute == "gpu") {
+      throw AppAbortException{std::format("Attempted to run with --compute gpu, but this is not a gpu build!")};
+    }
+      
+    throw AppAbortException{std::format("Invalid compute: {} (allowed values: {})", compute, allowed_devices_str)};
   }
 
   // input files are positional arguments
@@ -142,7 +157,9 @@ int main_impl(int argc, char** argv)
     print_version();
 
   // setup output loggers
-  sfqmc::arch::init(root,output_level,debug_level);
+  setup_loggers(root, output_level, debug_level);
+
+  sfqmc::arch::init(compute == "gpu");
 
   // !!!! assume a single input for now
   std::string myinput = inputs[0];
@@ -161,18 +178,28 @@ int main_impl(int argc, char** argv)
     if (cname == "afqmc") {
       ptree sim = it.second;
 #if defined(ENABLE_DEVICE)
-      if(compute=="gpu" or compute=="default") { 
+      if(compute=="gpu") { 
         sfqmc::arch::check_device_configuration();
         auto afqmc_fac = afqmc::AFQMCFactory<DEVICE_MEMORY>("afqmc", mpi, sim);
       } else 
 #endif
         auto afqmc_fac = afqmc::AFQMCFactory<HOST_MEMORY>("afqmc", mpi, sim);
-    } else if(cname == "cs_afqmc" || cname == "csafqmc") {
+    } else if (cname == "ftafqmc") {
+      ptree sim = it.second;
+#if defined(ENABLE_DEVICE)
+      if(compute=="gpu" or compute=="default") { 
+        sfqmc::arch::check_device_configuration();
+        auto afqmc_fac = afqmc::AFQMCFactory<DEVICE_MEMORY>("ftafqmc", mpi, sim);
+      } else 
+#endif
+        auto afqmc_fac = afqmc::AFQMCFactory<HOST_MEMORY>("ftafqmc", mpi, sim);
+    }
+     else if(cname == "cs_afqmc" || cname == "csafqmc") {
       ptree sim = it.second;
       int n_groups = sim.get<int>("project.n_groups", 1);
 // need new strategy for n_group>1, need to add a new "global" communicator to the context.
 #if defined(ENABLE_DEVICE)
-      if(compute=="gpu" or compute=="default") { 
+      if(compute=="gpu") { 
         sfqmc::arch::check_device_configuration();
         auto afqmc_fac = afqmc::AFQMCFactory<DEVICE_MEMORY>("csafqmc",mpi,sim,n_groups);
       } else 

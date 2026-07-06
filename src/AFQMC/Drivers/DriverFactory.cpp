@@ -28,6 +28,7 @@
 #include "utilities/Random.hpp"
 #include "AFQMC/Drivers/DriverFactory.h"
 #include "AFQMC/Drivers/AFQMCDriver.h"
+#include "AFQMC/Drivers/FTAFQMCDriver.h"
 //#include "AFQMC/Drivers/CSAFQMCDriver.h"
 #include "AFQMC/Walkers/WalkerIO.hpp"
 
@@ -66,6 +67,10 @@ bool DriverFactory<MEM>::executeDriver(std::string type, std::string title,
   if (type == "afqmc")
   {
     return executeAFQMCDriver(title, m_series, pt);
+  }
+  else if(type == "ftafqmc")
+  {
+    return executeFTAFQMCDriver(title, m_series, pt);
   }
   else if(type == "csafqmc") 
   {
@@ -134,7 +139,8 @@ std::string DriverFactory<MEM>::get_system_id(ptree pt, std::string wfn_name)
       if(name == "")
         name = std::string("sysid_") + std::to_string(++unique_id);
       if(InfoMap.find(name) == InfoMap.end()) {
-        AFQMCInfo info(name,nmo,nup,ndn);
+        //note: for finiteT ntau = nup, ndn = 0
+        AFQMCInfo info(name,nmo,nup,ndn,nup);
         InfoMap.insert(std::pair<std::string, AFQMCInfo>(info.name, info));
       }
     } else if( auto val = pt_->get_value_optional<std::string>() ) {
@@ -146,7 +152,8 @@ std::string DriverFactory<MEM>::get_system_id(ptree pt, std::string wfn_name)
   } else {
     // not found, build from wavefunction input 
     name = std::string("sysid_") + std::to_string(++unique_id);
-    AFQMCInfo info(name,nmo,nup,ndn);
+    //note: for finiteT ntau = nup, ndn = 0
+    AFQMCInfo info(name,nmo,nup,ndn,nup);
     InfoMap.insert(std::pair<std::string, AFQMCInfo>(info.name, info));
   }
   // check for compatibility
@@ -364,6 +371,192 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, ptr
   if (!driver.clear())
   {
     app_error(" Problems with AFQMCDriver::clear().");
+    return false;
+  }
+
+  return true;
+}
+
+
+template<MEMORY_SPACE MEM>
+bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, ptree pt_in)
+{
+  // reset timers
+  AFQMCTimer.reset_all();
+  // convert user input to verbose input
+  ptree pt = interpret_inputs_ftafqmc(pt_in);
+  app_log(2,"\nDrvFac::executeFTAFQMCDriver input:\n{}\n",io::to_string(pt));
+  // initialize using verbose input
+  auto [system,ham_name,wfn_name,wset_name,prop_name] = get_component_ids(pt);
+
+  if (InfoMap.find(system) == InfoMap.end())
+  {
+    app_error("ERROR: Undefined system in execute block. ");
+    return false;
+  }
+  auto& AFinfo = InfoMap[system];
+  //int NMO      = AFinfo.NMO;
+  //int ndown     = AFinfo.ndown;
+
+  std::string hdf_read_restart;
+  bool set_nWalker_target;
+  double dt;
+  hdf_read_restart = pt.get<std::string>("hdf_read_file");
+  set_nWalker_target = pt.get<bool>("set_nwalker_to_target");
+  dt = pt.get<double>("timestep");
+  int nWalkers = pt.get<int>("n_walkers_per_mpi_task");
+
+  bool restarted = false;
+  int step0      = 0;
+  int block0     = 0;
+  double Eshift =  pt.get<double>("initial_Eshift");
+
+  utils::RandomGenerator_t<>::result_type iseed = ( (pt.get<int>("seed") == 0) ? 
+					   utils::make_seed(mpi->comm) : 
+					   utils::split_seed(pt.get<int>("seed"),mpi->comm));
+  std::shared_ptr<utils::RandomGenerator_t<>> rng_wlk = std::make_shared<utils::RandomGenerator_t<>>(iseed);
+  iseed = ( (pt.get<int>("seed") == 0) ? utils::make_seed(mpi->comm) : 
+					 utils::split_seed(pt.get<int>("seed"),mpi->comm));
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(iseed));
+
+  app_log(1,"\n****************************************************");
+  app_log(1,"****************************************************");
+  app_log(1,"****************************************************");
+  app_log(1,"          Beginning Driver initialization.");
+  app_log(1,"****************************************************");
+  app_log(1,"****************************************************");
+  app_log(1,"****************************************************\n");
+
+  /*
+   * Note: Hamiltonian is only needed to construct Wavefunction.
+   *       If Wavefunction already exists in the factory (constructed in a previous exec block)
+   *       there is no need to build Hamiltonian.
+   */
+  if (mpi->comm.root() == 0)
+  {
+    if (hdf_read_restart != std::string(""))
+    {
+      utils::check(false,"Restart not yet implemented for finite-T calculations");
+      /*
+      h5::file file(hdf_read_restart,'r');
+      h5::group grp(file);
+      if (not grp.has_key("AFQMCDriver")) return false;
+      h5::group dgrp = grp.open_group("AFQMCDriver");
+      
+      std::vector<IndexType> Idata(2);
+      std::vector<RealType> Rdata(2);
+
+      h5::h5_read(dgrp,"DriverInts",Idata);
+      h5::h5_read(dgrp,"DriverReals",Rdata);
+
+      Eshift = Rdata[0];
+      block0 = Idata[0];
+      step0  = Idata[1];
+      restarted = true;
+      */
+    }
+  }
+  mpi->comm.broadcast_value(restarted);
+  if (restarted)
+  {
+    app_log(1," Restarted from file. Block={}, step={}",block0,step0);
+    app_log(1,"                      Eshift: {}", Eshift);
+    mpi->comm.broadcast_value(Eshift);
+    mpi->comm.broadcast_value(block0);
+    mpi->comm.broadcast_value(step0);
+  }
+
+  /*
+   * to do:
+   *  - add logic for estimators, e.g. whether to evaluate energy, which wfn to use, etc.
+   */
+
+  // walker set and type
+  auto& wset          = WSetFac.getWalkerSet(mpi, wset_name, rng_wlk);
+  WALKER_TYPES walker_type = wset.getWalkerType();
+  wset.setTauStep(0); // time-slice initialized to 0
+  if (not WfnFac.is_constructed(wfn_name))
+  {
+    // hamiltonian
+    Hamiltonian& ham0 = HamFac.getHamiltonian(mpi, ham_name);
+
+    // build wavefunction
+    [[maybe_unused]] auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, &ham0, nWalkers);
+  }
+
+  // wfn builder should not use Hamiltonian pointer now
+  auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, nullptr, nWalkers);
+
+  // propagator
+  auto& prop0 = PropFac.getPropagator(mpi, prop_name, wfn0, rng);
+  bool hybrid       = prop0.hybrid_propagation();
+  // resize walker set
+  if (restarted)
+  {
+    h5::file file(hdf_read_restart,'r');
+    restartFromHDF5(wset, nWalkers, file, set_nWalker_target);
+    // perform runtime optimization
+    wfn0.runtime_optimization(wset);  
+    wfn0.Energy(wset);
+  }
+  else
+  {
+    auto initial_guess = WfnFac.getInitialGuess_ft(wfn_name);
+    wset.resize(nWalkers, initial_guess()); 
+    // perform runtime optimization
+    wfn0.runtime_optimization(wset);  
+    // ntau implicitly set to 0 here    
+    wfn0.Energy(wset);
+    memory::buffered_array<MEM,ComplexType,1> ovlp0(nWalkers,ComplexType(0.0));
+    wset.getProperty(OVLP,ovlp0);
+    wfn0.setLogPT0(ovlp0);
+    print_initial_energy(wset);
+    if (hybrid)
+    {
+      // Eshift defaults to 0.0 if not provided in input
+      //    otherwise, use the value from input with warning
+      if (Eshift != 0.0)
+      {
+        app_warning("user set expert-level parameter, \"initial_Eshift\" : Using user-provided initial Eshift = {}", Eshift);
+      }
+    } else {
+      if (Eshift != 0.0)
+      {
+        app_log(1, "[Warning] : User set initial Eshift {} with local energy importance. This value is ignored.", Eshift);
+      }
+      Eshift = real(ComplexType(wset[0].energy()));
+    }
+  }
+
+  // is this run using importance sampling? 
+// MAM: should be asking for importance sampling and not for free_propagation...
+  bool free_proj = prop0.free_propagation();
+  // if hybrid calculation, set to true
+  bool addEnergyEstim = hybrid;
+
+  // estimator setup
+  auto estim0 = EstimatorHandler<MEM>(mpi, AFinfo, title, pt_in, wset, WfnFac, wfn0, 
+         prop0, walker_type, HamFac, ham_name, dt, addEnergyEstim, !free_proj);
+
+  app_log(1,"\n****************************************************");
+  app_log(1,"****************************************************");
+  app_log(1,"****************************************************");
+  app_log(1,"          Finished Driver initialization.");
+  app_log(1,"****************************************************");
+  app_log(1,"****************************************************");
+  app_log(1,"****************************************************\n");
+
+  FTAFQMCDriver<MEM> driver(mpi, AFinfo, title, m_series, block0, step0, Eshift, pt_in, wfn0, prop0, estim0);
+
+  if (!driver.run(wset))
+  {
+    app_error(" Problems with FTAFQMCDriver::run().");
+    return false;
+  }
+
+  if (!driver.clear())
+  {
+    app_error(" Problems with FTAFQMCDriver::clear().");
     return false;
   }
 
@@ -624,6 +817,7 @@ template std::string DriverFactory<M>::get_system_id(ptree,std::string);        
 template std::tuple<std::string,std::string,std::string,std::string,std::string>     \
   DriverFactory<M>::get_component_ids(ptree);                                        \
 template bool DriverFactory<M>::executeAFQMCDriver(std::string,int,ptree);           \
+template bool DriverFactory<M>::executeFTAFQMCDriver(std::string,int,ptree);           \
 template bool DriverFactory<M>::executeCSAFQMCDriver(std::string,int,ptree);
 
 __inst__(HOST_MEMORY)

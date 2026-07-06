@@ -205,7 +205,7 @@ requires( nda::MemoryMatrix<UL_t> and nda::MemoryVector<DL_t> and nda::MemoryMat
         )
 void log_overlap_impl(UL_t const& UL, DL_t const& DL, VL_t const& VL,
                       UR_t && UR, DR_t && DR, VR_t && VR, SL_t const& sclL, SR_t const& sclR,
-                      O_t && ovlp, T_t && TNN, bool unitaryR, bool unitaryL, bool invert = false)
+                      O_t && ovlp, T_t && TNN, bool unitaryL, bool unitaryR, bool invert = false)
 {
   constexpr MEMORY_SPACE MEM = memory::get_memory_space<UL_t>();
   using Type = nda::get_value_t<UR_t>;
@@ -851,9 +851,6 @@ void MixedDensityMatrix(A_t const& UL, B_t const& DL, C_t const& VL,
 
   memory::buffered_array<MEM,Type,1> ovlp_loc(1,Type(0.0));
 
-  // overlap is accumulated, so it must first be zeroed
-  ovlp() = Type(0.0);
-
   // if running on GPU
   if constexpr (nda::mem::have_device_compatible_addr_space<A_t>)
   {
@@ -1107,7 +1104,7 @@ void MixedDensityMatrix_v2(A_t const& UL, B_t const& DL, C_t const& VL,
   memory::buffered_array<MEM,Type,1> ovlp_loc(1,Type(0.0));
 
   // overlap is accumulated, so it must first be zeroed
-  ovlp() = Type(0.0);
+  //ovlp() = Type(0.0);
 
   // if running on GPU
   if constexpr (nda::mem::have_device_compatible_addr_space<A_t>)

@@ -158,7 +158,7 @@ inline constexpr auto lattice_unit_test_files(TestFiles::Flags flags)
     if(flags & TestFiles::FINITE_T) {
       files.emplace_back(pre + "finiteT/square_2x2_hubbard_Beta3_nt100/afqmc_inputs/ham_collinear.h5",
                                           pre + "finiteT/square_2x2_hubbard_Beta3_nt100/afqmc_inputs/wfn_collinear_ft.h5",
-                                          afqmc::UNDEFINED_WALKER_TYPE);
+                                          afqmc::COLLINEAR_FT);
     }
   }
   if (flags & TestFiles::PHMSD) {

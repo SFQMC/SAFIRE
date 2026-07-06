@@ -320,7 +320,6 @@ namespace linalg
   auto get_permutation_array_qr(Matrix auto const &jpvt) {
     static_assert(nda::mem::have_host_compatible_addr_space<decltype(jpvt)>);
     auto [m,nbatch]  = jpvt.shape();
-    int dm = m;
     auto P = nda::array<T, 3, LP>::zeros(m, m, nbatch);
     for (int i = 0; i < nbatch; ++i) {
       P(nda::range::all,nda::range::all,i) = get_permutation_matrix_qr<T,LP>(jpvt(nda::range::all,i));

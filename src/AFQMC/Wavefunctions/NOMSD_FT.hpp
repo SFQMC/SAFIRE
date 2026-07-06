@@ -69,7 +69,8 @@ public:
         ci(std::move(ci_)),
         OrbMats(std::move(orbs_)),
         RefOrbMats(0, 0, 0, 0),
-        NuclearCoulombEnergy(nce)
+        NuclearCoulombEnergy(nce),
+        sclL(walker_type == COLLINEAR_FT ? 2: 1)
   {
 
     //std::cout<<"OrbMats(0,1,1)"<<std::endl;
@@ -86,6 +87,9 @@ public:
       utils::check(false,"finish");
       //recompute_ci();
     }
+    
+    resetLogScale();
+
   }
 
   static ptree interpret_inputs(const ptree pt0)
@@ -132,8 +136,9 @@ public:
   void runtime_optimization(WlkSet& wset)
   {
     const int nw   = wset.size();
+    const int nspin = (walker_type==COLLINEAR_FT ? 2 : 1);
     const int npol = (walker_type==NONCOLLINEAR_FT ? 2 : 1 );
-    memory::array<MEM,ComplexType,2> G(nw,npol*NMO*npol*NMO);
+    memory::array<MEM,ComplexType,2> G(nw,nspin*npol*NMO*npol*NMO);
     // don't use buffered_array!!!
     HamOp.runtime_optimization(G);
   }
@@ -186,13 +191,14 @@ public:
    */
   
   template<class WlkSet>
-  void vbias(WlkSet& wset, nda::MemoryMatrix auto && v, double dt, int nt = 0)
+  void vbias(WlkSet& wset, nda::MemoryMatrix auto && v, double dt, int nt = -1)
   {
     memory::check_memory_space<MEM>(v);
     AFQMCTimer.start(G_for_vbias_timer);
     int nspin = (walker_type==COLLINEAR_FT ? 2 : 1);
     int npol  = (walker_type==NONCOLLINEAR_FT ? 2 : 1);
     int nw = wset.size();
+    nt = nt < 0? wset.getTauStep() : nt; // if time-slice is not given, use current time-slice
     int nc = nspin*npol*NMO*npol*NMO;
     utils::check(v.shape() == std::array<long,2>{nw,HamOp.number_of_cholesky_vectors()}, 
                  "Shape mismatch");
@@ -226,7 +232,7 @@ public:
    * them in the wset data
    */
   template<class WlkSet>
-  void Energy(WlkSet& wset, int nt = 0)
+  void Energy(WlkSet& wset, int nt = -1)
   {
     auto all = nda::range::all;
     int nw = wset.size();
@@ -245,7 +251,7 @@ public:
    * returns them in the appropriate data structures
    */
   template<class WlkSet,  nda::MemoryMatrix TMat, nda::MemoryVector TVec>
-  void Energy(const WlkSet& wset, TMat&& E, TVec&& Ov, int nt = 0);
+  void Energy(const WlkSet& wset, TMat&& E, TVec&& Ov, int nt = -1);
 
   /*
    * Calculates the mixed density matrix for all walkers in the walker set. 
@@ -275,13 +281,13 @@ public:
    * Calculates the overlaps of all walkers in the set. Returns values in arrays. 
    */
   template<class WlkSet, nda::MemoryArrayOfRank<1> TVec>
-  void Log_Overlap(const WlkSet& wset, TVec && Ov, int nt = 0);
+  void Log_Overlap(const WlkSet& wset, TVec && Ov, int nt = -1);
 
   /*
    * Calculates the overlaps of all walkers in the set. Updates values in wset. 
    */
   template<class WlkSet>
-  void Log_Overlap(WlkSet& wset, int nt = 0)
+  void Log_Overlap(WlkSet& wset, int nt = -1)
   {
     int nw = wset.size();
     memory::buffered_array<MEM,ComplexType,1> ovlp(nw,ComplexType(0.0));
@@ -296,7 +302,7 @@ public:
   void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
         std::vector<Observable>& properties_1body, std::vector<Observable>& properties, 
         nda::MemoryArrayOfRank<4> auto* X, nda::MemoryArrayOfRank<4> auto* Yc, 
-        nda::MemoryArrayOfRank<4> auto* M, bool time_evolved, bool importanceSampling=true, int nt=0);
+        nda::MemoryArrayOfRank<4> auto* M, bool time_evolved, bool importanceSampling=true);
   
   /*
    * Calculates Green functions and calls Observables.
@@ -304,10 +310,10 @@ public:
   template<class WlkSet, class Observable>
   void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
         std::vector<Observable>& properties_1body,
-        std::vector<Observable>& properties, bool importanceSampling = true, int nt = 0)
+        std::vector<Observable>& properties, bool importanceSampling = true)
   {
     memory::buffered_array<MEM,ComplexType,4> *X = nullptr;
-    accumulate_estimators(iav,wset,wgt,properties_1body,properties,X,X,X,false,importanceSampling,nt);
+    accumulate_estimators(iav,wset,wgt,properties_1body,properties,X,X,X,false,importanceSampling);//,nt);
   }
 
   /*
@@ -334,22 +340,42 @@ public:
     utils::check(false, "back propagation not implemented for finite-T");
   }
 
+  // FIX: multi-determinant finiteT wfns?
   void updateLogScale(auto scl_new, SpinTypes s)
   {
-    if(s==Alpha) 
-        sclL_up += scl_new;
-    else if(s==Beta)
-        sclL_dn += scl_new;     
-  }
-
-  auto getLogScale(SpinTypes s)
-  {
-    if(s==Alpha) 
-        return sclL_up;
+    if(s==Alpha)
+      sclL(0) = scl_new;
     else
-        return sclL_dn;     
+      sclL(1) = scl_new;
   }
 
+  auto getLogScale(SpinTypes s){
+    if(MEM==DEVICE_MEMORY){
+      auto scl_h = nda::to_host(sclL);
+      if(s==Alpha)
+        return scl_h(0);
+      else
+        return scl_h(1);
+    }
+    else{
+      if(s==Alpha)
+        return sclL(0);
+      else
+        return sclL(1);
+    }
+  }
+
+  void resetLogScale(){
+    sclL() = ComplexType(0.0);
+  }
+
+  void setLogPT0(nda::MemoryArrayOfRank<1> auto&& v)
+  {
+    LogPT0 = v;
+  }
+
+  auto const& getLogPT0() const {return LogPT0;}
+  
 protected:
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
@@ -368,10 +394,12 @@ protected:
   // RefOrbMats[ndet][nspin][nel][NMO]
   memory::array<MEM,ComplexType,4> RefOrbMats;
 
-  // log scale for DL
-  ComplexType sclL_up = 0.0, sclL_dn = 0.0;
+  memory::array<MEM,ComplexType,1> LogPT0;
 
   ComplexType NuclearCoulombEnergy;
+
+  // log scale for DL
+  nda::array<ComplexType, 1> sclL;
 
 /*
   void recompute_ci();

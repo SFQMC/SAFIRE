@@ -44,15 +44,12 @@
 namespace sfqmc {
 namespace arch
 {
-  void init(bool active_log, int output_level, int debug_level);
+  void init(bool use_gpu);
   bool get_device_synchronization();
   void set_device_synchronization(bool);
   void synchronize_if_set();
   void synchronize();
   void check_device_configuration();
-
-  // device streams
-  extern std::vector<nda::devStream_t> device_streams;
 }
 }
 
