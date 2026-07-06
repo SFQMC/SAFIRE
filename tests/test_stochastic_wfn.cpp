@@ -2229,6 +2229,272 @@ TEST_CASE("stochastic_inner_permute_cross_rank_fallback", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
+// -----------------------------------------------------------------------------------------------------
+// Persistence x population-control coupling (Phase 10 + Phase 9).
+//
+// The two features touch the SAME slot-major inner ensemble but were validated separately: Phase 9's
+// permute_inner_blocks_after_pop was written for the reset-then-redraw path (where the pool is thrown
+// away at the next begin_inner_step anyway), and Phase 10's persistent pool was validated WITHOUT an
+// intervening popControl. In production they run back to back every pop step (AFQMCDriver: popControl ->
+// permute_inner_blocks_after_pop -> accumulate_step), and the persistent pool must survive that permute.
+// The two cases below pin the contract at both ends of the branch.
+// -----------------------------------------------------------------------------------------------------
+
+// Case 1 -- a SUCCESSFUL (local) permute realigns the PERSISTENT pool exactly, like the reset-then-redraw
+// case, and the post-permute reduction reuses it (no re-prime, no resample). Same clone-3-into-0 exact
+// overlap-identity check as stochastic_inner_permute_after_pop_control, but with inner_persistence = true
+// so the block being moved is a tethered MCMC sample (and its leapfrog magnitude inner_cond_mag_ must move
+// with it). If the persistent branch failed to permute the pool -- or spuriously re-primed/re-equilibrated
+// it -- Ov_after[0] would not equal Ov_before[3].
+template<MEMORY_SPACE MEM>
+void stochastic_persistent_permute_after_pop_control(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // conditioned inner sampling is CPU-only today.
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    if (mpi->comm.size() != 1)
+      return; // per-rank-local permutation; the exact cross-slot equalities assume no cross-rank mixing.
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk          = 6;
+    const int inner_nwalkers = 3;
+    const int clone_src      = 3;
+    const int clone_dst      = 0;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac{};
+    ptree pt;
+    pt.put("name", "wfn_stoch_pp_persist");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    mark_stochastic_wfn_input(pt);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    pt.put("inner_leapfrog", true);
+    pt.put("inner_persistence", true); // <-- the only difference from stochastic_inner_permute_after_pop_control
+    pt.put("inner_equil_steps", 1);
+    pt.put("inner_pool_burn_in", 1);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_pp_persist", pt);
+    auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_pp_persist", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_pp_persist", type, wlk_pt);
+
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_pp_persist"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+
+    // Prime + equilibrate the persistent pool conditioned on the distinct walkers, then record overlaps.
+    wfn_s.begin_inner_step(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+    nda::array<ComplexType, 1> ov_before(nwalk);
+    wfn_s.Log_Overlap(wset, ov_before); // latch consumed by begin_inner_step -> reuses the primed pool
+
+    // Simulate a count-preserving popControl clone: outer slot clone_dst becomes a copy of clone_src.
+    {
+      auto all = nda::range::all;
+      auto SM  = wset.SlaterMatrices(Alpha);
+      SM(clone_dst, all, all) = SM(clone_src, all, all);
+    }
+    {
+      nda::array<ComplexType, 1> lin(nwalk);
+      for (int w = 0; w < nwalk; ++w)
+        lin(w) = ComplexType(double(w), 0.0);
+      lin(clone_dst) = ComplexType(double(clone_src), 0.0);
+      wset.setProperty(SLOT_LINEAGE, lin);
+    }
+
+    // Permute the PERSISTENT pool by the lineage map (no resample, no re-prime).
+    wfn_s.permute_inner_blocks_after_pop(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+
+    // Score again -- latch consumed + size unchanged + pool still primed => NO resample, so this reads the
+    // permuted persistent pool against the cloned walkers.
+    nda::array<ComplexType, 1> ov_after(nwalk);
+    wfn_s.Log_Overlap(wset, ov_after);
+
+    auto lin_before = linear_overlap(ov_before);
+    auto lin_after  = linear_overlap(ov_after);
+    // Tethered block clone_src moved to slot clone_dst, paired with phi_clone_dst == phi_clone_src.
+    CHECK_THAT(lin_after(clone_dst), utils::Approx(lin_before(clone_src)));
+    CHECK_THAT(lin_after(clone_src), utils::Approx(lin_before(clone_src)));
+    for (int w = 0; w < nwalk; ++w)
+      if (w != clone_dst)
+        CHECK_THAT(lin_after(w), utils::Approx(lin_before(w)));
+  }
+}
+
+TEST_CASE("stochastic_persistent_permute_after_pop_control", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn permute_inner_blocks_after_pop realigns the PERSISTENT inner pool after pop control.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_persistent_permute_after_pop_control<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Case 2 -- the prime-flag semantics of the coupling. The open question in StochasticDevelopment.md is
+// whether a successful Phase-9 permute correctly KEEPS the pool primed (persist across the pop event) while
+// the cross-rank fallback correctly INVALIDATES it (re-prime from the anchor). The two paths are made
+// observable with inner_equil_steps = 0: a PERSIST does zero MCMC sweeps and leaves the pool byte-identical,
+// whereas a RE-PRIME resets every slot to the anchor and runs inner_pool_burn_in sweeps -> a different pool.
+//   (A) identity lineage  -> successful permute -> primed stays true -> next step persists -> overlaps UNCHANGED
+//   (B) sentinel lineage  -> fallback          -> primed cleared     -> next step re-primes -> overlaps CHANGE
+// This pins that persistence and population control are not silently resetting or freezing each other: the
+// good samples survive a local branch, and only a genuinely foreign block forces the expensive re-prime.
+template<MEMORY_SPACE MEM>
+void stochastic_persistent_pool_survives_pop_control(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // conditioned inner sampling is CPU-only today.
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    if (mpi->comm.size() != 1)
+      return; // synthetic single-rank sentinel check (real cross-rank moves need no special harness).
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk          = 6;
+    const int inner_nwalkers = 3;
+    const int sentinel_slot  = 2;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac{};
+    ptree pt;
+    pt.put("name", "wfn_stoch_persist_pop");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    mark_stochastic_wfn_input(pt);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    pt.put("inner_leapfrog", true);
+    pt.put("inner_persistence", true);
+    // equil_steps = 0 makes the persist path a no-op on the pool (0 sweeps), so a PERSIST is observably
+    // byte-identical and a RE-PRIME (reset-to-anchor + burn_in sweeps) is observably different.
+    pt.put("inner_equil_steps", 0);
+    pt.put("inner_pool_burn_in", 2);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_persist_pop", pt);
+    auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_persist_pop", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_persist_pop", type, wlk_pt);
+
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_persist_pop"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+
+    auto identity_lineage = [&]() {
+      nda::array<ComplexType, 1> lin(nwalk);
+      for (int w = 0; w < nwalk; ++w)
+        lin(w) = ComplexType(double(w), 0.0);
+      wset.setProperty(SLOT_LINEAGE, lin);
+    };
+    auto sentinel_lineage = [&]() {
+      nda::array<ComplexType, 1> lin(nwalk);
+      for (int w = 0; w < nwalk; ++w)
+        lin(w) = ComplexType(double(w), 0.0);
+      lin(sentinel_slot) = ComplexType(-1.0, 0.0); // foreign-rank arrival
+      wset.setProperty(SLOT_LINEAGE, lin);
+    };
+
+    // Prime the persistent pool (first use: reset-to-anchor + burn_in sweeps) and record its overlaps.
+    wfn_s.begin_inner_step(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+    nda::array<ComplexType, 1> ov0(nwalk);
+    wfn_s.Log_Overlap(wset, ov0);
+    auto lin0 = linear_overlap(ov0);
+
+    // (A) A local branch (identity lineage): the permute keeps the pool primed. The next begin_inner_step
+    // runs the persist path (0 equil sweeps), so the tethered samples carry across the pop event UNCHANGED.
+    identity_lineage();
+    wfn_s.permute_inner_blocks_after_pop(wset);
+    wfn_s.begin_inner_step(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+    nda::array<ComplexType, 1> ovA(nwalk);
+    wfn_s.Log_Overlap(wset, ovA);
+    auto linA = linear_overlap(ovA);
+    for (int w = 0; w < nwalk; ++w)
+      CHECK_THAT(linA(w), utils::Approx(lin0(w))); // persistence held: no re-prime, no re-equilibration
+
+    // (B) A foreign-rank arrival (one sentinel): the permute clears the prime latch, so the next
+    // begin_inner_step re-primes from the anchor (+ burn_in sweeps) -> a fresh pool -> overlaps change.
+    sentinel_lineage();
+    wfn_s.permute_inner_blocks_after_pop(wset);
+    wfn_s.begin_inner_step(wset);
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+    nda::array<ComplexType, 1> ovB(nwalk);
+    wfn_s.Log_Overlap(wset, ovB);
+    auto linB = linear_overlap(ovB);
+    double max_diff = 0.0;
+    for (int w = 0; w < nwalk; ++w)
+      max_diff = std::max(max_diff, std::abs(linB(w) - lin0(w)));
+    REQUIRE(max_diff > 1e-6); // fallback re-primed the pool from the anchor -> ensemble (and overlaps) changed
+  }
+}
+
+TEST_CASE("stochastic_persistent_pool_survives_pop_control", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn persistent inner pool survives a local pop-control permute and re-primes on a foreign slot.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_persistent_pool_survives_pop_control<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
 // End-to-end propagator integration: build a real OUTER AFQMCBasePropagator (default hybrid) bound to
 // the dynamic stochastic trial (inner_nsteps = 1) and run Propagate() steps. Drives the full hot path
 // THROUGH the propagator (vbias -> vHS -> apply -> Log_Overlap), validating that the stochastic
