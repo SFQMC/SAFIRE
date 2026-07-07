@@ -592,8 +592,18 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
     // sized/conditioned for the current outer-walker count (bootstrap: priming overlap/energy calls
     // before the propagator arms the latch, and any change in the outer walker count). Otherwise the
     // ensemble is already conditioned for this configuration -- reuse it.
+    //
+    // The size check alone is NOT a reliable bootstrap signal at nw == 1: initialize_inner_walkers sizes
+    // the freshly-constructed ensemble to inner_nwalkers_ (= P), which coincidentally already equals
+    // nw*P when nw == 1, so an un-conditioned, un-primed ensemble is indistinguishable from a properly
+    // resampled one by size alone. A driver's pre-loop initial-energy call (Energy/Log_Overlap before the
+    // first begin_inner_step ever arms inner_step_pending_) hits exactly this case with a single outer
+    // walker per rank, skipping persistent_conditioned_resample entirely and leaving inner_cond_mag_
+    // unsized -> the leapfrog check below aborts. Guard with inner_pool_primed_ (persistence path only;
+    // it is never set outside that path, so non-persistence behavior is unchanged).
     const bool need_resample =
-        inner_step_pending_ || (inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_);
+        inner_step_pending_ || (inner_persistence_ && not inner_pool_primed_) ||
+        (inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_);
     if (not need_resample)
       return;
     if (inner_persistence_)
