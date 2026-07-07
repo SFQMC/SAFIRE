@@ -15,6 +15,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cmath>
+#include <limits>
 #include <unordered_set>
 
 #include "IO/ptree/ptree_utilities.hpp"
@@ -27,6 +28,49 @@ namespace sfqmc
 {
 namespace afqmc
 {
+
+namespace
+{
+// Stable complex sum of P-sample terms (hafqmc mix_overlap_terms analogue). shift = max log|t_p|;
+// returns sum_p t_p without underflow when magnitudes span decades.
+inline ComplexType stable_complex_sum(ComplexType const* terms, int n)
+{
+  double shift = -std::numeric_limits<double>::infinity();
+  for (int i = 0; i < n; ++i)
+  {
+    const double a = std::abs(terms[i]);
+    if (a > 0.0)
+    {
+      const double l = std::log(a);
+      if (l > shift)
+        shift = l;
+    }
+  }
+  if (not std::isfinite(shift))
+    return ComplexType(0.0);
+  const RealType scale = std::exp(-shift);
+  ComplexType acc(0.0);
+  for (int i = 0; i < n; ++i)
+  {
+    const double a = std::abs(terms[i]);
+    if (a > 0.0)
+      acc += terms[i] * scale;
+  }
+  return std::exp(shift) * acc;
+}
+
+template<class Mat2D>
+inline ComplexType stable_complex_sum_row(Mat2D const& terms, int row, int ncols)
+{
+  ComplexType buf[256];
+  utils::check(ncols <= int(sizeof(buf) / sizeof(buf[0])),
+               "stable_complex_sum_row: P exceeds compile-time buffer (increase buf)");
+  for (int c = 0; c < ncols; ++c)
+    buf[c] = terms(row, c);
+  return stable_complex_sum(buf, ncols);
+}
+
+} // namespace
 
 template<MEMORY_SPACE MEM, class devPsiT>
 StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
@@ -56,6 +100,7 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
   inner_equil_steps_ = pt.get<int>("inner_equil_steps");
   inner_pool_burn_in_ = pt.get<int>("inner_pool_burn_in");
   inner_mcmc_        = pt.get<std::string>("inner_mcmc");
+  inner_log_aggregate_ = pt.get<bool>("inner_log_aggregate");
   int inner_seed     = pt.get<int>("inner_seed");
   inner_ensemble_.rng =
       std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(inner_seed, mpi_->comm));
@@ -115,6 +160,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
   int inner_equil_steps = pt0.get<int>("inner_equil_steps", 1);
   int inner_pool_burn_in = pt0.get<int>("inner_pool_burn_in", 0);
   std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "metropolis");
+  bool inner_log_aggregate = pt0.get<bool>("inner_log_aggregate", false);
   int inner_seed = pt0.get<int>("inner_seed", 777);
   pt1.put("inner_nwalkers", inner_nwalkers);
   pt1.put("inner_nsteps", inner_nsteps);
@@ -124,6 +170,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
   pt1.put("inner_equil_steps", inner_equil_steps);
   pt1.put("inner_pool_burn_in", inner_pool_burn_in);
   pt1.put("inner_mcmc", inner_mcmc);
+  pt1.put("inner_log_aggregate", inner_log_aggregate);
   pt1.put("inner_seed", inner_seed);
   if (auto prop_pt = pt0.get_child_optional("inner_propagator"))
     pt1.put_child("inner_propagator", *prop_pt);
@@ -142,6 +189,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "inner_equil_steps",
       "inner_pool_burn_in",
       "inner_mcmc",
+      "inner_log_aggregate",
       "inner_seed",
       "inner_propagator",
   };
@@ -236,6 +284,14 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
 
   Ov() = ComplexType(0.0);
 
+  const bool log_agg = inner_log_aggregate_;
+  memory::buffered_array<MEM, ComplexType, 2> ov_terms;
+  if (log_agg)
+  {
+    ov_terms = memory::buffered_array<MEM, ComplexType, 2>(nw, P);
+    ov_terms() = ComplexType(0.0);
+  }
+
   // Per-rank-local, exactly like NOMSD::Log_Overlap: each rank scores its OWN nw outer walkers against
   // the full inner ensemble (loop the full nw*P pairs) with NO cross-rank distribution / all_reduce. The
   // earlier FairDivide-of-pairs-across-the-comm + all_reduce(Ov, nw) was correct only for REPLICATED outer
@@ -252,8 +308,9 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
   for (int tk = tk0; tk < tkN; ++tk)
   {
     const int iw = (conditioned ? tk % nw : tk / P);
-    const int ip = (conditioned ? tk : tk % P);
-    inner_one(0, all, all) = inner.SlaterMatrices(Alpha)(ip, all, all);
+    const int ip = (conditioned ? tk / nw : tk % P);
+    const int inner_idx = conditioned ? tk : ip;
+    inner_one(0, all, all) = inner.SlaterMatrices(Alpha)(inner_idx, all, all);
     outer_one(0, all, all) = wset.SlaterMatrices(Alpha)(iw, all, all);
     log_ov(0)              = ComplexType(0.0);
     det_ops::Log_Overlap(inner_one, outer_one, log_ov);
@@ -264,7 +321,7 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
     {
       memory::buffered_array<MEM, ComplexType, 3> inner_beta(1, NMO, ndown);
       memory::buffered_array<MEM, ComplexType, 3> outer_beta(1, NMO, ndown);
-      inner_beta(0, all, all) = inner.SlaterMatrices(Beta)(ip, all, all);
+      inner_beta(0, all, all) = inner.SlaterMatrices(Beta)(inner_idx, all, all);
       outer_beta(0, all, all) = wset.SlaterMatrices(Beta)(iw, all, all);
       log_ov(0)               = ComplexType(0.0);
       det_ops::Log_Overlap(inner_beta, outer_beta, log_ov);
@@ -275,19 +332,35 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
       // q == tk in conditioned (slot-major) layout; reweight by the conditioning-walker magnitude.
       double mag = double(inner_cond_mag_(tk));
       if (mag > 0.0)
-        Ov(iw) += ov / ComplexType(mag, 0.0);
+      {
+        ComplexType term = ov / ComplexType(mag, 0.0);
+        if (log_agg)
+          ov_terms(iw, ip) = term;
+        else
+          Ov(iw) += term;
+      }
     }
     else
-      Ov(iw) += inv_P * ov;
+    {
+      ComplexType term = inv_P * ov;
+      if (log_agg)
+        ov_terms(iw, ip) = term;
+      else
+        Ov(iw) += term;
+    }
   }
 
-  // NO cross-rank all_reduce of Ov (see the per-rank-local note above): each rank already holds the
-  // complete effective overlap for its own walkers.
-  // The pair loop accumulates the LINEAR effective overlap: (1/P) sum_p <psi_p|phi_w> normally, or the
-  // leapfrog-reweighted sum_p <psi_p|phi_w>/|<psi_p|phi_cond>| (so new/old reproduces Eq. 25). The OVLP
-  // property convention (matching NOMSD::Log_Overlap) is the LOG overlap, so convert back here.
-  for (int iw = 0; iw < nw; ++iw)
-    Ov(iw) = std::log(Ov(iw));
+  if (log_agg)
+  {
+    for (int iw = 0; iw < nw; ++iw)
+      Ov(iw) = std::log(stable_complex_sum_row(ov_terms(), iw, P));
+  }
+  else
+  {
+    // The pair loop accumulates the LINEAR effective overlap; OVLP stores the log overlap.
+    for (int iw = 0; iw < nw; ++iw)
+      Ov(iw) = std::log(Ov(iw));
+  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -771,6 +844,17 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
   D()  = zero;
   Ov() = zero;
 
+  const bool log_agg = inner_log_aggregate_;
+  memory::buffered_array<MEM, ComplexType, 2> s_store;
+  memory::buffered_array<MEM, ComplexType, 2> ov_lin_store;
+  if (log_agg)
+  {
+    s_store     = memory::buffered_array<MEM, ComplexType, 2>(nwalk, P);
+    ov_lin_store = memory::buffered_array<MEM, ComplexType, 2>(nwalk, P);
+    s_store()     = zero;
+    ov_lin_store() = zero;
+  }
+
   memory::array<MEM, ComplexType, 2> ref_alpha(NMO, nup);
   memory::array<MEM, ComplexType, 2> ref_beta(NMO, ndown);
 
@@ -849,24 +933,37 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
       ComplexType s;
       if (leapfrog)
       {
-        // generalized importance weight w_p = <psi_p|chi> / |<psi_p|phi_cond>|; the effective overlap
-        // is Sum_p w_p (same quantity the leapfrog Log_Overlap accumulates -- keeps Energy's Ov and the
-        // local-energy-mode ratio consistent with the hybrid path).
         double magc = double(inner_cond_mag_(long(ip) * nwalk + w));
-        s           = (magc > 0.0) ? (lin_ov / ComplexType(magc, 0.0)) : zero;
-        Ov(w)       = Ov(w) + s;
+        s = (magc > 0.0) ? (lin_ov / ComplexType(magc, 0.0)) : zero;
       }
       else
       {
         double mag = std::abs(lin_ov);
         s          = (mag > 0.0) ? (lin_ov / ComplexType(mag, 0.0)) : zero;
-        Ov(w)      = Ov(w) + inv_P * lin_ov;
       }
       Sp(w) = s;
-      D(w)  = D(w) + s;
+      if (log_agg)
+      {
+        s_store(w, ip)      = s;
+        ov_lin_store(w, ip) = leapfrog ? s : (inv_P * lin_ov);
+      }
+      else
+      {
+        Ov(w) = Ov(w) + (leapfrog ? s : (inv_P * lin_ov));
+        D(w)  = D(w) + s;
+      }
     }
     accumulate(Gp, ov_, Sp, ip, 0, Gsize);
     mpi_->comm.barrier();
+  }
+
+  if (log_agg)
+  {
+    for (int w = 0; w < nwalk; ++w)
+    {
+      D(w)  = stable_complex_sum_row(s_store(), w, P);
+      Ov(w) = leapfrog ? D(w) : stable_complex_sum_row(ov_lin_store(), w, P);
+    }
   }
 }
 

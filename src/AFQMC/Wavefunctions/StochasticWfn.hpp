@@ -40,7 +40,7 @@ inline ptree strip_stochastic_input_keys(ptree pt)
 {
   for (auto const& key : {"type", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
                           "inner_conditioning", "inner_leapfrog", "inner_persistence", "inner_equil_steps",
-                          "inner_mcmc", "inner_pool_burn_in"})
+                          "inner_mcmc", "inner_pool_burn_in", "inner_log_aggregate"})
     pt.erase(key);
   return pt;
 }
@@ -98,6 +98,7 @@ public:
   // re-equilibrated by a short Metropolis MCMC instead of reset-then-redraw with Gaussian-shift resampling.
   bool inner_persistence() const { return inner_persistence_; }
   int inner_equil_steps() const { return inner_equil_steps_; }
+  bool inner_log_aggregate() const { return inner_log_aggregate_; }
 
   WalkerSet<MEM>& inner_wset();
   WalkerSet<MEM> const& inner_wset() const;
@@ -380,6 +381,7 @@ private:
   int inner_pool_burn_in_{0};
   std::string inner_mcmc_{"metropolis"};
   bool inner_pool_primed_{false};
+  bool inner_log_aggregate_{false};
   nda::array<ComplexType, 3> inner_anchor_;
   // Leapfrog: per inner walker q (slot-major q = ip*nwalk + w), the magnitude |⟨ψ_q|φ_w^cond⟩| of its cross overlap with the walker its block was conditioned on. Set at each
   // conditioned resample; the leapfrog overlap reweights by 1/inner_cond_mag_ so the step ratio is Eq. 25.

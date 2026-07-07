@@ -1944,6 +1944,104 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
   }
 }
 
+// Phase 10c: log-sum-exp P-sample aggregation (inner_log_aggregate=true) on the persistent leapfrog path.
+template<MEMORY_SPACE MEM>
+void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                  std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return;
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    const double dt(0.01);
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk          = 7;
+    const int inner_nwalkers = 4;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac{};
+    ptree pt;
+    pt.put("name", "wfn_stoch_logagg");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    mark_stochastic_wfn_input(pt);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    pt.put("inner_leapfrog", true);
+    pt.put("inner_persistence", true);
+    pt.put("inner_log_aggregate", true);
+    pt.put("inner_equil_steps", 1);
+    pt.put("inner_pool_burn_in", 0);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_logagg", pt);
+    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_logagg", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_logagg", type, wlk_pt);
+
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_logagg"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+
+    for (int step = 0; step < 4; ++step)
+    {
+      wfn.begin_inner_step(wset);
+      memory::array<MEM, ComplexType, 2> X(nwalk, wfn.number_of_cholesky_vectors());
+      wfn.vbias(wset, X, dt);
+      wfn.Energy(wset);
+      wfn.Log_Overlap(wset);
+      REQUIRE(wfn.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+      nda::array<ComplexType, 1> ov(nwalk), e1(nwalk), exx(nwalk), ej(nwalk);
+      wset.getProperty(OVLP, ov);
+      wset.getProperty(E1_, e1);
+      wset.getProperty(EXX_, exx);
+      wset.getProperty(EJ_, ej);
+      for (int w = 0; w < nwalk; ++w)
+      {
+        REQUIRE(std::isfinite(real(ov(w))));
+        REQUIRE(std::isfinite(imag(ov(w))));
+        REQUIRE(std::isfinite(real(e1(w))));
+        REQUIRE(std::isfinite(real(exx(w))));
+        REQUIRE(std::isfinite(real(ej(w))));
+      }
+    }
+  }
+}
+
+TEST_CASE("stochastic_log_aggregate_smoke", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn inner_log_aggregate smoke (Phase 10c).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+    stochastic_log_aggregate_smoke<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
 TEST_CASE("stochastic_persistent_pool_smoke", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
