@@ -343,6 +343,16 @@ public:
     return nomsd_.getLogScale(std::forward<Args>(args)...);
   }
 
+  void resetLogScale() { nomsd_.resetLogScale(); }
+
+  template<nda::MemoryArrayOfRank<1> T>
+  void setLogPT0(T&& v)
+  {
+    nomsd_.setLogPT0(std::forward<T>(v));
+  }
+
+  auto getLogPT0() const { return nomsd_.getLogPT0(); }
+
 private:
   static ptree nomsd_inputs(ptree const& pt0)
   {
