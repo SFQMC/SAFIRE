@@ -456,7 +456,8 @@ private:
   // proposal: a fresh bare free-projection draw ψ* = B̂_T(Y*)|φ_T⟩ (reset-to-anchor + inner_nsteps_
   // Propagate_free steps); per-slot accept with probability min(1, |⟨ψ*|φ_w⟩| / |⟨ψ_cur|φ_w⟩|), which
   // targets the EXACT conditioned distribution ∝ p_T(Y)·|⟨ψ|φ_w⟩| (no linear Gaussian-shift approximation,
-  // unlike Phase 3c-i's force-biased draw). Rejected slots keep their previous sample -> persistence.
+  // unlike the force-biased Gaussian-shift draw used without persistence). Rejected slots keep their
+  // previous sample -> persistence.
   template<class WlkSet>
   void metropolis_sweep_conditioned(const WlkSet& wset);
 

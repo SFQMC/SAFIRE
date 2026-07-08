@@ -31,7 +31,7 @@ namespace afqmc
 
 namespace
 {
-// Stable complex sum of P-sample terms (hafqmc mix_overlap_terms analogue). shift = max log|t_p|;
+// Stable complex sum of P-sample terms (log-sum-exp). shift = max log|t_p|;
 // returns sum_p t_p without underflow when magnitudes span decades.
 inline ComplexType stable_complex_sum(ComplexType const* terms, int n)
 {

@@ -1944,7 +1944,7 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
   }
 }
 
-// Phase 10c: log-sum-exp P-sample aggregation (inner_log_aggregate=true) on the persistent leapfrog path.
+// Log-domain P-sample aggregation (inner_log_aggregate=true) on the persistent leapfrog path.
 template<MEMORY_SPACE MEM>
 void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                   std::string hamil_file, std::string wfn_file)
@@ -2035,7 +2035,7 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
 TEST_CASE("stochastic_log_aggregate_smoke", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn inner_log_aggregate smoke (Phase 10c).");
+  app_log(0, "StochasticWfn inner_log_aggregate smoke.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
     stochastic_log_aggregate_smoke<MEM>(mpi, hamil_file, wfn_file);
@@ -2422,11 +2422,11 @@ TEST_CASE("stochastic_inner_permute_cross_rank_fallback", "[stochastic_wfn]")
 }
 
 // -----------------------------------------------------------------------------------------------------
-// Persistence x population-control coupling (Phase 10 + Phase 9).
+// Persistent inner pool x population-control permute coupling.
 //
-// The two features touch the SAME slot-major inner ensemble but were validated separately: Phase 9's
+// Both features touch the same slot-major inner ensemble but were validated separately:
 // permute_inner_blocks_after_pop was written for the reset-then-redraw path (where the pool is thrown
-// away at the next begin_inner_step anyway), and Phase 10's persistent pool was validated WITHOUT an
+// away at the next begin_inner_step anyway), and the persistent pool was validated without an
 // intervening popControl. In production they run back to back every pop step (AFQMCDriver: popControl ->
 // permute_inner_blocks_after_pop -> accumulate_step), and the persistent pool must survive that permute.
 // The two cases below pin the contract at both ends of the branch.
@@ -2553,8 +2553,8 @@ TEST_CASE("stochastic_persistent_permute_after_pop_control", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Case 2 -- the prime-flag semantics of the coupling. The open question in StochasticDevelopment.md is
-// whether a successful Phase-9 permute correctly KEEPS the pool primed (persist across the pop event) while
+// Case 2 -- the prime-flag semantics of the coupling: whether a successful local permute correctly KEEPS
+// the pool primed (persist across the pop event) while
 // the cross-rank fallback correctly INVALIDATES it (re-prime from the anchor). The two paths are made
 // observable with inner_equil_steps = 0: a PERSIST does zero MCMC sweeps and leaves the pool byte-identical,
 // whereas a RE-PRIME resets every slot to the anchor and runs inner_pool_burn_in sweeps -> a different pool.
