@@ -70,9 +70,19 @@ namespace TestFiles {
 };
 
 
-inline constexpr auto molecule_unit_tests_files(TestFiles::Flags flags) 
+// struct to store test file info with finiteT flag
+struct UnitTestFile {
+  std::string hamil_file;
+  std::string wfn_file;
+  afqmc::WALKER_TYPES walker_type;
+  bool finiteT;
+  UnitTestFile(std::string h, std::string w, afqmc::WALKER_TYPES t, bool ft = false)
+      : hamil_file(std::move(h)), wfn_file(std::move(w)), walker_type(t), finiteT(ft) {}
+};
+
+inline constexpr auto molecule_unit_tests_files(TestFiles::Flags flags)
 {
-  std::vector< std::tuple<std::string, std::string, afqmc::WALKER_TYPES> > files;
+  std::vector< UnitTestFile > files;
   auto pre = unit_test_base() + "molecules/";
   if(flags & TestFiles::NOMSD) {
     if(flags & TestFiles::RHF) {
@@ -125,7 +135,7 @@ inline constexpr auto molecule_unit_tests_files(TestFiles::Flags flags)
 
 inline constexpr auto lattice_unit_test_files(TestFiles::Flags flags) 
 {
-  std::vector< std::tuple<std::string, std::string, afqmc::WALKER_TYPES> > files;
+  std::vector< UnitTestFile > files;
   auto pre = unit_test_base() + "models/";
   if(flags & TestFiles::NOMSD) {
     if(flags & TestFiles::RHF) {
@@ -157,8 +167,8 @@ inline constexpr auto lattice_unit_test_files(TestFiles::Flags flags)
     }
     if(flags & TestFiles::FINITE_T) {
       files.emplace_back(pre + "finiteT/square_2x2_hubbard_Beta3_nt100/afqmc_inputs/ham_collinear.h5",
-                                          pre + "finiteT/square_2x2_hubbard_Beta3_nt100/afqmc_inputs/wfn_collinear_ft.h5",
-                                          afqmc::COLLINEAR_FT);
+                                          pre + "finiteT/square_2x2_hubbard_Beta3_nt100/afqmc_inputs/wfn_collinear.h5",
+                                          afqmc::COLLINEAR, /*finiteT=*/true);
     }
   }
   if (flags & TestFiles::PHMSD) {
@@ -169,7 +179,7 @@ inline constexpr auto lattice_unit_test_files(TestFiles::Flags flags)
 
 
 inline constexpr auto solid_unit_test_files(TestFiles::Flags flags) {
-  std::vector< std::tuple<std::string, std::string, afqmc::WALKER_TYPES> > files;
+  std::vector< UnitTestFile > files;
   auto pre = unit_test_base() + "solids/";
   if(flags & TestFiles::NOMSD) {
     if(flags & TestFiles::RHF) {
@@ -212,7 +222,7 @@ inline constexpr auto solid_unit_test_files(TestFiles::Flags flags) {
 
 
 inline constexpr auto get_unit_tests_files(TestFiles::Flags flags) {
-  auto unit_test_files = std::vector< std::tuple<std::string, std::string, afqmc::WALKER_TYPES> >{};
+  auto unit_test_files = std::vector< UnitTestFile >{};
 
   if (flags & TestFiles::MOLECULES) {
     auto mol_files = molecule_unit_tests_files(flags);
@@ -244,33 +254,33 @@ template<typename F>
 inline void run_test_with_files(F func, std::string hamil_file, std::string wfn_file, TestFiles::Flags flags) {
   std::string name = Catch::getResultCapture().getCurrentTestName();
 
-  auto run = [&](std::string hamil_file, std::string wfn_file, afqmc::WALKER_TYPES walker_type) {
-    std::string subsection = std::format("{}({},{},{})", name, hamil_file, wfn_file, afqmc::walkerTypeToString(walker_type));
-    
+  auto run = [&](std::string hamil_file, std::string wfn_file, afqmc::WALKER_TYPES walker_type, bool finiteT) {
+    std::string subsection = std::format("{}({},{},{}{})", name, hamil_file, wfn_file, afqmc::walkerTypeToString(walker_type), finiteT ? ",finite-T" : "");
+
     INFO(std::format("Subsection: {} CPU", subsection));
     catch_test_exceptions(std::format("{} CPU", subsection), [&]() {
-      func.template operator()<HOST_MEMORY>(hamil_file, wfn_file, walker_type);
+      func.template operator()<HOST_MEMORY>(hamil_file, wfn_file, walker_type, finiteT);
     });
     #if defined(ENABLE_DEVICE)
       INFO(std::format("Subsection: {} GPU", subsection));
       catch_test_exceptions(std::format("{} GPU", subsection), [&]() {
-        func.template operator()<DEVICE_MEMORY>(hamil_file, wfn_file, walker_type);
+        func.template operator()<DEVICE_MEMORY>(hamil_file, wfn_file, walker_type, finiteT);
       });
-    #endif    
+    #endif
   };
 
   if(hamil_file != "" && wfn_file != "") {
     app_log(0, "Running test with user-provided files: {}\n --hamil {} \\\n --wfn {}", name, hamil_file, wfn_file);
-    run(hamil_file, wfn_file, afqmc::UNDEFINED_WALKER_TYPE);
+    run(hamil_file, wfn_file, afqmc::UNDEFINED_WALKER_TYPE, false);
   } else {
-    auto [std_hamil_file, std_wfn_file, walker_type] = GENERATE_COPY(from_range(get_unit_tests_files(flags)));
+    auto entry = GENERATE_COPY(from_range(get_unit_tests_files(flags)));
 
-    app_log(0, "Running test with files: \"{}\"\n --hamil {} \\\n --wfn {}", 
-      name, std_hamil_file, std_wfn_file
+    app_log(0, "Running test with files: \"{}\"\n --hamil {} \\\n --wfn {}",
+      name, entry.hamil_file, entry.wfn_file
     );
-  
-    run(std_hamil_file, std_wfn_file, walker_type);
-  }  
+
+    run(entry.hamil_file, entry.wfn_file, entry.walker_type, entry.finiteT);
+  }
 }
 
 /* Checks if a file exists in the file system */

@@ -52,9 +52,7 @@ enum WALKER_TYPES
   CLOSED,
   COLLINEAR,
   NONCOLLINEAR,
-  FULLYPOLARIZED,
-  COLLINEAR_FT,
-  NONCOLLINEAR_FT
+  FULLYPOLARIZED
 };
 
 inline WALKER_TYPES initWALKER_TYPES(int i)
@@ -69,10 +67,6 @@ inline WALKER_TYPES initWALKER_TYPES(int i)
     return NONCOLLINEAR;
   else if (i == 4)
     return FULLYPOLARIZED;
-  else if (i == 5)
-    return COLLINEAR_FT;
-  else if (i == 6)
-    return NONCOLLINEAR_FT;
   else
     return UNDEFINED_WALKER_TYPE;
 }
@@ -138,8 +132,6 @@ inline std::string walkerTypeToString(WALKER_TYPES type)
   else if (type == COLLINEAR) return "collinear";
   else if (type == NONCOLLINEAR) return "noncollinear";
   else if (type == FULLYPOLARIZED) return "fullypolarized";
-  else if (type == COLLINEAR_FT) return "collinear-ft";
-  else if (type == NONCOLLINEAR_FT) return "noncollinear-ft";
   utils::check(false, "unknown walker type: {}", type);
   return "unknown";
 }

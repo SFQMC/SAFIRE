@@ -168,19 +168,19 @@ public:
             if (WfnFac.is_constructed(wfn_name))
             {
               wfn = std::addressof(
-                  WfnFac.getWavefunction(mpi, wfn_name, wfn0.getWalkerType(), nullptr));
+                  WfnFac.getWavefunction(mpi, wfn_name, wfn0.getWalkerType(), wfn0.isFiniteTemperature(), nullptr));
             }
             else if (ham_name != "")
             {
               Hamiltonian& ham = HamFac.getHamiltonian(mpi, ham_name);
               wfn              = std::addressof(WfnFac.getWavefunction(mpi, wfn_name,
-                                                          wfn0.getWalkerType(), std::addressof(ham)));
+                                                          wfn0.getWalkerType(), wfn0.isFiniteTemperature(), std::addressof(ham)));
             }
             else
             {
               Hamiltonian& ham = HamFac.getHamiltonian(mpi, ham0);
               wfn              = std::addressof(WfnFac.getWavefunction(mpi, wfn_name,
-                                                          wfn0.getWalkerType(), std::addressof(ham)));
+                                                          wfn0.getWalkerType(), wfn0.isFiniteTemperature(), std::addressof(ham)));
             }
             utils::check(wfn != nullptr, " Error: Problems generating wavefunction in DriverFactory::executeAFQMCDriver(). ");
           }

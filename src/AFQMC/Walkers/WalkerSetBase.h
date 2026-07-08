@@ -100,6 +100,7 @@ public:
         tau_step(0),
         history_pos(0),
         walkerType(UNDEFINED_WALKER_TYPE),
+        finite_temperature(false),
         tot_num_walkers(0),
         walker_buffer(0, 1),
         bp_buffer(0, 0),
@@ -491,12 +492,15 @@ public:
   int single_walker_bp_size() const { return (wlk_desc[3] > 0) ? bp_walker_size : 0; }
 
   WALKER_TYPES getWalkerType() const { return walkerType; }
+
+  bool isFiniteTemperature() const { return finite_temperature; }
+
   std::tuple<BRANCHING_ALGORITHM,int,int> population_control_parameters() const 
   { return std::make_tuple(pop_control,min_weight,max_weight); }
 
   int walkerSizeIO() const
   {
-    if (walkerType == COLLINEAR_FT or walkerType == NONCOLLINEAR_FT)
+    if (finite_temperature)
       return walker_size; //finite-T walkers include U,D,V matrices
     else if (walkerType == COLLINEAR)
       return wlk_desc[0] * (wlk_desc[1] + wlk_desc[2]) + 10;
@@ -605,6 +609,7 @@ public:
     pop_control_type  = pt0.get<std::string>("pop_control_type", "pair");
     min_weight        = pt0.get<double>("min_weight", 0.05);
     max_weight        = pt0.get<double>("max_weight", 4.0);
+    bool finite_temperature = pt0.get<bool>("finite_temperature", false);
   
     // check input validity
     if (min_weight < 1e-2) APP_ABORT("min_weight too small");
@@ -625,6 +630,7 @@ public:
     pt1.put("pop_control_type", pop_control_type);
     pt1.put("min_weight", min_weight);
     pt1.put("max_weight", max_weight);
+    pt1.put("finite_temperature", finite_temperature);
     std::unordered_set<std::string> pass_through_keys = {
       "system"
     };
@@ -669,6 +675,8 @@ protected:
   wlk_indices data_displ;
 
   WALKER_TYPES walkerType;
+
+  bool finite_temperature;
 
   int targetN_per_rank;
   int targetN;

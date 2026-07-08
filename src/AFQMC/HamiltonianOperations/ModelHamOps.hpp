@@ -79,10 +79,10 @@ public:
       nCV += v.number_of_cholesky_vectors();
     }
 
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
     int M     = PsiC.extent(2);
     int NMO   = M/npol;
-    if( walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+    if( walker_type == COLLINEAR) {
       for(int n=0; n<n2IJ.size(); ++n) {
         if( n2IJ[n]/M >= NMO ) {
           nIJ_first_beta=n;
@@ -93,7 +93,7 @@ public:
  
     // setup n2IJ_vHS_dev, only needed for NONCOLLINEAR 
     // for COLLINEAR, n2IJ_vHS == n2IJ, so no need to update 
-    if(walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) {
+    if(walker_type == NONCOLLINEAR) {
       nda::array<long,1> n2IJ_vHS_h(n2IJ);
       for(auto& v : n2IJ_vHS_h) {
         long In = long(v/M);
@@ -117,8 +117,8 @@ public:
                                                        nda::MemoryVector auto const& vMF)
   {
     utils::check(vMF.size() == number_of_cholesky_vectors(), "Size mismatch"); 
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    int nspin = (walker_type == COLLINEAR) ? 2 : 1;
     int NMO   = PsiC.extent(2) / npol;
 
     nda::array<ComplexType, 3> H1(nspin, npol*NMO, npol*NMO);
@@ -135,7 +135,7 @@ public:
 
   void runtime_optimization(nda::MemoryArrayOfRank<2> auto const& G)
   {  
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
     int NMO   = PsiC.extent(2) / npol;
     int nwalk = G.extent(0);
 
@@ -180,8 +180,8 @@ public:
   {
     using nda::range;
     auto all = range::all;
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    int nspin = (walker_type == COLLINEAR) ? 2 : 1;
     int NMO   = PsiC.extent(2) / npol;
     int nwalk = G.extent(0);
     
@@ -190,7 +190,7 @@ public:
 
     // ET.get_n2IJ() runs over [0,M^2) in COLLINEAR case 
     int nIJ(ET.get_n2IJ().extent(0));
-    bool allocate_EJn (addEJ and (walker_type==COLLINEAR or walker_type==COLLINEAR_FT));
+    bool allocate_EJn (addEJ and walker_type==COLLINEAR);
     memory::buffered_array<MEM,ComplexType,3> EJn(nspin, (allocate_EJn?nIJ:1), (allocate_EJn?nwalk:1)); 
 
     utils::check(G.is_contiguous(), "Layout mismatch");
@@ -219,7 +219,7 @@ public:
     }
 
     // opposite spin EJ contribution
-    if(addEJ and (walker_type == COLLINEAR or walker_type == COLLINEAR_FT))
+    if(addEJ and walker_type == COLLINEAR)
       nda::tensor::contract(ComplexType(1.0), EJn(0,all,all), "iw", EJn(1,all,all), "iw",
                             ComplexType(1.0), E(all,2), "w");
   }
@@ -233,7 +233,7 @@ public:
               bool addEJ  = true,
               bool addEXX = true)
   {
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
     int ispin = ( spin_component==Alpha ? 0 : 1 );
     int NMO   = PsiC.extent(2) / npol;
     int nwalk = G.extent(0);
@@ -246,7 +246,7 @@ public:
     memory::array_view<MEM,const ComplexType,3> G3d(std::array<long,3>{nwalk,nel[ispin],npol*NMO},G.data());
 
     E() = ComplexType(0.0);
-    bool allocate_EJn (addEJ and (walker_type==COLLINEAR or walker_type==COLLINEAR_FT));
+    bool allocate_EJn (addEJ and walker_type==COLLINEAR);
     if(allocate_EJn) {
       utils::check(EJn.shape() == std::array<long,2>{nwalk,nIJ}, "Size mismatch");
       EJn() = ComplexType(0.0);
@@ -290,8 +290,8 @@ public:
   {
     constexpr MEMORY_SPACE MEM_X = memory::get_memory_space<decltype(X)>();
     static_assert(MEM == MEM_X, "Memory space mismatch");
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+    int nspin = walker_type == COLLINEAR ? 2 : 1;
     int NMO   = PsiC.extent(2) / npol;
     int nwalk = X.extent(0);
     int nIJ = n2IJ.size();
@@ -320,8 +320,8 @@ public:
   {
     using nda::range;
     auto all = range::all;
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+    int nspin = walker_type == COLLINEAR ? 2 : 1;
     int NMO   = PsiC.extent(2) / npol;
     int nwalk = X.extent(0);
     int nIJ = n2IJ.size();
@@ -334,10 +334,10 @@ public:
         make_csr_vHS(nwalk);
     utils::check(spvHS(0).extent(0) == nwalk*npol*NMO and spvHS(0).extent(1) == nwalk*npol*NMO, "Size mismatch");
     utils::check(spvHS(nspin-1).extent(0) == nwalk*npol*NMO and spvHS(nspin-1).extent(1) == nwalk*npol*NMO, "Size mismatch");
-    if(walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+    if(walker_type == COLLINEAR) {
       utils::check(spvHS(0).capacity() == nwalk*nIJ_first_beta, "Size mismatch");
       utils::check(spvHS(1).capacity() == nwalk*(nIJ-nIJ_first_beta), "Size mismatch");
-    } else if(walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) {
+    } else if(walker_type == NONCOLLINEAR) {
       utils::check(spvHS(0).capacity() == nwalk*nIJ, "Size mismatch");
     }
 
@@ -348,7 +348,7 @@ public:
 
     auto vals_up = nda::reshape(spvHS(0).values(), std::array<long,2>{nwalk,nIJ_first_beta});
     vals_up() = vIJ(all,range(nIJ_first_beta));
-    if(walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+    if(walker_type == COLLINEAR) {
       auto vals_dn = nda::reshape(spvHS(1).values(), std::array<long,2>{nwalk,nIJ-nIJ_first_beta});
       vals_dn() = vIJ(all,range(nIJ_first_beta,nIJ));
     }
@@ -359,8 +359,8 @@ public:
   void vbias(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto& v, double dt)
   {
     auto all = nda::range::all;
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+    int nspin = walker_type == COLLINEAR ? 2 : 1;
     int NMO   = PsiC.extent(2) / npol;
     int nwalk = v.extent(0);
     int nci = PsiC.extent(0); 
@@ -401,8 +401,8 @@ public:
   }
 
   std::tuple<int,int> vHS_dims() const {
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+    int nspin = walker_type == COLLINEAR ? 2 : 1;
     return std::make_tuple(nspin,npol);
   }
   int number_of_cholesky_vectors() const { return nCV; }
@@ -473,7 +473,7 @@ private:
   {
     using nda::range;
     auto all = range::all;
-    int npol   = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int npol   = walker_type == NONCOLLINEAR ? 2 : 1;
     int NMO    = PsiC.extent(2) / npol;
     int nwalk  = Gc.extent(0);
     utils::check( Gc.shape() == std::array<long,3>{nwalk,nel[ispin],npol*NMO}, "Shape mismatch");
@@ -498,8 +498,8 @@ private:
   {
     using nda::range;
     auto all = range::all;
-    int npol   = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-    int nspin  = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int npol   = walker_type == NONCOLLINEAR ? 2 : 1;
+    int nspin  = walker_type == COLLINEAR ? 2 : 1;
     int NMO    = PsiC.extent(2) / npol;
     int nwalk  = Gc.extent(0);
     utils::check( Gc.shape() == std::array<long,3>{nwalk,nel[0]+nel[1],npol*NMO}, "Shape mismatch");
@@ -511,7 +511,7 @@ private:
       int n0 = 0;
       for(int iw=0; iw<nwalk; ++iw) 
         nda::blas::gemm(psi,Gc(iw,range(n0,n0+nel[0]),all),Gfull_4d(iw,0,all,all));
-      if( walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+      if( walker_type == COLLINEAR ) {
         auto psi_dn = PsiC()(idet,1,all,range(nel[1]));
         n0 = nel[0];
         for(int iw=0; iw<nwalk; ++iw) 
@@ -521,7 +521,7 @@ private:
       auto psi = PsiC()(idet,0,all,range(nel[0]));
       int n0 = 0;
       nda::tensor::contract(psi,"ia",Gc(all,range(n0,n0+nel[0]),all),"waj",Gfull_4d(all,0,all,all),"wij");
-      if( walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+      if( walker_type == COLLINEAR ) {
         auto psi_dn = PsiC()(idet,1,all,range(nel[1]));
         n0 = nel[0];
         nda::tensor::contract(psi_dn,"ia",Gc(all,range(n0,n0+nel[1]),all),"waj",Gfull_4d(all,1,all,all),"wij");
@@ -534,7 +534,7 @@ private:
   {
     using nda::range;
     auto all = range::all;
-    int npol   = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int npol   = walker_type == NONCOLLINEAR ? 2 : 1;
     int M      = PsiC.extent(2);
     int NMO    = PsiC.extent(2) / npol;
     int nwalk  = Gc.extent(0);
@@ -579,7 +579,7 @@ private:
   {     
     using nda::range;
     auto all = range::all;
-    int npol   = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int npol   = walker_type == NONCOLLINEAR ? 2 : 1;
     int M      = PsiC.extent(2);
     int NMO    = PsiC.extent(2) / npol;
     int nwalk  = Gc.extent(0);
@@ -598,7 +598,7 @@ private:
           nda::tensor::contract(psi(In,all),"a",Gwaj(all,all,Jn),"wa",GIJ(all,n),"w");
         }
       }
-      if(walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+      if(walker_type == COLLINEAR) {
         auto psi = PsiC()(0,1,all,range(nel[1]));
         auto Gwaj = Gc(all,range(nel[0],nel[0]+nel[1]),all);
         for(int n=nIJ_first_beta; n<nIJ; ++n) {
@@ -631,7 +631,7 @@ private:
           vC.emplace_back(C(range(n,n+1),all));
         }
       }
-      if(walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+      if(walker_type == COLLINEAR) {
         auto psi = PsiC()(0,1,all,range(nel[1]));
         auto Gjaw = Gt(all,range(nel[0],nel[0]+nel[1]),all);
         for(int n=nIJ_first_beta; n<nIJ; ++n) {
@@ -651,8 +651,8 @@ private:
   {
     using nda::range;
     auto all = range::all;
-    int nspin  = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
-    int npol   = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int nspin  = walker_type == COLLINEAR ? 2 : 1;
+    int npol   = walker_type == NONCOLLINEAR ? 2 : 1;
     int M      = PsiC.extent(2);
     int NMO    = PsiC.extent(2) / npol;
     int nIJ = n2IJ.extent(0);
@@ -677,7 +677,7 @@ private:
       }
       spvHS(0) = std::move(v_h);
     }
-    if(walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+    if(walker_type == COLLINEAR) {
       nda::array<int,2> nnz(nwalk,NMO);
       for(int w=0; w<nwalk; w++)
         nnz(w,all) = cnt(range(NMO,2*NMO));
@@ -701,7 +701,7 @@ private:
   {
     using nda::range;
     auto all = range::all;
-    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int nspin = walker_type == COLLINEAR ? 2 : 1;
     int nwalk = G3d.extent(0);
     TimerManager Timer;
 

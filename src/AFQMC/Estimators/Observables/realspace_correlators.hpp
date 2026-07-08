@@ -191,7 +191,7 @@ public:
     // assumes G[nwalk][spin][M][M]
     int nw(G.size(0));
     int npts(Orbitals.size(1));
-    int nsp = ( walker_type == COLLINEAR or walker_type == COLLINEAR_FT ? 2 : 1 );
+    int nsp = walker_type == COLLINEAR ? 2 : 1;
 
     LocalTGBufferManager buffer_manager;
 #if defined(ENABLE_CUDA) || defined(ENABLE_HIP)
@@ -273,7 +273,7 @@ public:
           }
         }
       }
-      else if (walker_type == COLLINEAR or walker_type == COLLINEAR_FT)
+      else if (walker_type == COLLINEAR)
       {
         auto&& Gur = Gr_host[iw][0];
         auto&& Gdr = Gr_host[iw][1];
@@ -296,7 +296,7 @@ public:
           }
         }
       }
-      else if (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT)
+      else if (walker_type == NONCOLLINEAR)
       {
         APP_ABORT(" Noncollinear not implemented \n\n");
         auto&& Gur = Gr_host[iw][0];

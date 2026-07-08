@@ -70,7 +70,7 @@ public:
         OrbMats(std::move(orbs_)),
         RefOrbMats(0, 0, 0, 0),
         NuclearCoulombEnergy(nce),
-        sclL(walker_type == COLLINEAR_FT ? 2: 1)
+        sclL(walker_type == COLLINEAR ? 2: 1)
   {
 
     //std::cout<<"OrbMats(0,1,1)"<<std::endl;
@@ -124,6 +124,8 @@ public:
 
   WALKER_TYPES getWalkerType() const { return walker_type; }
 
+  bool isFiniteTemperature() const { return true; }
+
   /*
    * Returns the memory space.
    */
@@ -136,8 +138,8 @@ public:
   void runtime_optimization(WlkSet& wset)
   {
     const int nw   = wset.size();
-    const int nspin = (walker_type==COLLINEAR_FT ? 2 : 1);
-    const int npol = (walker_type==NONCOLLINEAR_FT ? 2 : 1 );
+    const int nspin = walker_type==COLLINEAR ? 2 : 1;
+    const int npol = walker_type==NONCOLLINEAR ? 2 : 1;
     memory::array<MEM,ComplexType,2> G(nw,nspin*npol*NMO*npol*NMO);
     // don't use buffered_array!!!
     HamOp.runtime_optimization(G);
@@ -195,8 +197,8 @@ public:
   {
     memory::check_memory_space<MEM>(v);
     AFQMCTimer.start(G_for_vbias_timer);
-    int nspin = (walker_type==COLLINEAR_FT ? 2 : 1);
-    int npol  = (walker_type==NONCOLLINEAR_FT ? 2 : 1);
+    int nspin = walker_type==COLLINEAR ? 2 : 1;
+    int npol  = walker_type==NONCOLLINEAR ? 2 : 1;
     int nw = wset.size();
     nt = nt < 0? wset.getTauStep() : nt; // if time-slice is not given, use current time-slice
     int nc = nspin*npol*NMO*npol*NMO;

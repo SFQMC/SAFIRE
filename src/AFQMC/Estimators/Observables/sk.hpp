@@ -335,8 +335,8 @@ private:
 
     // assumes G[nwalk][spin][M][M]
     int nwalk(G.size(0));
-    int nspin = ( walker_type == COLLINEAR or walker_type == COLLINEAR_FT ? 2 : 1 );
-    int npol = ( walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1 );
+    int nspin = walker_type == COLLINEAR ? 2 : 1;
+    int npol = walker_type == NONCOLLINEAR ? 2 : 1;
 
     // if needed, write customized version for gamma point/super cell calculations 
     //int buffer_size = std::max(default_buffer_size_in_MB, buffer_manager.available_in_MB());

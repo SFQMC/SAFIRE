@@ -289,17 +289,18 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, ptr
   auto& wset          = WSetFac.getWalkerSet(mpi, wset_name, rng_wlk);
   WALKER_TYPES walker_type = wset.getWalkerType();
 
+  bool finiteT = false;
   if (not WfnFac.is_constructed(wfn_name))
   {
     // hamiltonian
     Hamiltonian& ham0 = HamFac.getHamiltonian(mpi, ham_name);
 
     // build wavefunction
-    WfnFac.getWavefunction(mpi, wfn_name, walker_type, &ham0, nWalkers);
+    WfnFac.getWavefunction(mpi, wfn_name, walker_type, finiteT, &ham0, nWalkers);
   }
 
   // wfn builder should not use Hamiltonian pointer now
-  auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, nullptr, nWalkers);
+  auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, finiteT, nullptr, nWalkers);
   WfnFac.maybe_initialize_stochastic_inner_walkers(wfn0, wfn_name, walker_type, WSetFac.get_input(wset_name));
 
   // propagator
@@ -472,20 +473,24 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, p
    */
 
   // walker set and type
+  // if executing FT driver, finite_temperature flag internally set to true
+  // ft driver selected by user in input file
+  WSetFac.get_input(wset_name).put("finite_temperature", true);
   auto& wset          = WSetFac.getWalkerSet(mpi, wset_name, rng_wlk);
   WALKER_TYPES walker_type = wset.getWalkerType();
   wset.setTauStep(0); // time-slice initialized to 0
+  bool finiteT = true;
   if (not WfnFac.is_constructed(wfn_name))
   {
     // hamiltonian
     Hamiltonian& ham0 = HamFac.getHamiltonian(mpi, ham_name);
 
     // build wavefunction
-    [[maybe_unused]] auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, &ham0, nWalkers);
+    [[maybe_unused]] auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, finiteT, &ham0, nWalkers);
   }
 
   // wfn builder should not use Hamiltonian pointer now
-  auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, nullptr, nWalkers);
+  auto& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, finiteT, nullptr, nWalkers);
 
   // propagator
   auto& prop0 = PropFac.getPropagator(mpi, prop_name, wfn0, rng);
@@ -717,6 +722,7 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver(std::string title, int m_series, p
     // walker set and type
     auto& wset          = WSetFac.getWalkerSet(mpi, wset_name, rng_wlk);
     WALKER_TYPES walker_type = wset.getWalkerType();
+    bool finiteT = false; // if this driver is re-implemented, it is ground-state only
     wset_ref.emplace_back(std::ref(wset));
 
     if (not WfnFac.is_constructed(wfn_name) && wfn_restart == "")
@@ -725,11 +731,11 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver(std::string title, int m_series, p
       Hamiltonian& ham0 = HamFac.getHamiltonian(mpi, ham_name);
 
       // build wavefunction
-      [[maybe_unused]] Wavefunction& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, &ham0, nWalkers);
+      [[maybe_unused]] Wavefunction& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, finiteT, &ham0, nWalkers);
     }
 
     // wfn builder should not use Hamiltonian pointer now
-    Wavefunction& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, nullptr, nWalkers);
+    Wavefunction& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, finiteT, nullptr, nWalkers);
     wfn_ref.emplace_back(std::ref(wfn0));
 
     // propagator

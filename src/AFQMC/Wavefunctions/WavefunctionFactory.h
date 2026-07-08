@@ -174,6 +174,7 @@ public:
   auto& getWavefunction(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                 const std::string& ID,
                                 WALKER_TYPES walker_type,
+                                bool finiteT,
                                 Hamiltonian* h,
                                 int targetNW   = 1)
   {
@@ -187,7 +188,7 @@ public:
     if (w0 == wavefunctions.end())
     {
       auto neww = wavefunctions.insert(
-          std::make_pair(ID, buildWavefunction(mpi,xml->second, walker_type, h, targetNW)));
+          std::make_pair(ID, buildWavefunction(mpi,xml->second, walker_type, finiteT, h, targetNW)));
       utils::check(neww.second," Error: Problems building new wavefunction in WavefunctionFactory::getWavefunction(string&). ");
       return (neww.first)->second;
     }
@@ -304,6 +305,7 @@ protected:
   Wavefunction<MEM> buildWavefunction(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                  ptree pt,
                                  WALKER_TYPES walker_type,
+                                 bool finiteT,
                                  Hamiltonian* h,
                                  int targetNW)
   {
@@ -311,17 +313,18 @@ protected:
     app_log(1,"               Initializing Wavefunction ");
     app_log(1,"\n****************************************************");
 
-    return fromHDF5(mpi, pt, walker_type, *h, targetNW);
+    return fromHDF5(mpi, pt, walker_type, finiteT, *h, targetNW);
   }
 
   Wavefunction<MEM> fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                         ptree pt,
                         WALKER_TYPES walker_type,
+                        bool finiteT,
                         Hamiltonian& h,
                         int targetNW);
 
-  void getInitialGuess(h5::group grp, utils::mpi_context_t<boost::mpi3::communicator>& mpi, const std::string& name, int NMO, int nup, int ndown, WALKER_TYPES walker_type);
-  void getInitialGuess_ft(h5::group grp, utils::mpi_context_t<boost::mpi3::communicator>& mpi, const std::string& name, int NMO, WALKER_TYPES walker_type);
+  void getInitialGuess(h5::group grp, utils::mpi_context_t<boost::mpi3::communicator>& mpi, const std::string& name, int NMO, int nup, int ndown, WALKER_TYPES walker_type, bool finiteT);
+  void getInitialGuess_ft(h5::group grp, utils::mpi_context_t<boost::mpi3::communicator>& mpi, const std::string& name, int NMO, WALKER_TYPES walker_type, bool finiteT);
 /*
   int getExcitation(nda::MemoryVector& deti,
                     nda::MemoryVector& detj,

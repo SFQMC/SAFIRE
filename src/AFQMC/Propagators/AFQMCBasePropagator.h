@@ -178,8 +178,8 @@ public:
     {
       //    read_external_field(H1ext);
       auto walker_type = wfn->getWalkerType();
-      int npol  = ( walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1 );
-      int nspin = ( walker_type == COLLINEAR  or walker_type == COLLINEAR_FT  ? 2 : 1 );
+      int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+      int nspin = walker_type == COLLINEAR ? 2 : 1;
       external_H1 = true;
       H1ext = memory::share_from_root(*mpi, [&] {
         // use hdf5 format!!!

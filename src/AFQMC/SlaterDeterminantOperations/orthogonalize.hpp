@@ -451,9 +451,10 @@ void orthogonalize(WlkSet &wset, Vec && ldet, bool importance_sampling = true)
   memory::check_memory_space<MEM>(ldet);
   auto walker_type = wset.getWalkerType();
   const int nwalk = wset.size();
+  bool ft = wset.isFiniteTemperature();
   utils::check(ldet.size() >= nwalk, "Size mismatch");
   ldet() = ComplexType(0.0);
-  if(walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT ){
+  if(!ft){
     if(importance_sampling) {
       orthogonalize( wset.SlaterMatrices(Alpha), ldet);
       if(walker_type == COLLINEAR)
@@ -478,7 +479,7 @@ void orthogonalize(WlkSet &wset, Vec && ldet, bool importance_sampling = true)
     if(importance_sampling) {
       orthogonalize_wQR(wset.UMatrices(Alpha), wset.DMatrices(Alpha), wset.VMatrices(Alpha), scl_up);
       wset.setProperty(LOGSCL_UP, scl_up);
-      if(walker_type == COLLINEAR_FT){
+      if(walker_type == COLLINEAR){
         memory::buffered_array<MEM,ComplexType,1> scl_dn(nwalk);
         wset.getProperty(LOGSCL_DN, scl_dn);
         orthogonalize_wQR(wset.UMatrices(Beta), wset.DMatrices(Beta), wset.VMatrices(Beta), scl_dn);

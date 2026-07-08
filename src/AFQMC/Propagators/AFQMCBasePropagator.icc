@@ -51,11 +51,12 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
   AFQMCTimer.start(setup_timer);
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
-  int npol  = ( walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1 );
-  int nspin = ( walker_type == COLLINEAR or walker_type == COLLINEAR_FT ? 2 : 1 );
+  int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+  int nspin = walker_type == COLLINEAR ? 2 : 1;
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
   bool step0 = false;
+  bool ft = wset.isFiniteTemperature();
 
   memory::buffered_array<MEM,ComplexType,1> MFfactor(nwalk,ComplexType(0.0));
   memory::buffered_array<MEM,ComplexType,1> hybrid_weight(nwalk,ComplexType(0.0));
@@ -69,7 +70,7 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
   AFQMCTimer.stop(setup_timer);
 
   // store current time-slice for finite-T walkers
-  if (walker_type == COLLINEAR_FT || walker_type == NONCOLLINEAR_FT)
+  if (ft)
     wset.setTauStep(nt);
 
   memory::buffered_array<MEM,ComplexType,2> X(nwalk, nCV);
@@ -80,7 +81,7 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
   }
   else
   {
-    if(walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT)
+    if(!ft)
       wfn->vbias(wset, X, dt);
     else
       wfn->vbias(wset, X, dt, nt-1);

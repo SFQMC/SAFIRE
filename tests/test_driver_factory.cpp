@@ -57,7 +57,7 @@ using namespace afqmc;
 template<MEMORY_SPACE MEM>
 void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
              std::string hamil_file, std::string wfn_file,
-             WALKER_TYPES walker_type = UNDEFINED_WALKER_TYPE)
+             WALKER_TYPES walker_type = UNDEFINED_WALKER_TYPE, bool finiteT = false)
 {
   std::map<std::string, AFQMCInfo> InfoMap;
   HamiltonianFactory HamFac(InfoMap);
@@ -67,13 +67,12 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   DriverFactory<MEM> DriverFac(mpi, InfoMap, WSetFac, PropFac, WfnFac, HamFac);
 
   const auto[NMO, nup, ndown] = read_info_from_wfn(wfn_file,"any");
-  bool ft = (walker_type == COLLINEAR_FT or walker_type == NONCOLLINEAR_FT);
 
   AFQMCInfo info;//("sys0",NMO,nup,ndown,ntau);
   
   info.name = "sys0";
   info.NMO = NMO;
-  if(ft){
+  if(finiteT){
     //for finite-T wfn dims are [NMO, ntau, 0]
     //walker matrices are NMO x NMO, not NMO x nelec
     info.nup = NMO;
@@ -164,7 +163,7 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   exec.put_child("propagator",prop_min);
   exec.put_child("walker_set",wlk_min);
   app_log(0,"[driver_fac] TEST: wfn+ham+prop+wlk (all inline); walker_type={}", walkerTypeToString(walker_type));
-  if(ft)
+  if(finiteT)
     CHECK(DriverFac.executeDriver("ftafqmc","drv_test",0,exec));
   else
     CHECK(DriverFac.executeDriver("afqmc","drv_test",0,exec));
@@ -198,7 +197,7 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   exec.put("propagator","prop0");
   exec.put("walker_set","wlk0");
   app_log(0,"[driver_fac] TEST: wfn+ham+prop+wlk (all external); walker_type={}", walkerTypeToString(walker_type));
-  if(ft)
+  if(finiteT)
     CHECK(DriverFac.executeDriver("ftafqmc","drv_test",0,exec));
   else
     CHECK(DriverFac.executeDriver("afqmc","drv_test",0,exec));
@@ -210,7 +209,7 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   exec.put("walker_set","wlk0");
   if (hamil_file == wfn_file) {
     app_log(0,"[driver_fac] TEST: wfn(inline)+wlk(external); walker_type={}", walkerTypeToString(walker_type));
-    if(ft)
+    if(finiteT)
       CHECK(DriverFac.executeDriver("ftafqmc","drv_test",0,exec));
     else
       CHECK(DriverFac.executeDriver("afqmc","drv_test",0,exec));
@@ -231,7 +230,7 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   exec.put_child("hamiltonian",ham_min);
   exec.put("walker_set","wlk0");
   app_log(0,"[driver_fac] TEST: wfn(external)+ham(inline)+wlk(external); walker_type={}", walkerTypeToString(walker_type));
-  if(ft)
+  if(finiteT)
     CHECK(DriverFac.executeDriver("ftafqmc","drv_test",0,exec));
   else
     CHECK(DriverFac.executeDriver("afqmc","drv_test",0,exec));
@@ -242,7 +241,7 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   exec.put_child("hamiltonian",ham_min);
   exec.put_child("walker_set",wlk_min);
   app_log(0,"[driver_fac] TEST: wfn(external)+ham(inline)+wlk(inline); walker_type={}", walkerTypeToString(walker_type));
-  if(ft)
+  if(finiteT)
     CHECK(DriverFac.executeDriver("ftafqmc","drv_test",0,exec));
   else
     CHECK(DriverFac.executeDriver("afqmc","drv_test",0,exec));
@@ -256,8 +255,8 @@ TEST_CASE("driver_factory: build", "[driver_factory]")
   
   using namespace utils;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES walker_type) {
-    driver_factory_build<MEM>(mpi, hamil_file, wfn_file, walker_type);
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES walker_type, bool finiteT) {
+    driver_factory_build<MEM>(mpi, hamil_file, wfn_file, walker_type, finiteT);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
 }
 

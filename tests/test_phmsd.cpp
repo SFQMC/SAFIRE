@@ -180,7 +180,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
 
   WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
+  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
 
   ptree wlk_pt;
   wlk_pt.put("name","wset0");
@@ -266,7 +266,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   nomsd_pt.put("filename",nomsd_file);
 
   WfnFac.push("nomsd", nomsd_pt);
-  auto& nomsd = WfnFac.getWavefunction(mpi, "nomsd", type, &ham, nwalk);
+  auto& nomsd = WfnFac.getWavefunction(mpi, "nomsd", type, false, &ham, nwalk);
 
   // 1. Overlap 
   ComplexType ovlp_sum = ComplexType(0.0);
@@ -385,7 +385,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     wfn1_pt.put("algorithm",1);
 
     WfnFac.push("wfn1", wfn1_pt);
-    auto& wfn1 = WfnFac.getWavefunction(mpi, "wfn1", type, &ham, nwalk);
+    auto& wfn1 = WfnFac.getWavefunction(mpi, "wfn1", type, false, &ham, nwalk);
 
     memory::array<MEM,ComplexType,2> eloc(nwalk,3);
     memory::array<MEM,ComplexType,1> ov(nwalk);
@@ -451,7 +451,7 @@ TEST_CASE("phmsd: read", "[phmsd]")
 
   using namespace utils;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool) {
     if constexpr (MEM == HOST_MEMORY) {
       phmsd_read<MEM>(mpi, hamil_file, wfn_file);
     }
@@ -466,7 +466,7 @@ TEST_CASE("phmsd: compute", "[phmsd]")
   
   using namespace utils;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool) {
     phmsd_compute<MEM>(mpi, hamil_file, wfn_file, write_reference && MEM == HOST_MEMORY);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::UHF | TestFiles::PHMSD | TestFiles::ALL_SYSTEMS);
 }

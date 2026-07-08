@@ -62,7 +62,7 @@ using namespace afqmc;
 
 template<MEMORY_SPACE MEM>
 void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
-             std::string hamil_file, std::string wfn_file, bool dense_trial)
+             std::string hamil_file, std::string wfn_file, bool dense_trial, bool finiteT)
 {
   using nda::range;
 
@@ -70,11 +70,11 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   auto[wfn_NMO,nup, ndown] = read_info_from_wfn(wfn_file,"any");
   utils::check(NMO == wfn_NMO, "Error: NMO != wfn_NMO.");
   WALKER_TYPES type         = getWalkerType(wfn_file);
-  int nspin                 = (type == COLLINEAR or type == COLLINEAR_FT) ? 2 : 1;
-  int npol                  = (type == NONCOLLINEAR or type == NONCOLLINEAR_FT) ? 2 : 1;
+  int nspin                 = type == COLLINEAR ? 2 : 1;
+  int npol                  = type == NONCOLLINEAR ? 2 : 1;
 
   int ntau = 0;
-  if(type == COLLINEAR_FT or type == NONCOLLINEAR_FT){
+  if(finiteT){
     ntau = nup;
     nup = NMO;
     ndown = NMO;
@@ -100,6 +100,7 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   ptree wlk_pt;
   wlk_pt.put("name","wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
+  wlk_pt.put("finite_temperature", finiteT);
   auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
 
   ptree wfn_pt;
@@ -110,9 +111,9 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
 
   WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
+  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, finiteT, &ham, nwalk);
 
-  if(type != COLLINEAR_FT and type != NONCOLLINEAR_FT)
+  if(!finiteT)
   {
     auto initial_guess = WfnFac.getInitialGuess("wfn0"); 
     REQUIRE(initial_guess.shape() == std::array<long,3>{nspin,npol*NMO,nup});
@@ -148,7 +149,7 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   double tot_time = 0;
   RealType dt     = 0.01;
   RealType Eshift = std::abs(wset[0].get_property(OVLP));
-  if(type != COLLINEAR_FT and type != NONCOLLINEAR_FT){
+  if(!finiteT){
     for (int i = 0; i < 10; i++)
     {
       prop.Propagate(wset, Eshift, dt);
@@ -207,9 +208,9 @@ TEST_CASE("propagator_factory: build", "[propagator_factory]")
 
   using namespace utils;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
-    propagator_factory_build<MEM>(mpi, hamil_file, wfn_file, true);
-    propagator_factory_build<MEM>(mpi, hamil_file, wfn_file, false);
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    propagator_factory_build<MEM>(mpi, hamil_file, wfn_file, true, finiteT);
+    propagator_factory_build<MEM>(mpi, hamil_file, wfn_file, false, finiteT);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
 }
 

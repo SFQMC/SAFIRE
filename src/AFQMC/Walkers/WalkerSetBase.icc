@@ -55,12 +55,15 @@ void WalkerSetBase<_M_>::parse(ptree pt_in)
     
   walkerType = utils::parse_enum<WALKER_TYPES>(walker_type, {
     {CLOSED, "closed-shell RHF", {"closed"}},
-    {NONCOLLINEAR_FT, "GHF finite-temperature", {"noncollinear-ft", "non-collinear-ft"}},
-    {COLLINEAR_FT, "UHF/ROHF finite-temperature", {"collinear-ft"}},
     {NONCOLLINEAR, "GHF", {"non-collinear", "noncollinear"}},
     {COLLINEAR, "UHF/ROHF", {"collinear"}},
     {FULLYPOLARIZED, "beta sector identically 0", {"fullypolarized", "fully-polarized"}},
   }, "walker");
+
+  finite_temperature = pt.get<bool>("finite_temperature", false); // defaults to false for GS
+  utils::check(!finite_temperature ||
+              ( walkerType == COLLINEAR || walkerType == NONCOLLINEAR ),
+              "finite temperature requires collinear or noncollinear walkers");
 
   load_balance = utils::parse_enum<LOAD_BALANCE_ALGORITHM>(load_balance_type, {
     {SIMPLE, "blocking 1-1 swap", {"simple"}},
@@ -86,45 +89,52 @@ void WalkerSetBase<_M_>::setup()
   // careful! These are only used to calculate memory needs and access points/partitionings
   int ncol = nup;
   int nrow = NMO;
-  if(walkerType == COLLINEAR_FT or walkerType == NONCOLLINEAR_FT)
+  // wlk_descriptor: {nmo, naea, naeb, nback_prop, nCV, nRefs, nHist}
+  if(!finite_temperature){
+    if (walkerType == CLOSED)
+    {
+      wlk_desc = {NMO, nup, 0, 0, 0, 0, 0};
+    }
+    else if (walkerType == COLLINEAR)
+    {
+      wlk_desc = {NMO, nup, ndown, 0, 0, 0, 0};
+      ncol += ndown;
+    }
+    else if (walkerType == NONCOLLINEAR)
+    {
+      wlk_desc = {2 * NMO, nup + ndown, 0, 0, 0, 0, 0};
+      nrow += NMO;
+      ncol += ndown;
+    }
+    else if (walkerType == FULLYPOLARIZED)
+    {
+      wlk_desc = {NMO, nup, 0, 0, 0, 0, 0};
+    }
+    else
+    {
+      app_error(" Error: Incorrect ground state walker_type on WalkerSetBase::setup ");
+      APP_ABORT("");
+    }
+  }
+  else //finite temperature
   {
     ncol = NMO;
-  }
-  // wlk_descriptor: {nmo, naea, naeb, nback_prop, nCV, nRefs, nHist}
-  if (walkerType == CLOSED)
-  {
-    wlk_desc = {NMO, nup, 0, 0, 0, 0, 0};
-  }
-  else if (walkerType == COLLINEAR)
-  {
-    wlk_desc = {NMO, nup, ndown, 0, 0, 0, 0};
-    ncol += ndown;
-  }
-  else if (walkerType == NONCOLLINEAR)
-  {
-    wlk_desc = {2 * NMO, nup + ndown, 0, 0, 0, 0, 0};
-    nrow += NMO;
-    ncol += ndown;
-  }
-  else if (walkerType == FULLYPOLARIZED)
-  {
-    wlk_desc = {NMO, nup, 0, 0, 0, 0, 0};
-  }
-  else if (walkerType == COLLINEAR_FT)
-  {
-    wlk_desc = {NMO, NMO, NMO, 0, 0, 0, 0};
-    ncol += NMO;
-  }
-  else if (walkerType == NONCOLLINEAR_FT)
-  {
-    wlk_desc = {2*NMO, 2*NMO, 0, 0, 0, 0, 0};
-    nrow += NMO;
-    ncol += NMO;
-  }
-  else
-  {
-    app_error(" Error: Incorrect walker_type on WalkerSetBase::setup ");
-    APP_ABORT("");
+    if (walkerType == COLLINEAR)
+    {
+      wlk_desc = {NMO, NMO, NMO, 0, 0, 0, 0};
+      ncol += NMO;
+    }
+    else if (walkerType == NONCOLLINEAR)
+    {
+      wlk_desc = {2*NMO, 2*NMO, 0, 0, 0, 0, 0};
+      nrow += NMO;
+      ncol += NMO;
+    }
+    else
+    {
+      app_error(" Error: finite temperature currently requires a collinear or noncollinear walker type ");
+      APP_ABORT("");
+    }
   }
 
   //   T = 0
@@ -145,12 +155,12 @@ void WalkerSetBase<_M_>::setup()
   //   - SlaterMatrixAux:        Same size as Slater Matrix
   //   (T=0) Total: 10+2*NROW*NCOL+BP_SIZE+2*NBACK_PROP
   int cnt        = 0;
-  if(walkerType != COLLINEAR_FT and walkerType != NONCOLLINEAR_FT)
+  if(!finite_temperature)
   {    
     data_displ[SM] = cnt;
     cnt += nrow * ncol;
   }
-  else if(walkerType == COLLINEAR_FT or walkerType == NONCOLLINEAR_FT) 
+  else //finite_temperature 
   {
     data_displ[UR] = cnt;
     cnt += nrow * ncol;
@@ -464,7 +474,7 @@ void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& U,
                                        nda::MemoryArrayOfRank<3> auto const& V)
 { 
   auto all = nda::range::all;
-  int nspin = (walkerType == COLLINEAR_FT ? 2 : 1);
+  int nspin = (walkerType == COLLINEAR ? 2 : 1);
   utils::check(U.shape() == std::array<long,3>{nspin,wlk_desc[0],wlk_desc[1]} , "Size mismatch.");
   reserve(n);
   if (n > tot_num_walkers)
@@ -478,7 +488,7 @@ void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& U,
       w0.UMatrix(Alpha) = U(0,nda::ellipsis{});
       w0.DMatrix(Alpha) = D(0,nda::ellipsis{});
       w0.VMatrix(Alpha) = V(0,nda::ellipsis{});
-      if (walkerType == COLLINEAR_FT)
+      if (walkerType == COLLINEAR)
       {
         w0.UMatrix(Beta) = U(1,all,nda::range(wlk_desc[2]));
         w0.DMatrix(Beta) = D(1,nda::range(wlk_desc[2]));
@@ -511,7 +521,7 @@ template<MEMORY_SPACE _M_>
 void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<4> auto const& UDV)
 { 
   auto all = nda::range::all;
-  int nspin = (walkerType == COLLINEAR_FT ? 2 : 1);
+  int nspin = (walkerType == COLLINEAR ? 2 : 1);
   utils::check(UDV.shape() == std::array<long,4>{3,nspin,wlk_desc[0],wlk_desc[1]}, "Size mismatch.");
   reserve(n);
   if (n > tot_num_walkers)
@@ -525,7 +535,7 @@ void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<4> auto const& UDV
       w0.UMatrix(Alpha) = UDV(0,0,nda::ellipsis{});
       w0.DMatrix(Alpha) = nda::diagonal(UDV(1,0,nda::ellipsis{}));
       w0.VMatrix(Alpha) = UDV(2,0,nda::ellipsis{});
-      if (walkerType == COLLINEAR_FT)
+      if (walkerType == COLLINEAR)
       {
         w0.UMatrix(Beta) = UDV(0,1,all,nda::range(wlk_desc[2]));
         w0.DMatrix(Beta) = nda::diagonal(UDV(1,1,all,nda::range(wlk_desc[2])));
@@ -560,7 +570,7 @@ template<MEMORY_SPACE _M_>
 void WalkerSetBase<_M_>::reset(int n)
 { 
   auto all = nda::range::all;
-  int npol = (walkerType == NONCOLLINEAR_FT ? 2 : 1);
+  int npol = (walkerType == NONCOLLINEAR ? 2 : 1);
 
   reserve(n);
 
@@ -578,7 +588,7 @@ void WalkerSetBase<_M_>::reset(int n)
     w0.UMatrix(Alpha) = IMat();
     w0.DMatrix(Alpha) = IVec();
     w0.VMatrix(Alpha) = IMat();
-    if (walkerType == COLLINEAR_FT)
+    if (walkerType == COLLINEAR)
     {
       w0.UMatrix(Beta) = IMat();
       w0.DMatrix(Beta) = IVec();

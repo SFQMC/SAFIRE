@@ -84,8 +84,8 @@ public:
                                   [[maybe_unused]] nda::array<ComplexType, 1> const& vMF,
                                   nda::array<long,1> const& n2IJ)
   {
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
-    int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
+    int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+    int nspin = walker_type == COLLINEAR ? 2 : 1;
     int NMO = H1.extent(1) / npol;
     long nIJ = n2IJ.extent(0);
 

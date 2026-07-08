@@ -190,7 +190,7 @@ TEST_CASE("hamiltonian_factory: build", "[hamiltonian_factory]")
 
   using namespace utils;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool) {
     hamiltonian_factory_build<MEM>(mpi, hamil_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::PHMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
 }

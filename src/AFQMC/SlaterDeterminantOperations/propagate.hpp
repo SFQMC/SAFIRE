@@ -318,28 +318,28 @@ void Propagate(WALKER_TYPES walker_type, int npol, nda::MemoryArrayOfRank<3> aut
   int nwalk        = SMA.extent(0); 
   utils::check(V.extent(1) == nwalk, "Size mismatch");
   long nspin_P1 = P1.extent(0);
-  utils::check((walker_type == COLLINEAR or walker_type == COLLINEAR_FT) and (npol==1), "Walker type mismatch: walker_type must be COLLINEAR or COLLINEAR_FT and npol==1, got walker_type: {}, npol: {}", walkerTypeToString(walker_type), npol);
+  utils::check((walker_type == COLLINEAR) and (npol==1), "Walker type mismatch: walker_type must be COLLINEAR and npol==1, got walker_type: {}, npol: {}", walkerTypeToString(walker_type), npol);
   
   if constexpr ( nda::MemoryArrayOfRank<V_t,4> ) {
     long nspin_V = V.extent(0);
     if constexpr( nda::MemoryArrayOfRank<P_t,3> ) {
       detail::propagate_impl<TA>(npol,SMA,P1(0,nda::ellipsis{}),V(0,all,all,all),order);
-      if(walker_type==COLLINEAR or walker_type==COLLINEAR_FT)
+      if(walker_type==COLLINEAR)
         detail::propagate_impl<TA>(npol,SMB,P1(1%nspin_P1,nda::ellipsis{}),V(1%nspin_V,all,all,all),order);
     } else {
       detail::propagate_impl<TA>(npol,SMA,P1(0),V(0,all,all,all),order);
-      if(walker_type==COLLINEAR or walker_type==COLLINEAR_FT)
+      if(walker_type==COLLINEAR)
         detail::propagate_impl<TA>(npol,SMB,P1(1%nspin_P1),V(1%nspin_V,all,all,all),order);
     }
   } else {
     long nspin_V = V.extent(0);
     if constexpr( nda::MemoryArrayOfRank<P_t,3> ) {
       detail::propagate_impl<TA>(npol,SMA,P1(0,nda::ellipsis{}),V(0),order);
-      if(walker_type==COLLINEAR or walker_type==COLLINEAR_FT)
+      if(walker_type==COLLINEAR)
         detail::propagate_impl<TA>(npol,SMB,P1(1%nspin_P1,nda::ellipsis{}),V(1%nspin_V),order);
     } else {
       detail::propagate_impl<TA>(npol,SMA,P1(0),V(0),order);
-      if(walker_type==COLLINEAR or walker_type==COLLINEAR_FT)
+      if(walker_type==COLLINEAR)
         detail::propagate_impl<TA>(npol,SMB,P1(1%nspin_P1),V(1%nspin_V),order);
     }
   }
@@ -352,15 +352,16 @@ requires( std::decay_t<V_t>::is_stride_order_C() and math::is_valid_op(TA) and
 void Propagate(WlkSet& wset, P_t const& P1, V_t const& V, int order = 6)
 {
   auto walker_type = wset.getWalkerType();
-  int npol  = (walker_type == NONCOLLINEAR or walker_type==NONCOLLINEAR_FT) ? 2 : 1;
-  if(walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT){
+  int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+  bool ft = wset.isFiniteTemperature();
+  if(!ft){
     if(walker_type == COLLINEAR) 
       Propagate<MEM,TA>(walker_type,npol,wset.SlaterMatrices(Alpha),wset.SlaterMatrices(Beta),P1,V,order);
     else
       Propagate<MEM,TA>(walker_type,npol,wset.SlaterMatrices(Alpha),P1,V,order);
   }
   else{
-    if(walker_type == COLLINEAR_FT) 
+    if(walker_type == COLLINEAR) 
       Propagate<MEM,TA>(walker_type,npol,wset.UMatrices(Alpha),wset.UMatrices(Beta),P1,V,order);
     else
       Propagate<MEM,TA>(walker_type,npol,wset.UMatrices(Alpha),P1,V,order);

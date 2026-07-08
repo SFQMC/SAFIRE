@@ -82,11 +82,11 @@ public:
 
     // (a,a,a,a), (a,a,b,b)
     int nspinblocks = 2;
-    if (walker_type == COLLINEAR or walker_type == COLLINEAR_FT)
+    if (walker_type == COLLINEAR)
     {
       nspinblocks = 3; // (a,a,a,a), (a,a,b,b), (b,b,b,b)
     }
-    else if (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT)
+    else if (walker_type == NONCOLLINEAR)
       APP_ABORT(" Error: NONCOLLINEAR not yet implemented. \n\n");
 
     dm_average.resize(nave_, nspinblocks, dm_size, dm_size, dm_size, dm_size);
@@ -168,7 +168,7 @@ private:
   {
     using nda::ellipsis;
     // (ikjl) = Gik * Gjl - (same spin) Gil Gjk
-    if (walker_type == COLLINEAR or walker_type == COLLINEAR_FT)
+    if (walker_type == COLLINEAR)
     {
       memory::buffered_array<MEM,ComplexType,2> R(NMO * NMO, NMO * NMO);
       memory::buffered_array<MEM,ComplexType,2> Q(NMO, NMO * NMO * NMO);

@@ -150,7 +150,7 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   int nwalk = 2;
   WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
+  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
 
   ptree prop_pt;
   prop_pt.put("name","prop0");
@@ -247,7 +247,7 @@ TEST_CASE("estimators: reduced density matrix", "[estimators]")
 
   using namespace utils;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool) {
     estimators_reduced_density_matrix<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::PHMSD | TestFiles::ALL_SYSTEMS);
 }

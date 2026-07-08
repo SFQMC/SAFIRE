@@ -17,6 +17,7 @@
 #include <random>
 #include <numeric>
 #include <boost/optional.hpp>
+#include "AFQMC/config.h"
 #include "utilities/h5_utils.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
 
@@ -229,6 +230,7 @@ template<MEMORY_SPACE MEM>
 Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                            ptree pt_in,
                                            WALKER_TYPES walker_type,
+                                           bool finiteT,
                                            Hamiltonian& h,
                                            int targetNW)
 {
@@ -247,8 +249,8 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 
   const auto [NMO, nup_in_wfn, ndown_in_wfn] = read_info_from_wfn(filename,"any");
 
-  int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
-  int npol = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+  int nspin = walker_type == COLLINEAR ? 2 : 1;
+  int npol = walker_type == NONCOLLINEAR ? 2 : 1;
 
   WAVEFUNCTION_TYPES wfn_type; 
   if(mpi->comm.root()) { 
@@ -281,7 +283,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     WALKER_TYPES input_wtype{};
     getCommonInput(ngrp, ndets_to_read, ci, input_wtype);
 
-    if (walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT) {
+    if (!finiteT) {
       // validation blocks
       utils::check(input_wtype != NONCOLLINEAR or walker_type == NONCOLLINEAR,
           "Error: Trial wavefunction is NONCOLLINEAR and requires NONCOLLINEAR walkers. walker_type: {}", walkerTypeToString(walker_type));
@@ -299,7 +301,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       auto PsiT = read_nomsd_wavefunction<MEM>(ngrp,ndets_to_read,walker_type,NMO,nup,ndown);
 
       // Set initial walker's Slater matrix.
-      getInitialGuess(ngrp, *mpi, name, NMO, nup, ndown, walker_type);
+      getInitialGuess(ngrp, *mpi, name, NMO, nup, ndown, walker_type, finiteT);
 
       // if not set, get default based on HamTYpe
       // use sparse trial only on KP runs
@@ -391,7 +393,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
                    "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
                    "finite-temperature walkers.");
       // validation blocks
-      utils::check(input_wtype != NONCOLLINEAR_FT or walker_type == NONCOLLINEAR_FT,
+      utils::check(input_wtype != NONCOLLINEAR or walker_type == NONCOLLINEAR,
           "Error: Trial wavefunction is NONCOLLINEAR and requires NONCOLLINEAR walkers. walker_type: {}", walkerTypeToString(walker_type));
       
       int ntau = nup_in_wfn;
@@ -405,7 +407,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       auto PsiT = read_nomsd_wavefunction<MEM>(ngrp,ndets_to_read,walker_type,NMO,ntau);
 
       // Set initial walker's Slater matrix.
-      getInitialGuess_ft(ngrp, *mpi, name, NMO, walker_type);
+      getInitialGuess_ft(ngrp, *mpi, name, NMO, walker_type, finiteT);
 
       // if not set, get default based on HamTYpe
       // use sparse trial only on KP runs
@@ -622,7 +624,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       }
     }
 
-    getInitialGuess(ngrp, *mpi, name, NMO, nup, ndown, walker_type);
+    getInitialGuess(ngrp, *mpi, name, NMO, nup, ndown, walker_type, finiteT);
 
     auto n_unique(abij.number_of_unique_excitations());
     app_log(1," Number of unique determinants per spin channel: {} {} ",
@@ -699,11 +701,14 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 template<MEMORY_SPACE MEM>
 void WavefunctionFactory<MEM>::getInitialGuess_ft(h5::group grp,
          utils::mpi_context_t<boost::mpi3::communicator>& mpi,
-         const std::string& name, int NMO, WALKER_TYPES walker_type)
+         const std::string& name, int NMO, WALKER_TYPES walker_type, bool finiteT)
 {
+
+    utils::check(finiteT, "Error: attempting to read finite-T wfn with finiteT flag set to false");
+
   using nda::range;
-  int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
-  int npol = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+  int nspin = walker_type == COLLINEAR ? 2 : 1;
+  int npol = walker_type == NONCOLLINEAR ? 2 : 1;
   nda::array<int,1> dims(5);
   nda::h5_read(grp,"dims",dims);
   
@@ -722,9 +727,9 @@ void WavefunctionFactory<MEM>::getInitialGuess_ft(h5::group grp,
     utils::h5_read(grp,"DR_alpha",DRup);
     auto VRup = M(2,0,nda::ellipsis{});
     utils::h5_read(grp,"VR_alpha",VRup);
-    if (walker_type == COLLINEAR_FT)
+    if (walker_type == COLLINEAR)
     {
-      if (wtype == COLLINEAR_FT)
+      if (wtype == COLLINEAR)
       {
         auto URdn = M(0,1,nda::range::all,nda::range(NMO));
         utils::h5_read(grp,"UR_beta",URdn);
@@ -735,7 +740,6 @@ void WavefunctionFactory<MEM>::getInitialGuess_ft(h5::group grp,
       }
       else if (wtype == CLOSED)
       {
-        //utils::check(nup == ndown, "Error: wfn_type:Closed with nup != ndown.");
         M(0,1,nda::ellipsis{}) = URup();
         M(1,1,nda::ellipsis{}) = DRup();
         M(2,1,nda::ellipsis{}) = VRup();
@@ -754,7 +758,7 @@ void WavefunctionFactory<MEM>::getInitialGuess_ft(h5::group grp,
 template<MEMORY_SPACE MEM>
 void WavefunctionFactory<MEM>::getInitialGuess(h5::group grp,
          utils::mpi_context_t<boost::mpi3::communicator>& mpi,
-         const std::string& name, int NMO, int nup, int ndown, WALKER_TYPES walker_type)
+         const std::string& name, int NMO, int nup, int ndown, WALKER_TYPES walker_type, bool finiteT)
 {
   using nda::range;
   auto all = range::all;
@@ -766,7 +770,7 @@ void WavefunctionFactory<MEM>::getInitialGuess(h5::group grp,
 
   WALKER_TYPES wtype(initWALKER_TYPES(dims[3]));
   utils::check(walkerTypeIsConvertible(wtype, walker_type), "Initial guess ({}) not convertible to walker_type {}", walkerTypeToString(wtype), walkerTypeToString(walker_type));
-  utils::check(walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT, "called ground state function on finite temperature");
+  utils::check(!finiteT, "Error: attempting to read ground state wfn with finiteT flag set to true");
   auto guess = initial_guess.find(name);
   utils::check(guess == initial_guess.end(), 
              "Error: Problems adding new initial guess, already exists.");
@@ -1178,11 +1182,11 @@ void WavefunctionFactory<MEM>::build_PsiT_MO_phmsd(WALKER_TYPES walker_type, int
 
 // Instantiate templates
 
-template Wavefunction<HOST_MEMORY> WavefunctionFactory<HOST_MEMORY>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,ptree,WALKER_TYPES,Hamiltonian&,int);
+template Wavefunction<HOST_MEMORY> WavefunctionFactory<HOST_MEMORY>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,ptree,WALKER_TYPES,bool,Hamiltonian&,int);
 
 #if defined(ENABLE_DEVICE)
 
-template Wavefunction<DEVICE_MEMORY> WavefunctionFactory<DEVICE_MEMORY>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,ptree,WALKER_TYPES,Hamiltonian&,int);
+template Wavefunction<DEVICE_MEMORY> WavefunctionFactory<DEVICE_MEMORY>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,ptree,WALKER_TYPES,bool,Hamiltonian&,int);
 
 #endif
 

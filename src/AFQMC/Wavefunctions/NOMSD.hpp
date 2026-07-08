@@ -112,6 +112,8 @@ public:
 
   WALKER_TYPES getWalkerType() const { return walker_type; }
 
+  bool isFiniteTemperature() const { return false; }
+
   /*
    * Returns the memory space.
    */

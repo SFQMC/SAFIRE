@@ -35,8 +35,8 @@ void NOMSD_FT<MEM,devPsiT>::Energy(const WlkSet& wset, TMat&& E, TVec&& Ov, int 
   memory::check_memory_space<MEM>(E,Ov);
   const int ndet = ci.size();
   const int nw   = wset.size();
-  const int nspin = (walker_type==COLLINEAR_FT ? 2 : 1 ); 
-  const int npol = (walker_type==NONCOLLINEAR_FT ? 2 : 1 );
+  const int nspin = walker_type==COLLINEAR ? 2 : 1; 
+  const int npol = walker_type==NONCOLLINEAR ? 2 : 1;
   nt = nt < 0 ? wset.getTauStep() : nt; // if time-slice is (default nt = -1) not given, use current time-slice 
   utils::check(Ov.size() == nw, "Size mismatch");
   utils::check(E.shape() == std::array<long,2>{nw,3}, "Size mismatch");
@@ -102,8 +102,8 @@ void NOMSD_FT<MEM,devPsiT>::DensityMatrix(const WlkSet& wset, RMat&& Ref, MatG&&
   auto all = nda::range::all;
   memory::check_memory_space<MEM>(G,Ov);
   const int nw   = wset.size();
-  const int nspin = (walker_type==COLLINEAR_FT ? 2 : 1 );
-  const int npol = (walker_type==NONCOLLINEAR_FT ? 2 : 1 );
+  const int nspin = walker_type==COLLINEAR ? 2 : 1;
+  const int npol = walker_type==NONCOLLINEAR ? 2 : 1;
   utils::check(Ov.size() == nw, "Size mismatch");
   utils::check(Ref.extent(0) == nspin,"Size mismatch");
   utils::check(Ref(0,0).shape() == std::array<long,2>{npol*NMO,npol*NMO}, "Size mismatch");
@@ -148,7 +148,7 @@ void NOMSD_FT<MEM,devPsiT>::DensityMatrix(const WlkSet& wset, RMat&& Ref, MatG&&
 
   }
 
-  if (walker_type == COLLINEAR_FT){
+  if (walker_type == COLLINEAR){
 
     wset.getProperty(LOGSCL_DN, sclR(1,nda::range::all));
     memory::buffered_array<MEM,ComplexType,1> sclL_dn(1,sclL(1));
@@ -184,8 +184,8 @@ void NOMSD_FT<MEM,devPsiT>::MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVe
   memory::check_memory_space<MEM>(G,Ov);
   const int ndet  = ci.size();
   const int nw    = wset.size();
-  const int nspin = (walker_type==COLLINEAR_FT ? 2 : 1 );
-  const int npol  = (walker_type==NONCOLLINEAR_FT ? 2 : 1 );
+  const int nspin = walker_type==COLLINEAR ? 2 : 1;
+  const int npol  = walker_type==NONCOLLINEAR ? 2 : 1;
   utils::check(Ov.size() == nw, "Size mismatch");
   const int nc    =  nspin*npol*NMO ;
   utils::check(G.shape() == std::array<long,2>{nw,nc*npol*NMO}, "Size mismatch");
@@ -280,7 +280,7 @@ void NOMSD_FT<MEM,devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt)
                         sclL_up, sclR_up, Ov);
     //if(walker_type == CLOSED) {
     //  nda::tensor::scale(ComplexType(2.0),Ov);
-      if (walker_type == COLLINEAR_FT)  {
+      if (walker_type == COLLINEAR)  {
         memory::buffered_array<MEM,ComplexType,1> sclR_dn(nw);
         wset.getProperty(LOGSCL_DN, sclR_dn(nda::range::all));
 
@@ -307,7 +307,7 @@ void NOMSD_FT<MEM,devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt)
                         sclL_up, sclR_up, Ov);
       if(walker_type == CLOSED) utils::check(false, "Closed walkers not implemented for finite-T");
 
-      if (walker_type == COLLINEAR_FT)  {
+      if (walker_type == COLLINEAR)  {
         memory::buffered_array<MEM,ComplexType,1> sclR_dn(nw);
         wset.getProperty(LOGSCL_DN, sclR_dn(nda::range::all));
 
@@ -366,8 +366,8 @@ void NOMSD_FT<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Me
   auto all = range::all;
   const int ndet   = ci.size();
   const int nw     = wset.size();
-  const int nspin  = (walker_type==COLLINEAR_FT ? 2 : 1 );
-  const int npol   = (walker_type==NONCOLLINEAR_FT ? 2 : 1 );
+  const int nspin  = walker_type==COLLINEAR ? 2 : 1;
+  const int npol   = walker_type==NONCOLLINEAR ? 2 : 1;
 
   int nt = wset.getTauStep();
   // this is wrong without importanceSampling!!!
@@ -824,8 +824,8 @@ auto NOMSD_FT<MEM,devPsiT>::G_MF()
   using nda::range;
   auto all = range::all;
 
-  int nspin = (walker_type==COLLINEAR_FT ? 2 : 1);
-  int npol  = (walker_type==NONCOLLINEAR_FT ? 2 : 1);
+  int nspin = walker_type==COLLINEAR ? 2 : 1;
+  int npol  = walker_type==NONCOLLINEAR ? 2 : 1;
   int ndet  = ci.size();
 
   if (ndet == 1)
@@ -859,7 +859,7 @@ auto NOMSD_FT<MEM,devPsiT>::G_MF()
         auto G3d = nda::reshape(gMF,std::array<long,3>{1,nspin*npol*NMO,npol*NMO});
         det_ops::MixedDensityMatrix(ULup, DLup(0,all), VLup, IMat3D, IVec2D, 
             IMat3D, G3d(all,range(npol*NMO),all), Ov, sclL0_up, sclR, true, true);
-        if( walker_type == COLLINEAR_FT ) {
+        if( walker_type == COLLINEAR ) {
           memory::buffered_array<MEM,ComplexType,1> sclL0_dn(1,sclL(1));
           det_ops::MixedDensityMatrix(ULdn, DLdn(0,all), VLdn, IMat3D, IVec2D, 
                IMat3D, G3d(all,nda::range(npol*NMO,nspin*npol*NMO),all), Ov, sclL0_dn, sclR, true, true);
@@ -869,7 +869,7 @@ auto NOMSD_FT<MEM,devPsiT>::G_MF()
         det_ops::MixedDensityMatrix(ULup, DLup(0,all), VLup, IMat3D, IVec2D, 
                 IMat3D, gt, Ov, sclL0_up, sclR, true, true);
         gMF(0,all,all) = gt(0,all,all);
-        if( walker_type == COLLINEAR_FT ) { 
+        if( walker_type == COLLINEAR ) { 
           memory::buffered_array<MEM,ComplexType,1> sclL0_dn(1,sclL(1));
           det_ops::MixedDensityMatrix(ULdn, DLdn(0,all), VLdn, IMat3D, IVec2D, 
                 IMat3D, gt, Ov, sclL0_dn, sclR, true, true);
@@ -956,8 +956,8 @@ void NOMSD_FT<MEM,devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
   auto v2d = nda::reshape(v,std::array<long,2>{1,v.size()});   
   v() = ComplexType(0.0);
 
-  int nspin = (walker_type==COLLINEAR_FT ? 2 : 1);
-  int npol  = (walker_type==NONCOLLINEAR_FT ? 2 : 1);
+  int nspin = walker_type==COLLINEAR ? 2 : 1;
+  int npol  = walker_type==NONCOLLINEAR ? 2 : 1;
   int ndet  = ci.size();
 
   if (ndet == 1)
@@ -987,7 +987,7 @@ void NOMSD_FT<MEM,devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
     det_ops::MixedDensityMatrix(ULup, DLup(0,all), VLup, IMat3D, IVec2D, 
             IMat3D, G3d(all,range(npol*NMO),all), Ov, sclL0_up, sclR, true, true);
     
-    if( walker_type == COLLINEAR_FT ) {
+    if( walker_type == COLLINEAR ) {
         memory::buffered_array<MEM,ComplexType,1> sclL0_dn(1,sclL(1)); 
         det_ops::MixedDensityMatrix(ULdn, DLdn(0,all), VLdn, IMat3D, IVec2D, 
                IMat3D, G3d(all,nda::range(npol*NMO,nspin*npol*NMO),all), Ov, sclL0_dn, sclR, true, true);

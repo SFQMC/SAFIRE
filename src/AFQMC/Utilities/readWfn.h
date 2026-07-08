@@ -142,7 +142,7 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
                             WALKER_TYPES walker_type, int NMO, int ntau)
 {
   using csr = PsiT_Matrix<MEM>;
-  long nspin = (walker_type == COLLINEAR_FT ? 2 : 1);
+  long nspin = walker_type == COLLINEAR ? 2 : 1;
 
   std::vector<int> dims(5);
   h5::read(grp,"dims",dims);
@@ -160,29 +160,24 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
   if(wfn_type == walker_type) {
     for(int id=0, k=0; id<ndets; ++id) {
       for(int is=0; is<nspin; ++is, ++k) {
-        //h5::h5_read(grp,"sclL_"+std::to_string(k),sclL(k));
         h5::group pgrp = grp.open_group("UL_"+std::to_string(k));
         psi(id,is,0) = std::move(math::sparse::HDF2CSR<ComplexType,MEM,int,int>(pgrp));
         pgrp = grp.open_group("DL_"+std::to_string(k));
         psi(id,is,1) = std::move(math::sparse::HDF2CSR<ComplexType,MEM,int,int>(pgrp));
         pgrp = grp.open_group("VL_"+std::to_string(k));
         psi(id,is,2) = std::move(math::sparse::HDF2CSR<ComplexType,MEM,int,int>(pgrp));
-        //utils::check(psi(id,is).shape() == std::array<long,2>{nel[is],NMO}, "Shape mismatch");
       } 
     }
-  } else if(wfn_type == COLLINEAR_FT) { 
-    utils::check(walker_type == NONCOLLINEAR_FT, "walker_type==COLLINEAR incompatible with wfn_type:{}",int(wfn_type));
+  } else if(wfn_type == COLLINEAR) { 
+    utils::check(walker_type == NONCOLLINEAR, "walker_type==COLLINEAR incompatible with wfn_type:{}",int(wfn_type));
     // upgrade from COLLINEAR to NONCOLLINEAR
     for(int id=0; id<ndets; ++id) {
-      //h5::h5_read(grp,"sclL_"+std::to_string(2*id),sclL(2*id));
-      //h5::h5_read(grp,"sclL_"+std::to_string(2*id+1),sclL(2*id+1));
       h5::group ugrp = grp.open_group("UL_"+std::to_string(2*id));
       auto up = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(ugrp);
       h5::group dgrp = grp.open_group("UL_"+std::to_string(2*id+1));
       auto dn = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(dgrp);
       utils::check(up.extent(1) == NMO, "Shape mismatch");
       utils::check(dn.extent(1) == NMO, "Shape mismatch");
-      //utils::check(up.extent(0) + dn.extent(1) == nel[0], "Shape mismatch");
       // combining, shift dn by NMO 
       psi(id,0,0) = math::sparse::combine_csr(up,dn,NMO);
       ugrp = grp.open_group("DL_"+std::to_string(2*id));
@@ -191,7 +186,6 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
       dn = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(dgrp);
       utils::check(up.extent(1) == NMO, "Shape mismatch");
       utils::check(dn.extent(1) == NMO, "Shape mismatch");
-      //utils::check(up.extent(0) + dn.extent(1) == nel[0], "Shape mismatch");
       // combining, shift dn by NMO 
       psi(id,0,1) = math::sparse::combine_csr(up,dn,NMO);
       ugrp = grp.open_group("VL_"+std::to_string(2*id));
@@ -200,39 +194,13 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
       dn = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(dgrp);
       utils::check(up.extent(1) == NMO, "Shape mismatch");
       utils::check(dn.extent(1) == NMO, "Shape mismatch");
-      //utils::check(up.extent(0) + dn.extent(1) == nel[0], "Shape mismatch");
       // combining, shift dn by NMO 
       psi(id,0,2) = math::sparse::combine_csr(up,dn,NMO);
     } 
   } else {
     utils::check(wfn_type == CLOSED, "Closed wavefunction type not implemented for finite-T");
-    /*
-    utils::check(wfn_type == CLOSED, "Logic error: wfn_type:{}, walker_type:{}",int(wfn_type),int(walker_type)); 
-    utils::check(walker_type == COLLINEAR or walker_type == NONCOLLINEAR, "Logic error."); 
-    if(walker_type == COLLINEAR) {
-      // upgrade from CLOSED to COLLINEAR 
-      utils::check(nup==ndown, "Problems upgrading wavefunction: nup!=ndown when upgrading to COLLINEAR");
-      for(int id=0; id<ndets; ++id) {
-        h5::group pgrp = grp.open_group("PsiT_"+std::to_string(id));
-        psi(id,0) = std::move(math::sparse::HDF2CSR<ComplexType,MEM,int,int>(pgrp));
-        utils::check(psi(id,0).shape() == std::array<long,2>{nel[0],NMO}, "Shape mismatch");
-        psi(id,1) = psi(id,0);
-      }
-    } else {
-      // upgrade from CLOSED to NONCOLLINEAR 
-      for(int id=0; id<ndets; ++id) {
-        h5::group ugrp = grp.open_group("PsiT_"+std::to_string(id));
-        auto up = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(ugrp);
-        utils::check(up.extent(1) == NMO, "Shape mismatch");
-        utils::check(2*up.extent(0) == nel[0], "Shape mismatch");
-        // combining, shift dn by NMO 
-        psi(id,0) = math::sparse::combine_csr(up,up,NMO);
-      }
-    }
-    */
   }
 
-  //return std::tuple(psi,sclL);
   return psi;
 }
 

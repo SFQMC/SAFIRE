@@ -100,7 +100,7 @@ void estimator_handler_measure_schedule(std::shared_ptr<utils::mpi_context_t<boo
   int nwalk = 11;
   WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
+  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
 
   ptree prop_pt;
   prop_pt.put("name","prop0");

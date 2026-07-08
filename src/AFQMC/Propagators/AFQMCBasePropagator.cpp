@@ -68,7 +68,7 @@ void AFQMCBasePropagator<MEM>::generateP1(double dt, WALKER_TYPES walker_type, b
   // discrete propagators setup their own vMF
   memory::buffered_array<MEM,ComplexType,1> vMF_discrete(nCV);
   if(discrete_propg) {
-    int npol         = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int npol         = walker_type == NONCOLLINEAR ? 2 : 1;
     nda::array<ComplexType,1> nMF(2*NMO, ComplexType(0.0));
     // setup sparse vector to generate <nI>
     auto Gmf_shm = wfn->G_MF();
@@ -127,8 +127,8 @@ void AFQMCBasePropagator<MEM>::generateP1(double dt, WALKER_TYPES walker_type, b
 
   // assemble H1(i,j) = dt * (h(i,j) + vn0(i,j) + sum_n vMF[n]*vn(i,j,n))
   // H1 should have the same spin structure as walker_type
-  int nspin = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT ? 2 : 1);
-  int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1);
+  int nspin = walker_type == COLLINEAR ? 2 : 1;
+  int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
 
   // H1 is in host
   nda::array<ComplexType,3> H1;

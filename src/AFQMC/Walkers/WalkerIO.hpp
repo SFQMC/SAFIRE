@@ -191,6 +191,7 @@ bool restartFromHDF5(WalkerSet& wset,
   int NMO        = Idata[4];
   int nup       = Idata[5];
   int ndn       = Idata[6];
+  bool ft = wset.isFiniteTemperature();
   utils::check(wlk_nterms == wset.walkerSizeIO(), 
                " Inconsistent walker restart file: IO size, NMO, nup, ndown, WalkerType: {}, {}, {}, {}, {} ",
                wset.walkerSizeIO(), NMO, nup, ndn, walkerTypeToString(wset.getWalkerType()));
@@ -214,7 +215,7 @@ bool restartFromHDF5(WalkerSet& wset,
 
   int nw_local = nWN - nW0;
   { // to limit scope
-    if(walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT){
+    if(!ft){
       int nspin = ((walker_type == COLLINEAR) ? 2 : 1);
       int npol = ((walker_type == NONCOLLINEAR) ? 2 : 1);
       nda::array<ComplexType, 3> Psi(nspin, npol*NMO, nup);
@@ -222,8 +223,8 @@ bool restartFromHDF5(WalkerSet& wset,
       wset.resize(nw_local, Psi);
     }
     else{
-      int nspin = ((walker_type == COLLINEAR_FT) ? 2 : 1);
-      int npol = ((walker_type == NONCOLLINEAR_FT) ? 2 : 1);
+      int nspin = ((walker_type == COLLINEAR) ? 2 : 1);
+      int npol = ((walker_type == NONCOLLINEAR) ? 2 : 1);
       nda::array<ComplexType, 3> U(nspin, npol*NMO, npol*NMO);
       nda::array<ComplexType, 2> D(nspin, npol*NMO);
       nda::array<ComplexType, 3> V(nspin, npol*NMO, npol*NMO);
@@ -273,6 +274,7 @@ bool dumpToHDF5(WalkerSet& wset, h5::file& fh5)
   int w0    = std::accumulate(nw_per_rank.begin(), nw_per_rank.begin() + mpi->comm.rank(), int(0));
 
   auto walker_type = wset.getWalkerType();
+  bool ft = wset.isFiniteTemperature();
 
   // careful here, avoid sending extra information (e.g. B mats for back propg)
   int wlk_nterms = wset.walkerSizeIO();
@@ -299,7 +301,7 @@ bool dumpToHDF5(WalkerSet& wset, h5::file& fh5)
     [[maybe_unused]] long NMO = 0, nup = 0, ndn = 0;
     { // to limit the scope
       auto w = wset[0];
-      if(walker_type != COLLINEAR_FT and walker_type != NONCOLLINEAR_FT){
+      if(!ft){
         auto SM = w.SlaterMatrix(Alpha);
         NMO = SM.extent(0); 
         nup = SM.extent(1); 
@@ -310,7 +312,7 @@ bool dumpToHDF5(WalkerSet& wset, h5::file& fh5)
       } else {
         auto UR = w.UMatrix(Alpha);
         NMO = UR.extent(0); 
-        if (walker_type == NONCOLLINEAR_FT)
+        if (walker_type == NONCOLLINEAR)
           NMO /= 2;
       }
     }

@@ -221,7 +221,7 @@ public:
         for (int ir = i0; ir < iN; ir++, Gur++, DM++)
           (*DM) += X_ * (*Gur) * (*Gur);
       }
-      else if (walker_type == COLLINEAR or walker_type == COLLINEAR_FT)
+      else if (walker_type == COLLINEAR)
       {
         auto&& Gd = G[iw][1];
         ma::product(Gd, Orb0N, T0N);
@@ -238,7 +238,7 @@ public:
             (*DM) += X_ * (*Gur) * (*Gdr);
         }
       }
-      else if (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT)
+      else if (walker_type == NONCOLLINEAR)
       {
         APP_ABORT(" Error: NONCOLLINEAR not yet implemented in n2r. ");
       }

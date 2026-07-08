@@ -60,13 +60,13 @@ public:
   {
     // expect hij as a sparse Matrix with a single row (to reuse csr_matrix class) 
     int nIJ = n2IJ_host.extent(0);
-    int nspin = (type == COLLINEAR or type == COLLINEAR_FT ? 2 : 1);
+    int nspin = type == COLLINEAR ? 2 : 1;
     utils::check(SpVJ.size() == 1 + (nspin-1)*2, "Size mismatch");
     utils::check(SpVX.size() == 1 + (nspin-1), "Size mismatch");
     utils::check(hij[0].shape() == std::array<long,2>{1,nIJ}, "Size mismatch");
     utils::check(SpVJ[0].shape() == std::array<long,2>{nIJ,nIJ}, "Size mismatch");
     utils::check(SpVX[0].shape() == std::array<long,2>{nIJ,nIJ}, "Size mismatch");
-    if(type == COLLINEAR or type == COLLINEAR_FT ) {
+    if(type == COLLINEAR) {
       utils::check(hij[1].shape() == std::array<long,2>{1,nIJ}, "Size mismatch");
       utils::check(SpVJ[1].shape() == std::array<long,2>{nIJ,nIJ}, "Size mismatch");
       utils::check(SpVJ[2].shape() == std::array<long,2>{nIJ,nIJ}, "Size mismatch");
@@ -98,8 +98,8 @@ public:
   {
     using nda::range;
     auto all = range::all;
-    int nspin  = (walker_type == COLLINEAR or walker_type == COLLINEAR_FT) ? 2 : 1;
-    int npol  = (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT) ? 2 : 1;
+    int nspin  = walker_type == COLLINEAR ? 2 : 1;
+    int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
     int NMO = H1.extent(1) / npol;
     int nIJ = n2IJ_host.extent(0);
     utils::check(H1.shape() == std::array<long,3>{nspin, npol*NMO, npol*NMO}, "Shape mismatch");
@@ -116,7 +116,7 @@ public:
       nda::copy_select(true, n2IJ_host, ComplexType(dt), vals, ComplexType(1.0), H2d(0,all));
     }
     // beta component
-    if( walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+    if(walker_type == COLLINEAR) {
       auto vals = nda::to_host(hij[1].values()(range(nIJ)));
       nda::copy_select(true, n2IJ_host, ComplexType(dt), vals, ComplexType(1.0), H2d(1,all));
     }
@@ -165,7 +165,7 @@ public:
         nda::tensor::contract(ComplexType(1.0), G, "nw", VG, "nw", 
     		              ComplexType(1.0), E(all,2), "w");
       }	
-      if(walker_type == COLLINEAR or walker_type == COLLINEAR_FT) {
+      if(walker_type == COLLINEAR) {
         utils::check(EJn.shape() == G.shape(), "Size mismatch");
         if(ispin==0) {
           if( nnz_VJ[2] > 0 ) {

@@ -67,7 +67,7 @@ using namespace afqmc;
 template<MEMORY_SPACE MEM>
 void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
              std::string hamil_file, std::string wfn_file, WALKER_TYPES type,
-             bool dense_trial, bool write_reference)
+             bool finiteT, bool dense_trial, bool write_reference)
 {
   using nda::range;
   auto all = range::all;
@@ -97,16 +97,16 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
     ndown = 0;
   }
 
-  int nspin            = (type == COLLINEAR or type == COLLINEAR_FT) ? 2 : 1;
-  int npol             = (type == NONCOLLINEAR or type == NONCOLLINEAR_FT) ? 2 : 1;
-  int nel              = (type == COLLINEAR or type == COLLINEAR_FT) ? nup+ndown : nup;
+  int nspin            = (type == COLLINEAR) ? 2 : 1;
+  int npol             = (type == NONCOLLINEAR) ? 2 : 1;
+  int nel              = (type == COLLINEAR) ? nup+ndown : nup;
   double dt(0.01);
 
   app_log(1, "wfn_factory_sdet: native type {} -> walker type {} (dense_trial={})",
           walkerTypeToString(from), walkerTypeToString(type), dense_trial);
 
   int ntau(0);
-  if(type == COLLINEAR_FT or type == NONCOLLINEAR_FT){
+  if(finiteT){
     ntau = nup;
     nup = NMO;
     ndown = NMO;
@@ -130,6 +130,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   ptree wlk_pt;
   wlk_pt.put("name","wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
+  wlk_pt.put("finite_temperature", finiteT);
 
   ptree wfn_pt;
   wfn_pt.put("name","wfn0");
@@ -139,14 +140,14 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
 
   WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
+  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, finiteT, &ham, nwalk);
 
   //nwalk=nw;
   auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
 
-  if(type != COLLINEAR_FT and type != NONCOLLINEAR_FT)
+  if(!finiteT)
   {
-    auto initial_guess = WfnFac.getInitialGuess("wfn0"); 
+    auto initial_guess = WfnFac.getInitialGuess("wfn0");
     REQUIRE(initial_guess.shape() == std::array<long,3>{nspin,npol*NMO,nup});
 
     wset.resize(nwalk, initial_guess);
@@ -162,15 +163,14 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   // Perturb the initial guess by a deterministic non-trivial sequence.
   {
     std::array nels = {nup, ndown};
-    bool ft = (type == COLLINEAR_FT or type == NONCOLLINEAR_FT);
     for (int spin = 0; spin < nspin; spin++) {
-      long nuv = (ft ? 2 : 1);
+      long nuv = (finiteT ? 2 : 1);
       nda::array<ComplexType, 1> p_h(nuv * nwalk * npol * NMO * nels[spin]);
       for (long k = 0; k < p_h.size(); ++k) {
         double v = 0.1 * (k + 1);
         p_h[k] = {std::cos(v), std::sin(v * v)};
       }
-      if (ft) {
+      if (finiteT) {
         memory::array<MEM, ComplexType, 4> p(reshape(p_h, 2, nwalk, npol * NMO, nels[spin]));
         auto UM = wset.UMatrices(static_cast<SpinTypes>(spin));
         auto VM = wset.VMatrices(static_cast<SpinTypes>(spin));
@@ -187,7 +187,6 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   }
 
   // Overlap
-  //if(type != COLLINEAR_FT and type != NONCOLLINEAR_FT)
   wfn.Log_Overlap(wset);
 
   Watch Time;
@@ -245,7 +244,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
       trG += nda::sum(nda::diagonal(gMF_spin)); 
       CHECK_THAT(gMF_spin, utils::Approx(nda::transpose(gMF_spin)));
     }
-    if(type != COLLINEAR_FT && type != NONCOLLINEAR_FT) {
+    if(!finiteT) {
       CHECK_THAT(trG.real(), utils::Approx(nel));
     }
   }
@@ -329,13 +328,19 @@ TEST_CASE("wfn_factory: sdet", "[wfn_factory]")
 
   bool write_reference = WRITE_REFERENCE;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     WALKER_TYPES from = afqmc::getWalkerType(wfn_file, "any");
-    // Test the wfn's native walker type plus every walker type it can be converted to.
-    for(auto to : {CLOSED, COLLINEAR, NONCOLLINEAR, FULLYPOLARIZED, COLLINEAR_FT, NONCOLLINEAR_FT}) {
-      if(!walkerTypeIsConvertible(from, to)) continue;
-      wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, to, true,  write_reference && MEM == HOST_MEMORY);
-      wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, to, false, false);
+    if(finiteT) {
+      // finite-T wavefunctions are tested only at their native (base) walker type.
+      wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, from, true, true,  write_reference && MEM == HOST_MEMORY);
+      wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, from, true, false, false);
+    } else {
+      // Test the wfn's native walker type plus every walker type it can be converted to.
+      for(auto to : {CLOSED, COLLINEAR, NONCOLLINEAR, FULLYPOLARIZED}) {
+        if(!walkerTypeIsConvertible(from, to)) continue;
+        wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, to, false, true,  write_reference && MEM == HOST_MEMORY);
+        wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, to, false, false, false);
+      }
     }
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
 

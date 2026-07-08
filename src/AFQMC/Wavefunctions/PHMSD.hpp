@@ -157,6 +157,8 @@ public:
 
   WALKER_TYPES getWalkerType() const { return walker_type; }
 
+  bool isFiniteTemperature() const { return false; }
+
   /*
    *  Performs runtime optimizations.
    */

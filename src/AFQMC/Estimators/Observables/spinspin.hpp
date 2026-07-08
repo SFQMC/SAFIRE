@@ -87,7 +87,7 @@ public:
           }
         }
       }
-      else if (walker_type == COLLINEAR or walker_type == COLLINEAR_FT)
+      else if (walker_type == COLLINEAR)
       {
         auto Gu_ = G_host(iw,0,nda::ellipsis{});
         auto Gd_ = G_host(iw,1,nda::ellipsis{});
@@ -113,7 +113,7 @@ public:
           }
         }
       }
-      else if (walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT)
+      else if (walker_type == NONCOLLINEAR)
       {
         auto G_ = G_host(iw,0,nda::ellipsis{});
         for (int ref = 0; ref < NMO; ref++){

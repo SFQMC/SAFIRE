@@ -56,16 +56,16 @@ csrM spin_to_walker_type(int NMO, WALKER_TYPES type, std::string stype, csrM& hi
     utils::check_shape(hij, "one_body::tij", 2*NMO, NMO);
     if(type == CLOSED) {
       utils::check(false," Error: Model Hamiltonians not allowed with CLOSED walkers. ");
-    } else if(type == COLLINEAR or type == COLLINEAR_FT) {
+    } else if(type == COLLINEAR) {
       return hij;
-    } else if(type == NONCOLLINEAR or type == NONCOLLINEAR_FT) {
+    } else if(type == NONCOLLINEAR) {
       return math::sparse::collinear_to_noncollinear(hij);
     } else {
       utils::check(false,base_error + " Bad Walker Type!");
     }
   } else if(stype == "noncollinear") {
     utils::check_shape(hij, "one_body::tij", 2*NMO, 2*NMO);
-    if(type == NONCOLLINEAR or type == NONCOLLINEAR_FT) {
+    if(type == NONCOLLINEAR) {
       return hij;
     } else { 
       utils::check(false,base_error + " Bad Walker Type!");
@@ -96,11 +96,11 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
   std::string base_error("Error in ModelHamOpsGenerator::getHamiltonianOperations(): ");
 
   int ndet   = PsiT.extent(0); 
-  int nspin  = ((type == COLLINEAR or type == COLLINEAR_FT) ? 2 : 1);
-  int npol   = ((type == NONCOLLINEAR or type == NONCOLLINEAR_FT) ? 2 : 1);
+  int nspin  = ((type == COLLINEAR) ? 2 : 1);
+  int npol   = ((type == NONCOLLINEAR) ? 2 : 1);
   int NMO = PsiT(0, 0).extent(1)/npol;
   int nel_up = PsiT(0,0).extent(0); 
-  int nel_dn = ( type == COLLINEAR or type == COLLINEAR_FT ? PsiT(0,1).extent(0) : 0 ); 
+  int nel_dn = ( type == COLLINEAR ? PsiT(0,1).extent(0) : 0 ); 
   int nspin_in_PsiT = PsiT.extent(1);
   utils::check(nspin_in_PsiT==1 or nspin_in_PsiT==nspin, base_error + "Invalid PsiT shape");
 
@@ -113,7 +113,7 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
         auto [id] = idx;
         utils::check_shape(PsiT(id,0), "PsiT", nel_up, npol*NMO);
         block(0,all,all) = math::sparse::to_array<'T'>(PsiT(id,0));
-        if(type == COLLINEAR or type == COLLINEAR_FT) {
+        if(type == COLLINEAR) {
           utils::check_shape(PsiT(id,nspin_in_PsiT-1), "PsiT", nel_dn, npol*NMO);
           block(1,all,range(nel_dn)) = math::sparse::to_array<'T'>(PsiT(id,nspin_in_PsiT-1));
         }
