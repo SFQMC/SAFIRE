@@ -57,7 +57,14 @@ public:
         if(debug_level < 0) debug_level=2;
         if(debug_level > 5) debug_level=2;
       }
-      sfqmc::arch::init(world.root(),output_level,debug_level);
+      sfqmc::setup_loggers(world.root(), output_level, debug_level);
+
+#if defined(ENABLE_DEVICE)
+      constexpr bool use_gpu = true;
+#else
+      constexpr bool use_gpu = false;
+#endif
+      sfqmc::arch::init(use_gpu);
     }
 
     void testCaseEnded(Catch::TestCaseStats const& stats) override {

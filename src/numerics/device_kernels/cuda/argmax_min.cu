@@ -39,13 +39,17 @@
 namespace kernels::device
 {
 
+template<typename R>
 struct op_less_real
 {
   template<typename T>
   __host__ __device__
-  bool operator()(T const& a, T const& b)
+  bool operator()(T const& a, T const& b) const
   {
-    return thrust::get<0>(a).real() < thrust::get<0>(b).real();
+    thrust::complex<R> a_r = static_cast<thrust::complex<R>>(thrust::get<0>(a));
+    thrust::complex<R> b_r = static_cast<thrust::complex<R>>(thrust::get<0>(b));
+    //return thrust::get<0>(a).real() < thrust::get<0>(b).real();
+    return a_r.real() < b_r.real();
   }
 };
 
@@ -62,9 +66,10 @@ std::tuple<long,T> argmax(T const* x, long N)
   long pos;
   T res=0;
   if constexpr (is_complex_v<T>) {
-    auto res_d = thrust::max_element(thrust::device, it, it+N, op_less_real());
+    using R = sfqmc::utils::remove_complex_t<T>;
+    auto res_d = thrust::max_element(thrust::device, it, it+N, op_less_real<R>());
     pos = thrust::get<1>(*res_d);
-    thrust::complex<sfqmc::utils::remove_complex_t<T>> r_ = thrust::get<0>(*res_d);
+    thrust::complex<R> r_ = thrust::get<0>(*res_d);
     res = T{r_.real(),r_.imag()};
   } else {
     auto res_d = thrust::max_element(thrust::device, it, it+N);
@@ -91,9 +96,10 @@ std::tuple<long,T> argmin(T const* x, long N)
   long pos;
   T res=0;
   if constexpr (is_complex_v<T>) {
-    auto res_d = thrust::min_element(thrust::device, it, it+N, op_less_real());
+    using R = sfqmc::utils::remove_complex_t<T>;
+    auto res_d = thrust::min_element(thrust::device, it, it+N, op_less_real<R>());
     pos = thrust::get<1>(*res_d);
-    thrust::complex<sfqmc::utils::remove_complex_t<T>> r_ = thrust::get<0>(*res_d);
+    thrust::complex<R> r_ = thrust::get<0>(*res_d);
     res = T{r_.real(),r_.imag()};
   } else {
     auto res_d = thrust::min_element(thrust::device, it, it+N);

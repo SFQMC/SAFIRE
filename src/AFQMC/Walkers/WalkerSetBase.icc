@@ -554,8 +554,60 @@ void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<4> auto const& UDV
            targetN,targetN_per_rank,mpi->comm.size());
 }
 
+// for finite-T : resets walker set for start of each sweep
+// UR, DR, VR --> Identity matrices, log scales --> 0
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::reset(int n)
+{ 
+  auto all = nda::range::all;
+  int npol = (walkerType == NONCOLLINEAR_FT ? 2 : 1);
+
+  reserve(n);
+
+  memory::array<MEM, ComplexType, 2> IMat(npol*NMO,npol*NMO);
+  memory::array<MEM, ComplexType, 1> IVec(npol*NMO, ComplexType(1.0));
+
+  math::set_identity(IMat);
+
+  auto pos = 0;
+  // careful here!!!
+  while (pos < n)
+  { 
+    walker_buffer(pos,all) = ComplexType(0.0);
+    reference w0(walker_buffer(pos,all), data_displ, wlk_desc);
+    w0.UMatrix(Alpha) = IMat();
+    w0.DMatrix(Alpha) = IVec();
+    w0.VMatrix(Alpha) = IMat();
+    if (walkerType == COLLINEAR_FT)
+    {
+      w0.UMatrix(Beta) = IMat();
+      w0.DMatrix(Beta) = IVec();
+      w0.VMatrix(Beta) = IMat();
+    }
+    pos++;
+  }
+  auto r = nda::range(tot_num_walkers,n); 
+  walker_buffer(r,data_displ[WEIGHT]) = ComplexType(1.0);
+  walker_buffer(r,data_displ[OVLP]) = ComplexType(0.0); //finite-T keeps log(ovlp), instead of ovlp 
+  walker_buffer(r,data_displ[PHASE]) = ComplexType(1.0);
+  walker_buffer(r,data_displ[PHASE1]) = ComplexType(1.0);
+  walker_buffer(r,data_displ[PHASE2]) = ComplexType(1.0);
+  walker_buffer(r,data_displ[PHASE3]) = ComplexType(1.0);
+  walker_buffer(r,data_displ[LOGSCL_UP]) = ComplexType(0.0);
+  walker_buffer(r,data_displ[LOGSCL_DN]) = ComplexType(0.0);
+  walker_buffer(r,data_displ[IS_UNITARY]) = ComplexType(1.0);
+  walker_buffer(r,data_displ[THETA]) = ComplexType(0.0);
+
+  tot_num_walkers = n;
+  targetN_per_rank  = tot_num_walkers;
+  targetN         = GlobalPopulation();
+  utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
+           " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
+           targetN,targetN_per_rank,mpi->comm.size());
+}
+
 /*
-* Resizes back propagation buffers.
+* Resizes back propagation buffers
 * Must be called before any call to bp-related routines.
 */  
 template<MEMORY_SPACE _M_>

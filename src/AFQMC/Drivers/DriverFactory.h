@@ -114,6 +114,71 @@ public:
     return pt1;
   }
 
+    static ptree interpret_inputs_ftafqmc(const ptree pt0)
+  {
+    // "verbose" ptree 
+    ptree pt1;
+
+    // read inputs 
+    // Rules (at least for afqmc):
+    // 1. wavefunction must exist. It must be either a string referencing a previously defined wavefunction
+    //    or a full input block.
+    // 2. All other elements (walkerset, hamiltonian, propagator) can either be defined (by name or by 
+    //    full specification) or not (in which case, default parameters are used).
+    // 3. Unnamed and/or default blocks can not be referenced in future execute blocks.      
+
+    if( auto wfn_pt = pt0.get_child_optional("wavefunction") ) {
+
+      pt1.put_child("wavefunction",*wfn_pt);
+		
+      // empty value means default object
+      for( auto& ss : {"system", "walker_set", "hamiltonian", "propagator"})
+	      if( auto pt_child = pt0.get_child_optional(ss) ) 
+          pt1.put_child(ss, *pt_child);
+
+      auto hdf_read_file = pt0.get<std::string>("hdf_read_file", "");
+      auto set_nwalker_to_target = pt0.get<bool>("set_nwalker_to_target", false);
+      auto nWalkers = pt0.get<int>("n_walkers_per_mpi_task", 10);
+      auto timestep = pt0.get<double>("timestep", 0.01);
+      auto iseed = pt0.get<int>("seed", 0);
+      // local energy importance sampling will ignore "initial_Eshift", if provided, with a warning
+      auto Eshift = pt0.get<double>("initial_Eshift", 0.0); 
+      pt1.put("hdf_read_file", hdf_read_file);
+      pt1.put("set_nwalker_to_target", set_nwalker_to_target);
+      pt1.put("n_walkers_per_mpi_task", nWalkers);
+      pt1.put("timestep", timestep);
+      pt1.put("seed", iseed);
+      pt1.put("initial_Eshift", Eshift);
+    } else 
+      utils::check(false," wavefunction definition or declaration required in execution blocks.");
+    // allow any keys that the execute block may use to pass through
+    std::unordered_set<std::string> pass_through_keys = {
+      "walker_set",
+      "wavefunction",
+      "propagator",
+      "estimator",
+      "hamiltonian",
+      "hdf_write_file",
+      "steps",
+      "sweeps",
+      "population_control_interval",
+      "measure_interval_multiplier",
+      "fix_bias",
+      "walker_ortho_interval",
+      "checkpoint_interval",
+      "sample_interval",
+      "weight_reset",
+      "timestep",
+      "dshift",
+      "seed",
+      "filename",
+      "system",
+      "ndets_to_read",
+    };
+    io::compare_known_keys("Driver factory" ,pt1, pt0, pass_through_keys);
+    return pt1;
+  }
+
   static ptree interpret_inputs_csafqmc(const ptree pt0)
   {
     ptree pt1;
@@ -165,6 +230,7 @@ public:
 
 private:
   bool executeAFQMCDriver(std::string title, int m_seties, ptree pt);
+  bool executeFTAFQMCDriver(std::string title, int m_seties, ptree pt);
   bool executeCSAFQMCDriver(std::string title, int m_series, ptree pt);
 
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;

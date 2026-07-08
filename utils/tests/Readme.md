@@ -14,70 +14,61 @@ See the `pyproject.toml` file for default configuration.
 
 ## Functional Tests
 
-The functional tests are also invoked via `pytest`; however, the default settings
-defined in the `pyrpoject.toml` file will not  run the functional tests by default.
-You must explicitly request them using pytest marks.
+The functional tests are run using the script `functional/run_functional.py`.
 
 ### Sample Functional Test Slurm script
 
-A sample script to run the "weekly" functional tests is as follows.
 
 ```bash
 #!/bin/bash
 #SBATCH -J func_tests_safire
-#SBATCH --partition=ccq,gen
-#SBATCH --constraint=icelake
-#! Number of MPI ranks (= tasks for Slurm)
+#SBATCH --partition=ccq
+#SBATCH --constraint=genoa
 #SBATCH --ntasks=64
 #SBATCH --time=24:00:00
 #SBATCH -o functional_tests.o%j
 
-module load safire
-
-echo "====== some git info =======\n\n"
-git status
-git log -n 1
-
-# This is read by the testing infrastructure!!
-export NUM_MPI_TASKS=64
+senf safire
+module load cuda
+module load openmpi/cuda
 
 echo "Starting functional tests... "
 date
-python -c "import sys; print(sys.path)"
-python -m pytest --basetemp=/path/to/scratch/dir/ \
-       --afqmc-runmode mpi_cpu \
-       --a
-       -m "functional and weekly" \
-       -vvv -rP -rs \
-       --html=./.htmlpytest_functional_cpu/pytest.html
+
+OUTPUT_DIR="/path/to/scratch/dir"
+rm -rf $OUTPUT_DIR
+
+set -x PYTHONPATH (pwd) $PYTHONPATH
+python functional/run_functional.py \
+       all \
+       --output-path=$OUTPUT_DIR \
+       --mpiexec="srun -n 90 --cpu-bind=cores" \
+       --compute cpu \
+       --timeout=120 \
+
 echo "... done!"
 date
 ```
 
-> The key detail to notice is the `-m "functional and weekly"` option which
->   selects both functional tests and weekly tests. Using just the `-m "functional"` 
->   option will run all functional tests which will take a long time! This can 
->   be done occassionally (recommended one per month or less frequently)
-
-
-> 💡 Note that the tests use a temporary directory for scratch work. 
-> The directory is cleared upon the next test run.
-> These are a very useful place to debug problems in the test.
+> 💡 Note that the tests write all input and output files to `$OUTPUT_DIR`. 
+> Using a persistent directory for this is useful because it allows inspecting logs afterwards.
+> However, it is recommended to delete the directory before each run to avoid coexisting old and new outputs. 
 
 ### Local Runs
 
 ```bash
- NUM_MPI_TASKS=64 python -m pytest --basetemp= \
-       --afqmc-runmode mpi_cpu \
-       -m "functional and push" \
-       -vvv -rP -rs \
-       --html=./.htmlpytest_functional_cpu/pytest.html
+rm -rf $OUTPUT_DIR
+python functional/run_functional.py \
+       all \
+       --output-path=$OUTPUT_DIR \
+       --mpiexec="mpirun -n 16" \
+       --compute cpu \
+       --timeout=120
 ```
 
 ### Adding new cases
 
-A collection of developer tools related to the functional tests is provide in `utils/tests/functional/dev_tools`.
-It has it's own Readme.md file which explains the functional testing infrastructure.
+See the file `functional/functional_cases.py`.
 
 
 

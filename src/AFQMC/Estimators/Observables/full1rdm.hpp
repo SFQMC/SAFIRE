@@ -60,8 +60,8 @@ public:
     rot_file = pt.get<std::string>("rotation", "");
     h5_path = pt.get<std::string>("path", "/");
     print_from_list = pt.get<bool>("with_index_list", false);
-    int nspin = ( walker_type == COLLINEAR ? 2 : 1 );
-    int npol = ( walker_type == NONCOLLINEAR ? 2 : 1 );
+    int nspin = ( walker_type == COLLINEAR or walker_type == COLLINEAR_FT ? 2 : 1 );
+    int npol = ( walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1 );
 
     std::optional<nda::array<ComplexType,3>> R;
     std::optional<nda::array<int,2>> I;
@@ -129,13 +129,13 @@ public:
     // increase counter
     ncalls++;
     int nwalk = Xw.extent(0);
-    int nspin = ( walker_type == COLLINEAR ? 2 : 1 );
-    int npol = ( walker_type == NONCOLLINEAR ? 2 : 1 );
+    int nspin = ( walker_type == COLLINEAR or walker_type == COLLINEAR_FT ? 2 : 1 );
+    int npol = ( walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1 );
     utils::check(G.shape() == std::array<long,4>{nwalk,nspin,npol*NMO,npol*NMO}, "Shape mismatch");
     utils::check(G_host.shape() == G.shape(), "Shape mismatch");
     if (apply_rotation) {
 
-       utils::check(walker_type != NONCOLLINEAR,"Error: Not yet implemented: acc_with_rotation && noncollinear.");
+       utils::check(walker_type != NONCOLLINEAR and walker_type != NONCOLLINEAR_FT,"Error: Not yet implemented: acc_with_rotation && noncollinear.");
 
       int nX   = XRot().extent(0);
       // Grot = Xc * G * H(Xc)

@@ -124,8 +124,9 @@ auto read_nomsd_wavefunction(h5::group& grp,int requested_ndets,
       for(int id=0; id<ndets; ++id) {
         h5::group ugrp = grp.open_group("PsiT_"+std::to_string(id));
         auto up = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(ugrp);
-        utils::check(up.extent(1) == NMO, "Shape mismatch");
-        utils::check(2*up.extent(0) == nel[0], "Shape mismatch");
+
+        utils::check(nel[0] % 2 == 0 && nel[1] == 0, "Unexpected nel = {} for closed->noncollinear conversion. Should be {{2*n, 0}}", nel);
+        utils::check_shape(up, "up", nel[0]/2, NMO);
         // combining, shift dn by NMO 
         psi(id,0) = math::sparse::combine_csr(up,up,NMO);
         utils::check_shape(psi(id,0), std::format("psi({},0)",id), nup, npol*NMO);
@@ -159,6 +160,7 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
   if(wfn_type == walker_type) {
     for(int id=0, k=0; id<ndets; ++id) {
       for(int is=0; is<nspin; ++is, ++k) {
+        //h5::h5_read(grp,"sclL_"+std::to_string(k),sclL(k));
         h5::group pgrp = grp.open_group("UL_"+std::to_string(k));
         psi(id,is,0) = std::move(math::sparse::HDF2CSR<ComplexType,MEM,int,int>(pgrp));
         pgrp = grp.open_group("DL_"+std::to_string(k));
@@ -172,6 +174,8 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
     utils::check(walker_type == NONCOLLINEAR_FT, "walker_type==COLLINEAR incompatible with wfn_type:{}",int(wfn_type));
     // upgrade from COLLINEAR to NONCOLLINEAR
     for(int id=0; id<ndets; ++id) {
+      //h5::h5_read(grp,"sclL_"+std::to_string(2*id),sclL(2*id));
+      //h5::h5_read(grp,"sclL_"+std::to_string(2*id+1),sclL(2*id+1));
       h5::group ugrp = grp.open_group("UL_"+std::to_string(2*id));
       auto up = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(ugrp);
       h5::group dgrp = grp.open_group("UL_"+std::to_string(2*id+1));
@@ -228,6 +232,7 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
     */
   }
 
+  //return std::tuple(psi,sclL);
   return psi;
 }
 

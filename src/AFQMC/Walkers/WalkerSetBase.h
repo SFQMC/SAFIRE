@@ -97,6 +97,7 @@ public:
         bp_walker_size(0),
         bp_walker_memory_usage(0),
         bp_pos(-1),
+        tau_step(0),
         history_pos(0),
         walkerType(UNDEFINED_WALKER_TYPE),
         tot_num_walkers(0),
@@ -153,6 +154,14 @@ public:
   int getBPPos() const { return bp_pos; }
   void setBPPos(int p) { bp_pos = p; }
   void advanceBPPos() { bp_pos++; }
+
+   /*
+   * Current imaginary-time slice index. Set to 0 for ground state walker types.
+   * Used by FT wavefunction routines to select DL matrix slice.
+   */
+  int getTauStep() const { return tau_step; }
+  void setTauStep(int p) { tau_step = p; }
+  void advanceTauStep() { tau_step++; }
 
   /*
    * Returns, sets and advances the position of the insertion point in the History circular buffers. 
@@ -257,6 +266,10 @@ public:
 
   void resize(int n, nda::MemoryArrayOfRank<4> auto const& UDV);
 
+  /*
+   * Finite temperature reset walkers at the beginning of each sweep
+  */
+  void reset(int n);
   /*
    * Resizes back propagation buffers.
    * Must be called before any call to bp-related routines.
@@ -483,7 +496,9 @@ public:
 
   int walkerSizeIO() const
   {
-    if (walkerType == COLLINEAR)
+    if (walkerType == COLLINEAR_FT or walkerType == NONCOLLINEAR_FT)
+      return walker_size; //finite-T walkers include U,D,V matrices
+    else if (walkerType == COLLINEAR)
       return wlk_desc[0] * (wlk_desc[1] + wlk_desc[2]) + 10;
     else // since NAEB = 0 in both CLOSED and NONCOLLINEAR cases
       return wlk_desc[0] * wlk_desc[1] + 10;
@@ -646,6 +661,7 @@ protected:
   int walker_size, walker_memory_usage;
   int bp_walker_size, bp_walker_memory_usage;
   int bp_pos;
+  int tau_step;
   int history_pos;
 
   // wlk_descriptor: {nmo, naea, naeb, nback_prop, nCV, nRefs, nHist}

@@ -164,7 +164,7 @@ void read_ph_wavefunction_hdf(h5::group& grp,
 
     {
       h5::group g = grp.open_group("PsiT_"+ std::to_string(0));
-      PsiT(0) = std::move(math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(g));
+      PsiT(0) = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(g);
       utils::check(PsiT(0).extent(1) == npol*NMO, 
                    "For PHMSD type=mixed, PsiT.size(1) must be npol*NMO");
     }
@@ -173,7 +173,7 @@ void read_ph_wavefunction_hdf(h5::group& grp,
       utils::check(walker_type == COLLINEAR,
                    "walker_type must be COLLINEAR, got {}", walkerTypeToString(walker_type));
       h5::group g = grp.open_group("PsiT_"+ std::to_string(1));
-      PsiT(1) = std::move(math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(g));
+      PsiT(1) = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(g);
       utils::check(PsiT(1).extent(1) == npol*NMO, 
                    "For PHMSD type=mixed, PsiT.size(1) must be npol*NMO");
     }

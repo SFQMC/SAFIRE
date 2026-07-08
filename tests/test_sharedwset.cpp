@@ -145,14 +145,14 @@ void sharedwset_basic_walker_features(std::string wtype)
     for (auto it = wset.begin(); it != wset.end(); ++it)
     {
       auto umat = it->UMatrix(Alpha);
-      REQUIRE( umat.extent(0) == initU.extent(1) );	
-      REQUIRE( umat.extent(1) == M );	
-      REQUIRE(nda::to_host(it->UMatrix(Alpha)) == initU(0,nda::ellipsis{}));
-      if( wset.getWalkerType() == COLLINEAR ) { 
+      REQUIRE( umat.extent(0) == initU.extent(1) );
+      REQUIRE( umat.extent(1) == M );
+      REQUIRE(nda::to_host(it->UMatrix(Alpha)) == initU_h(0,nda::ellipsis{}));
+      if( wset.getWalkerType() == COLLINEAR_FT ) {
         auto umatB = it->UMatrix(Beta);
-        REQUIRE( umatB.extent(0) == initU.extent(1) );	
-        REQUIRE( umatB.extent(1) == M );	
-        REQUIRE( nda::to_host(it->UMatrix(Beta)) == initU(1,nda::range::all,nda::range(M)));
+        REQUIRE( umatB.extent(0) == initU.extent(1) );
+        REQUIRE( umatB.extent(1) == M );
+        REQUIRE( nda::to_host(it->UMatrix(Beta)) == initU_h(1,nda::range::all,nda::range(M)));
       }
       it->set_property(WEIGHT,base * 1.0 + 0.5);
       it->set_property(OVLP,base * 1.0 + 0.5);
@@ -301,6 +301,9 @@ void sharedwset_basic_walker_features(std::string wtype)
     }
 
     // No BP for finite temperature
+    wset.clean();
+    wset.reset(nwalkers);
+
   }
   wset.clean();
   REQUIRE(wset.size() == 0);
@@ -315,6 +318,8 @@ void sharedwset_walker_io(std::string wtype)
   using Type = std::complex<double>;
   auto& mpi = utils::make_unit_test_mpi_context();
 
+  bool ft = (wtype == "collinear-ft" or wtype == "noncollinear-ft");
+
   int NMO = 8, nup = 2, ndown = 2, nwalkers = 10;
   if (wtype == "noncollinear")
   {
@@ -327,45 +332,99 @@ void sharedwset_walker_io(std::string wtype)
   info.nup = nup;
   info.ndown = ndown;
   info.name = "walker";
-  int npol = (wtype == "noncollinear") ? 2 : 1;
-  int nspin = wtype == "collinear" ? 2 : 1;
-  nda::array<Type, 3> initA_h(nspin, npol * NMO, nup);
-  initA_h() = 0.0;
-  for(int spin = 0; spin < nspin; spin++) {
-    for (int i = 0; i < nup; i++) { 
-      initA_h(spin,i,i) = Type(0.11 * (spin + 2));
-    }
-  }
+
   auto rng = std::make_shared<utils::RandomGenerator_t<>>();
 
-  auto initA = memory::to_memory_space<MEM>(initA_h);
-  
   ptree pt0;
   pt0.put("WalkerSet.name","wset0");
   pt0.put("WalkerSet.walker_type",wtype);
   auto wset = make_WalkerSet<MEM>(mpi, pt0.get_child("WalkerSet"), info, rng);
-  wset.resize(nwalkers, initA);
 
-  REQUIRE(wset.size() == nwalkers);
   int cnt(0);
   Type base(0.0);
   Type tot_weight(0.0);
-  for (auto it = wset.begin(); it != wset.end(); ++it)
+
+  if(!ft)
   {
+    int npol = (wtype == "noncollinear") ? 2 : 1;
+    int nspin = wtype == "collinear" ? 2 : 1;
+    nda::array<Type, 3> initA_h(nspin, npol * NMO, nup);
+    initA_h() = 0.0;
     for(int spin = 0; spin < nspin; spin++) {
-      auto sm = it->SlaterMatrix(static_cast<SpinTypes>(spin));
-      REQUIRE(sm.extent(0) == initA.extent(1));
-      REQUIRE(sm.extent(1) == initA.extent(2)); 
-      REQUIRE(nda::to_host(sm) == nda::to_host(initA(spin,nda::ellipsis{})));
+      for (int i = 0; i < nup; i++) {
+        initA_h(spin,i,i) = Type(0.11 * (spin + 2));
+      }
     }
-    it->set_property(WEIGHT,base * 1.0 + 0.1);
-    it->set_property(OVLP,base * 1.0 + 0.2);
-    it->set_property(E1_,base * 1.0 + 0.3);
-    it->set_property(EXX_,base * 1.0 + 0.4);
-    it->set_property(EJ_,base * 1.0 + 0.5);
-    tot_weight += base * 1.0 + 0.5; // not used?
-    base += Type(1.0);
-    cnt++;
+    auto initA = memory::to_memory_space<MEM>(initA_h);
+
+    wset.resize(nwalkers, initA);
+
+    REQUIRE(wset.size() == nwalkers);
+    for (auto it = wset.begin(); it != wset.end(); ++it)
+    {
+      for(int spin = 0; spin < nspin; spin++) {
+        auto sm = it->SlaterMatrix(static_cast<SpinTypes>(spin));
+        REQUIRE(sm.extent(0) == initA.extent(1));
+        REQUIRE(sm.extent(1) == initA.extent(2));
+        REQUIRE(nda::to_host(sm) == nda::to_host(initA(spin,nda::ellipsis{})));
+      }
+      it->set_property(WEIGHT,base * 1.0 + 0.1);
+      it->set_property(OVLP,base * 1.0 + 0.2);
+      it->set_property(E1_,base * 1.0 + 0.3);
+      it->set_property(EXX_,base * 1.0 + 0.4);
+      it->set_property(EJ_,base * 1.0 + 0.5);
+      tot_weight += base * 1.0 + 0.5; // not used?
+      base += Type(1.0);
+      cnt++;
+    }
+  }
+  else
+  {
+    int M = (wtype == "noncollinear-ft") ? 2 * NMO : NMO;
+    int nspin = (wtype == "collinear-ft") ? 2 : 1;
+    nda::array<Type, 3> initU_h(nspin, M, M);
+    nda::array<Type, 2> initD_h(nspin, M);
+    nda::array<Type, 3> initV_h(nspin, M, M);
+    initU_h() = Type(0.0);
+    initD_h() = Type(0.0);
+    initV_h() = Type(0.0);
+    for(int spin = 0; spin < nspin; spin++) {
+      for (int i = 0; i < M; i++) {
+        initU_h(spin,i,i) = Type(0.11 * (spin + 2));
+        initD_h(spin,i)   = Type(0.13 * (spin + 2));
+        initV_h(spin,i,i) = Type(0.17 * (spin + 2));
+      }
+    }
+    auto initU = memory::to_memory_space<MEM>(initU_h);
+    auto initD = memory::to_memory_space<MEM>(initD_h);
+    auto initV = memory::to_memory_space<MEM>(initV_h);
+
+    wset.resize(nwalkers, initU, initD, initV);
+
+    REQUIRE(wset.size() == nwalkers);
+    for (auto it = wset.begin(); it != wset.end(); ++it)
+    {
+      for(int spin = 0; spin < nspin; spin++) {
+        auto um = it->UMatrix(static_cast<SpinTypes>(spin));
+        auto dm = it->DMatrix(static_cast<SpinTypes>(spin));
+        auto vm = it->VMatrix(static_cast<SpinTypes>(spin));
+        REQUIRE(um.extent(0) == initU.extent(1));
+        REQUIRE(um.extent(1) == initU.extent(2));
+        REQUIRE(nda::to_host(um) == nda::to_host(initU(spin,nda::ellipsis{})));
+        REQUIRE(nda::to_host(dm) == nda::to_host(initD(spin,nda::ellipsis{})));
+        REQUIRE(nda::to_host(vm) == nda::to_host(initV(spin,nda::ellipsis{})));
+      }
+      it->set_property(WEIGHT,base * 1.0 + 0.1);
+      it->set_property(OVLP,base * 1.0 + 0.2);
+      it->set_property(E1_,base * 1.0 + 0.3);
+      it->set_property(EXX_,base * 1.0 + 0.4);
+      it->set_property(EJ_,base * 1.0 + 0.5);
+      it->set_property(LOGSCL_UP,base * 1.0 + 0.6);
+      it->set_property(LOGSCL_DN,base * 1.0 + 0.7);
+      tot_weight += base * 1.0 + 0.5;
+      base += Type(1.0);
+      cnt++;
+    }
   }
   REQUIRE(cnt == nwalkers);
 
@@ -381,10 +440,25 @@ void sharedwset_walker_io(std::string wtype)
     h5::file fh5(std::string("dummy_walkers.h5"),'r');
     auto wset2 = make_WalkerSet<MEM>(mpi, pt0.get_child("WalkerSet"), info, rng);
     restartFromHDF5(wset2, nwalkers, fh5, true);
-    std::array<walker_data,5> tags = {WEIGHT,OVLP,E1_,EXX_,EJ_};
+    REQUIRE(wset2.size() == nwalkers);
+    std::vector<walker_data> tags = {WEIGHT,OVLP,E1_,EXX_,EJ_};
+    if(ft) {
+      tags.push_back(LOGSCL_UP);
+      tags.push_back(LOGSCL_DN);
+    }
+    int nspin = (wtype == "collinear" or wtype == "collinear-ft") ? 2 : 1;
     for (int i = 0; i < nwalkers; i++)
     {
-      CHECK(nda::to_host(wset[i].SlaterMatrix(Alpha)) == nda::to_host(wset2[i].SlaterMatrix(Alpha)));
+      if(ft) {
+        for(int spin = 0; spin < nspin; spin++) {
+          auto s = static_cast<SpinTypes>(spin);
+          CHECK(nda::to_host(wset[i].UMatrix(s)) == nda::to_host(wset2[i].UMatrix(s)));
+          CHECK(nda::to_host(wset[i].DMatrix(s)) == nda::to_host(wset2[i].DMatrix(s)));
+          CHECK(nda::to_host(wset[i].VMatrix(s)) == nda::to_host(wset2[i].VMatrix(s)));
+        }
+      } else {
+        CHECK(nda::to_host(wset[i].SlaterMatrix(Alpha)) == nda::to_host(wset2[i].SlaterMatrix(Alpha)));
+      }
       for(auto v : tags)
         CHECK(wset[i].get_property(v) == wset2[i].get_property(v));
     }
@@ -410,6 +484,8 @@ TEST_CASE("sharedwset: basic walker features", "[sharedwset]")
   sharedwset_basic_walker_features<DEVICE_MEMORY>("collinear");
   sharedwset_basic_walker_features<DEVICE_MEMORY>("noncollinear");
   sharedwset_basic_walker_features<DEVICE_MEMORY>("fullypolarized");
+  sharedwset_basic_walker_features<DEVICE_MEMORY>("collinear-ft");
+  sharedwset_basic_walker_features<DEVICE_MEMORY>("noncollinear-ft");
 #endif
 }
 TEST_CASE("sharedwset: walker io", "[sharedwset]")
@@ -418,11 +494,15 @@ TEST_CASE("sharedwset: walker io", "[sharedwset]")
   sharedwset_walker_io<HOST_MEMORY>("collinear");
   sharedwset_walker_io<HOST_MEMORY>("noncollinear");
   sharedwset_walker_io<HOST_MEMORY>("fullypolarized");
+  sharedwset_walker_io<HOST_MEMORY>("collinear-ft");
+  sharedwset_walker_io<HOST_MEMORY>("noncollinear-ft");  
 #if defined(ENABLE_DEVICE)
   sharedwset_walker_io<DEVICE_MEMORY>("closed");
   sharedwset_walker_io<DEVICE_MEMORY>("collinear");
   sharedwset_walker_io<DEVICE_MEMORY>("noncollinear");
   sharedwset_walker_io<DEVICE_MEMORY>("fullypolarized");
+  sharedwset_walker_io<DEVICE_MEMORY>("collinear-ft");
+  sharedwset_walker_io<DEVICE_MEMORY>("noncollinear-ft");  
 #endif
 }
 

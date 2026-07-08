@@ -94,7 +94,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
                           nda::MemoryVector auto &&hybrid_weight,
                           double lower_cutoff_scale, double upper_cutoff_scale,
                           bool symmetric_split, bool debug_verbosity = false,
-                          bool use_cp_constraint = false) {
+                          bool step0 = false, bool use_cp_constraint = false) {
   auto all = nda::range::all;
   int nwalk = w.size();
   bool BackProp = (w.getBPPos() >= 0 && w.getBPPos() < w.NumBackProp());
@@ -184,11 +184,18 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
                 << std::endl;
     }
 
-    if (symmetric_split)
-      weight(i) *= ComplexType(
-          scale *
-              std::exp(-dt * (0.5 * (eloc.real() + old_eloc.real()) - Eshift)),
-          0.0);
+    if (symmetric_split) {
+      if(step0)
+          weight(i) *= ComplexType(
+            scale *
+                std::exp(-dt * (eloc.real() - Eshift)),
+            0.0);
+      else
+        weight(i) *= ComplexType(
+            scale *
+                std::exp(-dt * (0.5 * (eloc.real() + old_eloc.real()) - Eshift)),
+            0.0);
+      }
     else
       weight(i) *=
           ComplexType(scale * std::exp(-dt * (eloc.real() - Eshift)), 0.0);

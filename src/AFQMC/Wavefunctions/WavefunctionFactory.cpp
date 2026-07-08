@@ -531,7 +531,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 
       // RHF/GHF reference
       auto nnzpr = get_nnz(PsiT_MO(0), active_combined.data(), active_combined.size(), 0);
-      PsiT(0) = std::move(PsiT_Matrix<HOST_MEMORY>({active_combined.size(),npol*NMO},nnzpr));
+      PsiT(0) = PsiT_Matrix<HOST_MEMORY>({active_combined.size(),npol*NMO},nnzpr);
       {
         auto vals = PsiT_MO(0).values();
         auto cols = PsiT_MO(0).columns();
@@ -560,7 +560,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 
       {
         auto nnzpr = get_nnz(PsiT_MO[0], active_alpha.data(), active_alpha.size(), 0);
-        PsiT(0) = std::move(PsiT_Matrix<HOST_MEMORY>({active_alpha.size(),npol*NMO},nnzpr));
+        PsiT(0) = PsiT_Matrix<HOST_MEMORY>({active_alpha.size(),npol*NMO},nnzpr);
         auto vals = PsiT_MO(0).values();
         auto cols = PsiT_MO(0).columns();
         auto row_begin = PsiT_MO(0).row_begin();
@@ -576,7 +576,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       }
       {
         auto nnzpr = get_nnz(PsiT_MO[1], active_beta.data(), active_beta.size(), 0);
-        PsiT(1) = std::move(PsiT_Matrix<HOST_MEMORY>({active_beta.size(),npol*NMO},nnzpr));
+        PsiT(1) = PsiT_Matrix<HOST_MEMORY>({active_beta.size(),npol*NMO},nnzpr);
         auto vals = PsiT_MO(1).values();
         auto cols = PsiT_MO(1).columns();
         auto row_begin = PsiT_MO(1).row_begin();
@@ -1039,7 +1039,7 @@ void WavefunctionFactory<MEM>::build_PsiT_MO_phmsd(WALKER_TYPES walker_type, int
   if(trivial_ref) {
 
     PsiT_MO.resize(1);
-    PsiT_MO(0) = std::move(PsiT_Matrix<HOST_MEMORY>({npol*NMO,npol*NMO},1)); 
+    PsiT_MO(0) = PsiT_Matrix<HOST_MEMORY>({npol*NMO,npol*NMO},1);
 
     // makes sense to move the reordering of non-compact excitations to here!
     for (int k = 0; k < npol*NMO; k++)
@@ -1066,8 +1066,8 @@ void WavefunctionFactory<MEM>::build_PsiT_MO_phmsd(WALKER_TYPES walker_type, int
 
 
       PsiT_MO.resize(2);
-      PsiT_MO(0) = std::move(PsiT_Matrix<HOST_MEMORY>({NMO,NMO},1)); 
-      PsiT_MO(1) = std::move(PsiT_Matrix<HOST_MEMORY>({NMO,NMO},1)); 
+      PsiT_MO(0) = PsiT_Matrix<HOST_MEMORY>({NMO,NMO},1);
+      PsiT_MO(1) = PsiT_Matrix<HOST_MEMORY>({NMO,NMO},1);
 
       {
 
@@ -1109,7 +1109,7 @@ void WavefunctionFactory<MEM>::build_PsiT_MO_phmsd(WALKER_TYPES walker_type, int
     } else { // separate_references
 
       PsiT_MO.resize(1);
-      PsiT_MO(0) = std::move(PsiT_Matrix<HOST_MEMORY>({npol*NMO,npol*NMO},1)); 
+      PsiT_MO(0) = PsiT_Matrix<HOST_MEMORY>({npol*NMO,npol*NMO},1); 
 
       {
 

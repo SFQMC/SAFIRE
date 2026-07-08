@@ -68,7 +68,7 @@ TEST_CASE("tensor: hermitize", "[tensor]")
 
     math::hermitize(A);
     for(int i = 0; i < A.extent(0); i++) {
-      nda::array ref = 0.5 * A(i, all, all) + 0.5 * nda::conj(nda::transpose(A(i, all, all)));
+      auto ref = nda::make_regular(0.5 * A(i, all, all) + 0.5 * nda::conj(nda::transpose(A(i, all, all))));
       CHECK_THAT(A(i, all, all), utils::Approx(ref));
     }
 

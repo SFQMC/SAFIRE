@@ -217,12 +217,36 @@ public:
   {
     std::visit([&](auto&& a) { a.updateLogScale(std::forward<Args>(args)...); }, var);
   }
-  
+
   template<class... Args>
   auto getLogScale(Args&&... args)
   {
     return std::visit([&](auto&& a) { return a.getLogScale(std::forward<Args>(args)...); }, var);
   }
+  
+  void resetLogScale()
+  {
+    std::visit([&](auto&& a) { a.resetLogScale(); }, var);
+  }
+
+  template<class... Args>
+  void setLogPT0(Args&&... args)
+  {
+    std::visit([&](auto&& a) { a.setLogPT0(std::forward<Args>(args)...); }, var);
+  }
+
+  //auto getLogPT0()
+  //{
+  //  return std::visit([&](auto&& a) -> decltype(auto) { return a.getLogPT0(); }, var);
+  //}
+
+  auto getLogPT0()
+  {
+    using R = memory::array<MEM,ComplexType,1>;
+    return std::visit([&](auto&& a) -> R { return a.getLogPT0(); }, var);
+  }
+
+
 
   bool is_stochastic_wavefunction() const
   {
