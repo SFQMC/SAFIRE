@@ -372,7 +372,7 @@ void stochastic_back_propagation_estimator_smoke(
       wfn_pt.put_child("inner_propagator", inner_prop);
     }
     WfnFac.push("wfn_stoch_bp_est", wfn_pt);
-    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_bp_est", type, &ham, nwalk);
+    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_bp_est", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_bp_est", type, wlk_pt);
 
     ptree prop_pt;
@@ -448,7 +448,7 @@ TEST_CASE("stochastic_back_propagation_estimator_smoke", "[estimator_handler][st
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "BackPropagatedEstimator + EstimatorHandler on a static stochastic trial.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -465,7 +465,7 @@ TEST_CASE("stochastic_back_propagation_dynamic_smoke", "[estimator_handler][stoc
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "BackPropagatedEstimator on a DYNAMIC conditioned+leapfrog stochastic trial.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file, /*dynamic_leapfrog=*/true);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
