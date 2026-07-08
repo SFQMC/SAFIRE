@@ -316,7 +316,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 
       if (build_stochastic)
       {
-        utils::check(walker_type != COLLINEAR_FT && walker_type != NONCOLLINEAR_FT,
+        utils::check(not finiteT,
                      "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
                      "finite-temperature walkers.");
         // Resolve the inner (Variational) Hamiltonian. If the wfn block names one via `inner_hamiltonian`

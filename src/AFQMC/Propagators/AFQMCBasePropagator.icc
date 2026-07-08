@@ -176,7 +176,7 @@ void AFQMCBasePropagator<MEM>::Propagate_conditioned(WlkSet& wset,
   (void)nt;
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
-  int npol  = ( walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1 );
+  auto [nspins, npol] = walkerTypeToDims(walker_type);
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
 
@@ -212,6 +212,7 @@ void AFQMCBasePropagator<MEM>::Propagate_conditioned(WlkSet& wset,
     apply_propagators<'N'>(wset,vHS);
   }
   (void)npol;
+  (void)nspins;
   mpi->comm.barrier();
 }
 
@@ -233,7 +234,7 @@ void AFQMCBasePropagator<MEM>::Propagate_free(WlkSet& wset, RealType dt, int nt)
   (void)nt;
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
-  int npol  = ( walker_type == NONCOLLINEAR or walker_type == NONCOLLINEAR_FT ? 2 : 1 );
+  auto [nspins, npol] = walkerTypeToDims(walker_type);
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
 
@@ -272,6 +273,7 @@ void AFQMCBasePropagator<MEM>::Propagate_free(WlkSet& wset, RealType dt, int nt)
     apply_propagators<'N'>(wset,vHS);
   }
   (void)npol;
+  (void)nspins;
   mpi->comm.barrier();
 }
 

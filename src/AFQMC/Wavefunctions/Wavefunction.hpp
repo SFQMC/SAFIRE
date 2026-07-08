@@ -101,7 +101,15 @@ public:
 
   bool isFiniteTemperature() const
   {
-    return std::visit([&](auto&& a) { return a.isFiniteTemperature(); }, var);
+    return std::visit(
+        [&](auto&& a) {
+          using T = std::decay_t<decltype(a)>;
+          if constexpr (requires(T const& x) { x.isFiniteTemperature(); })
+            return a.isFiniteTemperature();
+          else
+            return false;
+        },
+        var);
   }
 
   template<class... Args>

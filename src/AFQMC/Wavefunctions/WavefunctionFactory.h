@@ -196,6 +196,16 @@ public:
       return w0->second;
   }
 
+  // Backward-compatible overload for call sites that omit finiteT.
+  auto& getWavefunction(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                const std::string& ID,
+                                WALKER_TYPES walker_type,
+                                Hamiltonian* h,
+                                int targetNW   = 1)
+  {
+    return getWavefunction(mpi, ID, walker_type, false, h, targetNW);
+  }
+
   void maybe_initialize_stochastic_inner_walkers(Wavefunction<MEM>& wfn,
                                                  const std::string& ID,
                                                  WALKER_TYPES walker_type,
