@@ -502,7 +502,7 @@ TEST_CASE("stochastic_inner_hamiltonian_same_as_true", "[wfn_factory]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn inner_hamiltonian (same integral file) reproduces the clone path.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_inner_hamiltonian_same_as_true<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -562,7 +562,7 @@ TEST_CASE("wfn_factory: stochasticwfn", "[wfn_factory]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "type: stochasticwfn builds StochasticWfn via WavefunctionFactory.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     wfn_factory_stochasticwfn_type_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -637,7 +637,7 @@ TEST_CASE("stochastic_hdf5_type_smoke", "[wfn_factory]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "Wavefunction/StochasticWfn HDF5 marker builds StochasticWfn.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_hdf5_type_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }

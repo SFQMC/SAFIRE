@@ -30,6 +30,9 @@
 #include <vector>
 #include <complex>
 #include <random>
+#include <functional>
+#include <optional>
+#include <memory>
 
 #include "test_common.hpp"
 #include "utilities/check.hpp"
@@ -54,7 +57,136 @@ namespace sfqmc
 using namespace afqmc;
 
 namespace {
+
 void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
+constexpr bool is_ft_walker_type([[maybe_unused]] WALKER_TYPES type) { return false; }
+
+struct StochasticWfnOptions
+{
+  int inner_nwalkers     = 1;
+  int inner_nsteps       = 0;
+  bool inner_conditioning  = false;
+  bool inner_leapfrog      = false;
+  bool inner_persistence   = false;
+  int inner_equil_steps    = 1;
+  int inner_pool_burn_in   = 0;
+  bool inner_log_aggregate = false;
+  double inner_prop_timestep = 0.01;
+};
+
+ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_file, StochasticWfnOptions const& opt = {})
+{
+  ptree pt;
+  pt.put("name", name);
+  pt.put("system", "info0");
+  pt.put("filename", wfn_file);
+  mark_stochastic_wfn_input(pt);
+  pt.put("inner_nwalkers", opt.inner_nwalkers);
+  if (opt.inner_nsteps > 0)
+    pt.put("inner_nsteps", opt.inner_nsteps);
+  if (opt.inner_conditioning)
+    pt.put("inner_conditioning", true);
+  if (opt.inner_leapfrog)
+    pt.put("inner_leapfrog", true);
+  if (opt.inner_persistence)
+    pt.put("inner_persistence", true);
+  if (opt.inner_persistence || opt.inner_equil_steps != 1)
+    pt.put("inner_equil_steps", opt.inner_equil_steps);
+  if (opt.inner_pool_burn_in != 0)
+    pt.put("inner_pool_burn_in", opt.inner_pool_burn_in);
+  if (opt.inner_log_aggregate)
+    pt.put("inner_log_aggregate", true);
+  if (opt.inner_nsteps > 0)
+  {
+    ptree inner_prop;
+    inner_prop.put("timestep", opt.inner_prop_timestep);
+    pt.put_child("inner_propagator", inner_prop);
+  }
+  return pt;
+}
+
+ptree make_nomsd_wfn_ptree(std::string const& name, std::string const& wfn_file)
+{
+  ptree pt;
+  pt.put("name", name);
+  pt.put("system", "info0");
+  pt.put("filename", wfn_file);
+  return pt;
+}
+
+template<MEMORY_SPACE MEM>
+struct StochasticHamWfnEnv
+{
+  std::map<std::string, AFQMCInfo> info_map;
+  std::unique_ptr<HamiltonianFactory> ham_fac;
+  Hamiltonian* ham = nullptr;
+  WavefunctionFactory<MEM> wfn_fac;
+  ptree wlk_pt;
+  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+  int NMO = 0;
+  int nup = 0;
+  int ndown = 0;
+  WALKER_TYPES type = CLOSED;
+
+  static std::optional<StochasticHamWfnEnv> build(
+      std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string const& hamil_file,
+      std::string const& wfn_file, std::function<bool(WALKER_TYPES)> accept_type = {})
+  {
+    if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+      return std::nullopt;
+
+    StochasticHamWfnEnv env;
+    const auto info = read_info_from_wfn(wfn_file, "any");
+    env.NMO         = std::get<0>(info);
+    env.nup         = std::get<1>(info);
+    env.ndown       = std::get<2>(info);
+    env.type        = afqmc::getWalkerType(wfn_file, "any");
+    if (accept_type && not accept_type(env.type))
+      return std::nullopt;
+
+    env.info_map.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", env.NMO, env.nup, env.ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    env.ham_fac = std::make_unique<HamiltonianFactory>(env.info_map);
+    env.ham_fac->push("ham0", ham_pt);
+    env.ham = &env.ham_fac->getHamiltonian(mpi, "ham0");
+
+    env.wlk_pt.put("name", "wset0");
+    env.wlk_pt.put("walker_type", walkerTypeToString(env.type));
+    return env;
+  }
+
+  Wavefunction<MEM>& push_stochastic_wfn(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                         std::string const& name, std::string const& wfn_file,
+                                         StochasticWfnOptions const& opt, int nwalk, bool init_inner_walkers = true)
+  {
+    ptree pt = make_stochastic_wfn_ptree(name, wfn_file, opt);
+    wfn_fac.push(name, pt);
+    auto& wfn = wfn_fac.getWavefunction(mpi, name, type, ham, nwalk);
+    if (init_inner_walkers)
+      wfn_fac.maybe_initialize_stochastic_inner_walkers(wfn, name, type, wlk_pt);
+    return wfn;
+  }
+
+  Wavefunction<MEM>& push_nomsd_wfn(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                    std::string const& name, std::string const& wfn_file, int nwalk)
+  {
+    wfn_fac.push(name, make_nomsd_wfn_ptree(name, wfn_file));
+    return wfn_fac.getWavefunction(mpi, name, type, ham, nwalk);
+  }
+
+  WalkerSet<MEM> make_resized_walker_set(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, int nwalk,
+                                         std::string const& wfn_id)
+  {
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, info_map["info0"], rng);
+    wset.resize(nwalk, wfn_fac.getInitialGuess(wfn_id));
+    return wset;
+  }
+};
+
 } // namespace
 
 // ----------------------------------------------------------------------------
@@ -85,52 +217,26 @@ void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mp
   const int  ndown = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
   // Finite-temperature trials are out of scope for the stochastic delegate limit.
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+  if (is_ft_walker_type(type))
     return;
   const int nspin = (type == COLLINEAR) ? 2 : 1;
   const int npol  = (type == NONCOLLINEAR) ? 2 : 1;
   const double dt(0.01);
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
-  ptree ham_pt;
-  ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
-  ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
-  HamFac.push("ham0", ham_pt);
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(
+      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  if (not env_opt)
+    return;
+  auto& env = *env_opt;
 
   const int nwalk = 11; // prime: forces non-trivial splits in shared routines
-  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
 
-  ptree wlk_pt;
-  wlk_pt.put("name", "wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
+  auto& wfn_nomsd = env.push_nomsd_wfn(mpi, "wfn_nomsd", wfn_file, nwalk);
 
-  WavefunctionFactory<MEM> WfnFac{};
-
-  // Plain NOMSD reference.
-  ptree nomsd_pt;
-  nomsd_pt.put("name", "wfn_nomsd");
-  nomsd_pt.put("system", "info0");
-  nomsd_pt.put("filename", wfn_file);
-  WfnFac.push("wfn_nomsd", nomsd_pt);
-  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd", type, &ham, nwalk);
-
-  // Stochastic trial at the delegate limit: inner_nwalkers = 1, inner_nsteps = 0 (default).
-  ptree stoch_pt;
-  stoch_pt.put("name", "wfn_stoch");
-  stoch_pt.put("system", "info0");
-  stoch_pt.put("filename", wfn_file);
-  mark_stochastic_wfn_input(stoch_pt);
-  stoch_pt.put("inner_nwalkers", 1);
-  WfnFac.push("wfn_stoch", stoch_pt);
-  auto& wfn_stoch = WfnFac.getWavefunction(mpi, "wfn_stoch", type, &ham, nwalk);
+  StochasticWfnOptions stoch_opt;
+  stoch_opt.inner_nwalkers = 1;
+  auto& wfn_stoch          = env.push_stochastic_wfn(mpi, "wfn_stoch", wfn_file, stoch_opt, nwalk);
   REQUIRE(wfn_stoch.is_stochastic_wavefunction());
-  // Initialize the inner trial ensemble (anchored at the trial determinant).
-  WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_stoch, "wfn_stoch", type, wlk_pt);
   REQUIRE(wfn_stoch.stochastic_inner_walkers_initialized());
 
   // Bisection checkpoints (pinpoint SIGSEGV; trim once the test is stable).
@@ -178,9 +284,7 @@ void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mp
     return std::make_tuple(std::move(ov), std::move(e1), std::move(exx), std::move(ej), nda::to_host(X));
   };
 
-  auto wset_nomsd = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-  REQUIRE(wset_nomsd.size() == 0);
-  wset_nomsd.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd"));
+  auto wset_nomsd = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd");
   REQUIRE(wset_nomsd.size() == nwalk);
   perturb(wset_nomsd);
   REQUIRE(wset_nomsd.size() == nwalk);
@@ -196,13 +300,18 @@ void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mp
   wset_nomsd.getProperty(EXX_, exx_n);
   wset_nomsd.getProperty(EJ_, ej_n);
   REQUIRE(ov_n.size() == nwalk);
+  // Discrete (model) propagators must initialize potentials before vbias.
+  if (wfn_nomsd.getHamType() == ModelHamiltonian) {
+    const long ncv = wfn_nomsd.number_of_cholesky_vectors();
+    memory::array<MEM, ComplexType, 1> vMF_discrete(ncv, ComplexType(0.0, 0.0));
+    memory::host_array<ComplexType, 1> nMF(2 * NMO, ComplexType(0.0, 0.0));
+    wfn_nomsd.update_potentials(dt, nMF, vMF_discrete, false);
+  }
   memory::array<MEM, ComplexType, 2> X_n(nwalk, wfn_nomsd.number_of_cholesky_vectors());
   wfn_nomsd.vbias(wset_nomsd, X_n, dt);
   REQUIRE(X_n.extent(0) == nwalk);
 
-  auto wset_stoch = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-  REQUIRE(wset_stoch.size() == 0);
-  wset_stoch.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch"));
+  auto wset_stoch = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch");
   REQUIRE(wset_stoch.size() == nwalk);
   perturb(wset_stoch);
   auto [ov_s, e1_s, exx_s, ej_s, X_s] = harvest(wfn_stoch, wset_stoch);
@@ -225,7 +334,7 @@ TEST_CASE("stochastic_wfn_matches_nomsd", "[stochastic_wfn]")
 
   using namespace utils;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_wfn_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 
@@ -257,7 +366,7 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   const int  nup   = std::get<1>(info);
   const int  ndown = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+  if (is_ft_walker_type(type))
     return;
 
   std::map<std::string, AFQMCInfo> InfoMap;
@@ -301,7 +410,7 @@ TEST_CASE("stochastic_build_smoke", "[stochastic_wfn]")
 
   using namespace utils;
 
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_build_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 
@@ -365,55 +474,21 @@ template<MEMORY_SPACE MEM>
 void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                       std::string hamil_file, std::string wfn_file)
 {
-  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(
+      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  if (not env_opt)
     return;
-
-  const auto info  = read_info_from_wfn(wfn_file, "any");
-  const int  NMO   = std::get<0>(info);
-  const int  nup   = std::get<1>(info);
-  const int  ndown = std::get<2>(info);
-  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
-    return;
-
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
-  ptree ham_pt;
-  ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
-  ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
-  HamFac.push("ham0", ham_pt);
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  auto& env = *env_opt;
 
   const int nwalk = 11; // prime: forces non-trivial splits in shared routines
-  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
-  ptree wlk_pt;
-  wlk_pt.put("name", "wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
-
-  WavefunctionFactory<MEM> WfnFac{};
-
-  ptree nomsd_pt;
-  nomsd_pt.put("name", "wfn_nomsd_ov");
-  nomsd_pt.put("system", "info0");
-  nomsd_pt.put("filename", wfn_file);
-  WfnFac.push("wfn_nomsd_ov", nomsd_pt);
-  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_ov", type, &ham, nwalk);
+  auto& wfn_nomsd = env.push_nomsd_wfn(mpi, "wfn_nomsd_ov", wfn_file, nwalk);
 
   // Stochastic trials at the static limit (inner_nsteps = 0) with inner_nwalkers = 1 and = 3.
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
-    ptree pt;
-    pt.put("name", name);
-    pt.put("system", "info0");
-    pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
-    pt.put("inner_nwalkers", inner_nwalkers);
-    WfnFac.push(name, pt);
-    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
+    StochasticWfnOptions opt;
+    opt.inner_nwalkers = inner_nwalkers;
+    auto& w            = env.push_stochastic_wfn(mpi, name, wfn_file, opt, nwalk);
     REQUIRE(w.is_stochastic_wavefunction());
-    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
     REQUIRE(w.stochastic_inner_walkers_initialized());
     return w;
   };
@@ -423,9 +498,8 @@ void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost
   // Every walker set is initialized from the SAME guess and SAME deterministic perturbation, so the
   // three wavefunctions see bit-for-bit identical outer walkers.
   auto collect_overlaps = [&](Wavefunction<MEM>& wfn) {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_ov"));
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_ov");
+    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     wfn.Log_Overlap(wset);
     nda::array<ComplexType, 1> ov(nwalk);
     wset.getProperty(OVLP, ov);
@@ -447,7 +521,7 @@ TEST_CASE("stochastic_overlap_matches_nomsd", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn Log_Overlap delegate-limit parity.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_overlap_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -458,53 +532,19 @@ template<MEMORY_SPACE MEM>
 void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                      std::string hamil_file, std::string wfn_file)
 {
-  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(
+      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  if (not env_opt)
     return;
-
-  const auto info  = read_info_from_wfn(wfn_file, "any");
-  const int  NMO   = std::get<0>(info);
-  const int  nup   = std::get<1>(info);
-  const int  ndown = std::get<2>(info);
-  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
-    return;
-
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
-  ptree ham_pt;
-  ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
-  ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
-  HamFac.push("ham0", ham_pt);
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  auto& env = *env_opt;
 
   const int nwalk = 11;
-  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
-  ptree wlk_pt;
-  wlk_pt.put("name", "wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
-
-  WavefunctionFactory<MEM> WfnFac{};
-
-  ptree nomsd_pt;
-  nomsd_pt.put("name", "wfn_nomsd_en");
-  nomsd_pt.put("system", "info0");
-  nomsd_pt.put("filename", wfn_file);
-  WfnFac.push("wfn_nomsd_en", nomsd_pt);
-  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_en", type, &ham, nwalk);
+  auto& wfn_nomsd = env.push_nomsd_wfn(mpi, "wfn_nomsd_en", wfn_file, nwalk);
 
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
-    ptree pt;
-    pt.put("name", name);
-    pt.put("system", "info0");
-    pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
-    pt.put("inner_nwalkers", inner_nwalkers);
-    WfnFac.push(name, pt);
-    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
-    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
+    StochasticWfnOptions opt;
+    opt.inner_nwalkers = inner_nwalkers;
+    auto& w            = env.push_stochastic_wfn(mpi, name, wfn_file, opt, nwalk);
     return w;
   };
   auto& wfn_s1 = build_stoch("wfn_stoch_en1", 1);
@@ -515,9 +555,8 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
     nda::array<ComplexType, 1> ov, e1, exx, ej;
   };
   auto collect_energies = [&](Wavefunction<MEM>& wfn) {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_en"));
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_en");
+    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     wfn.Energy(wset);
     WalkerEnergies out;
     out.ov.resize(nwalk);
@@ -552,9 +591,8 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
   // (3) Overlap/Energy consistency: Energy's Ov is the same reduction as Log_Overlap,
   // computed through a different code path, so the two must agree.
   {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_en"));
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_en");
+    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     wfn_s1.Log_Overlap(wset);
     nda::array<ComplexType, 1> ov_ovlp(nwalk);
     wset.getProperty(OVLP, ov_ovlp);
@@ -565,9 +603,8 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
   // local-energy propagation path in the propagator (not the property-setter form) -- agrees with
   // Energy(wset). Exercises the 3-arg overload with caller-allocated buffers.
   {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_en"));
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_en");
+    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     memory::array<MEM, ComplexType, 2> E_direct(nwalk, 3);
     memory::array<MEM, ComplexType, 1> Ov_direct(nwalk);
     wfn_s1.Energy(wset, E_direct, Ov_direct);
@@ -592,7 +629,7 @@ TEST_CASE("stochastic_energy_matches_nomsd", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn Energy delegate-limit parity.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_energy_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -606,69 +643,34 @@ template<MEMORY_SPACE MEM>
 void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                     std::string hamil_file, std::string wfn_file)
 {
-  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(
+      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  if (not env_opt)
     return;
-
-  const auto info  = read_info_from_wfn(wfn_file, "any");
-  const int  NMO   = std::get<0>(info);
-  const int  nup   = std::get<1>(info);
-  const int  ndown = std::get<2>(info);
-  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
-    return;
+  auto& env = *env_opt;
   const double dt(0.01);
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
-  ptree ham_pt;
-  ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
-  ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
-  HamFac.push("ham0", ham_pt);
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
-
   const int nwalk = 11;
-  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
-  ptree wlk_pt;
-  wlk_pt.put("name", "wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
-
-  WavefunctionFactory<MEM> WfnFac{};
-
-  ptree nomsd_pt;
-  nomsd_pt.put("name", "wfn_nomsd_vb");
-  nomsd_pt.put("system", "info0");
-  nomsd_pt.put("filename", wfn_file);
-  WfnFac.push("wfn_nomsd_vb", nomsd_pt);
-  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_vb", type, &ham, nwalk);
+  auto& wfn_nomsd = env.push_nomsd_wfn(mpi, "wfn_nomsd_vb", wfn_file, nwalk);
 
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
-    ptree pt;
-    pt.put("name", name);
-    pt.put("system", "info0");
-    pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
-    pt.put("inner_nwalkers", inner_nwalkers);
-    WfnFac.push(name, pt);
-    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
-    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
+    StochasticWfnOptions opt;
+    opt.inner_nwalkers = inner_nwalkers;
+    auto& w            = env.push_stochastic_wfn(mpi, name, wfn_file, opt, nwalk);
     return w;
   };
   auto& wfn_s1 = build_stoch("wfn_stoch_vb1", 1);
   auto& wfn_s3 = build_stoch("wfn_stoch_vb3", 3);
 
   auto collect_vbias = [&](Wavefunction<MEM>& wfn) {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_vb"));
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_vb");
+    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     // Discrete (model) propagators must initialize potentials before vbias.
     if (wfn.getHamType() == ModelHamiltonian)
     {
       const long ncv = wfn.number_of_cholesky_vectors();
       memory::array<MEM, ComplexType, 1> vMF_discrete(ncv, ComplexType(0.0, 0.0));
-      memory::host_array<ComplexType, 1> nMF(2 * NMO, ComplexType(0.0, 0.0));
+      memory::host_array<ComplexType, 1> nMF(2 * env.NMO, ComplexType(0.0, 0.0));
       wfn.update_potentials(dt, nMF, vMF_discrete, false);
     }
     memory::array<MEM, ComplexType, 2> X(nwalk, wfn.number_of_cholesky_vectors());
@@ -691,7 +693,7 @@ TEST_CASE("stochastic_vbias_matches_nomsd", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn vbias delegate-limit parity.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_vbias_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -706,67 +708,32 @@ void stochastic_mixed_density_matrix_matches_nomsd(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
     std::string wfn_file)
 {
-  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(
+      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  if (not env_opt)
     return;
+  auto& env = *env_opt;
 
-  const auto info   = read_info_from_wfn(wfn_file, "any");
-  const int  NMO    = std::get<0>(info);
-  const int  nup    = std::get<1>(info);
-  const int  ndown  = std::get<2>(info);
-  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
-    return;
-
-  const int nspin = (type == COLLINEAR ? 2 : 1);
-  const int npol  = (type == NONCOLLINEAR ? 2 : 1);
-  const int nel   = (type == COLLINEAR ? nup + ndown : nup);
-
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
-  ptree ham_pt;
-  ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
-  ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
-  HamFac.push("ham0", ham_pt);
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  const int nspin = (env.type == COLLINEAR ? 2 : 1);
+  const int npol  = (env.type == NONCOLLINEAR ? 2 : 1);
+  const int nel   = (env.type == COLLINEAR ? env.nup + env.ndown : env.nup);
 
   const int nwalk = 11;
-  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
-  ptree wlk_pt;
-  wlk_pt.put("name", "wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
-
-  WavefunctionFactory<MEM> WfnFac{};
-
-  ptree nomsd_pt;
-  nomsd_pt.put("name", "wfn_nomsd_dm");
-  nomsd_pt.put("system", "info0");
-  nomsd_pt.put("filename", wfn_file);
-  WfnFac.push("wfn_nomsd_dm", nomsd_pt);
-  auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_dm", type, &ham, nwalk);
+  auto& wfn_nomsd = env.push_nomsd_wfn(mpi, "wfn_nomsd_dm", wfn_file, nwalk);
 
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
-    ptree pt;
-    pt.put("name", name);
-    pt.put("system", "info0");
-    pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
-    pt.put("inner_nwalkers", inner_nwalkers);
-    WfnFac.push(name, pt);
-    auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
-    WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
+    StochasticWfnOptions opt;
+    opt.inner_nwalkers = inner_nwalkers;
+    auto& w            = env.push_stochastic_wfn(mpi, name, wfn_file, opt, nwalk);
     return w;
   };
   auto& wfn_s1 = build_stoch("wfn_stoch_dm1", 1);
   auto& wfn_s3 = build_stoch("wfn_stoch_dm3", 3);
 
   auto collect_dm = [&](Wavefunction<MEM>& wfn, bool compact) {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_dm"));
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
-    const int Gsize = compact ? nel * npol * NMO : nspin * npol * NMO * npol * NMO;
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_dm");
+    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    const int Gsize = compact ? nel * npol * env.NMO : nspin * npol * env.NMO * npol * env.NMO;
     memory::array<MEM, ComplexType, 2> G(nwalk, Gsize);
     memory::array<MEM, ComplexType, 1> Ov(nwalk);
     wfn.MixedDensityMatrix(wset, G, Ov, compact);
@@ -808,7 +775,7 @@ TEST_CASE("stochastic_mixed_density_matrix_matches_nomsd", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn observable MixedDensityMatrix delegate-limit parity.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_mixed_density_matrix_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -833,7 +800,7 @@ void stochastic_mean_field_matches_nomsd(
   const int  nup    = std::get<1>(info);
   const int  ndown  = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+  if (is_ft_walker_type(type))
     return;
   const double dt(0.01);
 
@@ -921,7 +888,7 @@ TEST_CASE("stochastic_mean_field_matches_nomsd", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn vMF / G_MF mean-field delegate-limit parity.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_mean_field_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -1029,7 +996,7 @@ TEST_CASE("stochastic_mean_field_production_order", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn vMF / G_MF survive the begin_inner_step-before-generateP1 order.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_mean_field_production_order<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -1083,7 +1050,7 @@ void stochastic_back_propagation_matches_nomsd(
   const int  nup    = std::get<1>(info);
   const int  ndown  = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+  if (is_ft_walker_type(type))
     return;
 
   const int npol = (type == NONCOLLINEAR ? 2 : 1);
@@ -1168,7 +1135,7 @@ TEST_CASE("stochastic_back_propagation_matches_nomsd", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn back-propagation reference API (outer-NOMSD delegate) parity.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -1297,7 +1264,7 @@ TEST_CASE("stochastic_back_propagation_production_order", "[stochastic_wfn]")
   app_log(0, "StochasticWfn BP references are a dedicated free-projection draw, decoupled from a "
              "conditioned/leapfrog forward ensemble.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_production_order<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -1411,7 +1378,7 @@ TEST_CASE("stochastic_back_propagation_inner_refs", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn back-propagation draws a fresh free-projection reference ensemble.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_inner_refs<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -1451,7 +1418,7 @@ void stochastic_accumulate_estimators_matches_nomsd(
   const int  nup    = std::get<1>(info);
   const int  ndown  = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
+  if (is_ft_walker_type(type))
     return;
 
   std::map<std::string, AFQMCInfo> InfoMap;
@@ -1592,7 +1559,7 @@ TEST_CASE("stochastic_accumulate_estimators_matches_nomsd", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn accumulate_estimators (one_rdm) delegate-limit parity.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_accumulate_estimators_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -1731,7 +1698,7 @@ TEST_CASE("stochastic_full_g_matches_compact", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn un-rotated full-G vs compact at the anchor.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_full_g_matches_compact<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -1750,50 +1717,23 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
     return; // Un-rotated full-G kernels are CPU-only today.
   else
   {
-    const auto info  = read_info_from_wfn(wfn_file, "any");
-    const int  NMO   = std::get<0>(info);
-    const int  nup   = std::get<1>(info);
-    const int  ndown = std::get<2>(info);
-    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
-      return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
-    ptree ham_pt;
-    ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
-    ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
-    HamFac.push("ham0", ham_pt);
-    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+    auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file,
+                                                   [](WALKER_TYPES t) { return t == CLOSED; });
+    if (not env_opt)
+      return;
+    auto& env = *env_opt;
 
     const int nwalk = 11;
-    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
-    ptree wlk_pt;
-    wlk_pt.put("name", "wset0");
-    wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac{};
-    ptree pt;
-    pt.put("name", "wfn_stoch_dyn");
-    pt.put("system", "info0");
-    pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
-    pt.put("inner_nwalkers", 4);
-    pt.put("inner_nsteps", 1);
-    ptree inner_prop;
-    inner_prop.put("timestep", 0.01);
-    pt.put_child("inner_propagator", inner_prop);
-    WfnFac.push("wfn_stoch_dyn", pt);
-    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_dyn", type, &ham, nwalk);
-    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_dyn", type, wlk_pt);
+    StochasticWfnOptions stoch_opt;
+    stoch_opt.inner_nwalkers = 4;
+    stoch_opt.inner_nsteps   = 1;
+    auto& wfn                = env.push_stochastic_wfn(mpi, "wfn_stoch_dyn", wfn_file, stoch_opt, nwalk);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_dyn"));
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_dyn");
+    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
 
     // Each "step" mimics one outer propagator step: arm the latch, then run the hot-path overrides in
     // order. begin_inner_step() + the first reduction resamples the inner ensemble once; the rest
@@ -1831,7 +1771,7 @@ TEST_CASE("stochastic_dynamic_ensemble_smoke", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn dynamic free-projection ensemble smoke.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_dynamic_ensemble_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -2037,7 +1977,7 @@ TEST_CASE("stochastic_log_aggregate_smoke", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn inner_log_aggregate smoke.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_log_aggregate_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -2047,7 +1987,7 @@ TEST_CASE("stochastic_persistent_pool_smoke", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn persistent conditioned/leapfrog inner pool smoke.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_persistent_pool_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -2069,55 +2009,27 @@ void stochastic_persistent_pool_nwalk1_bootstrap(std::shared_ptr<utils::mpi_cont
     return;
   else
   {
-    const auto info  = read_info_from_wfn(wfn_file, "any");
-    const int  NMO   = std::get<0>(info);
-    const int  nup   = std::get<1>(info);
-    const int  ndown = std::get<2>(info);
-    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file,
+                                                   [](WALKER_TYPES t) { return t == CLOSED; });
+    if (not env_opt)
       return;
-
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
-    ptree ham_pt;
-    ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
-    ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
-    HamFac.push("ham0", ham_pt);
-    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+    auto& env = *env_opt;
 
     const int nwalk          = 1; // the bug's trigger: nwalk*P aliases the pre-resample ensemble size at P.
     const int inner_nwalkers = 4;
-    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
-    ptree wlk_pt;
-    wlk_pt.put("name", "wset0");
-    wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    WavefunctionFactory<MEM> WfnFac{};
-    ptree pt;
-    pt.put("name", "wfn_stoch_nwalk1");
-    pt.put("system", "info0");
-    pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
-    pt.put("inner_nwalkers", inner_nwalkers);
-    pt.put("inner_nsteps", 1);
-    pt.put("inner_conditioning", true);
-    pt.put("inner_leapfrog", true);
-    pt.put("inner_persistence", true);
-    pt.put("inner_equil_steps", 1);
-    pt.put("inner_pool_burn_in", 0);
-    ptree inner_prop;
-    inner_prop.put("timestep", 0.01);
-    pt.put_child("inner_propagator", inner_prop);
-    WfnFac.push("wfn_stoch_nwalk1", pt);
-    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_nwalk1", type, &ham, nwalk);
-    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_nwalk1", type, wlk_pt);
+    StochasticWfnOptions stoch_opt;
+    stoch_opt.inner_nwalkers     = inner_nwalkers;
+    stoch_opt.inner_nsteps       = 1;
+    stoch_opt.inner_conditioning = true;
+    stoch_opt.inner_leapfrog     = true;
+    stoch_opt.inner_persistence  = true;
+    stoch_opt.inner_equil_steps  = 1;
+    stoch_opt.inner_pool_burn_in = 0;
+    auto& wfn                    = env.push_stochastic_wfn(mpi, "wfn_stoch_nwalk1", wfn_file, stoch_opt, nwalk);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_nwalk1"));
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nwalk1");
+    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
 
     // The driver's initial-energy report: Energy() called directly, with NO prior begin_inner_step.
     REQUIRE(wfn.stochastic_inner_ensemble_size() == inner_nwalkers); // pre-resample: still the P-sized anchor.
@@ -2141,7 +2053,7 @@ TEST_CASE("stochastic_persistent_pool_nwalk1_bootstrap", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn persistent/leapfrog pool: nwalk=1 pre-begin_inner_step bootstrap regression.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_persistent_pool_nwalk1_bootstrap<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -2298,7 +2210,7 @@ TEST_CASE("stochastic_inner_permute_after_pop_control", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn permute_inner_blocks_after_pop realigns inner blocks after population control.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_inner_permute_after_pop_control<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -2416,7 +2328,7 @@ TEST_CASE("stochastic_inner_permute_cross_rank_fallback", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn permute_inner_blocks_after_pop resamples on a foreign-rank (sentinel) slot.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_inner_permute_cross_rank_fallback<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -2548,7 +2460,7 @@ TEST_CASE("stochastic_persistent_permute_after_pop_control", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn permute_inner_blocks_after_pop realigns the PERSISTENT inner pool after pop control.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_persistent_permute_after_pop_control<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -2682,7 +2594,7 @@ TEST_CASE("stochastic_persistent_pool_survives_pop_control", "[stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn persistent inner pool survives a local pop-control permute and re-primes on a foreign slot.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_persistent_pool_survives_pop_control<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }

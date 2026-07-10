@@ -384,7 +384,7 @@ TEST_CASE("stochastic_back_propagation_driver_smoke", "[driver_factory][stochast
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "DriverFactory AFQMC run with stochastic trial + back_propagation estimator.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_driver_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }

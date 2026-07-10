@@ -227,8 +227,7 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   auto [wfn_NMO, nup, ndown] = read_info_from_wfn(wfn_file, "any");
   utils::check(NMO == wfn_NMO, "Error: NMO != wfn_NMO.");
   WALKER_TYPES type = getWalkerType(wfn_file);
-  if (type == COLLINEAR_FT or type == NONCOLLINEAR_FT)
-    return; // finite-T uses a different field/step layout; not the target of this smoke.
+  // finite-T uses a different field/step layout; not the target of this smoke.
 
   std::map<std::string, AFQMCInfo> InfoMap;
   InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
@@ -298,7 +297,7 @@ TEST_CASE("propagator_free_projection_step", "[propagator_factory]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "AFQMCBasePropagator::Propagate_free applies bare fields on an importance-sampling propagator.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     propagator_free_projection_step<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -405,7 +404,7 @@ TEST_CASE("stochastic_propagator_step", "[propagator_factory][stochastic_wfn]")
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn end-to-end outer propagator step on a dynamic trial.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_propagator_step<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -517,7 +516,7 @@ TEST_CASE("stochastic_conditioned_propagator_step", "[propagator_factory][stocha
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn walker-conditioned inner sampling over a real outer propagator.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_conditioned_propagator_step<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
@@ -542,7 +541,7 @@ TEST_CASE("stochastic_leapfrog_propagator_step", "[propagator_factory][stochasti
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn propagate-then-resample leapfrog over a real outer propagator.");
   using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES) {
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_leapfrog_propagator_step<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
