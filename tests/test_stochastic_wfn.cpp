@@ -70,6 +70,8 @@ struct StochasticWfnOptions
   bool inner_persistence   = false;
   int inner_equil_steps    = 1;
   int inner_pool_burn_in   = 0;
+  std::string inner_mcmc   = ""; // empty = input default ("pcn")
+  double inner_mcmc_step   = 0.0; // <= 0 = kernel default
   bool inner_log_aggregate = false;
   double inner_prop_timestep = 0.01;
 };
@@ -94,6 +96,10 @@ ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_
     pt.put("inner_equil_steps", opt.inner_equil_steps);
   if (opt.inner_pool_burn_in != 0)
     pt.put("inner_pool_burn_in", opt.inner_pool_burn_in);
+  if (not opt.inner_mcmc.empty())
+    pt.put("inner_mcmc", opt.inner_mcmc);
+  if (opt.inner_mcmc_step > 0.0)
+    pt.put("inner_mcmc_step", opt.inner_mcmc_step);
   if (opt.inner_log_aggregate)
     pt.put("inner_log_aggregate", true);
   if (opt.inner_nsteps > 0)
@@ -1777,14 +1783,15 @@ TEST_CASE("stochastic_dynamic_ensemble_smoke", "[stochastic_wfn]")
 }
 
 // Persistent (tethered) inner pool under production conditioning + leapfrog. Instead of the
-// reset-then-redraw of the Gaussian-shift conditioned path, the pool is kept across outer steps and
-// re-equilibrated by a short independence-Metropolis MCMC (proposal ~ bare free projection; accept on
-// |<psi|phi_w>|, targeting the exact conditioned distribution p_T(Y)*|<psi|phi_w>|). Drives several outer
-// steps through all four hot-path overrides and asserts finiteness (values are stochastic, not fixed),
-// that the slot-major nw*P pool layout is preserved across steps (persistence, not a resize to P or a
-// collapse), and -- via the equil_steps = 0 leg -- that the zero-equilibration prime path is well-behaved.
-// Regression for the default-off path is byte-identical inner_persistence = false (every other
-// [stochastic_wfn] case).
+// reset-then-redraw of the Gaussian-shift conditioned path, each (walker, p) slot owns a FIELD-space
+// Markov chain (state = the auxiliary-field configuration Y behind psi = B_T(Y)|phi_T>, stored in the
+// outer walker buffer's TrialFields block) re-equilibrated each step by Metropolis-Hastings sweeps
+// targeting the conditioned distribution p_T(Y)*|<psi(Y)|phi_w>|. Drives several outer steps through
+// all four hot-path overrides for BOTH proposal kernels (pcn and gaussian) and asserts finiteness
+// (values are stochastic, not fixed), that the slot-major nw*P pool layout is preserved across steps
+// (persistence, not a resize to P or a collapse), that the acceptance counters advance sanely, and --
+// via the equil_steps = 0 leg -- that the zero-equilibration prime path is well-behaved. Regression for
+// the default-off path is byte-identical inner_persistence = false (every other [stochastic_wfn] case).
 template<MEMORY_SPACE MEM>
 void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                       std::string hamil_file, std::string wfn_file)
@@ -1822,9 +1829,10 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    // Two persistent decks: (1) equil_steps = 1 + burn_in = 1 (a genuine short MCMC), and (2) equil_steps
-    // = 0 (zero equilibration after prime -- pool reset to the anchor once, then frozen).
-    auto run_persistent = [&](const std::string& name, int equil_steps, int burn_in) {
+    // Persistent decks: for each proposal kernel, (1) equil_steps = 1 + burn_in = 1 (a genuine short
+    // MCMC), and (2) equil_steps = 0 (zero equilibration after prime -- chains drawn once, then frozen).
+    auto run_persistent = [&](const std::string& name, int equil_steps, int burn_in,
+                              const std::string& mcmc, double mcmc_step) {
       WavefunctionFactory<MEM> WfnFac{};
       ptree pt;
       pt.put("name", name);
@@ -1838,6 +1846,9 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
       pt.put("inner_persistence", true);
       pt.put("inner_equil_steps", equil_steps);
       pt.put("inner_pool_burn_in", burn_in);
+      pt.put("inner_mcmc", mcmc);
+      if (mcmc_step > 0.0)
+        pt.put("inner_mcmc_step", mcmc_step);
       ptree inner_prop;
       inner_prop.put("timestep", 0.01);
       pt.put_child("inner_propagator", inner_prop);
@@ -1877,10 +1888,18 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
           for (int g = 0; g < X_h.extent(1); ++g)
             REQUIRE(std::isfinite(real(X_h(w, g))));
       }
+      // Acceptance bookkeeping: with equil/burn-in sweeps the chains proposed at least once and the
+      // cumulative acceptance is a valid fraction; the frozen (equil = 0, burn-in = 0) leg makes no
+      // proposals and reports the 1.0 sentinel.
+      const double acc = wfn.stochastic_inner_chain_acceptance();
+      REQUIRE(acc >= 0.0);
+      REQUIRE(acc <= 1.0);
     };
 
-    run_persistent("wfn_stoch_persist", 1, 1);
-    run_persistent("wfn_stoch_persist_noequil", 0, 0);
+    run_persistent("wfn_stoch_persist_pcn", 1, 1, "pcn", 0.5);
+    run_persistent("wfn_stoch_persist_pcn_indep", 1, 0, "pcn", 1.0); // s = 1: independence redraw limit
+    run_persistent("wfn_stoch_persist_gauss", 1, 1, "gaussian", 0.05);
+    run_persistent("wfn_stoch_persist_noequil", 0, 0, "pcn", 0.5);
   }
 }
 
@@ -1993,12 +2012,13 @@ TEST_CASE("stochastic_persistent_pool_smoke", "[stochastic_wfn]")
 }
 
 // Regression: a driver's pre-loop initial-energy call (Energy/Log_Overlap called BEFORE the first
-// begin_inner_step ever arms inner_step_pending_) with a single outer walker per rank (nwalk == 1). The
-// freshly-initialized inner ensemble has size == inner_nwalkers_ (= P), which coincidentally already
-// equals nwalk*P at nwalk == 1, so the conditioned_resample bootstrap size-check alone cannot tell an
-// un-conditioned ensemble from a properly resampled one -- it must fall through to inner_pool_primed_.
-// Without that guard this aborts ("leapfrog inner_cond_mag_ not sized") the first time SAFIRE reports the
-// starting local energy on a single-walker-per-rank run (e.g. n_walkers_per_mpi_task=1).
+// begin_inner_step, i.e. before the persistent chains exist) with a single outer walker per rank
+// (nwalk == 1). The freshly-initialized inner ensemble has size == inner_nwalkers_ (= P), which
+// coincidentally already equals nwalk*P at nwalk == 1, so the conditioned_resample bootstrap size-check
+// alone cannot tell an un-conditioned ensemble from a properly resampled one -- the persistent path's
+// chains-not-yet-primed fallback (a one-off Gaussian-shift resample) must catch it. Without that guard
+// this aborts ("leapfrog inner_cond_mag_ not sized") the first time SAFIRE reports the starting local
+// energy on a single-walker-per-rank run (e.g. n_walkers_per_mpi_task=1).
 template<MEMORY_SPACE MEM>
 void stochastic_persistent_pool_nwalk1_bootstrap(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                                  std::string hamil_file, std::string wfn_file)
@@ -2344,12 +2364,14 @@ TEST_CASE("stochastic_inner_permute_cross_rank_fallback", "[stochastic_wfn]")
 // The two cases below pin the contract at both ends of the branch.
 // -----------------------------------------------------------------------------------------------------
 
-// Case 1 -- a SUCCESSFUL (local) permute realigns the PERSISTENT pool exactly, like the reset-then-redraw
-// case, and the post-permute reduction reuses it (no re-prime, no resample). Same clone-3-into-0 exact
-// overlap-identity check as stochastic_inner_permute_after_pop_control, but with inner_persistence = true
-// so the block being moved is a tethered MCMC sample (and its leapfrog magnitude inner_cond_mag_ must move
-// with it). If the persistent branch failed to permute the pool -- or spuriously re-primed/re-equilibrated
-// it -- Ov_after[0] would not equal Ov_before[3].
+// Case 1 -- pop control transports the PERSISTENT chains with their walkers, and the post-pop hook
+// rebuilds the pool determinants from the transported fields exactly. Same clone-3-into-0 exact
+// overlap-identity check as stochastic_inner_permute_after_pop_control, but with inner_persistence =
+// true: the chain state (fields) lives inside the outer walker buffer, so the clone is simulated by
+// copying the walker's Slater matrix AND its TrialFields row (production branch() copies the whole
+// buffer row -- see stochastic_branch_lineage_metadata for the row-copy contract). The rebuild is
+// deterministic, so Ov_after[0] must equal Ov_before[3] exactly; a spurious re-prime, a chain restart,
+// or dets rebuilt from the wrong slot's fields all break the identity.
 template<MEMORY_SPACE MEM>
 void stochastic_persistent_permute_after_pop_control(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -2422,10 +2444,15 @@ void stochastic_persistent_permute_after_pop_control(
     wfn_s.Log_Overlap(wset, ov_before); // latch consumed by begin_inner_step -> reuses the primed pool
 
     // Simulate a count-preserving popControl clone: outer slot clone_dst becomes a copy of clone_src.
+    // Production branch() clones the ENTIRE walker_buffer row, so the copy includes the walker's chain
+    // fields (TrialFields row) alongside its Slater matrix; the lineage scalar is set for completeness
+    // (the persistent path rebuilds from the fields and does not consume it).
     {
       auto all = nda::range::all;
       auto SM  = wset.SlaterMatrices(Alpha);
       SM(clone_dst, all, all) = SM(clone_src, all, all);
+      auto TF = wset.TrialFields();
+      TF(clone_dst, all) = TF(clone_src, all);
     }
     {
       nda::array<ComplexType, 1> lin(nwalk);
@@ -2435,12 +2462,12 @@ void stochastic_persistent_permute_after_pop_control(
       wset.setProperty(SLOT_LINEAGE, lin);
     }
 
-    // Permute the PERSISTENT pool by the lineage map (no resample, no re-prime).
+    // The post-pop hook rebuilds the pool determinants from the transported chain fields.
     wfn_s.permute_inner_blocks_after_pop(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
 
-    // Score again -- latch consumed + size unchanged + pool still primed => NO resample, so this reads the
-    // permuted persistent pool against the cloned walkers.
+    // Score again -- latch consumed + chains live => NO resample, so this reads the rebuilt persistent
+    // pool against the cloned walkers.
     nda::array<ComplexType, 1> ov_after(nwalk);
     wfn_s.Log_Overlap(wset, ov_after);
 
@@ -2465,15 +2492,18 @@ TEST_CASE("stochastic_persistent_permute_after_pop_control", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Case 2 -- the prime-flag semantics of the coupling: whether a successful local permute correctly KEEPS
-// the pool primed (persist across the pop event) while
-// the cross-rank fallback correctly INVALIDATES it (re-prime from the anchor). The two paths are made
-// observable with inner_equil_steps = 0: a PERSIST does zero MCMC sweeps and leaves the pool byte-identical,
-// whereas a RE-PRIME resets every slot to the anchor and runs inner_pool_burn_in sweeps -> a different pool.
-//   (A) identity lineage  -> successful permute -> primed stays true -> next step persists -> overlaps UNCHANGED
-//   (B) sentinel lineage  -> fallback          -> primed cleared     -> next step re-primes -> overlaps CHANGE
-// This pins that persistence and population control are not silently resetting or freezing each other: the
-// good samples survive a local branch, and only a genuinely foreign block forces the expensive re-prime.
+// Case 2 -- chain-transport semantics of the coupling: the pool determinants always follow the chain
+// FIELDS stored in the outer walker buffer, with no chain restart in either direction. Made observable
+// with inner_equil_steps = 0 (zero sweeps per step, so the only thing that can change the pool is the
+// post-pop rebuild itself):
+//   (A) identity lineage, fields untouched -> the rebuild reproduces the same pool -> overlaps UNCHANGED
+//       (an all-or-nothing "re-prime on pop" would have destroyed them);
+//   (B) one slot's fields replaced (simulating a migrated walker arriving with a DIFFERENT chain, with
+//       the push_walkers sentinel set) -> the rebuild derives that slot's determinants from the NEW
+//       fields -> its overlap CHANGES while every other slot's stays exactly fixed.
+// This pins that persistence and population control neither reset nor freeze each other: samples survive
+// any local branch exactly, and a migrant's samples are reconstructed from its transported chain rather
+// than redrawn from scratch.
 template<MEMORY_SPACE MEM>
 void stochastic_persistent_pool_survives_pop_control(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -2525,8 +2555,9 @@ void stochastic_persistent_pool_survives_pop_control(
     pt.put("inner_conditioning", true);
     pt.put("inner_leapfrog", true);
     pt.put("inner_persistence", true);
-    // equil_steps = 0 makes the persist path a no-op on the pool (0 sweeps), so a PERSIST is observably
-    // byte-identical and a RE-PRIME (reset-to-anchor + burn_in sweeps) is observably different.
+    // equil_steps = 0 freezes the chains after the prime (+ burn-in), so the only thing that can change
+    // the pool across the pop event is the post-pop rebuild itself -- transported fields => identical
+    // determinants; replaced fields => different determinants at exactly that slot.
     pt.put("inner_equil_steps", 0);
     pt.put("inner_pool_burn_in", 2);
     ptree inner_prop;
@@ -2561,8 +2592,9 @@ void stochastic_persistent_pool_survives_pop_control(
     wfn_s.Log_Overlap(wset, ov0);
     auto lin0 = linear_overlap(ov0);
 
-    // (A) A local branch (identity lineage): the permute keeps the pool primed. The next begin_inner_step
-    // runs the persist path (0 equil sweeps), so the tethered samples carry across the pop event UNCHANGED.
+    // (A) A local branch (identity lineage, fields untouched): the post-pop rebuild reproduces the same
+    // pool from the same fields, and the next begin_inner_step (0 equil sweeps) leaves it alone -- the
+    // tethered samples carry across the pop event UNCHANGED.
     identity_lineage();
     wfn_s.permute_inner_blocks_after_pop(wset);
     wfn_s.begin_inner_step(wset);
@@ -2571,10 +2603,17 @@ void stochastic_persistent_pool_survives_pop_control(
     wfn_s.Log_Overlap(wset, ovA);
     auto linA = linear_overlap(ovA);
     for (int w = 0; w < nwalk; ++w)
-      CHECK_THAT(linA(w), utils::Approx(lin0(w))); // persistence held: no re-prime, no re-equilibration
+      CHECK_THAT(linA(w), utils::Approx(lin0(w))); // persistence held: no restart, no re-equilibration
 
-    // (B) A foreign-rank arrival (one sentinel): the permute clears the prime latch, so the next
-    // begin_inner_step re-primes from the anchor (+ burn_in sweeps) -> a fresh pool -> overlaps change.
+    // (B) A migrated walker arrives with a DIFFERENT chain: replace slot sentinel_slot's fields
+    // (negation is a deterministic, valid, different chain state) and set the push_walkers sentinel.
+    // The rebuild must derive that slot's determinants from the NEW fields (overlap changes) and leave
+    // every other slot's exactly untouched -- no whole-rank restart.
+    {
+      auto TF = wset.TrialFields();
+      for (long j = 0; j < TF.extent(1); ++j)
+        TF(sentinel_slot, j) = -TF(sentinel_slot, j);
+    }
     sentinel_lineage();
     wfn_s.permute_inner_blocks_after_pop(wset);
     wfn_s.begin_inner_step(wset);
@@ -2582,20 +2621,129 @@ void stochastic_persistent_pool_survives_pop_control(
     nda::array<ComplexType, 1> ovB(nwalk);
     wfn_s.Log_Overlap(wset, ovB);
     auto linB = linear_overlap(ovB);
-    double max_diff = 0.0;
+    REQUIRE(std::abs(linB(sentinel_slot) - lin0(sentinel_slot)) > 1e-6); // dets follow the new fields
     for (int w = 0; w < nwalk; ++w)
-      max_diff = std::max(max_diff, std::abs(linB(w) - lin0(w)));
-    REQUIRE(max_diff > 1e-6); // fallback re-primed the pool from the anchor -> ensemble (and overlaps) changed
+      if (w != sentinel_slot)
+        CHECK_THAT(linB(w), utils::Approx(lin0(w))); // every other chain carried exactly
   }
 }
 
 TEST_CASE("stochastic_persistent_pool_survives_pop_control", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "StochasticWfn persistent inner pool survives a local pop-control permute and re-primes on a foreign slot.");
+  app_log(0, "StochasticWfn persistent chains survive pop control; a replaced chain rebuilds its own slot only.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_persistent_pool_survives_pop_control<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Regression: the leapfrog conditioning magnitudes inner_cond_mag_ = |<psi_q|phi_cond>| reference the
+// walker the chains were EQUILIBRATED against (phi_cond, set in begin_inner_step), and a
+// pop-control realignment that only re-indexes the ensemble must PERMUTE them, never recompute them
+// against the current (post-propagation, post-pop) walker. The distinction is invisible to the other
+// permute tests because they never move the walker between begin_inner_step and the permute -- so a
+// recompute lands on the same phi and looks correct. Here we deliberately perturb the walkers AFTER
+// begin_inner_step (mimicking the driver: begin_inner_step -> Propagate moves phi -> popControl ->
+// permute), then apply an IDENTITY-lineage permute. Under the correct permutation the magnitudes are
+// unchanged (identity re-indexing of values still tied to phi_cond); a stray recompute against the
+// moved walker changes them. This is the unit-level analogue of the driver's EnergyEstimator deno_real
+// bookkeeping invariant (must be 1 to floating precision), which the recompute broke from the first
+// measured block on the trained N2 trial.
+template<MEMORY_SPACE MEM>
+void stochastic_persistent_cond_mag_invariant_under_permute(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // conditioned inner sampling is CPU-only today.
+  else
+  {
+    const auto info  = read_info_from_wfn(wfn_file, "any");
+    const int  NMO   = std::get<0>(info);
+    const int  nup   = std::get<1>(info);
+    const int  ndown = std::get<2>(info);
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (type != CLOSED)
+      return;
+    if (mpi->comm.size() != 1)
+      return; // manipulates SLOT_LINEAGE directly; the identity-lineage permute assumes no cross-rank mixing.
+
+    std::map<std::string, AFQMCInfo> InfoMap;
+    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("system", "info0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac(InfoMap);
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    const int nwalk          = 6;
+    const int inner_nwalkers = 3;
+    std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    ptree wlk_pt;
+    wlk_pt.put("name", "wset0");
+    wlk_pt.put("walker_type", walkerTypeToString(type));
+
+    WavefunctionFactory<MEM> WfnFac{};
+    ptree pt;
+    pt.put("name", "wfn_stoch_condmag");
+    pt.put("system", "info0");
+    pt.put("filename", wfn_file);
+    mark_stochastic_wfn_input(pt);
+    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_nsteps", 1);
+    pt.put("inner_conditioning", true);
+    pt.put("inner_leapfrog", true);
+    pt.put("inner_persistence", true);
+    pt.put("inner_equil_steps", 1);
+    pt.put("inner_pool_burn_in", 1);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.01);
+    pt.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_stoch_condmag", pt);
+    auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_condmag", type, &ham, nwalk);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_condmag", type, wlk_pt);
+
+    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
+    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_condmag"));
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown); // distinct walkers => distinct cond_mag
+
+    // Equilibrate the chains against the CURRENT walkers phi_cond and set inner_cond_mag_ (leapfrog).
+    wfn_s.begin_inner_step(wset);
+    const double sum_cond = wfn_s.stochastic_inner_cond_mag_sum();
+    REQUIRE(sum_cond > 0.0); // magnitudes were actually set
+
+    // Move the walkers (mimic the propagation that runs before pop control) WITHOUT re-equilibrating
+    // the chains -- the leapfrog ensemble and its phi_cond-referenced magnitudes must stay fixed.
+    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+
+    // A count-preserving local pop event: identity lineage (no clone, no cross-rank arrival).
+    {
+      nda::array<ComplexType, 1> lin(nwalk);
+      for (int w = 0; w < nwalk; ++w)
+        lin(w) = ComplexType(double(w), 0.0);
+      wset.setProperty(SLOT_LINEAGE, lin);
+    }
+    wfn_s.permute_inner_blocks_after_pop(wset);
+
+    // The magnitudes still reference phi_cond, so an identity re-indexing leaves their sum EXACTLY
+    // unchanged. A recompute against the moved walker would change it (the fixed bug).
+    CHECK_THAT(wfn_s.stochastic_inner_cond_mag_sum(), utils::Approx(sum_cond));
+  }
+}
+
+TEST_CASE("stochastic_persistent_cond_mag_invariant_under_permute", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn leapfrog inner_cond_mag_ is permuted (not recomputed) across a pop-control realignment.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_persistent_cond_mag_invariant_under_permute<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
