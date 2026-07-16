@@ -277,6 +277,13 @@ public:
    */     
   void resize_bp(int nbp, int nCV, int nref);
 
+  /*
+   * Appends a per-walker auxiliary-field block of n entries to the walker layout (see
+   * TRIAL_FIELDS in WalkerConfig.hpp). Must be called (uniformly across ranks) before any
+   * population-control event that should transport the block.
+   */
+  void resize_trial_fields(int n);
+
   // perform and report tests/timings
   void benchmark(std::string& blist, int maxnW, int delnW, int repeat);
 
@@ -421,6 +428,30 @@ public:
   {
     utils::check(data_displ[SMN]>=0, "access to uninitialized BP sector. ");
     return extract_SM<SMN>(s);
+  }
+
+  bool has_trial_fields() const { return data_displ[TRIAL_FIELDS] >= 0; }
+  int trial_fields_size() const { return trial_fields_size_; }
+
+  // [tot_num_walkers, trial_fields_size] view of the per-walker auxiliary-field block
+  auto TrialFields()
+  {
+    utils::check(data_displ[TRIAL_FIELDS] >= 0, "access to unallocated trial-fields block.");
+    long i0 = data_displ[TRIAL_FIELDS];
+    std::array<long,2> shape   = {long(tot_num_walkers), long(trial_fields_size_)};
+    std::array<long,2> strides = {walker_buffer.strides()[0], 1};
+    nda::idx_map<2, 0, nda::C_stride_order<2>, nda::layout_prop_e::none> idxm(shape,strides);
+    return memory::array_view<MEM,ComplexType,2>(idxm, walker_buffer.data() + i0);
+  }
+
+  auto TrialFields() const
+  {
+    utils::check(data_displ[TRIAL_FIELDS] >= 0, "access to unallocated trial-fields block.");
+    long i0 = data_displ[TRIAL_FIELDS];
+    std::array<long,2> shape   = {long(tot_num_walkers), long(trial_fields_size_)};
+    std::array<long,2> strides = {walker_buffer.strides()[0], 1};
+    nda::idx_map<2, 0, nda::C_stride_order<2>, nda::layout_prop_e::none> idxm(shape,strides);
+    return memory::array_view<MEM,const ComplexType,2>(idxm, walker_buffer.data() + i0);
   }
 
   void processWalkerData(std::vector<ComplexType>& curData);
@@ -665,6 +696,8 @@ protected:
   int Branching_timer;
 
   int walker_size, walker_memory_usage;
+  // width of the optional per-walker TRIAL_FIELDS block (0 = unallocated); included in walker_size
+  int trial_fields_size_{0};
   int bp_walker_size, bp_walker_memory_usage;
   int bp_pos;
   int tau_step;
