@@ -63,6 +63,12 @@ public:
   }
 
   template<class... Args>
+  void Propagate_given_fields(Args&&... args)
+  {
+    std::visit([&](auto&& a) { a.Propagate_given_fields(std::forward<Args>(args)...); }, var);
+  }
+
+  template<class... Args>
   void BackPropagate(Args&&... args)
   {
     std::visit([&](auto&& a) { a.BackPropagate(std::forward<Args>(args)...); }, var);
