@@ -297,6 +297,15 @@ public:
   template<class WlkSet>
   void Propagate_free(WlkSet& wset, RealType dt, int nt = 0);
 
+  // Applies B_T(X) for CALLER-SUPPLIED auxiliary fields X(nwalk,nCV): vHS -> apply_propagators, with
+  // no field generation, no RNG consumption, and no weight update. The deterministic companion of
+  // Propagate_free: feeding back the fields Propagate_free would have drawn reproduces its walkers
+  // exactly. Used by wavefunctions that keep per-walker field configurations (e.g. a Metropolis
+  // sampler over trial auxiliary fields) and need to (re)build the corresponding determinants.
+  // X is taken non-const because some HamiltonianOperations::vHS implementations stage through it.
+  template<class WlkSet>
+  void Propagate_given_fields(WlkSet& wset, nda::MemoryArrayOfRank<2> auto& X, RealType dt);
+
   template<class WlkSet>
   void BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset,
         nda::MemoryArrayOfRank<4> auto&& Refs, nda::MemoryArrayOfRank<2> auto&& logdetR);           

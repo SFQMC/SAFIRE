@@ -294,6 +294,35 @@ public:
         var);
   }
 
+  // Cumulative Metropolis acceptance fraction of a stochastic trial's persistent field-space chain
+  // updates on this rank (1.0 before any proposal; -1 for a non-stochastic wavefunction). Read-only
+  // diagnostic.
+  double stochastic_inner_chain_acceptance() const
+  {
+    return std::visit(
+        [](auto&& a) -> double {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.inner_chain_acceptance();
+          return -1.0;
+        },
+        var);
+  }
+
+  // Sum of a stochastic trial's leapfrog conditioning magnitudes (test/diagnostic checksum; -1 for a
+  // non-stochastic wavefunction). See StochasticWfn::inner_cond_mag_sum.
+  double stochastic_inner_cond_mag_sum() const
+  {
+    return std::visit(
+        [](auto&& a) -> double {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.inner_cond_mag_sum();
+          return -1.0;
+        },
+        var);
+  }
+
   void initialize_stochastic_inner_walkers(
       ptree const& walker_pt,
       memory::const_shared_array<HOST_MEMORY, ComplexType, 3> const& initial_guess,

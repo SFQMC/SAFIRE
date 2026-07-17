@@ -205,6 +205,8 @@ void WalkerSetBase<_M_>::setup()
   data_displ[FIELDS]         = -1;
   data_displ[WEIGHT_FAC]     = -1;
   data_displ[WEIGHT_HISTORY] = -1;
+  data_displ[TRIAL_FIELDS]   = -1;
+  trial_fields_size_         = 0;
   bp_walker_size             = 0;
   bp_walker_memory_usage     = bp_walker_size * sizeof(ComplexType);
 
@@ -675,6 +677,38 @@ void WalkerSetBase<_M_>::resize_bp(int nbp, int nCV, int nref)
     walker_buffer = std::move(wb);
   }
 }  
+
+/*
+* Appends a per-walker auxiliary-field block of `n` ComplexType entries to the walker layout
+* (data_displ[TRIAL_FIELDS]), growing walker_size and preserving buffer contents -- the same
+* runtime-growth mechanism resize_bp uses for the SMN block. Because the block lives inside
+* walker_buffer, branch()'s whole-row copies clone it with the walker and the load-balance payload
+* (sized by walker_size) ships it across ranks; it sits after SLOT_LINEAGE, outside the
+* walkerSizeIO() checkpoint window. Idempotent for the same n; a different n on an already-sized
+* block is a programming error.
+*/
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::resize_trial_fields(int n)
+{
+  utils::check(n > 0, "Error in WalkerSetBase::resize_trial_fields: n <= 0.");
+  utils::check(walker_buffer.extent(1) == walker_size, "Size mismatch.");
+  if (data_displ[TRIAL_FIELDS] >= 0)
+  {
+    utils::check(trial_fields_size_ == n,
+                 "Error in WalkerSetBase::resize_trial_fields: block already sized to {} != {}.",
+                 trial_fields_size_, n);
+    return;
+  }
+  auto sz(walker_size);
+  data_displ[TRIAL_FIELDS] = walker_size;
+  trial_fields_size_       = n;
+  walker_size += n;
+  walker_memory_usage = walker_size * sizeof(ComplexType);
+  memory::array<MEM, ComplexType, 2> wb(walker_buffer.extent(0), walker_size);
+  wb(nda::range::all, nda::range(0, sz)) = walker_buffer();
+  wb(nda::range::all, nda::range(sz, walker_size)) = ComplexType(0.0);
+  walker_buffer = std::move(wb);
+}
 
 template<MEMORY_SPACE _M_>
 void WalkerSetBase<_M_>::push_walkers(nda::MemoryArrayOfRank<2> auto&& M)

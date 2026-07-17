@@ -40,7 +40,7 @@ inline ptree strip_stochastic_input_keys(ptree pt)
 {
   for (auto const& key : {"type", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
                           "inner_conditioning", "inner_leapfrog", "inner_persistence", "inner_equil_steps",
-                          "inner_mcmc", "inner_pool_burn_in", "inner_log_aggregate"})
+                          "inner_mcmc", "inner_mcmc_step", "inner_pool_burn_in", "inner_log_aggregate"})
     pt.erase(key);
   return pt;
 }
@@ -94,10 +94,35 @@ public:
   int inner_nsteps() const { return inner_nsteps_; }
   bool inner_conditioning() const { return inner_conditioning_; }
   bool inner_leapfrog() const { return inner_leapfrog_; }
-  // Persistent (tethered) inner sampling. When on, the inner pool is kept across outer steps and
-  // re-equilibrated by a short Metropolis MCMC instead of reset-then-redraw with Gaussian-shift resampling.
+  // Persistent (tethered) inner sampling. When on, each (outer walker, p) slot owns a Markov chain
+  // whose STATE is the auxiliary-field configuration Y that generates its trial sample
+  // psi = B_T(Y)|phi_T>; chains are kept across outer steps and re-equilibrated by a short
+  // Metropolis-Hastings walk in field space targeting p_T(Y)*|<psi(Y)|phi_w>| instead of
+  // reset-then-redraw with Gaussian-shift resampling. The field configurations live in a per-walker
+  // block of the OUTER walker buffer (WalkerSetBase::TrialFields), so population control clones and
+  // ships the chains with their walkers and the determinants can be rebuilt exactly wherever a walker
+  // lands.
   bool inner_persistence() const { return inner_persistence_; }
   int inner_equil_steps() const { return inner_equil_steps_; }
+  std::string const& inner_mcmc() const { return inner_mcmc_; }
+  double inner_mcmc_step() const { return inner_mcmc_step_; }
+  // Cumulative Metropolis acceptance fraction of the field-space chain updates on this rank
+  // (1.0 before any proposal has been made).
+  double inner_chain_acceptance() const
+  {
+    return chain_proposed_ > 0 ? double(chain_accepted_) / double(chain_proposed_) : 1.0;
+  }
+  // Sum of the leapfrog conditioning magnitudes |<psi_q|phi_cond>| (test/diagnostic checksum; 0 when
+  // unset). A pop-control realignment that only re-indexes the ensemble must leave this sum invariant
+  // -- it references phi_cond (the walker the chains were equilibrated against), not the post-pop
+  // walker -- so a test can pin "permute must not recompute cond_mag against the current walker".
+  double inner_cond_mag_sum() const
+  {
+    double s = 0.0;
+    for (long i = 0; i < inner_cond_mag_.size(); ++i)
+      s += inner_cond_mag_(i);
+    return s;
+  }
   bool inner_log_aggregate() const { return inner_log_aggregate_; }
 
   WalkerSet<MEM>& inner_wset();
@@ -379,18 +404,30 @@ private:
   bool bp_refs_drawn_{false};
   bool inner_conditioning_{false};
   bool inner_leapfrog_{false};
-  // Persistent-pool controls (default OFF => reset-then-redraw conditioned resample is byte-for-byte
-  // unchanged). inner_persistence_: keep the inner pool across outer steps and re-equilibrate it in place.
-  // inner_equil_steps_: Metropolis sweeps per outer step once the pool is primed. inner_pool_burn_in_:
-  // extra sweeps at the one-time prime (fresh-from-anchor). inner_mcmc_: proposal kernel ("metropolis"
-  // only for now; "hmc" reserved). inner_pool_primed_: latched true once the pool has been initialized so
-  // subsequent steps persist rather than re-draw; cleared whenever the pool is invalidated (BP draw,
-  // cross-rank pop-control move).
+  // Persistent-chain controls (default OFF => reset-then-redraw conditioned resample is byte-for-byte
+  // unchanged). inner_persistence_: keep per-slot field-space Markov chains across outer steps and
+  // re-equilibrate them in place (see inner_persistence() above). inner_equil_steps_: MH sweeps per
+  // outer step once the chains exist. inner_pool_burn_in_: extra sweeps at the one-time prime.
+  // inner_mcmc_: proposal kernel -- "pcn" (preconditioned Crank-Nicolson, prior-preserving:
+  // Y* = sqrt(1-s^2) Y + s xi) or "gaussian" (random walk: Y* = Y + s xi, prior ratio in the
+  // acceptance). inner_mcmc_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
+  // independence redraw; gaussian: s > 0).
   bool inner_persistence_{false};
   int inner_equil_steps_{1};
   int inner_pool_burn_in_{0};
-  std::string inner_mcmc_{"metropolis"};
-  bool inner_pool_primed_{false};
+  std::string inner_mcmc_{"pcn"};
+  double inner_mcmc_step_{0.5};
+  // inner_chains_primed_: the per-walker field blocks hold live chain states (set at the first
+  // persistent pool update, which runs inside begin_inner_step -- the one seam with non-const access
+  // to the outer walker set). inner_dets_stale_: the cached inner determinants no longer match the
+  // chain fields (the BP reference draw reused the pool storage, or population control moved chains
+  // between slots/ranks) and must be rebuilt -- deterministically -- from the fields before use.
+  bool inner_chains_primed_{false};
+  bool inner_dets_stale_{false};
+  // Cumulative per-rank Metropolis statistics of the field-space chain updates.
+  long chain_proposed_{0};
+  long chain_accepted_{0};
+  long chain_updates_{0};
   bool inner_log_aggregate_{false};
   nda::array<ComplexType, 3> inner_anchor_;
   // Leapfrog: per inner walker q (slot-major q = ip*nwalk + w), the magnitude |⟨ψ_q|φ_w^cond⟩| of its cross overlap with the walker its block was conditioned on. Set at each
@@ -415,12 +452,32 @@ private:
   // layout -- shared by the free-projection advance, the conditioned resample, and the BP reference draw.
   void reset_inner_to_anchor(WalkerSet<MEM>& inner, int count);
 
-  // Propose a fresh bare free-projection sample psi* = B_T(Y*)|phi_T> into every inner walker
-  // of the current (slot-major nw*P) pool -- reset to the anchor, then inner_nsteps_ Propagate_free steps.
-  // Walker-INDEPENDENT (the proposal density is the trial's own p_T(Y)); the walker conditioning enters
-  // only through the Metropolis accept/reject in metropolis_sweep_conditioned. Defined in StochasticWfn.cpp
-  // (the propagator call needs the complete Propagator type, unavailable to the .icc templates).
-  void propose_free_projection_pool();
+  // ---- Persistent field-space chain machinery (all defined in StochasticWfn.cpp: the propagator
+  // ---- calls need the complete Propagator type, unavailable to the .icc templates).
+
+  // Draw a fresh field configuration Y ~ p_T (i.i.d. standard normals) into every chain's slot of the
+  // outer walker set's TrialFields block -- the chain start. Requires the block to be sized.
+  void prime_chain_fields(WalkerSet<MEM>& wset);
+
+  // Rebuild the inner determinants from the chain fields: reset the (slot-major nw*P) pool to the
+  // anchor |phi_T>, then apply the inner propagator's B_T with the STORED fields, one inner step at a
+  // time (Propagate_given_fields). Deterministic -- the single source of truth for what psi_q is --
+  // and therefore exact after population control moved chains between slots or ranks, and after the
+  // back-propagation reference draw reused the pool storage.
+  void rebuild_inner_dets_from_chain_fields(WalkerSet<MEM> const& wset);
+
+  // One Metropolis-Hastings sweep over all nw*P chains, in FIELD space (the chain state is the field
+  // configuration Y, not the determinant). Proposal per inner_mcmc_: pCN (prior-preserving) or
+  // random-walk gaussian (prior ratio in the acceptance). Target on slot q = ip*nw + w:
+  // p_T(Y) * |<psi(Y)|phi_w>|. Batched: one Propagate_given_fields build of all proposal determinants
+  // + one cross-overlap pass; rejected slots restore their determinant row (fields untouched).
+  void chain_pool_sweep(WalkerSet<MEM>& wset);
+
+  // Per-outer-step persistent chain update, called from begin_inner_step (the non-const seam):
+  // lazily size the TrialFields block, prime the chains on first use (+ burn-in), rebuild stale
+  // determinants, run inner_equil_steps_ sweeps against the CURRENT (old) walkers, and refresh the
+  // leapfrog conditioning magnitudes. Purely rank-local: no communication, no collectives.
+  void update_persistent_chain_pool(WalkerSet<MEM>& wset);
 
   // Resample the inner ensemble conditioned on each outer walker phi_w. Computes the custom inner force bias x_bar(phi_w) = sqrt(dt)*L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (the inner
   // trial IS the anchor phi_T, so this reuses inner_nomsd()'s mixed DM + vbias on the OUTER wset) and
@@ -444,22 +501,6 @@ private:
   // sized nw*P; `inner` must be in the slot-major nw*P conditioned form.
   template<class WlkSet>
   void cross_overlap_magnitudes(const WlkSet& wset, WalkerSet<MEM>& inner, nda::array<RealType, 1>& mag);
-
-  // Persistent conditioned resample. Replaces reset-then-redraw with a persistent pool:
-  // on `prime` (first use / outer-count change / after invalidation) reset every slot to the anchor and
-  // burn in; otherwise KEEP the previous pool and re-equilibrate. Runs inner_equil_steps_ (+ burn-in on
-  // prime) Metropolis sweeps. Conditioned path only (inner_conditioning_ && inner_nsteps_ > 0).
-  template<class WlkSet>
-  void persistent_conditioned_resample(const WlkSet& wset, bool prime);
-
-  // One Metropolis sweep over all nw*P inner slots for the persistent conditioned pool. Independence
-  // proposal: a fresh bare free-projection draw ψ* = B̂_T(Y*)|φ_T⟩ (reset-to-anchor + inner_nsteps_
-  // Propagate_free steps); per-slot accept with probability min(1, |⟨ψ*|φ_w⟩| / |⟨ψ_cur|φ_w⟩|), which
-  // targets the EXACT conditioned distribution ∝ p_T(Y)·|⟨ψ|φ_w⟩| (no linear Gaussian-shift approximation,
-  // unlike the force-biased Gaussian-shift draw used without persistence). Rejected slots keep their
-  // previous sample -> persistence.
-  template<class WlkSet>
-  void metropolis_sweep_conditioned(const WlkSet& wset);
 
   template<class WlkSet, class TVecD, class TVecOv, class Accumulate>
   void reduce_inner_cross_dm(const WlkSet& wset,

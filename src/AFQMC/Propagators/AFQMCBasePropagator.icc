@@ -213,7 +213,6 @@ void AFQMCBasePropagator<MEM>::Propagate_conditioned(WlkSet& wset,
   }
   (void)npol;
   (void)nspins;
-  mpi->comm.barrier();
 }
 
 /*
@@ -274,7 +273,38 @@ void AFQMCBasePropagator<MEM>::Propagate_free(WlkSet& wset, RealType dt, int nt)
   }
   (void)npol;
   (void)nspins;
-  mpi->comm.barrier();
+}
+
+/*
+ * Applies B_T(X) for caller-supplied auxiliary fields X(nwalk,nCV): vHS -> apply_propagators, nothing
+ * else. No field generation, no RNG consumption, no MFfactor/hybrid-weight bookkeeping, no weight
+ * update -- the deterministic companion of Propagate_free, so re-feeding the fields Propagate_free
+ * drew reproduces its walkers exactly. Callers own the meaning of X (for the bare free-projection
+ * convention, X holds standard-normal draws; see construct_X).
+ */
+template<MEMORY_SPACE MEM>
+template<class WlkSet>
+void AFQMCBasePropagator<MEM>::Propagate_given_fields(WlkSet& wset,
+     nda::MemoryArrayOfRank<2> auto& X, RealType dt)
+{
+  int nwalk = wset.size();
+  int nCV   = wfn->number_of_cholesky_vectors();
+  utils::check(X.shape() == std::array<long,2>{nwalk,nCV},
+               "Error in Propagate_given_fields: X shape mismatch.");
+
+  // if timestep changed, recalculate one body propagator and vMF
+  if (std::abs(dt - old_dt) > 1e-6)
+    generateP1(dt, wset.getWalkerType());
+
+  if(denseP2) {
+    auto vHS = wfn->vHS(X, dt);
+    utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
+                 "Size mismatch");
+    apply_propagators<'N'>(wset,vHS);
+  } else {
+    auto vHS = wfn->vHS_sparse(X, dt);
+    apply_propagators<'N'>(wset,vHS);
+  }
 }
 
 /*

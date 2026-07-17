@@ -24,7 +24,7 @@ namespace afqmc
 {
 // wlk_descriptor: [ nmo, naea, naeb, nback_prop, nCV, nRefs, nHist]
 using wlk_descriptor = std::array<int, 8>;
-using wlk_indices    = std::array<int, 23>;
+using wlk_indices    = std::array<int, 24>;
 enum walker_data
 {
   SM,
@@ -58,6 +58,14 @@ enum walker_data
   // exact in the double mantissa. Appended after THETA so it stays outside the walkerSizeIO() checkpoint
   // window.
   SLOT_LINEAGE,
+  // Per-walker BOOKKEEPING block (stochastic trials with a persistent field-sampled inner ensemble),
+  // NOT a physical walker quantity: the auxiliary-field configurations that generate the walker's
+  // tethered inner trial samples. Zero-width unless a wavefunction requests it via
+  // resize_trial_fields(); real field values stored in the real parts. Living inside walker_buffer
+  // means branch()'s whole-row copies clone the fields with the walker and the load-balance payload
+  // ships them across ranks, so the inner samples can be reconstructed exactly wherever the walker
+  // lands. Appended after SLOT_LINEAGE, outside the walkerSizeIO() checkpoint window.
+  TRIAL_FIELDS,
 };
 
 } // namespace afqmc
