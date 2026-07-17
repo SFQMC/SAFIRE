@@ -25,6 +25,7 @@
 #include "AFQMC/config.h"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
+#include "numerics/device_kernels/kernels.h" // kernels::device::{row_accumulate,row_divide,inner_scalar_reduce,elementwise_log} (device only)
 
 namespace sfqmc
 {

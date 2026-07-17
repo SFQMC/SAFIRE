@@ -118,6 +118,8 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
     // DEVICE_MEMORY)` forbids only the device instantiation; the off-anchor device method bodies are
     // separately compile-time gated (if constexpr (MEM == HOST_MEMORY)) so this abort is the single
     // runtime seam a device dynamic trial hits.
+    // Static-anchor off-anchor reductions are device-ported below; free-projection dynamic still waits
+    // on the full-G energy device path.
     if constexpr (MEM == DEVICE_MEMORY)
       APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) is CPU-only; the "
                 "un-rotated full-G kernels are not yet implemented for device builds.");
@@ -388,7 +390,16 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
   }
   else
   {
-    APP_ABORT("StochasticWfn::log: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+    // Device (static-anchor only; conditioned / leapfrog / log-aggregate need inner_nsteps > 0, which is
+    // forbidden at construction on device). reduce_inner_cross_dm accumulates exactly the linear effective
+    // overlap Ov = (1/P) sum_p <psi_p|phi_w> (device-ported); a no-op accumulate discards the mixed DM it
+    // also builds. Take the log for the OVLP (log-overlap) convention, as the host pair loop does.
+    memory::buffered_array<MEM, ComplexType, 1> Ddummy(wset.size(), ComplexType(0.0));
+    reduce_inner_cross_dm(wset, /*compact=*/true, dm_size(false), Ddummy, Ov,
+                          [](auto&, auto&, auto&, int, int, int) {});
+    kernels::device::elementwise_log(Ov);
+#endif
   }
 }
 
@@ -446,7 +457,9 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
             E(w, nda::range::all) += Sp(w) * eloc2(w, nda::range::all);
         else
         {
-          APP_ABORT("StochasticWfn::off-anchor: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+          kernels::device::row_accumulate(Sp, eloc2, E);
+#endif
         }
       });
 
@@ -462,7 +475,9 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
       E(w, nda::range::all) /= D(w);
   else
   {
-    APP_ABORT("StochasticWfn::off-anchor: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(D, E);
+#endif
   }
 
   // reduce_inner_cross_dm fills Ov with the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; the
@@ -472,7 +487,9 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
       Ov(w) = std::log(Ov(w));
   else
   {
-    APP_ABORT("StochasticWfn::row_divide: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+    kernels::device::elementwise_log(Ov);
+#endif
   }
 }
 
@@ -1007,7 +1024,15 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
     }
     else
     {
-      APP_ABORT("StochasticWfn::abs: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+      // Device path supports only the non-leapfrog, non-log-aggregate static-anchor reduction (inner
+      // conditioning / leapfrog / log-aggregate require inner_nsteps > 0, which is forbidden at
+      // construction on device -- PR-3 will lift these). One fused kernel does Sp/Ov/D per walker.
+      utils::check(not leapfrog and not log_agg,
+                   "StochasticWfn: device inner reduction is limited to the non-leapfrog, non-log-"
+                   "aggregate static-anchor path; leapfrog / log-aggregate are CPU-only (PR-3).");
+      kernels::device::inner_scalar_reduce(ov_, Sp, Ov, D, 1.0 / static_cast<double>(P));
+#endif
     }
     accumulate(Gp, ov_, Sp, ip, 0, Gsize);
     mpi_->comm.barrier();
@@ -1057,7 +1082,9 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix_for_vbias(const WlkSet& wse
             Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
         else
         {
-          APP_ABORT("StochasticWfn::off-anchor: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+          kernels::device::row_accumulate(Sp, Gp, Gnum);
+#endif
         }
       });
 
@@ -1066,7 +1093,9 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix_for_vbias(const WlkSet& wse
       Gnum(w, nda::range::all) /= D(w);
   else
   {
-    APP_ABORT("StochasticWfn::row_accumulate: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(D, Gnum);
+#endif
   }
   G() = Gnum();
 }
@@ -1115,7 +1144,9 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix(const WlkSet& wset, MatG&& 
             Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
         else
         {
-          APP_ABORT("StochasticWfn::off-anchor: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+          kernels::device::row_accumulate(Sp, Gp, Gnum);
+#endif
         }
       });
 
@@ -1124,7 +1155,9 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix(const WlkSet& wset, MatG&& 
       Gnum(w, nda::range::all) /= D(w);
   else
   {
-    APP_ABORT("StochasticWfn::row_accumulate: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(D, Gnum);
+#endif
   }
   G() = Gnum();
 
@@ -1136,7 +1169,9 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix(const WlkSet& wset, MatG&& 
       Ov(w) = std::log(Ov(w));
   else
   {
-    APP_ABORT("StochasticWfn::log: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+    kernels::device::elementwise_log(Ov);
+#endif
   }
 }
 
@@ -1294,7 +1329,9 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_mean_field_dm(memory::buffered_ar
           Gsum(0, all) += ComplexType(scl) * Gpq(q, all);
         else
         {
-          APP_ABORT("StochasticWfn::to_host: off-anchor path is CPU-only on device builds.");
+#if defined(ENABLE_DEVICE)
+          kernels::device::accumulate(ComplexType(scl), Gpq(q, all), Gsum(0, all));
+#endif
         }
       }
     }
