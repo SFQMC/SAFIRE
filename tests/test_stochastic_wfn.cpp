@@ -480,6 +480,7 @@ template<MEMORY_SPACE MEM>
 void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                       std::string hamil_file, std::string wfn_file)
 {
+  // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
   auto env_opt = StochasticHamWfnEnv<MEM>::build(
       mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
   if (not env_opt)
@@ -538,6 +539,8 @@ template<MEMORY_SPACE MEM>
 void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                      std::string hamil_file, std::string wfn_file)
 {
+  // PR-3: the off-anchor Energy reduction is device-ported (row_accumulate / row_divide /
+  // inner_scalar_reduce / elementwise_log kernels), so this runs on DEVICE_MEMORY too.
   auto env_opt = StochasticHamWfnEnv<MEM>::build(
       mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
   if (not env_opt)
@@ -649,6 +652,7 @@ template<MEMORY_SPACE MEM>
 void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                     std::string hamil_file, std::string wfn_file)
 {
+  // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
   auto env_opt = StochasticHamWfnEnv<MEM>::build(
       mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
   if (not env_opt)
@@ -714,6 +718,7 @@ void stochastic_mixed_density_matrix_matches_nomsd(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
     std::string wfn_file)
 {
+  // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
   auto env_opt = StochasticHamWfnEnv<MEM>::build(
       mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
   if (not env_opt)
@@ -800,6 +805,7 @@ void stochastic_mean_field_matches_nomsd(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
+  // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
 
   const auto info   = read_info_from_wfn(wfn_file, "any");
   const int  NMO    = std::get<0>(info);
@@ -1050,6 +1056,7 @@ void stochastic_back_propagation_matches_nomsd(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
+  // PR-3: free-projection BP / accumulate is device-ported (getReferences + accumulate_estimators); runs on DEVICE_MEMORY.
 
   const auto info   = read_info_from_wfn(wfn_file, "any");
   const int  NMO    = std::get<0>(info);
@@ -1292,9 +1299,7 @@ void stochastic_back_propagation_inner_refs(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // free-projection inner sampling (inner_nsteps > 0) is CPU-only today.
-  else
+  // PR-3: free-projection BP references are device-ported (getReferences); runs on DEVICE_MEMORY.
   {
     const auto info   = read_info_from_wfn(wfn_file, "any");
     const int  NMO    = std::get<0>(info);
@@ -1418,6 +1423,7 @@ void stochastic_accumulate_estimators_matches_nomsd(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
+  // PR-3: free-projection BP / accumulate is device-ported (getReferences + accumulate_estimators); runs on DEVICE_MEMORY.
 
   const auto info   = read_info_from_wfn(wfn_file, "any");
   const int  NMO    = std::get<0>(info);
@@ -1477,13 +1483,18 @@ void stochastic_accumulate_estimators_matches_nomsd(
   // parity holds for ANY choice (both apply the same linear M + T(X).G_full.Yc transform to their full
   // mixed DM); a near-identity-plus-offsets choice exercises the gemms without ill-conditioning.
   auto make_op = [&](double diag, double off) {
-    memory::array<MEM, ComplexType, 4> A(nwalk, nspin, npol * NMO, npol * NMO);
+    // Assemble on host (element-by-element), then move to MEM: writing individual elements into a device
+    // array from host segfaults (this test now runs on DEVICE_MEMORY).
+    nda::array<ComplexType, 4> A_h(nwalk, nspin, npol * NMO, npol * NMO);
     for (int w = 0; w < nwalk; ++w)
       for (int s = 0; s < nspin; ++s)
         for (int i = 0; i < npol * NMO; ++i)
           for (int j = 0; j < npol * NMO; ++j)
-            A(w, s, i, j) = ComplexType(i == j ? diag : off * double((i + 3 * j) % 5), 0.0);
-    return A;
+            A_h(w, s, i, j) = ComplexType(i == j ? diag : off * double((i + 3 * j) % 5), 0.0);
+    if constexpr (MEM == HOST_MEMORY)
+      return memory::array<MEM, ComplexType, 4>(A_h);
+    else
+      return memory::array<MEM, ComplexType, 4>(nda::to_device(A_h));
   };
   auto Xop  = make_op(1.0, 0.05);
   auto Ycop = make_op(1.0, 0.03);
@@ -1591,9 +1602,8 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // Un-rotated full-G kernels are CPU-only today.
-  else
+  // PR-3: the un-rotated full-G energy is device-ported; this runs on DEVICE_MEMORY too (free-projection,
+  // ensemble held at the anchor, so full-G must reproduce the compact/NOMSD result).
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -1719,9 +1729,8 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // Un-rotated full-G kernels are CPU-only today.
-  else
+  // PR-3: free-projection dynamic path is device-ported (full-G energy + inner-propagator advance); runs on
+  // DEVICE_MEMORY too.
   {
     const double dt(0.01);
 
