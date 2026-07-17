@@ -921,9 +921,7 @@ void stochastic_mean_field_production_order(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // leapfrog / conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     const auto info   = read_info_from_wfn(wfn_file, "any");
     const int  NMO    = std::get<0>(info);
@@ -1170,9 +1168,7 @@ void stochastic_back_propagation_production_order(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // leapfrog / conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     const auto info   = read_info_from_wfn(wfn_file, "any");
     const int  NMO    = std::get<0>(info);
@@ -2114,9 +2110,7 @@ void stochastic_inner_permute_after_pop_control(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2191,7 +2185,7 @@ void stochastic_inner_permute_after_pop_control(
     // to nwalk*P), then record the per-walker effective overlaps.
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ov_before(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_before(nwalk);
     wfn_s.Log_Overlap(wset, ov_before); // latch consumed by begin_inner_step -> reuses the conditioned ensemble
 
     // Simulate an outer popControl clone that preserves the per-rank count (the case the size-mismatch
@@ -2216,12 +2210,13 @@ void stochastic_inner_permute_after_pop_control(
 
     // Reduce again -- latch consumed + size unchanged => NO resample, so this scores the PERMUTED ensemble
     // against the cloned walkers.
-    nda::array<ComplexType, 1> ov_after(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_after(nwalk);
     wfn_s.Log_Overlap(wset, ov_after);
 
-    // Exact block identity via linear overlaps (branch-independent).
-    auto lin_before = linear_overlap(ov_before);
-    auto lin_after  = linear_overlap(ov_after);
+    // Exact block identity via linear overlaps (branch-independent). ov_* are MEM arrays (Log_Overlap runs
+    // on device); pull to host for the comparison.
+    auto lin_before = linear_overlap(nda::to_host(ov_before));
+    auto lin_after  = linear_overlap(nda::to_host(ov_after));
     // Block clone_src moved to slot clone_dst, paired with phi_clone_dst == phi_clone_src.
     CHECK_THAT(lin_after(clone_dst), utils::Approx(lin_before(clone_src)));
     // Slot clone_src itself is unchanged (identity parent, walker untouched).
@@ -2257,9 +2252,7 @@ void stochastic_inner_permute_cross_rank_fallback(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2313,10 +2306,10 @@ void stochastic_inner_permute_cross_rank_fallback(
     // Condition on the current walkers and record the baseline overlaps (first reduction resamples to
     // the slot-major nwalk*P form and consumes the latch).
     wfn_s.begin_inner_step(wset);
-    nda::array<ComplexType, 1> ov_before(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_before(nwalk);
     wfn_s.Log_Overlap(wset, ov_before);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    auto lin_before = linear_overlap(ov_before);
+    auto lin_before = linear_overlap(nda::to_host(ov_before));
 
     auto set_lineage = [&](int sentinel) {
       nda::array<ComplexType, 1> lin(nwalk);
@@ -2331,9 +2324,9 @@ void stochastic_inner_permute_cross_rank_fallback(
     // overlaps are unchanged.
     set_lineage(-1);
     wfn_s.permute_inner_blocks_after_pop(wset);
-    nda::array<ComplexType, 1> ov_id(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_id(nwalk);
     wfn_s.Log_Overlap(wset, ov_id);
-    auto lin_id = linear_overlap(ov_id);
+    auto lin_id = linear_overlap(nda::to_host(ov_id));
     for (int w = 0; w < nwalk; ++w)
       CHECK_THAT(lin_id(w), utils::Approx(lin_before(w)));
 
@@ -2342,9 +2335,9 @@ void stochastic_inner_permute_cross_rank_fallback(
     set_lineage(sentinel_slot);
     wfn_s.permute_inner_blocks_after_pop(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ov_fb(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_fb(nwalk);
     wfn_s.Log_Overlap(wset, ov_fb);
-    auto lin_fb = linear_overlap(ov_fb);
+    auto lin_fb = linear_overlap(nda::to_host(ov_fb));
     double max_diff = 0.0;
     for (int w = 0; w < nwalk; ++w)
       max_diff = std::max(max_diff, std::abs(lin_fb(w) - lin_before(w)));

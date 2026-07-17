@@ -118,15 +118,14 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
     // DEVICE_MEMORY)` forbids only the device instantiation; the off-anchor device method bodies are
     // separately compile-time gated (if constexpr (MEM == HOST_MEMORY)) so this abort is the single
     // runtime seam a device dynamic trial hits.
-    // On device, PR-3 has ported the un-rotated full-G energy/force-bias reductions, so FREE-PROJECTION
-    // dynamic trials (inner_nsteps > 0, no conditioning) are supported. The conditioned / leapfrog /
-    // persistent field-chain machinery is still CPU-only (its device paths are not ported), so reject
-    // only those here.
+    // On device, PR-3 has ported the full-G reductions, conditioned sampling, and leapfrog reweighting, so
+    // free-projection / conditioned / leapfrog dynamic trials are supported. Only the PERSISTENT field-chain
+    // machinery (chain MCMC + device RNG) is still CPU-only, so reject just that here.
     if constexpr (MEM == DEVICE_MEMORY)
-      if (inner_conditioning_ || inner_leapfrog_ || inner_persistence_)
-        APP_ABORT("Error in StochasticWfn: on device builds only free-projection dynamic trials are "
-                  "supported so far (PR-3); inner_conditioning / inner_leapfrog / inner_persistence are "
-                  "CPU-only (their field-chain / reweight device paths are not yet ported).");
+      if (inner_persistence_)
+        APP_ABORT("Error in StochasticWfn: inner_persistence = true (persistent field-space chains) is "
+                  "CPU-only on device builds (the field-chain MCMC / device-RNG port is pending); "
+                  "free-projection, conditioned, and leapfrog dynamic trials run on device.");
   }
   if (inner_conditioning_ && inner_nsteps_ <= 0)
     APP_ABORT("Error in StochasticWfn: inner_conditioning = true (walker-conditioned inner sampling) "
@@ -555,21 +554,23 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // inner_equil_steps_ MH sweeps targeting the CURRENT (old) walkers. The updated pool serves every
   // reduction of this step (latch cleared below), so the step's overlap RATIO new/old shares one
   // ensemble (Eq. 25). Runs on every rank at every step -- uniform control flow, no communication.
-  if constexpr (MEM == HOST_MEMORY)
-  {
+  // Persistent field-chain pool update is CPU-only for now (the chain-MCMC device port is pending);
+  // persistent dynamic trials are blocked at construction on device, so this branch is unreachable there.
   if (inner_persistence_ && inner_conditioning_ && inner_nsteps_ > 0)
   {
-    update_persistent_chain_pool(wset);
-    inner_step_pending_ = false;
+    if constexpr (MEM == HOST_MEMORY)
+    {
+      update_persistent_chain_pool(wset);
+      inner_step_pending_ = false;
+    }
   }
   // Leapfrog: refresh the stored OVLP = <Psi_T|phi> against the ensemble tied to the current (old)
   // walker phi. Without persistence, Log_Overlap(wset) consumes the latch just armed (driving the
   // conditioned resample + inner_cond_mag_); with persistence it reuses the pool updated above. Either
   // way the post-propagation Log_Overlap sees the SAME ensemble, so the step's overlap RATIO new/old
-  // is exactly Eq. 25 and N(phi) cancels.
+  // is exactly Eq. 25 and N(phi) cancels. Device-safe: Log_Overlap is device-ported.
   if (inner_leapfrog_ && inner_conditioning_ && inner_nsteps_ > 0)
     Log_Overlap(wset);
-  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -583,8 +584,10 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& w
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     return;
 
-  if constexpr (MEM == HOST_MEMORY)
-  {
+  // Device-safe: the non-persistent conditioned permute is getProperty(SLOT_LINEAGE)->host + host parent +
+  // device slice-copy gather + host inner_cond_mag_ permute. The persistent branch below uses the (still
+  // CPU-only) rebuild_inner_dets_from_chain_fields, but persistent trials are blocked at construction on
+  // device, so that branch is unreachable on GPU.
   const int nw          = int(wset.size());
   const int P           = inner_nwalkers_;
 
@@ -730,10 +733,6 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& w
   // fresh). The post-permute ensemble is still conditioned on the PRE-pop walker geometry; permutation
   // fixes only the index mismatch, not orbital gauge, which is consistent with the resample-everything
   // contract at the next propagation step.
-  }
-  else
-    APP_ABORT("StochasticWfn::permute_inner_blocks_after_pop: off-anchor (dynamic inner-ensemble) path "
-              "is CPU-only on device builds; only the delegate limit runs on GPU.");
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -847,11 +846,17 @@ void StochasticWfn<MEM, devPsiT>::cross_overlap_magnitudes(const WlkSet& wset, W
       logov_b()    = ComplexType(0.0);
       det_ops::Log_Overlap(inner_b, wset.SlaterMatrices(Beta), logov_b);
     }
+    // mag is a host array; the per-slot log-overlaps are small ([nw]). Pull them to host (a no-op copy on
+    // HOST_MEMORY) and finish the |exp(.)| on host -- device-safe and avoids a bespoke magnitude kernel.
+    auto logov_h = nda::to_host(logov);
+    nda::array<ComplexType, 1> logov_b_h;
+    if (wt == COLLINEAR)
+      logov_b_h = nda::to_host(logov_b);
     for (int w = 0; w < nw; ++w)
     {
-      ComplexType lo = logov(w);
+      ComplexType lo = logov_h(w);
       if (wt == COLLINEAR)
-        lo += logov_b(w);
+        lo += logov_b_h(w);
       mag(long(ip) * nw + w) = std::abs(std::exp(lo));
     }
   }
@@ -1029,28 +1034,96 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
     else
     {
 #if defined(ENABLE_DEVICE)
-      // Device path supports only the non-leapfrog, non-log-aggregate static-anchor reduction (inner
-      // conditioning / leapfrog / log-aggregate require inner_nsteps > 0, which is forbidden at
-      // construction on device -- PR-3 will lift these). One fused kernel does Sp/Ov/D per walker.
-      utils::check(not leapfrog and not log_agg,
-                   "StochasticWfn: device inner reduction is limited to the non-leapfrog, non-log-"
-                   "aggregate static-anchor path; leapfrog / log-aggregate are CPU-only (PR-3).");
-      kernels::device::inner_scalar_reduce(ov_, Sp, Ov, D, 1.0 / static_cast<double>(P));
+      if (not leapfrog and not log_agg)
+      {
+        // Common path: one fused kernel does Sp/Ov/D per walker (phase reduction).
+        kernels::device::inner_scalar_reduce(ov_, Sp, Ov, D, 1.0 / static_cast<double>(P));
+      }
+      else
+      {
+        // Leapfrog reweight (by the host inner_cond_mag_) and log-aggregate storing are small per-walker
+        // scalar work over [nwalk]; do them on host (ov_ pulled down, results pushed back). Correctness-
+        // first; these modes are not perf-critical (leapfrog/log-agg tests use small P).
+        auto ovh = nda::to_host(ov_);
+        nda::array<ComplexType, 1> Sp_h(nwalk), Ov_h, D_h, sstore_col, ovlin_col;
+        if (log_agg)
+        {
+          sstore_col = nda::array<ComplexType, 1>(nwalk);
+          ovlin_col  = nda::array<ComplexType, 1>(nwalk);
+        }
+        else
+        {
+          Ov_h = nda::to_host(Ov);
+          D_h  = nda::to_host(D);
+        }
+        for (int w = 0; w < nwalk; ++w)
+        {
+          ComplexType lin_ov = std::exp(ovh(w));
+          ComplexType s;
+          if (leapfrog)
+          {
+            double magc = double(inner_cond_mag_(long(ip) * nwalk + w));
+            s = (magc > 0.0) ? (lin_ov / ComplexType(magc, 0.0)) : zero;
+          }
+          else
+          {
+            double mag = std::abs(lin_ov);
+            s          = (mag > 0.0) ? (lin_ov / ComplexType(mag, 0.0)) : zero;
+          }
+          Sp_h(w) = s;
+          if (log_agg)
+          {
+            sstore_col(w) = s;
+            ovlin_col(w)  = leapfrog ? s : (inv_P * lin_ov);
+          }
+          else
+          {
+            Ov_h(w) += leapfrog ? s : (inv_P * lin_ov);
+            D_h(w) += s;
+          }
+        }
+        Sp() = Sp_h(); // host -> device
+        if (log_agg)
+        {
+          s_store(nda::range::all, ip)      = sstore_col();
+          ov_lin_store(nda::range::all, ip) = ovlin_col();
+        }
+        else
+        {
+          Ov() = Ov_h();
+          D()  = D_h();
+        }
+      }
 #endif
     }
     accumulate(Gp, ov_, Sp, ip, 0, Gsize);
     mpi_->comm.barrier();
   }
 
-  if constexpr (MEM == HOST_MEMORY)
+  if (log_agg)
   {
-    if (log_agg)
+    if constexpr (MEM == HOST_MEMORY)
     {
       for (int w = 0; w < nwalk; ++w)
       {
         D(w)  = stable_complex_sum_row(s_store(), w, P);
         Ov(w) = leapfrog ? D(w) : stable_complex_sum_row(ov_lin_store(), w, P);
       }
+    }
+    else
+    {
+      // Device: stable log-sum over the P columns is small per-walker work -> host round-trip of the
+      // [nwalk, P] stores, then push D/Ov back.
+      auto ss = nda::to_host(s_store());
+      auto ol = nda::to_host(ov_lin_store());
+      nda::array<ComplexType, 1> D_h(nwalk), Ov_h(nwalk);
+      for (int w = 0; w < nwalk; ++w)
+      {
+        D_h(w)  = stable_complex_sum_row(ss, w, P);
+        Ov_h(w) = leapfrog ? D_h(w) : stable_complex_sum_row(ol, w, P);
+      }
+      D()  = D_h();
+      Ov() = Ov_h();
     }
   }
 }
