@@ -354,6 +354,14 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
   if (not inner_stack_->has_propagator())
     APP_ABORT("Error in StochasticWfn::update_persistent_chain_pool: inner propagator not built.");
 
+  if constexpr (MEM != HOST_MEMORY)
+  {
+    (void)wset;
+    APP_ABORT("Error in StochasticWfn::update_persistent_chain_pool: persistent field-space chains are "
+              "CPU-only (the dynamic stochastic trial is gated to host builds).");
+  }
+  else
+  {
   const int nw    = int(wset.size());
   const int P     = inner_nwalkers_;
   const int nCV   = inner_nomsd().number_of_cholesky_vectors();
@@ -388,6 +396,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
   if (++chain_updates_ % 200 == 0 && chain_proposed_ > 0)
     app_log(2, "StochasticWfn field-chain MCMC ({}, step {}): cumulative acceptance {:.3f} ({} / {})",
             inner_mcmc_, inner_mcmc_step_, inner_chain_acceptance(), chain_accepted_, chain_proposed_);
+  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>

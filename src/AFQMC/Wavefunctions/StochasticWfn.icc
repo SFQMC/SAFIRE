@@ -112,10 +112,15 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
     if (wlk != CLOSED && wlk != COLLINEAR)
       APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) currently supports "
                 "CLOSED (RHF) and COLLINEAR (UHF) trials only -- NONCOLLINEAR full-G is a follow-up.");
-#if defined(ENABLE_DEVICE)
-    APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) is CPU-only; the "
-              "un-rotated full-G kernels are not yet implemented for device builds.");
-#endif
+    // Dynamic trials are gated to HOST_MEMORY. Key this on MEM, not on `#if defined(ENABLE_DEVICE)`:
+    // a CUDA build still instantiates and runs HOST_MEMORY StochasticWfn (e.g. the dual-memory unit
+    // tests' CPU subsection), which must behave exactly like a CPU-only build. `if constexpr (MEM ==
+    // DEVICE_MEMORY)` forbids only the device instantiation; the off-anchor device method bodies are
+    // separately compile-time gated (if constexpr (MEM == HOST_MEMORY)) so this abort is the single
+    // runtime seam a device dynamic trial hits.
+    if constexpr (MEM == DEVICE_MEMORY)
+      APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) is CPU-only; the "
+                "un-rotated full-G kernels are not yet implemented for device builds.");
   }
   if (inner_conditioning_ && inner_nsteps_ <= 0)
     APP_ABORT("Error in StochasticWfn: inner_conditioning = true (walker-conditioned inner sampling) "
@@ -275,6 +280,8 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
     nomsd_.Log_Overlap(wset, std::forward<TVec>(Ov), nt);
     return;
   }
+  if constexpr (MEM == HOST_MEMORY)
+  {
   conditioned_resample(wset);
 
   WalkerSet<MEM>& inner  = *inner_ensemble_.wset;
@@ -378,6 +385,11 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
     for (int iw = 0; iw < nw; ++iw)
       Ov(iw) = std::log(Ov(iw));
   }
+  }
+  else
+  {
+    APP_ABORT("StochasticWfn::log: off-anchor path is CPU-only on device builds.");
+  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -389,6 +401,7 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(WlkSet& wset)
     nomsd_.Log_Overlap(wset);
     return;
   }
+  // Off-anchor: delegates to the device-safe Log_Overlap(wset, ovlp) (static-anchor ported).
   int nw = wset.size();
   memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
   Log_Overlap(wset, ovlp);
@@ -408,7 +421,6 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
     nomsd_.Energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
     return;
   }
-
   const int nwalk         = wset.size();
   const ComplexType zero(0.0);
   const bool full         = (inner_nsteps_ > 0);
@@ -428,8 +440,14 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
           nomsd_.energy_from_fullG(eloc2, Gp);
         else
           nomsd_.energy_from_G(eloc2, Gp, 0);
-        for (int w = 0; w < nwalk; ++w)
-          E(w, nda::range::all) += Sp(w) * eloc2(w, nda::range::all);
+        // E[w,:] += Sp[w] * eloc2[w,:]  (per-outer-walker scaled accumulate over the P inner samples).
+        if constexpr (MEM == HOST_MEMORY)
+          for (int w = 0; w < nwalk; ++w)
+            E(w, nda::range::all) += Sp(w) * eloc2(w, nda::range::all);
+        else
+        {
+          APP_ABORT("StochasticWfn::off-anchor: off-anchor path is CPU-only on device builds.");
+        }
       });
 
   // NO all_reduce over E here. nomsd_.energy_from_G / energy_from_fullG (-> HamOp.energy) returns the
@@ -439,13 +457,23 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
   // loop in Log_Overlap), so both the numerator E and the denominator D are already complete on each
   // rank. An all_reduce here would double-count E by comm.size() (a latent bug invisible at -np 1; it
   // doubled the energy at -np 2 while the matching un-reduced D left s3 != s1 == NOMSD).
-  for (int w = 0; w < nwalk; ++w)
-    E(w, nda::range::all) /= D(w);
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      E(w, nda::range::all) /= D(w);
+  else
+  {
+    APP_ABORT("StochasticWfn::off-anchor: off-anchor path is CPU-only on device builds.");
+  }
 
   // reduce_inner_cross_dm fills Ov with the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; the
   // OVLP property convention (matching NOMSD::Energy) is the LOG overlap, so convert back here.
-  for (int w = 0; w < nwalk; ++w)
-    Ov(w) = std::log(Ov(w));
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Ov(w) = std::log(Ov(w));
+  else
+  {
+    APP_ABORT("StochasticWfn::row_divide: off-anchor path is CPU-only on device builds.");
+  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -457,6 +485,8 @@ void StochasticWfn<MEM, devPsiT>::Energy(WlkSet& wset)
     nomsd_.Energy(wset);
     return;
   }
+  // Off-anchor: delegates to the device-safe Energy(wset, eloc, ovlp) reduction (static-anchor ported;
+  // dynamic inner_nsteps>0 is forbidden at construction on device).
   int nw = wset.size();
   memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
   memory::buffered_array<MEM, ComplexType, 2> eloc(nw, 3);
@@ -476,6 +506,8 @@ void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int n
     nomsd_.vbias(wset, std::forward<MatA>(v), dt, nt);
     return;
   }
+  // Off-anchor: device-safe via the ported MixedDensityMatrix_for_vbias + device vbias_from_G
+  // (static-anchor; dynamic inner_nsteps>0 is forbidden at construction on device).
   const int nwalk = wset.size();
   const bool full = (inner_nsteps_ > 0);
   const int Gsize = dm_size(full);
@@ -502,6 +534,8 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // inner_equil_steps_ MH sweeps targeting the CURRENT (old) walkers. The updated pool serves every
   // reduction of this step (latch cleared below), so the step's overlap RATIO new/old shares one
   // ensemble (Eq. 25). Runs on every rank at every step -- uniform control flow, no communication.
+  if constexpr (MEM == HOST_MEMORY)
+  {
   if (inner_persistence_ && inner_conditioning_ && inner_nsteps_ > 0)
   {
     update_persistent_chain_pool(wset);
@@ -514,6 +548,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // is exactly Eq. 25 and N(phi) cancels.
   if (inner_leapfrog_ && inner_conditioning_ && inner_nsteps_ > 0)
     Log_Overlap(wset);
+  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -527,6 +562,8 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& w
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     return;
 
+  if constexpr (MEM == HOST_MEMORY)
+  {
   const int nw          = int(wset.size());
   const int P           = inner_nwalkers_;
 
@@ -672,6 +709,10 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& w
   // fresh). The post-permute ensemble is still conditioned on the PRE-pop walker geometry; permutation
   // fixes only the index mismatch, not orbital gauge, which is consistent with the resample-everything
   // contract at the next propagation step.
+  }
+  else
+    APP_ABORT("StochasticWfn::permute_inner_blocks_after_pop: off-anchor (dynamic inner-ensemble) path "
+              "is CPU-only on device builds; only the delegate limit runs on GPU.");
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -935,6 +976,8 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
       }
     }
 
+    if constexpr (MEM == HOST_MEMORY)
+    {
     for (int w = 0; w < nwalk; ++w)
     {
       ComplexType lin_ov = std::exp(ov_(w));
@@ -961,16 +1004,24 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
         D(w)  = D(w) + s;
       }
     }
+    }
+    else
+    {
+      APP_ABORT("StochasticWfn::abs: off-anchor path is CPU-only on device builds.");
+    }
     accumulate(Gp, ov_, Sp, ip, 0, Gsize);
     mpi_->comm.barrier();
   }
 
-  if (log_agg)
+  if constexpr (MEM == HOST_MEMORY)
   {
-    for (int w = 0; w < nwalk; ++w)
+    if (log_agg)
     {
-      D(w)  = stable_complex_sum_row(s_store(), w, P);
-      Ov(w) = leapfrog ? D(w) : stable_complex_sum_row(ov_lin_store(), w, P);
+      for (int w = 0; w < nwalk; ++w)
+      {
+        D(w)  = stable_complex_sum_row(s_store(), w, P);
+        Ov(w) = leapfrog ? D(w) : stable_complex_sum_row(ov_lin_store(), w, P);
+      }
     }
   }
 }
@@ -1001,12 +1052,22 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix_for_vbias(const WlkSet& wse
   reduce_inner_cross_dm(
       wset, compact, Gsize, D, Ov,
       [&](auto& Gp, auto& /*ov_*/, auto& Sp, int /*ip*/, int /*r0*/, int /*rN*/) {
-        for (int w = 0; w < nwalk; ++w)
-          Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        if constexpr (MEM == HOST_MEMORY)
+          for (int w = 0; w < nwalk; ++w)
+            Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        else
+        {
+          APP_ABORT("StochasticWfn::off-anchor: off-anchor path is CPU-only on device builds.");
+        }
       });
 
-  for (int w = 0; w < nwalk; ++w)
-    Gnum(w, nda::range::all) /= D(w);
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Gnum(w, nda::range::all) /= D(w);
+  else
+  {
+    APP_ABORT("StochasticWfn::row_accumulate: off-anchor path is CPU-only on device builds.");
+  }
   G() = Gnum();
 }
 
@@ -1049,19 +1110,34 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix(const WlkSet& wset, MatG&& 
   reduce_inner_cross_dm(
       wset, compact, Gsize, D, Ov,
       [&](auto& Gp, auto& /*ov_*/, auto& Sp, int /*ip*/, int /*r0*/, int /*rN*/) {
-        for (int w = 0; w < nwalk; ++w)
-          Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        if constexpr (MEM == HOST_MEMORY)
+          for (int w = 0; w < nwalk; ++w)
+            Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        else
+        {
+          APP_ABORT("StochasticWfn::off-anchor: off-anchor path is CPU-only on device builds.");
+        }
       });
 
-  for (int w = 0; w < nwalk; ++w)
-    Gnum(w, nda::range::all) /= D(w);
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Gnum(w, nda::range::all) /= D(w);
+  else
+  {
+    APP_ABORT("StochasticWfn::row_accumulate: off-anchor path is CPU-only on device builds.");
+  }
   G() = Gnum();
 
   // reduce_inner_cross_dm fills Ov with the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; NOMSD's
   // MixedDensityMatrix returns the LOG overlap (det_ops convention, matching the OVLP property), so
   // convert back here -- exactly as the Energy / Log_Overlap overrides do.
-  for (int w = 0; w < nwalk; ++w)
-    Ov(w) = std::log(Ov(w));
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Ov(w) = std::log(Ov(w));
+  else
+  {
+    APP_ABORT("StochasticWfn::log: off-anchor path is CPU-only on device builds.");
+  }
 }
 
 // Accumulate observable contributions using the stochastic mixed Green's function. NOMSD (ndet == 1) builds the full mixed DM of its trial -- compact `DensityMatrix` against
@@ -1084,6 +1160,8 @@ void StochasticWfn<MEM, devPsiT>::accumulate_estimators(int iav, WlkSet& wset,
                                  importanceSampling);
     return;
   }
+  // Off-anchor: device-safe via the ported MixedDensityMatrix + device math::product (time-evolved BP
+  // transform) + the NOMSD observable accumulate path (same as the [estimators] GPU tests).
   utils::check(importanceSampling, "Finish"); // mirror NOMSD: the non-importance-sampled path is unfinished
 
   using nda::range;
@@ -1211,7 +1289,13 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_mean_field_dm(memory::buffered_ar
       {
         RealType scl = std::real(ComplexType(invP2) * std::exp(ov_h(q)));
         Osum += scl;
-        Gsum(0, all) += ComplexType(scl) * Gpq(q, all);
+        // Gsum[0,:] += scl * Gpq[q,:]  (scl is a host scalar from to_host(ov_) above).
+        if constexpr (MEM == HOST_MEMORY)
+          Gsum(0, all) += ComplexType(scl) * Gpq(q, all);
+        else
+        {
+          APP_ABORT("StochasticWfn::to_host: off-anchor path is CPU-only on device builds.");
+        }
       }
     }
   }
@@ -1239,6 +1323,8 @@ auto StochasticWfn<MEM, devPsiT>::G_MF()
   if (not mean_field_uses_inner_ensemble())
     return nomsd_.G_MF();
 
+  // Off-anchor: device-safe via the ported reduce_inner_mean_field_dm (static-anchor). The share_from_root
+  // copy gMF() = Gv() is a device->host nda MemoryArray assignment on device builds.
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   const int nspin       = (wt == COLLINEAR ? 2 : 1);
   const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
@@ -1270,6 +1356,7 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
     nomsd_.vMF(v, dt);
     return;
   }
+  // Off-anchor: device-safe via the ported reduce_inner_mean_field_dm + device vbias_from_G (static-anchor).
   utils::check(v.size() == number_of_cholesky_vectors(), "Size mismatch");
   utils::check(v.strides()[0] == 1, "Strides mismatch");
 
@@ -1303,6 +1390,9 @@ void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat
     nomsd_.getReferences(number_of_references, std::forward<RefMat>(Refs));
     return;
   }
+  // Free-projection BP references are device-safe: draw_bp_reference_ensemble() has a device branch (same
+  // inner propagator as the verified dynamic path) and the fill loop uses device nda::tensor ops.
+  {
   // Dedicated free-projection draw of the P reference samples (walker-independent), fresh per BP block.
   draw_bp_reference_ensemble();
   using nda::range;
@@ -1326,6 +1416,7 @@ void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat
     if (wt == COLLINEAR)
       nda::tensor::add(nda::conj(inner.SlaterMatrices(Beta)(p, all, all)), "ij", Refs(p, all, range(nup, nel)),
                        "ij");
+  }
   }
 }
 
