@@ -118,11 +118,15 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
     // DEVICE_MEMORY)` forbids only the device instantiation; the off-anchor device method bodies are
     // separately compile-time gated (if constexpr (MEM == HOST_MEMORY)) so this abort is the single
     // runtime seam a device dynamic trial hits.
-    // Static-anchor off-anchor reductions are device-ported below; free-projection dynamic still waits
-    // on the full-G energy device path.
+    // On device, PR-3 has ported the un-rotated full-G energy/force-bias reductions, so FREE-PROJECTION
+    // dynamic trials (inner_nsteps > 0, no conditioning) are supported. The conditioned / leapfrog /
+    // persistent field-chain machinery is still CPU-only (its device paths are not ported), so reject
+    // only those here.
     if constexpr (MEM == DEVICE_MEMORY)
-      APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) is CPU-only; the "
-                "un-rotated full-G kernels are not yet implemented for device builds.");
+      if (inner_conditioning_ || inner_leapfrog_ || inner_persistence_)
+        APP_ABORT("Error in StochasticWfn: on device builds only free-projection dynamic trials are "
+                  "supported so far (PR-3); inner_conditioning / inner_leapfrog / inner_persistence are "
+                  "CPU-only (their field-chain / reweight device paths are not yet ported).");
   }
   if (inner_conditioning_ && inner_nsteps_ <= 0)
     APP_ABORT("Error in StochasticWfn: inner_conditioning = true (walker-conditioned inner sampling) "

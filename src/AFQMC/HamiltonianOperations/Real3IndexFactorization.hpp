@@ -815,25 +815,36 @@ private:
 
   bool full_cholesky_ready_{false};
   memory::array<MEM,ComplexType,2> Lank_full_flat_;
-  memory::array<HOST_MEMORY,ComplexType,1> hij_full_flat_;
+  memory::array<MEM,ComplexType,1> hij_full_flat_;
 
   void ensure_full_cholesky()
   {
     if (full_cholesky_ready_)
       return;
-    Lank_full_flat_ = memory::array<MEM, ComplexType, 2>(NMO * nCV, NMO);
+    // Build both flat arrays on HOST (element assembly), then move to the MEM space in one shot. Writing
+    // element-by-element into a device array from host is a segfault, so never assemble into the MEM member
+    // directly (this path is first exercised on device by the PR-3 dynamic full-G port).
+    auto Lank_host = memory::array<HOST_MEMORY, ComplexType, 2>(NMO * nCV, NMO);
     auto Lhost = nda::to_host(Likn()(0, nda::range::all, nda::range::all, nda::range::all));
     for (int i = 0; i < NMO; ++i)
       for (int k = 0; k < NMO; ++k)
         for (int nc = 0; nc < nCV; ++nc)
-          Lank_full_flat_(i * nCV + nc, k) = ComplexType(Lhost(i, k, nc));
-    hij_full_flat_ = memory::array<HOST_MEMORY, ComplexType, 1>(NMO * NMO);
+          Lank_host(i * nCV + nc, k) = ComplexType(Lhost(i, k, nc));
+    auto hij_host = memory::array<HOST_MEMORY, ComplexType, 1>(NMO * NMO);
     auto hij_h = hij();
     for (int i = 0; i < NMO; ++i)
       for (int k = 0; k < NMO; ++k)
-        hij_full_flat_(i * NMO + k) = hij_h(0, i, k);
+        hij_host(i * NMO + k) = hij_h(0, i, k);
     if constexpr (MEM != HOST_MEMORY)
-      Lank_full_flat_ = nda::to_device(Lank_full_flat_);
+    {
+      Lank_full_flat_ = nda::to_device(Lank_host);
+      hij_full_flat_  = nda::to_device(hij_host);
+    }
+    else
+    {
+      Lank_full_flat_ = Lank_host;
+      hij_full_flat_  = hij_host;
+    }
     full_cholesky_ready_ = true;
   } 
 

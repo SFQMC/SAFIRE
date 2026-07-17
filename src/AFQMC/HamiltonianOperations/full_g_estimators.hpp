@@ -22,6 +22,7 @@
 #include "numerics/nda_functions.hpp"
 #include "nda/blas.hpp"
 #include "nda/tensor.hpp"
+#include "numerics/device_kernels/kernels.h" // kernels::device::{accumulate,diag_trace_accumulate} (device only)
 
 namespace sfqmc
 {
@@ -78,10 +79,19 @@ void accumulate_spin_full_g(MatE&& E,
   // GF[(n,i)][k] = G[n][i][k] -- repack into contiguous [nwalk*NMO][NMO] for the gemm (handles a
   // strided G3, e.g. a collinear spin block).
   memory::buffered_array<MEM, ComplexType, 2> GF(nwalk * NMO, NMO);
-  for (int n = 0; n < nwalk; ++n)
-    for (int i = 0; i < NMO; ++i)
-      for (int k = 0; k < NMO; ++k)
-        GF(n * NMO + i, k) = G3(n, i, k);
+  if constexpr (MEM == HOST_MEMORY)
+  {
+    for (int n = 0; n < nwalk; ++n)
+      for (int i = 0; i < NMO; ++i)
+        for (int k = 0; k < NMO; ++k)
+          GF(n * NMO + i, k) = G3(n, i, k);
+  }
+  else
+  {
+    // GF viewed as [nwalk, NMO, NMO] is exactly G3; the nda copy handles a strided G3 (collinear block).
+    auto GF3d = nda::reshape(GF, std::array<long, 3>{nwalk, NMO, NMO});
+    GF3d() = G3();
+  }
 
   // Twban[(n,i)][(i',nc)] = sum_k GF[(n,i)][k] * Lankf[(i',nc)][k], over the FULL (i',nc) range.
   memory::buffered_array<MEM, ComplexType, 2> Twban(nwalk * NMO, NMO * local_nCV);
@@ -89,23 +99,41 @@ void accumulate_spin_full_g(MatE&& E,
 
   auto T4D = nda::reshape(Twban, std::array<long, 4>{nwalk, NMO, NMO, local_nCV});
 
-  for (int n = 0; n < nwalk; ++n)
+  // EXX[w] = sum_{a,b,nc} T4D[w,a,b,nc] * T4D[w,b,a,nc] (non-conjugating); E[w,1] -= 0.5*scl*EXX[w].
+  if constexpr (MEM == HOST_MEMORY)
   {
-    ComplexType exx(0.0);
-    for (int a = 0; a < NMO; ++a)
-      for (int b = 0; b < NMO; ++b)
-        // non-conjugating dot: EXX = sum_{ij,nc} T[i][j][nc] T[j][i][nc] (matches energy_impl).
-        exx += static_cast<ComplexType>(nda::blas::dot(T4D(n, a, b, all), T4D(n, b, a, all)));
-    E(n, 1) -= ComplexType(0.5) * scl * exx;
+    for (int n = 0; n < nwalk; ++n)
+    {
+      ComplexType exx(0.0);
+      for (int a = 0; a < NMO; ++a)
+        for (int b = 0; b < NMO; ++b)
+          // non-conjugating dot: EXX = sum_{ij,nc} T[i][j][nc] T[j][i][nc] (matches energy_impl).
+          exx += static_cast<ComplexType>(nda::blas::dot(T4D(n, a, b, all), T4D(n, b, a, all)));
+      E(n, 1) -= ComplexType(0.5) * scl * exx;
+    }
+  }
+  else
+  {
+    // CuTENSOR contraction with the (a<->b) index swap; the two operands are the same T4D relabeled.
+    memory::buffered_array<MEM, ComplexType, 1> exx(nwalk);
+    nda::tensor::contract(ComplexType(1.0), T4D, "wabc", T4D, "wbac", ComplexType(0.0), exx, "w");
+    kernels::device::accumulate(ComplexType(-0.5) * scl, exx, E(all, 1));
   }
 
   if (addEJ)
   {
     // RAW per-spin Coulomb vector (no scl): Kl[n][nc] += sum_a T4D[n][a][a][nc]. For COLLINEAR both
     // spins accumulate into the same Kl, so the caller's 0.5*scl^2*|Kl|^2 acts on the total density.
-    for (int n = 0; n < nwalk; ++n)
-      for (int a = 0; a < NMO; ++a)
-        Kl(n, all) += T4D(n, a, a, all);
+    if constexpr (MEM == HOST_MEMORY)
+    {
+      for (int n = 0; n < nwalk; ++n)
+        for (int a = 0; a < NMO; ++a)
+          Kl(n, all) += T4D(n, a, a, all);
+    }
+    else
+    {
+      kernels::device::diag_trace_accumulate(T4D, Kl);
+    }
   }
   else
   {
@@ -159,9 +187,19 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
   accumulate_spin_full_g<MEM>(E, G3, Lankf, hijf, local_nCV, scl, Kl(), addH1, addEJ, addEXX);
 
   if (addEXX and addEJ)
-    for (int n = 0; n < nwalk; ++n)
-      E(n, 2) += ComplexType(0.5) * scl * scl *
-                 static_cast<ComplexType>(nda::blas::dot(Kl(n, all), Kl(n, all)));
+  {
+    // EJ[w] = sum_nc Kl[w,nc]*Kl[w,nc] (non-conjugating); E[w,2] += 0.5*scl^2*EJ[w].
+    if constexpr (MEM == HOST_MEMORY)
+      for (int n = 0; n < nwalk; ++n)
+        E(n, 2) += ComplexType(0.5) * scl * scl *
+                   static_cast<ComplexType>(nda::blas::dot(Kl(n, all), Kl(n, all)));
+    else
+    {
+      memory::buffered_array<MEM, ComplexType, 1> ej(nwalk);
+      nda::tensor::contract(ComplexType(1.0), Kl(), "wc", Kl(), "wc", ComplexType(0.0), ej, "w");
+      kernels::device::accumulate(ComplexType(0.5) * scl * scl, ej, E(all, 2));
+    }
+  }
 }
 
 // StochasticWfn: un-rotated full-G local-energy contraction for COLLINEAR (UHF) trials (inner_nsteps > 0).
@@ -220,9 +258,19 @@ void energy_collinear(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> 
   accumulate_spin_full_g<MEM>(E, Gb3, Lankf, hijf, local_nCV, scl, Kl(), addH1, addEJ, addEXX);
 
   if (addEXX and addEJ)
-    for (int n = 0; n < nwalk; ++n)
-      E(n, 2) += ComplexType(0.5) * scl * scl *
-                 static_cast<ComplexType>(nda::blas::dot(Kl(n, all), Kl(n, all)));
+  {
+    // EJ[w] = sum_nc Kl[w,nc]*Kl[w,nc] (non-conjugating); E[w,2] += 0.5*scl^2*EJ[w].
+    if constexpr (MEM == HOST_MEMORY)
+      for (int n = 0; n < nwalk; ++n)
+        E(n, 2) += ComplexType(0.5) * scl * scl *
+                   static_cast<ComplexType>(nda::blas::dot(Kl(n, all), Kl(n, all)));
+    else
+    {
+      memory::buffered_array<MEM, ComplexType, 1> ej(nwalk);
+      nda::tensor::contract(ComplexType(1.0), Kl(), "wc", Kl(), "wc", ComplexType(0.0), ej, "w");
+      kernels::device::accumulate(ComplexType(0.5) * scl * scl, ej, E(all, 2));
+    }
+  }
 }
 
 } // namespace full_g
