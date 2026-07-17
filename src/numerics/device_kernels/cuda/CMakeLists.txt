@@ -13,6 +13,7 @@ target_sources(safire_lib
     phmsd_determinants.cu
     phmsd_energy.cu
     apply.cu
+    stochastic_reductions.cu
     probe.cu
 #    symmetry_tools.cu
 #    potentials.cu

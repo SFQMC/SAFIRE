@@ -17,6 +17,7 @@
 #include "numerics/device_kernels/cuda/add_scalar.cuh"
 #include "numerics/device_kernels/cuda/phmsd_routines.cuh"
 #include "numerics/device_kernels/cuda/apply.cuh"
+#include "numerics/device_kernels/cuda/stochastic_reductions.cuh"
 
 #endif
 
