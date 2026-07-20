@@ -118,14 +118,9 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
     // DEVICE_MEMORY)` forbids only the device instantiation; the off-anchor device method bodies are
     // separately compile-time gated (if constexpr (MEM == HOST_MEMORY)) so this abort is the single
     // runtime seam a device dynamic trial hits.
-    // On device, PR-3 has ported the full-G reductions, conditioned sampling, and leapfrog reweighting, so
-    // free-projection / conditioned / leapfrog dynamic trials are supported. Only the PERSISTENT field-chain
-    // machinery (chain MCMC + device RNG) is still CPU-only, so reject just that here.
-    if constexpr (MEM == DEVICE_MEMORY)
-      if (inner_persistence_)
-        APP_ABORT("Error in StochasticWfn: inner_persistence = true (persistent field-space chains) is "
-                  "CPU-only on device builds (the field-chain MCMC / device-RNG port is pending); "
-                  "free-projection, conditioned, and leapfrog dynamic trials run on device.");
+    // PR-3 device port complete for all inner-sampling modes (free-projection, conditioned, leapfrog, and
+    // persistent field chains). Persistent chains use a host-RNG hybrid MCMC (same mt19937 stream as a CPU
+    // build), so no device construction is rejected here.
   }
   if (inner_conditioning_ && inner_nsteps_ <= 0)
     APP_ABORT("Error in StochasticWfn: inner_conditioning = true (walker-conditioned inner sampling) "
@@ -554,15 +549,11 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // inner_equil_steps_ MH sweeps targeting the CURRENT (old) walkers. The updated pool serves every
   // reduction of this step (latch cleared below), so the step's overlap RATIO new/old shares one
   // ensemble (Eq. 25). Runs on every rank at every step -- uniform control flow, no communication.
-  // Persistent field-chain pool update is CPU-only for now (the chain-MCMC device port is pending);
-  // persistent dynamic trials are blocked at construction on device, so this branch is unreachable there.
+  // Persistent field-chain pool update (device-ported: host-RNG hybrid chain MCMC).
   if (inner_persistence_ && inner_conditioning_ && inner_nsteps_ > 0)
   {
-    if constexpr (MEM == HOST_MEMORY)
-    {
-      update_persistent_chain_pool(wset);
-      inner_step_pending_ = false;
-    }
+    update_persistent_chain_pool(wset);
+    inner_step_pending_ = false;
   }
   // Leapfrog: refresh the stored OVLP = <Psi_T|phi> against the ensemble tied to the current (old)
   // walker phi. Without persistence, Log_Overlap(wset) consumes the latch just armed (driving the
