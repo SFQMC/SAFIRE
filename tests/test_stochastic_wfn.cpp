@@ -80,7 +80,6 @@ ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_
 {
   ptree pt;
   pt.put("name", name);
-  pt.put("system", "info0");
   pt.put("filename", wfn_file);
   mark_stochastic_wfn_input(pt);
   pt.put("inner_nwalkers", opt.inner_nwalkers);
@@ -115,7 +114,6 @@ ptree make_nomsd_wfn_ptree(std::string const& name, std::string const& wfn_file)
 {
   ptree pt;
   pt.put("name", name);
-  pt.put("system", "info0");
   pt.put("filename", wfn_file);
   return pt;
 }
@@ -123,7 +121,6 @@ ptree make_nomsd_wfn_ptree(std::string const& name, std::string const& wfn_file)
 template<MEMORY_SPACE MEM>
 struct StochasticHamWfnEnv
 {
-  std::map<std::string, AFQMCInfo> info_map;
   std::unique_ptr<HamiltonianFactory> ham_fac;
   Hamiltonian* ham = nullptr;
   WavefunctionFactory<MEM> wfn_fac;
@@ -150,13 +147,10 @@ struct StochasticHamWfnEnv
     if (accept_type && not accept_type(env.type))
       return std::nullopt;
 
-    env.info_map.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", env.NMO, env.nup, env.ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    env.ham_fac = std::make_unique<HamiltonianFactory>(env.info_map);
+    env.ham_fac = std::make_unique<HamiltonianFactory>();
     env.ham_fac->push("ham0", ham_pt);
     env.ham = &env.ham_fac->getHamiltonian(mpi, "ham0");
 
@@ -187,9 +181,8 @@ struct StochasticHamWfnEnv
   WalkerSet<MEM> make_resized_walker_set(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, int nwalk,
                                          std::string const& wfn_id)
   {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, info_map["info0"], rng);
-    wset.resize(nwalk, wfn_fac.getInitialGuess(wfn_id));
-    return wset;
+    auto const& initial_guess = wfn_fac.getInitialGuess(wfn_id);
+    return WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
   }
 };
 
@@ -367,22 +360,14 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
 
-  const auto info  = read_info_from_wfn(wfn_file, "any");
-  const int  NMO   = std::get<0>(info);
-  const int  nup   = std::get<1>(info);
-  const int  ndown = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
   if (is_ft_walker_type(type))
     return;
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -393,7 +378,6 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   WavefunctionFactory<MEM> WfnFac{};
   ptree stoch_pt;
   stoch_pt.put("name", "wfn_stoch");
-  stoch_pt.put("system", "info0");
   stoch_pt.put("filename", wfn_file);
   mark_stochastic_wfn_input(stoch_pt);
   stoch_pt.put("inner_nwalkers", 1);
@@ -809,21 +793,15 @@ void stochastic_mean_field_matches_nomsd(
 
   const auto info   = read_info_from_wfn(wfn_file, "any");
   const int  NMO    = std::get<0>(info);
-  const int  nup    = std::get<1>(info);
-  const int  ndown  = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
   if (is_ft_walker_type(type))
     return;
   const double dt(0.01);
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -845,7 +823,6 @@ void stochastic_mean_field_matches_nomsd(
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
     ptree pt;
     pt.put("name", name);
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -923,23 +900,15 @@ void stochastic_mean_field_production_order(
     return;
   // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
-    const auto info   = read_info_from_wfn(wfn_file, "any");
-    const int  NMO    = std::get<0>(info);
-    const int  nup    = std::get<1>(info);
-    const int  ndown  = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -962,7 +931,6 @@ void stochastic_mean_field_production_order(
     // Leapfrog stochastic trial: begin_inner_step will conditioned-resample (expand to nwalk*P).
     ptree pt;
     pt.put("name", "wfn_stoch_mfp");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -976,8 +944,8 @@ void stochastic_mean_field_production_order(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_mfp", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_mfp", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_mfp"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_mfp");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
     // Reproduce the Propagate ordering: begin_inner_step (leapfrog => conditioned resample to nwalk*P)
     // BEFORE the mean-field calls. With the fix, vMF/G_MF detect the non-P-sample ensemble and delegate
@@ -1056,25 +1024,14 @@ void stochastic_back_propagation_matches_nomsd(
     return;
   // PR-3: free-projection BP / accumulate is device-ported (getReferences + accumulate_estimators); runs on DEVICE_MEMORY.
 
-  const auto info   = read_info_from_wfn(wfn_file, "any");
-  const int  NMO    = std::get<0>(info);
-  const int  nup    = std::get<1>(info);
-  const int  ndown  = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
   if (is_ft_walker_type(type))
     return;
 
-  const int npol = (type == NONCOLLINEAR ? 2 : 1);
-  const int nel  = (type == COLLINEAR ? nup + ndown : nup);
-
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1095,7 +1052,6 @@ void stochastic_back_propagation_matches_nomsd(
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
     ptree pt;
     pt.put("name", name);
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -1122,10 +1078,8 @@ void stochastic_back_propagation_matches_nomsd(
   // (3) the reference Slater matrices themselves match NOMSD (shape [nrefs, npol*NMO, nel], as
   // BackPropagatedEstimator requests them).
   auto collect_refs = [&](Wavefunction<MEM>& wfn) {
-    const int n = wfn.total_number_of_references();
-    memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
-    Refs() = ComplexType(0.0);
-    wfn.getReferences(n, Refs);
+    memory::array<MEM, ComplexType, 3> Refs;
+    wfn.getReferences(Refs);
     return nda::to_host(Refs);
   };
   auto R_ref = collect_refs(wfn_nomsd);
@@ -1170,25 +1124,14 @@ void stochastic_back_propagation_production_order(
     return;
   // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
-    const auto info   = read_info_from_wfn(wfn_file, "any");
-    const int  NMO    = std::get<0>(info);
-    const int  nup    = std::get<1>(info);
-    const int  ndown  = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
 
-    const int npol = (type == NONCOLLINEAR ? 2 : 1);
-    const int nel  = (type == COLLINEAR ? nup + ndown : nup);
-
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1210,7 +1153,6 @@ void stochastic_back_propagation_production_order(
 
     ptree pt;
     pt.put("name", "wfn_stoch_bpp");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -1224,18 +1166,17 @@ void stochastic_back_propagation_production_order(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_bpp", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpp", type, wlk_pt);
 
-    auto get_refs = [&](Wavefunction<MEM>& wfn, int n) {
-      memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
-      Refs() = ComplexType(0.0);
-      wfn.getReferences(n, Refs);
+    auto get_refs = [&](Wavefunction<MEM>& wfn) {
+      memory::array<MEM, ComplexType, 3> Refs;
+      wfn.getReferences(Refs);
       return nda::to_host(Refs);
     };
     auto all = nda::range::all;
-    auto R_anchor = get_refs(wfn_nomsd, 1); // NOMSD delegate -> the single anchor reference
+    auto R_anchor = get_refs(wfn_nomsd); // NOMSD delegate -> the single anchor reference
 
     // Drive the inner ensemble: leapfrog begin_inner_step resamples + expands it to nwalk*P.
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_bpp"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_bpp");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
 
@@ -1246,7 +1187,7 @@ void stochastic_back_propagation_production_order(
     for (int p = 0; p < inner_nwalkers; ++p)
       CHECK_THAT(wfn_s.getReferenceWeight(p), utils::Approx(ComplexType(1.0 / inner_nwalkers, 0.0)));
 
-    auto R_draw1 = get_refs(wfn_s, inner_nwalkers);
+    auto R_draw1 = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw1));
     for (int p = 0; p < inner_nwalkers; ++p) // each sample is propagated off the anchor (one B_T step)
       CHECK(max_abs_diff2d(R_draw1(p, all, all), R_anchor(0, all, all)) > 1e-6);
@@ -1258,7 +1199,7 @@ void stochastic_back_propagation_production_order(
 
     // Across windows: begin_inner_step opened a new BP window (resetting the idempotency guard), so
     // getReferences now draws a FRESH free-projection ensemble -- different from the previous window's.
-    auto R_draw2 = get_refs(wfn_s, inner_nwalkers);
+    auto R_draw2 = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw2));
     double cross_window = 0.0;
     for (int p = 0; p < inner_nwalkers; ++p)
@@ -1297,26 +1238,16 @@ void stochastic_back_propagation_inner_refs(
     return;
   // PR-3: free-projection BP references are device-ported (getReferences); runs on DEVICE_MEMORY.
   {
-    const auto info   = read_info_from_wfn(wfn_file, "any");
-    const int  NMO    = std::get<0>(info);
-    const int  nup    = std::get<1>(info);
-    const int  ndown  = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
 
-    const int npol = (type == NONCOLLINEAR ? 2 : 1);
-    const int nel  = (type == COLLINEAR ? nup + ndown : nup);
     const int P    = 3;
-
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
 
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1337,7 +1268,6 @@ void stochastic_back_propagation_inner_refs(
     // Non-conditioned, free-projection, dynamic (inner_nsteps = 1) trial -> dedicated reference draw active.
     ptree pt;
     pt.put("name", "wfn_stoch_bpir");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", P);
@@ -1355,18 +1285,17 @@ void stochastic_back_propagation_inner_refs(
     for (int p = 0; p < P; ++p)
       CHECK_THAT(wfn_s.getReferenceWeight(p), utils::Approx(ComplexType(1.0 / P, 0.0)));
 
-    auto get_refs = [&](Wavefunction<MEM>& wfn, int n) {
-      memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
-      Refs() = ComplexType(0.0);
-      wfn.getReferences(n, Refs);
+    auto get_refs = [&](Wavefunction<MEM>& wfn) {
+      memory::array<MEM, ComplexType, 3> Refs;
+      wfn.getReferences(Refs);
       return nda::to_host(Refs);
     };
     auto all = nda::range::all;
 
     // (2) getReferences performs a fresh free-projection draw {psi_p = B_T(Y^[p])|phi_T>}: P finite
     // references, each PROPAGATED off the anchor (inner_nsteps = 1 bare B_T step).
-    auto R_anchor = get_refs(wfn_nomsd, 1); // NOMSD delegate -> the single anchor reference
-    auto R_draw1  = get_refs(wfn_s, P);
+    auto R_anchor = get_refs(wfn_nomsd); // NOMSD delegate -> the single anchor reference
+    auto R_draw1  = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw1));
     for (int p = 0; p < P; ++p)
       CHECK(max_abs_diff2d(R_draw1(p, all, all), R_anchor(0, all, all)) > 1e-6);
@@ -1374,7 +1303,7 @@ void stochastic_back_propagation_inner_refs(
     // (3) IDEMPOTENT within a BP window: a repeated getReferences with no intervening forward step
     // (begin_inner_step) reuses the SAME draw -- the guard prevents a silent re-draw within a window
     // (cross-window freshness, after begin_inner_step, is checked in _production_order).
-    auto R_draw2 = get_refs(wfn_s, P);
+    auto R_draw2 = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw2));
     CHECK_THAT(R_draw2, utils::Approx(R_draw1));
   }
@@ -1429,15 +1358,10 @@ void stochastic_accumulate_estimators_matches_nomsd(
   if (is_ft_walker_type(type))
     return;
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  AFQMCInfo info0{"info0", NMO, nup, ndown, 0};
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", info0));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1459,7 +1383,6 @@ void stochastic_accumulate_estimators_matches_nomsd(
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
     ptree pt;
     pt.put("name", name);
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -1489,8 +1412,16 @@ void stochastic_accumulate_estimators_matches_nomsd(
             A_h(w, s, i, j) = ComplexType(i == j ? diag : off * double((i + 3 * j) % 5), 0.0);
     if constexpr (MEM == HOST_MEMORY)
       return memory::array<MEM, ComplexType, 4>(A_h);
+#if defined(ENABLE_DEVICE)
     else
       return memory::array<MEM, ComplexType, 4>(nda::to_device(A_h));
+#else
+    else
+    {
+      static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+      return memory::array<MEM, ComplexType, 4>{};
+    }
+#endif
   };
   auto Xop  = make_op(1.0, 0.05);
   auto Ycop = make_op(1.0, 0.03);
@@ -1500,15 +1431,15 @@ void stochastic_accumulate_estimators_matches_nomsd(
   // used directly as the Observable template type (same v.accumulate(...) path as the variant). With
   // time_evolved the operators above transform the (stochastic) mixed DM as in BPWithTimeEvolvedOperators.
   auto collect_one_rdm = [&](Wavefunction<MEM>& wfn, const std::string& tag, bool time_evolved) {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_ae"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_ae");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     nda::array<ComplexType, 1> wgt(nwalk);
     wgt() = ComplexType(1.0, 0.0);
 
     std::vector<full1rdm> props1;
-    props1.emplace_back(mpi, info0, ptree{}, type, 1);
+    props1.emplace_back(mpi, ptree{}, type, NMO, 1);
     std::vector<full1rdm> props; // empty
 
     if (time_evolved)
@@ -1610,14 +1541,10 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
       return; // Un-rotated full-G kernels support CLOSED (RHF) trials only.
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1639,7 +1566,6 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     auto build_stoch = [&](const std::string& name, int inner_nwalkers, int inner_nsteps) -> Wavefunction<MEM>& {
       ptree pt;
       pt.put("name", name);
-      pt.put("system", "info0");
       pt.put("filename", wfn_file);
       mark_stochastic_wfn_input(pt);
       pt.put("inner_nwalkers", inner_nwalkers);
@@ -1657,8 +1583,8 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
       nda::array<ComplexType, 1> ov, e1, exx, ej;
     };
     auto collect_energies = [&](Wavefunction<MEM>& wfn) {
-      auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-      wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_fg"));
+      auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_fg");
+      auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
       perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
       wfn.Energy(wset); // never calls begin_inner_step -> full-G evaluated at the anchor
       WalkerEnergies out;
@@ -1692,8 +1618,8 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     // Force bias: the full-Likn contraction at the anchor == the compact half-rotated one. Compare
     // the bias X = L.G ([nwalk][nCV] in both), which is layout-independent (G layouts differ).
     auto collect_vbias = [&](Wavefunction<MEM>& wfn) {
-      auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-      wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_fg"));
+      auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_fg");
+      auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
       perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
       memory::array<MEM, ComplexType, 2> X(nwalk, wfn.number_of_cholesky_vectors());
       wfn.vbias(wset, X, dt);
@@ -1814,14 +1740,10 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1839,7 +1761,6 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
       WavefunctionFactory<MEM> WfnFac{};
       ptree pt;
       pt.put("name", name);
-      pt.put("system", "info0");
       pt.put("filename", wfn_file);
       mark_stochastic_wfn_input(pt);
       pt.put("inner_nwalkers", inner_nwalkers);
@@ -1859,8 +1780,8 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
       auto& wfn = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
       WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, name, type, wlk_pt);
 
-      auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-      wset.resize(nwalk, WfnFac.getInitialGuess(name));
+      auto const& initial_guess = WfnFac.getInitialGuess(name);
+      auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
       perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
       for (int step = 0; step < 4; ++step)
@@ -1924,14 +1845,10 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1945,7 +1862,6 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_logagg");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -1963,8 +1879,8 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_logagg", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_logagg", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_logagg"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_logagg");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     for (int step = 0; step < 4; ++step)
@@ -2120,14 +2036,10 @@ void stochastic_inner_permute_after_pop_control(
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2154,7 +2066,6 @@ void stochastic_inner_permute_after_pop_control(
     // inner_cond_mag_ permutation too).
     ptree pt;
     pt.put("name", "wfn_stoch_pp");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2168,8 +2079,8 @@ void stochastic_inner_permute_after_pop_control(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_pp", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_pp", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_pp"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_pp");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown); // distinct outer walkers
 
     // Contract: the hook is a no-op for a non-stochastic wavefunction (callable, no crash/side effect).
@@ -2258,14 +2169,10 @@ void stochastic_inner_permute_cross_rank_fallback(
     if (mpi->comm.size() != 1)
       return; // synthetic single-rank sentinel check (real cross-rank moves need no special harness)
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2280,7 +2187,6 @@ void stochastic_inner_permute_cross_rank_fallback(
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_xr");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2293,8 +2199,8 @@ void stochastic_inner_permute_cross_rank_fallback(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_xr", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_xr", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_xr"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_xr");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     // Condition on the current walkers and record the baseline overlaps (first reduction resamples to
@@ -2387,14 +2293,10 @@ void stochastic_persistent_permute_after_pop_control(
     if (mpi->comm.size() != 1)
       return; // per-rank-local permutation; the exact cross-slot equalities assume no cross-rank mixing.
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2410,7 +2312,6 @@ void stochastic_persistent_permute_after_pop_control(
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_pp_persist");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2427,8 +2328,8 @@ void stochastic_persistent_permute_after_pop_control(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_pp_persist", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_pp_persist", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_pp_persist"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_pp_persist");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     // Prime + equilibrate the persistent pool conditioned on the distinct walkers, then record overlaps.
@@ -2517,14 +2418,10 @@ void stochastic_persistent_pool_survives_pop_control(
     if (mpi->comm.size() != 1)
       return; // synthetic single-rank sentinel check (real cross-rank moves need no special harness).
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2539,7 +2436,6 @@ void stochastic_persistent_pool_survives_pop_control(
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_persist_pop");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2559,8 +2455,8 @@ void stochastic_persistent_pool_survives_pop_control(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_persist_pop", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_persist_pop", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_persist_pop"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_persist_pop");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     auto identity_lineage = [&]() {
@@ -2665,14 +2561,10 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     if (mpi->comm.size() != 1)
       return; // manipulates SLOT_LINEAGE directly; the identity-lineage permute assumes no cross-rank mixing.
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2686,7 +2578,6 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_condmag");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2703,8 +2594,8 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_condmag", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_condmag", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_condmag"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_condmag");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown); // distinct walkers => distinct cond_mag
 
     // Equilibrate the chains against the CURRENT walkers phi_cond and set inner_cond_mag_ (leapfrog).

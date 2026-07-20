@@ -305,22 +305,14 @@ void stochastic_back_propagation_estimator_smoke(
     return;
   else
   {
-    const auto info   = read_info_from_wfn(wfn_file, "any");
-    const int  NMO    = std::get<0>(info);
-    const int  nup    = std::get<1>(info);
-    const int  ndown  = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -345,12 +337,10 @@ void stochastic_back_propagation_estimator_smoke(
     ptree wlk_pt;
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
 
     WavefunctionFactory<MEM> WfnFac{};
     ptree wfn_pt;
     wfn_pt.put("name", "wfn_stoch_bp_est");
-    wfn_pt.put("system", "info0");
     wfn_pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(wfn_pt);
     wfn_pt.put("inner_nwalkers", 4);
@@ -366,15 +356,15 @@ void stochastic_back_propagation_estimator_smoke(
     WfnFac.push("wfn_stoch_bp_est", wfn_pt);
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_bp_est", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_bp_est", type, wlk_pt);
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_bp_est");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
     ptree prop_pt;
     prop_pt.put("name", "prop_stoch_bp_est");
-    prop_pt.put("system", "info0");
-    PropagatorFactory<MEM> PropgFac(InfoMap);
+    PropagatorFactory<MEM> PropgFac;
     PropgFac.push("prop_stoch_bp_est", prop_pt);
     auto& prop = PropgFac.getPropagator(mpi, "prop_stoch_bp_est", wfn, rng_dev);
 
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_bp_est"));
     wfn.Energy(wset);
 
     ptree one_rdm;
@@ -393,7 +383,7 @@ void stochastic_back_propagation_estimator_smoke(
     exec_pt.put("measure_interval_multiplier", bp_measure_multiplier);
     exec_pt.add_child("estimator", est_pt_bp);
 
-    EstimatorHandler<MEM> estim(mpi, InfoMap["info0"], title, exec_pt, wset, WfnFac, wfn, prop, type,
+    EstimatorHandler<MEM> estim(mpi, title, exec_pt, wset, WfnFac, wfn, prop,
                                 HamFac, "ham0", dt);
 
     const int measure_interval = estim.get_max_common_interval();

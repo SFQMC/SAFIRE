@@ -282,12 +282,11 @@ void stochastic_back_propagation_driver_smoke(
     const int nStep                       = bp_measure_multiplier * population_control_interval * 2;
     const std::string title               = "stoch_bp_drv_smoke";
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    HamiltonianFactory HamFac(InfoMap);
-    WalkerSetFactory<MEM> WSetFac(InfoMap);
+    HamiltonianFactory HamFac;
+    WalkerSetFactory<MEM> WSetFac;
     WavefunctionFactory<MEM> WfnFac{};
-    PropagatorFactory<MEM> PropFac(InfoMap);
-    DriverFactory<MEM> DriverFac(mpi, InfoMap, WSetFac, PropFac, WfnFac, HamFac);
+    PropagatorFactory<MEM> PropFac;
+    DriverFactory<MEM> DriverFac(mpi, WSetFac, PropFac, WfnFac, HamFac);
 
     ptree wfn_min;
     wfn_min.put("filename", wfn_file);

@@ -433,23 +433,17 @@ void stochastic_branch_lineage_metadata()
     return; // single-rank lineage check; the cross-rank path is covered separately
 
   const int NMO = 6, nup = 2, ndown = 2, nwalk = 6;
-  AFQMCInfo info;
-  info.NMO   = NMO;
-  info.nup   = nup;
-  info.ndown = ndown;
-  info.name  = "walker";
   ptree wlk_pt;
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", "closed");
   auto rng  = std::make_shared<utils::RandomGenerator_t<>>();
-  auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, info, rng);
-
-  nda::array<Type, 3> initA_h(1, NMO, nup);
-  initA_h() = Type(0.0);
+  nda::matrix<ComplexType> guess0({NMO, nup});
+  guess0 = ComplexType(0.0);
   for (int i = 0; i < nup; ++i)
-    initA_h(0, i, i) = Type(0.22);
-  auto initA = memory::to_memory_space<MEM>(initA_h);
-  wset.resize(nwalk, initA);
+    guess0(i, i) = ComplexType(0.22);
+  std::vector<nda::matrix<ComplexType>> guess{guess0};
+  auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, CLOSED, guess, nwalk);
+
   REQUIRE(wset.size() == nwalk);
 
   auto lineage_of = [&](int w) {

@@ -393,14 +393,10 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -415,7 +411,6 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     auto build_pt = [&](std::string id, bool with_inner_ham) {
       ptree pt;
       pt.put("name", id);
-      pt.put("system", "info0");
       pt.put("filename", wfn_file);
       mark_stochastic_wfn_input(pt);
       pt.put("inner_nwalkers", 4);
@@ -445,10 +440,10 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
 
     std::shared_ptr<utils::RandomGenerator_t<>> rng_a = std::make_shared<utils::RandomGenerator_t<>>();
     std::shared_ptr<utils::RandomGenerator_t<>> rng_b = std::make_shared<utils::RandomGenerator_t<>>();
-    auto wset_a = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng_a);
-    auto wset_b = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng_b);
-    wset_a.resize(nwalk, WfnFac.getInitialGuess("wfn_clone"));
-    wset_b.resize(nwalk, WfnFac.getInitialGuess("wfn_hvar"));
+    auto const& initial_guess_a = WfnFac.getInitialGuess("wfn_clone");
+    auto const& initial_guess_b = WfnFac.getInitialGuess("wfn_hvar");
+    auto wset_a = WalkerSet<MEM>(mpi, wlk_pt, rng_a, type, initial_guess_a, nwalk);
+    auto wset_b = WalkerSet<MEM>(mpi, wlk_pt, rng_b, type, initial_guess_b, nwalk);
     perturb_stochastic_walkers<MEM>(wset_a, type, NMO, nup, ndown); // deterministic -> wset_a == wset_b
     perturb_stochastic_walkers<MEM>(wset_b, type, NMO, nup, ndown);
 
@@ -511,22 +506,14 @@ void wfn_factory_stochasticwfn_type_smoke(
     return;
   else
   {
-    const auto info   = read_info_from_wfn(wfn_file, "any");
-    const int  NMO    = std::get<0>(info);
-    const int  nup    = std::get<1>(info);
-    const int  ndown  = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -537,7 +524,6 @@ void wfn_factory_stochasticwfn_type_smoke(
     WavefunctionFactory<MEM> WfnFac{};
     ptree wfn_pt;
     wfn_pt.put("name", "wfn_stoch");
-    wfn_pt.put("system", "info0");
     wfn_pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(wfn_pt);
     wfn_pt.put("inner_nwalkers", 1);
@@ -587,19 +573,10 @@ void stochastic_hdf5_type_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 
     REQUIRE(getWavefunctionType(marked) == STOCHASTIC_WFN);
 
-    const auto info  = read_info_from_wfn(marked, "any");
-    const int  NMO   = std::get<0>(info);
-    const int  nup   = std::get<1>(info);
-    const int  ndown = std::get<2>(info);
-
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -610,7 +587,6 @@ void stochastic_hdf5_type_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     WavefunctionFactory<MEM> WfnFac{};
     ptree wfn_pt;
     wfn_pt.put("name", "wfn_marked");
-    wfn_pt.put("system", "info0");
     wfn_pt.put("filename", marked);
     WfnFac.push("wfn_marked", wfn_pt);
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_marked", type, &ham, 4);

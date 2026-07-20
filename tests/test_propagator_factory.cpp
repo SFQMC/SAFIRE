@@ -220,14 +220,10 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   WALKER_TYPES type = getWalkerType(wfn_file);
   // finite-T uses a different field/step layout; not the target of this smoke.
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -240,23 +236,21 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   ptree wlk_pt;
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
-  auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
 
   ptree wfn_pt;
   wfn_pt.put("name", "wfn0");
-  wfn_pt.put("system", "info0");
   wfn_pt.put("filename", wfn_file);
   WavefunctionFactory<MEM> WfnFac{};
   WfnFac.push("wfn0", wfn_pt);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
-  wset.resize(nwalk, WfnFac.getInitialGuess("wfn0"));
+  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
+  auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
   // Standard propagator: free_projection defaults to false (importance sampling / hybrid).
   ptree prop_pt;
   prop_pt.put("name", "prop0");
-  prop_pt.put("system", "info0");
   prop_pt.put("denseP2", true);
-  PropagatorFactory<MEM> PropgFac(InfoMap);
+  PropagatorFactory<MEM> PropgFac;
   PropgFac.push("prop0", prop_pt);
   auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
 
@@ -308,22 +302,14 @@ void stochastic_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     return; // Un-rotated full-G kernels are CPU-only today.
   else
   {
-    const auto info  = read_info_from_wfn(wfn_file, "any");
-    const int  NMO   = std::get<0>(info);
-    const int  nup   = std::get<1>(info);
-    const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -338,7 +324,6 @@ void stochastic_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_prop");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", 4);
@@ -350,8 +335,8 @@ void stochastic_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_prop", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_prop", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_prop"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_prop");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
     // Prime overlaps/energies (anchor ensemble; begin_inner_step armed by the propagator each step)
     // and pick an energy shift so the hybrid weights stay well-scaled over the test steps.
@@ -368,8 +353,7 @@ void stochastic_propagator_step(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     // Build the OUTER propagator (default hybrid) bound to the stochastic trial.
     ptree prop_pt;
     prop_pt.put("name", "prop_stoch");
-    prop_pt.put("system", "info0");
-    PropagatorFactory<MEM> PropgFac(InfoMap);
+    PropagatorFactory<MEM> PropgFac;
     PropgFac.push("prop_stoch", prop_pt);
     auto& prop = PropgFac.getPropagator(mpi, "prop_stoch", wfn, rng_dev);
 
@@ -418,22 +402,14 @@ void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t
     return; // Walker-conditioned sampling is CPU-only today (full-G kernels CPU-only).
   else
   {
-    const auto info  = read_info_from_wfn(wfn_file, "any");
-    const int  NMO   = std::get<0>(info);
-    const int  nup   = std::get<1>(info);
-    const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -449,7 +425,6 @@ void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_cond");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -463,8 +438,8 @@ void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_cond", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_cond", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_cond"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_cond");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
     // Prime overlaps/energies and pick an energy shift so the hybrid weights stay well-scaled.
     wfn.Log_Overlap(wset);
@@ -480,8 +455,7 @@ void stochastic_conditioned_propagator_step(std::shared_ptr<utils::mpi_context_t
     // Build the OUTER propagator (default hybrid) bound to the conditioned stochastic trial.
     ptree prop_pt;
     prop_pt.put("name", "prop_stoch_cond");
-    prop_pt.put("system", "info0");
-    PropagatorFactory<MEM> PropgFac(InfoMap);
+    PropagatorFactory<MEM> PropgFac;
     PropgFac.push("prop_stoch_cond", prop_pt);
     auto& prop = PropgFac.getPropagator(mpi, "prop_stoch_cond", wfn, rng_dev);
 
