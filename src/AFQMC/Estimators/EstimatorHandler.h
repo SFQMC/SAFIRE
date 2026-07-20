@@ -49,31 +49,27 @@ namespace afqmc
  *   4) each with independent wavefunctions.
  */
 template<MEMORY_SPACE MEM>
-class EstimatorHandler : public AFQMCInfo
+class EstimatorHandler
 {
   using EstimPtr     = std::shared_ptr<EstimatorBase<MEM>>;
   using communicator = boost::mpi3::communicator;
 
 public:
   EstimatorHandler(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                   AFQMCInfo info,
                    std::string title,
                    ptree exec_pt,
-                   WalkerSet<MEM>& wset, 
+                   WalkerSet<MEM>& wset,
                    WavefunctionFactory<MEM>& WfnFac,
                    Wavefunction<MEM>& wfn0,
                    Propagator<MEM>& prop0,
-                   WALKER_TYPES walker_type,
                    HamiltonianFactory& HamFac,
                    std::string ham0,
                    double dt,
                    bool defaultEnergyEstim = false,
                    bool impsamp            = true)
-      : AFQMCInfo(info), mpi(_mpi), project_title(title), dt(dt), hdf_output(false)
+      : mpi(_mpi), project_title(title), NMO(wfn0.getNMO()), dt(dt), hdf_output(false)
   {
     estimators.reserve(10);
-    // handling this at runtime to avoid templating everything
-    utils::check(MEM == wfn0.get_memory_space(), "Memory space mismatch");
 
     app_log(1,"\n****************************************************");
     app_log(1,"               Initializing Estimators ");
@@ -116,7 +112,7 @@ public:
     est_pt.put("_population_control_interval", population_control_interval); // to compute measure_interval
 
     estimators.emplace_back(
-        static_cast<EstimPtr>(std::make_shared<BasicEstimator<MEM>>(mpi, info, title, basic_pt, impsamp)));
+        static_cast<EstimPtr>(std::make_shared<BasicEstimator<MEM>>(mpi, title, basic_pt, impsamp)));
     measure_schedule[est_index] = estimators.back()->get_measurement_interval();
     est_index++;
 
@@ -126,7 +122,7 @@ public:
         )
       {
         estimators.emplace_back(
-          std::make_shared<EnergyEstimator<MEM>>(mpi, info, est_pt, wfn0, impsamp));
+          std::make_shared<EnergyEstimator<MEM>>(mpi, est_pt, wfn0, impsamp));
         measure_schedule[est_index] = estimators.back()->get_measurement_interval();
         est_index++;
       }
@@ -190,7 +186,7 @@ public:
             utils::check(not bp_estimator, " Error: Only one back propagator estimator allowed. ");
             est_pt.put("measure_interval_multiplier", child_measure_interval_multiplier);
             estimators.emplace_back(static_cast<EstimPtr>(
-                std::make_shared<BackPropagatedEstimator<MEM>>(mpi, info, title, est_pt, walker_type, wset, *wfn,
+                std::make_shared<BackPropagatedEstimator<MEM>>(mpi, title, est_pt, wset, *wfn,
                                                           prop0, impsamp)));
             measure_schedule[est_index] = estimators.back()->get_measurement_interval();
             est_index++;
@@ -202,8 +198,8 @@ public:
             utils::check(not bp_estimator, " Error: Only one back propagator estimator allowed. ");
             est_pt.put("measure_interval_multiplier", child_measure_interval_multiplier);
             estimators.emplace_back(static_cast<EstimPtr>(
-                std::make_shared<BPWithTimeEvolvedOperators<MEM>>(mpi, info, title, 
-                            est_pt, walker_type, wset, *wfn, prop0, impsamp)));
+                std::make_shared<BPWithTimeEvolvedOperators<MEM>>(mpi, title,
+                            est_pt, wset, *wfn, prop0, impsamp)));
             measure_schedule[est_index] = estimators.back()->get_measurement_interval();
             est_index++;
             hdf_output = true;
@@ -213,7 +209,7 @@ public:
           {
             est_pt.put("measure_interval_multiplier", child_measure_interval_multiplier);
             estimators.emplace_back(static_cast<EstimPtr>(
-                std::make_shared<MixedEstimator<MEM>>(mpi, info, title, est_pt, walker_type, 
+                std::make_shared<MixedEstimator<MEM>>(mpi, title, est_pt, wset.getWalkerType(),
                                                  *wfn)));
             measure_schedule[est_index] = estimators.back()->get_measurement_interval();
             est_index++;
@@ -228,7 +224,7 @@ public:
             bool remove = est_pt.get<bool>("remove", false);
             if(not remove) {
               estimators.emplace_back(
-                  std::make_shared<EnergyEstimator<MEM>>(mpi, info, est_pt, *wfn, impsamp));
+                  std::make_shared<EnergyEstimator<MEM>>(mpi, est_pt, *wfn, impsamp));
               measure_schedule[est_index] = estimators.back()->get_measurement_interval();
               est_index++;
             }
@@ -250,7 +246,7 @@ public:
       {
         hdf_file = project_title + ".stat.h5";
         h5::file file(hdf_file, 'w');
-        write_hdf_metadata(file, walker_type, !impsamp);
+        write_hdf_metadata(file, wset.getWalkerType(), !impsamp);
       }
       out.open(filename.c_str());
       utils::check(not out.fail(), "Problems opening estimator output file: " + filename + ""); 
@@ -335,8 +331,6 @@ public:
     h5::group grp(h5f);
     h5::group mgrp = grp.create_group("Metadata");
     h5::h5_write(mgrp,"NMO", NMO);
-    h5::h5_write(mgrp,"NUP", nup);
-    h5::h5_write(mgrp,"NDOWN", ndown);
     int wlk_t_copy = wlk; // the actual data type of enum is implementation-defined. convert to int for file
     h5::h5_write(mgrp, "WalkerType", wlk_t_copy);
     h5::h5_write(mgrp, "FreeProjection", free_projection);
@@ -402,6 +396,8 @@ private:
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
   std::string project_title;
+
+  int NMO{};
 
   std::vector<EstimPtr> estimators;
   std::vector<std::string> tags;

@@ -72,8 +72,28 @@ inline ComplexType stable_complex_sum_row(Mat2D const& terms, int row, int ncols
 
 } // namespace
 
+namespace stochastic_wfn_detail
+{
+inline nda::array<ComplexType, 3> guess_matrices_to_rank3(std::vector<nda::matrix<ComplexType>> const& guess,
+                                                          int naeb)
+{
+  utils::check(not guess.empty(), "StochasticWfn: empty initial guess.");
+  const int nspin = int(guess.size());
+  const int NMO   = int(guess[0].extent(0));
+  const int naea  = int(guess[0].extent(1));
+  nda::array<ComplexType, 3> A(nspin, NMO, naea);
+  A(0, nda::ellipsis{}) = guess[0];
+  if (nspin > 1)
+    A(1, nda::range::all, nda::range(naeb)) = guess[1];
+  return A;
+}
+} // namespace stochastic_wfn_detail
+
 template<MEMORY_SPACE MEM, class devPsiT>
-StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
+StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
+                                             int NMO_,
+                                             int nup_,
+                                             int ndown_,
                                              ptree pt_in,
                                              std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_in,
                                              HamiltonianOperations<MEM>&& outer_hop_,
@@ -81,12 +101,14 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
                                              nda::array<devPsiT, 2>&& orbs_,
                                              std::unique_ptr<StochasticInnerStack<MEM, devPsiT>>&& inner_stack_in,
                                              WALKER_TYPES wlk,
-                                             ComplexType nce,
                                              [[maybe_unused]] int targetNW)
-    : AFQMCInfo(info),
+    : system_(std::move(system)),
+      NMO{NMO_},
+      nup{nup_},
+      ndown{ndown_},
       mpi_(std::move(mpi_in)),
-      nomsd_(nomsd_inputs(pt_in), info.NMO, info.nup, info.ndown, wlk, mpi_, std::move(outer_hop_), std::move(ci_),
-             std::move(orbs_), nce, targetNW),
+      nomsd_(nomsd_inputs(pt_in), NMO_, nup_, ndown_, wlk, mpi_, std::move(outer_hop_), std::move(ci_),
+             std::move(orbs_), targetNW),
       inner_stack_(std::move(inner_stack_in))
 {
   if (inner_stack_ == nullptr)
@@ -112,10 +134,15 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
     if (wlk != CLOSED && wlk != COLLINEAR)
       APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) currently supports "
                 "CLOSED (RHF) and COLLINEAR (UHF) trials only -- NONCOLLINEAR full-G is a follow-up.");
-#if defined(ENABLE_DEVICE)
-    APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) is CPU-only; the "
-              "un-rotated full-G kernels are not yet implemented for device builds.");
-#endif
+    // Dynamic trials are gated to HOST_MEMORY. Key this on MEM, not on `#if defined(ENABLE_DEVICE)`:
+    // a CUDA build still instantiates and runs HOST_MEMORY StochasticWfn (e.g. the dual-memory unit
+    // tests' CPU subsection), which must behave exactly like a CPU-only build. `if constexpr (MEM ==
+    // DEVICE_MEMORY)` forbids only the device instantiation; the off-anchor device method bodies are
+    // separately compile-time gated (if constexpr (MEM == HOST_MEMORY)) so this abort is the single
+    // runtime seam a device dynamic trial hits.
+    // PR-3 device port complete for all inner-sampling modes (free-projection, conditioned, leapfrog, and
+    // persistent field chains). Persistent chains use a host-RNG hybrid MCMC (same mt19937 stream as a CPU
+    // build), so no device construction is rejected here.
   }
   if (inner_conditioning_ && inner_nsteps_ <= 0)
     APP_ABORT("Error in StochasticWfn: inner_conditioning = true (walker-conditioned inner sampling) "
@@ -244,20 +271,14 @@ WalkerSet<MEM> const& StochasticWfn<MEM, devPsiT>::inner_wset() const
 
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::initialize_inner_walkers(
-    ptree const& walker_pt, memory::const_shared_array<HOST_MEMORY, ComplexType, 3> const& initial_guess, int NAEB)
+    ptree const& walker_pt, std::vector<nda::matrix<ComplexType>> const& initial_guess, int NAEB)
 {
   if (inner_ensemble_.initialized)
     APP_ABORT("Error in StochasticWfn::initialize_inner_walkers: inner walkers already initialized.");
-  inner_ensemble_.wset = std::make_unique<WalkerSet<MEM>>(
-      make_WalkerSet<MEM>(mpi_, walker_pt, static_cast<AFQMCInfo&>(*this), inner_ensemble_.rng));
-  nda::array<ComplexType, 3> guess_host(initial_guess());
-  inner_anchor_ = guess_host;
-#if defined(ENABLE_DEVICE)
-  if constexpr (MEM == DEVICE_MEMORY)
-    inner_ensemble_.wset->resize(inner_nwalkers_, nda::to_device(guess_host));
-  else
-#endif
-    inner_ensemble_.wset->resize(inner_nwalkers_, guess_host);
+  auto wt = WalkerSet<MEM>::parse_walker_type(walker_pt);
+  inner_ensemble_.wset =
+      std::make_unique<WalkerSet<MEM>>(mpi_, walker_pt, inner_ensemble_.rng, wt, initial_guess, inner_nwalkers_);
+  inner_anchor_ = stochastic_wfn_detail::guess_matrices_to_rank3(initial_guess, NAEB);
   (void)NAEB;
   inner_ensemble_.initialized = true;
 }
@@ -275,6 +296,8 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
     nomsd_.Log_Overlap(wset, std::forward<TVec>(Ov), nt);
     return;
   }
+  if constexpr (MEM == HOST_MEMORY)
+  {
   conditioned_resample(wset);
 
   WalkerSet<MEM>& inner  = *inner_ensemble_.wset;
@@ -378,6 +401,20 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
     for (int iw = 0; iw < nw; ++iw)
       Ov(iw) = std::log(Ov(iw));
   }
+  }
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    // Device (static-anchor only; conditioned / leapfrog / log-aggregate need inner_nsteps > 0, which is
+    // forbidden at construction on device). reduce_inner_cross_dm accumulates exactly the linear effective
+    // overlap Ov = (1/P) sum_p <psi_p|phi_w> (device-ported); a no-op accumulate discards the mixed DM it
+    // also builds. Take the log for the OVLP (log-overlap) convention, as the host pair loop does.
+    memory::buffered_array<MEM, ComplexType, 1> Ddummy(wset.size(), ComplexType(0.0));
+    reduce_inner_cross_dm(wset, /*compact=*/true, dm_size(false), Ddummy, Ov,
+                          [](auto&, auto&, auto&, int, int, int) {});
+    kernels::device::elementwise_log(Ov);
+#endif
+  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -389,6 +426,7 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(WlkSet& wset)
     nomsd_.Log_Overlap(wset);
     return;
   }
+  // Off-anchor: delegates to the device-safe Log_Overlap(wset, ovlp) (static-anchor ported).
   int nw = wset.size();
   memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
   Log_Overlap(wset, ovlp);
@@ -408,7 +446,6 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
     nomsd_.Energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
     return;
   }
-
   const int nwalk         = wset.size();
   const ComplexType zero(0.0);
   const bool full         = (inner_nsteps_ > 0);
@@ -428,8 +465,16 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
           nomsd_.energy_from_fullG(eloc2, Gp);
         else
           nomsd_.energy_from_G(eloc2, Gp, 0);
-        for (int w = 0; w < nwalk; ++w)
-          E(w, nda::range::all) += Sp(w) * eloc2(w, nda::range::all);
+        // E[w,:] += Sp[w] * eloc2[w,:]  (per-outer-walker scaled accumulate over the P inner samples).
+        if constexpr (MEM == HOST_MEMORY)
+          for (int w = 0; w < nwalk; ++w)
+            E(w, nda::range::all) += Sp(w) * eloc2(w, nda::range::all);
+        else
+        {
+#if defined(ENABLE_DEVICE)
+          kernels::device::row_accumulate(Sp, eloc2, E);
+#endif
+        }
       });
 
   // NO all_reduce over E here. nomsd_.energy_from_G / energy_from_fullG (-> HamOp.energy) returns the
@@ -439,13 +484,27 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
   // loop in Log_Overlap), so both the numerator E and the denominator D are already complete on each
   // rank. An all_reduce here would double-count E by comm.size() (a latent bug invisible at -np 1; it
   // doubled the energy at -np 2 while the matching un-reduced D left s3 != s1 == NOMSD).
-  for (int w = 0; w < nwalk; ++w)
-    E(w, nda::range::all) /= D(w);
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      E(w, nda::range::all) /= D(w);
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(D, E);
+#endif
+  }
 
   // reduce_inner_cross_dm fills Ov with the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; the
   // OVLP property convention (matching NOMSD::Energy) is the LOG overlap, so convert back here.
-  for (int w = 0; w < nwalk; ++w)
-    Ov(w) = std::log(Ov(w));
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Ov(w) = std::log(Ov(w));
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::elementwise_log(Ov);
+#endif
+  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -457,6 +516,8 @@ void StochasticWfn<MEM, devPsiT>::Energy(WlkSet& wset)
     nomsd_.Energy(wset);
     return;
   }
+  // Off-anchor: delegates to the device-safe Energy(wset, eloc, ovlp) reduction (static-anchor ported;
+  // dynamic inner_nsteps>0 is forbidden at construction on device).
   int nw = wset.size();
   memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
   memory::buffered_array<MEM, ComplexType, 2> eloc(nw, 3);
@@ -476,6 +537,8 @@ void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int n
     nomsd_.vbias(wset, std::forward<MatA>(v), dt, nt);
     return;
   }
+  // Off-anchor: device-safe via the ported MixedDensityMatrix_for_vbias + device vbias_from_G
+  // (static-anchor; dynamic inner_nsteps>0 is forbidden at construction on device).
   const int nwalk = wset.size();
   const bool full = (inner_nsteps_ > 0);
   const int Gsize = dm_size(full);
@@ -502,6 +565,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // inner_equil_steps_ MH sweeps targeting the CURRENT (old) walkers. The updated pool serves every
   // reduction of this step (latch cleared below), so the step's overlap RATIO new/old shares one
   // ensemble (Eq. 25). Runs on every rank at every step -- uniform control flow, no communication.
+  // Persistent field-chain pool update (device-ported: host-RNG hybrid chain MCMC).
   if (inner_persistence_ && inner_conditioning_ && inner_nsteps_ > 0)
   {
     update_persistent_chain_pool(wset);
@@ -511,7 +575,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // walker phi. Without persistence, Log_Overlap(wset) consumes the latch just armed (driving the
   // conditioned resample + inner_cond_mag_); with persistence it reuses the pool updated above. Either
   // way the post-propagation Log_Overlap sees the SAME ensemble, so the step's overlap RATIO new/old
-  // is exactly Eq. 25 and N(phi) cancels.
+  // is exactly Eq. 25 and N(phi) cancels. Device-safe: Log_Overlap is device-ported.
   if (inner_leapfrog_ && inner_conditioning_ && inner_nsteps_ > 0)
     Log_Overlap(wset);
 }
@@ -527,6 +591,10 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& w
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     return;
 
+  // Device-safe: the non-persistent conditioned permute is getProperty(SLOT_LINEAGE)->host + host parent +
+  // device slice-copy gather + host inner_cond_mag_ permute. The persistent branch below uses the (still
+  // CPU-only) rebuild_inner_dets_from_chain_fields, but persistent trials are blocked at construction on
+  // device, so that branch is unreachable on GPU.
   const int nw          = int(wset.size());
   const int P           = inner_nwalkers_;
 
@@ -785,11 +853,17 @@ void StochasticWfn<MEM, devPsiT>::cross_overlap_magnitudes(const WlkSet& wset, W
       logov_b()    = ComplexType(0.0);
       det_ops::Log_Overlap(inner_b, wset.SlaterMatrices(Beta), logov_b);
     }
+    // mag is a host array; the per-slot log-overlaps are small ([nw]). Pull them to host (a no-op copy on
+    // HOST_MEMORY) and finish the |exp(.)| on host -- device-safe and avoids a bespoke magnitude kernel.
+    auto logov_h = nda::to_host(logov);
+    nda::array<ComplexType, 1> logov_b_h;
+    if (wt == COLLINEAR)
+      logov_b_h = nda::to_host(logov_b);
     for (int w = 0; w < nw; ++w)
     {
-      ComplexType lo = logov(w);
+      ComplexType lo = logov_h(w);
       if (wt == COLLINEAR)
-        lo += logov_b(w);
+        lo += logov_b_h(w);
       mag(long(ip) * nw + w) = std::abs(std::exp(lo));
     }
   }
@@ -935,6 +1009,8 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
       }
     }
 
+    if constexpr (MEM == HOST_MEMORY)
+    {
     for (int w = 0; w < nwalk; ++w)
     {
       ComplexType lin_ov = std::exp(ov_(w));
@@ -961,16 +1037,100 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
         D(w)  = D(w) + s;
       }
     }
+    }
+    else
+    {
+#if defined(ENABLE_DEVICE)
+      if (not leapfrog and not log_agg)
+      {
+        // Common path: one fused kernel does Sp/Ov/D per walker (phase reduction).
+        kernels::device::inner_scalar_reduce(ov_, Sp, Ov, D, 1.0 / static_cast<double>(P));
+      }
+      else
+      {
+        // Leapfrog reweight (by the host inner_cond_mag_) and log-aggregate storing are small per-walker
+        // scalar work over [nwalk]; do them on host (ov_ pulled down, results pushed back). Correctness-
+        // first; these modes are not perf-critical (leapfrog/log-agg tests use small P).
+        auto ovh = nda::to_host(ov_);
+        nda::array<ComplexType, 1> Sp_h(nwalk), Ov_h, D_h, sstore_col, ovlin_col;
+        if (log_agg)
+        {
+          sstore_col = nda::array<ComplexType, 1>(nwalk);
+          ovlin_col  = nda::array<ComplexType, 1>(nwalk);
+        }
+        else
+        {
+          Ov_h = nda::to_host(Ov);
+          D_h  = nda::to_host(D);
+        }
+        for (int w = 0; w < nwalk; ++w)
+        {
+          ComplexType lin_ov = std::exp(ovh(w));
+          ComplexType s;
+          if (leapfrog)
+          {
+            double magc = double(inner_cond_mag_(long(ip) * nwalk + w));
+            s = (magc > 0.0) ? (lin_ov / ComplexType(magc, 0.0)) : zero;
+          }
+          else
+          {
+            double mag = std::abs(lin_ov);
+            s          = (mag > 0.0) ? (lin_ov / ComplexType(mag, 0.0)) : zero;
+          }
+          Sp_h(w) = s;
+          if (log_agg)
+          {
+            sstore_col(w) = s;
+            ovlin_col(w)  = leapfrog ? s : (inv_P * lin_ov);
+          }
+          else
+          {
+            Ov_h(w) += leapfrog ? s : (inv_P * lin_ov);
+            D_h(w) += s;
+          }
+        }
+        Sp() = Sp_h(); // host -> device
+        if (log_agg)
+        {
+          s_store(nda::range::all, ip)      = sstore_col();
+          ov_lin_store(nda::range::all, ip) = ovlin_col();
+        }
+        else
+        {
+          Ov() = Ov_h();
+          D()  = D_h();
+        }
+      }
+#endif
+    }
     accumulate(Gp, ov_, Sp, ip, 0, Gsize);
     mpi_->comm.barrier();
   }
 
   if (log_agg)
   {
-    for (int w = 0; w < nwalk; ++w)
+    if constexpr (MEM == HOST_MEMORY)
     {
-      D(w)  = stable_complex_sum_row(s_store(), w, P);
-      Ov(w) = leapfrog ? D(w) : stable_complex_sum_row(ov_lin_store(), w, P);
+      for (int w = 0; w < nwalk; ++w)
+      {
+        D(w)  = stable_complex_sum_row(s_store(), w, P);
+        Ov(w) = leapfrog ? D(w) : stable_complex_sum_row(ov_lin_store(), w, P);
+      }
+    }
+    else
+    {
+      // Device: stable log-sum over the P columns is small per-walker work -> host round-trip of the
+      // [nwalk, P] stores, then push D/Ov back.
+      auto ss = nda::to_host(s_store());
+      auto ol = nda::to_host(ov_lin_store());
+      nda::array<ComplexType, 1> D_h(nwalk), Ov_h(nwalk);
+      for (int w = 0; w < nwalk; ++w)
+      {
+        D_h(w)  = stable_complex_sum_row(ss, w, P);
+        Ov_h(w) = leapfrog ? D_h(w) : stable_complex_sum_row(ol, w, P);
+      }
+      D()  = D_h();
+      Ov() = Ov_h();
     }
   }
 }
@@ -1001,12 +1161,26 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix_for_vbias(const WlkSet& wse
   reduce_inner_cross_dm(
       wset, compact, Gsize, D, Ov,
       [&](auto& Gp, auto& /*ov_*/, auto& Sp, int /*ip*/, int /*r0*/, int /*rN*/) {
-        for (int w = 0; w < nwalk; ++w)
-          Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        if constexpr (MEM == HOST_MEMORY)
+          for (int w = 0; w < nwalk; ++w)
+            Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        else
+        {
+#if defined(ENABLE_DEVICE)
+          kernels::device::row_accumulate(Sp, Gp, Gnum);
+#endif
+        }
       });
 
-  for (int w = 0; w < nwalk; ++w)
-    Gnum(w, nda::range::all) /= D(w);
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Gnum(w, nda::range::all) /= D(w);
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(D, Gnum);
+#endif
+  }
   G() = Gnum();
 }
 
@@ -1049,19 +1223,40 @@ void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix(const WlkSet& wset, MatG&& 
   reduce_inner_cross_dm(
       wset, compact, Gsize, D, Ov,
       [&](auto& Gp, auto& /*ov_*/, auto& Sp, int /*ip*/, int /*r0*/, int /*rN*/) {
-        for (int w = 0; w < nwalk; ++w)
-          Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        if constexpr (MEM == HOST_MEMORY)
+          for (int w = 0; w < nwalk; ++w)
+            Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        else
+        {
+#if defined(ENABLE_DEVICE)
+          kernels::device::row_accumulate(Sp, Gp, Gnum);
+#endif
+        }
       });
 
-  for (int w = 0; w < nwalk; ++w)
-    Gnum(w, nda::range::all) /= D(w);
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Gnum(w, nda::range::all) /= D(w);
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(D, Gnum);
+#endif
+  }
   G() = Gnum();
 
   // reduce_inner_cross_dm fills Ov with the LINEAR effective overlap (1/P) sum_p <psi_p|phi_w>; NOMSD's
   // MixedDensityMatrix returns the LOG overlap (det_ops convention, matching the OVLP property), so
   // convert back here -- exactly as the Energy / Log_Overlap overrides do.
-  for (int w = 0; w < nwalk; ++w)
-    Ov(w) = std::log(Ov(w));
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Ov(w) = std::log(Ov(w));
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::elementwise_log(Ov);
+#endif
+  }
 }
 
 // Accumulate observable contributions using the stochastic mixed Green's function. NOMSD (ndet == 1) builds the full mixed DM of its trial -- compact `DensityMatrix` against
@@ -1084,6 +1279,8 @@ void StochasticWfn<MEM, devPsiT>::accumulate_estimators(int iav, WlkSet& wset,
                                  importanceSampling);
     return;
   }
+  // Off-anchor: device-safe via the ported MixedDensityMatrix + device math::product (time-evolved BP
+  // transform) + the NOMSD observable accumulate path (same as the [estimators] GPU tests).
   utils::check(importanceSampling, "Finish"); // mirror NOMSD: the non-importance-sampled path is unfinished
 
   using nda::range;
@@ -1211,7 +1408,15 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_mean_field_dm(memory::buffered_ar
       {
         RealType scl = std::real(ComplexType(invP2) * std::exp(ov_h(q)));
         Osum += scl;
-        Gsum(0, all) += ComplexType(scl) * Gpq(q, all);
+        // Gsum[0,:] += scl * Gpq[q,:]  (scl is a host scalar from to_host(ov_) above).
+        if constexpr (MEM == HOST_MEMORY)
+          Gsum(0, all) += ComplexType(scl) * Gpq(q, all);
+        else
+        {
+#if defined(ENABLE_DEVICE)
+          kernels::device::accumulate(ComplexType(scl), Gpq(q, all), Gsum(0, all));
+#endif
+        }
       }
     }
   }
@@ -1239,6 +1444,8 @@ auto StochasticWfn<MEM, devPsiT>::G_MF()
   if (not mean_field_uses_inner_ensemble())
     return nomsd_.G_MF();
 
+  // Off-anchor: device-safe via the ported reduce_inner_mean_field_dm (static-anchor). The share_from_root
+  // copy gMF() = Gv() is a device->host nda MemoryArray assignment on device builds.
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   const int nspin       = (wt == COLLINEAR ? 2 : 1);
   const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
@@ -1270,6 +1477,7 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
     nomsd_.vMF(v, dt);
     return;
   }
+  // Off-anchor: device-safe via the ported reduce_inner_mean_field_dm + device vbias_from_G (static-anchor).
   utils::check(v.size() == number_of_cholesky_vectors(), "Size mismatch");
   utils::check(v.strides()[0] == 1, "Strides mismatch");
 
@@ -1296,14 +1504,8 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
 // the stochastic trial bra <Psi_T| ~ (1/P) sum_p <psi_p|.
 template<MEMORY_SPACE MEM, class devPsiT>
 template<class RefMat>
-void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat&& Refs)
+void StochasticWfn<MEM, devPsiT>::fill_references_from_draw(int number_of_references, RefMat&& Refs)
 {
-  if (not bp_uses_inner_ensemble())
-  {
-    nomsd_.getReferences(number_of_references, std::forward<RefMat>(Refs));
-    return;
-  }
-  // Dedicated free-projection draw of the P reference samples (walker-independent), fresh per BP block.
   draw_bp_reference_ensemble();
   using nda::range;
   auto all = range::all;
@@ -1327,6 +1529,22 @@ void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat
       nda::tensor::add(nda::conj(inner.SlaterMatrices(Beta)(p, all, all)), "ij", Refs(p, all, range(nup, nel)),
                        "ij");
   }
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class RefMat>
+void StochasticWfn<MEM, devPsiT>::getReferences(RefMat&& Refs)
+{
+  if (not bp_uses_inner_ensemble())
+  {
+    nomsd_.getReferences(Refs);
+    return;
+  }
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  const int nel         = nup + (wt == COLLINEAR ? ndown : 0);
+  const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
+  Refs.resize(inner_nwalkers_, npol * NMO, nel);
+  fill_references_from_draw(inner_nwalkers_, Refs);
 }
 
 } // namespace afqmc

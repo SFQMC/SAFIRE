@@ -20,6 +20,9 @@
 
 #include "AFQMC/config.h"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
+#if defined(ENABLE_DEVICE)
+#include "numerics/device_kernels/cuda/phmsd_routines.cuh"
+#endif
 
 namespace sfqmc
 {
@@ -300,7 +303,7 @@ void PHMSD<MEM>::energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov)
   utils::check(Ov.extent(0) == nwalk, "Size mismatch");
 
   E() = zero;
-  Ov() = zero; 
+  Ov() = zero;
 
   long nexcit[2] = {long(abij.number_of_unique_excitations()[0]),
               (walker_type==COLLINEAR ? long(abij.number_of_unique_excitations()[1]) : 0)};
@@ -317,8 +320,10 @@ void PHMSD<MEM>::energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov)
   else  
   {
 
-    // generalize later
-    int nbatch__ = nwalk;
+    // Walker-block size: process nwalk_block_size walkers per energy batch so the KEright/Tdn
+    // device temporaries stay bounded regardless of the total walker count. Per-walker energies
+    // are independent, so the block size is numerically irrelevant (nwalk_block_size input).
+    int nbatch__ = std::min(nwalk, std::max(1, nwalk_block_size));
     auto SMup=wset.SlaterMatrices(Alpha);
     auto SMdn=wset.SlaterMatrices(Beta);
 
@@ -361,7 +366,7 @@ void PHMSD<MEM>::energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov)
         nda::tensor::elementwise(one,ovlp_ratios_up,"uw",one,wgt,"uw",nda::tensor::op::MUL);
 
         // 3a. Reference energy and temporary matrices
-        HamOp.ph_reference_energy(Alpha, eloc, GA2d, KEright(0,all,all)); 
+        HamOp.ph_reference_energy(Alpha, eloc, GA2d, KEright(0,all,all));
 
         // MAM: ph_excited_energies calculates and adds sum_d wgt[d] * (E[d]-Eref)
         // so I need to add here: sum_d wgt[d] Eref = Ov * Eref
@@ -375,8 +380,8 @@ void PHMSD<MEM>::energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov)
         nda::tensor::add(one, eloc, "wi", one, E(w_rng,all), "wi");
 
         // 4a. calculate R matrices and evaluate E, KEright 
-        ph_excited_energies_first_step(abij, wgt, QQ0inv0, eloc, 
-                                       KEright(range(nexcit[0]),all,all), HamOp);
+        ph_excited_energies_first_step(abij, wgt, QQ0inv0, eloc,
+                                       KEright(range(nexcit[0]),all,all), HamOp, ndet_block_size);
         nda::tensor::add(one, eloc, "wi", one, E(w_rng,all), "wi");
 
         memory::buffered_array<MEM,ComplexType,3> Tdn(nexcit[0], nw, nkev);
@@ -433,9 +438,9 @@ void PHMSD<MEM>::energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov)
         // opSpinEJ[iw] += tmp[iw]
         nda::tensor::add(one,tmp,"w",one,E(w_rng,2),"w");
 
-        //4b. calculate R matrices and evaluate E, KEright 
-        ph_excited_energies_second_step(abij, wgt, QQ0inv1, eloc, 
-                                        KEright(range(nexcit[1]),all,all), HamOp);
+        //4b. calculate R matrices and evaluate E, KEright
+        ph_excited_energies_second_step(abij, wgt, QQ0inv1, eloc,
+                                        KEright(range(nexcit[1]),all,all), HamOp, ndet_block_size);
         nda::tensor::add(one, eloc, "wi", one, E(w_rng,all), "wi");
       }
     }
@@ -1358,8 +1363,51 @@ void PHMSD<MEM>::vMF(nda::MemoryVector  auto&& v, double dt)
     // off-diagonal contribution
     ComplexType dummy(0.0);
     confgB.resize((spin == 0) ? nup : ndown);
-    if(walker_type == COLLINEAR) 
+    if(walker_type == COLLINEAR)
     {
+#if defined(ENABLE_DEVICE)
+      if constexpr (MEM == DEVICE_MEMORY)
+      {
+        // GPU path: replace the O(sum nnz^2) host pair loop over excitation pairs with a
+        // device kernel. Build sorted occupied-orbital configurations for `spin` on host
+        // and copy once to device; feed the device-resident coupling CSR + dense orbitals.
+        long nex_spin = nexcit[spin];
+        int  nel_spin = nelec[spin];
+        nda::array<int,2> confg_h(nex_spin, nel_spin);
+        nda::array<int,1> cf(nel_spin);
+        for (long c = 0; c < nex_spin; ++c) {
+          abij.get_configuration(spin, c, cf);
+          std::sort(cf.begin(), cf.end());
+          for (int k = 0; k < nel_spin; ++k) confg_h(c,k) = cf(k);
+        }
+        memory::array<DEVICE_MEMORY,int,2> configs_d = confg_h;
+        memory::array<DEVICE_MEMORY,ComplexType,2> Orbs_d = Orbs[spin%nspin_in_orbmat]();
+        auto& csr = OpSpinDetCouplings[other_spin];
+        long nrows = nexcit[other_spin];
+        auto rbeg_h = csr.row_begin();
+        auto rend_h = csr.row_end();
+        // per-row upper-triangular pair count -> prefix sum (flattened pair index space)
+        nda::array<long,1> pair_off_h(nrows+1);
+        pair_off_h(0) = 0;
+        for (long nd = 0; nd < nrows; ++nd) {
+          long z = long(rend_h(nd)) - long(rbeg_h(nd));
+          pair_off_h(nd+1) = pair_off_h(nd) + z*(z-1)/2;
+        }
+        long total_pairs = pair_off_h(nrows);
+        memory::array<DEVICE_MEMORY,long,1> pair_off_d = pair_off_h;
+        memory::array<DEVICE_MEMORY,int,1> rbeg_d = rbeg_h;
+        memory::array<DEVICE_MEMORY,int,1> rend_d = rend_h;
+        memory::array<DEVICE_MEMORY,ComplexType,2> Gs_d(nact[spin], npol*NMO);
+        Gs_d() = ComplexType(0.0);
+        kernels::device::vmf_offdiag(total_pairs, int(nrows), mpi->comm.rank(), mpi->comm.size(),
+                                     nel_spin, pair_off_d.data(), rbeg_d.data(), rend_d.data(),
+                                     csr.columns().data(), csr.values().data(),
+                                     configs_d.data(), Orbs_d, Gs_d);
+        nda::array<ComplexType,2> Gs_h = Gs_d;
+        Gs += Gs_h;
+      }
+      else
+#endif
       for (int nd = 0; nd < int(abij.number_of_unique_excitations()[other_spin]); ++nd)
       {
         if (nd % mpi->comm.size() == mpi->comm.rank())

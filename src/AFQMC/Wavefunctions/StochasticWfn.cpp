@@ -150,24 +150,21 @@ void StochasticWfn<MEM, devPsiT>::prime_chain_fields(WalkerSet<MEM>& wset)
   // construct_X's bare field assembly) into every chain's slot of the walker set's TrialFields block.
   // Uniforms come from the wavefunction's own rank-decorrelated inner RNG -- the chain machinery never
   // touches the propagator's RNG stream, whose draws are kept synchronized across ranks.
-  if constexpr (MEM != HOST_MEMORY)
-  {
-    (void)wset;
-    APP_ABORT("Error in StochasticWfn::prime_chain_fields: persistent field-space chains are CPU-only "
-              "(the dynamic stochastic trial is gated to host builds).");
-  }
-  else
-  {
-    const int nw    = int(wset.size());
-    const int block = wset.trial_fields_size();
-    auto Yw         = wset.TrialFields();
-    nda::array<double, 1> u(long(nw) * block);
-    utils::sampleUniformFields(u, *inner_ensemble_.rng);
-    long k = 0;
-    for (int w = 0; w < nw; ++w)
-      for (int j = 0; j < block; ++j)
-        Yw(w, j) = ComplexType(probit(u(k++)), 0.0);
-  }
+  // Device port (hybrid): draw the uniforms on the HOST inner RNG (same rank-decorrelated mt19937 stream
+  // as a CPU build -> identical field values, so persistent parity tests stay bitwise-comparable), assemble
+  // the fields on a host buffer, then copy into the (device) TrialFields view. The field block is small; a
+  // device-cuRAND draw would be a localized perf follow-up but would break CPU/GPU reproducibility.
+  const int nw    = int(wset.size());
+  const int block = wset.trial_fields_size();
+  auto Yw         = wset.TrialFields();
+  nda::array<double, 1> u(long(nw) * block);
+  utils::sampleUniformFields(u, *inner_ensemble_.rng);
+  nda::array<ComplexType, 2> Yh(nw, block);
+  long k = 0;
+  for (int w = 0; w < nw; ++w)
+    for (int j = 0; j < block; ++j)
+      Yh(w, j) = ComplexType(probit(u(k++)), 0.0);
+  Yw() = Yh(); // host -> device copy into the strided TrialFields view (no-op-ish on HOST_MEMORY)
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -178,45 +175,45 @@ void StochasticWfn<MEM, devPsiT>::rebuild_inner_dets_from_chain_fields(WalkerSet
   // inner step at a time. Deterministic (no RNG), so it reproduces the pool exactly wherever the fields
   // came from -- after population control moved chains between slots or ranks, or after the
   // back-propagation reference draw reused the pool storage. Rank-local; no communication.
-  if constexpr (MEM != HOST_MEMORY)
-  {
-    (void)wset;
-    APP_ABORT("Error in StochasticWfn::rebuild_inner_dets_from_chain_fields: persistent field-space "
-              "chains are CPU-only (the dynamic stochastic trial is gated to host builds).");
-  }
-  else
-  {
-    if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
-      APP_ABORT("Error in StochasticWfn::rebuild_inner_dets_from_chain_fields: inner walkers not initialized.");
-    if (not inner_stack_->has_propagator())
-      APP_ABORT("Error in StochasticWfn::rebuild_inner_dets_from_chain_fields: inner propagator not built.");
-    const int nw      = int(wset.size());
-    const int P       = inner_nwalkers_;
-    const long ntot   = long(nw) * P;
-    const int nCV     = inner_nomsd().number_of_cholesky_vectors();
-    const int pathlen = inner_nsteps_ * nCV;
-    utils::check(wset.has_trial_fields() && wset.trial_fields_size() == P * pathlen,
-                 "rebuild_inner_dets_from_chain_fields: TrialFields block missing or mis-sized.");
+  // Device-safe: deterministic rebuild from the stored fields. The field gather X(q,:) = Yw(w, slice) is a
+  // device->device slice-copy (both are MEM), and Propagate_given_fields runs on device.
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::rebuild_inner_dets_from_chain_fields: inner walkers not initialized.");
+  if (not inner_stack_->has_propagator())
+    APP_ABORT("Error in StochasticWfn::rebuild_inner_dets_from_chain_fields: inner propagator not built.");
+  const int nw      = int(wset.size());
+  const int P       = inner_nwalkers_;
+  const long ntot   = long(nw) * P;
+  const int nCV     = inner_nomsd().number_of_cholesky_vectors();
+  const int pathlen = inner_nsteps_ * nCV;
+  utils::check(wset.has_trial_fields() && wset.trial_fields_size() == P * pathlen,
+               "rebuild_inner_dets_from_chain_fields: TrialFields block missing or mis-sized.");
 
-    WalkerSet<MEM>& inner = *inner_ensemble_.wset;
-    if (inner.size() != ntot)
+  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
+  if (inner.size() != ntot)
+  {
+#if defined(ENABLE_DEVICE)
+    if constexpr (MEM == DEVICE_MEMORY)
+      inner.resize(int(ntot), nda::to_device(inner_anchor_));
+    else
+#endif
       inner.resize(int(ntot), inner_anchor_);
-    reset_inner_to_anchor(inner, int(ntot));
+  }
+  reset_inner_to_anchor(inner, int(ntot));
 
-    auto Yw = wset.TrialFields(); // const host view [nw][P*pathlen]
-    memory::array<MEM, ComplexType, 2> X(ntot, nCV);
-    RealType dt(inner_timestep_);
-    for (int s = 0; s < inner_nsteps_; ++s)
+  auto Yw = wset.TrialFields(); // MEM view [nw][P*pathlen]
+  memory::array<MEM, ComplexType, 2> X(ntot, nCV);
+  RealType dt(inner_timestep_);
+  for (int s = 0; s < inner_nsteps_; ++s)
+  {
+    for (long q = 0; q < ntot; ++q)
     {
-      for (long q = 0; q < ntot; ++q)
-      {
-        const int w  = int(q % nw);
-        const int ip = int(q / nw);
-        X(q, nda::range::all) = Yw(w, nda::range(long(ip) * pathlen + long(s) * nCV,
-                                                 long(ip) * pathlen + long(s + 1) * nCV));
-      }
-      inner_propagator().Propagate_given_fields(inner, X, dt);
+      const int w  = int(q % nw);
+      const int ip = int(q / nw);
+      X(q, nda::range::all) = Yw(w, nda::range(long(ip) * pathlen + long(s) * nCV,
+                                               long(ip) * pathlen + long(s + 1) * nCV));
     }
+    inner_propagator().Propagate_given_fields(inner, X, dt);
   }
 }
 
@@ -234,13 +231,10 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
   //             multiplies the acceptance.
   // A zero current magnitude (walker orthogonal to the chain's sample) always accepts, moving off it.
   // Rejected chains keep their fields and restore their determinant row from the snapshot. Rank-local.
-  if constexpr (MEM != HOST_MEMORY)
-  {
-    (void)wset;
-    APP_ABORT("Error in StochasticWfn::chain_pool_sweep: persistent field-space chains are CPU-only "
-              "(the dynamic stochastic trial is gated to host builds).");
-  }
-  else
+  // Device port (hybrid): the per-chain proposal and accept/reject are small scalar logic -- run them on
+  // host over to_host copies using the HOST inner RNG (identical mt19937 stream to a CPU build, so the
+  // persistent parity tests stay bitwise-comparable), and apply the big-array updates (proposal-field
+  // determinant build, accepted-field write-back, rejected-determinant restore) with device copies.
   {
     WalkerSet<MEM>& inner = *inner_ensemble_.wset;
     const int nw          = int(wset.size());
@@ -270,10 +264,11 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
 
     // 3. propose fields per chain (slot-major scratch; written back only on acceptance).
     auto Yw        = wset.TrialFields();
+    auto Yw_h      = nda::to_host(Yw); // host copy for the per-element proposal reads (no-op-ish on host)
     const bool pcn = (inner_mcmc_ == "pcn");
     const double s = inner_mcmc_step_;
     const double keep = pcn ? std::sqrt(std::max(0.0, 1.0 - s * s)) : 1.0;
-    nda::array<ComplexType, 2> Ystar(ntot, pathlen);
+    nda::array<ComplexType, 2> Ystar_h(ntot, pathlen);
     nda::array<double, 1> prior_lr(ntot);
     prior_lr() = 0.0;
     {
@@ -286,14 +281,17 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
         const int ip = int(q / nw);
         for (int j = 0; j < pathlen; ++j)
         {
-          const double y  = real(Yw(w, long(ip) * pathlen + j));
+          const double y  = real(Yw_h(w, long(ip) * pathlen + j));
           const double yp = keep * y + s * probit(u(k++));
-          Ystar(q, j)     = ComplexType(yp, 0.0);
+          Ystar_h(q, j)   = ComplexType(yp, 0.0);
           if (not pcn)
             prior_lr(q) += 0.5 * (y * y - yp * yp);
         }
       }
     }
+    // Proposal fields to device (used for the determinant build and the accepted-field write-back below).
+    memory::array<MEM, ComplexType, 2> Ystar(ntot, pathlen);
+    Ystar() = Ystar_h();
 
     // 4. build the proposal determinants psi(Y*) in place (snapshot holds the current ones).
     reset_inner_to_anchor(inner, int(ntot));
@@ -354,6 +352,8 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
   if (not inner_stack_->has_propagator())
     APP_ABORT("Error in StochasticWfn::update_persistent_chain_pool: inner propagator not built.");
 
+  // Device-safe: delegates to the ported chain helpers (prime_chain_fields / rebuild_inner_dets_from_chain_fields
+  // / chain_pool_sweep / compute_inner_cond_mag).
   const int nw    = int(wset.size());
   const int P     = inner_nwalkers_;
   const int nCV   = inner_nomsd().number_of_cholesky_vectors();

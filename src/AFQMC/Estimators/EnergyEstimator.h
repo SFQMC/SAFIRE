@@ -49,12 +49,10 @@ class EnergyEstimator : public EstimatorBase<MEM>
 {
 public:
   EnergyEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                  AFQMCInfo info,
                   ptree pt_in,
                   Wavefunction<MEM>& wfn,
                   bool impsamp_ = true)
-      : EstimatorBase<MEM>(info), 
-        mpi(_mpi), 
+      : mpi(_mpi),
         wfn0(std::addressof(wfn)), 
         importanceSampling(impsamp_), 
         energy_components(false)

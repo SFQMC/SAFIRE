@@ -49,18 +49,17 @@ namespace afqmc
  * this class also handles all the hdf5 I/O (given a hdf archive).
  */
 template<MEMORY_SPACE MEM>
-class FullObsHandler : public AFQMCInfo
+class FullObsHandler
 {
 
 public:
   FullObsHandler(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                 AFQMCInfo& info,
                  std::string name_,
                  ptree pt,
                  WALKER_TYPES wlk,
+                 int NMO_,
                  Wavefunction<MEM>& wfn)
-      : AFQMCInfo(info),
-        mpi(_mpi),
+      : mpi(_mpi),
         walker_type(wlk),
         wfn0(std::addressof(wfn)),
         ncalls(0),
@@ -79,7 +78,7 @@ public:
       io::tolower(cname);
       if (cname == "onerdm")
       {
-        properties.emplace_back(full1rdm(mpi, info, it.second, walker_type, nave));
+        properties.emplace_back(full1rdm(mpi, it.second, walker_type, NMO_, nave));
       }
 
 //       else if (cname == "gfock" || cname == "genfock" || cname == "ekt")
@@ -89,11 +88,11 @@ public:
 //       }
       else if (cname == "diag2rdm")
       {
-        properties.emplace_back(diagonal2rdm<MEM>(mpi, info, it.second, walker_type, nave));
+        properties.emplace_back(diagonal2rdm<MEM>(mpi, it.second, walker_type, NMO_, nave));
       }
       else if (cname == "twordm")
       {
-        properties.emplace_back(full2rdm<MEM>(mpi, info, it.second, walker_type, nave));
+        properties.emplace_back(full2rdm<MEM>(mpi, it.second, walker_type, NMO_, nave));
       }
 //       else if (cname == "n2r" || cname == "ontop2rdm")
 //       {
@@ -125,11 +124,11 @@ public:
 //       }
       else if (cname == "pair_correlators")
       {
-        properties.emplace_back(pair_correlator(mpi, info, it.second, walker_type, nave));
+        properties.emplace_back(pair_correlator(mpi, it.second, walker_type, NMO_, nave));
       }
       else if (cname == "spinspin")
       {
-        properties.emplace_back(spinspinobs(mpi, info, it.second, walker_type, nave));
+        properties.emplace_back(spinspinobs(mpi, it.second, walker_type, NMO_, nave));
       }
 
     }
@@ -175,9 +174,10 @@ public:
     auto SMA = wset.SlaterMatricesN(Alpha);
     auto SMB = wset.SlaterMatricesN( (walker_type == COLLINEAR) ? Beta : Alpha );
 
+    int NMO = SMA.extent(1)/npol;
+
     int nup = SMA.extent(2); 
     int ndown = SMB.extent(2); 
-    utils::check(SMA.extent(1) == npol*NMO, "Size mismatch");
     utils::check(SMB.extent(1) == npol*NMO, "Size mismatch");
 
     memory::buffered_array<MEM,ComplexType,4> G4D(nwalk,nspins,npol*NMO,npol*NMO);

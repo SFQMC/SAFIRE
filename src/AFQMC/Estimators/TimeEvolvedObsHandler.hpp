@@ -40,19 +40,18 @@ namespace afqmc
  * Handler class for time-evolved observables. 
  */
 template<MEMORY_SPACE MEM>
-class TimeEvolvedObsHandler : public AFQMCInfo
+class TimeEvolvedObsHandler
 {
 
 public:
   TimeEvolvedObsHandler(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                 AFQMCInfo& info,
                  std::string name_,
                  ptree pt,
                  WALKER_TYPES wlk,
                  int nave,
+                 int NMO_,
                  Wavefunction<MEM>& wfn_)
-      : AFQMCInfo(info),
-        mpi(_mpi),
+      : mpi(_mpi),
         walker_type(wlk),
         wfn(std::addressof(wfn_)),
         ncalls(0),
@@ -69,7 +68,7 @@ public:
       io::tolower(cname);
       if (cname == "onerdm")
       {
-        properties_1body.emplace_back(full1rdm(mpi, info, it.second, walker_type, number_of_averages));
+        properties_1body.emplace_back(full1rdm(mpi, it.second, walker_type, NMO_, number_of_averages));
       }
 
 //       else if (cname == "gfock" || cname == "genfock" || cname == "ekt")
@@ -79,11 +78,11 @@ public:
 //       }
       else if (cname == "diag2rdm")
       {
-        properties.emplace_back(diagonal2rdm<MEM>(mpi, info, it.second, walker_type, number_of_averages));
+        properties.emplace_back(diagonal2rdm<MEM>(mpi, it.second, walker_type, NMO_, number_of_averages));
       }
       else if (cname == "twordm")
       {
-        properties.emplace_back(full2rdm<MEM>(mpi, info, it.second, walker_type, number_of_averages));
+        properties.emplace_back(full2rdm<MEM>(mpi, it.second, walker_type, NMO_, number_of_averages));
       }
 //       else if (cname == "n2r" || cname == "ontop2rdm")
 //       {
@@ -115,11 +114,11 @@ public:
 //       }
       else if (cname == "pair_correlators")
       {
-        properties.emplace_back(pair_correlator(mpi, info, it.second, walker_type, number_of_averages));
+        properties.emplace_back(pair_correlator(mpi, it.second, walker_type, NMO_, number_of_averages));
       }
       else if (cname == "spinspin")
       {
-        properties.emplace_back(spinspinobs(mpi, info, it.second, walker_type, number_of_averages));
+        properties.emplace_back(spinspinobs(mpi, it.second, walker_type, NMO_, number_of_averages));
       }
 
     }

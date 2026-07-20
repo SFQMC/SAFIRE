@@ -25,6 +25,19 @@
 
 namespace sfqmc {
 namespace afqmc {
+
+struct BoundStats {
+  long total = 0;
+  long upper = 0;
+  long lower = 0;
+  BoundStats &operator+=(BoundStats const &o) {
+    total += o.total;
+    upper += o.upper;
+    lower += o.lower;
+    return *this;
+  }
+};
+
 template <class Wlk>
 void free_projection_walker_update(Wlk &w, RealType dt,
                                    nda::MemoryVector auto &&overlap,
@@ -93,8 +106,10 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
                           nda::MemoryVector auto &&MFfactor,
                           nda::MemoryVector auto &&hybrid_weight,
                           double lower_cutoff_scale, double upper_cutoff_scale,
-                          bool symmetric_split, bool debug_verbosity = false,
-                          bool step0 = false, bool use_cp_constraint = false) {
+                          bool symmetric_split,
+                          bool step0, bool debug_verbosity,
+                          bool use_cp_constraint,
+                          BoundStats &eloc_stats) {
   auto all = nda::range::all;
   int nwalk = w.size();
   bool BackProp = (w.getBPPos() >= 0 && w.getBPPos() < w.NumBackProp());
@@ -155,16 +170,18 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
     }
     ComplexType eloc_ = eloc;
 
-    if ((!std::isfinite(eloc.real())) ||
-        (std::abs(eloc.real()) < std::numeric_limits<RealType>::min())) {
+    if (!std::isfinite(eloc.real())) {
       scale = 0.0;
       eloc = old_eloc;
     } else {
-      eloc = ComplexType(
-          std::max(std::min(eloc.real(),
-                            Eshift + upper_cutoff_scale * std::sqrt(2.0 / dt)),
-                   Eshift - lower_cutoff_scale * std::sqrt(2.0 / dt)),
-          eloc.imag());
+      RealType hi = Eshift + upper_cutoff_scale * std::sqrt(2.0 / dt);
+      RealType lo = Eshift - lower_cutoff_scale * std::sqrt(2.0 / dt);
+      ++eloc_stats.total;
+      if (eloc.real() > hi)
+        ++eloc_stats.upper;
+      else if (eloc.real() < lo)
+        ++eloc_stats.lower;
+      eloc = ComplexType(std::max(std::min(eloc.real(), hi), lo), eloc.imag());
     }
 
     if (debug_verbosity) {
@@ -201,10 +218,11 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
           ComplexType(scale * std::exp(-dt * (eloc.real() - Eshift)), 0.0);
     pseudo_eloc(i) = eloc;
     ovlp(i) = new_ovlp(i);
-    if (scale != 0)
+    if (std::abs(scale) > std::numeric_limits<RealType>::min()) {
       weight_factor(i) = std::exp(-ComplexType(0.0, dt) *
                                   (0.5 * (eloc.imag() + old_eloc.imag()))) /
                          scale;
+    }
     else
       weight_factor(i) = 0.0;
     phase1(i) *= weight_factor(i);
@@ -236,7 +254,8 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constrain,
                                 nda::MemoryMatrix auto &&energies,
                                 nda::MemoryVector auto &&MFfactor,
                                 double lower_cutoff_scale,
-                                double upper_cutoff_scale) {
+                                double upper_cutoff_scale,
+                                BoundStats &eloc_stats) {
   auto all = nda::range::all;
   int nwalk = w.size();
   bool BackProp = (w.getBPPos() >= 0 && w.getBPPos() < w.NumBackProp());
@@ -287,25 +306,31 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constrain,
                                                      mf_factor(i).imag())))
                            : 1.0);
     }
-    if ((!std::isfinite(eloc.real())) ||
-        (std::abs(eloc.real()) < std::numeric_limits<RealType>::min())) {
+    if (!std::isfinite(eloc.real())) {
       scale = 0.0;
       eloc = old_eloc;
     } else {
-      eloc = ComplexType(
-          std::max(std::min(eloc.real(),
-                            Eshift + upper_cutoff_scale * std::sqrt(2.0 / dt)),
-                   Eshift - lower_cutoff_scale * std::sqrt(2.0 / dt)),
-          eloc.imag());
+      RealType hi = Eshift + upper_cutoff_scale * std::sqrt(2.0 / dt);
+      RealType lo = Eshift - lower_cutoff_scale * std::sqrt(2.0 / dt);
+      ++eloc_stats.total;
+      if (eloc.real() > hi)
+        ++eloc_stats.upper;
+      else if (eloc.real() < lo)
+        ++eloc_stats.lower;
+      eloc = ComplexType(std::max(std::min(eloc.real(), hi), lo), eloc.imag());
     }
 
     weight(i) *= ComplexType(
         scale *
             std::exp(-dt * (0.5 * (eloc.real() + old_eloc.real()) - Eshift)),
         0.0);
-    weight_factor(i) = std::exp(-ComplexType(0.0, dt) *
+    if (std::abs(scale) > std::numeric_limits<RealType>::min()) {
+      weight_factor(i) = std::exp(-ComplexType(0.0, dt) *
                                 (0.5 * (eloc.imag() + old_eloc.imag()))) /
                        scale;
+    } else {
+      weight_factor(i) = 0.0;
+    }
     phase(i) *= weight_factor(i);
     pseudo_eloc(i) = eloc;
     ovlp(i) = new_ovlp(i);

@@ -37,7 +37,7 @@ namespace afqmc
  * The resulting RDM will be [spin][x*NMO][x*NMO],
  * where x:2 for NONCOLLINEAR and 1 for everything else.
  */
-class full1rdm : public AFQMCInfo
+class full1rdm
 {
 
 public:
@@ -45,10 +45,10 @@ public:
     utils::check(false, "Error in Observables::full1rdm: Reached disabled default constructor.");
   }
 
-  full1rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi, AFQMCInfo& info, ptree pt, WALKER_TYPES wlk, int nave = 1)
-      : AFQMCInfo(info),
-        mpi(_mpi),
+  full1rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi, ptree pt, WALKER_TYPES wlk, int NMO_, int nave = 1)
+      : mpi(_mpi),
         walker_type(wlk),
+        NMO{NMO_},
         apply_rotation(false),
         XRot{},
         print_from_list(false),
@@ -63,11 +63,11 @@ public:
     int nspin = walker_type == COLLINEAR ? 2 : 1;
     int npol = walker_type == NONCOLLINEAR ? 2 : 1;
 
-    std::optional<nda::array<ComplexType,3>> R;
-    std::optional<nda::array<int,2>> I;
     
     if (rot_file != "")
     {
+      std::optional<nda::array<ComplexType,3>> R;
+      std::optional<nda::array<int,2>> I;
       {
         std::ifstream f(rot_file.c_str());
         utils::check(f.good()," Error: File with rotation matrix does not exist: {}",rot_file);
@@ -82,6 +82,7 @@ public:
         utils::check(grp_.has_key(h5_path), "Missing h5 dataset:{}",h5_path);
         h5::group grp = grp_.open_group(h5_path);
         nda::h5_read(grp,"RotationMatrix",*R);
+
         utils::check(R->extent(0) == nspin, "Error Wrong dimensions in RotationMatrix.");
         utils::check(R->extent(2) == npol*NMO, "Error Wrong dimensions in RotationMatrix.");
         // conjugate rotation matrix
@@ -222,6 +223,7 @@ private:
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
   WALKER_TYPES walker_type;
+  int NMO{};
 
   int ncalls = 0;
 

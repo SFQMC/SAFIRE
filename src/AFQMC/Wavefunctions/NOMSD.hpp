@@ -64,15 +64,13 @@ public:
         HamiltonianOperations<MEM>&& hop_,
         nda::array<ComplexType,1>&& ci_,
         nda::array<devPsiT,2>&& orbs_,
-        ComplexType nce,
         [[maybe_unused]] int targetNW = 1)
       : mpi(_mpi),
         walker_type(wlk),
         NMO{NMO_}, nup{nup_}, ndown{ndown_},
         HamOp(std::move(hop_)),
         ci(std::move(ci_)),
-        OrbMats(std::move(orbs_)),
-        NuclearCoulombEnergy(nce)
+        OrbMats(std::move(orbs_))
   {
     utils::check(OrbMats.extent(0) == ci.size(), "Size mismatch");
     // convert user input to verbose input
@@ -98,7 +96,6 @@ public:
     pt1.put("rediag", rediag);
     pt1.put("dense_trial", dense_trial);
     std::unordered_set<std::string> pass_through_keys = {
-      "system",
       "name",
       "ndets_to_read",
       "filename",
@@ -310,23 +307,21 @@ public:
 
   int total_number_of_references() const { return OrbMats.extent(0); }
 
+  int getNMO() const { return NMO; }
+
   /*
    * Returns the reference Slater Matrices needed for back propagation.  
    */ 
-  void getReferences(int number_of_references, nda::MemoryArrayOfRank<3> auto&& Refs) const
+  void getReferences(nda::MemoryArrayOfRank<3> auto& Refs) const
   {
     using nda::range;
     auto all = range::all;
     memory::check_memory_space<MEM>(Refs);
+    int number_of_references = OrbMats.extent(0);
+    
     int nel = nup + (walker_type == COLLINEAR ? ndown : 0);
     int npol = (walker_type == NONCOLLINEAR ? 2 : 1);
-    if(number_of_references==0) return;
-    if(number_of_references < 0) number_of_references = OrbMats.extent(0);
-    utils::check(number_of_references > 0 and 
-                 number_of_references <= OrbMats.extent(0) and
-                 number_of_references <= Refs.extent(0), 
-                 "Invalid number_of_references:{}", number_of_references);
-    utils::check(Refs.extent(1) == npol*NMO and Refs.extent(2) == nel, "Size mismatch");
+    Refs.resize(number_of_references, npol*NMO, nel);
     if constexpr (math::sparse::CSRMatrix<devPsiT>) {
       for(int i=0; i<number_of_references; ++i) {
         Refs(i,all,range(nup)) = math::sparse::to_array<'H'>(OrbMats(i,0)());
@@ -418,8 +413,6 @@ protected:
 
   // OrbMats[ndet][nspin](nel,NMO)
   nda::array<devPsiT,2> OrbMats;
-
-  ComplexType NuclearCoulombEnergy;
 
 /*
   void recompute_ci();

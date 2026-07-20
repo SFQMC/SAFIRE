@@ -43,13 +43,11 @@ class MixedEstimator : public EstimatorBase<MEM>
 
 public:
   MixedEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
-                          AFQMCInfo& info,
                           std::string name,
                           ptree pt,
                           WALKER_TYPES wlk,
                           Wavefunction<MEM>& wfn)
-      : EstimatorBase<MEM>(info),
-        observ0(mpi, info, name, pt, wlk, wfn)
+      : observ0(mpi, name, pt, wlk, wfn.getNMO(), wfn)
   {
     int _pop_control_interval, equil_multiplier;
     _pop_control_interval = pt.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL);

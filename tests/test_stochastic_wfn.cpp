@@ -80,7 +80,6 @@ ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_
 {
   ptree pt;
   pt.put("name", name);
-  pt.put("system", "info0");
   pt.put("filename", wfn_file);
   mark_stochastic_wfn_input(pt);
   pt.put("inner_nwalkers", opt.inner_nwalkers);
@@ -115,7 +114,6 @@ ptree make_nomsd_wfn_ptree(std::string const& name, std::string const& wfn_file)
 {
   ptree pt;
   pt.put("name", name);
-  pt.put("system", "info0");
   pt.put("filename", wfn_file);
   return pt;
 }
@@ -123,7 +121,6 @@ ptree make_nomsd_wfn_ptree(std::string const& name, std::string const& wfn_file)
 template<MEMORY_SPACE MEM>
 struct StochasticHamWfnEnv
 {
-  std::map<std::string, AFQMCInfo> info_map;
   std::unique_ptr<HamiltonianFactory> ham_fac;
   Hamiltonian* ham = nullptr;
   WavefunctionFactory<MEM> wfn_fac;
@@ -150,13 +147,10 @@ struct StochasticHamWfnEnv
     if (accept_type && not accept_type(env.type))
       return std::nullopt;
 
-    env.info_map.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", env.NMO, env.nup, env.ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    env.ham_fac = std::make_unique<HamiltonianFactory>(env.info_map);
+    env.ham_fac = std::make_unique<HamiltonianFactory>();
     env.ham_fac->push("ham0", ham_pt);
     env.ham = &env.ham_fac->getHamiltonian(mpi, "ham0");
 
@@ -187,9 +181,8 @@ struct StochasticHamWfnEnv
   WalkerSet<MEM> make_resized_walker_set(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, int nwalk,
                                          std::string const& wfn_id)
   {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, info_map["info0"], rng);
-    wset.resize(nwalk, wfn_fac.getInitialGuess(wfn_id));
-    return wset;
+    auto const& initial_guess = wfn_fac.getInitialGuess(wfn_id);
+    return WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
   }
 };
 
@@ -367,22 +360,14 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
 
-  const auto info  = read_info_from_wfn(wfn_file, "any");
-  const int  NMO   = std::get<0>(info);
-  const int  nup   = std::get<1>(info);
-  const int  ndown = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
   if (is_ft_walker_type(type))
     return;
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -393,7 +378,6 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   WavefunctionFactory<MEM> WfnFac{};
   ptree stoch_pt;
   stoch_pt.put("name", "wfn_stoch");
-  stoch_pt.put("system", "info0");
   stoch_pt.put("filename", wfn_file);
   mark_stochastic_wfn_input(stoch_pt);
   stoch_pt.put("inner_nwalkers", 1);
@@ -480,6 +464,7 @@ template<MEMORY_SPACE MEM>
 void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                       std::string hamil_file, std::string wfn_file)
 {
+  // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
   auto env_opt = StochasticHamWfnEnv<MEM>::build(
       mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
   if (not env_opt)
@@ -538,6 +523,8 @@ template<MEMORY_SPACE MEM>
 void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                      std::string hamil_file, std::string wfn_file)
 {
+  // PR-3: the off-anchor Energy reduction is device-ported (row_accumulate / row_divide /
+  // inner_scalar_reduce / elementwise_log kernels), so this runs on DEVICE_MEMORY too.
   auto env_opt = StochasticHamWfnEnv<MEM>::build(
       mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
   if (not env_opt)
@@ -649,6 +636,7 @@ template<MEMORY_SPACE MEM>
 void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                     std::string hamil_file, std::string wfn_file)
 {
+  // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
   auto env_opt = StochasticHamWfnEnv<MEM>::build(
       mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
   if (not env_opt)
@@ -714,6 +702,7 @@ void stochastic_mixed_density_matrix_matches_nomsd(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
     std::string wfn_file)
 {
+  // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
   auto env_opt = StochasticHamWfnEnv<MEM>::build(
       mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
   if (not env_opt)
@@ -800,24 +789,19 @@ void stochastic_mean_field_matches_nomsd(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
+  // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
 
   const auto info   = read_info_from_wfn(wfn_file, "any");
   const int  NMO    = std::get<0>(info);
-  const int  nup    = std::get<1>(info);
-  const int  ndown  = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
   if (is_ft_walker_type(type))
     return;
   const double dt(0.01);
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -839,7 +823,6 @@ void stochastic_mean_field_matches_nomsd(
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
     ptree pt;
     pt.put("name", name);
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -915,27 +898,17 @@ void stochastic_mean_field_production_order(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // leapfrog / conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
-    const auto info   = read_info_from_wfn(wfn_file, "any");
-    const int  NMO    = std::get<0>(info);
-    const int  nup    = std::get<1>(info);
-    const int  ndown  = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -958,7 +931,6 @@ void stochastic_mean_field_production_order(
     // Leapfrog stochastic trial: begin_inner_step will conditioned-resample (expand to nwalk*P).
     ptree pt;
     pt.put("name", "wfn_stoch_mfp");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -972,8 +944,8 @@ void stochastic_mean_field_production_order(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_mfp", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_mfp", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_mfp"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_mfp");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
     // Reproduce the Propagate ordering: begin_inner_step (leapfrog => conditioned resample to nwalk*P)
     // BEFORE the mean-field calls. With the fix, vMF/G_MF detect the non-P-sample ensemble and delegate
@@ -1050,26 +1022,16 @@ void stochastic_back_propagation_matches_nomsd(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
+  // PR-3: free-projection BP / accumulate is device-ported (getReferences + accumulate_estimators); runs on DEVICE_MEMORY.
 
-  const auto info   = read_info_from_wfn(wfn_file, "any");
-  const int  NMO    = std::get<0>(info);
-  const int  nup    = std::get<1>(info);
-  const int  ndown  = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
   if (is_ft_walker_type(type))
     return;
 
-  const int npol = (type == NONCOLLINEAR ? 2 : 1);
-  const int nel  = (type == COLLINEAR ? nup + ndown : nup);
-
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1090,7 +1052,6 @@ void stochastic_back_propagation_matches_nomsd(
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
     ptree pt;
     pt.put("name", name);
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -1117,10 +1078,8 @@ void stochastic_back_propagation_matches_nomsd(
   // (3) the reference Slater matrices themselves match NOMSD (shape [nrefs, npol*NMO, nel], as
   // BackPropagatedEstimator requests them).
   auto collect_refs = [&](Wavefunction<MEM>& wfn) {
-    const int n = wfn.total_number_of_references();
-    memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
-    Refs() = ComplexType(0.0);
-    wfn.getReferences(n, Refs);
+    memory::array<MEM, ComplexType, 3> Refs;
+    wfn.getReferences(Refs);
     return nda::to_host(Refs);
   };
   auto R_ref = collect_refs(wfn_nomsd);
@@ -1163,29 +1122,16 @@ void stochastic_back_propagation_production_order(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // leapfrog / conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
-    const auto info   = read_info_from_wfn(wfn_file, "any");
-    const int  NMO    = std::get<0>(info);
-    const int  nup    = std::get<1>(info);
-    const int  ndown  = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
 
-    const int npol = (type == NONCOLLINEAR ? 2 : 1);
-    const int nel  = (type == COLLINEAR ? nup + ndown : nup);
-
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1207,7 +1153,6 @@ void stochastic_back_propagation_production_order(
 
     ptree pt;
     pt.put("name", "wfn_stoch_bpp");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -1221,18 +1166,17 @@ void stochastic_back_propagation_production_order(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_bpp", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpp", type, wlk_pt);
 
-    auto get_refs = [&](Wavefunction<MEM>& wfn, int n) {
-      memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
-      Refs() = ComplexType(0.0);
-      wfn.getReferences(n, Refs);
+    auto get_refs = [&](Wavefunction<MEM>& wfn) {
+      memory::array<MEM, ComplexType, 3> Refs;
+      wfn.getReferences(Refs);
       return nda::to_host(Refs);
     };
     auto all = nda::range::all;
-    auto R_anchor = get_refs(wfn_nomsd, 1); // NOMSD delegate -> the single anchor reference
+    auto R_anchor = get_refs(wfn_nomsd); // NOMSD delegate -> the single anchor reference
 
     // Drive the inner ensemble: leapfrog begin_inner_step resamples + expands it to nwalk*P.
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_bpp"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_bpp");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
 
@@ -1243,7 +1187,7 @@ void stochastic_back_propagation_production_order(
     for (int p = 0; p < inner_nwalkers; ++p)
       CHECK_THAT(wfn_s.getReferenceWeight(p), utils::Approx(ComplexType(1.0 / inner_nwalkers, 0.0)));
 
-    auto R_draw1 = get_refs(wfn_s, inner_nwalkers);
+    auto R_draw1 = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw1));
     for (int p = 0; p < inner_nwalkers; ++p) // each sample is propagated off the anchor (one B_T step)
       CHECK(max_abs_diff2d(R_draw1(p, all, all), R_anchor(0, all, all)) > 1e-6);
@@ -1255,7 +1199,7 @@ void stochastic_back_propagation_production_order(
 
     // Across windows: begin_inner_step opened a new BP window (resetting the idempotency guard), so
     // getReferences now draws a FRESH free-projection ensemble -- different from the previous window's.
-    auto R_draw2 = get_refs(wfn_s, inner_nwalkers);
+    auto R_draw2 = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw2));
     double cross_window = 0.0;
     for (int p = 0; p < inner_nwalkers; ++p)
@@ -1292,30 +1236,18 @@ void stochastic_back_propagation_inner_refs(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // free-projection inner sampling (inner_nsteps > 0) is CPU-only today.
-  else
+  // PR-3: free-projection BP references are device-ported (getReferences); runs on DEVICE_MEMORY.
   {
-    const auto info   = read_info_from_wfn(wfn_file, "any");
-    const int  NMO    = std::get<0>(info);
-    const int  nup    = std::get<1>(info);
-    const int  ndown  = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
     if (type != CLOSED)
       return;
 
-    const int npol = (type == NONCOLLINEAR ? 2 : 1);
-    const int nel  = (type == COLLINEAR ? nup + ndown : nup);
     const int P    = 3;
-
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
 
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1336,7 +1268,6 @@ void stochastic_back_propagation_inner_refs(
     // Non-conditioned, free-projection, dynamic (inner_nsteps = 1) trial -> dedicated reference draw active.
     ptree pt;
     pt.put("name", "wfn_stoch_bpir");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", P);
@@ -1354,18 +1285,17 @@ void stochastic_back_propagation_inner_refs(
     for (int p = 0; p < P; ++p)
       CHECK_THAT(wfn_s.getReferenceWeight(p), utils::Approx(ComplexType(1.0 / P, 0.0)));
 
-    auto get_refs = [&](Wavefunction<MEM>& wfn, int n) {
-      memory::array<MEM, ComplexType, 3> Refs(n, npol * NMO, nel);
-      Refs() = ComplexType(0.0);
-      wfn.getReferences(n, Refs);
+    auto get_refs = [&](Wavefunction<MEM>& wfn) {
+      memory::array<MEM, ComplexType, 3> Refs;
+      wfn.getReferences(Refs);
       return nda::to_host(Refs);
     };
     auto all = nda::range::all;
 
     // (2) getReferences performs a fresh free-projection draw {psi_p = B_T(Y^[p])|phi_T>}: P finite
     // references, each PROPAGATED off the anchor (inner_nsteps = 1 bare B_T step).
-    auto R_anchor = get_refs(wfn_nomsd, 1); // NOMSD delegate -> the single anchor reference
-    auto R_draw1  = get_refs(wfn_s, P);
+    auto R_anchor = get_refs(wfn_nomsd); // NOMSD delegate -> the single anchor reference
+    auto R_draw1  = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw1));
     for (int p = 0; p < P; ++p)
       CHECK(max_abs_diff2d(R_draw1(p, all, all), R_anchor(0, all, all)) > 1e-6);
@@ -1373,7 +1303,7 @@ void stochastic_back_propagation_inner_refs(
     // (3) IDEMPOTENT within a BP window: a repeated getReferences with no intervening forward step
     // (begin_inner_step) reuses the SAME draw -- the guard prevents a silent re-draw within a window
     // (cross-window freshness, after begin_inner_step, is checked in _production_order).
-    auto R_draw2 = get_refs(wfn_s, P);
+    auto R_draw2 = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw2));
     CHECK_THAT(R_draw2, utils::Approx(R_draw1));
   }
@@ -1418,6 +1348,7 @@ void stochastic_accumulate_estimators_matches_nomsd(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
+  // PR-3: free-projection BP / accumulate is device-ported (getReferences + accumulate_estimators); runs on DEVICE_MEMORY.
 
   const auto info   = read_info_from_wfn(wfn_file, "any");
   const int  NMO    = std::get<0>(info);
@@ -1427,15 +1358,10 @@ void stochastic_accumulate_estimators_matches_nomsd(
   if (is_ft_walker_type(type))
     return;
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  AFQMCInfo info0{"info0", NMO, nup, ndown, 0};
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", info0));
-
   ptree ham_pt;
   ham_pt.put("name", "ham0");
-  ham_pt.put("system", "info0");
   ham_pt.put("filename", hamil_file);
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1457,7 +1383,6 @@ void stochastic_accumulate_estimators_matches_nomsd(
   auto build_stoch = [&](const std::string& name, int inner_nwalkers) -> Wavefunction<MEM>& {
     ptree pt;
     pt.put("name", name);
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -1477,13 +1402,26 @@ void stochastic_accumulate_estimators_matches_nomsd(
   // parity holds for ANY choice (both apply the same linear M + T(X).G_full.Yc transform to their full
   // mixed DM); a near-identity-plus-offsets choice exercises the gemms without ill-conditioning.
   auto make_op = [&](double diag, double off) {
-    memory::array<MEM, ComplexType, 4> A(nwalk, nspin, npol * NMO, npol * NMO);
+    // Assemble on host (element-by-element), then move to MEM: writing individual elements into a device
+    // array from host segfaults (this test now runs on DEVICE_MEMORY).
+    nda::array<ComplexType, 4> A_h(nwalk, nspin, npol * NMO, npol * NMO);
     for (int w = 0; w < nwalk; ++w)
       for (int s = 0; s < nspin; ++s)
         for (int i = 0; i < npol * NMO; ++i)
           for (int j = 0; j < npol * NMO; ++j)
-            A(w, s, i, j) = ComplexType(i == j ? diag : off * double((i + 3 * j) % 5), 0.0);
-    return A;
+            A_h(w, s, i, j) = ComplexType(i == j ? diag : off * double((i + 3 * j) % 5), 0.0);
+    if constexpr (MEM == HOST_MEMORY)
+      return memory::array<MEM, ComplexType, 4>(A_h);
+#if defined(ENABLE_DEVICE)
+    else
+      return memory::array<MEM, ComplexType, 4>(nda::to_device(A_h));
+#else
+    else
+    {
+      static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+      return memory::array<MEM, ComplexType, 4>{};
+    }
+#endif
   };
   auto Xop  = make_op(1.0, 0.05);
   auto Ycop = make_op(1.0, 0.03);
@@ -1493,15 +1431,15 @@ void stochastic_accumulate_estimators_matches_nomsd(
   // used directly as the Observable template type (same v.accumulate(...) path as the variant). With
   // time_evolved the operators above transform the (stochastic) mixed DM as in BPWithTimeEvolvedOperators.
   auto collect_one_rdm = [&](Wavefunction<MEM>& wfn, const std::string& tag, bool time_evolved) {
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_ae"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_ae");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     nda::array<ComplexType, 1> wgt(nwalk);
     wgt() = ComplexType(1.0, 0.0);
 
     std::vector<full1rdm> props1;
-    props1.emplace_back(mpi, info0, ptree{}, type, 1);
+    props1.emplace_back(mpi, ptree{}, type, NMO, 1);
     std::vector<full1rdm> props; // empty
 
     if (time_evolved)
@@ -1591,9 +1529,8 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // Un-rotated full-G kernels are CPU-only today.
-  else
+  // PR-3: the un-rotated full-G energy is device-ported; this runs on DEVICE_MEMORY too (free-projection,
+  // ensemble held at the anchor, so full-G must reproduce the compact/NOMSD result).
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -1604,14 +1541,10 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
       return; // Un-rotated full-G kernels support CLOSED (RHF) trials only.
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1633,7 +1566,6 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     auto build_stoch = [&](const std::string& name, int inner_nwalkers, int inner_nsteps) -> Wavefunction<MEM>& {
       ptree pt;
       pt.put("name", name);
-      pt.put("system", "info0");
       pt.put("filename", wfn_file);
       mark_stochastic_wfn_input(pt);
       pt.put("inner_nwalkers", inner_nwalkers);
@@ -1651,8 +1583,8 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
       nda::array<ComplexType, 1> ov, e1, exx, ej;
     };
     auto collect_energies = [&](Wavefunction<MEM>& wfn) {
-      auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-      wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_fg"));
+      auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_fg");
+      auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
       perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
       wfn.Energy(wset); // never calls begin_inner_step -> full-G evaluated at the anchor
       WalkerEnergies out;
@@ -1686,8 +1618,8 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     // Force bias: the full-Likn contraction at the anchor == the compact half-rotated one. Compare
     // the bias X = L.G ([nwalk][nCV] in both), which is layout-independent (G layouts differ).
     auto collect_vbias = [&](Wavefunction<MEM>& wfn) {
-      auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-      wset.resize(nwalk, WfnFac.getInitialGuess("wfn_nomsd_fg"));
+      auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_fg");
+      auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
       perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
       memory::array<MEM, ComplexType, 2> X(nwalk, wfn.number_of_cholesky_vectors());
       wfn.vbias(wset, X, dt);
@@ -1719,9 +1651,8 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // Un-rotated full-G kernels are CPU-only today.
-  else
+  // PR-3: free-projection dynamic path is device-ported (full-G energy + inner-propagator advance); runs on
+  // DEVICE_MEMORY too.
   {
     const double dt(0.01);
 
@@ -1798,9 +1729,7 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling + un-rotated full-G kernels are CPU-only today.
-  else
+  // PR-3: persistent field chains device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -1811,14 +1740,10 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1836,7 +1761,6 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
       WavefunctionFactory<MEM> WfnFac{};
       ptree pt;
       pt.put("name", name);
-      pt.put("system", "info0");
       pt.put("filename", wfn_file);
       mark_stochastic_wfn_input(pt);
       pt.put("inner_nwalkers", inner_nwalkers);
@@ -1856,8 +1780,8 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
       auto& wfn = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
       WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, name, type, wlk_pt);
 
-      auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-      wset.resize(nwalk, WfnFac.getInitialGuess(name));
+      auto const& initial_guess = WfnFac.getInitialGuess(name);
+      auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
       perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
       for (int step = 0; step < 4; ++step)
@@ -1910,9 +1834,7 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return;
-  else
+  // PR-3: persistent / log-aggregate device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -1923,14 +1845,10 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -1944,7 +1862,6 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_logagg");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -1962,8 +1879,8 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_logagg", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_logagg", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_logagg"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_logagg");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     for (int step = 0; step < 4; ++step)
@@ -2025,9 +1942,7 @@ void stochastic_persistent_pool_nwalk1_bootstrap(std::shared_ptr<utils::mpi_cont
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return;
-  else
+  // PR-3: persistent / log-aggregate device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file,
                                                    [](WALKER_TYPES t) { return t == CLOSED; });
@@ -2105,9 +2020,7 @@ void stochastic_inner_permute_after_pop_control(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2123,14 +2036,10 @@ void stochastic_inner_permute_after_pop_control(
       return;
     const double dt(0.01);
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2157,7 +2066,6 @@ void stochastic_inner_permute_after_pop_control(
     // inner_cond_mag_ permutation too).
     ptree pt;
     pt.put("name", "wfn_stoch_pp");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2171,8 +2079,8 @@ void stochastic_inner_permute_after_pop_control(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_pp", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_pp", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_pp"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_pp");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown); // distinct outer walkers
 
     // Contract: the hook is a no-op for a non-stochastic wavefunction (callable, no crash/side effect).
@@ -2182,7 +2090,7 @@ void stochastic_inner_permute_after_pop_control(
     // to nwalk*P), then record the per-walker effective overlaps.
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ov_before(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_before(nwalk);
     wfn_s.Log_Overlap(wset, ov_before); // latch consumed by begin_inner_step -> reuses the conditioned ensemble
 
     // Simulate an outer popControl clone that preserves the per-rank count (the case the size-mismatch
@@ -2207,12 +2115,13 @@ void stochastic_inner_permute_after_pop_control(
 
     // Reduce again -- latch consumed + size unchanged => NO resample, so this scores the PERMUTED ensemble
     // against the cloned walkers.
-    nda::array<ComplexType, 1> ov_after(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_after(nwalk);
     wfn_s.Log_Overlap(wset, ov_after);
 
-    // Exact block identity via linear overlaps (branch-independent).
-    auto lin_before = linear_overlap(ov_before);
-    auto lin_after  = linear_overlap(ov_after);
+    // Exact block identity via linear overlaps (branch-independent). ov_* are MEM arrays (Log_Overlap runs
+    // on device); pull to host for the comparison.
+    auto lin_before = linear_overlap(nda::to_host(ov_before));
+    auto lin_after  = linear_overlap(nda::to_host(ov_after));
     // Block clone_src moved to slot clone_dst, paired with phi_clone_dst == phi_clone_src.
     CHECK_THAT(lin_after(clone_dst), utils::Approx(lin_before(clone_src)));
     // Slot clone_src itself is unchanged (identity parent, walker untouched).
@@ -2248,9 +2157,7 @@ void stochastic_inner_permute_cross_rank_fallback(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2262,14 +2169,10 @@ void stochastic_inner_permute_cross_rank_fallback(
     if (mpi->comm.size() != 1)
       return; // synthetic single-rank sentinel check (real cross-rank moves need no special harness)
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2284,7 +2187,6 @@ void stochastic_inner_permute_cross_rank_fallback(
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_xr");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2297,17 +2199,17 @@ void stochastic_inner_permute_cross_rank_fallback(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_xr", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_xr", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_xr"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_xr");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     // Condition on the current walkers and record the baseline overlaps (first reduction resamples to
     // the slot-major nwalk*P form and consumes the latch).
     wfn_s.begin_inner_step(wset);
-    nda::array<ComplexType, 1> ov_before(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_before(nwalk);
     wfn_s.Log_Overlap(wset, ov_before);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    auto lin_before = linear_overlap(ov_before);
+    auto lin_before = linear_overlap(nda::to_host(ov_before));
 
     auto set_lineage = [&](int sentinel) {
       nda::array<ComplexType, 1> lin(nwalk);
@@ -2322,9 +2224,9 @@ void stochastic_inner_permute_cross_rank_fallback(
     // overlaps are unchanged.
     set_lineage(-1);
     wfn_s.permute_inner_blocks_after_pop(wset);
-    nda::array<ComplexType, 1> ov_id(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_id(nwalk);
     wfn_s.Log_Overlap(wset, ov_id);
-    auto lin_id = linear_overlap(ov_id);
+    auto lin_id = linear_overlap(nda::to_host(ov_id));
     for (int w = 0; w < nwalk; ++w)
       CHECK_THAT(lin_id(w), utils::Approx(lin_before(w)));
 
@@ -2333,9 +2235,9 @@ void stochastic_inner_permute_cross_rank_fallback(
     set_lineage(sentinel_slot);
     wfn_s.permute_inner_blocks_after_pop(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ov_fb(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_fb(nwalk);
     wfn_s.Log_Overlap(wset, ov_fb);
-    auto lin_fb = linear_overlap(ov_fb);
+    auto lin_fb = linear_overlap(nda::to_host(ov_fb));
     double max_diff = 0.0;
     for (int w = 0; w < nwalk; ++w)
       max_diff = std::max(max_diff, std::abs(lin_fb(w) - lin_before(w)));
@@ -2379,9 +2281,7 @@ void stochastic_persistent_permute_after_pop_control(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: persistent field chains device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2393,14 +2293,10 @@ void stochastic_persistent_permute_after_pop_control(
     if (mpi->comm.size() != 1)
       return; // per-rank-local permutation; the exact cross-slot equalities assume no cross-rank mixing.
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2416,7 +2312,6 @@ void stochastic_persistent_permute_after_pop_control(
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_pp_persist");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2433,14 +2328,14 @@ void stochastic_persistent_permute_after_pop_control(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_pp_persist", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_pp_persist", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_pp_persist"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_pp_persist");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     // Prime + equilibrate the persistent pool conditioned on the distinct walkers, then record overlaps.
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ov_before(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_before(nwalk);
     wfn_s.Log_Overlap(wset, ov_before); // latch consumed by begin_inner_step -> reuses the primed pool
 
     // Simulate a count-preserving popControl clone: outer slot clone_dst becomes a copy of clone_src.
@@ -2468,11 +2363,11 @@ void stochastic_persistent_permute_after_pop_control(
 
     // Score again -- latch consumed + chains live => NO resample, so this reads the rebuilt persistent
     // pool against the cloned walkers.
-    nda::array<ComplexType, 1> ov_after(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_after(nwalk);
     wfn_s.Log_Overlap(wset, ov_after);
 
-    auto lin_before = linear_overlap(ov_before);
-    auto lin_after  = linear_overlap(ov_after);
+    auto lin_before = linear_overlap(nda::to_host(ov_before));
+    auto lin_after  = linear_overlap(nda::to_host(ov_after));
     // Tethered block clone_src moved to slot clone_dst, paired with phi_clone_dst == phi_clone_src.
     CHECK_THAT(lin_after(clone_dst), utils::Approx(lin_before(clone_src)));
     CHECK_THAT(lin_after(clone_src), utils::Approx(lin_before(clone_src)));
@@ -2511,9 +2406,7 @@ void stochastic_persistent_pool_survives_pop_control(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: persistent field chains device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2525,14 +2418,10 @@ void stochastic_persistent_pool_survives_pop_control(
     if (mpi->comm.size() != 1)
       return; // synthetic single-rank sentinel check (real cross-rank moves need no special harness).
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2547,7 +2436,6 @@ void stochastic_persistent_pool_survives_pop_control(
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_persist_pop");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2567,8 +2455,8 @@ void stochastic_persistent_pool_survives_pop_control(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_persist_pop", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_persist_pop", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_persist_pop"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_persist_pop");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     auto identity_lineage = [&]() {
@@ -2588,9 +2476,9 @@ void stochastic_persistent_pool_survives_pop_control(
     // Prime the persistent pool (first use: reset-to-anchor + burn_in sweeps) and record its overlaps.
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ov0(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov0(nwalk);
     wfn_s.Log_Overlap(wset, ov0);
-    auto lin0 = linear_overlap(ov0);
+    auto lin0 = linear_overlap(nda::to_host(ov0));
 
     // (A) A local branch (identity lineage, fields untouched): the post-pop rebuild reproduces the same
     // pool from the same fields, and the next begin_inner_step (0 equil sweeps) leaves it alone -- the
@@ -2599,9 +2487,9 @@ void stochastic_persistent_pool_survives_pop_control(
     wfn_s.permute_inner_blocks_after_pop(wset);
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ovA(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ovA(nwalk);
     wfn_s.Log_Overlap(wset, ovA);
-    auto linA = linear_overlap(ovA);
+    auto linA = linear_overlap(nda::to_host(ovA));
     for (int w = 0; w < nwalk; ++w)
       CHECK_THAT(linA(w), utils::Approx(lin0(w))); // persistence held: no restart, no re-equilibration
 
@@ -2610,17 +2498,21 @@ void stochastic_persistent_pool_survives_pop_control(
     // The rebuild must derive that slot's determinants from the NEW fields (overlap changes) and leave
     // every other slot's exactly untouched -- no whole-rank restart.
     {
-      auto TF = wset.TrialFields();
-      for (long j = 0; j < TF.extent(1); ++j)
-        TF(sentinel_slot, j) = -TF(sentinel_slot, j);
+      // Negate the sentinel slot's chain fields (a valid, deterministic, different chain state). TrialFields
+      // is a MEM view, so on device do the negation via a host round-trip of that single row.
+      auto TF   = wset.TrialFields();
+      auto row  = nda::to_host(TF(sentinel_slot, nda::range::all));
+      for (long j = 0; j < row.extent(0); ++j)
+        row(j) = -row(j);
+      TF(sentinel_slot, nda::range::all) = row; // host -> device (no-op-ish on HOST_MEMORY)
     }
     sentinel_lineage();
     wfn_s.permute_inner_blocks_after_pop(wset);
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ovB(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ovB(nwalk);
     wfn_s.Log_Overlap(wset, ovB);
-    auto linB = linear_overlap(ovB);
+    auto linB = linear_overlap(nda::to_host(ovB));
     REQUIRE(std::abs(linB(sentinel_slot) - lin0(sentinel_slot)) > 1e-6); // dets follow the new fields
     for (int w = 0; w < nwalk; ++w)
       if (w != sentinel_slot)
@@ -2657,9 +2549,7 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: persistent field chains device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2671,14 +2561,10 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     if (mpi->comm.size() != 1)
       return; // manipulates SLOT_LINEAGE directly; the identity-lineage permute assumes no cross-rank mixing.
 
-    std::map<std::string, AFQMCInfo> InfoMap;
-    InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown, 0}));
-
     ptree ham_pt;
     ham_pt.put("name", "ham0");
-    ham_pt.put("system", "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
@@ -2692,7 +2578,6 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     WavefunctionFactory<MEM> WfnFac{};
     ptree pt;
     pt.put("name", "wfn_stoch_condmag");
-    pt.put("system", "info0");
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
     pt.put("inner_nwalkers", inner_nwalkers);
@@ -2709,8 +2594,8 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_condmag", type, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_condmag", type, wlk_pt);
 
-    auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
-    wset.resize(nwalk, WfnFac.getInitialGuess("wfn_stoch_condmag"));
+    auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_condmag");
+    auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
     perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown); // distinct walkers => distinct cond_mag
 
     // Equilibrate the chains against the CURRENT walkers phi_cond and set inner_cond_mag_ (leapfrog).

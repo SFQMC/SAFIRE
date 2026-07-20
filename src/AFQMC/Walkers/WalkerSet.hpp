@@ -139,18 +139,6 @@ class WalkerSet
 };
 */
 
-// MAM: move to factory or utils file, this will remain a template even if we instantiate above
-template<MEMORY_SPACE _M_>
-inline decltype(auto) make_WalkerSet(
-                std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                ptree pt,
-                AFQMCInfo& info,
-                std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r)
-{
-//  return WalkerSet<_M_>( WalkerSetBase<_M_>(_mpi_,pt,info,r) );
-  return WalkerSetBase<_M_>(_mpi_,pt,info,r);
-}
-
 } // namespace afqmc
 
 } // namespace sfqmc

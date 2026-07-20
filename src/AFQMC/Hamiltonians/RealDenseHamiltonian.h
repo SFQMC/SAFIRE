@@ -37,12 +37,8 @@ namespace afqmc
 class RealDenseHamiltonian
 {
 public:
-  RealDenseHamiltonian(ptree pt_in,
-                       ComplexType nucE = 0,
-                       ComplexType fzcE = 0)
-      : NuclearCoulombEnergy(nucE),
-        FrozenCoreEnergy(fzcE),
-        fileName(""),
+  RealDenseHamiltonian(ptree pt_in)
+      : fileName(""),
         max_memory_MB(2000)
   {
     // convert user input to verbose input
@@ -60,8 +56,6 @@ public:
   RealDenseHamiltonian(RealDenseHamiltonian&& other)      = default;
   RealDenseHamiltonian& operator=(RealDenseHamiltonian const& other) = default; 
   RealDenseHamiltonian& operator=(RealDenseHamiltonian&& other) = default; 
-
-  ComplexType getNuclearCoulombEnergy() const { return NuclearCoulombEnergy; }
 
   HamiltonianTypes getHamType() const {return RealDenseFactorized; }
 
@@ -83,17 +77,12 @@ public:
     pt1.put("name", name);
     pt1.put("filename", filename);
     pt1.put("max_memory", mmem_mb);
-    std::unordered_set<std::string> pass_through_keys = {
-      "system"
-    };
+    std::unordered_set<std::string> pass_through_keys = {};
     io::compare_known_keys("Dense, Real Factorized (Cholesky) Hamiltonian",pt1, pt0,pass_through_keys);
     return pt1;
   }
 
 protected:
-  ComplexType NuclearCoulombEnergy;
-  ComplexType FrozenCoreEnergy;
-
   std::string fileName;
 
   int max_memory_MB;

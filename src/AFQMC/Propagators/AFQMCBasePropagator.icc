@@ -53,6 +53,8 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
   int nwalk        = wset.size();
   int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
   int nspin = walker_type == COLLINEAR ? 2 : 1;
+  // Orbital count inferred from the walker Slater matrices (nwalk, npol*NMO, naea).
+  const int NMO = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
   bool step0 = false;
@@ -146,12 +148,13 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
   {
     if(nt==1) step0 = true; 
     hybrid_walker_update(wset, dt, apply_constrain, importance_sampling, Eshift, new_overlaps, MFfactor,
-                         hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, true, debug_verbosity, step0);
+                         hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, symmetric_split, step0,
+                         debug_verbosity, use_cp_constraint, eloc_bound_stats);
   }
   else
   {
     local_energy_walker_update(wset, dt, apply_constrain, Eshift, new_overlaps, new_energies, MFfactor,
-                               lower_cutoff_scale, upper_cutoff_scale);
+                               lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
   }
   if (wset.getBPPos() >= 0) {
     if(wset.getBPPos() < wset.NumBackProp()) wset.advanceBPPos();
@@ -177,6 +180,7 @@ void AFQMCBasePropagator<MEM>::Propagate_conditioned(WlkSet& wset,
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
   auto [nspins, npol] = walkerTypeToDims(walker_type);
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
 
@@ -234,6 +238,7 @@ void AFQMCBasePropagator<MEM>::Propagate_free(WlkSet& wset, RealType dt, int nt)
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
   auto [nspins, npol] = walkerTypeToDims(walker_type);
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
 
@@ -287,7 +292,10 @@ template<class WlkSet>
 void AFQMCBasePropagator<MEM>::Propagate_given_fields(WlkSet& wset,
      nda::MemoryArrayOfRank<2> auto& X, RealType dt)
 {
+  auto walker_type = wset.getWalkerType();
   int nwalk = wset.size();
+  int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+  const int NMO = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   int nCV   = wfn->number_of_cholesky_vectors();
   utils::check(X.shape() == std::array<long,2>{nwalk,nCV},
                "Error in Propagate_given_fields: X shape mismatch.");
@@ -329,6 +337,10 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
   int nwalk        = wset.size();
   int nCV          = wfn->number_of_cholesky_vectors();
   int nrefs        = Refs.extent(1);
+  // Dimensions inferred from the walker Slater matrices (nwalk, npol*NMO, naea/naeb).
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
+  const int nup    = int(wset.SlaterMatrices(Alpha).extent(2));
+  const int ndown  = (walker_type == COLLINEAR) ? int(wset.SlaterMatrices(Beta).extent(2)) : 0;
   int nel          = ( walker_type==COLLINEAR ? nup+ndown : nup );
 
   utils::check(Refs.shape() == std::array<long,4>{nwalk,nrefs,npol*NMO,nel}, 
@@ -448,8 +460,12 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset,
   int nspin        = (walker_type == COLLINEAR) ? 2 : 1;
   int nwalk        = wset.size();
   int nCV          = wfn->number_of_cholesky_vectors();
-  int bp_step      = wset.getBPPos(); 
+  int bp_step      = wset.getBPPos();
   ComplexType one(1.0,0.0);
+  // Dimensions inferred from the walker Slater matrices (nwalk, npol*NMO, naea/naeb).
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
+  const int nup    = int(wset.SlaterMatrices(Alpha).extent(2));
+  const int ndown  = (walker_type == COLLINEAR) ? int(wset.SlaterMatrices(Beta).extent(2)) : 0;
 
   // Fields(nwalk, steps, nCV)
   auto Fields = wset.getFields();
@@ -722,6 +738,19 @@ void AFQMCBasePropagator<MEM>::assemble_X(RealType sqrtdt,
   // remember to call vbi = apply_bound_vbias(*vb);
 
   auto [nwalk,nCV] = X.shape();
+
+  // Count force-bias (vbias) clamp hits for the end-of-run report. On entry X(iw,m) still holds
+  // the raw vbias, so re-evaluate the exact magnitude condition construct_X uses to clamp it.
+  // Host-only (X is on device for DEVICE_MEMORY); device counting is not supported.
+  if constexpr (MEM == HOST_MEMORY) {
+    RealType bnd = vbias_bound * sqrtdt;
+    auto Xv = X();
+    for (long iw = 0; iw < nwalk; ++iw)
+      for (long m = 0; m < nCV; ++m) {
+        ++vbias_bound_stats.total;
+        if (std::abs(Xv(iw, m)) > bnd) ++vbias_bound_stats.upper;
+      }
+  }
   // generate random numbers
   utils::check( rng_block_size >= nCV, "Error in assemble_X: rng_block_size < nCV.");
   memory::buffered_array<MEM,RealType,2> RNGbuff(nwalk,rng_block_size);

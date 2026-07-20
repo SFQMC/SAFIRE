@@ -32,12 +32,8 @@ class KPTHCHamiltonian
 {
 public:
 
-  KPTHCHamiltonian(ptree pt_in,
-                   ComplexType nucE = 0,
-                   ComplexType fzcE = 0)
-      : NuclearCoulombEnergy(nucE),
-        FrozenCoreEnergy(fzcE),
-      	fileName("")
+  KPTHCHamiltonian(ptree pt_in)
+      : fileName("")
   {
     // convert user input to verbose input
     ptree pt = interpret_inputs(pt_in);
@@ -53,8 +49,6 @@ public:
   KPTHCHamiltonian(KPTHCHamiltonian&& other)      = default;
   KPTHCHamiltonian& operator=(KPTHCHamiltonian const& other) = default;
   KPTHCHamiltonian& operator=(KPTHCHamiltonian&& other) = default;
-
-  ComplexType getNuclearCoulombEnergy() const { return NuclearCoulombEnergy; }
 
   HamiltonianTypes getHamType() const { return KPTHC; }
 
@@ -74,18 +68,13 @@ public:
     ptree pt1;
     pt1.put("name", name);
     pt1.put("filename", filename);
-    std::unordered_set<std::string> pass_through_keys = {
-      "system"
-    };
+    std::unordered_set<std::string> pass_through_keys = {};
     io::compare_known_keys("Tensor hyper-contraction (KPTHC) KP Hamiltonian", pt1, pt0,pass_through_keys);
     return pt1;
   }
 
 protected:
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
-
-  ComplexType NuclearCoulombEnergy;
-  ComplexType FrozenCoreEnergy;
 
   std::string fileName;
 

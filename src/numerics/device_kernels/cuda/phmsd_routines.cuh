@@ -28,6 +28,13 @@ void ph_excited_1body_energy_impl(int const* refc, int const* iexcit, S_t const&
 template<typename T_t, typename R_t, typename W_t, typename EX_t, typename EJ_t, typename KE_t>
 void ph_excited_2body_energy_dense_cholesky_Tpna_impl(int const* refc, int const* iexcit, T_t const& T, R_t const& R, W_t const& w, EX_t &EX, EJ_t& EJ, KE_t &KE);
 
+template<typename O_t, typename G_t>
+void vmf_offdiag_impl(long total_pairs, int nrows, int rank, int size, int nelec,
+                      long const* pair_off,
+                      int const* coup_rbegin, int const* coup_rend, int const* coup_jdet,
+                      std::complex<double> const* coup_val,
+                      int const* configs, O_t const& O, G_t& G);
+
 }
 
 /*
@@ -138,6 +145,26 @@ void ph_excited_2body_energy_dense_cholesky_Tpna(int const* refc, int const* iex
   auto EJ_b = to_basic_layout(EJ());
   auto KE_b = to_basic_layout(KE());
   detail::ph_excited_2body_energy_dense_cholesky_Tpna_impl(refc,iexcit,T_b,R_b,w_b,EX_b,EJ_b,KE_b);
+}
+
+/*
+ *   Off-diagonal contribution to the PHMSD mean-field Green's function (PHMSD::vMF).
+ *   Replaces the O(sum nnz^2) host loop over excitation pairs with a GPU kernel.
+ *     coup_(indptr,jdet,val) : device CSR of OpSpinDetCouplings[other_spin]
+ *     configs                : device sorted occ-orbital lists [nconfig][nelec] for `spin`
+ *     O                      : dense orbitals (npol*NMO, nact) for `spin`
+ *     G                      : output Green's function slice (nact, npol*NMO)
+ */
+template<nda::MemoryArrayOfRank<2> O_t, nda::MemoryArrayOfRank<2> G_t>
+void vmf_offdiag(long total_pairs, int nrows, int rank, int size, int nelec,
+                 long const* pair_off,
+                 int const* coup_rbegin, int const* coup_rend, int const* coup_jdet,
+                 std::complex<double> const* coup_val,
+                 int const* configs, O_t const& O, G_t& G)
+{
+  auto O_b = to_basic_layout(O());
+  auto G_b = to_basic_layout(G());
+  detail::vmf_offdiag_impl(total_pairs, nrows, rank, size, nelec, pair_off, coup_rbegin, coup_rend, coup_jdet, coup_val, configs, O_b, G_b);
 }
 
 } // namespace kernels::device

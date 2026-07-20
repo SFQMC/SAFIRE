@@ -178,6 +178,11 @@ public:
     return std::visit([&](auto&& a) { return a.total_number_of_references(); }, var);
   }
 
+  int getNMO() const
+  {
+    return std::visit([&](auto&& a) { return a.getNMO(); }, var);
+  }
+
   template<class... Args>
   ComplexType getReferenceWeight(Args&&... args)
   {
@@ -325,7 +330,7 @@ public:
 
   void initialize_stochastic_inner_walkers(
       ptree const& walker_pt,
-      memory::const_shared_array<HOST_MEMORY, ComplexType, 3> const& initial_guess,
+      std::vector<nda::matrix<ComplexType>> const& initial_guess,
       int NAEB)
   {
     std::visit(

@@ -81,35 +81,41 @@ class Case:
 def _wavefunction_is_implemented(c: Case) -> bool:
     # only collinear PHMSD with collinear walkers is implemented; all NOMSD spin symmetries are fine.
     if c.wavefunction.type == WavefunctionClass.PHMSD:
-        return WALKERS[c.walker] == SpinSymm.COLLINEAR and c.wavefunction.spin == SpinSymm.COLLINEAR
-    # Multi-determinant noncollinear (GHF CASCI) NOMSD currently segfaults; the read
-    # path supports it but the eval path has a latent bug. Excluded manually (the only
-    # such trial is BH's casci_ghf_nomsd).
-    if c.wavefunction.file == "afqmc_casci_ghf_nomsd.h5":
-        return False
+        return WALKERS[c.walker] == SpinSymm.COLLINEAR or WALKERS[c.walker] == SpinSymm.NONCOLLINEAR and c.wavefunction.spin == SpinSymm.COLLINEAR
     return True
 
 
-def _rules() -> list:
-    return [
-        ("wavefunction implemented", _wavefunction_is_implemented),
-        ("H<->walker spin compatible", lambda c: WALKERS[c.walker] >= c.hamiltonian.spin),
-        ("walker<->wfn spin compatible", lambda c: WALKERS[c.walker] >= c.wavefunction.spin),
-        ("not closed-THC with noncollinear wfn",
-         lambda c: not (c.hamiltonian.type == HamiltonianClass.THC
-                        and c.hamiltonian.spin == SpinSymm.CLOSED
-                        and c.wavefunction.spin == SpinSymm.NONCOLLINEAR)),
-        ("not closed lattice hamiltonian",
-         lambda c: not (c.hamiltonian.type == HamiltonianClass.MODEL
-                        and c.hamiltonian.spin == SpinSymm.CLOSED)),
-        ("fully-polarized wfn/walker pairing",
-         lambda c: (c.wavefunction.spin == SpinSymm.FULLYPOLARIZED)
-                   == (WALKERS[c.walker] == SpinSymm.FULLYPOLARIZED)),
+def should_succeed(c: Case) -> bool:
+    rules = [
+        _wavefunction_is_implemented(c),
+        WALKERS[c.walker] >= c.hamiltonian.spin,  # walker<->hamiltonian spin compatible
+        WALKERS[c.walker] >= c.wavefunction.spin,  # walker<->wavefunction spin compatible
+        # not closed-THC with noncollinear wfn
+        not (c.hamiltonian.type == HamiltonianClass.THC
+             and c.hamiltonian.spin == SpinSymm.CLOSED
+             and c.wavefunction.spin == SpinSymm.NONCOLLINEAR),
+        # no closed walkers on lattice hamiltonian
+        not (c.hamiltonian.type == HamiltonianClass.MODEL
+             and c.hamiltonian.spin == SpinSymm.CLOSED),
+        # wfn/walkers either both fully-polarized or both not
+        (c.wavefunction.spin == SpinSymm.FULLYPOLARIZED)
+        == (WALKERS[c.walker] == SpinSymm.FULLYPOLARIZED),
     ]
+    return all(rules)
 
 
-def passes_all_rules(c: Case) -> bool:
-    return all(pred(c) for _, pred in _rules())
+def should_skip(c: Case) -> bool:
+    # Multi-determinant noncollinear (GHF CASCI) NOMSD works but currently
+    # segfaults in the reference
+    if c.wavefunction.file == "afqmc_casci_ghf_nomsd.h5":
+        return True
+
+    # The code now supports model Hamiltonians as long as the walker spin symmetry is not closed
+    # However, the reference fails for any closed model Hamiltonian.
+    if c.hamiltonian.type == HamiltonianClass.MODEL and c.hamiltonian.spin == SpinSymm.CLOSED:
+        return True
+
+    return False
 
 
 def bp_cherry_pick(c: Case) -> bool:
@@ -534,8 +540,13 @@ def main(argv=None) -> int:
     for name in selected:
         system = systems[name]
         all_cases = generate(system)
-        success = [c for c in all_cases if passes_all_rules(c)]
-        fail = [c for c in all_cases if not passes_all_rules(c)]
+        success = [c for c in all_cases if should_succeed(c) and not should_skip(c)]
+        fail = [c for c in all_cases if not should_succeed(c) and not should_skip(c)]
+
+        for c in all_cases:
+            if should_skip(c):
+                print(f"Skipped case {c.out_subdir}.")
+
         # Back-propagation cases are a cherry-picked subset of the success cases,
         # only for systems that have them.
         bp = bp_cases(success) if system.bp else []
@@ -543,8 +554,8 @@ def main(argv=None) -> int:
               f"{len(fail)} expected-fail, {len(bp)} back-propagation ===")
 
         for expect_success, label, group in (
-                (True, "EXPECT_SUCCESS", success),
                 (False, "EXPECT_FAILURE", fail),
+                (True, "EXPECT_SUCCESS", success),
                 (True, "BACKPROPAGATION", bp)):
             for case in group:
                 tag = f"[{label}] {case.out_subdir}"

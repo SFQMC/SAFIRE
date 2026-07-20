@@ -25,6 +25,7 @@
 #include "AFQMC/config.h"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
+#include "numerics/device_kernels/kernels.h" // kernels::device::{row_accumulate,row_divide,inner_scalar_reduce,elementwise_log} (device only)
 
 namespace sfqmc
 {
@@ -62,10 +63,13 @@ struct StochasticInnerStack
 };
 
 template<MEMORY_SPACE MEM, class devPsiT>
-class StochasticWfn : public AFQMCInfo
+class StochasticWfn
 {
 public:
-  StochasticWfn(AFQMCInfo& info,
+  StochasticWfn(std::string system,
+                int NMO_,
+                int nup_,
+                int ndown_,
                 ptree pt_in,
                 std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_in,
                 HamiltonianOperations<MEM>&& outer_hop_,
@@ -73,7 +77,6 @@ public:
                 nda::array<devPsiT, 2>&& orbs_,
                 std::unique_ptr<StochasticInnerStack<MEM, devPsiT>>&& inner_stack_in,
                 WALKER_TYPES wlk,
-                ComplexType nce,
                 [[maybe_unused]] int targetNW = 1);
 
   static ptree interpret_inputs(const ptree pt0);
@@ -86,7 +89,7 @@ public:
   StochasticWfn& operator=(StochasticWfn&& other)        = delete;
 
   void initialize_inner_walkers(ptree const& walker_pt,
-                                memory::const_shared_array<HOST_MEMORY, ComplexType, 3> const& initial_guess,
+                                std::vector<nda::matrix<ComplexType>> const& initial_guess,
                                 int NAEB);
 
   bool inner_walkers_initialized() const { return inner_ensemble_.initialized; }
@@ -320,6 +323,9 @@ public:
   {
     return bp_uses_inner_ensemble() ? inner_nwalkers_ : nomsd_.total_number_of_references();
   }
+
+  int getNMO() const { return NMO; }
+
   ComplexType getReferenceWeight(int i) const
   {
     return bp_uses_inner_ensemble() ? ComplexType(1.0 / static_cast<double>(inner_nwalkers_), 0.0)
@@ -331,7 +337,7 @@ public:
   // dedicated free-projection draw (draw_bp_reference_ensemble()) and fills from those P samples;
   // otherwise it delegates to nomsd_ (the anchor / CI expansion). Defined in the .icc.
   template<class RefMat>
-  void getReferences(int number_of_references, RefMat&& Refs);
+  void getReferences(RefMat&& Refs);
 
   HamiltonianTypes getHamType() const { return nomsd_.getHamType(); }
   auto getFieldTypes() { return nomsd_.getFieldTypes(); }
@@ -391,6 +397,10 @@ private:
     bool initialized{false};
   };
 
+  std::string system_;
+  int NMO{-1};
+  int nup{-1};
+  int ndown{-1};
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_;
   StochasticInnerEnsemble inner_ensemble_;
   int inner_nwalkers_{1};
@@ -446,6 +456,10 @@ private:
   // transiently overwriting it here is safe (the next begin_inner_step resamples from scratch). Called
   // by getReferences. Defined in StochasticWfn.cpp (does not depend on the RefMat template).
   void draw_bp_reference_ensemble();
+
+  // Copy the P inner-walker Slater matrices (post draw_bp_reference_ensemble) into Refs.
+  template<class RefMat>
+  void fill_references_from_draw(int number_of_references, RefMat&& Refs);
 
   // Reset the first `count` inner walkers in `inner` to the anchor |phi_T> (the per-spin Slater matrices
   // cached in inner_anchor_; handles CLOSED/COLLINEAR). The single place that knows the anchor/collinear

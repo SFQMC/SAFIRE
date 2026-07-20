@@ -17,9 +17,7 @@
 #pragma once
 
 #include <vector>
-#include <map>
 #include <string>
-#include <iostream>
 #include <tuple>
 
 #include "IO/app_loggers.h"
@@ -32,6 +30,7 @@
 #include "numerics/shared_array/const_shared_array.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/SlaterDeterminantOperations/propagate.hpp"
+#include "AFQMC/Propagators/WalkerSetUpdate.hpp"
 
 namespace sfqmc
 {
@@ -42,7 +41,7 @@ namespace afqmc
  * For all hamiltonians that only use a dense vHS. For model hamiltonians, use AFQMCModelPropagator.
  */
 template<MEMORY_SPACE MEM>
-class AFQMCBasePropagator : public AFQMCInfo
+class AFQMCBasePropagator
 {
 
 public:
@@ -50,13 +49,11 @@ public:
     utils::check(false, "Error: Reached disabled AFQMCBasePropagator default constructor.");
   }
 
-  AFQMCBasePropagator(AFQMCInfo& info,
-                      ptree pt_in,
+  AFQMCBasePropagator(ptree pt_in,
                       std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_,
                       Wavefunction<MEM>& wfn_,
                       std::shared_ptr<utils::RandomGenerator_t<MEM>> r)
-      : AFQMCInfo(info),
-        mpi(mpi_),
+      : mpi(mpi_),
         wfn(std::addressof(wfn_)),
         P1s(0),
         P1s_inv(0),
@@ -68,17 +65,27 @@ public:
         rng_block_size(wfn->number_of_cholesky_vectors())
   {
     utils::check(bool(mpi), "Error: Null mpi_context.");
+    const int NMO = wfn->getNMO();
     std::tie(nspins_in_vHS, npol_in_vHS) = wfn->vHS_dims();
     app_log(1," vHS dimensions: nspins = {}, npol = {}", nspins_in_vHS, npol_in_vHS);
     // convert user input to verbose input
     ptree pt = interpret_inputs(pt_in);
+    // set model hamiltonian defaults to legacy values if not specified by user
+    if (wfn->getHamType() == ModelHamiltonian) {
+      if (not pt_in.get_optional<double>("upper_cutoff_scale")) pt.put("upper_cutoff_scale", 50.0);
+      if (not pt_in.get_optional<double>("lower_cutoff_scale")) pt.put("lower_cutoff_scale", 50.0);
+      if (not pt_in.get_optional<double>("vbias_bound"))        pt.put("vbias_bound", 100.0);
+      if (not pt_in.get_optional<bool>("denseP2"))                pt.put("denseP2", false);
+      if (not pt_in.get_optional<bool>("symmetric_split"))        pt.put("symmetric_split", false);
+    }
     app_log(2,"\nBasePropagator input:\n\n{}\n",io::to_string(pt));
     // initialize using verbose input
-    int i_, a_;
-    std::string external_field, excited_file;
+    std::string external_field;
+    // int i_, a_;
+    // std::string excited_file;
     double external_field_scale;
-    i_ = pt.get<int>("i");
-    a_ = pt.get<int>("a");
+    // i_ = pt.get<int>("i");
+    // a_ = pt.get<int>("a");
     order                = pt.get<int>("taylor_n");
     vbias_bound          = pt.get<double>("vbias_bound");
     external_field_scale = pt.get<double>("external_field_scale");
@@ -94,7 +101,7 @@ public:
     free_projection     = pt.get<bool>("free_projection");
     denseP1             = pt.get<bool>("denseP1");
     denseP2             = pt.get<bool>("denseP2");
-    excited_file        = pt.get<std::string>("excited");
+    // excited_file        = pt.get<std::string>("excited");
     debug_verbosity     = pt.get<bool>("debug_verbosity");
     natural_shift       = pt.get<bool>("natural_shift");
     symmetric_split     = pt.get<bool>("symmetric_split");
@@ -111,7 +118,8 @@ public:
 
     app_log(1,"\n\n --------------- Constructing Propagator ------------------ \n");
 
-    app_log(1," vbias_bound: {}", vbias_bound); 
+    app_log(1," vbias_bound: {}", vbias_bound);
+    app_log(1," cutoff scales (upper/lower): {} / {}", upper_cutoff_scale, lower_cutoff_scale);
     if(denseP1)
       app_log(1," Using dense 1-body propagator");
     else
@@ -146,6 +154,9 @@ public:
 
     // read orbital matrix if excited state propagator
     excitedState = false;
+    // Excited-state propagator is disabled pending re-implementation (it was an
+    // abort-only stub).
+    /*
     if (excited_file != "" && i_ >= 0 && a_ >= 0)
     {
       if (i_ < NMO && a_ < NMO)
@@ -170,10 +181,11 @@ public:
       {
         utils::check(false," Errors: Inconsistent excited orbitals. ");
       }
-      utils::check(false," Error: Finish implementation. ");	
+      utils::check(false," Error: Finish implementation. ");
       // read from hdf5
       //readWfn(excited_file, excitedOrbMat_, NMO, maxOccupExtendedMat.first, maxOccupExtendedMat.second);
     }
+    */
     if (external_field != std::string(""))
     {
       //    read_external_field(H1ext);
@@ -218,7 +230,7 @@ public:
     bool denseP2                = pt0.get<bool>("denseP2", true);
     bool debug_verbosity        = pt0.get<bool>("debug_verbosity", false);
     auto natural_shift          = pt0.get<bool>("natural_shift",true);
-    auto symmetric_split        = pt0.get<bool>("symmetric_split",false);
+    auto symmetric_split        = pt0.get<bool>("symmetric_split",true);
     auto use_cp_constraint      = pt0.get<bool>("use_cp_constraint", false);
     auto use_real_vbias         = pt0.get<bool>("use_real_vbias", false);
     std::string external_field  = pt0.get<std::string>("external_field", "");
@@ -260,7 +272,6 @@ public:
     pt1.put("symmetric_split",symmetric_split);
     pt1.put("debug_verbosity", debug_verbosity);
     std::unordered_set<std::string> pass_through_keys = {
-      "system",
       "name",
       "debug"
     };
@@ -329,6 +340,40 @@ public:
 
   void set_rng_block_size(int sz) { rng_block_size = sz; }
 
+  // Report, at the end of the calculation, how often the propagation bounding boxes were
+  // triggered: the force-bias (vbias) clamp and the local-energy (eloc) clamp. Counters are
+  // aggregated across all ranks; only the root prints.
+  void printBoundStatistics()
+  {
+    long buf[6] = {vbias_bound_stats.total, vbias_bound_stats.upper, vbias_bound_stats.lower,
+                   eloc_bound_stats.total,  eloc_bound_stats.upper,  eloc_bound_stats.lower};
+    mpi->comm.all_reduce_in_place_n(&buf[0], 6, std::plus<>());
+    if (not mpi->comm.root()) return;
+    long vb_tot = buf[0], vb_up = buf[1];
+    long el_tot = buf[3], el_up = buf[4], el_lo = buf[5];
+    auto pct = [](long h, long t) { return t > 0 ? 100.0 * double(h) / double(t) : 0.0; };
+
+    app_log(1, "\n****************************************************");
+    app_log(1,   "          Bounding-box trigger statistics           ");
+    app_log(1,   "****************************************************");
+
+    app_log(1, " Force-bias (vbias) clamp  [|vbias| > vbias_bound*sqrt(dt)], per (walker,field):");
+    if (vb_tot == 0)
+      app_log(1, "   not measured (host-side counting only).");
+    else
+      app_log(1, "   operations: {}   hits: {} ({:.4f}%)  [upper/magnitude: {} ({:.4f}%)]",
+              vb_tot, vb_up, pct(vb_up, vb_tot), vb_up, pct(vb_up, vb_tot));
+
+    app_log(1, " Local-energy (eloc) clamp  [eloc outside Eshift +/- cutoff_scale*sqrt(2/dt)], per walker:");
+    if (el_tot == 0)
+      app_log(1, "   not triggered (0 operations counted).");
+    else
+      app_log(1, "   operations: {}   hits: {} ({:.4f}%)  [upper: {} ({:.4f}%), lower: {} ({:.4f}%)]",
+              el_tot, el_up + el_lo, pct(el_up + el_lo, el_tot),
+              el_up, pct(el_up, el_tot), el_lo, pct(el_lo, el_tot));
+    app_log(1,   "****************************************************\n");
+  }
+
 
 protected:
   // mpi_context
@@ -386,7 +431,7 @@ protected:
   double upper_cutoff_scale = 10.0;
   double lower_cutoff_scale = 1.0;
   bool natural_shift = true;
-  bool symmetric_split = false;
+  bool symmetric_split = true;
   bool use_cp_constraint = false;
   bool use_real_vbias = false;
 
@@ -394,6 +439,10 @@ protected:
   int npol_in_vHS   = 1;
 
   bool debug_verbosity = false;
+
+  // Diagnostic counters: how often the propagation bounding boxes are triggered over the run.
+  BoundStats vbias_bound_stats;  // force-bias (vbias) clamp, counted per (walker,field)
+  BoundStats eloc_bound_stats;   // local-energy (eloc) clamp, counted per walker
 
   // excited state propagator
   bool excitedState = false;

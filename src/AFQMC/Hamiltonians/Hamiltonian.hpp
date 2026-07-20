@@ -56,11 +56,6 @@ public:
   Hamiltonian& operator=(Hamiltonian const& other) = default;
   Hamiltonian& operator=(Hamiltonian&& other) = default;
 
-  auto getNuclearCoulombEnergy()
-  {
-    return std::visit([&](auto&& a) { return a.getNuclearCoulombEnergy(); }, var);
-  }
-
   template<MEMORY_SPACE MEM, class... Args>
   HamiltonianOperations<MEM> getHamiltonianOperations(Args&&... args)
   {

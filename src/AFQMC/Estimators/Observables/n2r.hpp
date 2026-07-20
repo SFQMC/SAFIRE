@@ -40,7 +40,7 @@ namespace afqmc
  * In a device compilation, this would need out-of-card gemm available.
  */
 template<class Alloc>
-class n2r : public AFQMCInfo
+class n2r
 {
   // allocators
   using Allocator = device_allocator<ComplexType>;
@@ -75,7 +75,7 @@ class n2r : public AFQMCInfo
 
 public:
   n2r(afqmc::TaskGroup_& tg_,
-      AFQMCInfo& info,
+      int NMO_,
       ptree pt,
       WALKER_TYPES wlk,
       bool host_mem,
@@ -83,7 +83,7 @@ public:
       aux_Allocator orb_alloc_,
       int nave_ = 1,
       int bsize = 1)
-      : AFQMCInfo(info),
+      : NMO{NMO_},
         aux_alloc(alloc_),
         block_size(bsize),
         nave(nave_),
@@ -307,6 +307,8 @@ private:
   TaskGroup_& TG;
 
   WALKER_TYPES walker_type;
+
+  int NMO = -1;
 
   int dm_size;
 

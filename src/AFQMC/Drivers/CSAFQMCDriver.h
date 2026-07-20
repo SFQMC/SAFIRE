@@ -38,7 +38,6 @@ public:
               int stp0,
               std::vector<double>&& eshft_,
               ptree pt_in,
-              std::vector<std::reference_wrapper<AFQMCInfo>>&& info_,
               std::vector<std::reference_wrapper<Wavefunction>>&& wfn_,
               std::vector<std::reference_wrapper<Propagator>>&& prpg_,
               std::vector<EstimatorHandler>&& estim_)
@@ -47,17 +46,15 @@ public:
         project_title(title),
         block0(blk0),
         step0(stp0),
-        info_ref(std::move(info_)),
         wfn_ref(std::move(wfn_)),
         prop_ref(std::move(prpg_)),
         estimators(std::move(estim_)),
         weight_reset_period(0.0),
         Eshift(std::move(eshft_))
   {
-    if(info_ref.size() != wfn_ref.size() or
-       info_ref.size() != prop_ref.size() or
-       info_ref.size() != estimators.size() or
-       info_ref.size() != Eshift.size() )
+    if(wfn_ref.size() != prop_ref.size() or
+       wfn_ref.size() != estimators.size() or
+       wfn_ref.size() != Eshift.size() )
       APP_ABORT("Error in CSAFQMCDriver::CSAFQMCDriver(): Incompatible dimensions."); 
     name = "CSAFQMCDriver";
     // convert user input to verbose input
@@ -156,8 +153,6 @@ protected:
   RealType dt;
   int block0, step0;
   std::string combine_type = "max";
-
-  std::vector<std::reference_wrapper<AFQMCInfo>> info_ref;
 
   std::vector<std::reference_wrapper<Wavefunction>> wfn_ref;
 

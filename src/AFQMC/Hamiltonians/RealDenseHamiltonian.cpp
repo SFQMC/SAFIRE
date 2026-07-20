@@ -69,7 +69,6 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   utils::check(nspin_in_PsiT == nspin, base_error + "nspin mismatch in PsiT {} != {} expected", nspin_in_PsiT, nspin);
   utils::check(nspin==1 or npol==1, base_error + "Both nspin and npol can not be >1 simultaneously."); 
 
-  // MAM: should this be zero with CLOSED shell???
   int nact_dn = (type == COLLINEAR ? PsiT(0,1).extent(0) : 0l);
 
   std::vector<long> Idata(8);
@@ -78,13 +77,12 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   if (mpi->comm.root()) 
   {
     file = h5::file(fileName,'r');
-    h5::group g = h5::group(file).open_group("Hamiltonian"); 
+    h5::group root = h5::group(file);
+    h5::group g = root.open_group("Hamiltonian");
 
     h5::h5_read(g,"dims",Idata);
 
-    std::vector<RealType> E_(2);
-    h5::h5_read(g,"Energies",E_);
-    E0 = E_[0] + E_[1];
+    E0 = read_energy_offset(root, "std", type, nact_up, nact_dn);
 
     {
       // Too many choices, consider forcing standard structure (e.g. [ns_f][np_f*NMO][np_f*NMO]

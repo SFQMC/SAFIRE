@@ -96,6 +96,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   nda::array<int,1> nchol;
   nda::array<double,2> qpoints;
 
+  ComplexType E0(0);
   h5::file file;
   // Read nbnd, BZ info, etc from h5. Only root reads
   if (mpi->comm.root())
@@ -103,6 +104,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     file = h5::file(fileName,'r');
     h5::group grp = h5::group(file);
     format = get_hamiltonian_format(grp);
+    E0 = read_energy_offset(grp, format, type, nel_up, nel_dn);
     if(format == "coqui") {
       // open subgroup
       h5::group hgrp = grp.open_group("System");
@@ -230,6 +232,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   mpi->comm.broadcast_value(nkpts_ibz);
   mpi->comm.broadcast_value(nqpts_ibz);
   mpi->comm.broadcast_value(Q0_index);
+  mpi->comm.broadcast_value(E0);
   if(not mpi->comm.root()) {
     minusq.resize(nkpts);
     qk_to_k2.resize(nkpts,nkpts);
@@ -450,8 +453,6 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     }
     block = vt();
   });
-
-  ComplexType E0 = NuclearCoulombEnergy + FrozenCoreEnergy;
 
   return HamiltonianOperations<MEM>(
       KP3IndexFactorization<MEM>(mpi,type,nbnd,Q0_index,std::move(nocc),std::move(minusq),

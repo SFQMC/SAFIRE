@@ -38,13 +38,13 @@ namespace afqmc
  * For collinear, the spin ordering is (a,a,a,a), (a,a,b,b), (b,b,b,b) 
  */
 template<MEMORY_SPACE MEM>
-class full2rdm : public AFQMCInfo
+class full2rdm
 {
 public:
-  full2rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi_, AFQMCInfo& info, ptree pt, WALKER_TYPES wlk, int nave_ = 1)
-      : AFQMCInfo{info},
-        mpi{mpi_},
+  full2rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi_, ptree pt, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
+      : mpi{mpi_},
         walker_type{wlk},
+        NMO{NMO_},
         apply_rotation{false}
   {
     app_log(1,"  --  Adding 2RDM (TwoRDM) estimator. -- ");
@@ -154,6 +154,8 @@ private:
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
   WALKER_TYPES walker_type;
+
+  int NMO{};
 
   int ncalls = 0;
   bool apply_rotation{};

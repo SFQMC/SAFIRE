@@ -68,7 +68,6 @@ public:
         ph_excitations<int, ComplexType, MEM>&& abij_,
         nda::array<csrM,1>&& op_spin_det_coupling_,
         nda::array<csrM,1>&& orbs_,
-        ComplexType nce,
         [[maybe_unused]] int targetNW = 1)
       : mpi(mpi_),
         walker_type(wlk),
@@ -76,8 +75,7 @@ public:
         HamOp(std::move(hop_)),
         abij(std::move(abij_)),
         OpSpinDetCouplings(std::move(op_spin_det_coupling_)),
-        OrbMats(std::move(orbs_)),
-        NuclearCoulombEnergy(nce)
+        OrbMats(std::move(orbs_))
   {
     /* To me, PHMSD is not compatible with walker_type=CLOSED unless
      * the MSD expansion is symmetric with respect to spin. For this, 
@@ -131,6 +129,13 @@ public:
       for(int i=0; i<ndown; i++)
         utils::check(refc[nup+i] == i, " Error: PHMSD algorithm=1 requires refc[i]==i.\n\n");
     }
+
+    if( auto val = pt.get_optional<int>("nwalk_block_size") ) nwalk_block_size = *val;
+    if( auto val = pt.get_optional<int>("ndet_block_size") )  ndet_block_size  = *val;
+    utils::check(nwalk_block_size > 0, " Error: PHMSD nwalk_block_size must be > 0.");
+    utils::check(ndet_block_size  > 0, " Error: PHMSD ndet_block_size must be > 0.");
+    app_log(1, " PHMSD energy batching: nwalk_block_size={}, ndet_block_size={}.",
+            nwalk_block_size, ndet_block_size);
   }
 
   static ptree interpret_inputs(const ptree pt0)
@@ -141,13 +146,18 @@ public:
     // leave as a true optional, to bypass issue with default value
     if( auto val = pt0.get_optional<int>("algorithm") )
       pt1.put("algorithm", *val);
+    if( auto val = pt0.get_optional<int>("nwalk_block_size") )
+      pt1.put("nwalk_block_size", *val);
+    if( auto val = pt0.get_optional<int>("ndet_block_size") )
+      pt1.put("ndet_block_size", *val);
     std::unordered_set<std::string> pass_through_keys = {
-      "system",
       "name",
       "ndets_to_read",
       "restart_file",
       "filename",
-      "rediag"
+      "rediag",
+      "nwalk_block_size",
+      "ndet_block_size"
     };
     io::compare_known_keys("particle-hole multi-Slater det. (PHMSD) Wavefunction", pt1, pt0,pass_through_keys);
     return pt1;
@@ -173,11 +183,6 @@ public:
 // This needs to depend on algorithm!!!
     HamOp.runtime_optimization(G);
   }
-
-  /*
-   * Returns the memory space.
-   */
-  constexpr auto get_memory_space() const { return MEM; }
 
   /*
    * Expectation value of Hubbard-Stratonovich potential with respect to trial wave-function.
@@ -362,12 +367,14 @@ public:
 
   ComplexType getReferenceWeight(int i) const { return std::get<2>(*abij.configuration(i)); }
 
-  int total_number_of_references() const { return abij.number_of_configurations(); } 
+  int total_number_of_references() const { return abij.number_of_configurations(); }
+
+  int getNMO() const { return NMO; }
 
   /*
    * Returns the reference Slater Matrices needed for back propagation.  
    */
-  void getReferences(int number_of_references, nda::MemoryArrayOfRank<3> auto&& Refs) 
+  void getReferences(nda::MemoryArrayOfRank<3> auto& Refs) 
   {
     using nda::range;
     auto all = range::all;
@@ -376,12 +383,10 @@ public:
     int nspin = walker_type == COLLINEAR ? 2 : 1;
     int nspin_in_wfn = OrbMats.extent(0);
     int npol = (walker_type == NONCOLLINEAR ? 2 : 1);
-    if(number_of_references==0) return;
-    if(number_of_references < 0) number_of_references = total_number_of_references(); 
-    utils::check(number_of_references > 0 and
-                 number_of_references <= Refs.extent(0),
-                 "Invalid number_of_references: {} should fulfill 0 < n <= {}!", number_of_references, Refs.extent(0));
-    utils::check(Refs.extent(1) == npol*NMO and Refs.extent(2) == nel, "Size mismatch");
+
+    int number_of_references = abij.number_of_configurations();
+    Refs.resize(number_of_references, npol*NMO, nel);
+    
     if (RefOrbMats.extent(0) < number_of_references)
     {
       RefOrbMats = memory::share_from_root(*mpi, [&] {
@@ -455,7 +460,13 @@ protected:
   // 2: calculate Fapbq and call ph_energy_Fapbq
   int energy_algorithm = 0;
 
-  ph_excitations<int, ComplexType, MEM> abij; 
+  // energy_shared_alg1 batching (optional wavefunction inputs; see interpret_inputs):
+  //   nwalk_block_size : walkers processed per energy batch  (bounds KEright/Tdn)
+  //   ndet_block_size  : determinants per excitation-shell block (bounds R/KEl)
+  int nwalk_block_size = 8;
+  int ndet_block_size  = 4096;
+
+  ph_excitations<int, ComplexType, MEM> abij;
 
   // sparse matrix with opposite spin determinant couplings
   nda::array<PsiT_Matrix<MEM>,1> OpSpinDetCouplings;
@@ -464,8 +475,6 @@ protected:
 
   // store references for back propagation
   memory::const_shared_array<HOST_MEMORY,ComplexType,3> RefOrbMats;
-
-  ComplexType NuclearCoulombEnergy;
 
   /*
    * Node-shared dense (daggered) copies of the orbital matrices.
