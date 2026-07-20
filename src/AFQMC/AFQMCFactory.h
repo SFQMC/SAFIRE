@@ -73,7 +73,7 @@ public:
        mpi(_mpi),
        HamFac(),
        WSetFac(),
-       WfnFac{},
+       WfnFac(HamFac),   // pass HamFac so StochasticWfn `inner_hamiltonian` can be built on demand
        PropFac(),
        DriverFac(mpi, WSetFac, PropFac, WfnFac, HamFac)
   {

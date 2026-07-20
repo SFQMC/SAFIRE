@@ -211,6 +211,12 @@ Wavefunction<MEM> buildStochasticNomsdWavefunction(
   auto inner_HOps = h_var.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
   auto inner_ci   = ci;
   auto inner_orbs = orbs;
+  // Thread the resolved system id (fromHDF5 defaults it to the wfn name) into pt so the inner stack's
+  // propagator sees it: the stochastic-wfn input block carries no `system` key, and
+  // buildStochasticInnerStack reads pt["system"] WITHOUT a default -> boost ptree "No such node
+  // (system)" otherwise. Mirrors the inner_hamiltonian `var_pt.put("system", system)` in fromHDF5.
+  if (not pt.get_child_optional("system"))
+    pt.put("system", system);
   auto inner_stack =
       buildStochasticInnerStack<MEM, MType>(NMO, nup, ndown, pt, mpi, std::move(inner_HOps), std::move(inner_ci),
                                             std::move(inner_orbs), walker_type, targetNW);
