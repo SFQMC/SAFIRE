@@ -562,15 +562,6 @@ void WalkerSetBase<_M_>::reset(int n)
            targetN,targetN_per_rank,mpi->comm.size());
 }
 
-template<MEMORY_SPACE _M_>
-bool WalkerSetBase<_M_>::clean()
-{
-  walker_buffer.resize(0, walker_size);
-  bp_buffer.resize(0, bp_walker_size);
-  tot_num_walkers = targetN = targetN_per_rank = 0;
-  return true;
-}
-
 /*
 * Resizes back propagation buffers
 * Must be called before any call to bp-related routines.

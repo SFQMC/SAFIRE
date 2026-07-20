@@ -144,44 +144,6 @@ public:
     populate_from_guess_ft(UDV);
   }
 
-  /// Legacy constructor for stochastic inner-walker setup and unit tests: parse
-  /// walker_type from pt, infer dims from AFQMCInfo, defer walker allocation.
-  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                ptree pt,
-                AFQMCInfo& info,
-                std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r)
-      : mpi(_mpi_),
-        rng(r),
-        walker_size(1),
-        walker_memory_usage(0),
-        bp_walker_size(0),
-        bp_walker_memory_usage(0),
-        bp_pos(-1),
-        tau_step(0),
-        history_pos(0),
-        walkerType(UNDEFINED_WALKER_TYPE),
-        finite_temperature(false),
-        tot_num_walkers(0),
-        walker_buffer(0, 1),
-        bp_buffer(0, 0),
-        load_balance(UNDEFINED_LOAD_BALANCE),
-        pop_control(UNDEFINED_BRANCHING),
-        min_weight(0.05),
-        max_weight(4.0)
-  {
-    parse(pt);
-    walkerType         = parse_walker_type(pt);
-    finite_temperature = pt.get<bool>("finite_temperature", false);
-    std::array<int, 3> dims;
-    if (walkerType == NONCOLLINEAR)
-      dims = {2 * info.NMO, info.nup + info.ndown, 0};
-    else if (walkerType == COLLINEAR)
-      dims = {info.NMO, info.nup, info.ndown};
-    else
-      dims = {info.NMO, info.nup, 0};
-    setup(dims);
-  }
-
   /*
    * Returns the memory space.
    */

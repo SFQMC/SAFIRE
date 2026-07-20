@@ -41,7 +41,7 @@ namespace afqmc
  * being performed. The resulting RDM will be [spin][x*NMO][x*NMO],
  * where x:2 for NONCOLLINEAR and 1 for everything else.
  */
-class generalizedFockMatrix : public AFQMCInfo
+class generalizedFockMatrix
 {
   // allocators
   using Allocator        = device_allocator<ComplexType>;
@@ -78,13 +78,13 @@ class generalizedFockMatrix : public AFQMCInfo
 
 public:
   generalizedFockMatrix(afqmc::TaskGroup_& tg_,
-                        AFQMCInfo& info,
+                        int NMO_,
                         [[maybe_unused]] ptree pt,
                         WALKER_TYPES wlk,
                         Wavefunction& wfn_, 
                         int nave_ = 1,
                         int bsize = 1)
-      : AFQMCInfo(info),
+      : NMO{NMO_},
         TG(tg_),
         walker_type(wlk),
 	wfn(wfn_),
@@ -214,6 +214,8 @@ private:
   TaskGroup_& TG;
 
   WALKER_TYPES walker_type;
+
+  int NMO = -1;
 
   Wavefunction& wfn;
 

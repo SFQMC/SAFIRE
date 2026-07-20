@@ -596,15 +596,11 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver(std::string title, int m_series, p
       Eshift[i-ns0] = E0[i];
   }
 
-  std::vector<std::reference_wrapper<AFQMCInfo>> AFinfo_ref;
-  std::vector<AFQMCInfo> AFinfo_store;
   std::vector<std::reference_wrapper<WalkerSet>> wset_ref;
   std::vector<std::reference_wrapper<Wavefunction>> wfn_ref;
   std::vector<std::reference_wrapper<Propagator>> prop_ref;
   std::vector<EstimatorHandler> estimators;
   
-  AFinfo_ref.reserve(nsys);
-  AFinfo_store.reserve(nsys);
   wset_ref.reserve(nsys);
   wfn_ref.reserve(nsys);
   prop_ref.reserve(nsys);
@@ -660,14 +656,6 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver(std::string title, int m_series, p
       app_warning("CSAFQMCDriver: walker HDF5 restart is not yet ported to the overhaul WalkerSetFactory API.");
     wset_ref.emplace_back(std::ref(wset));
 
-    {
-      const auto wfn_pt   = WfnFac.get_input(wfn_name);
-      const auto filename = wfn_pt.template get<std::string>("filename");
-      const auto [NMO, nup, ndown] = read_info_from_wfn(filename, "any");
-      AFinfo_store.emplace_back(wfn_name, NMO, nup, ndown);
-      AFinfo_ref.emplace_back(std::ref(AFinfo_store.back()));
-    }
-
     wfn0.Energy(wset);
     if (not restarted)
     {
@@ -711,7 +699,7 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver(std::string title, int m_series, p
   gTG.Global().barrier();
 / *
   CSAFQMCDriver driver(gTG.Global(), title, m_series, block0, step0, 
-		       std::move(Eshift), pt_in, std::move(AFinfo_ref), 
+		       std::move(Eshift), pt_in,
                        std::move(wfn_ref), std::move(prop_ref), 
                        std::move(estimators));
 
