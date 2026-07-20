@@ -22,7 +22,9 @@
 #include "numerics/nda_functions.hpp"
 #include "nda/blas.hpp"
 #include "nda/tensor.hpp"
+#if defined(ENABLE_DEVICE)
 #include "numerics/device_kernels/kernels.h" // kernels::device::{accumulate,diag_trace_accumulate} (device only)
+#endif
 
 namespace sfqmc
 {
@@ -86,12 +88,19 @@ void accumulate_spin_full_g(MatE&& E,
         for (int k = 0; k < NMO; ++k)
           GF(n * NMO + i, k) = G3(n, i, k);
   }
+#if defined(ENABLE_DEVICE)
   else
   {
     // GF viewed as [nwalk, NMO, NMO] is exactly G3; the nda copy handles a strided G3 (collinear block).
     auto GF3d = nda::reshape(GF, std::array<long, 3>{nwalk, NMO, NMO});
     GF3d() = G3();
   }
+#else
+  else
+  {
+    static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+  }
+#endif
 
   // Twban[(n,i)][(i',nc)] = sum_k GF[(n,i)][k] * Lankf[(i',nc)][k], over the FULL (i',nc) range.
   memory::buffered_array<MEM, ComplexType, 2> Twban(nwalk * NMO, NMO * local_nCV);
@@ -112,6 +121,7 @@ void accumulate_spin_full_g(MatE&& E,
       E(n, 1) -= ComplexType(0.5) * scl * exx;
     }
   }
+#if defined(ENABLE_DEVICE)
   else
   {
     // CuTENSOR contraction with the (a<->b) index swap; the two operands are the same T4D relabeled.
@@ -119,6 +129,12 @@ void accumulate_spin_full_g(MatE&& E,
     nda::tensor::contract(ComplexType(1.0), T4D, "wabc", T4D, "wbac", ComplexType(0.0), exx, "w");
     kernels::device::accumulate(ComplexType(-0.5) * scl, exx, E(all, 1));
   }
+#else
+  else
+  {
+    static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+  }
+#endif
 
   if (addEJ)
   {
@@ -130,10 +146,17 @@ void accumulate_spin_full_g(MatE&& E,
         for (int a = 0; a < NMO; ++a)
           Kl(n, all) += T4D(n, a, a, all);
     }
+#if defined(ENABLE_DEVICE)
     else
     {
       kernels::device::diag_trace_accumulate(T4D, Kl);
     }
+#else
+    else
+    {
+      static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+    }
+#endif
   }
   else
   {
@@ -193,12 +216,19 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
       for (int n = 0; n < nwalk; ++n)
         E(n, 2) += ComplexType(0.5) * scl * scl *
                    static_cast<ComplexType>(nda::blas::dot(Kl(n, all), Kl(n, all)));
+#if defined(ENABLE_DEVICE)
     else
     {
       memory::buffered_array<MEM, ComplexType, 1> ej(nwalk);
       nda::tensor::contract(ComplexType(1.0), Kl(), "wc", Kl(), "wc", ComplexType(0.0), ej, "w");
       kernels::device::accumulate(ComplexType(0.5) * scl * scl, ej, E(all, 2));
     }
+#else
+    else
+    {
+      static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+    }
+#endif
   }
 }
 
@@ -264,12 +294,19 @@ void energy_collinear(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> 
       for (int n = 0; n < nwalk; ++n)
         E(n, 2) += ComplexType(0.5) * scl * scl *
                    static_cast<ComplexType>(nda::blas::dot(Kl(n, all), Kl(n, all)));
+#if defined(ENABLE_DEVICE)
     else
     {
       memory::buffered_array<MEM, ComplexType, 1> ej(nwalk);
       nda::tensor::contract(ComplexType(1.0), Kl(), "wc", Kl(), "wc", ComplexType(0.0), ej, "w");
       kernels::device::accumulate(ComplexType(0.5) * scl * scl, ej, E(all, 2));
     }
+#else
+    else
+    {
+      static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+    }
+#endif
   }
 }
 

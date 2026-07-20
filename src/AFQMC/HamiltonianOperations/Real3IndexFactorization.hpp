@@ -837,8 +837,12 @@ private:
         hij_host(i * NMO + k) = hij_h(0, i, k);
     if constexpr (MEM != HOST_MEMORY)
     {
+#if defined(ENABLE_DEVICE)
       Lank_full_flat_ = nda::to_device(Lank_host);
       hij_full_flat_  = nda::to_device(hij_host);
+#else
+      static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+#endif
     }
     else
     {

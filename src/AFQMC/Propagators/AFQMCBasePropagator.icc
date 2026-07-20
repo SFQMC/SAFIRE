@@ -180,6 +180,7 @@ void AFQMCBasePropagator<MEM>::Propagate_conditioned(WlkSet& wset,
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
   auto [nspins, npol] = walkerTypeToDims(walker_type);
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
 
@@ -237,6 +238,7 @@ void AFQMCBasePropagator<MEM>::Propagate_free(WlkSet& wset, RealType dt, int nt)
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
   auto [nspins, npol] = walkerTypeToDims(walker_type);
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
 
@@ -290,7 +292,10 @@ template<class WlkSet>
 void AFQMCBasePropagator<MEM>::Propagate_given_fields(WlkSet& wset,
      nda::MemoryArrayOfRank<2> auto& X, RealType dt)
 {
+  auto walker_type = wset.getWalkerType();
   int nwalk = wset.size();
+  int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+  const int NMO = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   int nCV   = wfn->number_of_cholesky_vectors();
   utils::check(X.shape() == std::array<long,2>{nwalk,nCV},
                "Error in Propagate_given_fields: X shape mismatch.");

@@ -72,8 +72,28 @@ inline ComplexType stable_complex_sum_row(Mat2D const& terms, int row, int ncols
 
 } // namespace
 
+namespace stochastic_wfn_detail
+{
+inline nda::array<ComplexType, 3> guess_matrices_to_rank3(std::vector<nda::matrix<ComplexType>> const& guess,
+                                                          int naeb)
+{
+  utils::check(not guess.empty(), "StochasticWfn: empty initial guess.");
+  const int nspin = int(guess.size());
+  const int NMO   = int(guess[0].extent(0));
+  const int naea  = int(guess[0].extent(1));
+  nda::array<ComplexType, 3> A(nspin, NMO, naea);
+  A(0, nda::ellipsis{}) = guess[0];
+  if (nspin > 1)
+    A(1, nda::range::all, nda::range(naeb)) = guess[1];
+  return A;
+}
+} // namespace stochastic_wfn_detail
+
 template<MEMORY_SPACE MEM, class devPsiT>
-StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
+StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
+                                             int NMO_,
+                                             int nup_,
+                                             int ndown_,
                                              ptree pt_in,
                                              std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_in,
                                              HamiltonianOperations<MEM>&& outer_hop_,
@@ -81,12 +101,14 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(AFQMCInfo& info,
                                              nda::array<devPsiT, 2>&& orbs_,
                                              std::unique_ptr<StochasticInnerStack<MEM, devPsiT>>&& inner_stack_in,
                                              WALKER_TYPES wlk,
-                                             ComplexType nce,
                                              [[maybe_unused]] int targetNW)
-    : AFQMCInfo(info),
+    : system_(std::move(system)),
+      NMO{NMO_},
+      nup{nup_},
+      ndown{ndown_},
       mpi_(std::move(mpi_in)),
-      nomsd_(nomsd_inputs(pt_in), info.NMO, info.nup, info.ndown, wlk, mpi_, std::move(outer_hop_), std::move(ci_),
-             std::move(orbs_), nce, targetNW),
+      nomsd_(nomsd_inputs(pt_in), NMO_, nup_, ndown_, wlk, mpi_, std::move(outer_hop_), std::move(ci_),
+             std::move(orbs_), targetNW),
       inner_stack_(std::move(inner_stack_in))
 {
   if (inner_stack_ == nullptr)
@@ -249,20 +271,14 @@ WalkerSet<MEM> const& StochasticWfn<MEM, devPsiT>::inner_wset() const
 
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::initialize_inner_walkers(
-    ptree const& walker_pt, memory::const_shared_array<HOST_MEMORY, ComplexType, 3> const& initial_guess, int NAEB)
+    ptree const& walker_pt, std::vector<nda::matrix<ComplexType>> const& initial_guess, int NAEB)
 {
   if (inner_ensemble_.initialized)
     APP_ABORT("Error in StochasticWfn::initialize_inner_walkers: inner walkers already initialized.");
-  inner_ensemble_.wset = std::make_unique<WalkerSet<MEM>>(
-      make_WalkerSet<MEM>(mpi_, walker_pt, static_cast<AFQMCInfo&>(*this), inner_ensemble_.rng));
-  nda::array<ComplexType, 3> guess_host(initial_guess());
-  inner_anchor_ = guess_host;
-#if defined(ENABLE_DEVICE)
-  if constexpr (MEM == DEVICE_MEMORY)
-    inner_ensemble_.wset->resize(inner_nwalkers_, nda::to_device(guess_host));
-  else
-#endif
-    inner_ensemble_.wset->resize(inner_nwalkers_, guess_host);
+  auto wt = WalkerSet<MEM>::parse_walker_type(walker_pt);
+  inner_ensemble_.wset =
+      std::make_unique<WalkerSet<MEM>>(mpi_, walker_pt, inner_ensemble_.rng, wt, initial_guess, inner_nwalkers_);
+  inner_anchor_ = stochastic_wfn_detail::guess_matrices_to_rank3(initial_guess, NAEB);
   (void)NAEB;
   inner_ensemble_.initialized = true;
 }
@@ -1488,17 +1504,8 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
 // the stochastic trial bra <Psi_T| ~ (1/P) sum_p <psi_p|.
 template<MEMORY_SPACE MEM, class devPsiT>
 template<class RefMat>
-void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat&& Refs)
+void StochasticWfn<MEM, devPsiT>::fill_references_from_draw(int number_of_references, RefMat&& Refs)
 {
-  if (not bp_uses_inner_ensemble())
-  {
-    nomsd_.getReferences(number_of_references, std::forward<RefMat>(Refs));
-    return;
-  }
-  // Free-projection BP references are device-safe: draw_bp_reference_ensemble() has a device branch (same
-  // inner propagator as the verified dynamic path) and the fill loop uses device nda::tensor ops.
-  {
-  // Dedicated free-projection draw of the P reference samples (walker-independent), fresh per BP block.
   draw_bp_reference_ensemble();
   using nda::range;
   auto all = range::all;
@@ -1522,7 +1529,22 @@ void StochasticWfn<MEM, devPsiT>::getReferences(int number_of_references, RefMat
       nda::tensor::add(nda::conj(inner.SlaterMatrices(Beta)(p, all, all)), "ij", Refs(p, all, range(nup, nel)),
                        "ij");
   }
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class RefMat>
+void StochasticWfn<MEM, devPsiT>::getReferences(RefMat&& Refs)
+{
+  if (not bp_uses_inner_ensemble())
+  {
+    nomsd_.getReferences(Refs);
+    return;
   }
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  const int nel         = nup + (wt == COLLINEAR ? ndown : 0);
+  const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
+  Refs.resize(inner_nwalkers_, npol * NMO, nel);
+  fill_references_from_draw(inner_nwalkers_, Refs);
 }
 
 } // namespace afqmc
