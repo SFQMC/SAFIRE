@@ -35,12 +35,6 @@ template<MEMORY_SPACE MEM>
 class PropagatorFactory
 {
 public:
-  PropagatorFactory(std::map<std::string, AFQMCInfo>& info) : 
-	InfoMap(info)
-  {}
-
-  ~PropagatorFactory() {}
-
   bool is_constructed(const std::string& ID)
   {
     auto xml = propBlocks.find(ID);
@@ -104,9 +98,6 @@ public:
   }
 
 protected:
-  // reference to container of AFQMCInfo objects
-  std::map<std::string, AFQMCInfo>& InfoMap;
-
   // generates a new Propagator and returns the pointer to the base class
   Propagator<MEM> buildPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, ptree pt, Wavefunction<MEM>& wfn, std::shared_ptr<utils::RandomGenerator_t<MEM>> rng)
   {

@@ -27,6 +27,18 @@ namespace afqmc
 {
 
 template<MEMORY_SPACE _M_>
+WALKER_TYPES WalkerSetBase<_M_>::parse_walker_type(const ptree& pt0)
+{
+  std::string walker_type = pt0.get<std::string>("walker_type", "collinear");
+  return utils::parse_enum<WALKER_TYPES>(walker_type, {
+    {CLOSED, "closed-shell RHF", {"closed"}},
+    {NONCOLLINEAR, "GHF", {"non-collinear", "noncollinear"}},
+    {COLLINEAR, "UHF/ROHF", {"collinear"}},
+    {FULLYPOLARIZED, "beta sector identically 0", {"fullypolarized", "fully-polarized"}},
+  }, "walker");
+}
+
+template<MEMORY_SPACE _M_>
 void WalkerSetBase<_M_>::parse(ptree pt_in)
 {
   app_log(1,"\n****************************************************");
@@ -38,10 +50,10 @@ void WalkerSetBase<_M_>::parse(ptree pt_in)
   app_log(2,"WalkerSetBase input:");
   app_log(2, io::to_string(pt));
   app_log(2, "");
-  // initialize using verbose input
-  std::string name, walker_type, load_balance_type, pop_control_type;
+  // initialize using verbose input. The walker type is resolved by the caller
+  // (parse_walker_type) and passed to the constructor, so it is not parsed here.
+  std::string name, load_balance_type, pop_control_type;
   name              = pt.get<std::string>("name");
-  walker_type       = pt.get<std::string>("walker_type");
   load_balance_type = pt.get<std::string>("load_balance_type");
   pop_control_type  = pt.get<std::string>("pop_control_type");
   min_weight        = pt.get<double>("min_weight");
@@ -51,19 +63,6 @@ void WalkerSetBase<_M_>::parse(ptree pt_in)
     app_log(1, "Walker resides in CPU memory");
   else
     app_log(1, "Walker resides in GPU memory");
-
-    
-  walkerType = utils::parse_enum<WALKER_TYPES>(walker_type, {
-    {CLOSED, "closed-shell RHF", {"closed"}},
-    {NONCOLLINEAR, "GHF", {"non-collinear", "noncollinear"}},
-    {COLLINEAR, "UHF/ROHF", {"collinear"}},
-    {FULLYPOLARIZED, "beta sector identically 0", {"fullypolarized", "fully-polarized"}},
-  }, "walker");
-
-  finite_temperature = pt.get<bool>("finite_temperature", false); // defaults to false for GS
-  utils::check(!finite_temperature ||
-              ( walkerType == COLLINEAR || walkerType == NONCOLLINEAR ),
-              "finite temperature requires collinear or noncollinear walkers");
 
   load_balance = utils::parse_enum<LOAD_BALANCE_ALGORITHM>(load_balance_type, {
     {SIMPLE, "blocking 1-1 swap", {"simple"}},
@@ -81,61 +80,24 @@ void WalkerSetBase<_M_>::parse(ptree pt_in)
 }
 
 template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::setup()
+void WalkerSetBase<_M_>::setup(std::array<int, 3> dims)
 {
   LoadBalance_timer = AFQMCTimer.add("WalkerSetBase::loadBalance");
   Branching_timer = AFQMCTimer.add("WalkerSetBase::branching");
 
-  // careful! These are only used to calculate memory needs and access points/partitionings
-  int ncol = nup;
-  int nrow = NMO;
+  utils::check(walkerType != UNDEFINED_WALKER_TYPE,
+               " Error: Undefined walker_type on WalkerSetBase::setup ");
+  utils::check(!finite_temperature ||
+               (walkerType == COLLINEAR || walkerType == NONCOLLINEAR),
+               " Error: finite temperature requires a collinear or noncollinear walker type ");
+
   // wlk_descriptor: {nmo, naea, naeb, nback_prop, nCV, nRefs, nHist}
-  if(!finite_temperature){
-    if (walkerType == CLOSED)
-    {
-      wlk_desc = {NMO, nup, 0, 0, 0, 0, 0};
-    }
-    else if (walkerType == COLLINEAR)
-    {
-      wlk_desc = {NMO, nup, ndown, 0, 0, 0, 0};
-      ncol += ndown;
-    }
-    else if (walkerType == NONCOLLINEAR)
-    {
-      wlk_desc = {2 * NMO, nup + ndown, 0, 0, 0, 0, 0};
-      nrow += NMO;
-      ncol += ndown;
-    }
-    else if (walkerType == FULLYPOLARIZED)
-    {
-      wlk_desc = {NMO, nup, 0, 0, 0, 0, 0};
-    }
-    else
-    {
-      app_error(" Error: Incorrect ground state walker_type on WalkerSetBase::setup ");
-      APP_ABORT("");
-    }
-  }
-  else //finite temperature
-  {
-    ncol = NMO;
-    if (walkerType == COLLINEAR)
-    {
-      wlk_desc = {NMO, NMO, NMO, 0, 0, 0, 0};
-      ncol += NMO;
-    }
-    else if (walkerType == NONCOLLINEAR)
-    {
-      wlk_desc = {2*NMO, 2*NMO, 0, 0, 0, 0, 0};
-      nrow += NMO;
-      ncol += NMO;
-    }
-    else
-    {
-      app_error(" Error: finite temperature currently requires a collinear or noncollinear walker type ");
-      APP_ABORT("");
-    }
-  }
+  // dims = {rows, naea, naeb}: rows already carries the 2*NMO factor for
+  // noncollinear, naeb is 0 unless COLLINEAR. These are the resolved Slater
+  // matrix dimensions (inferred from the initial guess or the HDF5 dims).
+  wlk_desc = {dims[0], dims[1], dims[2], 0, 0, 0, 0};
+  int nrow = dims[0];
+  int ncol = dims[1] + dims[2];
 
   //   T = 0
   //   - SlaterMatrix:         NCOL*NROW
@@ -306,6 +268,51 @@ void WalkerSetBase<_M_>::resize(int n)
            targetN,targetN_per_rank,mpi->comm.size());
 }
 
+/*
+ * Adds/removes the number of walkers in the set to match the requested value.
+ * Walkers are removed from the end of the set 
+ *      and buffer capacity remains unchanged in this case.
+ * New walkers are initialized from the supplied array A. 
+ * Capacity is increased if necessary.
+ * Target Populations are set to n.
+*/
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& A)
+{
+  auto all = nda::range::all;
+  int nspin = (walkerType == COLLINEAR ? 2 : 1);
+  utils::check_shape(A, "A", nspin, wlk_desc[0], wlk_desc[1]);
+  reserve(n);
+  if (n > tot_num_walkers)
+  {
+    auto pos = tot_num_walkers;
+    while (pos < n)
+    {
+      walker_buffer(pos, all) = ComplexType(0.0);
+      reference w0(walker_buffer(pos, all), data_displ, wlk_desc);
+      w0.SlaterMatrix(Alpha) = A(0, nda::ellipsis{});
+      if (walkerType == COLLINEAR)
+        w0.SlaterMatrix(Beta) = A(1, all, nda::range(wlk_desc[2]));
+      pos++;
+    }
+    auto r = nda::range(tot_num_walkers, n);
+    walker_buffer(r, data_displ[WEIGHT]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[OVLP])  = ComplexType(1.0);
+    walker_buffer(r, data_displ[PHASE]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[PHASE1]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[PHASE2]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[PHASE3]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[THETA])  = ComplexType(0.0);
+  }
+  tot_num_walkers  = n;
+  set_slot_lineage_identity();
+  targetN_per_rank = tot_num_walkers;
+  targetN          = GlobalPopulation();
+  utils::check(targetN == targetN_per_rank * mpi->comm.size(),
+               " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
+               targetN, targetN_per_rank, mpi->comm.size());
+}
+
 /**
  * @brief Processes walker data by gathering, broadcasting, and scaling walker-related information.
  *
@@ -417,153 +424,88 @@ void WalkerSetBase<_M_>::popControl(std::vector<ComplexType>& curData, bool skip
 }
 
 /*
- * Adds/removes the number of walkers in the set to match the requested value.
- * Walkers are removed from the end of the set 
- *      and buffer capacity remains unchanged in this case.
- * New walkers are initialized from the supplied array A. 
- * Capacity is increased if necessary.
- * Target Populations are set to n.
+ * Reserves capacity for n walkers and initializes all n of them to valid
+ * default values (unit weight/overlap/phase, zero Slater matrices). This
+ * always leaves the set fully populated with n walkers.
 */
 template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& A)
-{ 
+void WalkerSetBase<_M_>::allocate_walkers(int n)
+{
   auto all = nda::range::all;
-  int nspin = (walkerType == COLLINEAR ? 2 : 1);
-  utils::check_shape(A, "A", nspin, wlk_desc[0], wlk_desc[1]);
   reserve(n);
-  if (n > tot_num_walkers)
-  { 
-    auto pos = tot_num_walkers;
-    // careful here!!!
-    while (pos < n)
-    { 
-      walker_buffer(pos,all) = ComplexType(0.0);
-      reference w0(walker_buffer(pos,all), data_displ, wlk_desc);
-      w0.SlaterMatrix(Alpha) = A(0,nda::ellipsis{});
-      if (walkerType == COLLINEAR)
-        w0.SlaterMatrix(Beta) = A(1,all,nda::range(wlk_desc[2]));
-      pos++;
-    }
-    auto r = nda::range(tot_num_walkers,n); 
-    walker_buffer(r,data_displ[WEIGHT]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[OVLP]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE1]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE2]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE3]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[THETA]) = ComplexType(0.0);
-  }
   tot_num_walkers = n;
+  auto r = nda::range(0, n);
+  walker_buffer(r, all) = ComplexType(0.0);
+  walker_buffer(r, data_displ[WEIGHT]) = ComplexType(1.0);
+  walker_buffer(r, data_displ[PHASE])  = ComplexType(1.0);
+  walker_buffer(r, data_displ[PHASE1]) = ComplexType(1.0);
+  walker_buffer(r, data_displ[PHASE2]) = ComplexType(1.0);
+  walker_buffer(r, data_displ[PHASE3]) = ComplexType(1.0);
+  walker_buffer(r, data_displ[THETA])  = ComplexType(0.0);
+  if (finite_temperature)
+  {
+    // finite-T keeps log(ovlp) instead of ovlp
+    walker_buffer(r, data_displ[LOGSCL_UP])  = ComplexType(0.0);
+    walker_buffer(r, data_displ[LOGSCL_DN])  = ComplexType(0.0);
+    walker_buffer(r, data_displ[IS_UNITARY]) = ComplexType(1.0);
+  }
+  else
+  {
+    walker_buffer(r, data_displ[OVLP]) = ComplexType(1.0);
+  }
   set_slot_lineage_identity(); // well-defined lineage before the first population-control event
-  targetN_per_rank  = tot_num_walkers;
-  targetN         = GlobalPopulation();
-  utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
+  targetN_per_rank = tot_num_walkers;
+  targetN          = GlobalPopulation();
+  utils::check(targetN == targetN_per_rank * mpi->comm.size(),
            " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
            targetN,targetN_per_rank,mpi->comm.size());
 }
 
 /*
- * Adds/removes the number of walkers in the set to match the requested value.
- * Walkers are removed from the end of the set 
- *      and buffer capacity remains unchanged in this case.
- * New finite-T walkers are initialized from the supplied matrices. 
- * Capacity is increased if necessary.
- * Target Populations are set to n.
+ * Copies the per-spin initial guess matrices into every walker's Slater matrix.
+ * Each matrix is already exactly (rows x naea) / (NMO x naeb), so no truncation
+ * is needed.
 */
 template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& U, 
-                                       nda::MemoryArrayOfRank<2> auto const& D, 
-                                       nda::MemoryArrayOfRank<3> auto const& V)
-{ 
+void WalkerSetBase<_M_>::populate_from_guess(const std::vector<nda::matrix<ComplexType>>& guess)
+{
   auto all = nda::range::all;
-  int nspin = (walkerType == COLLINEAR ? 2 : 1);
-  utils::check(U.shape() == std::array<long,3>{nspin,wlk_desc[0],wlk_desc[1]} , "Size mismatch.");
-  reserve(n);
-  if (n > tot_num_walkers)
-  { 
-    auto pos = tot_num_walkers;
-    // careful here!!!
-    while (pos < n)
-    { 
-      walker_buffer(pos,all) = ComplexType(0.0);
-      reference w0(walker_buffer(pos,all), data_displ, wlk_desc);
-      w0.UMatrix(Alpha) = U(0,nda::ellipsis{});
-      w0.DMatrix(Alpha) = D(0,nda::ellipsis{});
-      w0.VMatrix(Alpha) = V(0,nda::ellipsis{});
-      if (walkerType == COLLINEAR)
-      {
-        w0.UMatrix(Beta) = U(1,all,nda::range(wlk_desc[2]));
-        w0.DMatrix(Beta) = D(1,nda::range(wlk_desc[2]));
-        w0.VMatrix(Beta) = V(1,all,nda::range(wlk_desc[2]));
-      }
-      pos++;
-    }
-    auto r = nda::range(tot_num_walkers,n); 
-    walker_buffer(r,data_displ[WEIGHT]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[OVLP]) = ComplexType(0.0); //finite-T keeps log(ovlp), instead of ovlp 
-    walker_buffer(r,data_displ[PHASE]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE1]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE2]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE3]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[LOGSCL_UP]) = ComplexType(0.0);
-    walker_buffer(r,data_displ[LOGSCL_DN]) = ComplexType(0.0);
-    walker_buffer(r,data_displ[IS_UNITARY]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[THETA]) = ComplexType(0.0);
+  utils::check((walkerType == COLLINEAR) == (guess.size() == 2),
+               "WalkerSetBase::populate_from_guess: guess spin count does not match walker_type.");
+  for (int i = 0; i < tot_num_walkers; i++)
+  {
+    reference w0(walker_buffer(i, all), data_displ, wlk_desc);
+    w0.SlaterMatrix(Alpha) = guess[0];
+    if (guess.size() > 1)
+      w0.SlaterMatrix(Beta) = guess[1];
   }
-  tot_num_walkers = n;
-  set_slot_lineage_identity(); // well-defined lineage before the first population-control event
-  targetN_per_rank  = tot_num_walkers;
-  targetN         = GlobalPopulation();
-  utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
-           " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
-           targetN,targetN_per_rank,mpi->comm.size());
 }
 
+/*
+ * Copies the rank-4 finite-temperature guess {3, nspin, rows, naea} into every
+ * walker's U/D/V matrices. The D slab is a full matrix; only its diagonal is
+ * used. The set must already be sized and default-initialized (weights, phases,
+ * LOGSCL_*, IS_UNITARY) by allocate_walkers, so this only fills U/D/V.
+*/
 template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<4> auto const& UDV)
-{ 
+void WalkerSetBase<_M_>::populate_from_guess_ft(nda::MemoryArrayOfRank<4> auto const& UDV)
+{
   auto all = nda::range::all;
   int nspin = (walkerType == COLLINEAR ? 2 : 1);
   utils::check(UDV.shape() == std::array<long,4>{3,nspin,wlk_desc[0],wlk_desc[1]}, "Size mismatch.");
-  reserve(n);
-  if (n > tot_num_walkers)
-  { 
-    auto pos = tot_num_walkers;
-    // careful here!!!
-    while (pos < n)
-    { 
-      walker_buffer(pos,all) = ComplexType(0.0);
-      reference w0(walker_buffer(pos,all), data_displ, wlk_desc);
-      w0.UMatrix(Alpha) = UDV(0,0,nda::ellipsis{});
-      w0.DMatrix(Alpha) = nda::diagonal(UDV(1,0,nda::ellipsis{}));
-      w0.VMatrix(Alpha) = UDV(2,0,nda::ellipsis{});
-      if (walkerType == COLLINEAR)
-      {
-        w0.UMatrix(Beta) = UDV(0,1,all,nda::range(wlk_desc[2]));
-        w0.DMatrix(Beta) = nda::diagonal(UDV(1,1,all,nda::range(wlk_desc[2])));
-        w0.VMatrix(Beta) = UDV(2,1,all,nda::range(wlk_desc[2]));
-      }
-      pos++;
+  for (int i = 0; i < tot_num_walkers; i++)
+  {
+    reference w0(walker_buffer(i,all), data_displ, wlk_desc);
+    w0.UMatrix(Alpha) = UDV(0,0,nda::ellipsis{});
+    w0.DMatrix(Alpha) = nda::diagonal(UDV(1,0,nda::ellipsis{}));
+    w0.VMatrix(Alpha) = UDV(2,0,nda::ellipsis{});
+    if (walkerType == COLLINEAR)
+    {
+      w0.UMatrix(Beta) = UDV(0,1,all,nda::range(wlk_desc[2]));
+      w0.DMatrix(Beta) = nda::diagonal(UDV(1,1,all,nda::range(wlk_desc[2])));
+      w0.VMatrix(Beta) = UDV(2,1,all,nda::range(wlk_desc[2]));
     }
-    auto r = nda::range(tot_num_walkers,n); 
-    walker_buffer(r,data_displ[WEIGHT]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[OVLP]) = ComplexType(0.0); //finite-T keeps log(ovlp), instead of ovlp 
-    walker_buffer(r,data_displ[PHASE]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE1]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE2]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[PHASE3]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[LOGSCL_UP]) = ComplexType(0.0);
-    walker_buffer(r,data_displ[LOGSCL_DN]) = ComplexType(0.0);
-    walker_buffer(r,data_displ[IS_UNITARY]) = ComplexType(1.0);
-    walker_buffer(r,data_displ[THETA]) = ComplexType(0.0);
   }
-  tot_num_walkers = n;
-  set_slot_lineage_identity(); // well-defined lineage before the first population-control event
-  targetN_per_rank  = tot_num_walkers;
-  targetN         = GlobalPopulation();
-  utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
-           " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
-           targetN,targetN_per_rank,mpi->comm.size());
 }
 
 // for finite-T : resets walker set for start of each sweep
@@ -572,12 +514,14 @@ template<MEMORY_SPACE _M_>
 void WalkerSetBase<_M_>::reset(int n)
 { 
   auto all = nda::range::all;
-  int npol = (walkerType == NONCOLLINEAR ? 2 : 1);
 
   reserve(n);
 
-  memory::array<MEM, ComplexType, 2> IMat(npol*NMO,npol*NMO);
-  memory::array<MEM, ComplexType, 1> IVec(npol*NMO, ComplexType(1.0));
+  // FT walker U/V blocks are square with leading dimension wlk_desc[0] (= npol*NMO),
+  // and D is stored as its diagonal of the same length.
+  int dim = wlk_desc[0];
+  memory::array<MEM, ComplexType, 2> IMat(dim, dim);
+  memory::array<MEM, ComplexType, 1> IVec(dim, ComplexType(1.0));
 
   math::set_identity(IMat);
 
@@ -618,10 +562,19 @@ void WalkerSetBase<_M_>::reset(int n)
            targetN,targetN_per_rank,mpi->comm.size());
 }
 
+template<MEMORY_SPACE _M_>
+bool WalkerSetBase<_M_>::clean()
+{
+  walker_buffer.resize(0, walker_size);
+  bp_buffer.resize(0, bp_walker_size);
+  tot_num_walkers = targetN = targetN_per_rank = 0;
+  return true;
+}
+
 /*
 * Resizes back propagation buffers
 * Must be called before any call to bp-related routines.
-*/  
+*/
 template<MEMORY_SPACE _M_>
 void WalkerSetBase<_M_>::resize_bp(int nbp, int nCV, int nref)
 {
@@ -633,24 +586,21 @@ void WalkerSetBase<_M_>::resize_bp(int nbp, int nCV, int nref)
   wlk_desc[4] = nCV;
   wlk_desc[5] = nref;
   wlk_desc[6] = 3 * nbp;
-  int ncol    = nup;
-  int nrow    = NMO;
-  if (walkerType != CLOSED and walkerType != FULLYPOLARIZED)
+  // For all T=0 walker types (the only ones supported here), the Slater matrix
+  // dimensions are recovered directly from wlk_desc: nrow = wlk_desc[0] (already
+  // carries the 2*NMO factor for NONCOLLINEAR), ncol = wlk_desc[1] + wlk_desc[2]
+  // (wlk_desc[2] is 0 for the non-COLLINEAR cases).
+  int nrow, ncol;
+  if (walkerType == CLOSED or walkerType == FULLYPOLARIZED or
+      walkerType == COLLINEAR or walkerType == NONCOLLINEAR)
   {
-    if (walkerType == COLLINEAR)
-    {
-      ncol += ndown;
-    }
-    else if (walkerType == NONCOLLINEAR)
-    {
-      nrow += NMO;
-      ncol += ndown;
-    }
-    else
-    {
-      app_error(" Error: Incorrect walker_type on WalkerSetBase::setup ");
-      APP_ABORT("");
-    }
+    nrow = wlk_desc[0];
+    ncol = wlk_desc[1] + wlk_desc[2];
+  }
+  else
+  {
+    app_error(" Error: Incorrect walker_type on WalkerSetBase::resize_bp ");
+    APP_ABORT("");
   }
   // store nbpx3 history of weights and factors in circular buffer
   int cnt            = 0;

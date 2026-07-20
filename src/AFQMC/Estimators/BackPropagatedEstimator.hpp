@@ -51,24 +51,17 @@ template<MEMORY_SPACE MEM>
 class BackPropagatedEstimator : public EstimatorBase<MEM>
 {
 
-  using EstimatorBase<MEM>::NMO;
-  using EstimatorBase<MEM>::nup;
-  using EstimatorBase<MEM>::ndown;
-
 public:
   BackPropagatedEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                          AFQMCInfo& info,
                           std::string name,
                           ptree pt_in,
-                          WALKER_TYPES wlk,
                           WalkerSet<MEM>& wset,
                           Wavefunction<MEM>& wfn,
                           Propagator<MEM>& prop,
                           bool impsamp_ = true)
-      : EstimatorBase<MEM>(info),
-        mpi(_mpi),
-        walker_type(wlk),
-        observ0(mpi, info, name, pt_in, wlk, wfn),
+      : mpi(_mpi),
+        walker_type(wset.getWalkerType()),
+        observ0(mpi, name, pt_in, walker_type, wfn.getNMO(), wfn),
         wfn0(std::addressof(wfn)),
         prop0(std::addressof(prop)),
         max_nback_prop(10),
@@ -195,8 +188,6 @@ public:
     accumulated_in_last_block = false;
     int bp_step               = wset.getBPPos();
     int nwalk = wset.size();
-    int nel = nup + (walker_type == COLLINEAR ? ndown : 0);
-    int npol = (walker_type == NONCOLLINEAR ? 2 : 1);
     utils::check(bp_step>0," Error: Found bp_step <=0 in BackPropagate::accumulate_block. ");
     utils::check(bp_step<=max_nback_prop, " Error: max_nback_prop in back propagation estimator must be commensurate with measure_interval.");
     utils::check(max_nback_prop <= wset.NumBackProp()," Error: max_nback_prop > wset.NumBackProp() ");
@@ -233,7 +224,11 @@ public:
 
     // 1. allocate memory. Can loop over walkers if nrefs is too large 
     int number_of_references = wfn0->total_number_of_references();
-    memory::buffered_array<MEM,ComplexType,4> Refs(nwalk, number_of_references, npol*NMO, nel);
+
+    memory::buffered_array<MEM,ComplexType,3> Ref0;
+    wfn0->getReferences(Ref0);
+    
+    memory::buffered_array<MEM,ComplexType,4> Refs(nwalk, Ref0.extent(0), Ref0.extent(1), Ref0.extent(2));
     memory::buffered_array<MEM,ComplexType,2> logdetR(nwalk, number_of_references);
 
     // 2. setup back propagated references.

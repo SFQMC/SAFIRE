@@ -37,8 +37,8 @@ template<MEMORY_SPACE MEM>
 class BasicEstimator : public EstimatorBase<MEM>
 {
 public:
-  BasicEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi, AFQMCInfo info, [[maybe_unused]] std::string title, ptree pt_in, bool impsamp_)
-      : EstimatorBase<MEM>(info), mpi(_mpi), nwfacts(0), importanceSampling(impsamp_), timers(false)
+  BasicEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi, [[maybe_unused]] std::string title, ptree pt_in, bool impsamp_)
+      : mpi(_mpi), nwfacts(0), importanceSampling(impsamp_), timers(false)
   {
     // convert user input to verbose input
     ptree pt = interpret_inputs(pt_in);

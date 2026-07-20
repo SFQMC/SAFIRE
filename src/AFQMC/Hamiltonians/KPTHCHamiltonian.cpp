@@ -110,6 +110,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
 
 
   // only root reads
+  ComplexType E0(0);
   h5::file file;
   std::optional<h5::group> grp, hgrp;
   if (mpi->comm.root())
@@ -117,6 +118,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     file = h5::file(fileName,'r');
     grp = std::make_optional(h5::group(file));
     format = get_hamiltonian_format(*grp);
+    E0 = read_energy_offset(*grp, format, type, nel_up, nel_dn);
     // open subgroup
     utils::check(format == "coqui", base_error + " Only coqui format is allowed. Format found:{}",format);
     hgrp = std::make_optional(grp->open_group("System"));
@@ -227,6 +229,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   mpi->comm.broadcast_value(nkpts_ibz);
   mpi->comm.broadcast_value(nqpts_ibz);
   mpi->comm.broadcast_value(Q0_index);
+  mpi->comm.broadcast_value(E0);
   if(not mpi->comm.root()) {
     minusq.resize(nkpts);
     qk_to_k2.resize(nkpts,nkpts);
@@ -356,7 +359,6 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   });
   auto haj = half_rotate_hamiltonian<MEM>(*mpi, nel, nspin, npol, nspin_in_H1, npol_in_H1, NMO, PsiT(), hfull());
 
-  ComplexType E0 = NuclearCoulombEnergy + FrozenCoreEnergy;
   return HamiltonianOperations<MEM>(KPTHCOps<MEM>(mpi,type,NMO,nel_up,nel_dn,nkpts,Q0_index,std::move(nocc),
      std::move(minusq),std::move(qk_to_k2),std::move(H1),std::move(haj),std::move(Xsiu),
      std::move(Ydsau),std::move(Luv),std::move(Zuv),std::move(Xsiu_rot),std::move(Ydsau_rot),

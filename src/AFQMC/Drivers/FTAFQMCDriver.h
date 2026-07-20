@@ -27,11 +27,10 @@ namespace sfqmc
 namespace afqmc
 {
 template<MEMORY_SPACE MEM>
-class FTAFQMCDriver : public AFQMCInfo
+class FTAFQMCDriver
 {
 public:
   FTAFQMCDriver(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-              AFQMCInfo& info,
               std::string& title,
               int mser,
               int blk0,
@@ -41,8 +40,7 @@ public:
               Wavefunction<MEM>& wfn_,
               Propagator<MEM>& prpg_,
               EstimatorHandler<MEM>& estim_)
-      : AFQMCInfo(info),
-        mpi(_mpi),
+      : mpi(_mpi),
         m_series(mser),
         project_title(title),
         block0(blk0),

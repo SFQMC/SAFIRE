@@ -31,11 +31,9 @@ namespace sfqmc
 namespace afqmc
 {
 template<MEMORY_SPACE MEM>
-class EstimatorBase : public AFQMCInfo
+class EstimatorBase
 {
 public:
-  EstimatorBase(AFQMCInfo& info) : AFQMCInfo(info) {}
-
   virtual ~EstimatorBase() {}
 
   virtual void accumulate_block(double time, WalkerSet<MEM>& wlks) = 0;

@@ -120,31 +120,24 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(777));
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown}));
-
   ptree ham_pt;
   ham_pt.put("name","ham0");
-  ham_pt.put("system","info0");
   ham_pt.put("filename",hamil_file);
 
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   auto& ham = HamFac.getHamiltonian(mpi, "ham0");
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
   ptree wlk_pt;
   wlk_pt.put("name","wset0");
-  wlk_pt.put("system","info0");
   wlk_pt.put("walker_type", walkerTypeToString(type));
-  auto wset = make_WalkerSet<MEM>(mpi, wlk_pt, InfoMap["info0"], rng);
 
   int nspin = (type == COLLINEAR) ? 2 : 1;
   int npol  = (type == NONCOLLINEAR) ? 2 : 1;
 
   ptree wfn_pt;
   wfn_pt.put("name","wfn0");
-  wfn_pt.put("system","info0");
   wfn_pt.put("filename",wfn_file);
 
   int nwalk = 2;
@@ -154,15 +147,15 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
 
   ptree prop_pt;
   prop_pt.put("name","prop0");
-  prop_pt.put("system","info0");
 
-  PropagatorFactory<MEM> PropgFac(InfoMap);
+  PropagatorFactory<MEM> PropgFac;
   PropgFac.push("prop0", prop_pt);
   auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
 
-  auto initial_guess = WfnFac.getInitialGuess("wfn0");
-  REQUIRE(initial_guess.shape() == std::array<long,3>{nspin,npol*NMO,nup});
-  wset.resize(nwalk, initial_guess);
+  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
+  REQUIRE(int(initial_guess.size()) == nspin);
+  REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
+  auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
   // generate P1 with dt=0 so the BP RDM should match the mixed estimate
   // we cannot actually use exactly 0 because that changes the sparsity structure in model hamiltonians
@@ -181,7 +174,7 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
 
     std::vector<EstimPtr> estimators;
     estimators.push_back(std::make_unique<BackPropagatedEstimator<MEM>>(
-        mpi, InfoMap["info0"], "none", est_pt, type, wset, wfn, prop, true));
+        mpi, "none", est_pt, wset, wfn, prop, true));
 
     std::string file = test_hdf_name(UTEST_WFN, UTEST_HAMIL, "run1");
     std::ofstream out;
@@ -219,7 +212,7 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
 
     std::vector<EstimPtr> estimators2;
     estimators2.push_back(std::make_unique<BackPropagatedEstimator<MEM>>(
-        mpi, InfoMap["info0"], "none", est_pt2, type, wset, wfn, prop, true));
+        mpi, "none", est_pt2, wset, wfn, prop, true));
 
     std::string file = test_hdf_name(wfn_file, hamil_file, "run2");
     std::ofstream out;

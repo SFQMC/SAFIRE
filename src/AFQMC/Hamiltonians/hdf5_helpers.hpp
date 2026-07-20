@@ -75,6 +75,45 @@ inline std::string get_hamiltonian_format(h5::group& grp)
   return "";
 }
 
+// Reads the constant energy offset from an integral file: E_nuclear + E_frozen_core,
+// plus the Madelung electron self-interaction for periodic (coqui) systems.
+// nup/ndn are the trial-WF occupations of each spin block (ndn == 0 for CLOSED and
+// NONCOLLINEAR), from which the total electron count is derived for the Madelung term.
+// Must be called on the MPI root (the caller broadcasts the result).
+inline ComplexType read_energy_offset(h5::group& grp, std::string const& format,
+                                      WALKER_TYPES type, long nup, long ndn)
+{
+  ComplexType E0(0);
+  if(format == "std") {
+    h5::group hgrp = grp.open_group("Hamiltonian");
+    nda::vector<RealType> energy_offsets;  // resized by the read; [nuclear, frozen_core]
+    nda::h5_read(hgrp, "Energies", energy_offsets);
+    E0 = nda::sum(energy_offsets);
+  } else if(format == "coqui") {
+    h5::group hgrp = grp.open_group("System");
+    ComplexType nuc(0), fzc(0), madelung(0);
+    if(H5Aexists(h5::hid_t(hgrp), "nuclear_energy")) {
+      h5::h5_read_attribute(hgrp, "nuclear_energy", nuc);
+    }
+    if(H5Aexists(h5::hid_t(hgrp), "frozen_core_energy")) {
+      h5::h5_read_attribute(hgrp, "frozen_core_energy", fzc);
+    }
+    if(H5Aexists(h5::hid_t(hgrp), "madelung_constant")) {
+      h5::h5_read_attribute(hgrp, "madelung_constant", madelung);
+      long nelec = (type == CLOSED) ? 2 * nup : nup + ndn;  // NONCOLLINEAR: ndn == 0
+      madelung *= -1.0 * nelec;
+    }
+    app_log(2, "");
+    app_log(2, " - Nuclear coulomb energy: {}", nuc);
+    app_log(2, " - Frozen Core energy: {}", fzc);
+    app_log(2, " - Electron self-interaction energy: {}", madelung);
+    E0 = nuc + fzc + madelung;
+  } else {
+    utils::check(false, "Error in read_energy_offset: Invalid format: {}", format);
+  }
+  return E0;
+}
+
 inline std::tuple<int, int, int> read_info_from_wfn(std::string fileName, std::string type)
 {
   app_log(1, "Reading info from wfn file: {} of type {} ", fileName, type);

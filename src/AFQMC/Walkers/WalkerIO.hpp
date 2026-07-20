@@ -166,77 +166,71 @@ bool dumpSamplesHDF5([[maybe_unused]] WalkerSet& wset,
 */
 }
 
-// fh5 opened on all ranks with read-only
-template<class WalkerSet>
-bool restartFromHDF5(WalkerSet& wset,
-                     int nW_per_rank,
-                     h5::file& fh5,
-                     bool set_to_target)
+// Reads a walker restart file and returns a fully constructed, populated walker
+// set sized to this rank's share of the walkers in the file. fh5 opened on all
+// ranks read-only. The set is built from the given ptree/rng/walker_type with
+// dimensions taken from the file, upholding the invariant that a walker set is
+// always born fully populated (no empty intermediate state).
+template<class WalkerSet, class MpiContext, class Rng>
+WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
+                              ptree pt,
+                              std::shared_ptr<Rng> rng,
+                              WALKER_TYPES walker_type,
+                              h5::file& fh5,
+                              int nWalkers,
+                              bool set_to_target)
 {
   auto all = nda::range::all;
-  auto mpi = wset.get_mpi();
+  // Finite-temperature restart is not supported: this routine always builds a
+  // ground-state (finite_temperature = false) walker set from the file dims.
 
-  std::vector<int> Idata(7);
   h5::group grp(fh5);
   utils::check(grp.has_subgroup("Walkers"), " restartFromHDF5: Missing Walkers dataset.");
-  h5::group sgrp = grp.open_group("Walkers"); 
+  h5::group sgrp = grp.open_group("Walkers");
   utils::check(sgrp.has_subgroup("WalkerSet"), " restartFromHDF5: Missing WalkerSet dataset.");
   h5::group wgrp = sgrp.open_group("WalkerSet");
+
+  std::vector<int> Idata(7);
   h5::h5_read(wgrp, "dims", Idata);
-
-  auto walker_type = wset.getWalkerType();
-
   int nWtot      = Idata[0];
-  int wlk_nterms = Idata[2];
+  int wlk_nterms = Idata[2];  // per-walker IO record length
   int NMO        = Idata[4];
-  int nup       = Idata[5];
-  int ndn       = Idata[6];
-  bool ft = wset.isFiniteTemperature();
-  utils::check(wlk_nterms == wset.walkerSizeIO(), 
-               " Inconsistent walker restart file: IO size, NMO, nup, ndown, WalkerType: {}, {}, {}, {}, {} ",
-               wset.walkerSizeIO(), NMO, nup, ndn, walkerTypeToString(wset.getWalkerType()));
+  int nup        = Idata[5];
+  int ndn        = Idata[6];
 
-  // walker range belonging to this comm 
-  int nW0, nWN;
+  std::array<int, 3> dims;  // {rows, naea, naeb} = wlk_desc[0..2]
+  if (walker_type == NONCOLLINEAR)
+    dims = {2 * NMO, nup + ndn, 0};
+  else if (walker_type == COLLINEAR)
+    dims = {NMO, nup, ndn};
+  else
+    dims = {NMO, nup, 0};
+
+  // walker range belonging to this comm
+  int nW0, nWN;  // [nW0, nWN) = global walker indices owned by this rank
   if (set_to_target)
   {
-    utils::check(nWtot >= nW_per_rank * mpi->comm.size(),
+    utils::check(nWtot >= nWalkers * mpi->comm.size(),
                  " Error: Not enough walkers in restart file.");
-    nW0 = nW_per_rank * mpi->comm.rank();
-    nWN = nW0 + nW_per_rank;
+    nW0 = nWalkers * mpi->comm.rank();
+    nWN = nW0 + nWalkers;
   }
   else
   {
-    utils::check(nWtot % mpi->comm.size() == 0, 
+    utils::check(nWtot % mpi->comm.size() == 0,
                  " Error: Number of walkers in restart file must be divisible by number of task groups.");
     nW0 = (nWtot / mpi->comm.size()) * mpi->comm.rank();
     nWN = nW0 + nWtot / mpi->comm.size();
   }
-
   int nw_local = nWN - nW0;
-  { // to limit scope
-    if(!ft){
-      int nspin = ((walker_type == COLLINEAR) ? 2 : 1);
-      int npol = ((walker_type == NONCOLLINEAR) ? 2 : 1);
-      nda::array<ComplexType, 3> Psi(nspin, npol*NMO, nup);
-      Psi() = ComplexType(0.0);
-      wset.resize(nw_local, Psi);
-    }
-    else{
-      int nspin = ((walker_type == COLLINEAR) ? 2 : 1);
-      int npol = ((walker_type == NONCOLLINEAR) ? 2 : 1);
-      nda::array<ComplexType, 3> U(nspin, npol*NMO, npol*NMO);
-      nda::array<ComplexType, 2> D(nspin, npol*NMO);
-      nda::array<ComplexType, 3> V(nspin, npol*NMO, npol*NMO);
-      U() = ComplexType(0.0);
-      D() = ComplexType(0.0);
-      V() = ComplexType(0.0);
-      wset.resize(nw_local, U, D, V);
-    }
-  }
+
+  WalkerSet wset(mpi, pt, rng, walker_type, dims, nw_local, false);
+  utils::check(wlk_nterms == wset.walkerSizeIO(),
+               " Inconsistent walker restart file: IO size {} != walkerSizeIO {}.",
+               wlk_nterms, wset.walkerSizeIO());
 
   std::vector<int> wlk_per_blk;
-  h5::h5_read(wgrp,"wlk_per_blk",wlk_per_blk);
+  h5::h5_read(wgrp, "wlk_per_blk", wlk_per_blk);
 
   nda::array<ComplexType, 2> Data;
 
@@ -251,15 +245,15 @@ bool restartFromHDF5(WalkerSet& wset,
       int nw_ = std::min(ni + wlk_per_blk[bi], nWN) - std::max(ni, nW0);
       Data.resize(nw_, wlk_nterms);
 
-      nda::range r(w0,w0+nw_);
-      nda::h5_read(wgrp,"walkers_"+std::to_string(bi),Data,std::tuple{r,all}); 
+      nda::range r(w0, w0 + nw_);
+      nda::h5_read(wgrp, "walkers_" + std::to_string(bi), Data, std::tuple{r, all});
       for (int n = 0; n < nw_; n++, nread++)
-        wset.copyFromIO(Data(n,all), nread);
+        wset.copyFromIO(Data(n, all), nread);
     }
     ni += wlk_per_blk[bi++];
   }
   mpi->comm.barrier();
-  return true;
+  return wset;
 }
 
 template<class WalkerSet>

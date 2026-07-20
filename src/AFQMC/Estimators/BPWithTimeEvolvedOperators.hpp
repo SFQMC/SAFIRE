@@ -54,35 +54,28 @@ template<MEMORY_SPACE MEM>
 class BPWithTimeEvolvedOperators : public EstimatorBase<MEM>
 {
 
-  using EstimatorBase<MEM>::NMO;
-  using EstimatorBase<MEM>::nup;
-  using EstimatorBase<MEM>::ndown;
-
 public:
   BPWithTimeEvolvedOperators(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                          AFQMCInfo& info,
                           std::string name,
                           ptree pt_in,
-                          WALKER_TYPES wlk,
                           WalkerSet<MEM>& wset,
                           Wavefunction<MEM>& wfn,
                           Propagator<MEM>& prop,
                           bool impsamp_ = true)
-      : EstimatorBase<MEM>(info),
-        mpi(_mpi),
-        walker_type(wlk),
+      : mpi(_mpi),
+        walker_type(wset.getWalkerType()),
         nspin( (walker_type==COLLINEAR) ? 2 : 1 ),
         npol( (walker_type==NONCOLLINEAR) ? 2 : 1 ),
-        observ0(mpi, info, name, pt_in, wlk, detail::get_number_of_averages(pt_in), wfn),
+        observ0(mpi, name, pt_in, walker_type, detail::get_number_of_averages(pt_in), wfn.getNMO(), wfn),
         prop0(std::addressof(prop)),
         ncalls(0),
         path_restoration(true),
         importanceSampling(impsamp_),
         extra_path_restoration(true),
         first(true),
-        X(wset.size(), nspin, npol*info.NMO, npol*info.NMO),
-        Y(wset.size(), nspin, npol*info.NMO, npol*info.NMO),
-        M(wset.size(), nspin, npol*info.NMO, npol*info.NMO)
+        X(wset.size(), nspin, npol*wfn.getNMO(), npol*wfn.getNMO()),
+        Y(wset.size(), nspin, npol*wfn.getNMO(), npol*wfn.getNMO()),
+        M(wset.size(), nspin, npol*wfn.getNMO(), npol*wfn.getNMO())
   {
     // convert user input to verbose input
     ptree pt = interpret_inputs(pt_in);

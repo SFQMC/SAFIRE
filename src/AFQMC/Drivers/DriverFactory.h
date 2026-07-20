@@ -37,13 +37,11 @@ class DriverFactory
 
 public:
   DriverFactory(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                std::map<std::string, AFQMCInfo>& info,
                 WalkerSetFactory<MEM>& wsetfac_,
                 PropagatorFactory<MEM>& pfac_,
                 WavefunctionFactory<MEM>& wfnfac_,
                 HamiltonianFactory& hfac)
-      : mpi(_mpi), 
-        InfoMap(info),
+      : mpi(_mpi),
         WSetFac(wsetfac_),
         PropFac(pfac_),
         HamFac(hfac),
@@ -68,7 +66,7 @@ public:
       pt1.put_child("wavefunction",*wfn_pt);
 		
       // empty value means default object
-      for( auto& ss : {"system", "walker_set", "hamiltonian", "propagator"})
+      for( auto& ss : {"walker_set", "hamiltonian", "propagator"})
 	      if( auto pt_child = pt0.get_child_optional(ss) ) 
           pt1.put_child(ss, *pt_child);
 
@@ -107,7 +105,6 @@ public:
       "dshift",
       "seed",
       "filename",
-      "system",
       "ndets_to_read",
     };
     io::compare_known_keys("Driver factory" ,pt1, pt0, pass_through_keys);
@@ -132,7 +129,7 @@ public:
       pt1.put_child("wavefunction",*wfn_pt);
 		
       // empty value means default object
-      for( auto& ss : {"system", "walker_set", "hamiltonian", "propagator"})
+      for( auto& ss : {"walker_set", "hamiltonian", "propagator"})
 	      if( auto pt_child = pt0.get_child_optional(ss) ) 
           pt1.put_child(ss, *pt_child);
 
@@ -172,7 +169,6 @@ public:
       "dshift",
       "seed",
       "filename",
-      "system",
       "ndets_to_read",
     };
     io::compare_known_keys("Driver factory" ,pt1, pt0, pass_through_keys);
@@ -235,9 +231,6 @@ private:
 
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
-  // container of AFQMCInfo objects
-  std::map<std::string, AFQMCInfo>& InfoMap;
-
   // WalkerHandler factory
   WalkerSetFactory<MEM>& WSetFac;
 
@@ -259,11 +252,8 @@ private:
   // WfnFac.get_input(wfn_name) exists and it contains a non-empty filename.
   std::string get_wavefunction_id(ptree pt);
 
-  // similar to get_or_push, but customized for system
-  std::string get_system_id(ptree pt, std::string wfn_name); 
-
-  std::tuple<std::string,std::string,std::string,std::string,std::string>
-    get_component_ids(ptree pt); 
+  std::tuple<std::string,std::string,std::string,std::string>
+    get_component_ids(ptree pt);
 
   // this routine gets the node with key "key" from the property tree ptree. Then:
   // 1. If the node has a non-empty string as a value, it will check that the Factory
@@ -274,14 +264,12 @@ private:
   // 3. If the node contains an empty string and no child ptrees or no node is found, 
   //    then the provided (default) ptree is pushed into the factory with a unique name.        
   template<class Factory>
-  std::string get_or_push(std::string key, ptree pt, Factory& fac, ptree default_ptree, std::string system)
+  std::string get_or_push(std::string key, ptree pt, Factory& fac, ptree default_ptree)
   {
     std::string name("");
     if( auto pt_ = pt.get_child_optional(key) ) {
       if( pt_->size() > 0 ) {
         // assume declaration
-        if( pt_->get<std::string>("system","") == "")
-          pt_->put("system",system);
         auto val = pt_->get<std::string>("name","");
         if( val != "" ) {
           fac.push(val, *pt_);
@@ -295,10 +283,8 @@ private:
         }
       } else if( auto val = pt_->get_value_optional<std::string>() ) {
         if(*val != "") {
-          // a name is provided, retrieve it to make sure it exists 
-          ptree dummy = fac.get_input(*val);
-          if( dummy.get<std::string>("system","") == "" )
-            fac.get_input(*val).put("system",system);
+          // a name is provided, retrieve it to make sure it exists (aborts if not)
+          fac.get_input(*val);
           return *val;
         }
       // if val=="", then construct further below

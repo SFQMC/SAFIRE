@@ -178,6 +178,11 @@ public:
     return std::visit([&](auto&& a) { return a.total_number_of_references(); }, var);
   }
 
+  int getNMO() const
+  {
+    return std::visit([&](auto&& a) { return a.getNMO(); }, var);
+  }
+
   template<class... Args>
   ComplexType getReferenceWeight(Args&&... args)
   {

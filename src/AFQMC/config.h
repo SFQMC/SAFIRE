@@ -248,19 +248,19 @@ public:
   // copies values from object
   void copyInfo(const AFQMCInfo& a)
   {
-    name           = a.name;
-    NMO            = a.NMO;
-    nup            = a.nup;
-    ndown          = a.ndown;
-    ntau           = a.ntau;
-    MS2            = a.MS2;
-    ISYM           = a.ISYM;
+    name  = a.name;
+    NMO   = a.NMO;
+    nup   = a.nup;
+    ndown = a.ndown;
+    ntau  = a.ntau;
+    MS2   = a.MS2;
+    ISYM  = a.ISYM;
   }
 
   // no fully spin polarized yet, not sure what it will break
   bool checkAFQMCInfoState()
   {
-    if ( nup < 1 || ndown < 0 ) 
+    if (nup < 1 || ndown < 0)
       return false;
     return true;
   }
@@ -269,24 +269,21 @@ public:
   {
     out << "AFQMC info: "
         << "name: " << name << ""
-        << "NMO: "      << NMO << ""
+        << "NMO: " << NMO << ""
         << "nup: " << nup << ""
         << "ndown: " << ndown << ""
-        << "ntau: " << ntau << std::endl; 
-// FIX        << "MS2: " << MS2 << std::endl; 
+        << "ntau: " << ntau << std::endl;
   }
 
   bool parse(ptree pt)
   {
-    name = pt.get<std::string>("name");
-    NMO      = pt.get<int>("NMO", -1);
-    nup     = pt.get<int>("nup", -1);
-    ndown     = pt.get<int>("ndown", -1);
-    ntau     = pt.get<int>("ntau", -1);
-    MS2      = pt.get<int>("MS2", -99);
-    ISYM      = pt.get<int>("ISYM", -1);
-    // fix! either specify MS2 or nup/ndown, but not both
-    // right now MS2 is not a useful option
+    name  = pt.get<std::string>("name");
+    NMO   = pt.get<int>("NMO", -1);
+    nup   = pt.get<int>("nup", -1);
+    ndown = pt.get<int>("ndown", -1);
+    ntau  = pt.get<int>("ntau", -1);
+    MS2   = pt.get<int>("MS2", -99);
+    ISYM  = pt.get<int>("ISYM", -1);
     return true;
   }
 };

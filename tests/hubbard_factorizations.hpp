@@ -592,7 +592,7 @@ HamiltonianOperations<MEM> build_kpthc(
 class HubbardModelHamOpsAccess : public ModelHamOpsGenerator {
 public:
   explicit HubbardModelHamOpsAccess()
-      : ModelHamOpsGenerator(dummy_pt(), ComplexType(0), ComplexType(0)) {}
+      : ModelHamOpsGenerator(dummy_pt()) {}
 
   using ModelHamOpsGenerator::addComponent;
   using ModelHamOpsGenerator::find_occupied_pairs;

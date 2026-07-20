@@ -50,31 +50,7 @@ namespace afqmc
 template<MEMORY_SPACE MEM>
 bool AFQMCFactory<MEM>::parse(const ptree pt_in)
 {
-  InfoMap.clear();
-
-  // first look only for AFQMCInfo
-  // Careful here, since all factories have a reference to this map
-  // It must be built before any factory is used
-  for(auto& it : pt_in)
-  {
-    std::string cname = it.first;
-    ptree pt = it.second;
-    if (cname == "system")
-    {
-      AFQMCInfo info;
-      info.parse(pt);
-      std::pair<std::map<std::string, AFQMCInfo>::iterator, bool> ret;
-      ret = InfoMap.insert(std::pair<std::string, AFQMCInfo>(info.name, info));
-      if (ret.second == false)
-      {
-        app_error("ERROR: AFQMCInfo already defined: {} ", info.name);
-        app_error_flush();
-        return false;
-      }
-    }
-  }
-
-  // now look for non-executable blocks
+  // look for non-executable blocks
   for(auto& it : pt_in)
   {
     std::string cname = it.first;

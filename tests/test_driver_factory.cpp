@@ -59,52 +59,27 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
              std::string hamil_file, std::string wfn_file,
              WALKER_TYPES walker_type = UNDEFINED_WALKER_TYPE, bool finiteT = false)
 {
-  std::map<std::string, AFQMCInfo> InfoMap;
-  HamiltonianFactory HamFac(InfoMap);
-  WalkerSetFactory<MEM> WSetFac(InfoMap);
+  HamiltonianFactory HamFac;
+  WalkerSetFactory<MEM> WSetFac;
   WavefunctionFactory<MEM> WfnFac{};
-  PropagatorFactory<MEM> PropFac(InfoMap);
-  DriverFactory<MEM> DriverFac(mpi, InfoMap, WSetFac, PropFac, WfnFac, HamFac);
-
-  const auto[NMO, nup, ndown] = read_info_from_wfn(wfn_file,"any");
-
-  AFQMCInfo info;//("sys0",NMO,nup,ndown,ntau);
-  
-  info.name = "sys0";
-  info.NMO = NMO;
-  if(finiteT){
-    //for finite-T wfn dims are [NMO, ntau, 0]
-    //walker matrices are NMO x NMO, not NMO x nelec
-    info.nup = NMO;
-    info.ndown = NMO;
-    info.ntau = nup;
-  }
-  else{
-    info.nup = nup;
-    info.ndown = ndown;
-  }
-
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>(info.name, info));
+  PropagatorFactory<MEM> PropFac;
+  DriverFactory<MEM> DriverFac(mpi, WSetFac, PropFac, WfnFac, HamFac);
 
   ptree ham_full;
   ham_full.put("name","ham0");
-  ham_full.put("system","sys0");
   ham_full.put("filename",hamil_file);
   HamFac.push("ham0", ham_full);
 
   ptree wfn_full;
   wfn_full.put("name","wfn0");
-  wfn_full.put("system","sys0");
   wfn_full.put("filename",wfn_file);
   WfnFac.push("wfn0", wfn_full);
 
   ptree wlk_full;
   wlk_full.put("name","wlk0");
-  wlk_full.put("system","sys0");
 
   ptree prop_full;
   prop_full.put("name","prop0");
-  prop_full.put("system","sys0");
   PropFac.push("prop0", prop_full);
 
   ptree wfn_min;

@@ -113,6 +113,11 @@ public:
     std::visit([&](auto&& a) { a.set_rng_block_size(std::forward<Args>(args)...); }, var);
   }
 
+  void printBoundStatistics()
+  {
+    std::visit([&](auto&& a) { a.printBoundStatistics(); }, var);
+  }
+
   private:
 
   std::variant<AFQMCBasePropagator<MEM>> var;

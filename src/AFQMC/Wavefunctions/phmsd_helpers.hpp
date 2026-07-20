@@ -293,7 +293,7 @@ void get_compact_ph_R_matrices(nda::MemoryVector auto const& iexcit,
 template<class Op, nda::MemoryMatrix Mat>
 void ph_excited_energies_first_step(ph_excitations<int, ComplexType, memory::get_memory_space<Mat>()>& abij,
          Mat&& wgt, nda::MemoryArrayOfRank<3> auto T,
-         nda::MemoryMatrix auto&& E, nda::MemoryArrayOfRank<3> auto&& KE, Op& HamOps)
+         nda::MemoryMatrix auto&& E, nda::MemoryArrayOfRank<3> auto&& KE, Op& HamOps, int ndet_block_size)
 {
   using nda::range;
   auto all = range::all;
@@ -317,22 +317,30 @@ void ph_excited_energies_first_step(ph_excitations<int, ComplexType, memory::get
     if( ndet * nex * nact > max3 ) max3 = ndet * nex * nact;
   }
 
+  // process each excitation shell in blocks of at most NDET_BLK determinants so the
+  // per-block temporaries (R, and the ndet-proportional intermediates inside
+  // ph_excited_energy) stay bounded regardless of the total determinant count.
+  const int NDET_BLK = ndet_block_size;
   for (int nex = 1, idet=1; nex < abij.maximum_excitation_number()[spin]; nex++)
   {
     int ndet = abij.number_of_unique_excitations(nex)[spin];
     if(ndet > 0) {
       auto iexcit=abij.get_excitation_list_device(spin, nex);
-      memory::buffered_array<MEM,ComplexType,4> R(nwalk, ndet, nex, nact);
-      R() = ComplexType(0.0);
+      for (int d0 = 0; d0 < ndet; d0 += NDET_BLK) {
+        int nb = (ndet - d0 < NDET_BLK) ? (ndet - d0) : NDET_BLK;
+        auto iexb = iexcit(range(long(d0)*2*nex, long(d0+nb)*2*nex));
+        memory::buffered_array<MEM,ComplexType,4> R(nwalk, nb, nex, nact);
+        R() = ComplexType(0.0);
 
-      // generate R matrices for current excitation shell
-      get_compact_ph_R_matrices<MEM>(iexcit, refc, T, R); 
+        // generate R matrices for current block of the excitation shell
+        get_compact_ph_R_matrices<MEM>(iexb, refc, T, R);
 
-      // assumes no TG_local parallelization for now, needs TG for this
-      // calculate E and KE for current shell of excitations
-      auto KEr=KE(range(idet,idet+ndet),all,all);
-      HamOps.ph_excited_energy(Alpha, nelec, iexcit, refc, E, 
-                wgt(range(idet, idet+ndet),all), R, KEr, true); 
+        // assumes no TG_local parallelization for now, needs TG for this
+        // calculate E and KE for current block of excitations
+        auto KEr=KE(range(idet+d0,idet+d0+nb),all,all);
+        HamOps.ph_excited_energy(Alpha, nelec, iexb, refc, E,
+                  wgt(range(idet+d0, idet+d0+nb),all), R, KEr, true);
+      }
       idet += ndet;
     }
   }
@@ -345,9 +353,9 @@ void ph_excited_energies_first_step(ph_excitations<int, ComplexType, memory::get
 // E[nwalk,3]
 // KE[ndet,nwalk,nke]
 template<class Op, nda::MemoryMatrix Mat>
-void ph_excited_energies_second_step(ph_excitations<int, ComplexType, 
+void ph_excited_energies_second_step(ph_excitations<int, ComplexType,
          memory::get_memory_space<Mat>()>& abij, Mat&& wgt, nda::MemoryArrayOfRank<3> auto T,
-         nda::MemoryMatrix auto&& E, nda::MemoryArrayOfRank<3> auto&& KE, Op& HamOps)
+         nda::MemoryMatrix auto&& E, nda::MemoryArrayOfRank<3> auto&& KE, Op& HamOps, int ndet_block_size)
 {
   using nda::range;
   auto all = range::all;
@@ -372,27 +380,33 @@ void ph_excited_energies_second_step(ph_excitations<int, ComplexType,
     if( ndet * nex * nact > max3 ) max3 = ndet * nex * nact;
   }
 
+  // process each excitation shell in blocks of at most NDET_BLK determinants (see
+  // ph_excited_energies_first_step) to bound the per-block device temporaries.
+  const int NDET_BLK = ndet_block_size;
   for (int nex = 1, idet=1; nex < abij.maximum_excitation_number()[spin]; nex++)
   {
     int ndet = abij.number_of_unique_excitations(nex)[spin];
     if(ndet > 0) {
       auto iexcit=abij.get_excitation_list_device(spin, nex);
-      memory::buffered_array<MEM,ComplexType,4> R(nwalk, ndet, nex, nact);
-      memory::buffered_array<MEM,ComplexType,3> KEl(ndet, nwalk, nke);
-      R() = ComplexType(0.0);
-      KEl() = ComplexType(0.0);
+      for (int d0 = 0; d0 < ndet; d0 += NDET_BLK) {
+        int nb = (ndet - d0 < NDET_BLK) ? (ndet - d0) : NDET_BLK;
+        auto iexb = iexcit(range(long(d0)*2*nex, long(d0+nb)*2*nex));
+        memory::buffered_array<MEM,ComplexType,4> R(nwalk, nb, nex, nact);
+        memory::buffered_array<MEM,ComplexType,3> KEl(nb, nwalk, nke);
+        R() = ComplexType(0.0);
+        KEl() = ComplexType(0.0);
 
-      // generate R matrices for current excitation shell
-      get_compact_ph_R_matrices<MEM>(iexcit, refc, T, R);
+        // generate R matrices for current block of the excitation shell
+        get_compact_ph_R_matrices<MEM>(iexb, refc, T, R);
 
-      // calculate E and KE for current shell of excitations
-      HamOps.ph_excited_energy(Beta, nelec, iexcit, refc, E, 
-                wgt(range(idet, idet+ndet),all), R, KEl, true); 
+        // calculate E and KE for current block of excitations
+        HamOps.ph_excited_energy(Beta, nelec, iexb, refc, E,
+                  wgt(range(idet+d0, idet+d0+nb),all), R, KEl, true);
 
-      // eloc[iw] = sum_d_ke KE[d,iw,ke] KEl[d,iw,ke]
-      nda::tensor::contract(ComplexType(1.0),KE(range(idet,idet+ndet),all,all),"dwn",KEl,"dwn",
-                            ComplexType(1.0),E(all,2),"w");
- 
+        // eloc[iw] = sum_d_ke KE[d,iw,ke] KEl[d,iw,ke]
+        nda::tensor::contract(ComplexType(1.0),KE(range(idet+d0,idet+d0+nb),all,all),"dwn",KEl,"dwn",
+                              ComplexType(1.0),E(all,2),"w");
+      }
       idet += ndet;
     }
   }

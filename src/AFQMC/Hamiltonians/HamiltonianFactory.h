@@ -36,9 +36,7 @@ namespace afqmc
 class HamiltonianFactory
 {
 public:
-  HamiltonianFactory(std::map<std::string, AFQMCInfo>& info) : 
-	InfoMap(info)
-  {}
+  HamiltonianFactory() {}
 
   ~HamiltonianFactory()
   {
@@ -111,9 +109,6 @@ public:
   }
 
 protected:
-  // reference to container of AFQMCInfo objects
-  std::map<std::string, AFQMCInfo>& InfoMap;
-
   // generates a new Hamiltonian and returns the pointer to the base class
   Hamiltonian buildHamiltonian(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi, 
                                ptree pt)

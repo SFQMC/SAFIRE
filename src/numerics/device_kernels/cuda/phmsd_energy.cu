@@ -317,8 +317,8 @@ void ph_excited_2body_energy_dense_cholesky_Tpna_impl(int const* refc, int const
     // KE(ndet,nwalk,nchol)
     auto KE_d = to_cuda_std_mdspan(KE(nda::range::all,iw,nda::range::all));
 
-    kernel_ph_excited_energy_real_dense_chol_Tpna_first<<<grid_dim,__NTHR__,sm_size>>>(iexcit,refc,T_d,R_d,w_d,EX_d.data_handle()+iw,EJ_d.data_handle()+iw,KE_d);
-    kernel_ph_excited_energy_real_dense_chol_Tpna_second<<<grid_dim2,__BZ__,sm_size>>>(iexcit,refc,T_d,R_d,w_d,EX_d.data_handle()+iw);
+    kernel_ph_excited_energy_real_dense_chol_Tpna_first<<<grid_dim,__NTHR__,sm_size>>>(iexcit,refc,T_d,R_d,w_d,&EX_d(iw),&EJ_d(iw),KE_d);
+    kernel_ph_excited_energy_real_dense_chol_Tpna_second<<<grid_dim2,__BZ__,sm_size>>>(iexcit,refc,T_d,R_d,w_d,&EX_d(iw));
 
   }
 

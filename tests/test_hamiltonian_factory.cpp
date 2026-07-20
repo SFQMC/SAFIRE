@@ -51,6 +51,31 @@ namespace sfqmc
 {
 using namespace afqmc;
 
+// Fill a physical mixed density matrix G (walker == trial determinant) from PsiT,
+// laid out as [1][ nel * npol * NMO ] to match HamiltonianOperations::energy. G must be
+// pre-sized by the caller; this zeroes and fills it.
+template<class PsiTArray>
+void fill_physical_G(nda::array<ComplexType, 2>& G, PsiTArray const& PsiT,
+                     WALKER_TYPES walker_type, int NMO)
+{
+  long const nspin = (walker_type == COLLINEAR) ? 2 : 1;
+  int const  npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+  G() = ComplexType(0.0);
+  int offset = 0;
+  for(int is = 0; is < nspin; ++is) {
+    const auto& pt = PsiT(0, is);
+    for(long a = 0; a < pt.shape(0); ++a) {
+      auto row  = pt[a];
+      auto cols = row.columns();
+      auto vals = row.values();
+      for(long k = 0; k < row.nnz(); ++k) {
+        G(0, (offset + a) * NMO * npol + cols(k)) = std::conj(vals(k));
+      }
+    }
+    offset += static_cast<int>(pt.shape(0));
+  }
+}
+
 void thc_vs_chol_energy_agreement(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
     std::string chol_file, std::string thc_file, std::string wfn_file)
@@ -73,16 +98,12 @@ void thc_vs_chol_energy_agreement(
   h5::group nomsd_grp = wfn_grp.open_group("Wavefunction").open_group("NOMSD");
   auto PsiT = read_nomsd_wavefunction<HOST_MEMORY>(nomsd_grp, 1, walker_type, NMO, nup, ndown);
 
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert({"info0", AFQMCInfo{"info0", NMO, nup, ndown}});
-
   // Build HamiltonianOperations from a file-backed Hamiltonian
   auto make_ham_ops = [&](std::string hamil_file) {
     ptree ham_pt;
     ham_pt.put("name",     "ham0");
-    ham_pt.put("system",   "info0");
     ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac(InfoMap);
+    HamiltonianFactory HamFac;
     HamFac.push("ham0", ham_pt);
     auto& ham = HamFac.getHamiltonian(mpi, "ham0");
     return ham.template getHamiltonianOperations<HOST_MEMORY>(walker_type, mpi, PsiT);
@@ -118,22 +139,7 @@ void thc_vs_chol_energy_agreement(
   CHECK_THAT(E_thc(all, 2), utils::Approx(E_chol(all, 2), 1e-2, 1e-2));
 
   nda::array<ComplexType, 2> G_phys(1, nel * npol * NMO);
-  G_phys() = ComplexType(0.0);
-  {
-    long const nspin = (walker_type == COLLINEAR) ? 2 : 1;
-    int  offset = 0;
-    for (int is = 0; is < nspin; ++is) {
-      const auto& pt = PsiT(0, is);
-      for (long a = 0; a < pt.shape(0); ++a) {
-        auto row  = pt[a];
-        auto cols = row.columns();
-        auto vals = row.values();
-        for (long k = 0; k < row.nnz(); ++k)
-          G_phys(0, (offset + a) * NMO * npol + cols(k)) = std::conj(vals(k));
-      }
-      offset += static_cast<int>(pt.shape(0));
-    }
-  }
+  fill_physical_G(G_phys, PsiT, walker_type, NMO);
 
   auto eval_phys_energy = [&](auto& H) -> nda::array<ComplexType, 2> {
     nda::array<ComplexType, 2> E(1, 3);
@@ -169,17 +175,12 @@ void hamiltonian_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3:
 
   int NMO = read_nmo_from_hdf(hamil_file);
   CHECK(NMO > 0);
-  int nup=1, ndown=1;
-
-  std::map<std::string, AFQMCInfo> InfoMap;
-  InfoMap.insert(std::pair<std::string, AFQMCInfo>("info0", AFQMCInfo{"info0", NMO, nup, ndown}));
 
   ptree ham_pt;
   ham_pt.put("name","ham0");
-  ham_pt.put("system","info0");
   ham_pt.put("filename",hamil_file);
 
-  HamiltonianFactory HamFac(InfoMap);
+  HamiltonianFactory HamFac;
   HamFac.push("ham0", ham_pt);
   [[maybe_unused]] Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 }
@@ -196,7 +197,7 @@ TEST_CASE("hamiltonian_factory: build", "[hamiltonian_factory]")
 }
 
 
-TEST_CASE("thc_vs_chol_energy", "[thc_chol_energy_agreement]")
+TEST_CASE("hamiltonian_factory: thc_vs_chol_energy", "[hamiltonian_factory]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
 
@@ -205,6 +206,60 @@ TEST_CASE("thc_vs_chol_energy", "[thc_chol_energy_agreement]")
       pre + "ham_chol_1e-5.h5",
       pre + "ham_thc_1e-6.h5",
       pre + "wfn_mf_pbe.h5");
+}
+
+// Regression test for the Madelung electron self-interaction offset (see the constant
+// energy offset E0 in read_energy_offset / hdf5_helpers.hpp). E0 lands in the one-body
+// energy slot E(:,0). For a periodic (coqui) system with a madelung_constant the offset
+// scales with the TOTAL electron count, so the one-body energy of the trial determinant
+// must be identical whether the same physical system is built as CLOSED or COLLINEAR.
+TEST_CASE("hamiltonian_factory: closed_vs_collinear_energy_offset", "[hamiltonian_factory]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+
+  std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/unit_test_files/C_1x1x1_ks_basis/";
+  std::string chol_file = pre + "ham_chol_1e-5.h5";
+  std::string wfn_file  = pre + "wfn_mf_pbe.h5";
+  utils::check(utils::file_exists(chol_file), "Cholesky file not found: {}", chol_file);
+  utils::check(utils::file_exists(wfn_file),  "Wavefunction file not found: {}", wfn_file);
+
+  auto [NMO, nup, ndown] = read_info_from_wfn(wfn_file, "NOMSD");
+
+  // Build the coqui Cholesky Hamiltonian with the given walker type and return the
+  // one-body energy E(:,0) (which includes the constant offset E0) of the trial det.
+  auto one_body_energy = [&](WALKER_TYPES wt) -> ComplexType {
+    int npol = (wt == NONCOLLINEAR) ? 2 : 1;
+    int nel  = (wt == COLLINEAR)    ? nup + ndown : nup;
+
+    h5::file  wfn_f(wfn_file, 'r');
+    h5::group wfn_grp(wfn_f);
+    h5::group nomsd_grp = wfn_grp.open_group("Wavefunction").open_group("NOMSD");
+    auto PsiT = read_nomsd_wavefunction<HOST_MEMORY>(nomsd_grp, 1, wt, NMO, nup, ndown);
+
+    ptree ham_pt;
+    ham_pt.put("name",     "ham0");
+    ham_pt.put("filename", chol_file);
+    HamiltonianFactory HamFac;
+    HamFac.push("ham0", ham_pt);
+    auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+    auto H = ham.template getHamiltonianOperations<HOST_MEMORY>(wt, mpi, PsiT);
+
+    nda::array<ComplexType, 2> G(1, nel * npol * NMO);
+    fill_physical_G(G, PsiT, wt, NMO);
+    nda::array<ComplexType, 2> E(1, 3);
+    H.energy(E, G, 0, true, true, true);
+    return E(0, 0);
+  };
+
+  auto e1_closed    = one_body_energy(CLOSED);
+  auto e1_collinear = one_body_energy(COLLINEAR);
+
+  app_log(0, "  One-body energy (incl. offset): CLOSED={:+.8e}  COLLINEAR={:+.8e}",
+          std::real(e1_closed), std::real(e1_collinear));
+
+  // Pre-fix these differ by half the Madelung correction (~2.72 Ha for this system).
+  nda::array<ComplexType, 1> a{e1_closed}, b{e1_collinear};
+  CHECK_THAT(a, utils::Approx(b));
 }
 
 } // namespace sfqmc

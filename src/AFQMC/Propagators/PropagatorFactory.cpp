@@ -34,12 +34,7 @@ namespace afqmc
 template<MEMORY_SPACE MEM>
 Propagator<MEM> PropagatorFactory<MEM>::buildAFQMCPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, ptree pt, Wavefunction<MEM>& wfn, std::shared_ptr<utils::RandomGenerator_t<MEM>> rng)
 {
-  std::string info = pt.get<std::string>("system", "");
-
-  utils::check(InfoMap.find(info) != InfoMap.end(),"ERROR: Undefined system in PropagatorFactory. ");
-  AFQMCInfo& AFinfo = InfoMap[info];
-
-  return Propagator<MEM>(AFQMCBasePropagator<MEM>(AFinfo, pt, mpi, wfn, rng));
+  return Propagator<MEM>(AFQMCBasePropagator<MEM>(pt, mpi, wfn, rng));
 }
 
 template Propagator<HOST_MEMORY> 

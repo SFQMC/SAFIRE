@@ -70,13 +70,12 @@ public:
 	       const ptree pt, int n_groups = 1)
      : m_series(pt.get<int>("project.series", 0)),
        project_title(pt.get<std::string>("project.id", "afqmc")),
-       mpi(_mpi), 
-       InfoMap(),
-       HamFac(InfoMap),
-       WSetFac(InfoMap),
-       WfnFac(HamFac),
-       PropFac(InfoMap),
-       DriverFac(mpi, InfoMap, WSetFac, PropFac, WfnFac, HamFac) 
+       mpi(_mpi),
+       HamFac(),
+       WSetFac(),
+       WfnFac{},
+       PropFac(),
+       DriverFac(mpi, WSetFac, PropFac, WfnFac, HamFac)
   {
     utils::check(n_groups==1, "finish!!!");
     app_log(1, " AFQMCFactory Project settings: ");
@@ -109,9 +108,6 @@ private:
   std::string project_title;
 
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
-
-  // container of AFQMCInfo objects
-  std::map<std::string, AFQMCInfo> InfoMap;
 
   // Hamiltonian factory
   HamiltonianFactory HamFac;

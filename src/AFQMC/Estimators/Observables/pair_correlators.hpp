@@ -28,14 +28,14 @@ namespace afqmc
 /* 
  * Observable class that calculates the walker averaged spin*spin correlation
  */
-class pair_correlator : public AFQMCInfo
+class pair_correlator
 {
 public:
-   pair_correlator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, AFQMCInfo& info, ptree pt0, WALKER_TYPES wlk, int nave_ = 1)
-      : AFQMCInfo(info),
-        mpi{mpi},
+   pair_correlator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, ptree pt0, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
+      : mpi{mpi},
         num_correlators{0},
-        walker_type{wlk}
+        walker_type{wlk},
+        NMO{NMO_}
   {
 
     ptree pt = interpret_inputs(pt0);
@@ -235,6 +235,8 @@ private:
   int num_correlators{}; // number of correlators which are actually used! (vs number of correlators defined in the HDF5 input)
 
   WALKER_TYPES walker_type{};
+
+  int NMO{};
 
   std::vector<memory::host_array<int,2>> pair_map;
 

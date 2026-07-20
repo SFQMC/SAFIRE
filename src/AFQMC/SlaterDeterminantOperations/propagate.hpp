@@ -287,7 +287,12 @@ void Propagate(WALKER_TYPES walker_type, int npol, nda::MemoryArrayOfRank<3> aut
 {
   auto all = nda::range::all;
   int nwalk        = SMA.extent(0);
-  utils::check(V.extent(1) == nwalk, "Size mismatch");
+  if constexpr ( nda::MemoryArrayOfRank<V_t,4> ) {  // dense: V is [nspin][nwalk][...][...]
+    utils::check(V.extent(1) == nwalk, "Size mismatch");
+  } else {                                           // sparse: V is [nspin] of csr [nwalk*M, nwalk*M]
+    auto sh = V(0).shape();
+    utils::check(sh[0] == sh[1] and sh[0] % nwalk == 0, "Size mismatch (csr vHS)");
+  }
   utils::check(walker_type != COLLINEAR, "Walker type mismatch: walker_type must not be COLLINEAR");
 
 // MAM: wrong if npol_in_file == 1 in NONCOLLINEAR, fix fix fix!!!
@@ -316,7 +321,12 @@ void Propagate(WALKER_TYPES walker_type, int npol, nda::MemoryArrayOfRank<3> aut
 {
   auto all = nda::range::all;
   int nwalk        = SMA.extent(0); 
-  utils::check(V.extent(1) == nwalk, "Size mismatch");
+  if constexpr ( nda::MemoryArrayOfRank<V_t,4> ) {   // dense: V is [nspin][nwalk][...][...]
+    utils::check(V.extent(1) == nwalk, "Size mismatch");
+  } else {                                           // sparse: V is [nspin] of csr [nwalk*M, nwalk*M]
+    auto sh = V(0).shape();
+    utils::check(sh[0] == sh[1] and sh[0] % nwalk == 0, "Size mismatch (csr vHS)");
+  }
   long nspin_P1 = P1.extent(0);
   utils::check((walker_type == COLLINEAR) and (npol==1), "Walker type mismatch: walker_type must be COLLINEAR and npol==1, got walker_type: {}, npol: {}", walkerTypeToString(walker_type), npol);
   

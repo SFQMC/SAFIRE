@@ -60,7 +60,6 @@ public:
         HamiltonianOperations<MEM>&& hop_,
         nda::array<ComplexType,1>&& ci_,
         nda::array<devPsiT,3>&& orbs_,
-        ComplexType nce,
         [[maybe_unused]] int targetNW = 1)
       : mpi(mpi_),
         walker_type(wlk),
@@ -69,7 +68,6 @@ public:
         ci(std::move(ci_)),
         OrbMats(std::move(orbs_)),
         RefOrbMats(0, 0, 0, 0),
-        NuclearCoulombEnergy(nce),
         sclL(walker_type == COLLINEAR ? 2: 1)
   {
 
@@ -102,7 +100,6 @@ public:
     pt1.put("rediag", rediag);
     pt1.put("dense_trial", dense_trial);
     std::unordered_set<std::string> pass_through_keys = {
-      "system",
       "name",
       "ndets_to_read",
       "filename",
@@ -125,6 +122,8 @@ public:
   WALKER_TYPES getWalkerType() const { return walker_type; }
 
   bool isFiniteTemperature() const { return true; }
+
+  int getNMO() const { return NMO; }
 
   /*
    * Returns the memory space.
@@ -337,7 +336,7 @@ public:
     return 0;
   }
 
-  void getReferences(int number_of_references, nda::MemoryArrayOfRank<3> auto&& Refs) const
+  void getReferences(nda::MemoryArrayOfRank<3> auto&& Refs) const
   {
     utils::check(false, "back propagation not implemented for finite-T");
   }
@@ -397,8 +396,6 @@ protected:
   memory::array<MEM,ComplexType,4> RefOrbMats;
 
   memory::array<MEM,ComplexType,1> LogPT0;
-
-  ComplexType NuclearCoulombEnergy;
 
   // log scale for DL
   nda::array<ComplexType, 1> sclL;

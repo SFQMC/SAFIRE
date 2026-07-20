@@ -48,6 +48,7 @@ void AFQMCBasePropagator<MEM>::generateP1(double dt, WALKER_TYPES walker_type, b
   using nda::range;
   auto all = range::all;
   bool build_inv = Pinv or ( P1s_inv.size() > 0 ? (P1s_inv(0).capacity() > 0) : false );
+  const int NMO = wfn->getNMO();
 
   old_dt = dt;
 

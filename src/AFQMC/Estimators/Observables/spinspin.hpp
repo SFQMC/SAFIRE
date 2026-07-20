@@ -29,13 +29,13 @@ namespace afqmc
 /* 
  * Observable class that calculates the walker averaged spin*spin correlation
  */
-class spinspinobs : public AFQMCInfo
+class spinspinobs
 {
 public:
-  spinspinobs(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, AFQMCInfo& info, ptree pt, WALKER_TYPES wlk, int nave_ = 1)
-      : AFQMCInfo{info},
-        mpi{mpi},
-        walker_type{wlk}
+  spinspinobs(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, ptree pt, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
+      : mpi{mpi},
+        walker_type{wlk},
+        NMO{NMO_}
   {
     app_log(1,"  --  Adding Spin*Spin (spinspinobs) estimator. -- ");
 
@@ -205,6 +205,8 @@ private:
   int ncalls = 0;
 
   WALKER_TYPES walker_type;
+
+  int NMO{};
 
   // dm_average (nave, [XY, Z], x*NMO*(x*NMO-1)/2 ), x=(1:CLOSED/COLLINEAR, 2:NONCOLLINEAR)
   memory::host_array<ComplexType, 3> dm_average;
