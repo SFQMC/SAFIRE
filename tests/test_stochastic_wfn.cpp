@@ -1803,9 +1803,7 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling + un-rotated full-G kernels are CPU-only today.
-  else
+  // PR-3: persistent field chains device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -1915,9 +1913,7 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return;
-  else
+  // PR-3: persistent / log-aggregate device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2030,9 +2026,7 @@ void stochastic_persistent_pool_nwalk1_bootstrap(std::shared_ptr<utils::mpi_cont
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return;
-  else
+  // PR-3: persistent / log-aggregate device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file,
                                                    [](WALKER_TYPES t) { return t == CLOSED; });
@@ -2381,9 +2375,7 @@ void stochastic_persistent_permute_after_pop_control(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: persistent field chains device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2442,7 +2434,7 @@ void stochastic_persistent_permute_after_pop_control(
     // Prime + equilibrate the persistent pool conditioned on the distinct walkers, then record overlaps.
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ov_before(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_before(nwalk);
     wfn_s.Log_Overlap(wset, ov_before); // latch consumed by begin_inner_step -> reuses the primed pool
 
     // Simulate a count-preserving popControl clone: outer slot clone_dst becomes a copy of clone_src.
@@ -2470,11 +2462,11 @@ void stochastic_persistent_permute_after_pop_control(
 
     // Score again -- latch consumed + chains live => NO resample, so this reads the rebuilt persistent
     // pool against the cloned walkers.
-    nda::array<ComplexType, 1> ov_after(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov_after(nwalk);
     wfn_s.Log_Overlap(wset, ov_after);
 
-    auto lin_before = linear_overlap(ov_before);
-    auto lin_after  = linear_overlap(ov_after);
+    auto lin_before = linear_overlap(nda::to_host(ov_before));
+    auto lin_after  = linear_overlap(nda::to_host(ov_after));
     // Tethered block clone_src moved to slot clone_dst, paired with phi_clone_dst == phi_clone_src.
     CHECK_THAT(lin_after(clone_dst), utils::Approx(lin_before(clone_src)));
     CHECK_THAT(lin_after(clone_src), utils::Approx(lin_before(clone_src)));
@@ -2513,9 +2505,7 @@ void stochastic_persistent_pool_survives_pop_control(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: persistent field chains device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
@@ -2590,9 +2580,9 @@ void stochastic_persistent_pool_survives_pop_control(
     // Prime the persistent pool (first use: reset-to-anchor + burn_in sweeps) and record its overlaps.
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ov0(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ov0(nwalk);
     wfn_s.Log_Overlap(wset, ov0);
-    auto lin0 = linear_overlap(ov0);
+    auto lin0 = linear_overlap(nda::to_host(ov0));
 
     // (A) A local branch (identity lineage, fields untouched): the post-pop rebuild reproduces the same
     // pool from the same fields, and the next begin_inner_step (0 equil sweeps) leaves it alone -- the
@@ -2601,9 +2591,9 @@ void stochastic_persistent_pool_survives_pop_control(
     wfn_s.permute_inner_blocks_after_pop(wset);
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ovA(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ovA(nwalk);
     wfn_s.Log_Overlap(wset, ovA);
-    auto linA = linear_overlap(ovA);
+    auto linA = linear_overlap(nda::to_host(ovA));
     for (int w = 0; w < nwalk; ++w)
       CHECK_THAT(linA(w), utils::Approx(lin0(w))); // persistence held: no restart, no re-equilibration
 
@@ -2612,17 +2602,21 @@ void stochastic_persistent_pool_survives_pop_control(
     // The rebuild must derive that slot's determinants from the NEW fields (overlap changes) and leave
     // every other slot's exactly untouched -- no whole-rank restart.
     {
-      auto TF = wset.TrialFields();
-      for (long j = 0; j < TF.extent(1); ++j)
-        TF(sentinel_slot, j) = -TF(sentinel_slot, j);
+      // Negate the sentinel slot's chain fields (a valid, deterministic, different chain state). TrialFields
+      // is a MEM view, so on device do the negation via a host round-trip of that single row.
+      auto TF   = wset.TrialFields();
+      auto row  = nda::to_host(TF(sentinel_slot, nda::range::all));
+      for (long j = 0; j < row.extent(0); ++j)
+        row(j) = -row(j);
+      TF(sentinel_slot, nda::range::all) = row; // host -> device (no-op-ish on HOST_MEMORY)
     }
     sentinel_lineage();
     wfn_s.permute_inner_blocks_after_pop(wset);
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
-    nda::array<ComplexType, 1> ovB(nwalk);
+    memory::buffered_array<MEM, ComplexType, 1> ovB(nwalk);
     wfn_s.Log_Overlap(wset, ovB);
-    auto linB = linear_overlap(ovB);
+    auto linB = linear_overlap(nda::to_host(ovB));
     REQUIRE(std::abs(linB(sentinel_slot) - lin0(sentinel_slot)) > 1e-6); // dets follow the new fields
     for (int w = 0; w < nwalk; ++w)
       if (w != sentinel_slot)
@@ -2659,9 +2653,7 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  if constexpr (MEM != HOST_MEMORY)
-    return; // conditioned inner sampling is CPU-only today.
-  else
+  // PR-3: persistent field chains device-ported (host-RNG hybrid MCMC); runs on DEVICE_MEMORY.
   {
     const auto info  = read_info_from_wfn(wfn_file, "any");
     const int  NMO   = std::get<0>(info);
