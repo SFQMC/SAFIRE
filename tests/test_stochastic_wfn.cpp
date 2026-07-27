@@ -74,6 +74,8 @@ struct StochasticWfnOptions
   double inner_mcmc_step   = 0.0; // <= 0 = kernel default
   bool inner_log_aggregate = false;
   double inner_prop_timestep = 0.01;
+  int inner_measure_replicas = 1;  // nm; 1 => measure_energy IS Energy, byte-for-byte
+  int inner_measure_stride   = 0;  // <= 0 = input default (inner_equil_steps)
 };
 
 ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_file, StochasticWfnOptions const& opt = {})
@@ -101,6 +103,11 @@ ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_
     pt.put("inner_mcmc_step", opt.inner_mcmc_step);
   if (opt.inner_log_aggregate)
     pt.put("inner_log_aggregate", true);
+  // Only emitted when non-default, so every pre-existing test's ptree is unchanged.
+  if (opt.inner_measure_replicas != 1)
+    pt.put("inner_measure_replicas", opt.inner_measure_replicas);
+  if (opt.inner_measure_stride > 0)
+    pt.put("inner_measure_stride", opt.inner_measure_stride);
   if (opt.inner_nsteps > 0)
   {
     ptree inner_prop;
@@ -882,15 +889,70 @@ TEST_CASE("stochastic_mean_field_matches_nomsd", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
-// Production-order regression: vMF / G_MF are trial-only, but in the real Propagate loop
-// begin_inner_step(wset) runs BEFORE generateP1 calls vMF, and in leapfrog mode begin_inner_step
-// eagerly resamples -- expanding the inner ensemble to nwalk*P walker-CONDITIONED samples. The mean
-// field must NOT then be a 1/(nwalk*P)^2-weighted double sum over that conditioned ensemble; it must
-// still be the trial (anchor) mean field == NOMSD. This test reproduces that call order (build a
-// leapfrog trial, call begin_inner_step to expand the ensemble, then vMF/G_MF) and asserts equality
-// with NOMSD. Without the inner.size()==inner_nwalkers_ gate (mean_field_uses_inner_ensemble) the
-// expanded ensemble would be reduced with the wrong normalization and this would fail. CLOSED+CPU
-// (leapfrog/conditioning is CPU-only today).
+namespace
+{
+// Shared helpers for the mean-field + back-propagation reference tests: max |A-B| over two views (1D/2D),
+// finiteness checks (1D/3D), and tr(G) (electron count -- a physical invariant, exact and noise-free
+// regardless of the stochastic sampling). Defined before their first use (stochastic_mean_field_production_order).
+template<class A, class B>
+double max_abs_diff2d(A const& X, B const& Y)
+{
+  double m = 0.0;
+  for (long i = 0; i < X.extent(0); ++i)
+    for (long j = 0; j < X.extent(1); ++j)
+      m = std::max(m, std::abs(X(i, j) - Y(i, j)));
+  return m;
+}
+template<class A>
+bool all_finite3d(A const& X)
+{
+  for (long p = 0; p < X.extent(0); ++p)
+    for (long i = 0; i < X.extent(1); ++i)
+      for (long j = 0; j < X.extent(2); ++j)
+        if (not std::isfinite(X(p, i, j).real()) or not std::isfinite(X(p, i, j).imag()))
+          return false;
+  return true;
+}
+template<class A, class B>
+double max_abs_diff1d(A const& X, B const& Y)
+{
+  double m = 0.0;
+  for (long i = 0; i < X.extent(0); ++i)
+    m = std::max(m, std::abs(X(i) - Y(i)));
+  return m;
+}
+template<class A>
+bool all_finite1d(A const& X)
+{
+  for (long i = 0; i < X.extent(0); ++i)
+    if (not std::isfinite(X(i).real()) or not std::isfinite(X(i).imag()))
+      return false;
+  return true;
+}
+// Electron count = tr(G) summed over spin blocks (a physical invariant of any N-electron trial, exact and
+// noise-free regardless of the stochastic sampling).
+template<class A>
+ComplexType g_trace3d(A const& X)
+{
+  ComplexType t(0.0, 0.0);
+  for (long s = 0; s < X.extent(0); ++s)
+    for (long i = 0; i < std::min(X.extent(1), X.extent(2)); ++i)
+      t += X(s, i, i);
+  return t;
+}
+} // namespace
+
+// Production-order regression: vMF / G_MF are trial-only quantities (<Psi_T|.|Psi_T>/<Psi_T|Psi_T>), but
+// in the real Propagate loop begin_inner_step(wset) runs BEFORE generateP1 calls vMF, and in leapfrog mode
+// begin_inner_step eagerly resamples -- expanding the inner ensemble to nwalk*P walker-CONDITIONED samples.
+// The mean field must NOT be a double sum over that conditioned ensemble (wrong normalization + a spurious
+// outer-walker dependence), NOR the ANCHOR single-determinant mean field (the historical fallback -- it is
+// only correct for a static trial; for a dynamic trial it makes the HS-contour shift inconsistent with the
+// full-trial force bias/energy and biases the phaseless constraint toward overbinding). It must be the FULL
+// trial's mean field, reduced from a dedicated walker-INDEPENDENT free-projection draw
+// (mean_field_scratch_ensemble). This test reproduces Propagate ordering (begin_inner_step before vMF/G_MF)
+// and asserts: (1) finite result with preserved electron count tr(G); (2) result differs from anchor/NOMSD;
+// (3) the scratch draw leaves the forward conditioned ensemble untouched.
 template<MEMORY_SPACE MEM>
 void stochastic_mean_field_production_order(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -904,6 +966,7 @@ void stochastic_mean_field_production_order(
     if (type != CLOSED)
       return;
     const double dt(0.01);
+    auto all = nda::range::all;
 
     ptree ham_pt;
     ham_pt.put("name", "ham0");
@@ -948,24 +1011,48 @@ void stochastic_mean_field_production_order(
     auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
     // Reproduce the Propagate ordering: begin_inner_step (leapfrog => conditioned resample to nwalk*P)
-    // BEFORE the mean-field calls. With the fix, vMF/G_MF detect the non-P-sample ensemble and delegate
-    // to the anchor mean field == NOMSD.
+    // BEFORE the mean-field calls. With the fix, vMF/G_MF see the non-P-sample (conditioned) ensemble and
+    // draw a dedicated walker-independent free-projection ensemble to reduce the FULL trial's mean field.
     wfn_s.begin_inner_step(wset);
 
     // The leapfrog begin_inner_step must actually have expanded the ensemble to nwalk*P (otherwise the
-    // NOMSD parity below could pass for the wrong reason -- a still-P-sample anchor ensemble would also
-    // match). This pins the scenario the gate is meant to handle.
+    // scenario the fix handles is not exercised). This pins that the mean-field call happens while the
+    // forward ensemble is in the conditioned form.
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
 
+    // Anchor (NOMSD) reference mean field -- what the buggy code delegated to.
     memory::array<MEM, ComplexType, 1> v_ref(wfn_nomsd.number_of_cholesky_vectors(), ComplexType(0.0, 0.0));
     memory::array<MEM, ComplexType, 1> v_s(wfn_s.number_of_cholesky_vectors(), ComplexType(0.0, 0.0));
     wfn_nomsd.vMF(v_ref, dt);
     wfn_s.vMF(v_s, dt);
-    CHECK_THAT(nda::to_host(v_s), utils::Approx(nda::to_host(v_ref)));
+    auto v_ref_h = nda::to_host(v_ref);
+    auto v_s_h   = nda::to_host(v_s);
 
     auto Gmf_ref = wfn_nomsd.G_MF();
     auto Gmf_s   = wfn_s.G_MF();
-    CHECK_THAT(nda::to_host(Gmf_s()), utils::Approx(nda::to_host(Gmf_ref())));
+    auto G_ref_h = nda::to_host(Gmf_ref());
+    auto G_s_h   = nda::to_host(Gmf_s());
+
+    // (3) The dedicated scratch draw must leave the forward conditioned ensemble (nwalk*P) intact -- the
+    // mean-field call is trial-only and must not perturb the running conditioned/leapfrog walk. (Unlike the
+    // back-propagation reference draw, which reuses inner_ensemble_.wset as scratch and relies on the next
+    // begin_inner_step to re-expand it, the mean-field draw uses a SEPARATE scratch and never touches it.)
+    REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_nwalkers);
+
+    // (1) finite + electron-count (trace) preserved.
+    CHECK(all_finite1d(v_s_h));
+    CHECK(all_finite3d(G_s_h));
+    CHECK_THAT(g_trace3d(G_s_h), utils::Approx(g_trace3d(G_ref_h)));
+
+    // (2) regression guard: the DYNAMIC trial's mean field is genuinely OFF the anchor -- the buggy code
+    // returned the anchor (bit-for-bit == NOMSD via nomsd_.vMF), so a nonzero difference proves vMF/G_MF now
+    // reduce the full stochastic trial. (Deterministic: the inner free-projection draw is seeded.)
+    double dv = max_abs_diff1d(v_s_h, v_ref_h);
+    double dG = max_abs_diff2d(G_s_h(0, all, all), G_ref_h(0, all, all));
+    app_log(1, "  stochastic_mean_field_production_order: |vMF_stoch - vMF_anchor|_max = {:.3e}, "
+               "|G_MF_stoch - G_MF_anchor|_max = {:.3e}", dv, dG);
+    CHECK(dv > 1e-6);
+    CHECK(dG > 1e-6);
   }
 }
 
@@ -978,31 +1065,6 @@ TEST_CASE("stochastic_mean_field_production_order", "[stochastic_wfn]")
     stochastic_mean_field_production_order<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
-
-namespace
-{
-// Shared helpers for back-propagation reference tests: max |A-B| over two 2D views, and a finiteness
-// finiteness check over a 3D [nref, npol*NMO, nel] reference array (operator()-based, layout-agnostic).
-template<class A, class B>
-double max_abs_diff2d(A const& X, B const& Y)
-{
-  double m = 0.0;
-  for (long i = 0; i < X.extent(0); ++i)
-    for (long j = 0; j < X.extent(1); ++j)
-      m = std::max(m, std::abs(X(i, j) - Y(i, j)));
-  return m;
-}
-template<class A>
-bool all_finite3d(A const& X)
-{
-  for (long p = 0; p < X.extent(0); ++p)
-    for (long i = 0; i < X.extent(1); ++i)
-      for (long j = 0; j < X.extent(2); ++j)
-        if (not std::isfinite(X(p, i, j).real()) or not std::isfinite(X(p, i, j).imag()))
-          return false;
-  return true;
-}
-} // namespace
 
 // Back-propagation reference set and outer-facing layout queries AT THE STATIC LIMIT (inner_nsteps = 0 -- the default in this test). There bp_uses_inner_ensemble() is false, so
 // the stochastic trial DELEGATES its reference set to the outer nomsd_ (= {phi_T}, weight 1, for the
@@ -2636,5 +2698,135 @@ TEST_CASE("stochastic_persistent_cond_mag_invariant_under_permute", "[stochastic
 // the dynamic stochastic trial (inner_nsteps = 1) and run Propagate() steps. Drives the full hot path
 // THROUGH the propagator (vbias -> vHS -> apply -> Log_Overlap), validating that the stochastic
 // overrides plug into a real propagation step. Asserts the walkers stay finite.
+
+// At inner_measure_replicas == 1, measure_energy must be exactly Energy (same code path, exact equality).
+template<MEMORY_SPACE MEM>
+void stochastic_measure_replicas_nm1_matches_energy(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                                    std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file,
+                                                 [](WALKER_TYPES t) { return t == CLOSED; });
+  if (not env_opt)
+    return;
+  auto& env = *env_opt;
+
+  const int nwalk          = 3;
+  const int inner_nwalkers = 4;
+
+  StochasticWfnOptions opt;
+  opt.inner_nwalkers     = inner_nwalkers;
+  opt.inner_nsteps       = 1;
+  opt.inner_conditioning = true;
+  opt.inner_leapfrog     = true;
+  opt.inner_persistence  = true;
+  opt.inner_equil_steps  = 1;
+  opt.inner_pool_burn_in = 0;
+  // nm left at its default of 1 -- that IS the case under test.
+  auto& wfn = env.push_stochastic_wfn(mpi, "wfn_stoch_nm1", wfn_file, opt, nwalk);
+
+  auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nm1");
+  perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+  wfn.begin_inner_step(wset); // prime the chains, so only nm == 1 keeps the replica path off
+  REQUIRE_FALSE(wfn.stochastic_measure_replicas_active());
+
+  nda::array<ComplexType, 2> E_m(nwalk, 3), E_e(nwalk, 3);
+  nda::array<ComplexType, 1> Ov_m(nwalk), Ov_e(nwalk);
+  wfn.measure_energy(wset, E_m, Ov_m);
+  wfn.Energy(wset, E_e, Ov_e);
+
+  for (int w = 0; w < nwalk; ++w)
+  {
+    REQUIRE(real(Ov_m(w)) == real(Ov_e(w)));
+    REQUIRE(imag(Ov_m(w)) == imag(Ov_e(w)));
+    for (int k = 0; k < 3; ++k)
+    {
+      REQUIRE(real(E_m(w, k)) == real(E_e(w, k)));
+      REQUIRE(imag(E_m(w, k)) == imag(E_e(w, k)));
+    }
+  }
+}
+
+TEST_CASE("stochastic_measure_replicas_nm1_matches_energy", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn measure_energy at nm=1 is exactly Energy (no existing result perturbed).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_measure_replicas_nm1_matches_energy<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// At inner_measure_replicas > 1, measure_energy must return the walker's stored log overlap so
+// EnergyEstimator's exp(ovlp - OVLP) reweight stays 1 (deno_real == 1). Replica overlaps belong to
+// pools the walker weights never saw and must not be returned.
+template<MEMORY_SPACE MEM>
+void stochastic_measure_replicas_ovlp_is_stored(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                                std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file,
+                                                 [](WALKER_TYPES t) { return t == CLOSED; });
+  if (not env_opt)
+    return;
+  auto& env = *env_opt;
+
+  const int nwalk          = 3;
+  const int inner_nwalkers = 4;
+
+  StochasticWfnOptions opt;
+  opt.inner_nwalkers         = inner_nwalkers;
+  opt.inner_nsteps           = 1;
+  opt.inner_conditioning     = true;
+  opt.inner_leapfrog         = true;
+  opt.inner_persistence      = true;
+  opt.inner_equil_steps      = 1;
+  opt.inner_pool_burn_in     = 0;
+  opt.inner_measure_replicas = 4;
+  opt.inner_measure_stride   = 1;
+  auto& wfn = env.push_stochastic_wfn(mpi, "wfn_stoch_nm4", wfn_file, opt, nwalk);
+
+  auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nm4");
+  perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+  wfn.begin_inner_step(wset);
+  // Without this the test would pass vacuously through the plain-Energy fallback, where the invariant
+  // holds trivially and the fixed bug could return unnoticed.
+  REQUIRE(wfn.stochastic_measure_replicas_active());
+
+  nda::array<ComplexType, 1> ovlp_before(nwalk);
+  wset.getProperty(OVLP, ovlp_before);
+
+  nda::array<ComplexType, 2> E(nwalk, 3);
+  nda::array<ComplexType, 1> Ov(nwalk);
+  wfn.measure_energy(wset, E, Ov);
+
+  nda::array<ComplexType, 1> ovlp_after(nwalk);
+  wset.getProperty(OVLP, ovlp_after);
+
+  for (int w = 0; w < nwalk; ++w)
+  {
+    // The returned Ov IS the stored OVLP: this is deno_real == 1 exactly, by construction.
+    REQUIRE(real(Ov(w)) == real(ovlp_before(w)));
+    REQUIRE(imag(Ov(w)) == imag(ovlp_before(w)));
+    // ...and measuring left the stored property alone, so the next step's reweight is inert too.
+    REQUIRE(real(ovlp_after(w)) == real(ovlp_before(w)));
+    REQUIRE(imag(ovlp_after(w)) == imag(ovlp_before(w)));
+    // The replica-averaged energy is still a usable number (the averaging ran, nothing overflowed).
+    for (int k = 0; k < 3; ++k)
+      REQUIRE(std::isfinite(real(E(w, k))));
+  }
+}
+
+TEST_CASE("stochastic_measure_replicas_ovlp_is_stored", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn measure_energy at nm>1 returns the STORED OVLP (deno_real == 1 invariant).");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_measure_replicas_ovlp_is_stored<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
 
 } // namespace sfqmc
