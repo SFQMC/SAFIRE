@@ -314,6 +314,22 @@ public:
         var);
   }
 
+  // True when a stochastic trial's measure_energy will actually average over measurement replicas
+  // (false for a non-stochastic wavefunction, and for a stochastic one whose nm == 1 or whose pool is
+  // not a live persistent chain). Read-only; exists so a test can assert the replica path is LIVE
+  // rather than pass vacuously on the plain-Energy fallback.
+  bool stochastic_measure_replicas_active() const
+  {
+    return std::visit(
+        [](auto&& a) -> bool {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.measure_replicas_active();
+          return false;
+        },
+        var);
+  }
+
   // Sum of a stochastic trial's leapfrog conditioning magnitudes (test/diagnostic checksum; -1 for a
   // non-stochastic wavefunction). See StochasticWfn::inner_cond_mag_sum.
   double stochastic_inner_cond_mag_sum() const
@@ -350,6 +366,54 @@ public:
           using Wfn = std::decay_t<decltype(a)>;
           if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
             a.begin_inner_step(wset);
+        },
+        var);
+  }
+
+  // Measurement entry point for the estimators. For a StochasticWfn this is Energy averaged over
+  // inner_measure_replicas replicas of the field pool at fixed walkers (see
+  // StochasticWfn::measure_energy); for every other wavefunction, and for a StochasticWfn with
+  // inner_measure_replicas = 1, it IS Energy -- same call, same values. Takes wset by non-const
+  // reference because advancing the pool writes the chain state back into the walker buffer's
+  // TrialFields block.
+  template<class WlkSet, class Mat, class TVec>
+  void measure_energy(WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0)
+  {
+    std::visit(
+        [&](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            a.measure_energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
+          else
+            a.Energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
+        },
+        var);
+  }
+
+  // End-of-step seam for the current-walker-conditioning path (StochasticWfn only; no-op otherwise and
+  // internally no-op unless inner_condition_on_new is active). See StochasticWfn::end_inner_step.
+  template<class WlkSet, class TVec>
+  void end_inner_step(WlkSet& wset, TVec const& old_new_logovlp)
+  {
+    std::visit(
+        [&](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            a.end_inner_step(wset, old_new_logovlp);
+        },
+        var);
+  }
+
+  // True only for a StochasticWfn running the current-walker-conditioning path.
+  bool conditions_on_new_walker() const
+  {
+    return std::visit(
+        [&](auto&& a) -> bool {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return a.conditions_on_new_walker();
+          else
+            return false;
         },
         var);
   }
