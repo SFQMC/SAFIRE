@@ -130,8 +130,8 @@ SparseEnergy<MEM,REAL> ModelHamOpsGenerator::make_SparseEnergy(
     }
     for(long i=0; i<M; ++i) {
       for(long p=J.row_begin(i); p<J.row_end(i); ++p) {
-        auto Jij = J.values(i);
-        long j = long(J.columns(i));
+        auto Jij = J.values(p);
+        long j = long(J.columns(p));
         if( std::abs(Jij) < 1e-6 ) continue;
         if( i >= j ) continue;
         IJ.push_back(i*M2+j);               // ( i up, j up)
@@ -355,7 +355,7 @@ SparseEnergy<MEM,REAL> ModelHamOpsGenerator::make_SparseEnergy(
     for(long i=0; i<M; ++i) {
       for(long p=J.row_begin(i); p<J.row_end(i); ++p) {
         auto Jij = J.values(p);
-        long j = long(U.columns(p));
+        long j = long(J.columns(p));
         if( std::abs(Jij) < 1e-6 ) continue;
         if( i >= j ) continue;
         auto iuju= IJ2n[i*M2+j];               // ( i up, j up)

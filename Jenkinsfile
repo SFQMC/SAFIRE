@@ -9,7 +9,7 @@ timeout(time: 1, unit: 'HOURS') {
       withEnv([
         "SRC=$WORKSPACE",
         "BUILD=$WORKSPACE/build",
-        "BUILD_DEBUG=$WORKSPACE/build-debug"
+        "BUILD_CLANG=$WORKSPACE/build-clang"
       ]) {
         parallel python: {
           stage('build docs') {
@@ -54,11 +54,11 @@ timeout(time: 1, unit: 'HOURS') {
             sh '''
               cd $BUILD && cmake $SRC \
                 -GNinja \
-                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                 -DCMAKE_INSTALL_PREFIX="." \
                 -DCOMPILE_NDA_TESTS=OFF \
                 -DENABLE_CPPTRACE=OFF \
-                -DENABLE_SPDLOG=ON \
+                -DENABLE_SPDLOG=ON
             '''
             sh 'ninja -C $BUILD -j $PARALLEL'
             warnError("Tests failed") {
@@ -66,21 +66,28 @@ timeout(time: 1, unit: 'HOURS') {
             }
           }
         },
-        cpp_debug: {
-          stage('debug') {
-            sh 'mkdir $BUILD_DEBUG'
-            sh '''
-              cd $BUILD_DEBUG && cmake $SRC \
-                -GNinja \
-                -DCMAKE_BUILD_TYPE=Debug \
-                -DCMAKE_INSTALL_PREFIX="." \
-                -DCOMPILE_NDA_TESTS=OFF \
-                -DENABLE_CPPTRACE=OFF \
-                -DENABLE_SPDLOG=ON \
-            '''
-            sh 'ninja -C $BUILD_DEBUG -j $PARALLEL'
-            warnError("Tests on Debug with UBSAN failed") {
-              sh 'cd $BUILD_DEBUG && ctest --output-on-failure'
+        cpp_clang: {
+          stage('clang') {
+            withEnv([
+              "CC=clang-19",
+              "CXX=clang++-19"
+            ]) {
+              sh 'mkdir $BUILD_CLANG'
+              sh '''
+                cd $BUILD_CLANG && cmake $SRC \
+                  -GNinja \
+                  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                  -DCMAKE_INSTALL_PREFIX="." \
+                  -DCOMPILE_NDA_TESTS=OFF \
+                  -DCMAKE_C_COMPILER=clang-19 \
+                  -DCMAKE_CXX_COMPILER=clang++-19 \
+                  -DENABLE_CPPTRACE=OFF \
+                  -DENABLE_SPDLOG=ON
+              '''
+              sh 'ninja -C $BUILD_CLANG -j $PARALLEL'
+              warnError("Clang tests failed") {
+                sh 'cd $BUILD_CLANG && ctest --output-on-failure'
+              }
             }
           }
         }
@@ -88,7 +95,7 @@ timeout(time: 1, unit: 'HOURS') {
     }
   },
   cuda: {
-    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins_cuda', tag: 'cuda3', gpus: 1) {
+    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins_cuda', tag: 'cuda5', gpus: 1) {
       withEnv([
         "SRC=$WORKSPACE",
         "BUILD=$WORKSPACE/build"
@@ -98,8 +105,10 @@ timeout(time: 1, unit: 'HOURS') {
           sh '''
             cd $BUILD && cmake $SRC \
               -GNinja \
-              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo \
               -DCMAKE_INSTALL_PREFIX="." \
+              -DCMAKE_C_COMPILER=gcc \
+              -DCMAKE_CXX_COMPILER=g++ \
               -DCOMPILE_NDA_TESTS=OFF \
               -DENABLE_CPPTRACE=OFF \
               -DENABLE_SPDLOG=ON \

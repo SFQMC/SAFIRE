@@ -39,13 +39,14 @@ import re
 import shlex
 import subprocess as sp
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 from typing import List, Optional
 
 import h5py as h5
 import numpy as np
+import scipy.stats
 
 # Reusing SAFIRE library utilities is fine; only the dev test harness is avoided.
 from afqmctools.utils.types import SpinSymm
@@ -63,6 +64,9 @@ from functional_cases import (
 )
 
 
+SIGNIFICANCE_LEVEL = 0.001
+MACHINE_EPS = 1e-9
+
 @dataclass
 class Case:
     hamiltonian: Hamiltonian
@@ -71,7 +75,6 @@ class Case:
     reference: Path      # absolute path to the reference results.h5
     out_subdir: Path     # path (relative to output-path/system) for this run
     runparams: dict
-    bp: bool = False     # run with back-propagation (and compare the 1-RDM)
 
 
 # ============================================================================
@@ -81,7 +84,7 @@ class Case:
 def _wavefunction_is_implemented(c: Case) -> bool:
     # only collinear PHMSD with collinear walkers is implemented; all NOMSD spin symmetries are fine.
     if c.wavefunction.type == WavefunctionClass.PHMSD:
-        return WALKERS[c.walker] == SpinSymm.COLLINEAR or WALKERS[c.walker] == SpinSymm.NONCOLLINEAR and c.wavefunction.spin == SpinSymm.COLLINEAR
+        return WALKERS[c.walker] == SpinSymm.COLLINEAR and c.wavefunction.spin == SpinSymm.COLLINEAR
     return True
 
 
@@ -115,11 +118,16 @@ def should_skip(c: Case) -> bool:
     if c.hamiltonian.type == HamiltonianClass.MODEL and c.hamiltonian.spin == SpinSymm.CLOSED:
         return True
 
+    # The old reference would not support upgrading a wavefunction to Hamiltonian symmetry
+    if(c.hamiltonian.spin == SpinSymm.NONCOLLINEAR
+       and c.wavefunction.spin == SpinSymm.COLLINEAR
+       and WALKERS[c.walker] == SpinSymm.NONCOLLINEAR):
+        return True
     return False
 
 
-def bp_cherry_pick(c: Case) -> bool:
-    """Back-propagation subset selection from should_run_successfully_bp.
+def should_backprop(c: Case) -> bool:
+    """Back-propagation subset selection from should_succeed.
 
     BP runs are expensive, so only a representative subset of the successful
     space is exercised, chosen to cover distinct spin-symmetry transitions.
@@ -136,18 +144,6 @@ def bp_cherry_pick(c: Case) -> bool:
     elif h == SpinSymm.NONCOLLINEAR:
         return w == SpinSymm.NONCOLLINEAR and walker == SpinSymm.NONCOLLINEAR
     return False
-
-
-def bp_cases(success: List[Case]) -> List[Case]:
-    """The back-propagation cases: the cherry-picked subset of success cases,
-    flagged for BP and written to a sibling ``*_bp`` directory so they do not
-    clobber the plain run."""
-    picked = []
-    for c in success:
-        if bp_cherry_pick(c):
-            out = c.out_subdir.parent / (c.out_subdir.name + "_bp")
-            picked.append(replace(c, bp=True, out_subdir=out))
-    return picked
 
 
 # ============================================================================
@@ -347,22 +343,22 @@ def _compare_energy(ft: h5.File, fr: h5.File) -> bool:
     if "energy" not in ft or "energy" not in fr:
         print("  [compare] missing energy dataset")
         return False
-    E, _ = ft["energy"][:]
+    E, dE = ft["energy"][:]
     Eref, dEref = fr["energy"][:]
-    if np.isclose(E, Eref, atol=dEref):
-        print(f"  [compare] energy OK: {E:.6f} vs {Eref:.6f} +- {dEref:.6f}")
-        return True
-    if np.isclose(E, Eref, atol=2 * dEref):
-        print(f"  [compare] energy within 2x tol: {E:.6f} vs {Eref:.6f} +- {dEref:.6f}")
-        return True
-    print(f"  [compare] energy mismatch: {E:.6f} vs {Eref:.6f} +- {dEref:.6f}")
-    return False
+    sigma = np.sqrt(dE**2 + dEref**2)
+
+    z = (E-Eref)/sigma
+    p = 2 * scipy.stats.norm.sf(abs(z))
+    if p < SIGNIFICANCE_LEVEL:
+        print(f"  [compare] energy mismatch: {E:.6f} ± {dE:.6f} vs {Eref:.6f} ± {dEref:.6f} (p = {p:.2g} < {SIGNIFICANCE_LEVEL})")
+        return False
+
+    print(f"  [compare] energy OK: {E:.6f} ± {dE:.6f} vs {Eref:.6f} ± {dEref:.6f} (p = {p:.2g} > {SIGNIFICANCE_LEVEL})")
+    return True
 
 
 def _compare_1rdm(ft: h5.File, fr: h5.File) -> bool:
-    """Compare the back-propagated 1-RDM. A shape mismatch fails; otherwise we
-    report the fraction of elements agreeing within the joint stochastic
-    uncertainty (statistics-only check, warn-like, never fails) as the suite does."""
+    """Compare the back-propagated 1-RDM. A shape mismatch fails; otherwise we do Bonferroni adjusted test on the worst mismatch."""
     if "avg_1rdm" not in ft or "avg_1rdm" not in fr:
         print("  [compare] missing avg_1rdm dataset")
         return False
@@ -374,11 +370,38 @@ def _compare_1rdm(ft: h5.File, fr: h5.File) -> bool:
     A = np.asarray(A, dtype=np.complex128)
     B = np.asarray(B, dtype=np.complex128)
     sigma = np.sqrt(Aerr ** 2 + Berr ** 2).real
+    # Only test components with a meaningful stochastic error. Off-diagonal spin
+    # blocks that are identically zero (e.g. a collinear-derived noncollinear
+    # reference) have sigma ~ machine epsilon, where (a - b)/sigma is a
+    # tiny/tiny ratio that spuriously inflates the z-score.
+    valid = sigma > MACHINE_EPS
+    n_valid = int(np.count_nonzero(valid))
+
+    det = ~valid
+    if det.any():
+        if not np.allclose(A[det], B[det], rtol=MACHINE_EPS, atol=MACHINE_EPS):
+            d = np.abs(A - B)
+            d[valid] = 0.0
+            worst = tuple(map(int, np.unravel_index(np.argmax(d), d.shape)))
+            print(f"  [compare] avg_1rdm deterministic (sigma <= {MACHINE_EPS}) mismatch: |Δ| = {d[worst]:.3e} > {MACHINE_EPS} at idx = {worst}")
+            return False
+
+    if n_valid == 0:
+        print(f"  [compare] avg_1rdm: no components with sigma > {MACHINE_EPS}; matched to machine precision")
+        return True
+    z_crit = scipy.stats.norm.ppf(1 - SIGNIFICANCE_LEVEL / (2 * n_valid))
     for part in ("real", "imag"):
         a, b = getattr(A, part), getattr(B, part)
-        for k in (1, 2, 3):
-            pct = float(np.mean(np.isclose(a, b, atol=k * sigma, rtol=1e-4)) * 100)
-            print(f"  [compare] avg_1rdm {part} within {k} sigma: {pct:.1f}%")
+
+        z = np.zeros_like(sigma)
+        z[valid] = (a[valid] - b[valid]) / sigma[valid]
+        worst = tuple(map(int, np.unravel_index(np.argmax(np.abs(z)), z.shape)))
+
+        if np.abs(z[worst]) <= z_crit:
+            print(f"  [compare] avg_1rdm {part} OK: worst component z = {z[worst]:.2f} <= {z_crit:.2f} at idx = {worst}")
+        else:
+            print(f"  [compare] avg_1rdm {part} mismatch: worst component z = {z[worst]:.2f} > {z_crit:.2f} at idx = {worst}")
+            return False
     return True
 
 
@@ -441,7 +464,7 @@ def detect_ranks(mpiexec: str) -> int:
 
 def run_case(system: System, case: Case, out_root: Path, mpiexec: str,
              afqmc_exec: str, compute: str, ranks: int, timeout: Optional[float],
-             expect_success: bool) -> bool:
+             expect_success: bool, backpropagation: bool) -> bool:
     """Run one case's AFQMC subprocess, then record and compare its results."""
     out_dir = (out_root / case.out_subdir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -457,7 +480,7 @@ def run_case(system: System, case: Case, out_root: Path, mpiexec: str,
         n_walkers_per_mpi_task=n_walkers,
         steps=case.runparams.get("steps", 10000),
         timestep=case.runparams.get("timestep", 0.01),
-        run_bp=case.bp,
+        run_bp=backpropagation,
     )
 
     # Pass the input as an absolute path and let the child run in out_dir (so
@@ -480,9 +503,9 @@ def run_case(system: System, case: Case, out_root: Path, mpiexec: str,
             return False
         run_time = perf_counter() - t0
 
-    record_results(out_dir, return_code, run_time, run_bp=case.bp)
+    record_results(out_dir, return_code, run_time, run_bp=backpropagation)
     return compare(out_dir / "results.h5", case.reference, expect_success,
-                   check_bp=case.bp)
+                   check_bp=backpropagation)
 
 
 # ============================================================================
@@ -540,32 +563,32 @@ def main(argv=None) -> int:
     for name in selected:
         system = systems[name]
         all_cases = generate(system)
-        success = [c for c in all_cases if should_succeed(c) and not should_skip(c)]
+        success = [c for c in all_cases if should_succeed(c) and not should_skip(c) and not (system.bp and should_backprop(c))]
         fail = [c for c in all_cases if not should_succeed(c) and not should_skip(c)]
+        backprop = [c for c in all_cases if should_succeed(c) and system.bp and should_backprop(c) and not should_skip(c)]
 
         for c in all_cases:
             if should_skip(c):
                 print(f"Skipped case {c.out_subdir}.")
 
-        # Back-propagation cases are a cherry-picked subset of the success cases,
-        # only for systems that have them.
-        bp = bp_cases(success) if system.bp else []
         print(f"=== {name}: {len(success)} expected-success, "
-              f"{len(fail)} expected-fail, {len(bp)} back-propagation ===")
+              f"{len(fail)} expected-fail, {len(backprop)} back-propagation ===")
 
         for expect_success, label, group in (
                 (False, "EXPECT_FAILURE", fail),
                 (True, "EXPECT_SUCCESS", success),
-                (True, "BACKPROPAGATION", bp)):
+                (True, "BACKPROPAGATION", backprop)):
             for case in group:
                 tag = f"[{label}] {case.out_subdir}"
                 if args.dry_run:
                     print(f"  {tag}")
                     continue
                 print(f"\n>>> {name} {tag}")
+
                 ok = run_case(
                     system, case, args.output_path / name, args.mpiexec,
-                    afqmc_exec, args.compute, ranks, args.timeout, expect_success)
+                    afqmc_exec, args.compute, ranks, args.timeout, expect_success,
+                    label == "BACKPROPAGATION")
                 print(f"  RESULT: {'PASS' if ok else 'FAIL'}")
                 total_pass += int(ok)
                 total_fail += int(not ok)

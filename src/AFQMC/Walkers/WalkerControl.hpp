@@ -23,6 +23,7 @@
 #include <mpi.h>
 #include "AFQMC/config.h"
 #include "utilities/FairDivide.hpp"
+#include "utilities/Random.hpp"
 #include "IO/app_loggers.h"
 
 #include "AFQMC/Utilities/AFQMCTimer.h"
@@ -212,9 +213,8 @@ inline int swapWalkersAsync(WlkBucket& wset,
  * Implements Cafarrel's minimum branching algorithm.
  *   - buff: array of walker info (weight,num).
  */
-template<class Random>
 inline void min_branch([[maybe_unused]] std::vector<std::pair<double, int>>& buff, 
-                       [[maybe_unused]] Random& rng,
+                       [[maybe_unused]] utils::HostRandomGenerator& rng,
                        [[maybe_unused]] double max_c,
                        [[maybe_unused]] double min_c)
 {
@@ -225,8 +225,7 @@ inline void min_branch([[maybe_unused]] std::vector<std::pair<double, int>>& buf
  * Implements Cafarrel's minimum branching algorithm.
  *   - buff: array of walker info (weight,num).
  */
-template<class Random>
-inline void serial_comb(std::vector<std::pair<double, int>>& buff, Random& rng)
+inline void serial_comb(std::vector<std::pair<double, int>>& buff, utils::HostRandomGenerator& rng)
 {
   std::uniform_real_distribution<double> distribution(0.0,1.0);
   int nW = buff.size();
@@ -239,7 +238,7 @@ inline void serial_comb(std::vector<std::pair<double, int>>& buff, Random& rng)
   int idx=0;
   double s0(std::get<0>(buff[idx])),s1(0.0);
   for(int i=0; i<nW; ++i) {
-    s1 = (i+distribution(rng))/double(nW);
+    s1 = (i+distribution(rng.std_rng))/double(nW);
     while( s1 > s0 ) {
       idx++;
       s0 += std::get<0>(buff[idx]);
@@ -257,8 +256,7 @@ inline void serial_comb(std::vector<std::pair<double, int>>& buff, Random& rng)
  * and number of times the walker should appear in the new list.
  *   - buff: array of walker info (weight,num).
  */
-template<class Random>
-inline void pair_branch(std::vector<std::pair<double, int>>& buff, Random& rng, double max_c, double min_c)
+inline void pair_branch(std::vector<std::pair<double, int>>& buff, utils::HostRandomGenerator& rng, double max_c, double min_c)
 {
   std::uniform_real_distribution<double> distribution(0.0,1.0);
   typedef std::tuple<double, int, int> tp;
@@ -279,7 +277,7 @@ inline void pair_branch(std::vector<std::pair<double, int>>& buff, Random& rng, 
     if (std::abs(std::get<0>(*it_s)) < min_c || std::abs(std::get<0>(*it_l)) > max_c)
     {
       double w12 = std::get<0>(*it_s) + std::get<0>(*it_l);
-      if (distribution(rng) < std::get<0>(*it_l) / w12)
+      if (distribution(rng.std_rng) < std::get<0>(*it_l) / w12)
       {
         std::get<0>(*it_l) = 0.5 * w12;
         std::get<0>(*it_s) = 0.0;
@@ -325,8 +323,7 @@ inline void pair_branch(std::vector<std::pair<double, int>>& buff, Random& rng, 
  * Note: For replicated walkers, the weight of the new walkers will be:
  *    - For a walker in position I with bdata[I][:] = {2, Is}, wnew = 0.5*(weight[I] + weight[Is])  
  */
-template<class Random>
-inline void pair_branch_for_correlated(std::vector<double> const& buff, nda::array<int,2>& bdata, Random& rng, double max_c, double min_c)
+inline void pair_branch_for_correlated(std::vector<double> const& buff, nda::array<int,2>& bdata, utils::HostRandomGenerator& rng, double max_c, double min_c)
 { 
   std::uniform_real_distribution<double> distribution(0.0,1.0);
   typedef std::tuple<double, int> tp;
@@ -353,7 +350,7 @@ inline void pair_branch_for_correlated(std::vector<double> const& buff, nda::arr
       int i_l = std::get<1>(*it_l);
       int i_s = std::get<1>(*it_s);
       double w12 = std::get<0>(*it_s) + std::get<0>(*it_l);
-      if (distribution(rng) < std::get<0>(*it_l) / w12)
+      if (distribution(rng.std_rng) < std::get<0>(*it_l) / w12)
       { 
         bdata(i_l,0) = 2;   // replicate large
         bdata(i_l,1) = i_s; // coupled to small
@@ -387,7 +384,6 @@ inline void pair_branch_for_correlated(std::vector<double> const& buff, nda::arr
  * This implementation requires contiguous walkers and fixed population walker sets.
  */
 template<class WalkerSet,
-         class Random,
          typename = typename std::enable_if<(WalkerSet::contiguous_walker)>::type,
          typename = typename std::enable_if<(WalkerSet::fixed_population)>::type>
 inline void SerialBranching(WalkerSet& wset,
@@ -396,7 +392,7 @@ inline void SerialBranching(WalkerSet& wset,
                             double max_,
                             std::vector<int>& wlk_counts,
                             nda::MemoryArrayOfRank<2> auto& Wexcess,
-                            Random& rng,
+                            utils::HostRandomGenerator& rng,
                             mpi3::communicator& comm)
 {
   using nda::range;
@@ -454,13 +450,12 @@ inline void SerialBranching(WalkerSet& wset,
  * New weights and branching counts, for each system, are calculated and updated in the buffer.
  * comm is a communicator with the roots of all Global communicators. 
  */
-template<class Random>
 inline void correlatedSerialBranching(BRANCHING_ALGORITHM branch_type,
 			    std::string combine_type,		
                             double min_,
                             double max_,
 			    nda::array<std::pair<double, int>,2>& buffer,
-                            Random& rng,
+                            utils::HostRandomGenerator& rng,
                             mpi3::communicator& comm)
 {
   // generate collective weights
@@ -538,14 +533,13 @@ inline void correlatedSerialBranching(BRANCHING_ALGORITHM branch_type,
  * Implements the distributed comb branching algorithm.
  */
 template<class WalkerSet,
-         class Random,
          typename = typename std::enable_if<(WalkerSet::contiguous_walker)>::type,
          typename = typename std::enable_if<(WalkerSet::fixed_population)>::type>
 inline void CombBranching([[maybe_unused]] WalkerSet& wset,
                           [[maybe_unused]] BRANCHING_ALGORITHM type,
                           [[maybe_unused]] std::vector<int>& wlk_counts,
                           [[maybe_unused]] nda::MemoryArrayOfRank<2> auto& Wexcess,
-                          [[maybe_unused]] Random& rng,
+                          [[maybe_unused]] utils::HostRandomGenerator& rng,
                           [[maybe_unused]] mpi3::communicator& comm)
 {
   APP_ABORT("Error: comb not implemented yet. ");

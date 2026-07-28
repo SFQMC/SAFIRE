@@ -91,7 +91,7 @@ inline ComplexType read_energy_offset(h5::group& grp, std::string const& format,
     E0 = nda::sum(energy_offsets);
   } else if(format == "coqui") {
     h5::group hgrp = grp.open_group("System");
-    ComplexType nuc(0), fzc(0), madelung(0);
+    RealType nuc(0), fzc(0), madelung(0);
     if(H5Aexists(h5::hid_t(hgrp), "nuclear_energy")) {
       h5::h5_read_attribute(hgrp, "nuclear_energy", nuc);
     }

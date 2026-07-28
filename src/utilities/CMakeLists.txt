@@ -59,4 +59,5 @@ target_sources(safire_lib
     parser.cpp
     freemem.cpp
     threading.cpp
+    Random.cpp
 )

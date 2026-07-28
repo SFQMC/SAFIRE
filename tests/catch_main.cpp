@@ -108,6 +108,7 @@ int main(int argc, char* argv[])
     cfg.rngSeed = 0xC0FFEE;
   }
     
-  session.run();
+  int result = session.run();
   boost::mpi3::finalize();
+  return result;
 }

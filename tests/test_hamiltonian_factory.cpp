@@ -22,27 +22,19 @@
 #include "AFQMC/config.h"
 
 #include <string>
-#include <vector>
 #include <complex>
-#include <iomanip>
 
 #include "IO/app_loggers.h"
 #include "test_common.hpp"
 #include "utilities/mpi_context.h"
 #include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
-#include "utilities/Timer.hpp"
 #include "test_utils.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
 #include "AFQMC/Utilities/readWfn.h"
-#include "numerics/sparse/sparse.hpp"
 
-using std::cerr;
 using std::complex;
-using std::cout;
-using std::endl;
 using std::ifstream;
-using std::setprecision;
 using std::string;
 
 
@@ -164,6 +156,17 @@ void thc_vs_chol_energy_agreement(
   CHECK_THAT(E_thc_phys(all, 1), utils::Approx(E_chol_phys(all, 1), 1e-2, 1e-2));
   CHECK_THAT(E_thc_phys(all, 2), utils::Approx(E_chol_phys(all, 2), 1e-2, 1e-2));
 
+  RealType dt = 1.0;
+  auto run_h1 = [&](auto& H) {
+    int nCV = H.number_of_cholesky_vectors();
+    nda::array<ComplexType, 1> vMF(nCV);
+    vMF() = ComplexType(0);
+    return H.getOneBodyPropagatorMatrix(dt, vMF);
+  };
+  auto H1_chol = run_h1(H_chol);
+  auto H1_thc  = run_h1(H_thc);
+
+  CHECK_THAT(H1_thc, utils::Approx(H1_chol, 1e-2, 1e-2));
 }
 
 template<MEMORY_SPACE MEM>

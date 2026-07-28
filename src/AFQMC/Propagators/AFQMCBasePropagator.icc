@@ -767,7 +767,7 @@ void AFQMCBasePropagator<MEM>::assemble_X(RealType sqrtdt,
   {
     // always generate rng_block_size per walker, to keep generators synchronized in 
     // correlated sampling calculations
-    utils::sampleUniformFields(nda::flatten(RNGbuff), *rng);
+    rng->sampleUniformFields(nda::flatten(RNGbuff));
   }
 
   if(free_projection) {
