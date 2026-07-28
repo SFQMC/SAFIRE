@@ -76,6 +76,7 @@ struct StochasticWfnOptions
   double inner_prop_timestep = 0.01;
   int inner_measure_replicas = 1;  // nm; 1 => measure_energy IS Energy, byte-for-byte
   int inner_measure_stride   = 0;  // <= 0 = input default (inner_equil_steps)
+  bool inner_measure_restore = true; // false => replica sweeps are LEFT in the propagation chain
 };
 
 ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_file, StochasticWfnOptions const& opt = {})
@@ -108,6 +109,8 @@ ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_
     pt.put("inner_measure_replicas", opt.inner_measure_replicas);
   if (opt.inner_measure_stride > 0)
     pt.put("inner_measure_stride", opt.inner_measure_stride);
+  if (not opt.inner_measure_restore)
+    pt.put("inner_measure_restore", false);
   if (opt.inner_nsteps > 0)
   {
     ptree inner_prop;
@@ -3093,6 +3096,208 @@ TEST_CASE("stochastic_measure_replicas_ovlp_is_stored", "[stochastic_wfn]")
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_measure_replicas_ovlp_is_stored<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// ----------------------------------------------------------------------------
+// nm ENERGY correctness (the two tests above cover the nm == 1 identity and the OVLP invariant, both of
+// which hold even if the returned energy is wrong). nm is documented as a pure VARIANCE knob, so the
+// claim under test is arithmetic, not statistical: measure_energy must return exactly the unweighted mean
+// of nm consecutive replica measurements, and (with restore on) must hand the propagation chain back
+// untouched. Both are checkable deterministically, which is worth more here than a 2-sigma band on a
+// 3-walker fixture -- a statistical check on this fixture would be too loose to catch a 1/nm scale error
+// and too tight to run without flaking.
+//
+// What these two do NOT cover, stated plainly so it is not mistaken for full coverage: that each replica's
+// own Energy is an unbiased estimate of the trial energy (that is Energy(), covered upstream by
+// stochastic_mean_field_matches_nomsd), and the nm error-scaling claim (~1/sqrt(nm)), which is a
+// production-scale measurement, not a unit test.
+// ----------------------------------------------------------------------------
+
+// The nm-replica average must be the true unweighted mean of nm CONSECUTIVE replicas. Verified without a
+// reference energy: with restore OFF the pool motion is cumulative across calls, so two nm=2 measurements
+// visit exactly the same four pool states, in the same order, as one nm=4 measurement -- every
+// StochasticWfn seeds its own inner RNG from inner_seed (default 777), so the two wavefunctions get
+// identical, non-interleaved streams, and Energy() itself draws nothing. Hence
+// (E_call1 + E_call2) / 2 == E_nm4 up to floating-point reassociation alone.
+//
+// Catches, as a hard failure: a wrong divisor (1/nm), an accumulator not zeroed on entry, an off-by-one in
+// the advance-per-replica loop (2+2 advances would stop lining up with 4), and any host/device
+// accumulation mismatch (row_accumulate/row_divide vs the host loop), since each MEM runs separately.
+template<MEMORY_SPACE MEM>
+void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                                     std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  // CLOSED *and* COLLINEAR: both checks are reference-free (SAFIRE against itself), so neither is
+  // affected by the Psi0 != PsiT fixtures that tripped the retracted COLLINEAR full-G report.
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file, [](WALKER_TYPES t) {
+    return t == CLOSED || t == COLLINEAR;
+  });
+  if (not env_opt)
+    return;
+  auto& env = *env_opt;
+
+  const int nwalk = 3;
+
+  StochasticWfnOptions opt;
+  opt.inner_nwalkers         = 4;
+  opt.inner_nsteps           = 1;
+  opt.inner_conditioning     = true;
+  opt.inner_leapfrog         = true;
+  opt.inner_persistence      = true;
+  opt.inner_equil_steps      = 1;
+  opt.inner_pool_burn_in     = 0;
+  opt.inner_measure_stride   = 1;
+  // Restore OFF is what makes the two arms comparable: the pool must carry over between the split calls.
+  opt.inner_measure_restore  = false;
+
+  auto measure = [&](Wavefunction<MEM>& wfn, WalkerSet<MEM>& wset, nda::array<ComplexType, 2>& E) {
+    nda::array<ComplexType, 1> Ov(nwalk);
+    E() = ComplexType(0.0); // a caller-side zero, so a missing zero INSIDE measure_energy still shows up
+    wfn.measure_energy(wset, E, Ov);
+  };
+
+  // Arm 1: nm = 2, measured twice. Four advances total, in two batches.
+  StochasticWfnOptions opt2 = opt;
+  opt2.inner_measure_replicas = 2;
+  auto& wfn2  = env.push_stochastic_wfn(mpi, "wfn_stoch_nm2_split", wfn_file, opt2, nwalk);
+  auto wset2  = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nm2_split");
+  perturb_stochastic_walkers<MEM>(wset2, env.type, env.NMO, env.nup, env.ndown);
+  wfn2.begin_inner_step(wset2);
+  REQUIRE(wfn2.stochastic_measure_replicas_active());
+  nda::array<ComplexType, 2> E_a(nwalk, 3), E_b(nwalk, 3);
+  measure(wfn2, wset2, E_a);
+  measure(wfn2, wset2, E_b);
+
+  // Arm 2: nm = 4, measured once. The same four advances, in one batch.
+  StochasticWfnOptions opt4 = opt;
+  opt4.inner_measure_replicas = 4;
+  auto& wfn4  = env.push_stochastic_wfn(mpi, "wfn_stoch_nm4_whole", wfn_file, opt4, nwalk);
+  auto wset4  = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nm4_whole");
+  perturb_stochastic_walkers<MEM>(wset4, env.type, env.NMO, env.nup, env.ndown);
+  wfn4.begin_inner_step(wset4);
+  REQUIRE(wfn4.stochastic_measure_replicas_active());
+  nda::array<ComplexType, 2> E_c(nwalk, 3);
+  measure(wfn4, wset4, E_c);
+
+  // Only reassociation separates ((a+b)+c)+d)/4 from ((a+b)/2 + (c+d)/2)/2, so this is tight on purpose:
+  // every failure mode above is O(1) in the energy, not O(eps).
+  const double tol = 1e-10;
+  double dev = 0.0, scale = 1.0;
+  for (int w = 0; w < nwalk; ++w)
+    for (int k = 0; k < 3; ++k)
+    {
+      const ComplexType split = 0.5 * (E_a(w, k) + E_b(w, k));
+      dev   = std::max(dev, std::abs(split - E_c(w, k)));
+      scale = std::max(scale, std::abs(E_c(w, k)));
+    }
+  app_log(0, "  nm split-vs-whole: max|mean(E_nm2 x2) - E_nm4| = {:e} (scale {:.3f}, tol {:e})", dev, scale,
+          tol * scale);
+  REQUIRE(dev <= tol * scale);
+}
+
+TEST_CASE("stochastic_measure_replicas_average_is_true_mean", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn measure_energy at nm>1 is the exact mean of nm consecutive replicas.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_measure_replicas_average_is_true_mean<MEM>(mpi, hamil_file, wfn_file);
+    // MOLECULES, not ALL_SYSTEMS: the dynamic (inner_nsteps > 0) trial these replicas need calls
+    // energy_fullG, which is implemented ONLY for Real3IndexFactorization. THCOps, KP3IndexFactorization
+    // and ModelHamOps all APP_ABORT with "energy_fullG not implemented", so the solid and lattice
+    // fixtures cannot run this test at all -- a capability limit, not a defect, and the same one the
+    // header comment records for full-G parity. Excluding them keeps CLOSED + COLLINEAR coverage on BH
+    // while leaving this gate clean, so a failure here means the nm estimator moved and nothing else.
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::MOLECULES);
+}
+
+// With inner_measure_restore on, a measurement must be invisible to the propagation chain -- otherwise nm
+// is a BIAS knob (it would silently add nm*stride sweeps of pool relaxation per measured step) rather than
+// the variance knob it is documented as, and every nm curve would be measuring a different trial than the
+// nm=1 curve it is compared against. restore_chain_fields claims to put the pool back "bit for bit"
+// (fields restored, determinants rebuilt deterministically from them), so this is asserted EXACTLY: two
+// wavefunctions identical but for nm, same inner_seed, same walkers. One measures nothing, the other burns
+// four replicas and restores. A subsequent plain Energy() must agree to the last bit.
+template<MEMORY_SPACE MEM>
+void stochastic_measure_replicas_restore_is_invisible(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                                     std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file, [](WALKER_TYPES t) {
+    return t == CLOSED || t == COLLINEAR;
+  });
+  if (not env_opt)
+    return;
+  auto& env = *env_opt;
+
+  const int nwalk = 3;
+
+  StochasticWfnOptions opt;
+  opt.inner_nwalkers       = 4;
+  opt.inner_nsteps         = 1;
+  opt.inner_conditioning   = true;
+  opt.inner_leapfrog       = true;
+  opt.inner_persistence    = true;
+  opt.inner_equil_steps    = 1;
+  opt.inner_pool_burn_in   = 0;
+  opt.inner_measure_stride = 1;
+
+  // Control: nm = 1, so measure_replicas_active() is false and the pool is never advanced.
+  auto& wfn_ref = env.push_stochastic_wfn(mpi, "wfn_stoch_restore_ref", wfn_file, opt, nwalk);
+  auto wset_ref = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_restore_ref");
+  perturb_stochastic_walkers<MEM>(wset_ref, env.type, env.NMO, env.nup, env.ndown);
+  wfn_ref.begin_inner_step(wset_ref);
+  REQUIRE_FALSE(wfn_ref.stochastic_measure_replicas_active());
+  nda::array<ComplexType, 2> E_ref(nwalk, 3);
+  nda::array<ComplexType, 1> Ov_ref(nwalk);
+  wfn_ref.Energy(wset_ref, E_ref, Ov_ref);
+
+  // Test: nm = 4 with restore on. Four replica advances, then the pool is put back.
+  StochasticWfnOptions opt4  = opt;
+  opt4.inner_measure_replicas = 4;
+  opt4.inner_measure_restore  = true; // the default; stated because it IS the property under test
+  auto& wfn_rst = env.push_stochastic_wfn(mpi, "wfn_stoch_restore_nm4", wfn_file, opt4, nwalk);
+  auto wset_rst = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_restore_nm4");
+  perturb_stochastic_walkers<MEM>(wset_rst, env.type, env.NMO, env.nup, env.ndown);
+  wfn_rst.begin_inner_step(wset_rst);
+  REQUIRE(wfn_rst.stochastic_measure_replicas_active());
+
+  nda::array<ComplexType, 2> E_burn(nwalk, 3);
+  nda::array<ComplexType, 1> Ov_burn(nwalk);
+  wfn_rst.measure_energy(wset_rst, E_burn, Ov_burn); // result discarded; the point is the side effect
+
+  nda::array<ComplexType, 2> E_after(nwalk, 3);
+  nda::array<ComplexType, 1> Ov_after(nwalk);
+  wfn_rst.Energy(wset_rst, E_after, Ov_after);
+
+  double dev = 0.0;
+  for (int w = 0; w < nwalk; ++w)
+  {
+    dev = std::max(dev, std::abs(Ov_after(w) - Ov_ref(w)));
+    for (int k = 0; k < 3; ++k)
+      dev = std::max(dev, std::abs(E_after(w, k) - E_ref(w, k)));
+  }
+  app_log(0, "  nm restore invisibility: max|E_after_restore - E_never_measured| = {:e} (expect 0)", dev);
+  REQUIRE(dev == 0.0);
+}
+
+TEST_CASE("stochastic_measure_replicas_restore_is_invisible", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn nm>1 with inner_measure_restore leaves the propagation chain bit-identical.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_measure_replicas_restore_is_invisible<MEM>(mpi, hamil_file, wfn_file);
+    // MOLECULES, not ALL_SYSTEMS: the dynamic (inner_nsteps > 0) trial these replicas need calls
+    // energy_fullG, which is implemented ONLY for Real3IndexFactorization. THCOps, KP3IndexFactorization
+    // and ModelHamOps all APP_ABORT with "energy_fullG not implemented", so the solid and lattice
+    // fixtures cannot run this test at all -- a capability limit, not a defect, and the same one the
+    // header comment records for full-G parity. Excluding them keeps CLOSED + COLLINEAR coverage on BH
+    // while leaving this gate clean, so a failure here means the nm estimator moved and nothing else.
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::MOLECULES);
 }
 
 } // namespace sfqmc
