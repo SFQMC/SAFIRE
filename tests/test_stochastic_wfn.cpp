@@ -963,7 +963,10 @@ void stochastic_mean_field_production_order(
   // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
     const double dt(0.01);
     auto all = nda::range::all;
@@ -1187,7 +1190,10 @@ void stochastic_back_propagation_production_order(
   // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
 
     ptree ham_pt;
@@ -1301,7 +1307,10 @@ void stochastic_back_propagation_inner_refs(
   // PR-3: free-projection BP references are device-ported (getReferences); runs on DEVICE_MEMORY.
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
 
     const int P    = 3;
@@ -1599,8 +1608,15 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
-      return; // Un-rotated full-G kernels support CLOSED (RHF) trials only.
+    // Was `type != CLOSED` with the comment "full-G kernels support CLOSED (RHF) trials only" -- that
+    // predated full_g::energy_collinear landing, and it meant this comparison (the ONLY thing that
+    // validates an un-rotated full-G energy kernel against the compact/NOMSD reference) silently
+    // skipped COLLINEAR. So energy_collinear shipped unvalidated, and it is the kernel every
+    // broken-symmetry production panel runs through (N2-stretched, C2, Fe2S2). NONCOLLINEAR full-G
+    // really is unimplemented -- Real3IndexFactorization::energy_fullG APP_ABORTs on it -- so that is
+    // the only type still excluded.
+    if (type == NONCOLLINEAR)
+      return;
     const double dt(0.01);
 
     ptree ham_pt;
@@ -1798,7 +1814,10 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
     const double dt(0.01);
 
@@ -1903,7 +1922,10 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
     const double dt(0.01);
 
@@ -2089,7 +2111,10 @@ void stochastic_inner_permute_after_pop_control(
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
     // The permutation is per-rank-local and rank-count-independent, so single-rank fully validates it.
     // The exact cross-slot overlap equalities below assume no cross-rank reduction mixing; cross-rank
@@ -2157,10 +2182,19 @@ void stochastic_inner_permute_after_pop_control(
 
     // Simulate an outer popControl clone that preserves the per-rank count (the case the size-mismatch
     // guard in conditioned_resample does NOT catch): outer slot clone_dst becomes a copy of clone_src.
+    // BOTH spin blocks: a real popControl clone copies the whole walker, and the exact block-identity
+    // assertions below require phi_clone_dst == phi_clone_src. Copying Alpha alone leaves clone_dst with
+    // its ORIGINAL beta, so for COLLINEAR the overlaps legitimately differ and the test fails for a reason
+    // that has nothing to do with the permutation under test.
     {
       auto all = nda::range::all;
       auto SM  = wset.SlaterMatrices(Alpha);
       SM(clone_dst, all, all) = SM(clone_src, all, all);
+      if (type == COLLINEAR)
+      {
+        auto SMb = wset.SlaterMatrices(Beta);
+        SMb(clone_dst, all, all) = SMb(clone_src, all, all);
+      }
     }
     // SLOT_LINEAGE parent map: clone_dst <- clone_src, every other slot identity.
     {
@@ -2226,7 +2260,10 @@ void stochastic_inner_permute_cross_rank_fallback(
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
     if (mpi->comm.size() != 1)
       return; // synthetic single-rank sentinel check (real cross-rank moves need no special harness)
@@ -2350,7 +2387,10 @@ void stochastic_persistent_permute_after_pop_control(
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
     if (mpi->comm.size() != 1)
       return; // per-rank-local permutation; the exact cross-slot equalities assume no cross-rank mixing.
@@ -2402,12 +2442,18 @@ void stochastic_persistent_permute_after_pop_control(
 
     // Simulate a count-preserving popControl clone: outer slot clone_dst becomes a copy of clone_src.
     // Production branch() clones the ENTIRE walker_buffer row, so the copy includes the walker's chain
-    // fields (TrialFields row) alongside its Slater matrix; the lineage scalar is set for completeness
-    // (the persistent path rebuilds from the fields and does not consume it).
+    // fields (TrialFields row) alongside its Slater matrix -- and, for COLLINEAR, BOTH spin blocks (see
+    // the same note in stochastic_inner_permute_after_pop_control); the lineage scalar is set for
+    // completeness (the persistent path rebuilds from the fields and does not consume it).
     {
       auto all = nda::range::all;
       auto SM  = wset.SlaterMatrices(Alpha);
       SM(clone_dst, all, all) = SM(clone_src, all, all);
+      if (type == COLLINEAR)
+      {
+        auto SMb = wset.SlaterMatrices(Beta);
+        SMb(clone_dst, all, all) = SMb(clone_src, all, all);
+      }
       auto TF = wset.TrialFields();
       TF(clone_dst, all) = TF(clone_src, all);
     }
@@ -2475,7 +2521,10 @@ void stochastic_persistent_pool_survives_pop_control(
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
     if (mpi->comm.size() != 1)
       return; // synthetic single-rank sentinel check (real cross-rank moves need no special harness).
@@ -2618,7 +2667,10 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
+    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
+    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
+    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    if (type == NONCOLLINEAR)
       return;
     if (mpi->comm.size() != 1)
       return; // manipulates SLOT_LINEAGE directly; the identity-lineage permute assumes no cross-rank mixing.
