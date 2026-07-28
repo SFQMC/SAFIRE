@@ -450,6 +450,46 @@ void perturb_stochastic_walkers(WalkerSet<MEM>& wset, WALKER_TYPES type, int NMO
   }
 }
 
+// PREMISE CHECK for every test that compares a StochasticWfn path against NOMSD.
+//
+// The inner ensemble's anchor is the INITIAL GUESS (the wfn file's Psi0_alpha/Psi0_beta, via
+// StochasticWfn::initialize_inner_walkers), while NOMSD scores against PsiT. Those are independent
+// datasets, so such a comparison is only meaningful when they are the same determinant. Two fixtures
+// deliberately break that -- BH afqmc_uhf_nomsd.h5 and afqmc_uhf_nomsd_init_rhf.h5 -- shipping a Psi0
+// that differs from PsiT by a sign flip plus a ~1e-4 subspace rotation (max|Psi0-conj(PsiT)^T| = 2.0,
+// |det(PsiT^H Psi0)| = 1-4.7e-9). Against those, a "stochastic != NOMSD" failure says nothing about the
+// code under test: it is comparing two different wavefunctions. Every other NOMSD fixture in the suite
+// has Psi0 == PsiT bit-for-bit, as does every production trial the noci_comp decks write.
+//
+// Measuring it without new plumbing: at the unperturbed initial guess phi == Psi0, so NOMSD returns
+// G = phi inv(PsiT^H phi) PsiT^H, an oblique projector. It is idempotent EITHER WAY -- so idempotency
+// cannot discriminate -- but Hermitian exactly when PsiT and Psi0 span the same subspace. (Hermiticity is
+// preserved by the transposed storage convention.) Returns max|G - G^H| over NOMSD's own DM: ~1e-16 when
+// the premise holds, ~1e-4 when it does not.
+template<MEMORY_SPACE MEM>
+double anchor_reference_mismatch(Wavefunction<MEM>& wfn_nomsd, WalkerSet<MEM>& wset_at_guess,
+                                 WALKER_TYPES type, int NMO)
+{
+  const int nspin = (type == COLLINEAR ? 2 : 1);
+  const int npol  = (type == NONCOLLINEAR ? 2 : 1);
+  const int nwalk = int(wset_at_guess.size());
+  const int rows = npol * NMO, cols = npol * NMO;
+  memory::array<MEM, ComplexType, 2> G(nwalk, nspin * rows * cols);
+  memory::array<MEM, ComplexType, 1> Ov(nwalk);
+  wfn_nomsd.MixedDensityMatrix(wset_at_guess, G, Ov, false);
+  nda::array<ComplexType, 2> Gh(nda::to_host(G));
+  double herm = 0.0;
+  for (int w = 0; w < nwalk; ++w)
+    for (int sp = 0; sp < nspin; ++sp)
+      for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < cols; ++c)
+        {
+          const long a = long(sp * rows + r) * cols + c, b = long(sp * rows + c) * cols + r;
+          herm         = std::max(herm, std::abs(Gh(w, a) - std::conj(Gh(w, b))));
+        }
+  return herm;
+}
+
 // The OVLP property stores a complex LOG overlap whose imaginary part (phase) is defined only mod
 // 2*pi. NOMSD::Log_Overlap accumulates the unwrapped log-det phase, while the stochastic reduction
 // sums in linear space and then takes the log, so it returns the principal branch -- the two can
@@ -859,6 +899,24 @@ void stochastic_mean_field_matches_nomsd(
   auto v_s1  = collect_vMF(wfn_s1);
   auto v_s3  = collect_vMF(wfn_s3);
 
+  // Localize before asserting. inner_nsteps is unset here => 0 => the STATIC limit, where the inner
+  // ensemble is P exact replicas of the anchor. So these are deterministic identities, not stochastic
+  // estimates: any nonzero deviation is a real inner_nwalkers dependence, not sampling noise.
+  auto amax = [](auto const& a, auto const& b) {
+    double d = 0.0, s = 0.0;
+    for (long i = 0; i < a.size(); ++i)
+    {
+      d = std::max(d, std::abs(a(i) - b(i)));
+      s = std::max(s, std::abs(b(i)));
+    }
+    return std::make_pair(d, s);
+  };
+  {
+    auto [d31, s31] = amax(v_s3, v_s1);
+    auto [d1r, s1r] = amax(v_s1, v_ref);
+    app_log(0, "  vMF static-limit: max|v_s3-v_s1| = {:.6e} (rel {:.3e})   max|v_s1-v_ref| = {:.6e} (rel {:.3e})",
+            d31, s31 > 0 ? d31 / s31 : 0.0, d1r, s1r > 0 ? d1r / s1r : 0.0);
+  }
   // (1) inner_nwalkers invariance of the mean-field bias.
   CHECK_THAT(v_s3, utils::Approx(v_s1));
   // (2) delegate limit: single-determinant trial => stochastic vMF == NOMSD.
@@ -874,6 +932,13 @@ void stochastic_mean_field_matches_nomsd(
   auto G_s1  = collect_GMF(wfn_s1);
   auto G_s3  = collect_GMF(wfn_s3);
 
+  {
+    auto fl = [](auto const& A) { return nda::reshape(A, std::array<long, 1>{A.size()}); };
+    auto [d31, s31] = amax(fl(G_s3), fl(G_s1));
+    auto [d1r, s1r] = amax(fl(G_s1), fl(G_ref));
+    app_log(0, "  G_MF static-limit: max|G_s3-G_s1| = {:.6e} (rel {:.3e})   max|G_s1-G_ref| = {:.6e} (rel {:.3e})",
+            d31, s31 > 0 ? d31 / s31 : 0.0, d1r, s1r > 0 ? d1r / s1r : 0.0);
+  }
   CHECK_THAT(G_s3, utils::Approx(G_s1));
   if (wfn_nomsd.total_number_of_references() == 1)
     CHECK_THAT(G_s1, utils::Approx(G_ref));
@@ -1656,6 +1721,22 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     auto& wfn_compact = build_stoch("wfn_stoch_fg0", 1, 0); // compact nd = 0 (delegates to NOMSD)
     auto& wfn_full    = build_stoch("wfn_stoch_fg1", 1, 1); // un-rotated full-G; NOT resampled
 
+    // The two arms score against DIFFERENT determinants unless Psi0 == PsiT: wfn_compact (inner_nsteps=0)
+    // delegates to NOMSD -> PsiT, while wfn_full uses the inner-ensemble anchor -> Psi0. See
+    // anchor_reference_mismatch. Without this guard the BH UHF fixtures produce a ~2e-5 relative energy
+    // disagreement that is purely the fixture's Psi0/PsiT difference and not a kernel defect.
+    {
+      auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_fg");
+      auto wset_guess           = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
+      const double herm         = anchor_reference_mismatch<MEM>(wfn_nomsd, wset_guess, type, NMO);
+      app_log(0, "  full-G vs compact: anchor/reference premise  max|G - G^H| = {:.6e}", herm);
+      if (herm > 1e-10)
+      {
+        app_log(0, "  full-G vs compact: SKIPPED -- initial guess (inner anchor) is not the trial reference.");
+        return;
+      }
+    }
+
     struct WalkerEnergies
     {
       nda::array<ComplexType, 1> ov, e1, exx, ej;
@@ -1716,6 +1797,139 @@ TEST_CASE("stochastic_full_g_matches_compact", "[stochastic_wfn]")
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_full_g_matches_compact<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+}
+
+// Isolates G from the energy kernels. stochastic_full_g_matches_compact shows full-G energies drifting
+// from the compact reference on COLLINEAR fixtures (~2e-5 relative) while CLOSED holds to 1e-8, and the
+// error scales 1 : 2 : 2 across E1 : EXX : EJ -- E1 is LINEAR in G and involves no Cholesky at all, EXX
+// and EJ are QUADRATIC in G. That is the signature of G itself being off, not of the Cholesky or the
+// one-body. This checks G directly.
+//
+// The gap this fills: stochastic_mixed_density_matrix_matches_nomsd already compares the non-compact DM
+// against NOMSD for every walker type -- but only at inner_nsteps = 0 (the STATIC replicated ensemble,
+// which delegates to NOMSD). The full-G energy path requires inner_nsteps > 0, whose DM is assembled by
+// a different route (reduce_inner_cross_dm, [nwalk][nspin*NMO*NMO]). That assembly has never been
+// compared to anything. Held at the anchor (begin_inner_step never called, inner_nwalkers = 1) the
+// dynamic DM must equal NOMSD's exactly, so any deviation localizes the defect to the assembly.
+template<MEMORY_SPACE MEM>
+void stochastic_dynamic_full_g_dm_matches_nomsd(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(
+      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  if (not env_opt)
+    return;
+  auto& env = *env_opt;
+  if (env.type == NONCOLLINEAR)
+    return; // full-G aborts on NONCOLLINEAR by design
+
+  const int nspin = (env.type == COLLINEAR ? 2 : 1);
+  const int npol  = (env.type == NONCOLLINEAR ? 2 : 1);
+  const int nwalk = 11;
+
+  auto& wfn_nomsd = env.push_nomsd_wfn(mpi, "wfn_nomsd_dyndm", wfn_file, nwalk);
+
+  StochasticWfnOptions opt;
+  opt.inner_nwalkers = 1;
+  opt.inner_nsteps   = 1; // dynamic => un-rotated full-G representation
+  auto& wfn_dyn      = env.push_stochastic_wfn(mpi, "wfn_stoch_dyndm", wfn_file, opt, nwalk);
+
+  // Non-compact layout only: that IS the full-G layout the energy kernel contracts.
+  const int Gsize = nspin * npol * env.NMO * npol * env.NMO;
+  // PREMISE (load-bearing -- read anchor_reference_mismatch before trusting a failure here): this test
+  // asserts that the inner anchor and NOMSD's reference are the same determinant, which is a property of
+  // the FIXTURE (Psi0 vs PsiT), not of the code under test. Guarded below.
+  //
+  // `perturb` is a conditioning knob. perturb_stochastic_walkers drives walkers far off the anchor
+  // (|<psi|phi>| down to ~1e-9, |G| up to ~80). Both settings are asserted where the premise holds --
+  // CLOSED passes the perturbed comparison at 6.8e-16 and the COLLINEAR Hubbard fixtures at ~1e-15, which
+  // is what rules out ill-conditioning as an explanation for any disagreement seen here.
+  auto collect_dm = [&](Wavefunction<MEM>& wfn, bool perturb) {
+    auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_dyndm");
+    if (perturb)
+      perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    memory::array<MEM, ComplexType, 2> G(nwalk, Gsize);
+    memory::array<MEM, ComplexType, 1> Ov(nwalk);
+    wfn.MixedDensityMatrix(wset, G, Ov, false); // never begin_inner_step => ensemble at the anchor
+    return std::make_pair(nda::array<ComplexType, 2>(nda::to_host(G)),
+                          nda::array<ComplexType, 1>(nda::to_host(Ov)));
+  };
+  auto exp_of = [&](nda::array<ComplexType, 1> const& Ov) {
+    nda::array<ComplexType, 1> e(Ov.size());
+    for (int w = 0; w < int(Ov.size()); ++w)
+      e(w) = std::exp(Ov(w));
+    return e;
+  };
+
+  if (wfn_nomsd.total_number_of_references() != 1)
+    return;
+
+  // G is [nwalk][nspin*npol*NMO][npol*NMO] flattened, so spin sigma occupies rows
+  // [sigma*npol*NMO, (sigma+1)*npol*NMO).
+  const int rows = npol * env.NMO, cols = npol * env.NMO;
+  auto report = [&](char const* tag, nda::array<ComplexType, 2> const& G_ref,
+                    nda::array<ComplexType, 1> const& Ov_ref, nda::array<ComplexType, 2> const& G_dyn,
+                    nda::array<ComplexType, 1> const& Ov_dyn) {
+    // Per-walker, because the aggregate max is dominated by whichever walker is worst conditioned and so
+    // hides whether the error is uniform (a defect) or concentrated on near-singular walkers (roundoff).
+    for (int w = 0; w < nwalk; ++w)
+    {
+      double dmax = 0.0, gmax = 0.0;
+      for (int sp = 0; sp < nspin; ++sp)
+        for (int r = 0; r < rows; ++r)
+          for (int c = 0; c < cols; ++c)
+          {
+            const long idx = long(sp * rows + r) * cols + c;
+            dmax           = std::max(dmax, std::abs(G_dyn(w, idx) - G_ref(w, idx)));
+            gmax           = std::max(gmax, std::abs(G_ref(w, idx)));
+          }
+      const double aov = std::abs(std::exp(Ov_ref(w)));
+      const double dov = std::abs(Ov_dyn(w) - Ov_ref(w)); // log space: this IS the relative overlap error
+      app_log(0, "  {} w{:<2d} |ovlp| = {:.3e}  d(log ovlp) = {:.3e}   max|G| = {:.3e}  relG = {:.3e}", tag, w,
+              aov, dov, gmax, gmax > 0.0 ? dmax / gmax : 0.0);
+    }
+  };
+
+  auto [G_clean_ref, Ov_clean_ref] = collect_dm(wfn_nomsd, false);
+  auto [G_clean_dyn, Ov_clean_dyn] = collect_dm(wfn_dyn, false);
+
+  auto wset_guess   = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_dyndm"); // unperturbed == Psi0
+  const double herm = anchor_reference_mismatch<MEM>(wfn_nomsd, wset_guess, env.type, env.NMO);
+  app_log(0, "  dyn-full-G DM: anchor/reference premise  max|G - G^H| = {:.6e}", herm);
+  if (herm > 1e-10)
+  {
+    // Psi0 != PsiT for this fixture: the anchor and NOMSD's reference are different determinants, so
+    // there is nothing to compare. Report and skip rather than record a meaningless failure.
+    report("dyn-full-G DM [clean]", G_clean_ref, Ov_clean_ref, G_clean_dyn, Ov_clean_dyn);
+    app_log(0, "  dyn-full-G DM: SKIPPED -- initial guess (inner anchor) is not the trial reference.");
+    return;
+  }
+
+  report("dyn-full-G DM [clean]", G_clean_ref, Ov_clean_ref, G_clean_dyn, Ov_clean_dyn);
+  CHECK_THAT(G_clean_dyn, utils::Approx(G_clean_ref));
+  CHECK_THAT(exp_of(Ov_clean_dyn), utils::Approx(exp_of(Ov_clean_ref)));
+
+  // Perturbed walkers too: the premise holds, so this is a genuine assertion, and it is the stronger of
+  // the two (walkers far off the anchor, |ovlp| down to ~5e-7 and |G| up to ~80). CLOSED passes it at
+  // 6.8e-16, which is also what rules out ill-conditioning as an explanation for anything seen here.
+  auto [G_pert_ref, Ov_pert_ref] = collect_dm(wfn_nomsd, true);
+  auto [G_pert_dyn, Ov_pert_dyn] = collect_dm(wfn_dyn, true);
+  report("dyn-full-G DM [pert ]", G_pert_ref, Ov_pert_ref, G_pert_dyn, Ov_pert_dyn);
+  CHECK_THAT(G_pert_dyn, utils::Approx(G_pert_ref));
+  CHECK_THAT(exp_of(Ov_pert_dyn), utils::Approx(exp_of(Ov_pert_ref)));
+}
+
+TEST_CASE("stochastic_dynamic_full_g_dm_matches_nomsd", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn dynamic (inner_nsteps>0) full-G mixed DM vs NOMSD at the anchor.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_dynamic_full_g_dm_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
