@@ -358,7 +358,7 @@ void StochasticWfn<MEM, devPsiT>::prime_chain_fields(WalkerSet<MEM>& wset)
   const int block = wset.trial_fields_size();
   auto Yw         = wset.TrialFields();
   nda::array<double, 1> u(long(nw) * block);
-  utils::sampleUniformFields(u, *inner_ensemble_.rng);
+  inner_ensemble_.rng->sampleUniformFields(u);
   nda::array<ComplexType, 2> Yh(nw, block);
   long k = 0;
   for (int w = 0; w < nw; ++w)
@@ -473,7 +473,7 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
     prior_lr() = 0.0;
     {
       nda::array<double, 1> u(ntot * long(pathlen));
-      utils::sampleUniformFields(u, *inner_ensemble_.rng);
+      inner_ensemble_.rng->sampleUniformFields(u);
       long k = 0;
       for (long q = 0; q < ntot; ++q)
       {
@@ -512,7 +512,7 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
 
     // 6. accept/reject per chain.
     nda::array<double, 1> u_acc(ntot);
-    utils::sampleUniformFields(u_acc, *inner_ensemble_.rng);
+    inner_ensemble_.rng->sampleUniformFields(u_acc);
     auto SMa_now = inner.SlaterMatrices(Alpha);
     auto SMb_now = coll ? inner.SlaterMatrices(Beta) : inner.SlaterMatrices(Alpha);
     for (long q = 0; q < ntot; ++q)
