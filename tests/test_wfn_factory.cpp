@@ -389,6 +389,8 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (not utils::dynamic_inner_supports(type))
+      return; // dynamic inner ensemble: CLOSED/COLLINEAR only
     if (type != CLOSED)
       return;
     const double dt(0.01);
@@ -415,6 +417,7 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
       mark_stochastic_wfn_input(pt);
       pt.put("inner_nwalkers", 4);
       pt.put("inner_nsteps", 1);
+      pt.put("inner_mode", "free"); // dynamic trials must name a mode; the bare draw suffices here
       ptree inner_prop;
       inner_prop.put("timestep", 0.01);
       pt.put_child("inner_propagator", inner_prop);
@@ -491,7 +494,7 @@ TEST_CASE("stochastic_inner_hamiltonian_same_as_true", "[wfn_factory]")
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_inner_hamiltonian_same_as_true<MEM>(mpi, hamil_file, wfn_file);
-  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
 // type: stochasticwfn builds StochasticWfn via WavefunctionFactory.
