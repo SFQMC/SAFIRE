@@ -566,12 +566,14 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
 
   if (not inner_chains_primed_)
   {
+    // Prime only. There is no separate burn-in count: the priming step falls through to the
+    // inner_equil_steps_ sweeps below, and every subsequent outer step sweeps again, so the chains have
+    // taken inner_equil_steps_ * (steps so far) sweeps by the time any measurement is kept -- the outer
+    // equilibration window discards the early steps regardless.
     prime_chain_fields(wset);
     inner_chains_primed_ = true;
     rebuild_inner_dets_from_chain_fields(wset);
     inner_dets_stale_ = false;
-    for (int sweep = 0; sweep < inner_pool_burn_in_; ++sweep)
-      chain_pool_sweep(wset);
   }
   else if (inner_dets_stale_ || inner_ensemble_.wset->size() != long(nw) * P)
   {
@@ -582,7 +584,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
   for (int sweep = 0; sweep < inner_equil_steps_; ++sweep)
     chain_pool_sweep(wset);
 
-  if (inner_leapfrog_)
+  if (inner_leapfrog())
     compute_inner_cond_mag(wset);
 
   if (++chain_updates_ % 200 == 0 && chain_proposed_ > 0)
@@ -612,7 +614,7 @@ void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
   for (int sweep = 0; sweep < inner_measure_stride_; ++sweep)
     chain_pool_sweep(wset);
 
-  if (inner_leapfrog_)
+  if (inner_leapfrog())
     compute_inner_cond_mag(wset);
 }
 
@@ -644,7 +646,7 @@ void StochasticWfn<MEM, devPsiT>::restore_chain_fields(WalkerSet<MEM>& wset,
   Yw() = save();
   rebuild_inner_dets_from_chain_fields(wset);
   inner_dets_stale_ = false;
-  if (inner_leapfrog_)
+  if (inner_leapfrog())
     compute_inner_cond_mag(wset);
 }
 

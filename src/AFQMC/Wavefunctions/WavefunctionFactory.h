@@ -95,15 +95,14 @@ public:
     if (inner_nwalkers < 1)
       APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
     int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
-    bool inner_conditioning = pt0.get<bool>("inner_conditioning", false);
-    bool inner_leapfrog = pt0.get<bool>("inner_leapfrog", false);
-    bool inner_persistence = pt0.get<bool>("inner_persistence", false);
     int inner_equil_steps = pt0.get<int>("inner_equil_steps", 1);
-    int inner_pool_burn_in = pt0.get<int>("inner_pool_burn_in", 0);
     // Measurement-replica averaging (nm). Stride default tracks inner_equil_steps -- keep this in step
     // with StochasticWfn::interpret_inputs, which computes the same default.
     int inner_measure_replicas = pt0.get<int>("inner_measure_replicas", 1);
-    int inner_measure_stride = pt0.get<int>("inner_measure_stride", inner_equil_steps);
+    // Clamped to >= 1, matching StochasticWfn::interpret_inputs -- inner_equil_steps = 0 is legal and the
+    // unclamped default made it derive an illegal stride. See the comment there for why max() and not a
+    // relaxed validation.
+    int inner_measure_stride = pt0.get<int>("inner_measure_stride", std::max(1, inner_equil_steps));
     bool inner_measure_restore = pt0.get<bool>("inner_measure_restore", true);
     std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "pcn");
     // pcn default s = 1 (independence proposal): validated conditioned-path default (see StochasticWfn).
@@ -118,8 +117,14 @@ public:
     // HamFac_); it is deliberately NOT forwarded into pt1, so it never reaches the wavefunction's own
     // ptree (StochasticWfn::interpret_inputs does not know it). interpret_inputs only (a) rejects it
     // when stochastic is off and (b) lists it as a known pass-through key for compare_known_keys.
+    //
+    // inner_conditioning, inner_leapfrog, inner_persistence and inner_pool_burn_in are REMOVED options;
+    // they stay in this list so a legacy input still gets the "requires type: stochasticwfn" error rather
+    // than an unrelated unknown-key warning, and StochasticWfn::interpret_inputs then translates or
+    // rejects them.
     for (auto const& key :
-         {"inner_nwalkers", "inner_nsteps", "inner_conditioning", "inner_leapfrog", "inner_persistence",
+         {"inner_nwalkers", "inner_nsteps", "inner_mode",
+          "inner_conditioning", "inner_leapfrog", "inner_persistence",
           "inner_equil_steps", "inner_pool_burn_in", "inner_measure_replicas", "inner_measure_stride",
           "inner_measure_restore", "inner_mcmc", "inner_mcmc_step",
           "inner_log_aggregate", "inner_condition_on_new", "inner_seed", "inner_propagator",
@@ -131,11 +136,15 @@ public:
     {
       pt1.put("inner_nwalkers", inner_nwalkers);
       pt1.put("inner_nsteps", inner_nsteps);
-      pt1.put("inner_conditioning", inner_conditioning);
-      pt1.put("inner_leapfrog", inner_leapfrog);
-      pt1.put("inner_persistence", inner_persistence);
+      // RESOLVE the sampling mode here, at the outermost input seam, and emit only the resolved value.
+      // This layer's output is consumed TWICE downstream -- buildStochasticInnerStack reads it to decide
+      // how the inner propagator is built, and StochasticWfn::interpret_inputs reads it to select the
+      // sampler -- and the propagator is built FIRST. Resolving once here is what guarantees the two
+      // cannot disagree; forwarding the legacy keys instead would leave the propagator builder unable to
+      // read them (it runs before StochasticWfn's own interpret_inputs) and it would silently build a
+      // free-projection propagator for a conditioned sampler.
+      pt1.put("inner_mode", resolve_inner_mode(pt0, inner_nsteps));
       pt1.put("inner_equil_steps", inner_equil_steps);
-      pt1.put("inner_pool_burn_in", inner_pool_burn_in);
       pt1.put("inner_measure_replicas", inner_measure_replicas);
       pt1.put("inner_measure_stride", inner_measure_stride);
       pt1.put("inner_measure_restore", inner_measure_restore);
@@ -156,11 +165,8 @@ public:
       "type",
       "inner_nwalkers",
       "inner_nsteps",
-      "inner_conditioning",
-      "inner_leapfrog",
-      "inner_persistence",
+      "inner_mode",
       "inner_equil_steps",
-      "inner_pool_burn_in",
       "inner_measure_replicas",
       "inner_measure_stride",
       "inner_measure_restore",

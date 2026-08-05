@@ -37,11 +37,156 @@ class Wavefunction;
 template<MEMORY_SPACE MEM>
 class Propagator;
 
+// How the inner (trial) field ensemble is sampled. ONE key -- inner_mode -- replaces the
+// inner_conditioning / inner_leapfrog / inner_persistence booleans. Those were never independent: their
+// legal combinations formed a strict chain (leapfrog required conditioning, persistence required
+// conditioning, replicas required persistence) enforced by four separate runtime APP_ABORTs, so 2^3
+// spellings selected 3 behaviours and the illegal 5 were only caught after construction. An enum makes
+// them unrepresentable instead.
+enum class InnerMode
+{
+  // inner_nsteps == 0. Replicated anchor ensemble; every reduction delegates to NOMSD, so observables are
+  // independent of inner_nwalkers. This is the EXACTNESS LIMIT the NOMSD-parity tests are written against
+  // -- keep it: it is what proves the estimator right, not a production sampler.
+  Static,
+  // Dynamic (inner_nsteps > 0) with an unconditioned free-projection draw: fields from the bare prior
+  // p_T(Y), the plain (1/P) sum reduction, no reweight. REFERENCE / TEST MODE, correct but not usable:
+  // <psi(Y)|phi> is sharply peaked in Y, so prior sampling has catastrophic variance. Needed by the
+  // back-propagation reference-draw and dynamic-ensemble tests.
+  Free,
+  // Dynamic, walker-conditioned. Persistent per-slot field-space Markov chains targeting
+  // p_T(Y)|<psi(Y)|phi_w>|, with the leapfrog 1/|<psi_q|phi_cond>| reweight so the step's overlap ratio
+  // is exactly Eq. 25 and N(phi) cancels. THE PRODUCTION MODE, and the only one with a convergence story.
+  Conditioned,
+};
+
+inline std::string to_string(InnerMode m)
+{
+  switch (m)
+  {
+  case InnerMode::Static:
+    return "static";
+  case InnerMode::Free:
+    return "free";
+  case InnerMode::Conditioned:
+    return "conditioned";
+  }
+  return "unknown";
+}
+
+inline InnerMode parse_inner_mode(std::string const& s)
+{
+  if (s == "static")
+    return InnerMode::Static;
+  if (s == "free")
+    return InnerMode::Free;
+  if (s == "conditioned")
+    return InnerMode::Conditioned;
+  APP_ABORT("Error in StochasticWfn: inner_mode = '" + s +
+            "' is not a sampling mode. Choose one of: 'static' (inner_nsteps = 0 replicated anchor "
+            "ensemble, delegates to NOMSD), 'free' (dynamic unconditioned free projection -- a reference "
+            "mode; correct but catastrophically noisy), 'conditioned' (dynamic walker-conditioned "
+            "persistent field chains with the leapfrog reweight -- the production sampler).");
+  return InnerMode::Static; // unreachable; APP_ABORT throws
+}
+
+// Resolve the sampling mode from an input ptree, translating the four removed booleans it replaces.
+//
+// THIS IS THE SINGLE OWNER OF THAT TRANSLATION, and it is a free function precisely because there are
+// TWO consumers that must never disagree: WavefunctionFactory::interpret_inputs (whose output selects how
+// the inner PROPAGATOR is built) and StochasticWfn::interpret_inputs (which selects the sampler). The
+// propagator is built first, so if the two resolved the mode independently -- or if only the later one
+// knew how to read a legacy input -- a conditioned sampler would be paired with a free-projection
+// propagator and abort at the first step. One function, two call sites, no second source of truth.
+//
+// `inner_nsteps` is passed in rather than read here: callers have already validated it.
+inline std::string resolve_inner_mode(ptree const& pt0, int inner_nsteps)
+{
+  auto legacy_cond      = pt0.get_optional<bool>("inner_conditioning");
+  auto legacy_leap      = pt0.get_optional<bool>("inner_leapfrog");
+  auto legacy_persist   = pt0.get_optional<bool>("inner_persistence");
+  auto mode_opt         = pt0.get_optional<std::string>("inner_mode");
+  const bool any_legacy = legacy_cond || legacy_leap || legacy_persist;
+
+  if (mode_opt && any_legacy)
+    APP_ABORT("Error in StochasticWfn: inner_mode cannot be combined with the removed inner_conditioning "
+              "/ inner_leapfrog / inner_persistence keys -- two spellings of the sampler in one input is "
+              "exactly the ambiguity inner_mode exists to remove. Keep inner_mode and delete the others.");
+
+  std::string inner_mode;
+  if (mode_opt)
+  {
+    inner_mode = *mode_opt;
+  }
+  else if (any_legacy)
+  {
+    // Translate the legacy triple. For inner_conditioning and inner_leapfrog, ABSENT MEANS FALSE -- that
+    // was the old default, so absent carries a real request. inner_persistence is different: only its
+    // explicit `false` asks for something this engine no longer has, while absent means unspecified and
+    // `true` is now implied by the conditioned mode, so both of those translate cleanly. Keying that one
+    // on presence rather than on value_or(false) is what lets a deck that never mentioned persistence
+    // still be understood.
+    const bool c = legacy_cond.value_or(false);
+    const bool l = legacy_leap.value_or(false);
+    if (legacy_persist && not *legacy_persist)
+      APP_ABORT("Error in StochasticWfn: inner_persistence = false requests the removed reset-then-redraw "
+                "conditioned pool; persistent field chains are the only conditioned sampler. Use "
+                "inner_mode = conditioned, or inner_mode = free for an unconditioned draw.");
+    if (l && not c)
+      APP_ABORT("Error in StochasticWfn: inner_leapfrog = true requires inner_conditioning = true. Both "
+                "keys are removed; write inner_mode = conditioned.");
+    if (legacy_persist && *legacy_persist && not c)
+      APP_ABORT("Error in StochasticWfn: inner_persistence = true requires inner_conditioning = true. "
+                "Both keys are removed; write inner_mode = conditioned.");
+    if (c && not l)
+      // The deleted rung. Conditioning tilts the sampling density toward the walker; the leapfrog
+      // reweight by 1/|<psi_q|phi_cond>| is what corrects for that tilt. Conditioning WITHOUT it selects
+      // the plain (1/P) sum, i.e. a conditioned ensemble scored as if it were prior-sampled -- an
+      // estimator with no N(phi) cancellation. It had no production use and no test pinning it as a
+      // reference, so it is gone rather than promoted to a mode. Mapping it to `conditioned` would ADD a
+      // reweight the input never asked for; mapping it to `free` would keep the tilt and drop the weight.
+      APP_ABORT("Error in StochasticWfn: inner_conditioning = true with inner_leapfrog = false selected a "
+                "conditioned ensemble scored by the plain (1/P) sum, with no reweight correcting the "
+                "conditioning tilt and hence no N(phi) cancellation. That combination is REMOVED, not "
+                "renamed. Use inner_mode = conditioned (conditioned sampling + the leapfrog reweight) or "
+                "inner_mode = free (prior sampling + the (1/P) sum).");
+    inner_mode = c ? "conditioned" : (inner_nsteps > 0 ? "free" : "static");
+  }
+  else if (inner_nsteps > 0)
+  {
+    APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 selects a dynamic inner ensemble, so inner_mode "
+              "must be given explicitly -- 'conditioned' for the production walker-conditioned persistent "
+              "chains, or 'free' for the unconditioned free-projection reference sampler (correct, but its "
+              "variance makes it unusable in production). It is NOT defaulted, because defaulting it is "
+              "how a production run silently gets free projection.");
+  }
+  else
+  {
+    inner_mode = "static";
+  }
+
+  // Validate spelling and mode/inner_nsteps agreement here, at the input seam.
+  const InnerMode parsed = parse_inner_mode(inner_mode);
+  if (parsed == InnerMode::Static && inner_nsteps > 0)
+    APP_ABORT("Error in StochasticWfn: inner_mode = static is the inner_nsteps = 0 replicated anchor "
+              "ensemble, but inner_nsteps = " +
+              std::to_string(inner_nsteps) + " was given.");
+  if (parsed != InnerMode::Static && inner_nsteps <= 0)
+    APP_ABORT("Error in StochasticWfn: inner_mode = " + inner_mode +
+              " is a dynamic sampler and requires inner_nsteps > 0.");
+  return inner_mode;
+}
+
 inline ptree strip_stochastic_input_keys(ptree pt)
 {
   // Must list every [stochastic_wfn] key stripped before passing the ptree to the inner wavefunction.
+  // inner_conditioning, inner_leapfrog, inner_persistence and inner_pool_burn_in are REMOVED options
+  // (see interpret_inputs) but stay listed here: this list is "keys StochasticWfn owns OR HAS EVER
+  // OWNED", so a legacy input is rejected by interpret_inputs rather than leaking through to the inner
+  // wavefunction as an unknown key.
   for (auto const& key : {"type", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
-                          "inner_conditioning", "inner_leapfrog", "inner_persistence", "inner_equil_steps",
+                          "inner_mode", "inner_conditioning", "inner_leapfrog", "inner_persistence",
+                          "inner_equil_steps",
                           "inner_mcmc", "inner_mcmc_step", "inner_pool_burn_in", "inner_log_aggregate",
                           "inner_condition_on_new", "inner_measure_replicas", "inner_measure_stride",
                           "inner_measure_restore"})
@@ -98,17 +243,26 @@ public:
   bool inner_walkers_initialized() const { return inner_ensemble_.initialized; }
   int inner_nwalkers() const { return inner_nwalkers_; }
   int inner_nsteps() const { return inner_nsteps_; }
-  bool inner_conditioning() const { return inner_conditioning_; }
-  bool inner_leapfrog() const { return inner_leapfrog_; }
-  // Persistent (tethered) inner sampling. When on, each (outer walker, p) slot owns a Markov chain
-  // whose STATE is the auxiliary-field configuration Y that generates its trial sample
-  // psi = B_T(Y)|phi_T>; chains are kept across outer steps and re-equilibrated by a short
-  // Metropolis-Hastings walk in field space targeting p_T(Y)*|<psi(Y)|phi_w>| instead of
-  // reset-then-redraw with Gaussian-shift resampling. The field configurations live in a per-walker
-  // block of the OUTER walker buffer (WalkerSetBase::TrialFields), so population control clones and
-  // ships the chains with their walkers and the determinants can be rebuilt exactly wherever a walker
-  // lands.
-  bool inner_persistence() const { return inner_persistence_; }
+  InnerMode inner_mode() const { return inner_mode_; }
+  // The three predicates below are SYNONYMS for inner_mode_ == Conditioned, kept because the algorithm
+  // bodies read better naming the mechanism in play at each site ("conditioned resample" vs "leapfrog
+  // reweight" vs "persistent pool") than repeating the mode test. They are no longer independent knobs:
+  // one mode turns on the conditioned target, the leapfrog reweight that makes it unbiased, and the
+  // persistent chains that draw it -- the three are one algorithm, and any two without the third was
+  // either rejected at construction or (conditioning without leapfrog) an estimator with no N(phi)
+  // cancellation, i.e. wrong. Do NOT reintroduce them as separate inputs.
+  bool inner_conditioning() const { return inner_mode_ == InnerMode::Conditioned; }
+  bool inner_leapfrog() const { return inner_mode_ == InnerMode::Conditioned; }
+  // Persistent (tethered) inner sampling -- the ONLY conditioned inner sampler, not an option. Each
+  // (outer walker, p) slot owns a Markov chain whose STATE is the auxiliary-field configuration Y that
+  // generates its trial sample psi = B_T(Y)|phi_T>; chains are kept across outer steps and
+  // re-equilibrated by a short Metropolis-Hastings walk in field space targeting
+  // p_T(Y)*|<psi(Y)|phi_w>|. The field configurations live in a per-walker block of the OUTER walker
+  // buffer (WalkerSetBase::TrialFields), so population control clones and ships the chains with their
+  // walkers and the determinants can be rebuilt exactly wherever a walker lands.
+  // True exactly when the persistent chains are the active sampler, i.e. in Conditioned mode; Static and
+  // Free have no chains.
+  bool inner_persistence() const { return inner_mode_ == InnerMode::Conditioned; }
   int inner_equil_steps() const { return inner_equil_steps_; }
   std::string const& inner_mcmc() const { return inner_mcmc_; }
   double inner_mcmc_step() const { return inner_mcmc_step_; }
@@ -119,14 +273,13 @@ public:
   int inner_measure_stride() const { return inner_measure_stride_; }
   bool inner_measure_restore() const { return inner_measure_restore_; }
   // True when measure_energy should average over replicas: nm > 1 AND the pool is a live persistent
-  // walker-conditioned chain, since advancing it is what a replica IS. Every other mode (static anchor,
-  // free projection, non-persistent conditioned resample) has no chain to sweep, so measure_energy
-  // falls straight through to Energy(). Public so a test can assert the replica path is LIVE instead of
-  // passing vacuously on that fallback.
+  // walker-conditioned chain, since advancing it is what a replica IS. The other modes (static anchor,
+  // free projection) have no chain to sweep, so measure_energy falls straight through to Energy().
+  // Public so a test can assert the replica path is LIVE instead of passing vacuously on that fallback.
   bool measure_replicas_active() const
   {
-    return inner_measure_replicas_ > 1 && inner_persistence_ && inner_conditioning_ && inner_nsteps_ > 0 &&
-        inner_chains_primed_ && not inner_dets_stale_;
+    return inner_measure_replicas_ > 1 && inner_persistence() && inner_chains_primed_ &&
+        not inner_dets_stale_;
   }
   // Cumulative Metropolis acceptance fraction of the field-space chain updates on this rank
   // (1.0 before any proposal has been made).
@@ -178,8 +331,7 @@ public:
   // end_inner_step (and to skip it for every other mode/wavefunction).
   bool conditions_on_new_walker() const
   {
-    return inner_condition_on_new_ && inner_persistence_ && inner_leapfrog_ && inner_conditioning_ &&
-        inner_nsteps_ > 0;
+    return inner_condition_on_new_ && inner_persistence();
   }
 
   // Realign the conditioned inner ensemble with the outer walker set after an outer population-control
@@ -192,7 +344,7 @@ public:
   // walkers (via the per-walker SLOT_LINEAGE map recorded through branch/load-balance), or -- when a
   // walker arrived from another rank, whose inner block this rank does not hold -- rebuilds them with a
   // fresh conditioned resample on the next reduction.
-  // No-op unless this is a conditioned dynamic trial (inner_conditioning_ && inner_nsteps_ > 0); static,
+  // No-op unless this is a conditioned dynamic trial (InnerMode::Conditioned); static,
   // free-projection, and delegate-limit trials carry no slot-conditioned inner blocks.
   template<class WlkSet>
   void permute_inner_blocks_after_pop(const WlkSet& wset);
@@ -458,22 +610,23 @@ private:
   // then reuses that draw (idempotent -- no silent re-draw). Reset to false by begin_inner_step(), i.e.
   // when the forward walk advances to the next step (the next BP window draws fresh).
   bool bp_refs_drawn_{false};
-  bool inner_conditioning_{false};
-  bool inner_leapfrog_{false};
-  // Persistent-chain controls (default OFF => reset-then-redraw conditioned resample is byte-for-byte
-  // unchanged). inner_persistence_: keep per-slot field-space Markov chains across outer steps and
-  // re-equilibrate them in place (see inner_persistence() above). inner_equil_steps_: MH sweeps per
-  // outer step once the chains exist. inner_pool_burn_in_: extra sweeps at the one-time prime.
+  // The inner-sampling mode. Static is the safe default: it is the only mode that needs no sampler
+  // settings at all, and a dynamic trial must name its mode explicitly (see interpret_inputs) so that
+  // Free -- correct but catastrophically noisy -- can never be reached by forgetting a key.
+  InnerMode inner_mode_{InnerMode::Static};
+  // Persistent-chain controls. There is no on/off member: the chains ARE the conditioned sampler, so
+  // inner_persistence() is derived from inner_mode_ == Conditioned. inner_equil_steps_:
+  // MH sweeps per outer step, applied from the one-time prime onwards -- there is no separate burn-in
+  // count, because the prime is followed by inner_equil_steps_ sweeps every step and the outer
+  // equilibration window discards those steps anyway.
   // inner_mcmc_: proposal kernel -- "pcn" (preconditioned Crank-Nicolson, prior-preserving:
   // Y* = sqrt(1-s^2) Y + s xi) or "gaussian" (random walk: Y* = Y + s xi, prior ratio in the
   // acceptance). inner_mcmc_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
   // independence redraw; gaussian: s > 0).
-  bool inner_persistence_{false};
   // Current-walker conditioning: advance the persistent pool at end-of-step against phi_new so leapfrog
   // weights have unit magnitude at measurement. Default false preserves the begin-of-step phi_old path.
   bool inner_condition_on_new_{false};
   int inner_equil_steps_{1};
-  int inner_pool_burn_in_{0};
   std::string inner_mcmc_{"pcn"};
   double inner_mcmc_step_{0.5};
   // Measurement-replica controls (default 1 => measure_energy is Energy).
@@ -600,7 +753,7 @@ private:
   // drives the nw*P inner ensemble through the inner propagator's conditioned field-sampling seam.
   void advance_inner_ensemble_conditioned(memory::array<MEM, ComplexType, 2> const& X_bias, int nw);
 
-  // Resample dispatch: walker-conditioned when inner_conditioning_, else the walker-independent
+  // Resample dispatch: walker-conditioned in Conditioned mode, else the walker-independent
   // free-projection path. Honors the per-step latch armed by begin_inner_step().
   template<class WlkSet>
   void conditioned_resample(const WlkSet& wset);
@@ -645,10 +798,10 @@ private:
     // regime) that size collapses to 1*P == inner_nwalkers_ and would SPOOF the size test below, making
     // vMF/G_MF reduce the phi_w-conditioned ensemble as if it were the walker-independent trial. So gate
     // conditioned dynamic trials OUT explicitly: they always take the dedicated free-projection scratch
-    // draw (mean_field_scratch_ensemble) regardless of nwalk. Persistence implies inner_conditioning_, so
+    // draw (mean_field_scratch_ensemble) regardless of nwalk. Persistence IS Conditioned mode, so
     // this covers the persistent path too. (The same nwalk==1 size ambiguity is handled in
     // conditioned_resample via the latch/flags rather than size -- see that routine.)
-    return inner_nwalkers_ > 1 && not(inner_conditioning_ && inner_nsteps_ > 0)
+    return inner_nwalkers_ > 1 && not inner_conditioning()
            && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr
            && int(inner_ensemble_.wset->size()) == inner_nwalkers_;
   }
