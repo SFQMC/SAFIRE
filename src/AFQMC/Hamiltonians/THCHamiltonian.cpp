@@ -308,7 +308,8 @@ THCHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
               auto Xiv = Xsiu()(is,range(ip*NMO,(ip+1)*NMO),all);
               auto Zu = (*Zuv)()(range(u0,u1),all);
               nda::tensor::contract(Xiu, "iu", nda::conj(Xiv), "iv", Wuv, "uv");
-              nda::tensor::elementwise(Zu, "uv", Wuv, "uv", nda::tensor::op::MUL);
+              nda::tensor::elementwise(ValueType(1.0), Zu, "uv", ValueType(1.0), Wuv, "uv",
+                                       nda::tensor::op::MUL);
               nda::tensor::contract(nda::conj(Xiu), "iu", Wuv, "uv", Tiv, "iv");
               nda::tensor::contract(ValueType(-0.5),Tiv, "iv", Xiv, "jv",
                                     ValueType(0.0),vt(isp,all,all), "ij");

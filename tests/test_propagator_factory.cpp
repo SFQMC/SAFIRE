@@ -87,7 +87,7 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
 
   int nwalk = 11; 
   std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>();
-  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(777));
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
   ptree wlk_pt;
   wlk_pt.put("name","wset0");

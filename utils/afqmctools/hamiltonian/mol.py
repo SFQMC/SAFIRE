@@ -165,7 +165,8 @@ def process_generic_hamiltonian(
         E0:float=0.0,
         cholesky_delta:float=1e-6,
         spin_orbital_integrals:np.array=None,
-        verbose:bool=True
+        verbose:bool=True,
+        cmax:int=20
     ):
     r"""
     Process generic hamiltonian.
@@ -221,12 +222,25 @@ def process_generic_hamiltonian(
 
         if verbose:
             print(" # Generating Cholesky vectors from Coulomb repulsion tensor.")
+        # cmax caps Cholesky vectors at nchol_max = min(int(cmax*nmo), nmo**2). The old default cmax=4
+        # silently truncated large active spaces (e.g. Fe2S2 CAS(30e,20o): 79/193 vectors, ~+22 mHa bias).
+        # Default is now 20; pass cmax=None to remove the cap. Raises if the cap is hit before tol.
         cholesky_vectors = modified_cholesky_direct(
-        coulomb_repulsion_tensor.reshape(nmo**2,nmo**2), 
-        tol=cholesky_delta, 
-        verbose=verbose, 
-        cmax=4
+        coulomb_repulsion_tensor.reshape(nmo**2,nmo**2),
+        tol=cholesky_delta,
+        verbose=verbose,
+        cmax=(nmo if cmax is None else cmax)
         )
+        # Fail loudly rather than hand back a silently-capped factorization.
+        nchol_max = min(int((nmo if cmax is None else cmax) * nmo), nmo**2)
+        if cholesky_vectors.shape[0] >= nchol_max - 1:
+            raise RuntimeError(
+                f"modified_cholesky_direct hit its vector cap: produced "
+                f"{cholesky_vectors.shape[0]} vectors with nchol_max={nchol_max} "
+                f"(cmax={cmax}, nmo={nmo}), so it exited on the CAP and never reached "
+                f"tol={cholesky_delta}. The Hamiltonian would be silently truncated. "
+                f"Raise cmax (or pass cmax=None to remove the cap)."
+            )
     elif cholesky_vectors is not None:
         if cholesky_vectors.shape[1] != nmo**2:
             raise ValueError("Cholesky vectors must have shape (number of Cholesky vectors,number_of_orbitals**2).")

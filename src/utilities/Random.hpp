@@ -30,152 +30,73 @@
 #endif
 
 namespace sfqmc {
-namespace utils
-{
+namespace utils {
 
-/*
-using RandomGenerator_t = std::mt19937;
-#if defined(ENABLE_CUDA)
-using DeviceRandomGenerator_t = curandGenerator_t;
-inline DeviceRandomGenerator_t make_device_rng(RandomGenerator_t::result_type iseed)
-{
-  unsigned long long int v(iseed);
-  return ::sfqmc::cuda::make_device_rng(v);
-}
-#else
-using DeviceRandomGenerator_t = std::mt19937;
-inline DeviceRandomGenerator_t make_device_rng(RandomGenerator_t::result_type iseed)
-{
-  return DeviceRandomGenerator_t{iseed};
-}
+using SeedType = unsigned long long;
+
+SeedType make_seed(boost::mpi3::communicator& comm);
+SeedType split_seed(int seed, boost::mpi3::communicator& comm);
+
+struct HostRandomGenerator {
+  std::mt19937 std_rng; // still used directly in popcontrol
+
+  HostRandomGenerator(SeedType iseed) : std_rng{std::mt19937::result_type(iseed)} {};
+  HostRandomGenerator() = default;
+  
+  template<nda::MemoryVector Vec>
+  requires( nda::mem::on_host<Vec> )
+  void sampleUniformFields(Vec && V) {
+    using T = nda::get_value_t<Vec>;
+    std::uniform_real_distribution<double> distribution(0.0,1.0);
+    for(long i=0; i<V.extent(0); i++)
+      V(i) = T(distribution(std_rng));
+  }
+};  
+
+#if defined(ENABLE_DEVICE)
+class CurandRandomGenerator {
+private:
+  curandGenerator_t handle_ = nullptr;
+public:
+  CurandRandomGenerator(SeedType iseed);
+  ~CurandRandomGenerator();
+
+  CurandRandomGenerator(CurandRandomGenerator const&) = delete;
+  CurandRandomGenerator& operator=(CurandRandomGenerator const&) = delete;
+  // curandGenerator_t is a raw handle, so the defaulted moves would leave both
+  // objects owning it and destroy it twice
+  CurandRandomGenerator(CurandRandomGenerator&& other) noexcept;
+  CurandRandomGenerator& operator=(CurandRandomGenerator&& other) noexcept;
+
+  template<nda::MemoryVector Vec>
+  requires(nda::mem::on_device<Vec>)
+  void sampleUniformFields(Vec && V){
+    using T = nda::get_value_t<Vec>;
+    static_assert(std::is_same_v<T,double> or std::is_same_v<T,std::complex<double>>,
+                  "sampleUniformFields: Type not implemented.");
+    if constexpr (std::is_same_v<T,double>) {
+      cuda::curand_check(curandGenerateUniformDouble(handle_, reinterpret_cast<double*>(V.data()), V.size()),
+                           "curandGenerateUniformDouble");
+    } else if constexpr (std::is_same_v<T,std::complex<double>>) {
+      cuda::curand_check(curandGenerateUniformDouble(handle_, reinterpret_cast<double*>(V.data()), 2 * V.size()),
+                           "curandGenerateUniformDouble");
+      math::zero_imag(V);
+    } 
+    arch::synchronize_if_set();
+  }
+};
 #endif
-*/
+
 
 #if defined(ENABLE_DEVICE)
 template<MEMORY_SPACE MEM = HOST_MEMORY>
-using RandomGenerator_t = std::conditional_t<MEM==DEVICE_MEMORY,curandGenerator_t,std::mt19937>; 
+using RandomGenerator_t = std::conditional_t<MEM==DEVICE_MEMORY,CurandRandomGenerator,HostRandomGenerator>; 
 #else
 template<MEMORY_SPACE MEM = HOST_MEMORY>
-using RandomGenerator_t = std::mt19937; 
+using RandomGenerator_t = HostRandomGenerator; 
 #endif
 
-template<MEMORY_SPACE MEM>
-auto make_rng(RandomGenerator_t<>::result_type iseed)
-{
-#if defined(ENABLE_DEVICE)
-  if constexpr (MEM==DEVICE_MEMORY) {
-    unsigned long long int v(iseed);
-    return ::sfqmc::cuda::make_device_rng(v);
-  } else
-#endif
-    return RandomGenerator_t<>(iseed);
-}
 
-// Return Nth primer number
-template<typename UInt>
-UInt get_prime(UInt N)
-{
-  utils::check(not(N < 1),"N must be positive, provided N = {}", N);
-  if(N==UInt(1)) return UInt(1);
-  if(N==UInt(2)) return UInt(2);
-  if(N==UInt(3)) return UInt(3);
-  N-=UInt(3);
-  std::vector<UInt> primes;
-  primes.reserve(4096);
-  primes.push_back(3);
-  UInt largest = 3;
-  while (N) { 
-    largest += 2; 
-    bool is_prime = true;
-    for (int j = 0; j < primes.size(); j++) { 
-      if (largest % primes[j] == 0) { 
-        is_prime = false;
-        break;
-      }
-      else if (primes[j] * primes[j] > largest) { 
-        break;
-      }
-    }
-    if (is_prime) { 
-      primes.push_back(largest);
-      N--;
-    }
-  }  
-  return largest;
-}
-
-inline typename RandomGenerator_t<HOST_MEMORY>::result_type make_seed(boost::mpi3::communicator& comm)
-{
-  using result_type = typename RandomGenerator_t<HOST_MEMORY>::result_type;
-  result_type baseoffset;
-  if (comm.root())
-    baseoffset = static_cast<int>(static_cast<result_type>(std::time(0)) % 1024);
-  comm.broadcast_value(baseoffset);
-  baseoffset += result_type(comm.rank());
-  return get_prime<result_type>(baseoffset); 
-}
-
-inline typename RandomGenerator_t<HOST_MEMORY>::result_type split_seed(int seed, boost::mpi3::communicator& comm)
-{
-  /*
-  Splits the given seed across the given comm to guarantee that each MPI rank has a unique, but  
-    reproducible seed
-  */
-  using result_type = typename RandomGenerator_t<HOST_MEMORY>::result_type;
-  result_type baseoffset = seed;
-  baseoffset += result_type(comm.rank());
-  return get_prime<result_type>(baseoffset);
-} 
-
-template<nda::MemoryVector Vec>
-requires( nda::mem::on_host<Vec> )
-void sampleUniformFields(Vec && V, RandomGenerator_t<HOST_MEMORY>& rng)
-{
-  using T = nda::get_value_t<decltype(V)>;
-  std::uniform_real_distribution<double> distribution(0.0,1.0);
-  for(long i=0; i<V.extent(0); i++)
-    V(i) = T(distribution(rng));
-}
-
-#if defined(ENABLE_DEVICE)
-template<nda::MemoryVector Vec>
-requires( nda::mem::on_device<Vec> )
-void sampleUniformFields(Vec && V, RandomGenerator_t<DEVICE_MEMORY>& rng)
-{
-  using T = nda::get_value_t<Vec>;
-  static_assert(std::is_same_v<T,double> or std::is_same_v<T,std::complex<double>>,
-                "sampleUniformFields: Type not implemented.");
-  if constexpr (std::is_same_v<T,double>) {
-    cuda::curand_check(curandGenerateUniformDouble(rng, reinterpret_cast<double*>(V.data()), V.size()),
-                         "curandGenerateUniformDouble");
-  } else if constexpr (std::is_same_v<T,std::complex<double>>) {
-    cuda::curand_check(curandGenerateUniformDouble(rng, reinterpret_cast<double*>(V.data()), 2 * V.size()),
-                         "curandGenerateUniformDouble");
-    math::zero_imag(V);
-  } 
-  arch::synchronize_if_set();
-}
-#endif
-
-inline std::vector<RandomGenerator_t<HOST_MEMORY>::result_type> save(RandomGenerator_t<HOST_MEMORY>& rng) 
-{
-  std::vector<RandomGenerator_t<HOST_MEMORY>::result_type> state;
-  std::stringstream str;
-  str << rng;
-  std::copy(std::istream_iterator<RandomGenerator_t<HOST_MEMORY>::result_type>(str), 
-	    std::istream_iterator<RandomGenerator_t<HOST_MEMORY>::result_type>(), 
-	    std::back_inserter(state));  
-  return state;
-}
-
-inline void load(RandomGenerator_t<HOST_MEMORY>& rng, 
-		 std::vector<RandomGenerator_t<HOST_MEMORY>::result_type>& state) 
-{
-  std::stringstream str;
-  std::copy(state.begin(), state.end(),
-	    std::ostream_iterator<RandomGenerator_t<HOST_MEMORY>::result_type>(str, " "));
-  str >> rng;
-}
 
 }
 }

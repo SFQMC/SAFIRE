@@ -1,9 +1,13 @@
 #pragma once
 
+#include <utility>
+
 #include "AFQMC/config.h"
+#include "AFQMC/Utilities/wfn_utils.hpp"
 #include "utilities/check_shape.hpp"
 #include "utilities/mpi_context.h"
 #include "numerics/shared_array/const_shared_array.hpp"
+#include "nda/tensor.hpp"
 
 namespace sfqmc::afqmc {
 
@@ -145,6 +149,101 @@ auto half_rotate_hamiltonian(utils::mpi_context_t<mpi3::communicator>& mpi, std:
   }
   mpi.shared_windows.collective_free_unused();
   return haj;
+}
+
+// Half-rotates the KP momentum-transfer Cholesky factors LQ by the trial PsiT,
+// producing (Lank, Lbnk) in the layout KP3IndexFactorization expects. Shared by
+// KPFactorizedHamiltonian and the unit tests so there is a single implementation.
+//   Lank(Q)(idet,ispin,ik,a,n,ip*nbnd+j) = sum_i PsiT(idet,ispin)(a, ip*NMO+ik*nbnd+i)
+//                                                 * LQ(Q)(ispin*ip,ik,i,j,n)
+// LQ is stored only for Q<=minusq(Q); Lbnk holds the self-inverse (Q==minusq(Q))
+// blocks, indexed by Qmap(Q). nspin_in_H1/npol_in_H1 are the Hamiltonian's intrinsic
+// spin/pol dims, which can differ from the walker's (nspin,npol) derived from `type`.
+template<MEMORY_SPACE MEM>
+std::pair<nda::array<memory::const_shared_array<MEM,ComplexType,6>,1>,
+          nda::array<memory::const_shared_array<MEM,ComplexType,6>,1>>
+kpoint_half_rotate_cholesky(utils::mpi_context_t<mpi3::communicator>& mpi,
+    WALKER_TYPES type, int nspin_in_H1, int npol_in_H1, long NMO, int nbnd,
+    nda::array<PsiT_Matrix<MEM>,2> const& PsiT,
+    nda::array<nda::array<int,1>,2> const& nocc,
+    nda::array<int,1> const& minusq, nda::array<int,2> const& qk_to_k2,
+    nda::array<int,1> const& Qmap, nda::array<int,1> const& nchol,
+    nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> const& LQ) {
+  using nda::range;
+  auto all = range::all;
+  ComplexType zero(0.0), one(1.0);
+  long nspin = (type == COLLINEAR ? 2 : 1);
+  long npol  = (type == NONCOLLINEAR ? 2 : 1);
+  long ndet  = PsiT.extent(0);
+  int nkpts  = nocc.extent(1);
+  int nocc_max = max_nocc_per_kpoint(nocc);
+  int number_of_symmetric_Q = 0;
+  for(int Q=0; Q<nkpts; ++Q) {
+    if(Q == minusq(Q)) {
+      ++number_of_symmetric_Q;
+    }
+  }
+
+  nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> Lank(nkpts);
+  nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> Lbnk(number_of_symmetric_Q);
+  for(int Q=0; Q<nkpts; ++Q) {
+    int Qm = minusq(Q);
+    Lank(Q) = memory::share_from_ranks<MEM,ComplexType,6,3>(mpi,
+        {ndet,nspin,nkpts,nocc_max,nchol(Q),npol*nbnd},
+        [&](std::array<long,3> idx, auto&& block) {
+      auto [id,is,ik] = idx;
+      auto const& rows = nocc(is,ik);
+      int nk = int(rows.size());
+      for(long ip=0; ip<npol; ++ip) {
+        auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
+        if(Q <= Qm) {
+          // L[Q,k,k2=k-Q]
+          auto Aai = math::sparse::to_array<'N'>(PsiT(id,is),rows,
+                                                 range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
+          auto Lijn = LQ(Q)()(is_,ip_,ik,all,all,all);
+          auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
+          utils::check(Lijn.extent(2)==L_.extent(1), "Size mismatch.");
+          nda::tensor::contract(one,Aai,"ai",Lijn,"ijn",zero,L_,"anj");
+        } else {
+          // L[Q,k,k2=k-Q]
+          int k2 = qk_to_k2(Q,ik);
+          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),rows,
+                                                 range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
+          auto Lljn = LQ(Qm)()(is_,ip_,k2,all,all,all);
+          auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
+          utils::check(Lljn.extent(2)==L_.extent(1), "Size mismatch.");
+          nda::tensor::contract(one,Abj,"bj",nda::conj(Lljn),"ljn",zero,L_,"bnl");
+        }
+      } // ip
+    });
+    if(Q==Qm) {
+      // Lbnk is indexed by k2 = qk_to_k2(Q,ik): invert the map so the fill for
+      // item k2 knows the source kpoint ik of LQ
+      nda::array<int,1> k2_to_k(nkpts);
+      for(int ik=0; ik<nkpts; ++ik) {
+        k2_to_k(qk_to_k2(Q,ik)) = ik;
+      }
+      Lbnk(Qmap(Q)) = memory::share_from_ranks<MEM,ComplexType,6,3>(mpi,
+          {ndet,nspin,nkpts,nocc_max,nchol(Q),npol*nbnd},
+          [&](std::array<long,3> idx, auto&& block) {
+        auto [id,is,k2] = idx;
+        int ik = k2_to_k(k2);
+        auto const& rows = nocc(is,k2);
+        int nb = int(rows.size());
+        for(long ip=0; ip<npol; ++ip) {
+          auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
+          // conj(L[Q,k,k2](lj,n)) * A[k2]bj
+          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),rows,
+                                                 range(ip*NMO+k2*nbnd,ip*NMO+(k2+1)*nbnd));
+          auto Lljn = LQ(Q)()(is_,ip_,ik,all,all,all);
+          auto L_ = block(range(nb),all,range(ip*nbnd,(ip+1)*nbnd));
+          utils::check(Lljn.extent(2)==L_.extent(1), "Size mismatch.");
+          nda::tensor::contract(one,Abj,"bj",nda::conj(Lljn),"ljn",zero,L_,"bnl");
+        }
+      });
+    }
+  }  // Q
+  return {std::move(Lank), std::move(Lbnk)};
 }
 
 }

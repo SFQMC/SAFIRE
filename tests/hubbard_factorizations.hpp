@@ -32,7 +32,6 @@
 
 #pragma once
 
-#include <array>
 #include <cmath>
 #include <memory>
 #include <unordered_map>
@@ -50,9 +49,6 @@
 #include "AFQMC/HamiltonianOperations/THCOps.hpp"
 #include "AFQMC/Hamiltonians/ModelHamOpsGenerator.h"
 #include "IO/ptree/ptree_utilities.hpp"
-#include "nda/blas.hpp"
-#include "nda/lapack.hpp"
-#include "nda/nda.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
 #include "numerics/sparse/sparse.hpp"
 #include "utilities/check.hpp"
@@ -304,15 +300,27 @@ nda::array<T, 4> host_vexx_diagonal_kp(long NMO, RealType U, int nH) {
 
 /// Trivial Brillouin-zone tables for the single-kpoint lift (nkpts=1).
 struct SingleQTables {
-  nda::array<int, 2> nocc;     // (nspin, nkpts) — occupations per spin per k
+  nda::array<nda::array<int, 1>, 2> nocc; // (nspin, nkpts) — occupied orbital indices per spin per k
   nda::array<int, 1> minusq;   // q -> index of -q
   nda::array<int, 2> qk_to_k2; // (q, k) -> k+q index
   nda::array<int, 1> qmap;     // q -> index in symmetric-q list (KP3IndexFactorization)
 };
 
 inline SingleQTables make_single_q_tables(HubbardSpec const& s) {
+  // Single kpoint: every electron of walker-spin `is` occupies bands
+  // 0 .. nel_for_spin(is)-1 at the one kpoint.
+  int wns = s.walker_nspin();
+  nda::array<nda::array<int, 1>, 2> nocc(wns, 1);
+  for(int is = 0; is < wns; ++is) {
+    long n = s.nel_for_spin(is);
+    nda::array<int, 1> rows(n);
+    for(long a = 0; a < n; ++a) {
+      rows(a) = int(a);
+    }
+    nocc(is, 0) = std::move(rows);
+  }
   return SingleQTables{
-      .nocc     = nda::array<int, 2>{{s.walker_nup()}, {s.walker_ndown()}},
+      .nocc     = std::move(nocc),
       .minusq   = nda::array<int, 1>{0},
       .qk_to_k2 = nda::array<int, 2>{{0}},
       .qmap     = nda::array<int, 1>{0},
@@ -748,6 +756,270 @@ HamiltonianOperations<MEM> build_modelhamops(
       mpi, s.walker_type, s.walker_nup(), s.walker_ndown(),
       detail::to_const_shared<MEM>(mpi, PsiC_h),
       std::move(ET), std::move(Hams), n2IJ));
+}
+
+// ============================================================================
+// Paired-Q KP support: exercises the `Q != minusq(Q)` branches.
+//
+// The single-kpoint lift above (make_single_q_tables) has minusq(0)==0, so every
+// `Q != minusq(Q)` branch of KP3IndexFactorization is dead there: vHS's
+// X⁺(Q)+X¯(-Q) combine and its band-block transpose, and vbias's rho(-Q)=rho(Q)^+
+// partner accumulation. These helpers put the KP code on a 3-point ring (ℤ₃), where
+// Q=1 and Q=2 are a non-self-inverse pair (minusq=[0,2,1]), with nbnd>=2 so the
+// band-block transpose is non-trivial.
+//
+// Correctness is checked by cross-comparing against a second KP3IndexFactorization
+// built with nkpts=1 that represents the *same* two-body operator. At nkpts=1 the
+// paired branches are never entered, so that instance is the bug-immune reference.
+// Both run identical KP code, so all ±/sqrt(dt)/Hermitization factors are
+// automatically consistent; only the mechanical block-embedding of the ring's
+// momentum-transfer factors into the single-kpoint full-orbital basis must be
+// correct, which cannot silently encode the same bug.
+//
+// The embedding is not a plain copy: the ring gives Q and -Q a field pair each, so
+// a pair contributes L(Q) and L(-Q)=L(Q)^dagger as two independent Cholesky vectors.
+// The lift therefore carries both matrices in its self-inverse sector (see
+// build_kp3index_ring_reference); folding in only L(Q) would halve the paired
+// sector's two-body operator, its exchange/Hartree energy and its vHS(vbias(G)).
+// ============================================================================
+
+/// Ring model parameters. `walker_type == h_symmetry`; one occupied band per
+/// kpoint per spin. Values are deterministic (no RNG), so the test is stable.
+struct KPRingSpec {
+  int nkpts{3};
+  int nbnd{2};
+  int nchol0{2}; // #Cholesky vectors of the self-inverse Q=0 sector
+  int ncholp{2}; // #Cholesky vectors of the non-self-inverse pair (stored on Q=1)
+  WALKER_TYPES walker_type{COLLINEAR};
+
+  // The ring model uses h_symmetry == walker_type, so the Hamiltonian's (nspin,
+  // npol) equal the walker's; walkerTypeToDims gives both.
+  int NMO() const { return nkpts * nbnd; }
+};
+
+namespace detail {
+
+/// Deterministic complex trial amplitude.
+inline ComplexType kp_trialval(int a, int b, int c) {
+  double re = 0.50 + 0.30 * std::sin(1.1 * a + 0.7 * b + 1.9 * c + 0.2);
+  double im = 0.25 * std::cos(0.6 * a + 1.3 * b + 0.9 * c + 0.5);
+  return ComplexType(re, im);
+}
+
+/// BZ tables for a `nkpts`-point ring (ℤ_nkpts): minusq(Q)=(-Q)%nkpts,
+/// qk_to_k2(Q,k)=(k-Q)%nkpts, qmap enumerating the self-inverse Q's.
+struct RingQTables {
+  nda::array<int, 1> minusq;
+  nda::array<int, 2> qk_to_k2;
+  nda::array<int, 1> qmap;
+};
+
+inline RingQTables make_ring_q_tables(int nkpts) {
+  nda::array<int, 1> minusq(nkpts), qmap(nkpts);
+  nda::array<int, 2> qk(nkpts, nkpts);
+  for(int Q = 0; Q < nkpts; ++Q) {
+    minusq(Q) = (nkpts - Q) % nkpts;
+    for(int k = 0; k < nkpts; ++k) {
+      qk(Q, k) = (k - Q + nkpts) % nkpts;
+    }
+  }
+  int ns = 0;
+  for(int Q = 0; Q < nkpts; ++Q) {
+    qmap(Q) = (Q == minusq(Q)) ? ns++ : -1;
+  }
+  return {std::move(minusq), std::move(qk), std::move(qmap)};
+}
+
+/// Momentum-transfer Cholesky factors LQ(Q)(is,ip,ik,i,j,n) for the ring, stored
+/// only for Q <= minusq(Q). Shape (nsH, npH, nkpts, nbnd, nbnd, nchol(Q)).
+inline nda::array<nda::array<ComplexType, 6>, 1>
+make_ring_LQ(KPRingSpec const& s, RingQTables const& bz) {
+  auto [nspin, npol] = walkerTypeToDims(s.walker_type);
+  int nkpts = s.nkpts, nbnd = s.nbnd;
+  nda::array<nda::array<ComplexType, 6>, 1> LQ(nkpts);
+  for(int Q = 0; Q < nkpts; ++Q) {
+    if(Q > bz.minusq(Q)) {
+      continue;
+    }
+    int nchol = (Q == bz.minusq(Q)) ? s.nchol0 : s.ncholp;
+    nda::array<ComplexType, 6> L(nspin, npol, nkpts, nbnd, nbnd, nchol);
+    auto L1 = nda::flatten(L());
+    for(int i = 0; i < L1.size(); i++) {
+      L1(i) = ComplexType(std::cos(i*345 + 0.123*Q*Q), 2*std::sin(i*i+Q));
+    }
+    LQ(Q) = std::move(L);
+  }
+  return LQ;
+}
+
+/// Sparse trial PsiT(0,is)(a, ip*NMO + a*nbnd + i): electron `a` occupies kpoint
+/// `a`'s band block. Returned in the production container type
+/// nda::array<PsiT_Matrix<MEM>,2> so it can feed nocc_per_kpoint and the production
+/// half_rotate_cholesky. The dense (nel, npol*NMO) values are identical for the ring
+/// (nbnd) and its single-kpoint lift (nbnd=NMO): electron `a` lives in orbital block
+/// `a` under both interpretations, so the same trial serves both.
+template<MEMORY_SPACE MEM>
+nda::array<PsiT_Matrix<MEM>, 2> make_ring_psiT(KPRingSpec const& s) {
+  auto [nspin, npol] = walkerTypeToDims(s.walker_type);
+  int nkpts = s.nkpts, nbnd = s.nbnd, NMO = s.NMO();
+  nda::array<PsiT_Matrix<MEM>, 2> PsiT(1, nspin);
+  for(int is = 0; is < nspin; ++is) {
+    nda::array<ComplexType, 2> dense(nkpts, npol * NMO); // (nel, npol*NMO)
+    dense() = ComplexType(0);
+    for(int a = 0; a < nkpts; ++a) {
+      for(int ip = 0; ip < npol; ++ip) {
+        for(int i = 0; i < nbnd; ++i) {
+          dense(a, ip * NMO + a * nbnd + i) = kp_trialval(is, a, ip * nbnd + i);
+        }
+      }
+    }
+    PsiT(0, is) = math::sparse::to_csr<MEM, int, int>(dense);
+  }
+  return PsiT;
+}
+
+/// Assemble a KP3IndexFactorization from already-shared factors + BZ tables.
+/// hij/haj/vexx are zero (vHS/vbias do not use them; energy's E1 column is then 0
+/// on both sides, leaving the two-body EXX/EJ comparison meaningful).
+template<MEMORY_SPACE MEM>
+HamiltonianOperations<MEM> assemble_kp(
+    std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+    WALKER_TYPES walker_type, int nbnd, int q0,
+    nda::array<nda::array<int, 1>, 2> nocc,
+    nda::array<int, 1> minusq, nda::array<int, 2> qk_to_k2, nda::array<int, 1> qmap,
+    nda::array<memory::const_shared_array<MEM, ComplexType, 6>, 1> LQ,
+    nda::array<memory::const_shared_array<MEM, ComplexType, 6>, 1> Lank,
+    nda::array<memory::const_shared_array<MEM, ComplexType, 6>, 1> Lbnk) {
+  auto [nspin, npol] = walkerTypeToDims(walker_type);
+  int nkpts = nocc.extent(1);
+  int NMO   = nkpts * nbnd;
+  int nup   = nelec_for_spin(nocc, 0);
+  int ndown = (walker_type == COLLINEAR) ? nelec_for_spin(nocc, 1) : 0;
+
+  nda::array<ComplexType, 4> hij_h(nspin, nkpts, npol * nbnd, npol * nbnd);
+  hij_h() = ComplexType(0);
+  nda::array<ComplexType, 3> haj_h(1, nup + ndown, npol * NMO);
+  haj_h() = ComplexType(0);
+  nda::array<ComplexType, 4> vexx_h(nspin * npol, nkpts, nbnd, nbnd);
+  vexx_h() = ComplexType(0);
+
+  return HamiltonianOperations<MEM>(KP3IndexFactorization<MEM>(
+      mpi, walker_type, nbnd, q0, std::move(nocc), std::move(minusq),
+      std::move(qk_to_k2), std::move(qmap),
+      to_const_shared<HOST_MEMORY>(mpi, hij_h),
+      to_const_shared<MEM>(mpi, haj_h),
+      std::move(LQ), std::move(Lank), std::move(Lbnk),
+      to_const_shared<HOST_MEMORY>(mpi, vexx_h),
+      ComplexType(0)));
+}
+
+} // namespace detail
+
+/// Multi-kpoint KP3IndexFactorization on a ℤ_nkpts ring (nkpts>=3 => a
+/// non-self-inverse Q pair). This is the instance under test.
+template<MEMORY_SPACE MEM>
+HamiltonianOperations<MEM> build_kp3index_ring(
+    std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+    KPRingSpec const& s) {
+  auto [nspin, npol] = walkerTypeToDims(s.walker_type);
+  int nkpts = s.nkpts, nbnd = s.nbnd;
+  long NMO  = s.NMO();
+  auto bz   = detail::make_ring_q_tables(nkpts);
+  auto LQ_h = detail::make_ring_LQ(s, bz);
+  auto PsiT = detail::make_ring_psiT<MEM>(s);
+  auto nocc = nocc_per_kpoint(s.walker_type, nkpts, PsiT); // reuse production
+
+  // Per-Q Cholesky counts; the -Q partner shares Q's block.
+  nda::array<int, 1> nchol(nkpts);
+  nda::array<memory::const_shared_array<MEM, ComplexType, 6>, 1> LQ(nkpts);
+  for(int Q = 0; Q < nkpts; ++Q) {
+    nchol(Q) = int(LQ_h(std::min(Q, bz.minusq(Q))).extent(5));
+    if(Q <= bz.minusq(Q)) {
+      LQ(Q) = detail::to_const_shared<MEM>(mpi, LQ_h(Q));
+    }
+  }
+
+  auto [Lank, Lbnk] = kpoint_half_rotate_cholesky<MEM>(*mpi, s.walker_type, nspin, npol, NMO,
+      nbnd, PsiT, nocc, bz.minusq, bz.qk_to_k2, bz.qmap, nchol, LQ);
+  return detail::assemble_kp<MEM>(mpi, s.walker_type, nbnd, /*q0=*/0, std::move(nocc),
+      std::move(bz.minusq), std::move(bz.qk_to_k2), std::move(bz.qmap),
+      std::move(LQ), std::move(Lank), std::move(Lbnk));
+}
+
+/// Single-kpoint (nkpts=1, nbnd=NMO) lift of the SAME two-body operator as
+/// build_kp3index_ring, obtained by embedding the momentum-transfer blocks of both
+/// members of every Q pair into the full-orbital basis (orbital = ik*nbnd + i,
+/// kpoint-major). At nkpts=1 the `Q != minusq(Q)` branches are never entered, so
+/// this is the bug-immune reference.
+template<MEMORY_SPACE MEM>
+HamiltonianOperations<MEM> build_kp3index_ring_reference(
+    std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+    KPRingSpec const& s) {
+  auto [nspin, npol] = walkerTypeToDims(s.walker_type);
+  int nkpts = s.nkpts, nbnd = s.nbnd, NMO = s.NMO();
+  auto bz      = detail::make_ring_q_tables(nkpts);
+  auto LQ_ring = detail::make_ring_LQ(s, bz);
+  auto PsiT    = detail::make_ring_psiT<MEM>(s);
+
+  // Embed every stored ring block into one full-orbital Cholesky tensor. A
+  // non-self-inverse Q contributes TWO single-kpoint vectors: the ring treats Q and
+  // -Q as separate momentum sectors, each with its own pair of HS fields, and the
+  // -Q operator is L(Q)^dagger. Folding only L(Q) into the lift would represent half
+  // the two-body operator (and half the exchange/Hartree energy) of the ring.
+  int nchol_single = 0;
+  for(int Q = 0; Q < nkpts; ++Q) {
+    if(Q <= bz.minusq(Q)) {
+      nchol_single += (Q == bz.minusq(Q) ? 1 : 2) * int(LQ_ring(Q).extent(5));
+    }
+  }
+  nda::array<ComplexType, 6> L1(nspin, npol, 1, NMO, NMO, nchol_single);
+  L1() = ComplexType(0);
+  int m = 0;
+  for(int Q = 0; Q < nkpts; ++Q) {
+    if(Q > bz.minusq(Q)) {
+      continue;
+    }
+    bool paired = (Q != bz.minusq(Q));
+    int nchol   = LQ_ring(Q).extent(5);
+    for(int n = 0; n < nchol; ++n) {
+      for(int ik = 0; ik < nkpts; ++ik) {
+        int k2 = bz.qk_to_k2(Q, ik);
+        for(int is = 0; is < nspin; ++is) {
+          for(int ip = 0; ip < npol; ++ip) {
+            for(int i = 0; i < nbnd; ++i) {
+              for(int j = 0; j < nbnd; ++j) {
+                auto Lij = LQ_ring(Q)(is, ip, ik, i, j, n);
+                L1(is, ip, 0, ik * nbnd + i, k2 * nbnd + j, m) = Lij;
+                if(paired) {
+                  L1(is, ip, 0, k2 * nbnd + j, ik * nbnd + i, m + 1) = std::conj(Lij);
+                }
+              }
+            }
+          }
+        }
+      }
+      m += paired ? 2 : 1;
+    }
+  }
+  utils::check(m == nchol_single, "build_kp3index_ring_reference: Cholesky count mismatch.");
+
+  // Single-kpoint BZ tables and factors.
+  nda::array<int, 1> minusq{0};
+  nda::array<int, 2> qk{{0}};
+  nda::array<int, 1> qmap{0};
+  nda::array<int, 1> nchol(1);
+  nchol(0) = nchol_single;
+  nda::array<memory::const_shared_array<MEM, ComplexType, 6>, 1> LQ(1);
+  LQ(0) = detail::to_const_shared<MEM>(mpi, L1);
+
+  // nkpts=1 => nocc_per_kpoint puts all electrons at the single meta-kpoint.
+  auto nocc = nocc_per_kpoint(s.walker_type, 1, PsiT);
+
+  auto [Lank, Lbnk] = kpoint_half_rotate_cholesky<MEM>(*mpi, s.walker_type, nspin, npol, NMO,
+      /*nbnd=*/NMO, PsiT, nocc, minusq, qk, qmap, nchol, LQ);
+  return detail::assemble_kp<MEM>(mpi, s.walker_type, /*nbnd=*/NMO, /*q0=*/0,
+      std::move(nocc), std::move(minusq), std::move(qk), std::move(qmap),
+      std::move(LQ), std::move(Lank), std::move(Lbnk));
 }
 
 } // namespace sfqmc::afqmc::tests

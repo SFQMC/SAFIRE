@@ -167,13 +167,13 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, ptr
   int block0     = 0;
   double Eshift =  pt.get<double>("initial_Eshift");
 
-  utils::RandomGenerator_t<>::result_type iseed = ( (pt.get<int>("seed") == 0) ? 
+  utils::SeedType iseed = ((pt.get<int>("seed") == 0) ? 
 					   utils::make_seed(mpi->comm) : 
 					   utils::split_seed(pt.get<int>("seed"),mpi->comm));
   std::shared_ptr<utils::RandomGenerator_t<>> rng_wlk = std::make_shared<utils::RandomGenerator_t<>>(iseed);
   iseed = ( (pt.get<int>("seed") == 0) ? utils::make_seed(mpi->comm) : 
 					 utils::split_seed(pt.get<int>("seed"),mpi->comm));
-  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(iseed));
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng = std::make_shared<utils::RandomGenerator_t<MEM>>(iseed);
 
   app_log(1,"\n****************************************************");
   app_log(1,"****************************************************");
@@ -345,13 +345,13 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, p
   int block0     = 0;
   double Eshift =  pt.get<double>("initial_Eshift");
 
-  utils::RandomGenerator_t<>::result_type iseed = ( (pt.get<int>("seed") == 0) ? 
+  utils::SeedType iseed = ( (pt.get<int>("seed") == 0) ? 
 					   utils::make_seed(mpi->comm) : 
 					   utils::split_seed(pt.get<int>("seed"),mpi->comm));
   std::shared_ptr<utils::RandomGenerator_t<>> rng_wlk = std::make_shared<utils::RandomGenerator_t<>>(iseed);
   iseed = ( (pt.get<int>("seed") == 0) ? utils::make_seed(mpi->comm) : 
 					 utils::split_seed(pt.get<int>("seed"),mpi->comm));
-  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(iseed));
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng = std::make_shared<utils::RandomGenerator_t<MEM>>(iseed);
 
   app_log(1,"\n****************************************************");
   app_log(1,"****************************************************");
@@ -523,7 +523,7 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver(std::string title, int m_series, p
   std::vector<double> E0(n_systems,0.0);
   std::vector<double> Eshift(nsys,0.0);
 
-  utils::RandomGenerator_t<>::result_type iseed = ( (pt.get<int>("seed") == 0) ? 
+  utils::SeedType iseed = ( (pt.get<int>("seed") == 0) ? 
                                            utils::make_seed(gTG.Global()) : 
                                            pt.get<int>("seed"));
   utils::RandomGenerator_t<> rng_wlk(iseed);

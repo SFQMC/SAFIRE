@@ -400,7 +400,8 @@ public:
           nda::vector<int> Ac(nels[spin]);
           for (int i_det = 0; i_det < number_of_references; ++i_det) {
             auto c=abij.configuration(i_det);
-            abij.get_configuration(spin, std::get<0>(*c), Ac);
+            int conf_idx = (spin == 0) ? std::get<0>(*c) : std::get<1>(*c);
+            abij.get_configuration(spin, conf_idx, Ac);
             for (int a = 0; a < nels[spin]; ++a) {
               R(i_det,all,spin_offset[spin]+a) = nda::conj(psi(Ac(a),all));
             }

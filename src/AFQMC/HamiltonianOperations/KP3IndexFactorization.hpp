@@ -158,13 +158,6 @@ public:
     }
   }
 
-  ~KP3IndexFactorization() = default;
-
-  KP3IndexFactorization(const KP3IndexFactorization& other) = default;
-  KP3IndexFactorization& operator=(const KP3IndexFactorization& other) = default;
-  KP3IndexFactorization(KP3IndexFactorization&& other)                 = default;
-  KP3IndexFactorization& operator=(KP3IndexFactorization&& other) = default;
-
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
                                                        nda::MemoryVector auto const& vMF)
   {
@@ -687,7 +680,7 @@ public:
       for(int iq=0; iq<nkpts; iq++)  {
         int nchol = Lank(iq).extent(4);
         if( iq != minusq(iq) ) 
-          math::accumulate(one,X3d(all,1,range(ncv0(iq),ncv0(iq)+nchol)),
+          math::accumulate(one,X3d(all,1,range(ncv0(minusq(iq)),ncv0(minusq(iq))+nchol)),
                                           X3d(all,0,range(ncv0(iq),ncv0(iq)+nchol)));
       }
       arch::set_device_synchronization(true);
@@ -723,7 +716,7 @@ public:
                       nda::dagger(Lqm_(k2,all,all)),zero,v2d);
 
                 // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
-                nda::tensor::add(one,vKK,"wij",one,v7d(is,all,ip,ik,all,k2,all),"wij");
+                nda::tensor::add(one,vKK,"wij",one,v7d(is,all,ip,ik,all,k2,all),"wji");
               }
               // v[nw][k(in Q(K))][i(in K)] += sum_n conj(LQK[i][k][n]) X[Q][n-][nw]
               if(Q == minusq(Q)) {
@@ -776,10 +769,8 @@ public:
             arch::set_device_synchronization(false);
             for(int ik=0; ik<nkpts; ++ik) {
               int k2 = qk_to_k2(Q,ik);
-              for(int ip=0; ip<npol_in_H; ++ip) {
-                auto v_wji = nda::permuted_indices_view<nda::encode(std::array<int, 3>{0, 2, 1})>(v7d(is,all,ip,ik,all,k2,all));
-                math::accumulate(one,vKK(all,ip,k2,all,all),v_wji);
-              }
+              for(int ip=0; ip<npol_in_H; ++ip)
+                nda::tensor::add(one,vKK(all,ip,k2,all,all),"wij",one,v7d(is,all,ip,ik,all,k2,all),"wji");
             }
             arch::set_device_synchronization(true);
           }
@@ -795,10 +786,8 @@ public:
             arch::set_device_synchronization(false);
             for(int ik=0; ik<nkpts; ++ik) {
               int k2 = qk_to_k2(Q,ik);
-              for(int ip=0; ip<npol_in_H; ++ip) {
-                auto v_wji = nda::permuted_indices_view<nda::encode(std::array<int, 3>{0, 2, 1})>(v7d(is,all,ip,k2,all,ik,all));
-                math::accumulate(one,vKK(all,ip,ik,all,all),v_wji);
-              }
+              for(int ip=0; ip<npol_in_H; ++ip)
+                nda::tensor::add(one,vKK(all,ip,ik,all,all),"wij",one,v7d(is,all,ip,k2,all,ik,all),"wji");
             }
             arch::set_device_synchronization(true);
           }

@@ -130,7 +130,7 @@ html_css_files = [
 
 html_theme_options = {
     "logo": {
-        "image_light": "images/logo.webp"
+        "image_light": "images/logo.svg"
     },
     "globaltoc_maxdepth": 3,        # -1 for unlimited
     "globaltoc_collapse": False,    # expand whole tree or not

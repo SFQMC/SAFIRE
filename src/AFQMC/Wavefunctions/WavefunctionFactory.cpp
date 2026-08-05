@@ -160,7 +160,10 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
 
   int inner_seed = pt.get<int>("inner_seed", 777);
   auto iseed     = (inner_seed == 0) ? utils::make_seed(mpi->comm) : utils::split_seed(inner_seed, mpi->comm);
-  stack->rng_    = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(iseed));
+  // Construct in place from the seed: utils::make_rng<MEM> was removed with the curandGenerator_t
+  // ownership fix (aed0a52), which deletes CurandRandomGenerator's copy ctor -- so a by-value
+  // factory can no longer be handed to make_shared. Matches StochasticWfn.icc's inner-RNG pattern.
+  stack->rng_    = std::make_shared<utils::RandomGenerator_t<MEM>>(iseed);
 
   // Inner propagator is only needed when the ensemble is dynamic (inner_nsteps > 0).
   // At the delegate limit (inner_nsteps == 0) it stays dormant; lazy build on first access

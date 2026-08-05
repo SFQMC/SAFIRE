@@ -118,7 +118,7 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   utils::check(NMO == read_nmo_from_hdf(hamil_file), "NMO differ between hamil and wfn files.");
 
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
-  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(777));
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
   ptree ham_pt;
   ham_pt.put("name","ham0");

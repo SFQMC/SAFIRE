@@ -341,7 +341,6 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
  // indices occupying that kpoint. Computed on every rank (depends only on PsiT,
  // which is replicated), so no broadcast of the ragged list-of-lists is needed.
   auto nocc = nocc_per_kpoint(type,nkpts,PsiT);
-  auto nocc_max = max_nocc_per_kpoint(nocc);
   utils::check(nel_up == nelec_for_spin(nocc,0), "Error: Mismatch in number of electrons: nel_up:{} sum(nel_up(k)):{}",nel_up,nelec_for_spin(nocc,0));
   if(type == COLLINEAR)
     utils::check(nel_dn == nelec_for_spin(nocc,1), "Error: Mismatch in number of electrons: ndown:{} sum(ndown(k)):{}",nel_dn,nelec_for_spin(nocc,1));
@@ -353,65 +352,8 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
    */
   app_log(2, "KPFactorizedHamiltonian: Allocating Lank: {} GB",
         (number_of_symmetric_Q+nkpts)*ndet*nspin_in_H1*npol_in_H1*nel_up*nbnd*nchol_av*GBx);
-  nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> Lank(nkpts);
-  nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> Lbnk(number_of_symmetric_Q);
-  for(int Q=0; Q<nkpts; ++Q) {
-    int Qm = minusq(Q);
-    Lank(Q) = memory::share_from_ranks<MEM,ComplexType,6,3>(*mpi,
-        {ndet,nspin,nkpts,nocc_max,nchol(Q),npol*nbnd},
-        [&](std::array<long,3> idx, auto&& block) {
-      auto [id,is,ik] = idx;
-      auto const& rows = nocc(is,ik);
-      int nk = int(rows.size());
-      for(long ip=0; ip<npol; ++ip) {
-        auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
-        if(Q <= Qm) {
-          // L[Q,k,k2=k-Q]
-          auto Aai = math::sparse::to_array<'N'>(PsiT(id,is),rows,
-                                                 range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
-          auto Lijn = LQ(Q)()(is_,ip_,ik,all,all,all);
-          auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lijn.extent(2)==L_.extent(1), "Size mismatch.");
-          nda::tensor::contract(one,Aai,"ai",Lijn,"ijn",zero,L_,"anj");
-        } else {
-          // L[Q,k,k2=k-Q]
-          int k2 = qk_to_k2(Q,ik);
-          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),rows,
-                                                 range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
-          auto Lljn = LQ(Qm)()(is_,ip_,k2,all,all,all);
-          auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lljn.extent(2)==L_.extent(1), "Size mismatch.");
-          nda::tensor::contract(one,Abj,"bj",nda::conj(Lljn),"ljn",zero,L_,"bnl");
-        }
-      } // ip
-    });
-    if(Q==Qm) {
-      // Lbnk is indexed by k2 = qk_to_k2(Q,ik): invert the map so the fill for
-      // item k2 knows the source kpoint ik of LQ
-      nda::array<int,1> k2_to_k(nkpts);
-      for(int ik=0; ik<nkpts; ++ik) {
-        k2_to_k(qk_to_k2(Q,ik)) = ik;
-      }
-      Lbnk(Qmap(Q)) = memory::share_from_ranks<MEM,ComplexType,6,3>(*mpi,
-          {ndet,nspin,nkpts,nocc_max,nchol(Q),npol*nbnd},
-          [&](std::array<long,3> idx, auto&& block) {
-        auto [id,is,k2] = idx;
-        int ik = k2_to_k(k2);
-        auto const& rows = nocc(is,k2);
-        int nb = int(rows.size());
-        for(long ip=0; ip<npol; ++ip) {
-          auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
-          // conj(L[Q,k,k2](lj,n)) * A[k2]bj
-          auto Abj = math::sparse::to_array<'N'>(PsiT(id,is),rows,
-                                                 range(ip*NMO+k2*nbnd,ip*NMO+(k2+1)*nbnd));
-          auto Lljn = LQ(Q)()(is_,ip_,ik,all,all,all);
-          auto L_ = block(range(nb),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lljn.extent(2)==L_.extent(1), "Size mismatch.");
-          nda::tensor::contract(one,Abj,"bj",nda::conj(Lljn),"ljn",zero,L_,"bnl");
-        }
-      });
-    }
-  }  // Q
+  auto [Lank, Lbnk] = kpoint_half_rotate_cholesky<MEM>(*mpi, type, nspin_in_H1, npol_in_H1,
+      NMO, nbnd, PsiT, nocc, minusq, qk_to_k2, Qmap, nchol, LQ);
 
   // haj(idet,a_is_ik,j_ip_ik) = sum_j PsiT(idet,is)(a_is,i) H1(is,ik,i,j_ip)
   auto nel = std::to_array<long>({nel_up, (type == COLLINEAR ? nel_dn : 0l)});

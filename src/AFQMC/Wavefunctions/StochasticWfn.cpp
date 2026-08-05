@@ -18,6 +18,10 @@
 #include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Utilities/probit.h"
 
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+
 namespace sfqmc
 {
 namespace afqmc
@@ -116,23 +120,9 @@ void StochasticWfn<MEM, devPsiT>::draw_bp_reference_ensemble()
   if (bp_refs_drawn_ && int(inner_ensemble_.wset->size()) == P)
     return;
 
-  WalkerSet<MEM>& inner = *inner_ensemble_.wset;
-  if (int(inner.size()) != P)
-  {
-#if defined(ENABLE_DEVICE)
-    if constexpr (MEM == DEVICE_MEMORY)
-      inner.resize(P, nda::to_device(inner_anchor_));
-    else
-#endif
-      inner.resize(P, inner_anchor_);
-  }
-
-  // reset every reference sample to the anchor |phi_T>, then advance bare free-projection steps
-  reset_inner_to_anchor(inner, P);
-
-  RealType dt(inner_timestep_);
-  for (int step = 0; step < inner_nsteps_; ++step)
-    inner_propagator().Propagate_free(inner, dt, 0);
+  // Draw the walker-independent P-sample free-projection ensemble into inner_ensemble_.wset (used as
+  // scratch; every forward resample resets it to the anchor, so transiently overwriting it is safe).
+  draw_free_projection_samples(*inner_ensemble_.wset);
   // Mark this window as drawn (idempotency guard) and force a fresh forward resample on the next outer
   // step so the reductions never see this transient P-sized draw. For persistent chains only the CACHED
   // DETERMINANTS were overwritten -- the chain fields live in the outer walker buffer and are untouched
@@ -141,6 +131,216 @@ void StochasticWfn<MEM, devPsiT>::draw_bp_reference_ensemble()
   bp_refs_drawn_      = true;
   inner_step_pending_ = true;
   inner_dets_stale_   = true;
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::draw_free_projection_samples(WalkerSet<MEM>& target)
+{
+  // Reset `target` to the anchor |phi_T>, size it to P, and advance inner_nsteps_ BARE free-projection
+  // steps: this materializes a walker-INDEPENDENT P-sample draw {psi_p = B_T(Y^[p])|phi_T>} of the trial
+  // (Propagate_free forces bare field sampling regardless of the forward propagator's build mode, so the
+  // draw is decoupled from any conditioning/leapfrog of the forward walk). The single home of the
+  // free-projection draw, shared by draw_bp_reference_ensemble and mean_field_scratch_ensemble. Sets NO
+  // forward-walk flags -- the caller owns its own state (BP window idempotency, mean-field scratch, ...).
+  if (not inner_stack_->has_propagator())
+    APP_ABORT("Error in StochasticWfn::draw_free_projection_samples: inner propagator not built.");
+  const int P = inner_nwalkers_;
+  if (int(target.size()) != P)
+  {
+#if defined(ENABLE_DEVICE)
+    if constexpr (MEM == DEVICE_MEMORY)
+      target.resize(P, nda::to_device(inner_anchor_));
+    else
+#endif
+      target.resize(P, inner_anchor_);
+  }
+  reset_inner_to_anchor(target, P);
+  RealType dt(inner_timestep_);
+  for (int step = 0; step < inner_nsteps_; ++step)
+    inner_propagator().Propagate_free(target, dt, 0);
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+WalkerSet<MEM>& StochasticWfn<MEM, devPsiT>::mean_field_scratch_ensemble()
+{
+  // Provide a walker-INDEPENDENT P-sample draw of the trial for vMF/G_MF WITHOUT perturbing the forward
+  // inner ensemble. The trial mean field <Psi_T|.|Psi_T> is a walker-independent quantity, so it must be
+  // reduced from a fresh free-projection draw -- but at the point vMF is consumed (generateP1, after
+  // begin_inner_step) the forward ensemble is in the conditioned nw*P form and its determinants/flags are
+  // live state of the running walk. Drawing into a DEDICATED scratch set (mf_scratch_wset_, lazily built
+  // once via the same known-good WalkerSet constructor initialize_inner_walkers used) keeps
+  // inner_ensemble_.wset, the persistent chain pool, the latch and the leapfrog magnitudes all untouched.
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::mean_field_scratch_ensemble: inner walkers not initialized.");
+  if (not inner_stack_->has_propagator())
+    APP_ABORT("Error in StochasticWfn::mean_field_scratch_ensemble: inner propagator not built.");
+  if (mf_scratch_wset_ == nullptr)
+  {
+    auto wt = WalkerSet<MEM>::parse_walker_type(inner_walker_pt_); // identical to initialize_inner_walkers
+    // Give the scratch set its OWN walker-set RNG so it never shares (and cannot perturb) the forward
+    // inner ensemble's RNG stream -- the persistent field-space chains draw from inner_ensemble_.rng.
+    // Construction is deterministic (populate_from_guess sets every walker to the anchor) and the
+    // free-projection draw uses the inner PROPAGATOR's RNG, so the scratch's own generator is unused
+    // beyond construction; a fresh one just makes the decoupling explicit.
+    if (mf_scratch_rng_ == nullptr)
+      mf_scratch_rng_ = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>();
+    mf_scratch_wset_ = std::make_unique<WalkerSet<MEM>>(mpi_, inner_walker_pt_, mf_scratch_rng_, wt,
+                                                        inner_initial_guess_, inner_nwalkers_);
+  }
+  draw_free_projection_samples(*mf_scratch_wset_);
+  return *mf_scratch_wset_;
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::dump_persample_row(long call, int ip, ComplexType lin_ov, ComplexType s,
+                                                     ComplexType e0, ComplexType e1, ComplexType e2)
+{
+  // Debug-only: append one per-inner-sample row to $SAFIRE_DUMP_PERSAMPLE (first 32 Energy events only).
+  // No-op unless the env var is set. Columns: call ip Re(ov) Im(ov) Re(s) Im(s) Re(e0) Im(e0) Re(e1) Im(e1)
+  // Re(e2) Im(e2), where ov=<psi_ip|phi_0>, s is the weight actually used by the estimator, e0..e2 are the
+  // per-sample energy components (e0 total). Offline: SAFIRE E = sum_p s*e0 / sum_p s; plain ratio-of-sums
+  // reference = sum_p ov*e0 / sum_p ov.
+  const char* path = std::getenv("SAFIRE_DUMP_PERSAMPLE");
+  if (path == nullptr || call >= 32)
+    return;
+  std::ofstream f(path, std::ios::app);
+  if (!f)
+    return;
+  f << call << ' ' << ip << ' ' << std::setprecision(14) << std::scientific << lin_ov.real() << ' '
+    << lin_ov.imag() << ' ' << s.real() << ' ' << s.imag() << ' ' << e0.real() << ' ' << e0.imag() << ' '
+    << e1.real() << ' ' << e1.imag() << ' ' << e2.real() << ' ' << e2.imag() << '\n';
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+bool StochasticWfn<MEM, devPsiT>::want_vbias_dump()
+{
+  return std::getenv("SAFIRE_DUMP_VBIAS") != nullptr;
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::dump_vbias_row(long call, int rows, int naea, ComplexType const* phi,
+                                                 int nCV, ComplexType const* vb)
+{
+  // APPEND, for call `call`: a "VB <call>" header, then rows*naea "re im" lines of walker-0's phi
+  // (row-major), then nCV "re im" lines of its force bias. Header "rows naea nCV" written on call 0.
+  const char* path = std::getenv("SAFIRE_DUMP_VBIAS");
+  if (path == nullptr)
+    return;
+  std::ofstream f(path, call == 0 ? std::ios::trunc : std::ios::app);
+  if (!f)
+    return;
+  f << std::setprecision(15) << std::scientific;
+  if (call == 0)
+    f << rows << ' ' << naea << ' ' << nCV << '\n';
+  f << "VB " << call << '\n';
+  const long mat = long(rows) * naea;
+  for (long k = 0; k < mat; ++k)
+    f << phi[k].real() << ' ' << phi[k].imag() << '\n';
+  for (int m = 0; m < nCV; ++m)
+    f << vb[m].real() << ' ' << vb[m].imag() << '\n';
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+bool StochasticWfn<MEM, devPsiT>::cwc_measure_mag()
+{
+  return std::getenv("SAFIRE_CWC_MEASURE_MAG") != nullptr;
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+int StochasticWfn<MEM, devPsiT>::pool_seam_handoff_mode()
+{
+  // Optional pool-advance weight handoff (env SAFIRE_POOL_HANDOFF). begin_inner_step re-syncs OVLP after
+  // the pool advances, so the pool-change ratio r = O_pool_new(phi)/O_pool_old(phi) at fixed walker is
+  // normally dropped from WEIGHT. Modes: off (default); phase -> w *= max(0, cos arg r);
+  // full -> w *= |r| * max(0, cos arg r). Resolved once at first call.
+  static const int mode = [] {
+    const char* v = std::getenv("SAFIRE_POOL_HANDOFF");
+    if (v == nullptr)
+      return 0;
+    if (std::string(v) == "full")
+      return 2;
+    return 1;
+  }();
+  return mode;
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::dump_poolseam_row(long call, int w, ComplexType lo_old, ComplexType lo_new)
+{
+  // Debug-only: append one row per walker per step to $SAFIRE_DUMP_POOLSEAM, measuring the pool-change
+  // ratio the production path discards. Columns:
+  //   call w Re(lo_old) Im(lo_old) Re(lo_new) Im(lo_new) log|r| arg(r) max(0,cos arg r)
+  // with lo_old/lo_new = log O(phi_t) against the pre/post-advance pool and r = exp(lo_new - lo_old).
+  // Offline: the energy the missing handoff is worth is <1 - max(0,cos arg r)>/dt.
+  const char* path = std::getenv("SAFIRE_DUMP_POOLSEAM");
+  if (path == nullptr)
+    return;
+  std::ofstream f(path, (call == 0 && w == 0) ? std::ios::trunc : std::ios::app);
+  if (!f)
+    return;
+  const double dtheta = double(lo_new.imag() - lo_old.imag());
+  const double c      = std::cos(dtheta);
+  f << call << ' ' << w << ' ' << std::setprecision(14) << std::scientific << lo_old.real() << ' '
+    << lo_old.imag() << ' ' << lo_new.real() << ' ' << lo_new.imag() << ' '
+    << double(lo_new.real() - lo_old.real()) << ' ' << dtheta << ' ' << (c > 0.0 ? c : 0.0) << '\n';
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+bool StochasticWfn<MEM, devPsiT>::want_slater_dump()
+{
+  return std::getenv("SAFIRE_DUMP_SLATER") != nullptr;
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::dump_slater_snapshot(int rows, int naea, int P, ComplexType const* phi,
+                                                       ComplexType const* psis)
+{
+  // Write phi (the walker-0 ket) then the P inner determinants psi_ip as text; row-major [rows, naea].
+  // Format: "rows naea P" ; then rows*naea "re im" lines for phi ; then per ip: "PSI ip" + rows*naea lines.
+  const char* path = std::getenv("SAFIRE_DUMP_SLATER");
+  if (path == nullptr)
+    return;
+  std::ofstream f(path);
+  if (!f)
+    return;
+  f << std::setprecision(15) << std::scientific;
+  f << rows << ' ' << naea << ' ' << P << '\n';
+  const long mat = long(rows) * naea;
+  for (long k = 0; k < mat; ++k)
+    f << phi[k].real() << ' ' << phi[k].imag() << '\n';
+  for (int ip = 0; ip < P; ++ip)
+  {
+    f << "PSI " << ip << '\n';
+    ComplexType const* p = psis + long(ip) * mat;
+    for (long k = 0; k < mat; ++k)
+      f << p[k].real() << ' ' << p[k].imag() << '\n';
+  }
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+bool StochasticWfn<MEM, devPsiT>::want_walker_dump()
+{
+  return std::getenv("SAFIRE_DUMP_WALKERS") != nullptr;
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::dump_walker_row(long call, int rows, int naea, ComplexType const* phi)
+{
+  // APPEND walker-0's ket phi for measurement event `call`. Header "rows naea" written on call 0; then a
+  // "WALKER <call>" block + rows*naea "re im" lines (row-major). Reader loops WALKER blocks until EOF.
+  const char* path = std::getenv("SAFIRE_DUMP_WALKERS");
+  if (path == nullptr)
+    return;
+  std::ofstream f(path, call == 0 ? std::ios::trunc : std::ios::app);
+  if (!f)
+    return;
+  f << std::setprecision(15) << std::scientific;
+  if (call == 0)
+    f << rows << ' ' << naea << '\n';
+  f << "WALKER " << call << '\n';
+  const long mat = long(rows) * naea;
+  for (long k = 0; k < mat; ++k)
+    f << phi[k].real() << ' ' << phi[k].imag() << '\n';
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -158,7 +358,7 @@ void StochasticWfn<MEM, devPsiT>::prime_chain_fields(WalkerSet<MEM>& wset)
   const int block = wset.trial_fields_size();
   auto Yw         = wset.TrialFields();
   nda::array<double, 1> u(long(nw) * block);
-  utils::sampleUniformFields(u, *inner_ensemble_.rng);
+  inner_ensemble_.rng->sampleUniformFields(u);
   nda::array<ComplexType, 2> Yh(nw, block);
   long k = 0;
   for (int w = 0; w < nw; ++w)
@@ -273,7 +473,7 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
     prior_lr() = 0.0;
     {
       nda::array<double, 1> u(ntot * long(pathlen));
-      utils::sampleUniformFields(u, *inner_ensemble_.rng);
+      inner_ensemble_.rng->sampleUniformFields(u);
       long k = 0;
       for (long q = 0; q < ntot; ++q)
       {
@@ -312,7 +512,7 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
 
     // 6. accept/reject per chain.
     nda::array<double, 1> u_acc(ntot);
-    utils::sampleUniformFields(u_acc, *inner_ensemble_.rng);
+    inner_ensemble_.rng->sampleUniformFields(u_acc);
     auto SMa_now = inner.SlaterMatrices(Alpha);
     auto SMb_now = coll ? inner.SlaterMatrices(Beta) : inner.SlaterMatrices(Alpha);
     for (long q = 0; q < ntot; ++q)
@@ -391,6 +591,64 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
+{
+  // One measurement replica's pool motion: inner_measure_stride_ sweeps against the CURRENT walkers,
+  // then refresh the leapfrog conditioning magnitudes so the next reduction's weights match the pool it
+  // is about to measure with. This is update_persistent_chain_pool's tail with the priming, sizing and
+  // staleness branches removed -- measure_replicas_active() already guarantees primed, non-stale chains,
+  // and a measurement must never be the thing that first creates them.
+  //
+  // The walkers do not move across these sweeps, so unlike the propagation-side advance the chain is
+  // relaxing toward a FIXED target: the lag decays geometrically with no floor.
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::advance_measure_pool: inner walkers not initialized.");
+  if (not inner_stack_->has_propagator())
+    APP_ABORT("Error in StochasticWfn::advance_measure_pool: inner propagator not built.");
+  if (not inner_chains_primed_)
+    APP_ABORT("Error in StochasticWfn::advance_measure_pool: persistent chains not primed; a measurement "
+              "replica may not be the first thing to start them.");
+
+  for (int sweep = 0; sweep < inner_measure_stride_; ++sweep)
+    chain_pool_sweep(wset);
+
+  if (inner_leapfrog_)
+    compute_inner_cond_mag(wset);
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::snapshot_chain_fields(WalkerSet<MEM> const& wset,
+                                                        nda::array<ComplexType, 2>& save) const
+{
+  // The chain state is the field configuration, so this is a complete snapshot. Host-side buffer: the
+  // TrialFields view is strided over the walker buffer, and on device this is the same small host copy
+  // prime_chain_fields already round-trips.
+  utils::check(wset.has_trial_fields(), "snapshot_chain_fields: TrialFields block missing.");
+  auto Yw = wset.TrialFields();
+  save.resize(std::array<long, 2>{Yw.extent(0), Yw.extent(1)});
+  save() = Yw();
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::restore_chain_fields(WalkerSet<MEM>& wset,
+                                                       nda::array<ComplexType, 2> const& save)
+{
+  // Put the fields back and rebuild the determinants deterministically from them, which is exactly the
+  // repair path population control already relies on -- so the pool returns to the state the measurement
+  // found it in, bit for bit. Then refresh the conditioning magnitudes, which the replica sweeps moved.
+  utils::check(wset.has_trial_fields(), "restore_chain_fields: TrialFields block missing.");
+  auto Yw = wset.TrialFields();
+  utils::check(save.extent(0) == Yw.extent(0) && save.extent(1) == Yw.extent(1),
+               "restore_chain_fields: snapshot shape mismatch (population control moved between the "
+               "snapshot and the restore?).");
+  Yw() = save();
+  rebuild_inner_dets_from_chain_fields(wset);
+  inner_dets_stale_ = false;
+  if (inner_leapfrog_)
+    compute_inner_cond_mag(wset);
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::advance_inner_ensemble_conditioned(
     memory::array<MEM, ComplexType, 2> const& X_bias, int nw)
 {
@@ -430,9 +688,19 @@ void StochasticWfn<MEM, devPsiT>::advance_inner_ensemble_conditioned(
   for (int ip = 0; ip < P; ++ip)
     X_inner(nda::range(long(ip) * nw, long(ip + 1) * nw), all) = X_bias(nda::range(0, nw), all);
 
+  // Accumulate per-sample log importance weight logsw = sum_step HW over inner_nsteps_ conditioned steps.
+  // Leapfrog reweighting uses exp(logsw) instead of dividing by |<psi|phi_cond>|.
+  if (inner_logsw_.size() != ntot)
+    inner_logsw_ = nda::array<ComplexType, 1>(int(ntot));
+  inner_logsw_() = ComplexType(0.0);
+  auto hw_step = nda::array<ComplexType, 1>(int(ntot));
+
   RealType dt(inner_timestep_);
   for (int step = 0; step < inner_nsteps_; ++step)
-    inner_propagator().Propagate_conditioned(inner, X_inner, dt, 0);
+  {
+    inner_propagator().Propagate_conditioned(inner, X_inner, dt, 0, &hw_step);
+    inner_logsw_() += hw_step();
+  }
 }
 
 template class StochasticWfn<HOST_MEMORY, PsiT_Matrix<HOST_MEMORY>>;

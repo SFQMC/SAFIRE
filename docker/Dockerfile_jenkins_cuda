@@ -9,9 +9,11 @@ RUN apt-get update && apt-get install -y \
    g++ \
    cmake \
    ninja-build \
-   openmpi-bin \
-   openmpi-common \
-   libopenmpi-dev \
+   make \
+   gfortran \
+   wget \
+   bzip2 \
+   ca-certificates \
    libopenblas-dev \
    libcutensor2 \
    libcutensor-dev \
@@ -19,9 +21,40 @@ RUN apt-get update && apt-get install -y \
    python3 \
    python3-pip \
    libboost-dev \
-   python3-mpi4py \
    python3-h5py \
-   python3-venv
+   python3-venv \
+   catch2 \
+   libspdlog1.12 \
+   libspdlog-dev
+
+# Ubuntu's OpenMPI is not CUDA-aware, but the GPU build hands device pointers
+# straight to MPI (see mpi_is_cuda_aware() in src/arch/CUDA/cuda_init.cpp), so
+# build our own. Only cuda.h is needed here -- libcuda is dlopened at runtime,
+# hence no GPU or driver stub is required during the image build.
+#
+# Fortran support must stay enabled (hence gfortran above): mpi3 maps
+# std::complex<double> and thrust::complex<double> onto MPI_DOUBLE_COMPLEX,
+# which is a Fortran datatype (extern/mpi_wrapper/mpi3/detail/datatype.hpp:106).
+# --disable-mpi-fortran leaves that handle non-null but flagged unavailable, so
+# every complex collective fails with "MPI_ERR_TYPE: invalid datatype".
+ARG OPENMPI_VERSION=4.1.8
+RUN wget -q https://download.open-mpi.org/release/open-mpi/v4.1/openmpi-${OPENMPI_VERSION}.tar.bz2 \
+ && tar xf openmpi-${OPENMPI_VERSION}.tar.bz2 \
+ && cd openmpi-${OPENMPI_VERSION} \
+ && ./configure --prefix=/opt/openmpi \
+      --with-cuda=/usr/local/cuda \
+      --without-ucx \
+      --without-verbs \
+      --enable-orterun-prefix-by-default \
+ && make -j"$(nproc)" && make install \
+ && cd / && rm -rf openmpi-${OPENMPI_VERSION}* \
+ && echo /opt/openmpi/lib > /etc/ld.so.conf.d/openmpi.conf && ldconfig
+
+# Puts the wrappers where find_package(MPI) looks and makes MPIEXEC_EXECUTABLE
+# resolve to our mpiexec. The libraries themselves are on the ldconfig path, so
+# the MCA components OpenMPI dlopens resolve without LD_LIBRARY_PATH -- which
+# matters because ctest runs the test binaries directly, not through mpirun.
+ENV PATH=/opt/openmpi/bin:${PATH}
 
 # necessary for building BLIS within TBLIS
 ENV CC=/usr/bin/gcc

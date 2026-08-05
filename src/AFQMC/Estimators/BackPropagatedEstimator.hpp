@@ -68,7 +68,7 @@ public:
         nStabilize(10),
         path_restoration(true),
         importanceSampling(impsamp_),
-        extra_path_restoration(true),
+        extra_path_restoration(false),
         first(true)
   {
     // convert user input to verbose input
@@ -126,7 +126,7 @@ public:
     int ortho, equil_multiplier, _population_control_interval;
     std::vector<int> nback_prop_interval_multipliers;
     path_restoration       = pt0.get<bool>("path_restoration", true);
-    extra_path_restoration = pt0.get<bool>("extra_path_restoration", true);
+    extra_path_restoration = pt0.get<bool>("extra_path_restoration", false);
     ortho         = pt0.get<int>("bp_walker_ortho_interval", 10);
     equil_multiplier = pt0.get<int>("equil_multiplier", 0);
      _population_control_interval = pt0.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL); // only for computing nback_prop_steps!

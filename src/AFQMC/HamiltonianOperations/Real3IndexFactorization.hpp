@@ -769,10 +769,35 @@ public:
     // untestable without a spin-dependent DenseFactorized fixture (none exists) and unneeded for
     // molecular UHF.
     if (walker_type == COLLINEAR)
+    {
       utils::check(Likn.extent(0) == 1,
                    "Real3IndexFactorization::energy_fullG: COLLINEAR full-G currently requires a "
                    "spin-independent Cholesky (Likn.extent(0)==1); spin-dependent (per-spin) Cholesky "
                    "in the stochastic energy kernel is a follow-up.");
+      // The SAME restriction applies to the ONE-BODY and was missing: ensure_full_cholesky() flattens
+      // hij(0, i, k) -- spin index 0, unconditionally -- and energy_collinear then contracts that single
+      // h against BOTH spin blocks of G. With a genuinely spin-dependent H1 that silently scores the beta
+      // spin with h_alpha, and nothing downstream would flag it. Fail fast for the same reason the
+      // Cholesky check does: it fires on the first energy evaluation, before any measurement.
+      //
+      // Test the VALUES, not the storage shape. `hij.extent(0) == 1` would be the wrong condition:
+      // Hamiltonians legitimately store two IDENTICAL spin blocks (the BH test fixture ships hcore as
+      // (2*NMO, NMO) with max|h_alpha - h_beta| == 0 exactly), and flattening block 0 there is exact.
+      // Rejecting those would refuse correct input -- and would mask any real defect behind an abort.
+      auto h = hij();
+      if (h.extent(0) > 1)
+      {
+        double dmax = 0.0;
+        for (long i = 0; i < h.extent(1); ++i)
+          for (long k = 0; k < h.extent(2); ++k)
+            dmax = std::max(dmax, std::abs(h(0, i, k) - h(1, i, k)));
+        utils::check(dmax <= 1e-12,
+                     "Real3IndexFactorization::energy_fullG: COLLINEAR full-G requires a spin-independent "
+                     "one-body, but max|h_alpha - h_beta| exceeds 1e-12. ensure_full_cholesky() flattens "
+                     "spin 0 only, so the beta spin would be scored with h_alpha. Per-spin H1 in the "
+                     "stochastic full-G energy kernel is a follow-up.");
+      }
+    }
     ensure_full_cholesky();
     if (walker_type == COLLINEAR)
       full_g::energy_collinear<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_,

@@ -127,15 +127,6 @@ void check_device_configuration()
   utils::check(num_devices >= node.size(), "Error: # GPU < # tasks in node. \n # GPU: {} \n # MPI tasks: {}",num_devices,node.size());
 }
 
-curandGenerator_t make_device_rng(unsigned long long int iseed)
-{
-  curandGenerator_t rng;
-  curand_check(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_MT19937),
-                "Error code returned by curandCreateGenerator.");
-  curand_check(curandSetPseudoRandomGeneratorSeed(rng, iseed),
-                "Error code returned by curandSetPseudoRandomGeneratorSeed.");
-  return rng;
-}
 
-} // cufa
+} // cuda
 } // sfqmc

@@ -31,17 +31,14 @@
 
 #include "catch2/catch_test_macros.hpp"
 
+#include <cmath>
 #include <complex>
-#include <random>
-#include <string>
-#include <vector>
 
 #include "config.h"
 #include "AFQMC/config.h"
 #include "IO/AppAbort.hpp"
 #include "IO/app_loggers.h"
 #include "nda/nda.hpp"
-#include "utilities/check.hpp"
 #include "test_common.hpp"
 
 #include "hubbard_factorizations.hpp"
@@ -216,5 +213,123 @@ TEST_CASE("hamiltonian_operations: hubbard 4x4 consistency", "[hamiltonian_opera
 #endif
       }
     }
+  }
+}
+
+namespace sfqmc {
+
+/// vHS(vbias(G)) and the energy of the multi-kpoint instance and of its single-kpoint
+/// lift, both computed in memory space MEM and returned on the host.
+struct KPConsistencyResults {
+  nda::array<ComplexType, 5> V_multi, V_ref;
+  nda::array<ComplexType, 2> E_multi, E_ref;
+};
+
+// Exercises the `Q != minusq(Q)` branches of KP3IndexFactorization: vHS's
+// X⁺(Q)+X¯(-Q) combine and band-block transpose, and vbias's rho(-Q)=rho(Q)^+
+// partner accumulation. A multi-kpoint ring instance (nkpts>=3 => a non-self-inverse
+// Q pair, nbnd>=2 => non-trivial band transpose) is compared against a single-kpoint
+// lift of the SAME two-body operator. At nkpts=1 the branches are never entered, so
+// the lift is the bug-immune reference; vHS(vbias(G)) and the energy depend only on
+// the operator, not on how the fields are laid out, so the differing field layouts
+// of the two representations do not matter.
+template<MEMORY_SPACE MEM>
+KPConsistencyResults kpoint_consistency(afqmc::WALKER_TYPES walker_type,
+                                        nda::array<ComplexType, 2> const& G_h) {
+  using namespace afqmc;
+  using nda::range;
+  auto all = range::all;
+
+  auto& mpi = sfqmc::utils::make_unit_test_mpi_context();
+
+  tests::KPRingSpec spec;
+  spec.walker_type = walker_type;
+  auto [nspin, npol] = walkerTypeToDims(walker_type);
+  int nkpts = spec.nkpts;
+  int NMO   = spec.NMO();
+  int nwalk = G_h.extent(0);
+  double dt = 0.01;
+
+  app_log(0, "kpoint consistency check: walker={}, memory={}, nkpts={}, nbnd={}",
+          walkerTypeToString(walker_type), (MEM == HOST_MEMORY ? "host" : "device"),
+          nkpts, spec.nbnd);
+
+  auto H_multi = tests::build_kp3index_ring<MEM>(mpi, spec);
+  auto H_ref   = tests::build_kp3index_ring_reference<MEM>(mpi, spec);
+  REQUIRE(H_multi.getHamType() == KPFactorized);
+  REQUIRE(H_ref.getHamType() == KPFactorized);
+
+  auto run_vHS_of_vbias = [&](auto& H) {
+    int nCV = H.number_of_cholesky_vectors();
+    memory::array<MEM, ComplexType, 2> G(G_h);
+    memory::array<MEM, ComplexType, 2> X(nwalk, nCV);
+    X() = ComplexType(0);
+    H.vbias(G, X, dt);
+    auto V = H.vHS(X, dt);
+    return nda::array<ComplexType, 4>(nda::to_host(V));
+  };
+
+  auto expand_vHS = [&](nda::array<ComplexType, 4> const& V) {
+    int nspin_in_V = V.shape(0);
+    int npol_in_V = V.shape(2) / NMO;
+    nda::array<ComplexType, 5> Ev(nwalk, nspin, npol, NMO, NMO);
+    for(int w = 0; w < nwalk; ++w) {
+      for(int is = 0; is < nspin; ++is) {
+        for(int ip = 0; ip < npol; ++ip) {
+          int pr = (ip % npol_in_V) * NMO;
+          Ev(w, is, ip, all, all) = V(is % nspin_in_V, w, range(pr, pr + NMO), all);
+        }
+      }
+    }
+    return Ev;
+  };
+
+  auto run_energy = [&](auto& H) {
+    memory::array<MEM, ComplexType, 2> G(G_h);
+    nda::array<ComplexType, 2> E_h(nwalk, 3);
+    memory::array<MEM, ComplexType, 2> E(E_h);
+    H.energy(E, G, 0, true, true, true);
+    return nda::array<ComplexType, 2>(nda::to_host(E()));
+  };
+
+  return {expand_vHS(run_vHS_of_vbias(H_multi)), expand_vHS(run_vHS_of_vbias(H_ref)),
+          run_energy(H_multi), run_energy(H_ref)};
+}
+
+} // namespace sfqmc
+
+TEST_CASE("hamiltonian_operations: kpoint consistency", "[hamiltonian_operations]") {
+  using namespace sfqmc;
+  using namespace sfqmc::afqmc;
+  // CLOSED and COLLINEAR fully exercise the paired-Q branches (each (is,ip) block is
+  // independent); NONCOLLINEAR would only add polarization loops, not new branches.
+  for(auto wtype : {CLOSED, COLLINEAR}) {
+    auto [nspin, npol] = walkerTypeToDims(wtype);
+    tests::KPRingSpec spec;
+    spec.walker_type = wtype;
+    int nwalk = 3;
+    // Deterministic G, so the host and device runs are comparable element by element.
+    nda::array<ComplexType, 2> G_h(nwalk, nspin * spec.nkpts * npol * spec.NMO());
+    for(int w = 0; w < G_h.extent(0); ++w) {
+      for(int i = 0; i < G_h.extent(1); ++i) {
+        G_h(w, i) = ComplexType(0.4 * std::sin(0.9 * i + 1.7 * w + 0.3),
+                                0.3 * std::cos(1.3 * i + 0.5 * w + 0.8));
+      }
+    }
+
+    auto host = kpoint_consistency<HOST_MEMORY>(wtype, G_h);
+    CHECK_THAT(host.V_multi, utils::Approx(host.V_ref));
+    CHECK_THAT(host.E_multi, utils::Approx(host.E_ref));
+#if defined(ENABLE_DEVICE)
+    auto dev = kpoint_consistency<DEVICE_MEMORY>(wtype, G_h);
+    // Device against host for each instance separately: separates a broken device
+    // branch from a wrong multi-kpoint operator.
+    CHECK_THAT(dev.V_ref, utils::Approx(host.V_ref));
+    CHECK_THAT(dev.V_multi, utils::Approx(host.V_multi));
+    CHECK_THAT(dev.E_ref, utils::Approx(host.E_ref));
+    CHECK_THAT(dev.E_multi, utils::Approx(host.E_multi));
+    CHECK_THAT(dev.V_multi, utils::Approx(dev.V_ref));
+    CHECK_THAT(dev.E_multi, utils::Approx(dev.E_ref));
+#endif
   }
 }

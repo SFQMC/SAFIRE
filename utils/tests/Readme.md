@@ -18,7 +18,6 @@ The functional tests are run using the script `functional/run_functional.py`.
 
 ### Sample Functional Test Slurm script
 
-
 ```bash
 #!/bin/bash
 #SBATCH -J func_tests_safire
@@ -28,18 +27,27 @@ The functional tests are run using the script `functional/run_functional.py`.
 #SBATCH --time=24:00:00
 #SBATCH -o functional_tests.o%j
 
-senf safire
+module purge
+module load slurm
+module load cmake
+module load gcc
+module load openmpi
+module load hdf5
+module load boost
+module load intel-oneapi-mkl
 module load cuda
 module load openmpi/cuda
 
 echo "Starting functional tests... "
 date
 
+export AFQMC_EXEC="/path/to/safire"
+
 OUTPUT_DIR="/path/to/scratch/dir"
 rm -rf $OUTPUT_DIR
 
 set -x PYTHONPATH (pwd) $PYTHONPATH
-python functional/run_functional.py \
+python -u functional/run_functional.py \
        all \
        --output-path=$OUTPUT_DIR \
        --mpiexec="srun -n 90 --cpu-bind=cores" \

@@ -150,14 +150,14 @@ int main_impl(int argc, char** argv)
     inputs = args["filenames"].as<std::vector<std::string>>();
   }
 
+  // setup output loggers
+  setup_loggers(root, output_level, debug_level);
 
   app_log(1, welcome);      
 
   if(root)
     print_version();
 
-  // setup output loggers
-  setup_loggers(root, output_level, debug_level);
 
   sfqmc::arch::init(compute == "gpu");
 

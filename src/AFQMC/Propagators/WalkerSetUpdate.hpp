@@ -17,6 +17,7 @@
 #pragma once
 
 #include <algorithm>
+#include <numbers>
 
 #include "AFQMC/Walkers/WalkerConfig.hpp"
 #include "AFQMC/config.h"
@@ -163,10 +164,11 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
         scale = (apply_constrain ? std::max(0.0, std::cos(delta_theta)) : 1.0);
       }
 
-      if (imp_sampl)
+      if (imp_sampl) {
         eloc = (mf_factor(i) - hyb_weight(i) - (new_ovlp(i) - old_ovlp)) / dt;
-      else
+      } else {
         eloc = mf_factor(i) / dt;
+      }
     }
     ComplexType eloc_ = eloc;
 
@@ -219,9 +221,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
     pseudo_eloc(i) = eloc;
     ovlp(i) = new_ovlp(i);
     if (std::abs(scale) > std::numeric_limits<RealType>::min()) {
-      weight_factor(i) = std::exp(-ComplexType(0.0, dt) *
-                                  (0.5 * (eloc.imag() + old_eloc.imag()))) /
-                         scale;
+      weight_factor(i) = std::exp(-ComplexType(0.0, dt) * eloc.imag()) / scale;
     }
     else
       weight_factor(i) = 0.0;

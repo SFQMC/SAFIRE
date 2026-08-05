@@ -295,8 +295,11 @@ public:
   // Deliberately omits the local-energy/overlap and walker-weight update: the resulting determinants
   // are field samples whose weights are not consumed by the StochasticWfn reductions. Requires the
   // propagator to be built with free_projection = false so assemble_X applies the supplied bias.
+  // Optional hw_out: host copy of the per-walker Girsanov weight HW = log(p_T/q) from assemble_X for
+  // this step. StochasticWfn accumulates HW over inner_nsteps_ into inner_logsw_ for leapfrog reweighting.
   template<class WlkSet>
-  void Propagate_conditioned(WlkSet& wset, nda::MemoryArrayOfRank<2> auto const& Xbias, RealType dt, int nt = 0);
+  void Propagate_conditioned(WlkSet& wset, nda::MemoryArrayOfRank<2> auto const& Xbias, RealType dt, int nt = 0,
+                             nda::array<ComplexType, 1>* hw_out = nullptr);
 
   // Free-projection field-sampling step, INDEPENDENT of the propagator's build mode. Draws bare
   // auxiliary fields Y ~ p_T(Y) (no force bias, no vMF shift -- toggles free_projection around

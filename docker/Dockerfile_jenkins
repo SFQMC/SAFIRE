@@ -6,7 +6,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y openssh-client git \
    gcc \
    g++ \
+   clang-19 \
+   clang-tools-19 \
    cmake \
+   libomp-19-dev \
    ninja-build \
    openmpi-bin \
    openmpi-common \
@@ -18,7 +21,10 @@ RUN apt-get update && apt-get install -y openssh-client git \
    libboost-dev \
    python3-mpi4py \
    python3-h5py \
-   python3-venv
+   python3-venv \
+   catch2 \
+   libspdlog1.12 \
+   libspdlog-dev
 
 # necessary for building BLIS within TBLIS
 ENV CC=/usr/bin/gcc
