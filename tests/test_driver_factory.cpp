@@ -274,6 +274,8 @@ void stochastic_back_propagation_driver_smoke(
   else
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (not utils::dynamic_inner_supports(type))
+      return; // dynamic inner ensemble: CLOSED/COLLINEAR only
     if (type != CLOSED)
       return;
 
@@ -360,7 +362,7 @@ TEST_CASE("stochastic_back_propagation_driver_smoke", "[driver_factory][stochast
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_driver_smoke<MEM>(mpi, hamil_file, wfn_file);
-  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
 } // namespace sfqmc

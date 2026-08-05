@@ -67,7 +67,33 @@ namespace TestFiles {
   constexpr Flags LATTICES = 1<<7;
   constexpr Flags SOLIDS = 1<<8;
   constexpr Flags ALL_SYSTEMS = MOLECULES | LATTICES | SOLIDS;
+
+  // Fixture set for tests that build a DYNAMIC StochasticWfn inner ensemble (inner_nsteps > 0).
+  //
+  // MOLECULES, not ALL_SYSTEMS, and this is a CAPABILITY LIMIT rather than a convenience: the dynamic
+  // inner path routes its reductions through the un-rotated full-G energy / force-bias kernels, which
+  // exist only for Real3IndexFactorization. On the other fixture families the engine aborts, correctly,
+  // on input it does not implement:
+  //   - THCOps, KP3IndexFactorization (solids) -> "energy_fullG not implemented"
+  //   - Discrete_GeneralUJ (lattice/Hubbard)   -> "Using uninitialized Discrete_GeneralUJ object"
+  //   - NONCOLLINEAR walkers                   -> rejected by StochasticWfn's own constructor
+  // Requesting those fixtures for a dynamic test therefore asserts nothing about the code under test; it
+  // just converts unsupported-input aborts into red, which is how 80-odd failures sat in this suite
+  // masking the ones that mattered. RHF|UHF covers CLOSED and COLLINEAR, the two supported walker types.
+  constexpr Flags DYNAMIC_INNER = RHF | UHF | NOMSD | MOLECULES;
 };
+
+// Does the DYNAMIC (inner_nsteps > 0) StochasticWfn path support this walker type?
+//
+// Mirrors StochasticWfn's own constructor rule -- CLOSED and COLLINEAR only, everything else aborts.
+// This exists because TestFiles::DYNAMIC_INNER cannot express the restriction on its own: it keeps the
+// GHF/NONCOLLINEAR fixtures out, but FULLYPOLARIZED arrives through the UHF flag
+// (Li/rohf_nomsd_fullypolarized), so a `type == NONCOLLINEAR` guard lets it straight through to the abort.
+// Test the CAPABILITY, not one of the types that lacks it.
+inline bool dynamic_inner_supports(afqmc::WALKER_TYPES t)
+{
+  return t == afqmc::CLOSED || t == afqmc::COLLINEAR;
+}
 
 
 // struct to store test file info with finiteT flag

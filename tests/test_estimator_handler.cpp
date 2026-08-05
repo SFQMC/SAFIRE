@@ -306,6 +306,8 @@ void stochastic_back_propagation_estimator_smoke(
   else
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (not utils::dynamic_inner_supports(type))
+      return; // dynamic inner ensemble: CLOSED/COLLINEAR only
     if (type != CLOSED)
       return;
 
@@ -331,8 +333,11 @@ void stochastic_back_propagation_estimator_smoke(
     mpi->comm.barrier();
 
     std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+    // Construct in place from the seed. Both generators take a SeedType, and CurandRandomGenerator owns a
+    // raw handle (copy deleted, move hand-written), so building a temporary to hand to make_shared is
+    // what the post-curand ownership API removed -- this call site was missed when the others moved.
     std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
-        std::make_shared<utils::RandomGenerator_t<MEM>>(utils::make_rng<MEM>(919));
+        std::make_shared<utils::RandomGenerator_t<MEM>>(utils::SeedType(919));
 
     ptree wlk_pt;
     wlk_pt.put("name", "wset0");
@@ -432,7 +437,7 @@ TEST_CASE("stochastic_back_propagation_estimator_smoke", "[estimator_handler][st
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file);
-  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
 // Dynamic BP integration smoke: the SAME BackPropagatedEstimator path on a genuinely field-sampled
@@ -449,7 +454,7 @@ TEST_CASE("stochastic_back_propagation_dynamic_smoke", "[estimator_handler][stoc
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file, /*dynamic_leapfrog=*/true);
-  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
 }
