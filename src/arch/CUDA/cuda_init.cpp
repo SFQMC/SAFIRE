@@ -98,6 +98,9 @@ void init()
   app_debug(3,"MPI world rank: {}, node rank: {}, cuda device number: {}",
 	    world.rank(),node.rank(),devn);
 
+  // explicit synchronization after every call is not useful
+  nda::tensor::cutensor::set_synchronization(false);
+
   check_probe_kernel();
   
   if(world.size() > 1 && !mpi_is_cuda_aware()) {

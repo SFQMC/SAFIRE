@@ -51,8 +51,7 @@ enum WALKER_TYPES
   UNDEFINED_WALKER_TYPE,
   CLOSED,
   COLLINEAR,
-  NONCOLLINEAR,
-  FULLYPOLARIZED
+  NONCOLLINEAR
 };
 
 inline WALKER_TYPES initWALKER_TYPES(int i)
@@ -66,9 +65,10 @@ inline WALKER_TYPES initWALKER_TYPES(int i)
   else if (i == 3)
     return NONCOLLINEAR;
   else if (i == 4)
-    return FULLYPOLARIZED;
-  else
-    return UNDEFINED_WALKER_TYPE;
+    utils::check(false, "This wavefunction was generated with the removed FULLYPOLARIZED "
+                        "walker type (dims[3]==4). Regenerate it as COLLINEAR (dims[3]==2) "
+                        "with ndown=0.");
+  return UNDEFINED_WALKER_TYPE;
 }
 
 inline auto walkerTypeToDims(WALKER_TYPES type) {
@@ -96,7 +96,6 @@ inline bool walkerTypeIsConvertible(WALKER_TYPES from, WALKER_TYPES to) {
     return true;
   }
   if(from < CLOSED || from > NONCOLLINEAR || to < CLOSED || to > NONCOLLINEAR) {
-    // hopefully we can get rid of FULLYPOLARIZED and use a smarter scheme to work with FT
     return false;
   }
   return from <= to;
@@ -131,7 +130,6 @@ inline std::string walkerTypeToString(WALKER_TYPES type)
   else if (type == CLOSED) return "closed";
   else if (type == COLLINEAR) return "collinear";
   else if (type == NONCOLLINEAR) return "noncollinear";
-  else if (type == FULLYPOLARIZED) return "fullypolarized";
   utils::check(false, "unknown walker type: {}", type);
   return "unknown";
 }

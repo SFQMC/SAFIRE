@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <limits>
@@ -235,6 +236,11 @@ auto share_from_ranks(sfqmc::utils::mpi_context_t<mpi3::communicator>& mpi,
   }
   auto const nitems = std::reduce(item_shape.begin(), item_shape.end(),
                                   1l, std::multiplies<>{});
+  // A zero extent among the trailing axes makes every block empty. There is
+  // nothing for fill to write, and a zero extent also zeroes the strides of the
+  // enclosing axes, so the block slice itself would violate nda's stride order.
+  bool const empty_blocks = std::any_of(shape.begin() + K, shape.end(),
+                                        [](long n) { return n == 0; });
   auto decode = [&](long i) {
     std::array<long, K> idx{};
     for(int d = K - 1; d >= 0; --d) {
@@ -257,8 +263,10 @@ auto share_from_ranks(sfqmc::utils::mpi_context_t<mpi3::communicator>& mpi,
     }
     nda::array<ValueType, Rank - K + 1> local(local_shape);
     local() = ValueType{};
-    for(long i = i0; i < i1; ++i) {
-      fill(decode(i), local(i - i0, nda::ellipsis{}));
+    if(not empty_blocks) {
+      for(long i = i0; i < i1; ++i) {
+        fill(decode(i), local(i - i0, nda::ellipsis{}));
+      }
     }
 
     // Chunks are gathered in rank order, which is item order, so they land
@@ -277,9 +285,11 @@ auto share_from_ranks(sfqmc::utils::mpi_context_t<mpi3::communicator>& mpi,
     // over a zeroed array and assemble by summation.
     memory::array<MEM, ValueType, Rank> a(shape);
     a() = ValueType{};
-    for(long i = mpi.comm.rank(); i < nitems; i += mpi.comm.size()) {
-      auto idx = decode(i);
-      std::apply([&](auto... is) { fill(idx, a(is..., nda::ellipsis{})); }, idx);
+    if(not empty_blocks) {
+      for(long i = mpi.comm.rank(); i < nitems; i += mpi.comm.size()) {
+        auto idx = decode(i);
+        std::apply([&](auto... is) { fill(idx, a(is..., nda::ellipsis{})); }, idx);
+      }
     }
     mpi.all_reduce(a(), std::plus<>{});
     return a;

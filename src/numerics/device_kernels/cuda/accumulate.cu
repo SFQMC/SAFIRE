@@ -12,7 +12,6 @@
 #include "utilities/type_traits.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/arch.h"
 #include "nda/nda.hpp"
 #include <cuda/std/mdspan>
 #include "cub/device/device_for.cuh"
@@ -109,7 +108,6 @@ void accumulate_impl(nda::get_value_t<A> alpha, A const& a, B & b)
       cub::DeviceFor::Bulk(sz,f);
     }
   }
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename A>
@@ -198,7 +196,6 @@ void scale_impl(nda::get_value_t<A> alpha, A & a)
       cub::DeviceFor::Bulk(sz,f);
     }
   }
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename A, typename B>
@@ -219,10 +216,8 @@ void copy_impl(A const& a, B & b)
   d_temp_storage = (void*)(temp_storage.data()); 
 
   // Run copy algorithm
-  status = cub::DeviceCopy::Copy(d_temp_storage, temp_storage_bytes, a_d, b_d); 
+  status = cub::DeviceCopy::Copy(d_temp_storage, temp_storage_bytes, a_d, b_d);
   //cuda_heck(status);
-
-  sfqmc::arch::synchronize_if_set();
 }
 
 using memory::device_array_view;

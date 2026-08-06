@@ -58,35 +58,6 @@ namespace kernels::device
   template<typename T> auto complex_ptr_cast( std::complex<T> const* x ) 
   { return reinterpret_cast<thrust::complex<T> const*>(x); }
 
-  /***************    complex_val_cast   ***************/
-
-  template<typename T> auto complex_val_cast( T x )
-  { return x; }
-  template<typename T> auto complex_val_cast( std::complex<T> x )
-  { return static_cast<thrust::complex<T>>(x); }
-  //template<typename T> auto complex_val_cast( std::complex<T> const x )
-  //{ return static_cast<thrust::complex<T> const>(x); }
-
-  /***************    remove_thrust_complex   ***************/
-
-  template <typename T>
-  struct remove_thrust_complex {typedef T type;};
-  template <typename T>
-  struct remove_thrust_complex<thrust::complex<T> > {typedef T type;};
-
-  template<typename T>
-  using remove_thrust_complex_t = typename remove_thrust_complex<T>::type;
-
-  /***************    add_thrust_complex   ***************/
-
-  template <typename T>
-  struct add_thrust_complex {typedef thrust::complex<T> type;};
-  template <typename T>
-  struct add_thrust_complex<thrust::complex<T> > {typedef thrust::complex<T> type;};
-
-  template<typename T>
-  using add_thrust_complex_t = typename add_thrust_complex<T>::type;
-
   /***************    cuda_std_ptr_cast   ***************/
 
   template<typename T> auto cuda_std_ptr_cast( T* x )
@@ -102,26 +73,6 @@ namespace kernels::device
   { return x; }
   template<typename T> auto cuda_std_value_cast( std::complex<T> x )
   { return static_cast<cuda::std::complex<T>>(x); }
-
-  /***************    remove_cuda_complex   ***************/
-
-  template <typename T>
-  struct remove_cuda_complex {typedef T type;};
-  template <typename T>
-  struct remove_cuda_complex<cuda::std::complex<T> > {typedef T type;};
-
-  template<typename T>
-  using remove_cuda_complex_t = typename remove_cuda_complex<T>::type;
-
-  /***************    add_cuda_complex   ***************/
-
-  template <typename T>
-  struct add_cuda_complex {typedef cuda::std::complex<T> type;};
-  template <typename T>
-  struct add_cuda_complex<cuda::std::complex<T> > {typedef cuda::std::complex<T> type;};
-
-  template<typename T>
-  using add_cuda_complex_t = typename add_cuda_complex<T>::type;
 
   /***************    to_cuda_std_mdspan   ***************/
  
@@ -140,27 +91,6 @@ namespace kernels::device
     // Create a layout_stride mapping
     layout_stride::mapping<dext> mapping(extents,strides);
     return mdspan<value_t,dext,layout_stride>(cuda_std_ptr_cast(A.data()),mapping);
-  }
-
-  /***************    to_cuda_std_array   ***************/
-  
-  // this should be limited to static_arrays, but I don't know how to get the static extents right now
-  template<int rank, typename Arr>
-  auto to_cuda_std_array(Arr const& A)
-  {
-    sfqmc::utils::check(rank==A.size(),"Error in to_cuda_std_array: rank mismatch"); 
-    cuda::std::array<nda::get_value_t<Arr>, rank> cuA;
-    std::copy_n(A.data(),rank,cuA.data());
-    return cuA;
-  }
-
-  template<int rank, typename Arr>
-  auto to_std_array(Arr const& A)
-  {
-    sfqmc::utils::check(rank==A.size(), "Error in to_std_array: rank mismatch");
-    std::array<nda::get_value_t<Arr>, rank> stdA;
-    std::copy_n(A.data(),rank,stdA.data());
-    return stdA;
   }
 
 } // namespace kernels::device

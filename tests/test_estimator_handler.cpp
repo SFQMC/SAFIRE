@@ -245,8 +245,8 @@ TEST_CASE("estimator_handler: measure schedule", "[estimator_handler]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
 
-  std::string hamil = utils::unit_test_base() + "models/square_4x4_hubbard_nup5_ndn5/afqmc_inputs/ham_collinear.h5";
-  std::string wfn   = utils::unit_test_base() + "models/square_4x4_hubbard_nup5_ndn5/afqmc_inputs/uhf_U0.1_wfn_nup5_ndn5.h5";
+  std::string hamil = utils::unit_test_base() + "square_4x4_hubbard_nup5_ndn5/ham_collinear.h5";
+  std::string wfn   = utils::unit_test_base() + "square_4x4_hubbard_nup5_ndn5/uhf_U0.1_wfn_nup5_ndn5.h5";
   if (UTEST_HAMIL!="" and UTEST_WFN!="") {
     hamil = UTEST_HAMIL;
     wfn = UTEST_WFN;

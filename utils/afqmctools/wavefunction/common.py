@@ -133,7 +133,12 @@ def check_slater_matrix_orthonormality(slater_matrix, nelec=None, matrix_type='c
   """
   if nelec is None:
     nelec = slater_matrix.shape[1]
-    
+
+  # An empty spin sector is trivially orthonormal, and np.max below has no
+  # identity for a zero-size reduction.
+  if slater_matrix.shape[1] == 0:
+    return 1.0+0j, True
+
   # Check orthonormality: M^H M should be identity
   overlap = slater_matrix.conj().T @ slater_matrix
   norm = np.linalg.det(overlap)
@@ -172,7 +177,7 @@ def write_wfn(
         Wavefunction description. Either a list containing an array of coefficients and occupation numbers (PHMSD)
         or a tuple containing an array of coefficients and an array of determinants (NOMSD).
     walker_type : str
-        Type of walker to write. Options are 'closed', 'collinear', 'noncollinear', 'fullypolarized'.
+        Type of walker to write. Options are 'closed', 'collinear', 'noncollinear'.
     nelec : tuple
         Number of alpha and beta electrons.
     norb : int
@@ -214,24 +219,13 @@ def write_wfn(
 
     with h5py.File(filename, 'a') as fh5:
         nalpha, nbeta = nelec
-
-        # Apply some user input corrections
-        if walker_type == _SlaterType.COLLINEAR and nelec[1] == 0:
-            print(
-                "collinear/uhf/rohf walker type requested with no beta electrons: "
-                "using fully spin-polarized walkers"
-            )
-            walker_type = _SlaterType.FULLYPOLARIZED
         
         if "Wavefunction" in fh5:
             del fh5['Wavefunction']
 
         if wfn_type == 'PHMSD':
             print("PHMSD trial wavfunction -> using uhf-like walkers")
-            if nelec[1] > 0:
-                walker_type = _SlaterType.COLLINEAR
-            else:
-                walker_type = _SlaterType.FULLYPOLARIZED
+            walker_type = _SlaterType.COLLINEAR
 
             wfn_group = add_group(fh5, 'Wavefunction/PHMSD')
             write_phmsd(wfn_group, occa, occb, nelec, norb,
@@ -252,12 +246,8 @@ def write_wfn(
                     init=init,
                     orthonormalize=orthonormalize
                 )
-            elif (
-                walker_type == _SlaterType.NONCOLLINEAR or 
-                walker_type == _SlaterType.FULLYPOLARIZED
-            ):
-                if walker_type == _SlaterType.NONCOLLINEAR:
-                    nelec = (nalpha+nbeta,0)
+            elif walker_type == _SlaterType.NONCOLLINEAR:
+                nelec = (nalpha+nbeta,0)
                 write_nomsd_ghf(
                     fh5=wfn_group,
                     wfn=wfn,
@@ -354,11 +344,12 @@ def write_nomsd(fh5, wfn, uhf, nelec, thresh=1e-8, init=None, orthonormalize=Tru
         add_dataset(fh5, 'Psi0_alpha',
                     to_complex(wfn[0,:,:nalpha].copy()))  
         if uhf:
-            warn(
-                "Using UHF Slater determinant for initial Walkers with a Collinear Trial Wavefunction. " 
-                "This can lead to very slow equilibration in AFQMC calculations. " 
-                "using ROHF Slater determinants for initial Walkers is recommended."
-            )
+            if nbeta > 0:
+                warn(
+                    "Using UHF Slater determinant for initial Walkers with a Collinear Trial Wavefunction. "
+                    "This can lead to very slow equilibration in AFQMC calculations. "
+                    "using ROHF Slater determinants for initial Walkers is recommended."
+                )
             norm_b, is_ortho_b = check_slater_matrix_orthonormality(
                 wfn[0,:,nalpha:nalpha+nbeta], nelec=nbeta, matrix_type='wfn[0] beta (used as init)'
             )
@@ -376,7 +367,9 @@ def write_nomsd(fh5, wfn, uhf, nelec, thresh=1e-8, init=None, orthonormalize=Tru
         ix = 2*idet if uhf else idet
         psia = scipy.sparse.csr_array(w[:,:nalpha].conj().T)
         write_nomsd_single(fh5, psia, ix)
-        if uhf and nbeta > 0:
+        if uhf:
+            # A fully spin-polarized trial still needs its (empty) beta block on
+            # file: the reader always opens both spin groups for COLLINEAR.
             ix = 2*idet + 1
             psib = scipy.sparse.csr_array(w[:,nalpha:nalpha+nbeta].conj().T)
             write_nomsd_single(fh5, psib, ix)
@@ -404,8 +397,8 @@ def write_nomsd_ghf(fh5, wfn, nelec, thresh=1e-8, init=None, orthonormalize=True
 
     if nbeta != 0:
         raise ValueError(
-            "nbeta is non-zero while attempting to write NOMSD for either"
-            " NONCOLLINER or FULLYPOLARIZED Slater determinants."
+            "nbeta is non-zero while attempting to write NOMSD for"
+            " NONCOLLINEAR Slater determinants."
         )
 
     wfn = wfn.copy() + 0.0j

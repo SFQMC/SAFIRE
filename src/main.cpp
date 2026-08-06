@@ -152,6 +152,9 @@ int main_impl(int argc, char** argv)
 
   // setup output loggers
   setup_loggers(root, output_level, debug_level);
+  // the flag is set from the cli value, not __app_output_level__, so that the
+  // aborting rank prints a trace even though its output level is silenced
+  set_stacktrace(output_level > 1);
 
   app_log(1, welcome);      
 

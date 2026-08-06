@@ -307,12 +307,6 @@ def slater_gto2mo(
         return phi_mo
     
     elif _SlaterType(slater_type) is _SlaterType.COLLINEAR:
-        if nb == 0:
-            raise ValueError(
-                "Collinear walker with 0 beta electrons is not supported: "
-                "use 'fully_polarized' walkers instead"
-            )
-
         # Needs to handle both UHF and ROHF format for phi!
         phi_mo = np.zeros(
             shape=(nmo,sum(nelec)),
@@ -342,14 +336,6 @@ def slater_gto2mo(
         )
         phi[:nmo,:na+nb] = transform_matrix @ phi[:nmo,:na+nb]
         phi[nmo:,:na+nb] = transform_matrix @ phi[nmo:,:na+nb]
-    elif _SlaterType(slater_type) is _SlaterType.FULLYPOLARIZED:
-        phi_mo = np.zeros(
-            shape=(nmo,na),
-            dtype=np.complex128
-        )
-        # Also need to handle both UHF and ROHF format for *phi*
-        phi_mo[:,:na] = transform_matrix @ phi[:,:na]
-        return phi_mo
     else:
         raise ValueError("invalid Slater determinant type")
 

@@ -74,32 +74,27 @@ public:
   auto size() const { return _size; }
   auto SlaterMatrix(SpinTypes s)
   {
-    utils::check(s==Alpha or desc[2] > 0, "error:walker spin out of range in SlaterMatrix(SpinType).");
     return (s == Alpha) ? (SMType({desc[0], desc[1]}, getw_(SM)))
                         : (SMType({desc[0], desc[2]}, getw_(SM) + desc[0] * desc[1]));
   }
   auto UMatrix(SpinTypes s)
   {
-    utils::check(s==Alpha or desc[2] > 0, "error:walker spin out of range in UMatrix(SpinType).");
     return (s == Alpha) ? (SMType({desc[0], desc[1]}, getw_(UR)))
                         : (SMType({desc[0], desc[2]}, getw_(UR) + desc[0] * desc[1]));
   }
   auto DMatrix(SpinTypes s)
   {
-    utils::check(s==Alpha or desc[2] > 0, "error:walker spin out of range in UMatrix(SpinType).");
     return (s == Alpha) ? (SVType({desc[0]}, getw_(DR)))
                         : (SVType({desc[0]}, getw_(DR) + desc[0]));
   }
   auto VMatrix(SpinTypes s)
   {
-    utils::check(s==Alpha or desc[2] > 0, "error:walker spin out of range in UMatrix(SpinType).");
     return (s == Alpha) ? (SMType({desc[0], desc[1]}, getw_(VR)))
                         : (SMType({desc[0], desc[2]}, getw_(VR) + desc[0] * desc[1]));
   }
   auto SlaterMatrixN(SpinTypes s)
   {
     utils::check(indx[SMN] >= 0, "error: access to uninitialized BP sector. ");
-    utils::check(s==Alpha or desc[2] > 0, "error:walker spin out of range in SlaterMatrixN(SpinType).");
     return (s == Alpha) ? (SMType({desc[0], desc[1]}, getw_(SMN)))
                         : (SMType({desc[0], desc[2]}, getw_(SMN) + desc[0] * desc[1]));
   }

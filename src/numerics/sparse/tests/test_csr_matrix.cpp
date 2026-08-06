@@ -371,6 +371,62 @@ void test_array_of_csr()
   }
 }
 
+template<typename Type, typename IndxType, typename IntType>
+void test_combine_csr()
+{
+  using nda::range;
+
+  auto to_csr = [](auto const& A) {
+    return math::sparse::to_csr<HOST_MEMORY,IndxType,IntType>(A,0.0);
+  };
+  auto to_dense = [](auto const& csr) {
+    return math::sparse::to_array<'N'>(csr);
+  };
+
+  auto up = nda::array<Type,2>::zeros({2,4});
+  up(0,1) = 10;
+  up(0,3) = 9;
+  up(1,0) = 3;
+
+  auto dn = nda::array<Type,2>::zeros({3,4});
+  dn(0,2) = 1;
+  dn(1,1) = -2;
+  dn(2,3) = 5;
+
+  auto empty = nda::array<Type,2>::zeros({0,4});
+  long shift = up.extent(1);
+
+  // both blocks present: rows stacked, B shifted into the second half of the columns
+  {
+    auto c = math::sparse::combine_csr(to_csr(up),to_csr(dn),shift);
+    REQUIRE(c.shape() == std::array<long,2>{5,8});
+    auto ref = nda::array<Type,2>::zeros({5,8});
+    ref(range(2),range(4)) = up;
+    ref(range(2,5),range(4,8)) = dn;
+    CHECK_THAT(to_dense(c), sfqmc::utils::Approx(ref));
+  }
+
+  // empty B: the result must still be widened to B_col_shift + B.cols. A fully polarized
+  // trial hits this in readWfn's COLLINEAR -> NONCOLLINEAR upgrade, where returning A
+  // verbatim leaves the spinor matrix with only NMO columns.
+  {
+    auto c = math::sparse::combine_csr(to_csr(up),to_csr(empty),shift);
+    REQUIRE(c.shape() == std::array<long,2>{2,8});
+    auto ref = nda::array<Type,2>::zeros({2,8});
+    ref(range(2),range(4)) = up;
+    CHECK_THAT(to_dense(c), sfqmc::utils::Approx(ref));
+  }
+
+  // empty A: B must still be shifted into the second half of the columns
+  {
+    auto c = math::sparse::combine_csr(to_csr(empty),to_csr(dn),shift);
+    REQUIRE(c.shape() == std::array<long,2>{3,8});
+    auto ref = nda::array<Type,2>::zeros({3,8});
+    ref(range(3),range(4,8)) = dn;
+    CHECK_THAT(to_dense(c), sfqmc::utils::Approx(ref));
+  }
+}
+
 TEST_CASE("csr_matrix", "[csr]")
 {
   test_csr_matrix<double, int, long, HOST_MEMORY>();
@@ -392,6 +448,14 @@ TEST_CASE("csr_matrix", "[csr]")
 TEST_CASE("arrays_of_csr")
 {
   test_array_of_csr<double, int, long, HOST_MEMORY>();
+}
+
+TEST_CASE("combine_csr", "[csr]")
+{
+  test_combine_csr<double, int, long>();
+  test_combine_csr<double, int, int>();
+  test_combine_csr<std::complex<double>, int, long>();
+  test_combine_csr<std::complex<double>, int, int>();
 }
 
 } // namespace bdft 

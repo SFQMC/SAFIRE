@@ -365,10 +365,13 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
   logdetR() = ComplexType(0.0);
 
   // 0. copy SlaterMatrix to SMA/SMB
-  SMA() = wset.SlaterMatrices(Alpha);
-  if(walker_type==COLLINEAR) 
+  if(nup > 0) {
+    SMA() = wset.SlaterMatrices(Alpha);
+  }
+  if(walker_type==COLLINEAR && ndown > 0) {
     SMB() = wset.SlaterMatrices(Beta);
-
+  }
+  
   for (int ni = nbpsteps - 1; ni >= 0; --ni)
   {
     // 1. Get X(nwalk,nCV) from wset
@@ -386,9 +389,12 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
       for (int nr = 0; nr < nrefs; ++nr)
       {
         // 3. copy reference to SlaterMatrix
-        wset.SlaterMatrices(Alpha) = Refs(all,nr,all,range(nup));
-        if(walker_type==COLLINEAR)
+        if(nup > 0) {
+          wset.SlaterMatrices(Alpha) = Refs(all,nr,all,range(nup));
+        }
+        if(walker_type==COLLINEAR && ndown > 0) {
           wset.SlaterMatrices(Beta) = Refs(all,nr,all,range(nup,nup+ndown));        
+        }
 
         // 4. Propagate walkers 
         apply_propagators<'H'>(wset,vHS); 
@@ -401,8 +407,10 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
         }
 
         // 5. copy reference to back
-        Refs(all,nr,all,range(nup)) = wset.SlaterMatrices(Alpha);
-        if(walker_type==COLLINEAR)
+        if(nup > 0) {
+          Refs(all,nr,all,range(nup)) = wset.SlaterMatrices(Alpha);
+        }
+        if(walker_type==COLLINEAR && ndown > 0)
           Refs(all,nr,all,range(nup,nup+ndown)) = wset.SlaterMatrices(Beta);
       }
 

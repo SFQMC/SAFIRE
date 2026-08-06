@@ -508,6 +508,13 @@ private:
     memory::buffered_array<MEM,ComplexType,2> Gfull(npol * NMO * npol * NMO, nwalk);
     auto Gfull_3d = nda::reshape(Gfull, std::array<long,3>{npol * NMO, npol * NMO, nwalk});
 
+    // Empty spin sector (e.g. COLLINEAR with ndown==0): the sum over occupied
+    // orbitals is empty, and the contraction below would be zero-sized.
+    if(nel[ispin] == 0) {
+      Gfull() = 0.0;
+      return Gfull;
+    }
+
     auto psi = PsiC()(idet,ispin,all,range(nel[ispin]));
     if constexpr (MEM==HOST_MEMORY) {
       memory::buffered_array<MEM,ComplexType,2> G_(npol * NMO, npol * NMO);
@@ -534,22 +541,29 @@ private:
     memory::buffered_array<MEM,ComplexType,2> Gfull(nwalk, nspin * npol * NMO * npol * NMO);
     auto Gfull_4d = nda::reshape(Gfull, std::array<long,4>{nwalk, nspin, npol * NMO, npol * NMO});
 
+    // Empty beta sector (ndown==0): its block stays zero, the products below
+    // would be zero-sized.
+    bool empty_beta = (walker_type == COLLINEAR and nel[1] == 0);
+    if(empty_beta) {
+      Gfull() = 0.0;
+    }
+
     if constexpr (MEM==HOST_MEMORY) {
       auto psi = PsiC()(idet,0,all,range(nel[0]));
       int n0 = 0;
-      for(int iw=0; iw<nwalk; ++iw) 
+      for(int iw=0; iw<nwalk; ++iw)
         nda::blas::gemm(psi,Gc(iw,range(n0,n0+nel[0]),all),Gfull_4d(iw,0,all,all));
-      if( walker_type == COLLINEAR ) {
+      if( walker_type == COLLINEAR and not empty_beta ) {
         auto psi_dn = PsiC()(idet,1,all,range(nel[1]));
         n0 = nel[0];
-        for(int iw=0; iw<nwalk; ++iw) 
+        for(int iw=0; iw<nwalk; ++iw)
           nda::blas::gemm(psi_dn,Gc(iw,range(n0,n0+nel[1]),all),Gfull_4d(iw,1,all,all));
       }
     } else {
       auto psi = PsiC()(idet,0,all,range(nel[0]));
       int n0 = 0;
       nda::tensor::contract(psi,"ia",Gc(all,range(n0,n0+nel[0]),all),"waj",Gfull_4d(all,0,all,all),"wij");
-      if( walker_type == COLLINEAR ) {
+      if( walker_type == COLLINEAR and not empty_beta ) {
         auto psi_dn = PsiC()(idet,1,all,range(nel[1]));
         n0 = nel[0];
         nda::tensor::contract(psi_dn,"ia",Gc(all,range(n0,n0+nel[1]),all),"waj",Gfull_4d(all,1,all,all),"wij");
@@ -571,8 +585,15 @@ private:
     int nIJ = ET_n2IJ.extent(0);
     memory::buffered_array<MEM,ComplexType,2> GIJ(nIJ, nwalk);
 
+    // Empty spin sector (e.g. COLLINEAR with ndown==0): the sum over occupied
+    // orbitals is empty, and the work arrays below would be zero-sized.
+    if(nel[ispin] == 0) {
+      GIJ() = 0.0;
+      return GIJ;
+    }
+
     auto psi = PsiC()(idet,ispin,all,range(nel[ispin]));
- 
+
     if constexpr (MEM==HOST_MEMORY) {
       //C[w][n] = sum_a psi[ I[n] ][a] Gc[w][a][ J[n] ]
       for(int n=0; n<nIJ; ++n) {
@@ -614,7 +635,11 @@ private:
     utils::check( Gc.shape() == std::array<long,3>{nwalk,nel[0]+nel[1],npol*NMO}, "Shape mismatch");
     int nIJ = n2IJ.extent(0);
     utils::check( GIJ.shape() == std::array<long,2>{nwalk,nIJ}, "Shape mismatch");
-      
+
+    // Empty beta sector (ndown==0): the beta IJ terms are all zero, the
+    // products below would be zero-sized.
+    bool empty_beta = (walker_type == COLLINEAR and nel[1] == 0);
+
     if constexpr (MEM==HOST_MEMORY) {
       //C[w][n] = sum_a psi[ I[n] ][a] Gwaj[w][a][ J[n] ]
       {
@@ -626,7 +651,9 @@ private:
           nda::tensor::contract(psi(In,all),"a",Gwaj(all,all,Jn),"wa",GIJ(all,n),"w");
         }
       }
-      if(walker_type == COLLINEAR) {
+      if(empty_beta) {
+        GIJ(all,range(nIJ_first_beta,nIJ)) = 0.0;
+      } else if(walker_type == COLLINEAR) {
         auto psi = PsiC()(0,1,all,range(nel[1]));
         auto Gwaj = Gc(all,range(nel[0],nel[0]+nel[1]),all);
         for(int n=nIJ_first_beta; n<nIJ; ++n) {
@@ -659,7 +686,9 @@ private:
           vC.emplace_back(C(range(n,n+1),all));
         }
       }
-      if(walker_type == COLLINEAR) {
+      if(empty_beta) {
+        C(range(nIJ_first_beta,nIJ),all) = 0.0;
+      } else if(walker_type == COLLINEAR) {
         auto psi = PsiC()(0,1,all,range(nel[1]));
         auto Gjaw = Gt(all,range(nel[0],nel[0]+nel[1]),all);
         for(int n=nIJ_first_beta; n<nIJ; ++n) {

@@ -89,9 +89,6 @@ public:
     if (walker_type == NONCOLLINEAR)
       APP_ABORT("PHMSD has not yet been implemented for NONCOLLINEAR walkers.");
 
-    if (walker_type == FULLYPOLARIZED)
-      APP_ABORT("PHMSD has not yet been implemented for FULLYPOLARIZED walkers.");
-
     const int nspin = (walker_type==COLLINEAR ? 2 : 1 );
     utils::check(OrbMats.extent(0)==1 or OrbMats.extent(0)==nspin, "PHMSD: Invalid size of OrbMats");
 

@@ -23,6 +23,7 @@
 #ifndef SPARSE_CPU_HPP
 #define SPARSE_CPU_HPP
 
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -39,6 +40,37 @@ namespace math::sparse
 {
 namespace backup_impl
 {
+// beta == 0 means the output is not read (blas convention), so it must be assigned
+// rather than scaled: uninitialized NaN/Inf in the output would survive a multiply by zero.
+template<typename T>
+inline void scale_output(const int n, const T beta, T* y)
+{
+  if(beta == T(0)) {
+    std::fill_n(y, n, T(0));
+  } else {
+    for(int i = 0; i < n; i++) {
+      y[i] *= beta;
+    }
+  }
+}
+
+// same for the leading n x m block of a row-major matrix with leading dimension ld
+template<typename T>
+inline void scale_output(const int n, const int m, const T beta, T* C, const int ld)
+{
+  if(beta == T(0)) {
+    for(int i = 0; i < n; i++) {
+      std::fill_n(C + long(i) * ld, m, T(0));
+    }
+  } else {
+    for(int i = 0; i < n; i++) {
+      for(int j = 0; j < m; j++) {
+        C[long(i) * ld + j] *= beta;
+      }
+    }
+  }
+}
+
 template<typename T, typename I1, typename I2>
 void csrmv(const char transa,
            const int M,
@@ -57,9 +89,9 @@ void csrmv(const char transa,
   auto p0   = *pntrb;
   if (transa == 'n' || transa == 'N')
   {
+    scale_output(M, beta, y);
     for (int nr = 0; nr < M; nr++, y++, pntrb++, pntre++)
     {
-      (*y) *= beta;
       for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
       {
         if (*(indx + i) >= K)
@@ -70,8 +102,7 @@ void csrmv(const char transa,
   }
   else if (transa == 't' || transa == 'T')
   {
-    for (int k = 0; k < K; k++)
-      (*(y + k)) *= beta;
+    scale_output(K, beta, y);
     for (int nr = 0; nr < M; nr++, pntrb++, pntre++, x++)
     {
       for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
@@ -84,13 +115,12 @@ void csrmv(const char transa,
   }
   else if (transa == 'h' || transa == 'H' || transa == 'c' || transa == 'C')
   {
-    for (int k = 0; k < K; k++)
-      (*(y + k)) *= beta;
+    scale_output(K, beta, y);
     for (int nr = 0; nr < M; nr++, pntrb++, pntre++, x++)
     {
       for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
       {
-        if (*indx >= K)
+        if (*(indx + i) >= K)
           continue;
         *(y + (*(indx + i))) += alpha * (*(A + i)) * (*x);
       }
@@ -116,9 +146,9 @@ void csrmv(const char transa,
   auto p0   = *pntrb;
   if (transa == 'n' || transa == 'N')
   {
+    scale_output(M, beta, y);
     for (int nr = 0; nr < M; nr++, y++, pntrb++, pntre++)
     {
-      (*y) *= beta;
       for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
       {
         if (*(indx + i) >= K)
@@ -129,8 +159,7 @@ void csrmv(const char transa,
   }
   else if (transa == 't' || transa == 'T')
   {
-    for (int k = 0; k < K; k++)
-      (*(y + k)) *= beta;
+    scale_output(K, beta, y);
     for (int nr = 0; nr < M; nr++, pntrb++, pntre++, x++)
     {
       for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
@@ -143,13 +172,12 @@ void csrmv(const char transa,
   }
   else if (transa == 'h' || transa == 'H' || transa == 'c' || transa == 'C')
   {
-    for (int k = 0; k < K; k++)
-      (*(y + k)) *= beta;
+    scale_output(K, beta, y);
     for (int nr = 0; nr < M; nr++, pntrb++, pntre++, x++)
     {
       for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
       {
-        if (*indx >= K)
+        if (*(indx + i) >= K)
           continue;
         *(y + (*(indx + i))) += alpha * std::conj(*(A + i)) * (*x);
       }
@@ -184,10 +212,9 @@ void csrmm(const char transa,
   } else {
     if (transa == 'n' || transa == 'N')
     {
+      scale_output(M, N, beta, C, ldc);
       for (int nr = 0; nr < M; nr++, pntrb++, pntre++, C += ldc)
       {
-        for (int i = 0; i < N; i++)
-          (*(C + i)) *= beta;
         for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
         {
           if (*(indx + i) >= K)
@@ -205,9 +232,7 @@ void csrmm(const char transa,
     else if (transa == 't' || transa == 'T')
     {
       // not optimal, but simple
-      for (int i = 0; i < K; i++)
-        for (int j = 0; j < N; j++)
-          (*(C + i * ldc + j)) *= beta;
+      scale_output(K, N, beta, C, ldc);
       for (int nr = 0; nr < M; nr++, pntrb++, pntre++, B += ldb)
       {
         for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
@@ -227,9 +252,7 @@ void csrmm(const char transa,
     else if (transa == 'h' || transa == 'H' || transa == 'c' || transa == 'C')
     {
       // not optimal, but simple
-      for (int i = 0; i < K; i++)
-        for (int j = 0; j < N; j++)
-          (*(C + i * ldc + j)) *= beta;
+      scale_output(K, N, beta, C, ldc);
       for (int nr = 0; nr < M; nr++, pntrb++, pntre++, B += ldb)
       {
         for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
@@ -278,10 +301,9 @@ void csrmm(const char transa,
   {
     if (transa == 'n' || transa == 'N')
     {
+      scale_output(M, N, beta, C, ldc);
       for (int nr = 0; nr < M; nr++, pntrb++, pntre++, C += ldc)
       {
-        for (int i = 0; i < N; i++)
-          (*(C + i)) *= beta;
         for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
         {
           if (*(indx + i) >= K)
@@ -299,9 +321,7 @@ void csrmm(const char transa,
     else if (transa == 't' || transa == 'T')
     {
       // not optimal, but simple
-      for (int i = 0; i < K; i++)
-        for (int j = 0; j < N; j++)
-          (*(C + i * ldc + j)) *= beta;
+      scale_output(K, N, beta, C, ldc);
       for (int nr = 0; nr < M; nr++, pntrb++, pntre++, B += ldb)
       {
         for (I2 i = *pntrb - p0; i < *pntre - p0; i++)
@@ -321,9 +341,7 @@ void csrmm(const char transa,
     else if (transa == 'h' || transa == 'H' || transa == 'c' || transa == 'C')
     {
       // not optimal, but simple
-      for (int i = 0; i < K; i++)
-        for (int j = 0; j < N; j++)
-          (*(C + i * ldc + j)) *= beta;
+      scale_output(K, N, beta, C, ldc);
       for (int nr = 0; nr < M; nr++, pntrb++, pntre++, B += ldb)
       {
         for (I2 i = *pntrb - p0; i < *pntre - p0; i++)

@@ -34,7 +34,6 @@ WALKER_TYPES WalkerSetBase<_M_>::parse_walker_type(const ptree& pt0)
     {CLOSED, "closed-shell RHF", {"closed"}},
     {NONCOLLINEAR, "GHF", {"non-collinear", "noncollinear"}},
     {COLLINEAR, "UHF/ROHF", {"collinear"}},
-    {FULLYPOLARIZED, "beta sector identically 0", {"fullypolarized", "fully-polarized"}},
   }, "walker");
 }
 
@@ -582,8 +581,7 @@ void WalkerSetBase<_M_>::resize_bp(int nbp, int nCV, int nref)
   // carries the 2*NMO factor for NONCOLLINEAR), ncol = wlk_desc[1] + wlk_desc[2]
   // (wlk_desc[2] is 0 for the non-COLLINEAR cases).
   int nrow, ncol;
-  if (walkerType == CLOSED or walkerType == FULLYPOLARIZED or
-      walkerType == COLLINEAR or walkerType == NONCOLLINEAR)
+  if (walkerType == CLOSED or walkerType == COLLINEAR or walkerType == NONCOLLINEAR)
   {
     nrow = wlk_desc[0];
     ncol = wlk_desc[1] + wlk_desc[2];

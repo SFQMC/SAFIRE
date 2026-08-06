@@ -26,7 +26,6 @@
 
 #if defined(ENABLE_CUDA)
 #include "CUDA/cuda_init.h"
-#include "CUDA/cuda_sync.h"
 #endif
 
 // you can put __host__ or __device__ without guarding them
@@ -45,10 +44,6 @@ namespace sfqmc {
 namespace arch
 {
   void init(bool use_gpu);
-  bool get_device_synchronization();
-  void set_device_synchronization(bool);
-  void synchronize_if_set();
-  void synchronize();
   void check_device_configuration();
 }
 }

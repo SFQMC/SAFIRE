@@ -76,44 +76,39 @@ auto combine_csr(csr_matrix<value_type,HOST_MEMORY,IndxType,IntType> const& A,
   long nc = std::max(A.extent(1),B.extent(1)+B_col_shift);
   auto nnzpr = ::nda::array<IntType, 1>::zeros({nr});
 
-  if(A.extent(0) == 0) {
-    return csr_matrix<value_type,HOST_MEMORY,IndxType,IntType>{B};
-  } else if(B.extent(0) == 0) {
-    return csr_matrix<value_type,HOST_MEMORY,IndxType,IntType>{A};
-  } else {
-
-    for(int r=0; r<A.extent(0); ++r)
-      nnzpr(r) = A.nnz(r);
-    for(int r=0; r<B.extent(0); ++r)
-      nnzpr(r+nrA) = B.nnz(r);
-
-    csr_matrix<value_type,HOST_MEMORY,IndxType,IntType> csr({nr,nc},nnzpr);
-
-    {
-      auto vals = A.values();
-      auto cols = A.columns();
-      auto row_begin = A.row_begin();
-      auto row_end = A.row_end();
-      long i0 = row_begin(0);
-
-      for(long r=0; r<A.extent(0); r++)
-        for(long i=row_begin(r); i<row_end(r); ++i)
-          csr.emplace_back({IndxType(r), cols(i-i0)}, vals(i-i0));
-    }
-    {
-      auto vals = B.values();
-      auto cols = B.columns();
-      auto row_begin = B.row_begin();
-      auto row_end = B.row_end();
-      long i0 = row_begin(0);
-
-      for(long r=0; r<B.extent(0); r++)
-        for(long i=row_begin(r); i<row_end(r); ++i)
-          csr.emplace_back({IndxType(r+nrA), IndxType(B_col_shift+cols(i-i0))}, vals(i-i0));
-    }    
-
-    return csr;
+  for(int r=0; r<A.extent(0); ++r) {
+    nnzpr(r) = A.nnz(r);
   }
+  for(int r=0; r<B.extent(0); ++r) {
+    nnzpr(r+nrA) = B.nnz(r);
+  }
+
+  csr_matrix<value_type,HOST_MEMORY,IndxType,IntType> csr({nr,nc},nnzpr);
+
+  if(A.extent(0) > 0) {
+    auto vals = A.values();
+    auto cols = A.columns();
+    auto row_begin = A.row_begin();
+    auto row_end = A.row_end();
+    long i0 = row_begin(0);
+
+    for(long r=0; r<A.extent(0); r++)
+      for(long i=row_begin(r); i<row_end(r); ++i)
+        csr.emplace_back({IndxType(r), cols(i-i0)}, vals(i-i0));
+  }
+  if(B.extent(0) > 0) {
+    auto vals = B.values();
+    auto cols = B.columns();
+    auto row_begin = B.row_begin();
+    auto row_end = B.row_end();
+    long i0 = row_begin(0);
+
+    for(long r=0; r<B.extent(0); r++)
+      for(long i=row_begin(r); i<row_end(r); ++i)
+        csr.emplace_back({IndxType(r+nrA), IndxType(B_col_shift+cols(i-i0))}, vals(i-i0));
+  }
+
+  return csr;
 }
 
 template<typename ValType, MEMORY_SPACE MEM = HOST_MEMORY, typename IndxType = int, typename IntType = long>
@@ -291,12 +286,18 @@ auto to_array(nda::MemoryMatrix auto const& view, nda::range row_range, nda::ran
 //      typename v_t::regular_t A(col_range.size(),row_range.size()); 
       constexpr MEMORY_SPACE M = memory::get_memory_space<v_t>();
       memory::buffered_array<M,nda::get_value_t<v_t>,2> A(col_range.size(),row_range.size());;
+      if(A.size() == 0) {
+        return A;  // transposing an empty matrix is a no-op; cuTENSOR rejects zero-length modes
+      }
       nda::tensor::add(view,"ji",A,"ij");
       return A; 
     } else if constexpr (op=='H' or op=='C') {
 //      typename v_t::regular_t A(col_range.size(),row_range.size()); 
       constexpr MEMORY_SPACE M = memory::get_memory_space<v_t>();
       memory::buffered_array<M,nda::get_value_t<v_t>,2> A(col_range.size(),row_range.size());;
+      if(A.size() == 0) {
+        return A;  // transposing an empty matrix is a no-op; cuTENSOR rejects zero-length modes
+      }
       nda::tensor::add(nda::conj(view),"ji",A,"ij");
       return A; 
     } else
@@ -321,12 +322,18 @@ auto to_array(nda::MemoryMatrix auto const& view)
 //      typename v_t::regular_t A(view.extent(1),view.extent(0));
       constexpr MEMORY_SPACE M = memory::get_memory_space<v_t>();
       memory::buffered_array<M,nda::get_value_t<v_t>,2> A(view.extent(1),view.extent(0));
+      if(A.size() == 0) {
+        return A;  // transposing an empty matrix is a no-op; cuTENSOR rejects zero-length modes
+      }
       nda::tensor::add(view,"ji",A,"ij");
       return A; 
     } else if constexpr (op=='H' or op=='C') {
 //      typename v_t::regular_t A(view.extent(1),view.extent(0));
       constexpr MEMORY_SPACE M = memory::get_memory_space<v_t>();
       memory::buffered_array<M,nda::get_value_t<v_t>,2> A(view.extent(1),view.extent(0));
+      if(A.size() == 0) {
+        return A;  // transposing an empty matrix is a no-op; cuTENSOR rejects zero-length modes
+      }
       nda::tensor::add(nda::conj(view),"ji",A,"ij");
       return A; 
     } else

@@ -30,15 +30,10 @@
 #if defined(ENABLE_CUDA)
 
 #include "CUDA/cuda_init.h"
-#include "CUDA/cuda_sync.h"
 
 namespace sfqmc {
 namespace arch
 {
-  bool get_device_synchronization() {return cuda::get_device_synchronization();};
-  void set_device_synchronization(bool s) { cuda::set_device_synchronization(s); };
-  void synchronize_if_set() { cuda::synchronize_if_set(); };
-  void synchronize() { cuda::synchronize(); };
   void check_device_configuration() { cuda::check_device_configuration(); }
 }
 }
@@ -48,10 +43,6 @@ namespace arch
 namespace sfqmc {
 namespace arch
 {
-  bool get_device_synchronization() {return true;};
-  void set_device_synchronization(bool) {};
-  void synchronize_if_set() {};
-  void synchronize() {};
   void check_device_configuration() {};
 }
 }

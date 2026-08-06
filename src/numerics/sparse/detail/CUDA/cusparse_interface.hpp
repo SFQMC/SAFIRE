@@ -29,7 +29,6 @@
 #include <string>
 
 #include "configuration.hpp"
-#include "arch/arch.h"
 #include "IO/AppAbort.hpp"
 #include "utilities/check.hpp"
 
@@ -87,7 +86,6 @@ void csrmv(char oper_A,typename A::value_type alpha, A const& a, X const &x, typ
   CUSPARSE_CHECK( cusparseDestroySpMat, cuA )
   CUSPARSE_CHECK( cusparseDestroyDnVec, cuX )
   CUSPARSE_CHECK( cusparseDestroyDnVec, cuY )
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<CSRMatrix A, typename B, typename C> 
@@ -164,7 +162,6 @@ void csrmm(char oper_A, char oper_B, typename A::value_type alpha, A const& a, B
   CUSPARSE_CHECK( cusparseDestroySpMat, cuA )
   CUSPARSE_CHECK( cusparseDestroyDnMat, cuB )
   CUSPARSE_CHECK( cusparseDestroyDnMat, cuC )
-  sfqmc::arch::synchronize_if_set();
 }
 
 } // namespace math::sparse::device

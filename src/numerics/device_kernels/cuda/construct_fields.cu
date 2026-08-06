@@ -7,7 +7,6 @@
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "nda/nda.hpp"
-#include "arch/arch.h"
 #include <cuda/std/mdspan>
 #include <cub/device/device_for.cuh>
 #include "AFQMC/Propagators/construct_X.hpp"
@@ -30,7 +29,6 @@ void construct_X_impl(bool zero, bool fp, double sqrtdt, double vbias_bound, V1 
   sfqmc::afqmc::detail::construct_X_impl construct_X{zero,fp,sqrtdt,vbias_bound,FT_d,vMF_d,MF_d,HW_d,RN_d,X_d};
 
   cub::DeviceFor::Bulk(N,construct_X);
-  sfqmc::arch::synchronize_if_set();
 }
 
 using memory::device_array_view;

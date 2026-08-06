@@ -400,7 +400,7 @@ These are the most common Walker set options that a typical user will interact w
      - **Description**
    * - **walker_type**
      - Collinear
-     - The type of walker to use in AFQMC. Options are Closed, Collinear, Noncollinear, Fullypolarized. See :ref:`Walker-classes` for more detail.
+     - The type of walker to use in AFQMC. Options are Closed, Collinear, Noncollinear. See :ref:`Walker-classes` for more detail.
    * - **name**
      - n/a
      - The name to assign to the current walker_set block. This allows it to be referenced by name in execute blocks. A name is generated internally if not set here.

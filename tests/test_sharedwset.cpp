@@ -390,14 +390,12 @@ TEST_CASE("sharedwset: basic walker features", "[sharedwset]")
   sharedwset_basic_walker_features<HOST_MEMORY>(CLOSED, false);
   sharedwset_basic_walker_features<HOST_MEMORY>(COLLINEAR, false);
   sharedwset_basic_walker_features<HOST_MEMORY>(NONCOLLINEAR, false);
-  sharedwset_basic_walker_features<HOST_MEMORY>(FULLYPOLARIZED, false);
   sharedwset_basic_walker_features<HOST_MEMORY>(COLLINEAR, true);
   sharedwset_basic_walker_features<HOST_MEMORY>(NONCOLLINEAR, true);
 #if defined(ENABLE_DEVICE)
   sharedwset_basic_walker_features<DEVICE_MEMORY>(CLOSED, false);
   sharedwset_basic_walker_features<DEVICE_MEMORY>(COLLINEAR, false);
   sharedwset_basic_walker_features<DEVICE_MEMORY>(NONCOLLINEAR, false);
-  sharedwset_basic_walker_features<DEVICE_MEMORY>(FULLYPOLARIZED, false);
   sharedwset_basic_walker_features<DEVICE_MEMORY>(COLLINEAR, true);
   sharedwset_basic_walker_features<DEVICE_MEMORY>(NONCOLLINEAR, true);
 #endif
@@ -407,12 +405,10 @@ TEST_CASE("sharedwset: walker io", "[sharedwset]")
   sharedwset_walker_io<HOST_MEMORY>(CLOSED);
   sharedwset_walker_io<HOST_MEMORY>(COLLINEAR);
   sharedwset_walker_io<HOST_MEMORY>(NONCOLLINEAR);
-  sharedwset_walker_io<HOST_MEMORY>(FULLYPOLARIZED);
 #if defined(ENABLE_DEVICE)
   sharedwset_walker_io<DEVICE_MEMORY>(CLOSED);
   sharedwset_walker_io<DEVICE_MEMORY>(COLLINEAR);
   sharedwset_walker_io<DEVICE_MEMORY>(NONCOLLINEAR);
-  sharedwset_walker_io<DEVICE_MEMORY>(FULLYPOLARIZED);
 #endif
 }
 

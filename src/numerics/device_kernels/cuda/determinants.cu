@@ -7,7 +7,6 @@
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "nda/nda.hpp"
-#include "arch/arch.h"
 #include <cuda/std/mdspan>
 #include <cub/device/device_for.cuh>
 #include "numerics/operations/determinants_impl.hpp"
@@ -26,7 +25,6 @@ void log_determinant_from_getrf_impl(V1 const& a, V2 const& ipiv, V3& res)
   auto F = math::detail::log_determinant_from_getrf_impl<decltype(a_d),decltype(ipiv_d),decltype(res_d)>{a_d,ipiv_d,res_d};
 
   cub::DeviceFor::Bulk(N,F);
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename V1, typename V2, typename V3>
@@ -40,7 +38,6 @@ void log_determinant_from_geqrf_impl(V1 const& a, V2& scl, V3& res)
   auto F = math::detail::log_determinant_from_geqrf_impl<decltype(a_d),decltype(scl_d),decltype(res_d)>{a_d,scl_d,res_d};
 
   cub::DeviceFor::Bulk(N,F);
-  sfqmc::arch::synchronize_if_set();
 }
   
 using memory::device_array_view;

@@ -173,7 +173,9 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
       } else {
         memory::array<MEM, ComplexType, 3> p(reshape(p_h, nwalk, npol * NMO, nels[spin]));
         auto SM = wset.SlaterMatrices(static_cast<SpinTypes>(spin));
-        nda::tensor::add(p, "ijk", SM, "ijk");
+        if(SM.size() > 0) {
+          nda::tensor::add(p, "ijk", SM, "ijk");
+        }
       }
     }
   }
@@ -328,7 +330,7 @@ TEST_CASE("wfn_factory: sdet", "[wfn_factory]")
       wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, from, true, false, false);
     } else {
       // Test the wfn's native walker type plus every walker type it can be converted to.
-      for(auto to : {CLOSED, COLLINEAR, NONCOLLINEAR, FULLYPOLARIZED}) {
+      for(auto to : {CLOSED, COLLINEAR, NONCOLLINEAR}) {
         if(!walkerTypeIsConvertible(from, to)) continue;
         wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, to, false, true,  write_reference && MEM == HOST_MEMORY);
         wfn_factory_sdet<MEM>(mpi, hamil_file, wfn_file, to, false, false, false);

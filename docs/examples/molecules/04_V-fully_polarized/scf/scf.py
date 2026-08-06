@@ -10,8 +10,6 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-import numpy as np
-import matplotlib.pyplot as plt
 from pyscf import gto, scf, mcscf
 
 

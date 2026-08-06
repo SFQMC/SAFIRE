@@ -1,31 +1,166 @@
-FROM ubuntu:24.04
+# The CI image, in a CPU and a CUDA flavour: build with --build-arg VARIANT=cpu (the default)
+# or --build-arg VARIANT=cuda. An ARG declared before the first FROM is in scope for every FROM
+# in the file, which is what lets the shared stages below sit on either base. The variant stages
+# are sandwiched between the shared ones because mpi4py has to be built after MPI is in place,
+# and podman/docker skip the stages the requested variant does not reach.
+ARG VARIANT=cpu
+
+FROM ubuntu:24.04 AS base-cpu
+FROM docker.io/nvidia/cuda:12.8.1-devel-ubuntu24.04 AS base-cuda
+
+
+FROM base-${VARIANT} AS sysdeps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# install dependencies
+# install the dependencies both flavours need. /var/lib/apt/lists is deliberately left in
+# place, so the variant stages below can install without another apt-get update.
 RUN apt-get update && apt-get install -y openssh-client git \
    gcc \
    g++ \
-   clang-19 \
-   clang-tools-19 \
    cmake \
-   libomp-19-dev \
    ninja-build \
-   openmpi-bin \
-   openmpi-common \
-   libopenmpi-dev \
+   make \
    libopenblas-dev \
    libhdf5-dev \
    python3 \
+   python3-dev \
    python3-pip \
-   libboost-dev \
-   python3-mpi4py \
-   python3-h5py \
    python3-venv \
-   catch2 \
-   libspdlog1.12 \
-   libspdlog-dev
+   libboost-dev
+
+
+FROM sysdeps AS variant-cpu
+
+# clang-19 for the second CI build; Ubuntu's OpenMPI is enough without a GPU in the picture.
+RUN apt-get install -y \
+   clang-19 \
+   clang-tools-19 \
+   libomp-19-dev \
+   openmpi-bin \
+   openmpi-common \
+   libopenmpi-dev
+
+
+FROM sysdeps AS variant-cuda
+
+RUN apt-get install -y \
+   libcutensor2 \
+   libcutensor-dev \
+   gfortran \
+   wget \
+   bzip2 \
+   ca-certificates
+
+# Ubuntu's OpenMPI is not CUDA-aware, but the GPU build hands device pointers
+# straight to MPI (see mpi_is_cuda_aware() in src/arch/CUDA/cuda_init.cpp), so
+# build our own. Only cuda.h is needed here -- libcuda is dlopened at runtime,
+# hence no GPU or driver stub is required during the image build.
+#
+# Fortran support must stay enabled (hence gfortran above): mpi3 maps
+# std::complex<double> and thrust::complex<double> onto MPI_DOUBLE_COMPLEX,
+# which is a Fortran datatype (extern/mpi_wrapper/mpi3/detail/datatype.hpp:106).
+# --disable-mpi-fortran leaves that handle non-null but flagged unavailable, so
+# every complex collective fails with "MPI_ERR_TYPE: invalid datatype".
+ARG OPENMPI_VERSION=4.1.8
+RUN wget -q https://download.open-mpi.org/release/open-mpi/v4.1/openmpi-${OPENMPI_VERSION}.tar.bz2 \
+ && tar xf openmpi-${OPENMPI_VERSION}.tar.bz2 \
+ && cd openmpi-${OPENMPI_VERSION} \
+ && ./configure --prefix=/opt/openmpi \
+      --with-cuda=/usr/local/cuda \
+      --without-ucx \
+      --without-verbs \
+      --enable-orterun-prefix-by-default \
+ && make -j"$(nproc)" && make install \
+ && cd / && rm -rf openmpi-${OPENMPI_VERSION}* \
+ && echo /opt/openmpi/lib > /etc/ld.so.conf.d/openmpi.conf && ldconfig
+
+# Puts the wrappers where find_package(MPI) looks and makes MPIEXEC_EXECUTABLE
+# resolve to our mpiexec. The libraries themselves are on the ldconfig path, so
+# the MCA components OpenMPI dlopens resolve without LD_LIBRARY_PATH -- which
+# matters because ctest runs the test binaries directly, not through mpirun.
+ENV PATH=/opt/openmpi/bin:${PATH}
+
+
+# The rest is shared again. This is the last stage, so it is also the default build target and
+# neither flavour needs a --target.
+FROM variant-${VARIANT}
+
+# 24.04 only has Catch2 3.4.0 and spdlog 1.12.0, neither of which the build can use:
+# CMakeLists.txt asks for Catch2 >= 3.14.0, and Debian strips the fmt that spdlog bundles
+# (src/IO/fmt_extensions.hpp includes spdlog/fmt/bundled/format.h). So build both from
+# source into /usr/local, which CMake searches before /usr, and the two find_package()
+# calls succeed instead of falling back to FetchContent -- which would otherwise recompile
+# both libraries in every build directory, i.e. twice per CI run.
+#
+# Keep the versions in sync with the FetchContent pins in CMakeLists.txt; a mismatch is not
+# an error, it just silently reinstates the fetch. C++20 matches CMAKE_CXX_STANDARD there.
+# Both libraries are built with gcc and also consumed by the clang build, which is fine
+# because clang uses the same libstdc++.
+ARG CATCH2_VERSION=3.14.0
+RUN git clone --depth 1 --branch v${CATCH2_VERSION} https://github.com/catchorg/Catch2.git /tmp/Catch2 \
+ && cmake -S /tmp/Catch2 -B /tmp/Catch2/build -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CXX_STANDARD=20 \
+      -DBUILD_TESTING=OFF \
+ && cmake --build /tmp/Catch2/build --target install \
+ && rm -rf /tmp/Catch2
+
+ARG SPDLOG_VERSION=1.8.3
+RUN git clone --depth 1 --branch v${SPDLOG_VERSION} https://github.com/gabime/spdlog.git /tmp/spdlog \
+ && cmake -S /tmp/spdlog -B /tmp/spdlog/build -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CXX_STANDARD=20 \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DSPDLOG_BUILD_SHARED=OFF \
+      -DSPDLOG_BUILD_EXAMPLE=OFF \
+      -DSPDLOG_BUILD_TESTS=OFF \
+ && cmake --build /tmp/spdlog/build --target install \
+ && rm -rf /tmp/spdlog
 
 # necessary for building BLIS within TBLIS
 ENV CC=/usr/bin/gcc
 ENV CXX=/usr/bin/g++
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH=${VIRTUAL_ENV}/bin:${PATH}
+RUN install -d -o 1000 -g 1000 ${VIRTUAL_ENV}
+USER 1000:1000
+RUN python3 -m venv ${VIRTUAL_ENV}
+
+# This mirrors utils/pyproject.toml: the base dependencies plus the DOCS, TESTING and PYSCF
+# extras. Versions are pinned so that rebuilding the image cannot silently
+# change the python stack under the tests; to update, resolve the same list unpinned in a
+# scratch venv and copy the resulting `pip freeze` versions back here.
+#
+# mpi4py is built from source so that it links against this image's OpenMPI rather than
+# whatever MPI the PyPI wheel was built against -- Ubuntu's on the CPU flavour, the
+# CUDA-aware one in /opt/openmpi on the CUDA flavour.
+#
+# pyscf is held at 2.12: from 2.13 on, remove_linear_dep_ gives a different SCF energy for
+# the neon aug-cc-pVTZ case, so test_inputs.py::TestEnergy::test_from_pyscf_lindep fails
+# against its hardcoded reference (-128.1109 expected, -128.5333 with 2.13, -128.1029 with
+# 2.14). Bump this pin once that reference has been reviewed.
+RUN pip install --no-cache-dir --no-binary=mpi4py \
+      numpy==2.4.6 \
+      mpi4py==4.1.2 \
+      scipy==1.18.0 \
+      h5py==3.16.0 \
+      pandas==3.0.5 \
+      matplotlib==3.11.1 \
+      numba==0.66.0 \
+      pytest==9.1.1 \
+      toml==0.10.2 \
+      tables==3.11.1 \
+      pytest-html==4.2.0 \
+      coverage==7.15.2 \
+      pyscf==2.12.0 \
+      sphinx==9.1.0 \
+      sphinxcontrib-bibtex==2.7.0 \
+      sphinx-rtd-theme==3.1.0 \
+      nbsphinx==0.9.8 \
+      sphinx-autodoc-typehints==3.13.0 \
+      numpydoc==1.10.0 \
+      myst-nb==1.4.0 \
+      jupytext==1.19.5 \
+      pydata-sphinx-theme==0.20.0

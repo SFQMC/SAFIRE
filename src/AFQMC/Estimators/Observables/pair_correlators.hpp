@@ -47,10 +47,6 @@ public:
     {
       APP_ABORT("pair_correlator not yet implemented for CLOSED walkers. Use COLLINEAR or NONCOLLINEAR Walkers instead.");
     }
-    else if (walker_type == FULLYPOLARIZED)
-    {
-      APP_ABORT("pair_correlator not yet implemented for FULLYPOLARIZED Walkers.");
-    }
 
     {
       h5::file input(filename, 'r');

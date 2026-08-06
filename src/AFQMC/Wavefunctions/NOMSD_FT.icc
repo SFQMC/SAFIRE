@@ -587,11 +587,6 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators_general_impl(int iav, WlkSet& wse
         for (int iw = 0; iw < nwalk; iw++)
           Xw[iw] += CIcoeff * Ov[iw];
       }
-      else if (walker_type == FULLYPOLARIZED)
-      {
-        for (int iw = 0; iw < nwalk; iw++)
-          Xw[iw] += CIcoeff * Ov[iw];
-      }
     }
 
     // scale walker weights
@@ -669,11 +664,6 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators_general_impl(int iav, WlkSet& wse
           Xw[iw] *= CIcoeff * Ov[iw] * Ov[iw + nwalk];
       }
       else if (walker_type == NONCOLLINEAR)
-      {
-        for (int iw = 0; iw < nwalk; iw++)
-          Xw[iw] *= CIcoeff * Ov[iw];
-      }
-      else if (walker_type == FULLYPOLARIZED)
       {
         for (int iw = 0; iw < nwalk; iw++)
           Xw[iw] *= CIcoeff * Ov[iw];
@@ -1060,8 +1050,6 @@ inline void NOMSD<MEM,devPsiT>::recompute_ci()
 {
   if (walker_type == NONCOLLINEAR)
     APP_ABORT(" Error: NOMSD::recompute_ci not implemented with NONCOLLINEAR.");
-  if (walker_type == FULLYPOLARIZED)
-    APP_ABORT(" Error: NOMSD::recompute_ci not implemented with FULLYPOLARIZED.");
   double LogOverlapFactor(0.0);
   int ndets = ci.size();
   if (ndets == 1)

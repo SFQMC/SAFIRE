@@ -6,7 +6,7 @@
     },
     "execute": {
       "walker_set": {
-        "walker_type": "FULLYPOLARIZED"
+        "walker_type": "collinear"
       },
       "wavefunction": {
         "filename": "afqmc.h5"

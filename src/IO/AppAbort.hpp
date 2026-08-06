@@ -83,13 +83,15 @@ void common_abort(std::optional<std::source_location> loc, Args&&... args) {
 
   // how to make cpptrace interact with spdlog???
   if(__app_stacktrace__) {
-#if defined(ENABLE_CPPTRACE)     
+#if defined(ENABLE_CPPTRACE)
     cpptrace::generate_trace().print();
 #else
     log_backend->error("For stack trace, compile with -DENABLE_CPPTRACE=ON.");
 #endif
-    log_backend->error("**********************************************");
+  } else {
+    log_backend->error("For stack trace, rerun with --verbosity 2 or higher.");
   }
+  log_backend->error("**********************************************");
   log_backend->flush();
   // Abort
   throw AppAbortException("APP_ABORT triggered (see error log for details)");

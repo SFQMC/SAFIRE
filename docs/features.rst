@@ -93,8 +93,6 @@ Supported Walker Types
    For systems with noncollinear spin arrangements.
    Uses a single Slater matrix represented in an explicit spin-orbital basis.
    Essential for systems with spin-orbit coupling or frustrated magnetism.
-**FULLYPOLARIZED**
-   For fully spin-polarized systems - i.e. for :math:`N^\downarrow = 0`.
 
 See :ref:`Random Walker Classes <Walker-classes>` for details.
 
@@ -147,7 +145,6 @@ We indicate in parentheses whether the combination supports CPU, GPU, or is in t
         * CLOSED walkers (CPU, GPU)
         * COLLINEAR walkers (CPU, GPU)  
         * NONCOLLINEAR walkers (CPU, GPU)
-        * FULLYPOLARIZED walkers (CPU, GPU)
     **PHMSD Wavefunction**
         * COLLINEAR walkers - with fast Woodbury algorithm (CPU, GPU)
 

@@ -399,8 +399,13 @@ public:
         }
       } else {
         for (int is = 0; is < nspin; is++) {
+          int nel_is = (is == 0 ? nup : ndown);
+          // Empty spin sector, nothing to do.
+          if(nel_is == 0) {
+            continue;
+          }
           for (int ip = 0; ip < npol; ip++) {
-            auto Ln = Lnak(is)()(0,ip,all,range(is==0?nup:ndown),all);
+            auto Ln = Lnak(is)()(0,ip,all,range(nel_is),all);
             auto G_ = G3d(all,range(is*nup,nup+is*ndown),range(ip*NMO,(ip+1)*NMO));
             // KE: Likely need to transpose Ln, check on GPU build first!
             nda::tensor::contract(ComplexType(a), G_, "wak",  Ln, "nak", ComplexType(1.0), v, "wn");
@@ -909,6 +914,10 @@ private:
     utils::check(E.extent(0)==nwalk and E.extent(1)==3, "Size mismatch");
     if (addEJ)
       utils::check(Kl.extent(0) == nwalk and Kl.extent(1) == nCV, "Size mismatch");
+
+    // Empty spin sector, nothing to do.
+    if (nel[ispin] == 0)
+      return;
 
     // one-body contribution
     // haj(ndet,nel,npol*nmo)

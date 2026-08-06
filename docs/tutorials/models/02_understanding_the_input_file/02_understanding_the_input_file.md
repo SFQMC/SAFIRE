@@ -357,14 +357,6 @@ $$
 \end{bmatrix}
 $$
 
-<b>FullyPolarized (similar to Collinear) </b>
-
-similar to Collinear/UHF, but all electrons are in the $\alpha$-sector.
-
-$$
-| \Phi_k \rangle = | \Phi^\uparrow \rangle
-$$
-
 Here is a sample walker_set block with options exposed and default values where appropriate.
 
 ```json
@@ -396,7 +388,7 @@ td, th {
   
 | <b>        Parameter</b>   |  Default | Description |
 |--:|---|:--|
-|<b>walker_type</b> |  Collinear  | The type of walker to use in AFQMC. Options are Closed, Collinear, Noncollinear, Fullypolarized |
+|<b>walker_type</b> |  Collinear  | The type of walker to use in AFQMC. Options are Closed, Collinear, Noncollinear |
 |<b>name</b> | n/a  | The name to assign to the current walker_set block. This allows it to be referenced by name in execute blocks. A name is generated internally if not set here. |
 
 ### Less Common Settings

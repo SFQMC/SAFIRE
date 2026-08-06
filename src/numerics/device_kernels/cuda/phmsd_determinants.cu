@@ -4,7 +4,6 @@
 #include "utilities/check.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/arch.h"
 #include "arch/atomics.hpp"
 #include <nda/nda.hpp>
 #include "numerics/nda_functions.hpp"
@@ -268,7 +267,6 @@ void phmsd_det_impl(int nex, int const* iex, T_t const& T, Ov_t& ov)
         M_d(idet,iw,i,j) = T_d(iw,iex[2*nex*idet + nex + i],iex[2*nex*idet + j]);    
       };
       cub::DeviceFor::Bulk(ndet*nwalk*nex*nex,extract);
-      sfqmc::arch::synchronize();
       memory::buffered_array<DEVICE_MEMORY,int,2> ipiv(ndet*nwalk,nex);
       memory::buffered_array<DEVICE_MEMORY,nda::get_value_t<T_t>,1> work;
       auto M3d = nda::reshape(M,std::array<long,3>{ndet*nwalk,nex,nex});
@@ -276,7 +274,6 @@ void phmsd_det_impl(int nex, int const* iex, T_t const& T, Ov_t& ov)
       math::log_determinant_from_getrf(M3d,ipiv,nda::flatten(ov));
     }
   };
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename T_t, typename R_t> 
@@ -386,17 +383,14 @@ void phmsd_compact_R_impl(int nex, int const* refc, int const* iex, T_t const& T
         M_d(iw,idet,i,j) = T_d(iw,iex[2*nex*idet + nex + i],iex[2*nex*idet + j]);
       };
       cub::DeviceFor::Bulk(nwalk*n1,extract);
-      sfqmc::arch::synchronize();
       auto M3d = nda::reshape(M,std::array<long,3>{ndet*nwalk,nex,nex});
       memory::buffered_array<DEVICE_MEMORY,int,2> ipiv(ndet*nwalk,nex);
       memory::buffered_array<DEVICE_MEMORY,nda::get_value_t<T_t>,1> work;
       nda::lapack::getrf(M3d,ipiv,work);
       math::log_determinant_from_getrf(M3d,ipiv,nda::flatten(ov));
-      sfqmc::arch::synchronize();
       nda::lapack::getri_or_zero(M3d,ipiv,work);
     }
   }
-  sfqmc::arch::synchronize();
   // construct compact R
   {
     long n1 = ndet*nex*nel;
@@ -424,7 +418,6 @@ void phmsd_compact_R_impl(int nex, int const* refc, int const* iex, T_t const& T
     };
     cub::DeviceFor::Bulk(nwalk*ndet*nex*nel,f);
   }
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename W_t, typename Rb_t, typename R_t>
@@ -471,7 +464,6 @@ void phmsd_reduce_R_impl(int nex, int const* refc, int const* iex, W_t const& wg
     sfqmc::arch::atomic_add(&R_d(iw, i, a), y);
   };
   cub::DeviceFor::Bulk(nwalk*nblk*nel*nact,f);
-  sfqmc::arch::synchronize();
 }
 
 using memory::device_array_view;

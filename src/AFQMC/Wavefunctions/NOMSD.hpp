@@ -334,8 +334,10 @@ public:
       }
     } else { 
       for(int i=0; i<number_of_references; ++i) {
-        nda::tensor::add(nda::conj(OrbMats(i,0)()),"ji",Refs(i,all,range(nup)),"ij");
-        if(walker_type == COLLINEAR) {
+        if(nup != 0) {
+          nda::tensor::add(nda::conj(OrbMats(i,0)()),"ji",Refs(i,all,range(nup)),"ij");
+        }
+        if(walker_type == COLLINEAR && ndown != 0) {
           nda::tensor::add(nda::conj(OrbMats(i,1)()),"ji",Refs(i,all,range(nup,nel)),"ij");
         }
       }

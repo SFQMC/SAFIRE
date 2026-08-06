@@ -17,7 +17,6 @@
 #pragma once
 
 #include "configuration.hpp"
-#include "arch/arch.h"
 #include "nda/nda.hpp"
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
@@ -333,7 +332,6 @@ public:
                 
                 // add factor of 0.5 and accumulate on Kleft/Kright if needed
                 // custom kernel will be faster 
-                arch::set_device_synchronization(false);
                 for(auto i: kdiag) {
                   if(addEJ) {
                     // T5d(batch_size,nwalk,nocc_max,nocc_max,nchol)
@@ -343,13 +341,10 @@ public:
                     }
                   }
                 }                     
-                arch::set_device_synchronization(true);
-                arch::set_device_synchronization(false);
                 // only scale if Q!=Qm, otherwise full tensor is scaled below 
                 if(Q!=Qm) 
                   for(auto i: kdiag) 
                     nda::tensor::scale(0.5,Tl3d(i,all,all));
-                arch::set_device_synchronization(true);
                 if(Q==Qm) nda::tensor::scale(0.5,Tl3d);
 
                 nda::tensor::contract(-scl,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
@@ -370,7 +365,6 @@ public:
             nda::blas::gemm_batch<false>(one,Bv,Av,zero,Cv);
 
             // add factor of 0.5 and accumulate on Kleft/Kright if needed
-            arch::set_device_synchronization(false);
             for(auto i: kdiag) {
               if(addEJ) {
                 // T5d(batch_size,nwalk,nocc_max,nocc_max,nchol)
@@ -380,13 +374,10 @@ public:
                 }
               }
             }
-            arch::set_device_synchronization(true);
-            arch::set_device_synchronization(false);
             // only scale if Q!=Qm, otherwise full tensor is scaled below 
             if(Q!=Qm) 
               for(auto i: kdiag) 
                 nda::tensor::scale(0.5,Tl3d(i,all,all));
-            arch::set_device_synchronization(true);
             if(Q==Qm) nda::tensor::scale(ComplexType(0.5),Tl3d);
 
             nda::tensor::contract(-scl,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
@@ -547,7 +538,6 @@ public:
               nda::blas::gemm_batch<false>(ComplexType(1.0),Bv,Av,ComplexType(0.0),Cv);
               
               // add factor of 0.5 and accumulate on Kleft/Kright if needed
-              arch::set_device_synchronization(false);
               for(auto i: kdiag) {
                 if(addEJ) {
                   // T5d(batch_size,nwalk,nocc_max,nocc_max,nchol)
@@ -557,13 +547,10 @@ public:
                   }
                 }
               }
-              arch::set_device_synchronization(true);
-              arch::set_device_synchronization(false);
               // only scale if Q!=Qm, otherwise full tensor is scaled below 
               if(Q!=Qm)
                 for(auto i: kdiag)
                   nda::tensor::scale(ComplexType(0.5),Tl3d(i,all,all));
-              arch::set_device_synchronization(true);
               if(Q==Qm) nda::tensor::scale(ComplexType(0.5),Tl3d);
               nda::tensor::contract(-scl,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
                          Tr5d(range(batch_cnt),nda::ellipsis{}),"lwban",one,E(all,1),"w");
@@ -583,7 +570,6 @@ public:
           nda::blas::gemm_batch<false>(ComplexType(1.0),Bv,Av,ComplexType(0.0),Cv);
 
           // add factor of 0.5 and accumulate on Kleft/Kright if needed
-          arch::set_device_synchronization(false);
           for(auto i: kdiag) {
             if(addEJ) {
               // T5d(batch_size,nwalk,nocc_max,nocc_max,nchol)
@@ -593,13 +579,10 @@ public:
               }
             }
           }
-          arch::set_device_synchronization(true);
-          arch::set_device_synchronization(false);
           // only scale if Q!=Qm, otherwise full tensor is scaled below 
           if(Q!=Qm)
             for(auto i: kdiag)
               nda::tensor::scale(ComplexType(0.5),Tl3d(i,all,all));
-          arch::set_device_synchronization(true);
           if(Q==Qm) nda::tensor::scale(ComplexType(0.5),Tl3d);
 
           nda::tensor::contract(-scl,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
@@ -680,7 +663,6 @@ public:
       nda::tensor::add(ComplexType(0.0,-a),X3d(all,1,all),"wn",ComplexType(a),T,"wn");
       nda::tensor::add(ComplexType(a),X3d(all,0,all),"wn",ComplexType(0.0,a),X3d(all,1,all),"wn");
       X3d(all,0,all) = T();
-      arch::set_device_synchronization(false);
       //  then combine Q/(-Q) pieces if Q != -Q
       //  X(Q)np = (X(Q)np + X(-Q)nm)
       for(int iq=0; iq<nkpts; iq++)  {
@@ -689,7 +671,6 @@ public:
           math::accumulate(one,X3d(all,1,range(ncv0(minusq(iq)),ncv0(minusq(iq))+nchol)),
                                           X3d(all,0,range(ncv0(iq),ncv0(iq)+nchol)));
       }
-      arch::set_device_synchronization(true);
     }
 
     if constexpr (MEM==HOST_MEMORY) {
@@ -757,13 +738,11 @@ public:
                   nda::transpose(Lq_),zero,v2d);
 
             // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
-            arch::set_device_synchronization(false);
             for(int ik=0; ik<nkpts; ++ik) {
               int k2 = qk_to_k2(Q,ik);
               for(int ip=0; ip<npol_in_H; ++ip)
                 math::accumulate(one,vKK(all,ip,ik,all,all),v7d(is,all,ip,ik,all,k2,all));
             }
-            arch::set_device_synchronization(true);
           } else {
             // cj^dagger ci term
             // the kpoint index of LQ(Qm) refers to k2 
@@ -772,13 +751,11 @@ public:
                   nda::dagger(Lq_),zero,v2d);
 
             // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
-            arch::set_device_synchronization(false);
             for(int ik=0; ik<nkpts; ++ik) {
               int k2 = qk_to_k2(Q,ik);
               for(int ip=0; ip<npol_in_H; ++ip)
                 nda::tensor::add(one,vKK(all,ip,k2,all,all),"wij",one,v7d(is,all,ip,ik,all,k2,all),"wji");
             }
-            arch::set_device_synchronization(true);
           }
           // v[nw][k(in Q(K))][i(in K)] += sum_n conj(LQK[i][k][n]) X[Q][n-][nw]
           if(Q == minusq(Q)) {
@@ -789,13 +766,11 @@ public:
                   nda::dagger(Lq_),zero,v2d);
 
             // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
-            arch::set_device_synchronization(false);
             for(int ik=0; ik<nkpts; ++ik) {
               int k2 = qk_to_k2(Q,ik);
               for(int ip=0; ip<npol_in_H; ++ip)
                 nda::tensor::add(one,vKK(all,ip,ik,all,all),"wij",one,v7d(is,all,ip,k2,all,ik,all),"wji");
             }
-            arch::set_device_synchronization(true);
           }
         } // Q
       } // is
@@ -1017,7 +992,6 @@ protected:
 
     auto G5d = nda::reshape(GQK,std::array<long,5>{nwalk,nkpts,nocc_max,npol,nbnd});
     GQK() = ComplexType(0.0);
-    arch::set_device_synchronization(false);
     for(int ik=0; ik<nkpts; ++ik)
     {
       int k2 = qk_to_k2(iq,ik);
@@ -1035,7 +1009,6 @@ protected:
         }
       }
     }
-    arch::set_device_synchronization(true);
   }
 
 };
