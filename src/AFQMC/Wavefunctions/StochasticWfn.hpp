@@ -137,10 +137,6 @@ inline std::string resolve_sampling_target(ptree const& pt0, int inner_nsteps)
 inline ptree strip_stochastic_input_keys(ptree pt)
 {
   // Must list every [stochastic_wfn] key stripped before passing the ptree to the inner wavefunction.
-  // inner_conditioning, inner_leapfrog, inner_persistence and inner_pool_burn_in are REMOVED options
-  // (see interpret_inputs) but stay listed here: this list is "keys StochasticWfn owns OR HAS EVER
-  // OWNED", so a legacy input is rejected by interpret_inputs rather than leaking through to the inner
-  // wavefunction as an unknown key.
   for (auto const& key : {"type", "inner_n_samples", "inner_nsteps", "inner_seed", "inner_propagator",
                           "inner_sampling_target", "inner_burn_in", "inner_sample_update_steps",
                           "inner_sampler", "inner_sampler_step", "inner_n_measure_samples"})
@@ -198,25 +194,9 @@ public:
   int inner_n_samples() const { return inner_n_samples_; }
   int inner_nsteps() const { return inner_nsteps_; }
   SamplingTarget inner_sampling_target() const { return inner_sampling_target_; }
-  // The three predicates below are SYNONYMS for inner_sampling_target_ == Conditioned, kept because the algorithm
-  // bodies read better naming the mechanism in play at each site ("conditioned resample" vs "leapfrog
-  // reweight" vs "persistent pool") than repeating the mode test. They are no longer independent knobs:
-  // one mode turns on the conditioned target, the leapfrog reweight that makes it unbiased, and the
-  // persistent chains that draw it -- the three are one algorithm, and any two without the third was
-  // either rejected at construction or (conditioning without leapfrog) an estimator with no N(phi)
-  // cancellation, i.e. wrong. Do NOT reintroduce them as separate inputs.
-  bool inner_conditioning() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
-  bool inner_leapfrog() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
-  // Persistent (tethered) inner sampling -- the ONLY conditioned inner sampler, not an option. Each
-  // (outer walker, p) slot owns a Markov chain whose STATE is the auxiliary-field configuration Y that
-  // generates its trial sample psi = B_T(Y)|phi_T>; chains are kept across outer steps and
-  // re-equilibrated by a short Metropolis-Hastings walk in field space targeting
-  // p_T(Y)*|<psi(Y)|phi_w>|. The field configurations live in a per-walker block of the OUTER walker
-  // buffer (WalkerSetBase::TrialFields), so population control clones and ships the chains with their
-  // walkers and the determinants can be rebuilt exactly wherever a walker lands.
-  // True exactly when the persistent chains are the active sampler, i.e. in Conditioned mode; Static and
-  // Free have no chains.
-  bool inner_persistence() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
+  // True for SamplingTarget::WalkerOverlap: walker-conditioned persistent field chains with the leapfrog
+  // reweight. Those three mechanisms are one algorithm, not independent knobs.
+  bool is_conditioned() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
   // MH sweeps applied to the field-chain pool each time the pool is advanced. ONE knob for BOTH seams,
   // matching hafqmc's sample_update_steps, which drives its propagation-side re-tether
   // (update_tethered_samples_state) and its measurement-side advance (measure_block_energy_state) from
@@ -250,7 +230,7 @@ public:
   // Public so a test can assert the path is LIVE instead of passing vacuously on the fallback.
   bool measure_advances_pool() const
   {
-    return inner_persistence() && inner_chains_primed_ && not inner_dets_stale_;
+    return is_conditioned() && inner_chains_primed_ && not inner_dets_stale_;
   }
   // Cumulative Metropolis acceptance fraction of the field-space chain updates on this rank
   // (1.0 before any proposal has been made).
@@ -577,11 +557,11 @@ private:
   // settings at all, and a dynamic trial must name its mode explicitly (see interpret_inputs) so that
   // Free -- correct but catastrophically noisy -- can never be reached by forgetting a key.
   SamplingTarget inner_sampling_target_{SamplingTarget::Static};
-  // Persistent-chain controls. There is no on/off member: the chains ARE the conditioned sampler, so
-  // inner_persistence() is derived from inner_sampling_target_ == Conditioned. inner_sample_update_steps_: MH sweeps per pool
-  // advance, applied from the one-time prime onwards -- there is no separate burn-in count, because the
-  // prime is followed by inner_sample_update_steps_ sweeps every step and the outer equilibration window discards
-  // those steps anyway.
+  // Persistent-chain controls. There is no on/off member: the chains ARE the conditioned sampler
+  // (is_conditioned()). inner_sample_update_steps_: MH sweeps per pool advance, applied from the one-time
+  // prime onwards -- there is no separate burn-in count, because the prime is followed by
+  // inner_sample_update_steps_ sweeps every step and the outer equilibration window discards those steps
+  // anyway.
   // inner_sampler_: proposal kernel -- "pcn" (preconditioned Crank-Nicolson, prior-preserving:
   // Y* = sqrt(1-s^2) Y + s xi) or "gaussian" (random walk: Y* = Y + s xi, prior ratio in the
   // acceptance). inner_sampler_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
@@ -748,7 +728,7 @@ private:
     // draw (mean_field_scratch_ensemble) regardless of nwalk. Persistence IS Conditioned mode, so
     // this covers the persistent path too. (The same nwalk==1 size ambiguity is handled in
     // conditioned_resample via the latch/flags rather than size -- see that routine.)
-    return inner_n_samples_ > 1 && not inner_conditioning()
+    return inner_n_samples_ > 1 && not is_conditioned()
            && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr
            && int(inner_ensemble_.wset->size()) == inner_n_samples_;
   }

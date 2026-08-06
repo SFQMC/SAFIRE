@@ -155,10 +155,9 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   if (inner_sampling_target_ != SamplingTarget::Static && inner_nsteps_ <= 0)
     APP_ABORT("Error in StochasticWfn: inner_sampling_target = " + to_string(inner_sampling_target_) +
               " is a dynamic sampler and requires inner_nsteps > 0.");
-  // Persistent-chain input validation. The chains are not optional: inner_persistence() is true for
-  // every conditioned dynamic trial, so this block validates the sampler settings of the ONE conditioned
-  // mode rather than those of an opt-in path.
-  if (inner_persistence())
+  // Persistent-chain input validation. The chains are not optional under WalkerOverlap
+  // (is_conditioned()), so this block validates that mode's sampler settings.
+  if (is_conditioned())
   {
     if (inner_sample_update_steps_ < 0)
       APP_ABORT("Error in StochasticWfn: inner_sample_update_steps must be >= 0.");
@@ -186,7 +185,7 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   if (inner_n_measure_samples_ > 1 && inner_sample_update_steps_ < 1)
     APP_ABORT("Error in StochasticWfn: inner_n_measure_samples > 1 requires inner_sample_update_steps >= 1; with zero "
               "sweeps every replica measures the same frozen pool, which is one measurement repeated.");
-  if (inner_n_measure_samples_ > 1 && not inner_persistence())
+  if (inner_n_measure_samples_ > 1 && not is_conditioned())
     APP_ABORT("Error in StochasticWfn: inner_n_measure_samples > 1 (measurement-replica averaging) requires "
               "a conditioned dynamic trial (inner_sampling_target = walker_overlap, inner_nsteps > 0); a replica IS one "
               "advance of the persistent walker-conditioned field chain, and the static and "
@@ -350,11 +349,9 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
   // With conditioning, inner is block-structured (nw*P walkers, slot-major q = ip*nw + w); pair tk maps
   // to outer walker iw = tk % nw and inner walker q = tk (its own conditioned sample). Without
   // conditioning, inner has P shared walkers paired against all outer walkers.
-  const bool conditioned = (inner_conditioning());
-  // Leapfrog: reweight each per-sample term by 1/|<psi_q|phi_q^cond>| (computed at the resample), so
-  // old_ovlp = Sum_p S_p and the step overlap RATIO new/old is exactly Eq. 25 (N(phi) cancels). Without
-  // leapfrog, the absolute (1/P) Sum_p <psi_p|phi_w> reduction is kept.
-  const bool leapfrog    = (conditioned && inner_leapfrog());
+  const bool conditioned = is_conditioned();
+  // Leapfrog reweight (1/|<psi_q|phi_q^cond>|) is part of WalkerOverlap -- not a separate mode.
+  const bool leapfrog    = conditioned;
   const int P            = (conditioned ? inner_n_samples_ : int(inner.size()));
   utils::check(Ov.size() >= nw, "Size mismatch");
   utils::check(P >= 1, "inner ensemble must be non-empty");
@@ -679,7 +676,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // reduction of this step (latch cleared below), so the step's overlap RATIO new/old shares one
   // ensemble (Eq. 25). Runs on every rank at every step -- uniform control flow, no communication.
   // Persistent field-chain pool update (device-ported: host-RNG hybrid chain MCMC).
-  if (inner_persistence())
+  if (is_conditioned())
   {
     update_persistent_chain_pool(wset);
     inner_step_pending_ = false;
@@ -687,7 +684,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   // Leapfrog: refresh the stored OVLP = <Psi_T|phi> against the ensemble tied to the current (old)
   // walker phi, so the post-propagation Log_Overlap sees the SAME ensemble and the step's overlap RATIO
   // new/old is exactly Eq. 25 with N(phi) cancelling. Device-safe: Log_Overlap is device-ported.
-  if (inner_leapfrog() && inner_conditioning())
+  if (is_conditioned())
   {
     // NO POOL-CHANGE HANDOFF. The pool advanced above while the walker did not, so the stored OVLP jumps
     // by r = O_pool_new(phi)/O_pool_old(phi). We simply re-measure and carry on -- WEIGHT is not charged
@@ -726,98 +723,86 @@ template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet>
 void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& wset)
 {
-  // Only conditioned dynamic trials carry a slot-major (q = ip*nw + w) inner ensemble whose block w is
+  // Only WalkerOverlap trials carry a slot-major (q = ip*nw + w) inner ensemble whose block w is
   // conditioned on outer walker phi_w; static / free-projection / delegate modes have nothing to realign.
   // The permutation contract is: PERMUTE the stored inner_cond_mag_ values, never recompute them against
   // the post-pop wset. That is what keeps EnergyEstimator's deno_real == 1.
-  if (not(inner_conditioning()))
+  if (not is_conditioned())
     return;
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     return;
 
-  // Device-safe: the non-persistent conditioned permute is getProperty(SLOT_LINEAGE)->host + host parent +
-  // device slice-copy gather + host inner_cond_mag_ permute. The persistent branch below uses the (still
-  // CPU-only) rebuild_inner_dets_from_chain_fields, but persistent trials are blocked at construction on
-  // device, so that branch is unreachable on GPU.
-  const int nw          = int(wset.size());
-  const int P           = inner_n_samples_;
+  // Device-safe: getProperty(SLOT_LINEAGE)->host + host parent + device slice-copy gather + host
+  // inner_cond_mag_ permute. rebuild_inner_dets_from_chain_fields is device-ported.
+  const int nw = int(wset.size());
+  const int P  = inner_n_samples_;
 
-  // Persistent chains: the chain fields live inside walker_buffer, so branch()'s row copies and the
-  // load-balance payload have ALREADY moved them with their walkers -- clones inherited their parent's
-  // chains and cross-rank arrivals brought theirs along. The cached DETERMINANTS are simply out of
-  // date and are always exactly recoverable: rebuild_inner_dets_from_chain_fields reads whatever
-  // fields are now in each slot and reconstructs psi_q from them, correct for both local clones and
-  // cross-rank migrants (no lineage needed -- the fields already carry the right lineage).
+  // The chain fields live inside walker_buffer, so branch()'s row copies and the load-balance payload
+  // have ALREADY moved them with their walkers -- clones inherited their parent's chains and cross-rank
+  // arrivals brought theirs along. The cached DETERMINANTS are simply out of date and are always exactly
+  // recoverable: rebuild_inner_dets_from_chain_fields reads whatever fields are now in each slot and
+  // reconstructs psi_q from them, correct for both local clones and cross-rank migrants (no lineage
+  // needed -- the fields already carry the right lineage).
   //
   // inner_cond_mag_, however, is a StochasticWfn-owned array, NOT part of walker_buffer -- it does
   // NOT ride along with branch()/load-balance the way the fields do. Its value at slot w means
   // "|<psi_w|phi_cond>| for the walker this chain was equilibrated against at the last
   // begin_inner_step", and that meaning must be preserved across a pop event by PERMUTING existing
-  // values (mirroring the non-persistent path below), never by recomputing against the wset visible
-  // here -- which is the walker AFTER this step's propagation and pop control, not phi_cond. Recomputing
-  // against the wrong reference desyncs the value the leapfrog "old" overlap was already stored with
-  // (set earlier this same step, in begin_inner_step, against the true phi_cond) from what a later
-  // reduction in this same step (e.g. the estimator's Energy() call) would recompute -- breaking the
-  // Permute stored magnitudes; never recompute against the post-pop walker (breaks Eq. 25 consistency).
-  if (inner_persistence())
+  // values, never by recomputing against the wset visible here -- which is the walker AFTER this step's
+  // propagation and pop control, not phi_cond. Recomputing against the wrong reference desyncs the value
+  // the leapfrog "old" overlap was already stored with (set earlier this same step, in begin_inner_step,
+  // against the true phi_cond) from what a later reduction in this same step (e.g. the estimator's
+  // Energy() call) would recompute -- breaking Eq. 25 consistency.
+  if (not inner_chains_primed_)
+    return; // chains not started yet (no pop event can precede the first propagation step)
+  rebuild_inner_dets_from_chain_fields(wset);
+  inner_dets_stale_ = false;
+  if (inner_cond_mag_.size() == long(nw) * P)
   {
-    if (not inner_chains_primed_)
-      return; // chains not started yet (no pop event can precede the first propagation step)
-    rebuild_inner_dets_from_chain_fields(wset);
-    inner_dets_stale_ = false;
-    if (inner_leapfrog() && inner_cond_mag_.size() == long(nw) * P)
+    // Per-slot realignment of the leapfrog magnitudes. A locally-sourced slot (parent in [0,nw))
+    // PERMUTES its old |<psi|phi_cond>| -- exact, and consistent with the stored OVLP that rode the
+    // same branch() row copy. A cross-rank arrival (SLOT_LINEAGE sentinel -1) has no exact value:
+    // phi_cond was the OLD walker on the sending rank and is not shipped (only the current walker
+    // and the chain fields are), so its true magnitude cannot be reconstructed here. For those slots
+    // ONLY we approximate with a recompute against the current wset (a bounded, one-measurement
+    // desync from their stored OVLP); every locally-sourced slot on the rank stays exact. The full
+    // recompute is done once into scratch and only the foreign columns are taken from it.
+    nda::array<int, 1> parent(nw);
+    bool any_foreign = false;
     {
-      // Per-slot realignment of the leapfrog magnitudes. A locally-sourced slot (parent in [0,nw))
-      // PERMUTES its old |<psi|phi_cond>| -- exact, and consistent with the stored OVLP that rode the
-      // same branch() row copy. A cross-rank arrival (SLOT_LINEAGE sentinel -1) has no exact value:
-      // phi_cond was the OLD walker on the sending rank and is not shipped (only the current walker
-      // and the chain fields are), so its true magnitude cannot be reconstructed here. For those slots
-      // ONLY we approximate with a recompute against the current wset (a bounded, one-measurement
-      // desync from their stored OVLP); every locally-sourced slot on the rank stays exact. The full
-      // recompute is done once into scratch and only the foreign columns are taken from it.
-      nda::array<int, 1> parent(nw);
-      bool any_foreign = false;
-      {
-        nda::array<ComplexType, 1> lin(nw);
-        wset.getProperty(SLOT_LINEAGE, lin);
-        for (int w = 0; w < nw; ++w)
-        {
-          const int s = int(std::lround(real(lin(w)))); // sentinel -1 rounds to -1, not 0
-          parent(w)   = s;
-          if (s < 0 || s >= nw)
-            any_foreign = true;
-        }
-      }
-      nda::array<RealType, 1> old_mag(inner_cond_mag_);
-      nda::array<RealType, 1> recomputed;
-      if (any_foreign)
-      {
-        recomputed = nda::array<RealType, 1>(long(nw) * P);
-        cross_overlap_magnitudes(wset, *inner_ensemble_.wset, recomputed);
-      }
+      nda::array<ComplexType, 1> lin(nw);
+      wset.getProperty(SLOT_LINEAGE, lin);
       for (int w = 0; w < nw; ++w)
       {
-        const int s        = parent(w);
-        const bool local   = (s >= 0 && s < nw);
-        for (int ip = 0; ip < P; ++ip)
-          inner_cond_mag_(long(ip) * nw + w) =
-              local ? old_mag(long(ip) * nw + s) : recomputed(long(ip) * nw + w);
+        const int s = int(std::lround(real(lin(w)))); // sentinel -1 rounds to -1, not 0
+        parent(w)   = s;
+        if (s < 0 || s >= nw)
+          any_foreign = true;
       }
     }
-    return;
+    nda::array<RealType, 1> old_mag(inner_cond_mag_);
+    nda::array<RealType, 1> recomputed;
+    if (any_foreign)
+    {
+      recomputed = nda::array<RealType, 1>(long(nw) * P);
+      cross_overlap_magnitudes(wset, *inner_ensemble_.wset, recomputed);
+    }
+    for (int w = 0; w < nw; ++w)
+    {
+      const int s      = parent(w);
+      const bool local = (s >= 0 && s < nw);
+      for (int ip = 0; ip < P; ++ip)
+        inner_cond_mag_(long(ip) * nw + w) =
+            local ? old_mag(long(ip) * nw + s) : recomputed(long(ip) * nw + w);
+    }
   }
-
-  // NOTE: there is no `else` here. The early return at the top of this function excludes Static and
-  // Free (neither carries slot-conditioned inner blocks), so Conditioned is the only mode that reaches
-  // this far -- and it always returns above. The non-persistent conditioned permute that used to follow
-  // was reachable only with inner_persistence = false, which the input layer can no longer express.
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet>
 void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
 {
-  if (inner_conditioning())
+  if (is_conditioned())
   {
     const int nw = int(wset.size());
     // Persistent chains, once live, are advanced ONLY in begin_inner_step (the non-const seam that can
@@ -825,16 +810,13 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
     // sampling: rebuild the cached determinants from the fields when the pool storage was reused (the
     // BP reference draw resizes it to P) or a pop event flagged them stale. Rank-local and read-only
     // on the outer walker set.
-    // (Enclosing branch is inner_conditioning(), i.e. inner_persistence() -- so the
-    // only question left here is whether the chains have been primed yet.)
     if (inner_chains_primed_)
     {
       if (inner_dets_stale_ || inner_ensemble_.wset->size() != long(nw) * inner_n_samples_)
       {
         rebuild_inner_dets_from_chain_fields(wset);
         inner_dets_stale_ = false;
-        if (inner_leapfrog())
-          compute_inner_cond_mag(wset); // |<psi_q|phi_w^cond>| for the leapfrog reweighting (Eq. 25)
+        compute_inner_cond_mag(wset); // |<psi_q|phi_w^cond>| for the leapfrog reweighting (Eq. 25)
       }
       return;
     }
@@ -875,8 +857,7 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
     X_bias() = ComplexType(0.0);
     inner_nomsd().vbias_from_G(Gcross, X_bias, inner_timestep_);
     advance_inner_ensemble_conditioned(X_bias, nw);
-    if (inner_leapfrog())
-      compute_inner_cond_mag(wset); // |<psi_q|phi_w^cond>| for the leapfrog overlap reweighting (Eq. 25)
+    compute_inner_cond_mag(wset); // |<psi_q|phi_w^cond>| for the leapfrog overlap reweighting (Eq. 25)
   }
   else
   {
@@ -967,14 +948,10 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
   // slot ip pairs its nwalk inner walkers diagonally with the nwalk outer walkers via the batched-
   // reference MixedDensityMatrix. Without conditioning the ensemble is P shared walkers, each paired
   // against all outer walkers with a single reference.
-  const bool conditioned = (inner_conditioning());
-  // Leapfrog: weight each sample by the GENERALIZED importance weight w_p = <psi_p|chi> / |<psi_p|phi_cond>|   (phi_cond = the walker the ensemble was conditioned on)
-  // rather than the phase S_p = <psi_p|chi>/|<psi_p|chi>|. This is the exact Eq. 27 estimator when the
-  // scored walker chi differs from phi_cond (measurement Energy after propagation, and local-energy mode
-  // step-5) -- the samples come from P(.;phi_cond), so the reweighting divides by the SAMPLING density's
-  // magnitude. At the top of the step chi == phi_cond, so w_p == S_p and the force-bias DM / conditioned
-  // sampling path are unchanged. |<psi_p|phi_cond>| is inner_cond_mag_, set at the conditioned resample.
-  const bool leapfrog    = (conditioned && inner_leapfrog());
+  const bool conditioned = is_conditioned();
+  // Leapfrog reweight is part of WalkerOverlap -- not a separate mode. Weight each sample by
+  // w_p = <psi_p|chi> / |<psi_p|phi_cond>| rather than the phase S_p = <psi_p|chi>/|<psi_p|chi>|.
+  const bool leapfrog    = conditioned;
   const int P            = (conditioned ? inner_n_samples_ : int(inner.size()));
   utils::check(P >= 1, "inner ensemble must be non-empty");
   if (conditioned)

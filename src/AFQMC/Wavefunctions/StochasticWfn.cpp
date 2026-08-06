@@ -433,7 +433,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
   for (int sweep = 0; sweep < inner_sample_update_steps_; ++sweep)
     chain_pool_sweep(wset);
 
-  if (inner_leapfrog())
+  if (is_conditioned())
     compute_inner_cond_mag(wset);
 
   if (++chain_updates_ % 200 == 0 && chain_proposed_ > 0)
@@ -463,7 +463,7 @@ void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
   for (int sweep = 0; sweep < inner_sample_update_steps_; ++sweep)
     chain_pool_sweep(wset);
 
-  if (inner_leapfrog())
+  if (is_conditioned())
     compute_inner_cond_mag(wset);
 }
 
