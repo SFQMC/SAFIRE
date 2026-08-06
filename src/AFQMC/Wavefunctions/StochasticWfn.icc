@@ -722,6 +722,12 @@ void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int n
   // (static-anchor; dynamic inner_nsteps>0 is forbidden at construction on device).
   const int nwalk = wset.size();
   const bool full = (inner_nsteps_ > 0);
+  // Same capability gate as vMF, for the same reason: once the inner ensemble has moved off the anchor
+  // the force bias is built from an un-rotated G, which not every factorization can contract.
+  utils::check(not full || nomsd_.has_fullG_vbias(),
+               "StochasticWfn::vbias: a dynamic inner ensemble (inner_nsteps > 0) builds an un-rotated "
+               "full G, but this Hamiltonian operator implements vbias only for a half-rotated compact "
+               "G. Supported: Real3IndexFactorization (molecules) and ModelHamOps (lattice/Hubbard).");
   const int Gsize = dm_size(full);
   memory::buffered_array<MEM, ComplexType, 2> G(nwalk, Gsize);
   MixedDensityMatrix_for_vbias(wset, G);
@@ -1765,6 +1771,19 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
     return;
   }
   // Off-anchor: device-safe via the ported reduce_inner_mean_field_dm + device vbias_from_G (static-anchor).
+  //
+  // The off-anchor mean field is a reduction of the inner ensemble against ITSELF, so it exists only as
+  // a FULL [nspin*npol*NMO, npol*NMO] density matrix -- there is no determinant to half-rotate it
+  // against. Not every Hamiltonian operator can contract that: THCOps / KPTHCOps / KP3IndexFactorization
+  // implement vbias only for the half-rotated compact G (their ndet>1 branches are stubs). Gate on the
+  // capability HERE, so the refusal names the actual limitation instead of surfacing as a size mismatch
+  // several frames down -- and so a future operator can never quietly reinterpret the buffer instead.
+  // G_MF is deliberately NOT gated: it needs no Hamiltonian operator and is correct on every family.
+  utils::check(nomsd_.has_fullG_vbias(),
+               "StochasticWfn::vMF: inner_nwalkers > 1 needs the trial's own mean field, which is a full "
+               "un-rotated G, but this Hamiltonian operator implements vbias only for a half-rotated "
+               "compact G. Supported: Real3IndexFactorization (molecules) and ModelHamOps "
+               "(lattice/Hubbard). Use inner_nwalkers = 1 with this Hamiltonian.");
   utils::check(v.size() == number_of_cholesky_vectors(), "Size mismatch");
   utils::check(v.strides()[0] == 1, "Strides mismatch");
 

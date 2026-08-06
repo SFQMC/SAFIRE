@@ -538,6 +538,10 @@ public:
   void getReferences(RefMat&& Refs);
 
   HamiltonianTypes getHamType() const { return nomsd_.getHamType(); }
+
+  // True iff this wavefunction's Hamiltonian operator can contract a FULL (un-rotated) mean-field G.
+  // StochasticWfn::vMF requires it at inner_nwalkers > 1; see HamiltonianOperations::has_fullG_vbias.
+  bool has_fullG_vbias() const { return nomsd_.has_fullG_vbias(); }
   auto getFieldTypes() { return nomsd_.getFieldTypes(); }
 
   template<class... Args>

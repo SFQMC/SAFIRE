@@ -74,8 +74,12 @@ namespace TestFiles {
   // inner path routes its reductions through the un-rotated full-G energy / force-bias kernels, which
   // exist only for Real3IndexFactorization. On the other fixture families the engine aborts, correctly,
   // on input it does not implement:
-  //   - THCOps, KP3IndexFactorization (solids) -> "energy_fullG not implemented"
-  //   - Discrete_GeneralUJ (lattice/Hubbard)   -> "Using uninitialized Discrete_GeneralUJ object"
+  //   - THCOps, KP3IndexFactorization (solids) -> StochasticWfn::vbias's has_fullG_vbias() gate, and
+  //     behind it "energy_fullG not implemented". NOTE the STATIC path is a separate question and is
+  //     NOT excluded: stochastic_mean_field_matches_nomsd runs ALL_SYSTEMS and asserts the refusal.
+  //   - Discrete_GeneralUJ (lattice/Hubbard)   -> "Using uninitialized Discrete_GeneralUJ object".
+  //     This is the propagator-initialization order, NOT the full-G vbias gap: ModelHamOps DOES
+  //     implement the full-G contraction (has_fullG_vbias() == true).
   //   - NONCOLLINEAR walkers                   -> rejected by StochasticWfn's own constructor
   // Requesting those fixtures for a dynamic test therefore asserts nothing about the code under test; it
   // just converts unsupported-input aborts into red, which is how 80-odd failures sat in this suite

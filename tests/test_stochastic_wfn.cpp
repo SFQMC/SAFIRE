@@ -947,9 +947,17 @@ void stochastic_mean_field_matches_nomsd(
     wfn.vMF(v, dt);
     return nda::to_host(v);
   };
+  // At inner_nwalkers > 1 the trial's own mean field is a reduction of the inner ensemble against
+  // itself, so it exists only as a FULL un-rotated G. THCOps / KPTHCOps / KP3IndexFactorization
+  // implement vbias for the half-rotated compact G only, and StochasticWfn::vMF refuses rather than
+  // reinterpreting the buffer. Assert the refusal explicitly: a capability gap that is PINNED BY A TEST
+  // cannot silently turn back into a wrong number, which is exactly what the lattice path used to do.
+  // (wfn_s1 hits the P==1 delegate limit and never needs the full G, so it is unaffected.)
+  const bool fullG_vbias = wfn_s3.has_fullG_vbias();
+  app_log(0, "  vMF full-G vbias supported by this Hamiltonian operator: {}", fullG_vbias);
+
   auto v_ref = collect_vMF(wfn_nomsd);
   auto v_s1  = collect_vMF(wfn_s1);
-  auto v_s3  = collect_vMF(wfn_s3);
 
   // Localize before asserting. inner_nsteps is unset here => 0 => the STATIC limit, where the inner
   // ensemble is P exact replicas of the anchor. So these are deterministic identities, not stochastic
@@ -963,24 +971,39 @@ void stochastic_mean_field_matches_nomsd(
     }
     return std::make_pair(d, s);
   };
-  {
-    auto [d31, s31] = amax(v_s3, v_s1);
-    auto [d1r, s1r] = amax(v_s1, v_ref);
-    app_log(0, "  vMF static-limit: max|v_s3-v_s1| = {:.6e} (rel {:.3e})   max|v_s1-v_ref| = {:.6e} (rel {:.3e})",
-            d31, s31 > 0 ? d31 / s31 : 0.0, d1r, s1r > 0 ? d1r / s1r : 0.0);
-  }
   // PREMISE: skip when Psi0 != PsiT. At inner_nwalkers == 1 the stochastic path hits the
   // delegate limit (-> NOMSD -> PsiT) while s3 scores against the anchor (-> Psi0), so on those
   // fixtures this compares two wavefunctions. See anchor_is_not_reference.
   auto premise_guess = WfnFac.getInitialGuess("wfn_nomsd_mf");
   auto premise_wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, premise_guess, nwalk);
-  if (anchor_is_not_reference<MEM>(wfn_nomsd, premise_wset, type, NMO, "vMF"))
+  const bool premise_holds = not anchor_is_not_reference<MEM>(wfn_nomsd, premise_wset, type, NMO, "vMF");
+
+  if (fullG_vbias)
+  {
+    auto v_s3 = collect_vMF(wfn_s3);
+    auto [d31, s31] = amax(v_s3, v_s1);
+    auto [d1r, s1r] = amax(v_s1, v_ref);
+    app_log(0, "  vMF static-limit: max|v_s3-v_s1| = {:.6e} (rel {:.3e})   max|v_s1-v_ref| = {:.6e} (rel {:.3e})",
+            d31, s31 > 0 ? d31 / s31 : 0.0, d1r, s1r > 0 ? d1r / s1r : 0.0);
+    if (premise_holds)
+    {
+      // (1) inner_nwalkers invariance of the mean-field bias.
+      CHECK_THAT(v_s3, utils::Approx(v_s1));
+      // (2) delegate limit: single-determinant trial => stochastic vMF == NOMSD.
+      if (wfn_nomsd.total_number_of_references() == 1)
+        CHECK_THAT(v_s1, utils::Approx(v_ref));
+    }
+  }
+  else
+  {
+    // Capability gap, asserted rather than skipped. This is the ONLY assertion standing between an
+    // unimplemented full-G contraction and a quietly wrong vMF: it fails the moment an operator starts
+    // accepting the buffer without contracting it correctly. Unconditional -- it does not depend on the
+    // Psi0 == PsiT premise, since nothing is being compared against the anchor.
+    REQUIRE_THROWS_AS(collect_vMF(wfn_s3), AppAbortException);
+  }
+  if (not premise_holds)
     return;
-  // (1) inner_nwalkers invariance of the mean-field bias.
-  CHECK_THAT(v_s3, utils::Approx(v_s1));
-  // (2) delegate limit: single-determinant trial => stochastic vMF == NOMSD.
-  if (wfn_nomsd.total_number_of_references() == 1)
-    CHECK_THAT(v_s1, utils::Approx(v_ref));
 
   // Mean-field one-body Green's function G_MF ([nspin][npol*NMO][npol*NMO]).
   auto collect_GMF = [&](Wavefunction<MEM>& wfn) {
@@ -1010,19 +1033,20 @@ TEST_CASE("stochastic_mean_field_matches_nomsd", "[stochastic_wfn]")
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_mean_field_matches_nomsd<MEM>(mpi, hamil_file, wfn_file);
-      // MOLECULES only, and this is a MEASURED capability limit of the code under test, not a fixture whim.
-    // At inner_nwalkers > 1 in a non-conditioned mode, vMF/G_MF take the dedicated scratch-ensemble path
-    // (mean_field_uses_inner_ensemble), which calls HamOp::vbias with nwalk = P rows. That call is only
-    // implemented for Real3IndexFactorization:
+    // ALL_SYSTEMS. At inner_nwalkers > 1 in a non-conditioned mode, vMF/G_MF reduce a walker-independent
+    // P-sample ensemble (mean_field_uses_inner_ensemble) into a FULL un-rotated G, which vMF then hands
+    // to HamOp::vbias. Not every factorization can contract that, and the two outcomes used to be:
     //   - solids  (THCOps, KP3IndexFactorization) -> APP_ABORT "vbias: Size mismatch"          [loud]
-    //   - lattice (Discrete_GeneralUJ / Hubbard)  -> returns a P-DEPENDENT vMF                 [SILENT]
-    // The lattice case is the dangerous one: at the static limit the inner ensemble is P copies of the
-    // anchor, so vMF is P-independent BY CONSTRUCTION, and molecules confirm it (max|v_s3-v_s1| = 1e-16
-    // to 1e-7). The Hubbard fixtures instead give 1.8e-2 to 1.3e-1 with the Psi0 == PsiT premise HOLDING
-    // (max|G-G^H| = 8.3e-17), i.e. a wrong number returned quietly where its sibling path aborts.
-    // ⛔ That is an OPEN ENGINE DEFECT, not something this fixture list fixes -- it is excluded here so
-    // the suite stops reporting it as 10 anonymous red assertions, and it must be fixed or made to abort.
-  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::MOLECULES);
+    //   - lattice (Discrete_GeneralUJ / Hubbard)  -> returned a P-DEPENDENT vMF                [SILENT]
+    // The lattice case was the dangerous one: at the static limit the inner ensemble is P copies of the
+    // anchor, so vMF is P-independent BY CONSTRUCTION, and molecules confirmed it (max|v_s3-v_s1| = 1e-16
+    // to 1e-7); the Hubbard fixtures gave 1.8e-2 to 1.3e-1 with the Psi0 == PsiT premise HOLDING
+    // (max|G-G^H| = 8.3e-17). Cause: ModelHamOps::vbias branched on the trial determinant count instead
+    // of the G layout, so a full G reached a compact array_view over the same buffer -- in bounds,
+    // because a compact G is smaller, hence quiet. FIXED: it now dispatches on the layout.
+    // The solids gap is real and remains; the test now ASSERTS the refusal (has_fullG_vbias() == false
+    // => vMF throws) instead of excluding the fixtures, so it cannot regress into a silent wrong number.
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
 namespace
