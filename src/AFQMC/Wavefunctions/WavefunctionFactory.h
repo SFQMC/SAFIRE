@@ -91,17 +91,15 @@ public:
     bool stochastic = is_stochastic_wavefunction_input(pt0);
     if (pt0.get<bool>("stochastic", false) && not pt0.get_child_optional("type"))
       APP_ABORT("Error in WavefunctionFactory: stochastic: true is no longer supported; use type: stochasticwfn.");
-    int inner_nwalkers = pt0.get<int>("inner_nwalkers", 1);
-    if (inner_nwalkers < 1)
-      APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
+    int inner_n_samples = pt0.get<int>("inner_n_samples", 1);
+    if (inner_n_samples < 1)
+      APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_n_samples must be >= 1.");
     int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
-    // Measurement-replica averaging (nm). Stride default tracks inner_equil_steps -- keep this in step
-    // with StochasticWfn::interpret_inputs, which computes the same default.
-    int inner_measure_replicas = pt0.get<int>("inner_measure_replicas", 1);
-    std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "pcn");
+    // Measurement-replica averaging (hafqmc: n_measure_samples).
+    int inner_n_measure_samples = pt0.get<int>("inner_n_measure_samples", 1);
+    std::string inner_sampler = pt0.get<std::string>("inner_sampler", "pcn");
     // pcn default s = 1 (independence proposal): validated conditioned-path default (see StochasticWfn).
-    double inner_mcmc_step = pt0.get<double>("inner_mcmc_step", inner_mcmc == "gaussian" ? 0.05 : 1.0);
-    bool inner_log_aggregate = pt0.get<bool>("inner_log_aggregate", false);
+    double inner_sampler_step = pt0.get<double>("inner_sampler_step", inner_sampler == "gaussian" ? 0.05 : 1.0);
     int inner_seed   = pt0.get<int>("inner_seed", 777);
     auto inner_propagator_block = pt0.get_child_optional("inner_propagator");
     // inner_hamiltonian: optional block naming the second (Variational) Hamiltonian HDF5 file for the
@@ -110,24 +108,16 @@ public:
     // ptree (StochasticWfn::interpret_inputs does not know it). interpret_inputs only (a) rejects it
     // when stochastic is off and (b) lists it as a known pass-through key for compare_known_keys.
     //
-    // inner_conditioning, inner_leapfrog, inner_persistence and inner_pool_burn_in are REMOVED options;
-    // they stay in this list so a legacy input still gets the "requires type: stochasticwfn" error rather
-    // than an unrelated unknown-key warning, and StochasticWfn::interpret_inputs then translates or
-    // rejects them.
     for (auto const& key :
-         {"inner_nwalkers", "inner_nsteps", "inner_mode",
-          "inner_conditioning", "inner_leapfrog", "inner_persistence",
-          "inner_sweeps", "inner_equil_steps", "inner_measure_stride",
-          "inner_pool_burn_in", "inner_measure_replicas",
-          "inner_measure_restore", "inner_condition_on_new",
-          "inner_mcmc", "inner_mcmc_step", "inner_log_aggregate", "inner_seed", "inner_propagator",
-          "inner_hamiltonian"})
+         {"inner_sampling_target", "inner_n_samples", "inner_nsteps",
+          "inner_sample_update_steps", "inner_sampler", "inner_sampler_step",
+          "inner_n_measure_samples", "inner_seed", "inner_propagator", "inner_hamiltonian"})
       if (not stochastic && pt0.get_child_optional(key))
         APP_ABORT("Error in WavefunctionFactory::interpret_inputs: " + std::string(key) +
                   " requires type: stochasticwfn.");
     if (stochastic)
     {
-      pt1.put("inner_nwalkers", inner_nwalkers);
+      pt1.put("inner_n_samples", inner_n_samples);
       pt1.put("inner_nsteps", inner_nsteps);
       // RESOLVE the sampling mode here, at the outermost input seam, and emit only the resolved value.
       // This layer's output is consumed TWICE downstream -- buildStochasticInnerStack reads it to decide
@@ -136,16 +126,13 @@ public:
       // cannot disagree; forwarding the legacy keys instead would leave the propagator builder unable to
       // read them (it runs before StochasticWfn's own interpret_inputs) and it would silently build a
       // free-projection propagator for a conditioned sampler.
-      pt1.put("inner_mode", resolve_inner_mode(pt0, inner_nsteps));
-      // Sweep count: forward whatever spelling the user wrote and let StochasticWfn::interpret_inputs do
-      // the one-knob migration, so there is a single owner of it (same reasoning as inner_mode).
-      for (auto const& key : {"inner_sweeps", "inner_equil_steps", "inner_measure_stride"})
+      pt1.put("inner_sampling_target", resolve_sampling_target(pt0, inner_nsteps));
+      for (auto const& key : {"inner_sample_update_steps"})
         if (auto v = pt0.get_optional<int>(key))
           pt1.put(key, *v);
-      pt1.put("inner_measure_replicas", inner_measure_replicas);
-      pt1.put("inner_mcmc", inner_mcmc);
-      pt1.put("inner_mcmc_step", inner_mcmc_step);
-      pt1.put("inner_log_aggregate", inner_log_aggregate);
+      pt1.put("inner_n_measure_samples", inner_n_measure_samples);
+      pt1.put("inner_sampler", inner_sampler);
+      pt1.put("inner_sampler_step", inner_sampler_step);
       pt1.put("inner_seed", inner_seed);
       if (inner_propagator_block)
         pt1.put_child("inner_propagator", *inner_propagator_block);
@@ -157,14 +144,13 @@ public:
     std::unordered_set<std::string> pass_through_keys = {
       "system",
       "type",
-      "inner_nwalkers",
+      "inner_n_samples",
       "inner_nsteps",
-      "inner_mode",
-      "inner_sweeps",
-      "inner_measure_replicas",
-      "inner_mcmc",
-      "inner_mcmc_step",
-      "inner_log_aggregate",
+      "inner_sampling_target",
+      "inner_sample_update_steps",
+      "inner_n_measure_samples",
+      "inner_sampler",
+      "inner_sampler_step",
       "inner_seed",
       "inner_propagator",
       "inner_hamiltonian",

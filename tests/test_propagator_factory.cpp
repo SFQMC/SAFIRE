@@ -309,12 +309,12 @@ void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
 // and `stochastic_leapfrog_propagator_step`: two near-identical 80-line bodies plus an alias. The old
 // names also mis-described their subject -- "conditioned propagator" reads as a property of the
 // propagator, when it is the INNER SAMPLING that is conditioned, and "leapfrog" named an implementation
-// detail that stopped being separately selectable when inner_mode absorbed it. One body, one mode
+// detail that stopped being separately selectable when inner_sampling_target absorbed it. One body, one mode
 // argument, and names that say what is varied and what is asserted.
 template<MEMORY_SPACE MEM>
 void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                            std::string hamil_file, std::string wfn_file,
-                                           std::string const& inner_mode)
+                                           std::string const& inner_sampling_target)
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
@@ -327,8 +327,8 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
       return; // dynamic inner ensemble: CLOSED/COLLINEAR only
 
     const int nwalk          = 5;
-    const int inner_nwalkers = 4;
-    const std::string tag    = "stoch_" + inner_mode;
+    const int inner_n_samples = 4;
+    const std::string tag    = "stoch_" + inner_sampling_target;
 
     ptree ham_pt;
     ham_pt.put("name", "ham0");
@@ -349,9 +349,9 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
     pt.put("name", tag);
     pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(pt);
-    pt.put("inner_nwalkers", inner_nwalkers);
+    pt.put("inner_n_samples", inner_n_samples);
     pt.put("inner_nsteps", 1);
-    pt.put("inner_mode", inner_mode);
+    pt.put("inner_sampling_target", inner_sampling_target);
     ptree inner_prop;
     inner_prop.put("timestep", 0.01);
     pt.put_child("inner_propagator", inner_prop);
@@ -405,7 +405,7 @@ TEST_CASE("stochastic_free_trial_survives_propagation", "[propagator_factory][st
   app_log(0, "StochasticWfn free-projection inner sampling over a real outer propagator.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
-    stochastic_trial_survives_propagation<MEM>(mpi, hamil_file, wfn_file, "free");
+    stochastic_trial_survives_propagation<MEM>(mpi, hamil_file, wfn_file, "gaussian");
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
@@ -417,7 +417,7 @@ TEST_CASE("stochastic_conditioned_trial_survives_propagation", "[propagator_fact
   app_log(0, "StochasticWfn walker-conditioned inner sampling over a real outer propagator.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
-    stochastic_trial_survives_propagation<MEM>(mpi, hamil_file, wfn_file, "conditioned");
+    stochastic_trial_survives_propagation<MEM>(mpi, hamil_file, wfn_file, "walker_overlap");
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 

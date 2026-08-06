@@ -214,7 +214,7 @@ public:
   }
 
   // True iff the underlying Hamiltonian operator accepts a FULL (un-rotated) G in vbias. Callers that
-  // build a mean field with no half-rotated form -- StochasticWfn::vMF at inner_nwalkers > 1 -- must
+  // build a mean field with no half-rotated form -- StochasticWfn::vMF at inner_n_samples > 1 -- must
   // gate on this rather than discover the gap as a size mismatch deep in the operator.
   bool has_fullG_vbias() const
   {
@@ -292,7 +292,7 @@ public:
         var);
   }
 
-  // Current inner trial-ensemble walker count: P (= inner_nwalkers) in the walker-independent P-sample
+  // Current inner trial-ensemble walker count: P (= inner_n_samples) in the walker-independent P-sample
   // form, or nwalk*P after a conditioned/leapfrog resample; -1 for a non-stochastic or uninitialized
   // wavefunction. Read-only diagnostic (used by stochastic_mean_field_production_order).
   long stochastic_inner_ensemble_size() const
@@ -379,9 +379,9 @@ public:
   }
 
   // Measurement entry point for the estimators. For a StochasticWfn this is Energy averaged over
-  // inner_measure_replicas replicas of the field pool at fixed walkers (see
+  // inner_n_measure_samples replicas of the field pool at fixed walkers (see
   // StochasticWfn::measure_energy); for every other wavefunction, and for a StochasticWfn with
-  // inner_measure_replicas = 1, it IS Energy -- same call, same values. Takes wset by non-const
+  // inner_n_measure_samples = 1, it IS Energy -- same call, same values. Takes wset by non-const
   // reference because advancing the pool writes the chain state back into the walker buffer's
   // TrialFields block.
   template<class WlkSet, class Mat, class TVec>

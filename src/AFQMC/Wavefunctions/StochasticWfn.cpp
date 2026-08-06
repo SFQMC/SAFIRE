@@ -105,14 +105,14 @@ void StochasticWfn<MEM, devPsiT>::draw_bp_reference_ensemble()
   // resample resets it to the anchor (maybe_advance_inner_ensemble / advance_inner_ensemble_conditioned),
   // so transiently overwriting it (and resizing P <-> nwalk*P) is safe -- the next begin_inner_step
   // resamples it from scratch. getReferences calls this each BP block, giving a fresh MC draw per block.
-  if (inner_nsteps_ <= 0 || inner_nwalkers_ <= 1)
+  if (inner_nsteps_ <= 0 || inner_n_samples_ <= 1)
     return;
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::draw_bp_reference_ensemble: inner walkers not initialized.");
   if (not inner_stack_->has_propagator())
     APP_ABORT("Error in StochasticWfn::draw_bp_reference_ensemble: inner propagator not built.");
 
-  const int P           = inner_nwalkers_;
+  const int P           = inner_n_samples_;
   // Idempotency guard: at most ONE draw per BP window. If this window already drew (and the ensemble is
   // still at the P-sample form), reuse it -- a repeated getReferences in the same window must NOT silently
   // produce a different ensemble. The flag is reset by begin_inner_step() (forward walk advances => next
@@ -144,7 +144,7 @@ void StochasticWfn<MEM, devPsiT>::draw_free_projection_samples(WalkerSet<MEM>& t
   // forward-walk flags -- the caller owns its own state (BP window idempotency, mean-field scratch, ...).
   if (not inner_stack_->has_propagator())
     APP_ABORT("Error in StochasticWfn::draw_free_projection_samples: inner propagator not built.");
-  const int P = inner_nwalkers_;
+  const int P = inner_n_samples_;
   if (int(target.size()) != P)
   {
 #if defined(ENABLE_DEVICE)
@@ -185,7 +185,7 @@ WalkerSet<MEM>& StochasticWfn<MEM, devPsiT>::mean_field_scratch_ensemble()
     if (mf_scratch_rng_ == nullptr)
       mf_scratch_rng_ = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>();
     mf_scratch_wset_ = std::make_unique<WalkerSet<MEM>>(mpi_, inner_walker_pt_, mf_scratch_rng_, wt,
-                                                        inner_initial_guess_, inner_nwalkers_);
+                                                        inner_initial_guess_, inner_n_samples_);
   }
   draw_free_projection_samples(*mf_scratch_wset_);
   return *mf_scratch_wset_;
@@ -337,7 +337,7 @@ void StochasticWfn<MEM, devPsiT>::rebuild_inner_dets_from_chain_fields(WalkerSet
   if (not inner_stack_->has_propagator())
     APP_ABORT("Error in StochasticWfn::rebuild_inner_dets_from_chain_fields: inner propagator not built.");
   const int nw      = int(wset.size());
-  const int P       = inner_nwalkers_;
+  const int P       = inner_n_samples_;
   const long ntot   = long(nw) * P;
   const int nCV     = inner_nomsd().number_of_cholesky_vectors();
   const int pathlen = inner_nsteps_ * nCV;
@@ -393,7 +393,7 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
   {
     WalkerSet<MEM>& inner = *inner_ensemble_.wset;
     const int nw          = int(wset.size());
-    const int P           = inner_nwalkers_;
+    const int P           = inner_n_samples_;
     const long ntot       = long(nw) * P;
     const int nCV         = inner_nomsd().number_of_cholesky_vectors();
     const int pathlen     = inner_nsteps_ * nCV;
@@ -420,8 +420,8 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
     // 3. propose fields per chain (slot-major scratch; written back only on acceptance).
     auto Yw        = wset.TrialFields();
     auto Yw_h      = nda::to_host(Yw); // host copy for the per-element proposal reads (no-op-ish on host)
-    const bool pcn = (inner_mcmc_ == "pcn");
-    const double s = inner_mcmc_step_;
+    const bool pcn = (inner_sampler_ == "pcn");
+    const double s = inner_sampler_step_;
     const double keep = pcn ? std::sqrt(std::max(0.0, 1.0 - s * s)) : 1.0;
     nda::array<ComplexType, 2> Ystar_h(ntot, pathlen);
     nda::array<double, 1> prior_lr(ntot);
@@ -498,7 +498,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
 {
   // Per-outer-step persistent chain update, called from begin_inner_step (the one seam with non-const
   // access to the outer walker set): size the TrialFields block on first use, start the chains (prime +
-  // burn-in) or repair stale determinants, then run inner_sweeps_ MH sweeps against the CURRENT
+  // burn-in) or repair stale determinants, then run inner_sample_update_steps_ MH sweeps against the CURRENT
   // walkers and refresh the leapfrog conditioning magnitudes. Unconditional per step and rank-local, so
   // every rank performs the same sequence of propagator/reduction calls -- no rank-dependent control
   // flow, no communication.
@@ -510,7 +510,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
   // Device-safe: delegates to the ported chain helpers (prime_chain_fields / rebuild_inner_dets_from_chain_fields
   // / chain_pool_sweep / compute_inner_cond_mag).
   const int nw    = int(wset.size());
-  const int P     = inner_nwalkers_;
+  const int P     = inner_n_samples_;
   const int nCV   = inner_nomsd().number_of_cholesky_vectors();
   const int block = P * inner_nsteps_ * nCV;
   if (not wset.has_trial_fields())
@@ -522,8 +522,8 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
   if (not inner_chains_primed_)
   {
     // Prime only. There is no separate burn-in count: the priming step falls through to the
-    // inner_sweeps_ sweeps below, and every subsequent outer step sweeps again, so the chains have
-    // taken inner_sweeps_ * (steps so far) sweeps by the time any measurement is kept -- the outer
+    // inner_sample_update_steps_ sweeps below, and every subsequent outer step sweeps again, so the chains have
+    // taken inner_sample_update_steps_ * (steps so far) sweeps by the time any measurement is kept -- the outer
     // equilibration window discards the early steps regardless.
     prime_chain_fields(wset);
     inner_chains_primed_ = true;
@@ -536,7 +536,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
     inner_dets_stale_ = false;
   }
 
-  for (int sweep = 0; sweep < inner_sweeps_; ++sweep)
+  for (int sweep = 0; sweep < inner_sample_update_steps_; ++sweep)
     chain_pool_sweep(wset);
 
   if (inner_leapfrog())
@@ -544,13 +544,13 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
 
   if (++chain_updates_ % 200 == 0 && chain_proposed_ > 0)
     app_log(2, "StochasticWfn field-chain MCMC ({}, step {}): cumulative acceptance {:.3f} ({} / {})",
-            inner_mcmc_, inner_mcmc_step_, inner_chain_acceptance(), chain_accepted_, chain_proposed_);
+            inner_sampler_, inner_sampler_step_, inner_chain_acceptance(), chain_accepted_, chain_proposed_);
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
 {
-  // One measurement replica's pool motion: inner_sweeps_ sweeps against the CURRENT walkers,
+  // One measurement replica's pool motion: inner_sample_update_steps_ sweeps against the CURRENT walkers,
   // then refresh the leapfrog conditioning magnitudes so the next reduction's weights match the pool it
   // is about to measure with. This is update_persistent_chain_pool's tail with the priming, sizing and
   // staleness branches removed -- measure_advances_pool() already guarantees primed, non-stale chains,
@@ -566,7 +566,7 @@ void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
     APP_ABORT("Error in StochasticWfn::advance_measure_pool: persistent chains not primed; a measurement "
               "replica may not be the first thing to start them.");
 
-  for (int sweep = 0; sweep < inner_sweeps_; ++sweep)
+  for (int sweep = 0; sweep < inner_sample_update_steps_; ++sweep)
     chain_pool_sweep(wset);
 
   if (inner_leapfrog())
@@ -620,7 +620,7 @@ void StochasticWfn<MEM, devPsiT>::advance_inner_ensemble_conditioned(
   if (not inner_stack_->has_propagator())
     APP_ABORT("Error in StochasticWfn::advance_inner_ensemble_conditioned: inner propagator not built.");
 
-  const int P     = inner_nwalkers_;
+  const int P     = inner_n_samples_;
   const long ntot = long(nw) * P;
   auto all        = nda::range::all;
 

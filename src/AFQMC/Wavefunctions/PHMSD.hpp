@@ -200,7 +200,7 @@ public:
   HamiltonianTypes getHamType() const { return HamOp.getHamType(); }
 
   // True iff this wavefunction's Hamiltonian operator can contract a FULL (un-rotated) mean-field G.
-  // StochasticWfn::vMF requires it at inner_nwalkers > 1; see HamiltonianOperations::has_fullG_vbias.
+  // StochasticWfn::vMF requires it at inner_n_samples > 1; see HamiltonianOperations::has_fullG_vbias.
   bool has_fullG_vbias() const { return HamOp.has_fullG_vbias(); }
 
   auto getFieldTypes()

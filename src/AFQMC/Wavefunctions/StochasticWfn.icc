@@ -59,16 +59,6 @@ inline ComplexType stable_complex_sum(ComplexType const* terms, int n)
   return std::exp(shift) * acc;
 }
 
-template<class Mat2D>
-inline ComplexType stable_complex_sum_row(Mat2D const& terms, int row, int ncols)
-{
-  ComplexType buf[256];
-  utils::check(ncols <= int(sizeof(buf) / sizeof(buf[0])),
-               "stable_complex_sum_row: P exceeds compile-time buffer (increase buf)");
-  for (int c = 0; c < ncols; ++c)
-    buf[c] = terms(row, c);
-  return stable_complex_sum(buf, ncols);
-}
 
 } // namespace
 
@@ -114,19 +104,31 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   if (inner_stack_ == nullptr)
     APP_ABORT("Error in StochasticWfn: inner stack must be provided (see WavefunctionFactory).");
   ptree pt = interpret_inputs(pt_in);
-  inner_nwalkers_    = pt.get<int>("inner_nwalkers");
+  inner_n_samples_    = pt.get<int>("inner_n_samples");
   inner_nsteps_      = pt.get<int>("inner_nsteps");
-  inner_mode_        = parse_inner_mode(pt.get<std::string>("inner_mode"));
-  inner_sweeps_ = pt.get<int>("inner_sweeps");
-  inner_measure_replicas_ = pt.get<int>("inner_measure_replicas");
-  inner_mcmc_        = pt.get<std::string>("inner_mcmc");
-  inner_mcmc_step_   = pt.get<double>("inner_mcmc_step");
-  inner_log_aggregate_ = pt.get<bool>("inner_log_aggregate");
+  inner_sampling_target_        = parse_sampling_target(pt.get<std::string>("inner_sampling_target"));
+  inner_sample_update_steps_ = pt.get<int>("inner_sample_update_steps");
+  inner_n_measure_samples_ = pt.get<int>("inner_n_measure_samples");
+  inner_sampler_        = pt.get<std::string>("inner_sampler");
+  inner_sampler_step_   = pt.get<double>("inner_sampler_step");
   int inner_seed     = pt.get<int>("inner_seed");
   inner_ensemble_.rng =
       std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(inner_seed, mpi_->comm));
   if (auto prop_pt = pt.get_child_optional("inner_propagator"))
-    inner_timestep_ = prop_pt->get<double>("timestep", 0.01);
+  {
+    // No default. For a trained trial the factory injects the timestep it read from the variational
+    // Hamiltonian's inner_timestep attribute; for a synthetic trial with no inner_hamiltonian the input
+    // must state it. Either way an absent timestep on a dynamic trial is an error, never 0.01.
+    if (auto ts = prop_pt->get_optional<double>("timestep"))
+      inner_timestep_ = *ts;
+    else if (inner_nsteps_ > 0)
+      APP_ABORT("Error in StochasticWfn: a dynamic trial needs an inner propagator timestep. It is read "
+                "from the variational Hamiltonian's 'inner_timestep' attribute when inner_hamiltonian is "
+                "given; without one, set inner_propagator.timestep explicitly. There is no default.");
+  }
+  else if (inner_nsteps_ > 0)
+    APP_ABORT("Error in StochasticWfn: a dynamic trial needs an inner_propagator block carrying the "
+              "timestep (supplied automatically from inner_hamiltonian's 'inner_timestep' attribute).");
   if (inner_nsteps_ > 0)
   {
     if (wlk != CLOSED && wlk != COLLINEAR)
@@ -145,46 +147,45 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   // The only mode constraint left to check at runtime: Static IS inner_nsteps == 0, and the dynamic modes
   // need a nonzero path length. interpret_inputs already rejects the mismatched spellings, so reaching
   // either of these means the two were set inconsistently downstream of it.
-  if (inner_mode_ == InnerMode::Static && inner_nsteps_ != 0)
-    APP_ABORT("Error in StochasticWfn: inner_mode = static is the inner_nsteps = 0 replicated anchor "
+  if (inner_sampling_target_ == SamplingTarget::Static && inner_nsteps_ != 0)
+    APP_ABORT("Error in StochasticWfn: inner_sampling_target = static is the inner_nsteps = 0 replicated anchor "
               "ensemble, but inner_nsteps = " +
-              std::to_string(inner_nsteps_) + " was given. Use inner_mode = free or conditioned.");
-  if (inner_mode_ != InnerMode::Static && inner_nsteps_ <= 0)
-    APP_ABORT("Error in StochasticWfn: inner_mode = " + to_string(inner_mode_) +
+              std::to_string(inner_nsteps_) + " was given. Use inner_sampling_target = free or conditioned.");
+  if (inner_sampling_target_ != SamplingTarget::Static && inner_nsteps_ <= 0)
+    APP_ABORT("Error in StochasticWfn: inner_sampling_target = " + to_string(inner_sampling_target_) +
               " is a dynamic sampler and requires inner_nsteps > 0.");
   // Persistent-chain input validation. The chains are not optional: inner_persistence() is true for
   // every conditioned dynamic trial, so this block validates the sampler settings of the ONE conditioned
   // mode rather than those of an opt-in path.
   if (inner_persistence())
   {
-    if (inner_sweeps_ < 0)
-      APP_ABORT("Error in StochasticWfn: inner_sweeps must be >= 0.");
-    if (inner_mcmc_ == "metropolis")
-      APP_ABORT("Error in StochasticWfn: inner_mcmc = 'metropolis' (the determinant-space independence "
+    if (inner_sample_update_steps_ < 0)
+      APP_ABORT("Error in StochasticWfn: inner_sample_update_steps must be >= 0.");
+    if (inner_sampler_ == "metropolis")
+      APP_ABORT("Error in StochasticWfn: inner_sampler = 'metropolis' (the determinant-space independence "
                 "sampler) has been replaced by field-space kernels; use 'pcn' (equivalent physics at "
-                "inner_mcmc_step = 1) or 'gaussian'.");
-    if (inner_mcmc_ != "pcn" && inner_mcmc_ != "gaussian")
-      APP_ABORT("Error in StochasticWfn: inner_mcmc = '" + inner_mcmc_ +
+                "inner_sampler_step = 1) or 'gaussian'.");
+    if (inner_sampler_ != "pcn" && inner_sampler_ != "gaussian")
+      APP_ABORT("Error in StochasticWfn: inner_sampler = '" + inner_sampler_ +
                 "' is not implemented; available field-space kernels: 'pcn', 'gaussian'.");
-    if (inner_mcmc_ == "pcn" && (inner_mcmc_step_ <= 0.0 || inner_mcmc_step_ > 1.0))
-      APP_ABORT("Error in StochasticWfn: inner_mcmc = 'pcn' requires 0 < inner_mcmc_step <= 1 "
+    if (inner_sampler_ == "pcn" && (inner_sampler_step_ <= 0.0 || inner_sampler_step_ > 1.0))
+      APP_ABORT("Error in StochasticWfn: inner_sampler = 'pcn' requires 0 < inner_sampler_step <= 1 "
                 "(1 = independence redraw).");
-    if (inner_mcmc_ == "gaussian" && inner_mcmc_step_ <= 0.0)
-      APP_ABORT("Error in StochasticWfn: inner_mcmc = 'gaussian' requires inner_mcmc_step > 0.");
+    if (inner_sampler_ == "gaussian" && inner_sampler_step_ <= 0.0)
+      APP_ABORT("Error in StochasticWfn: inner_sampler = 'gaussian' requires inner_sampler_step > 0.");
   }
-  if (inner_measure_replicas_ < 1)
-    APP_ABORT("Error in StochasticWfn: inner_measure_replicas must be >= 1.");
-  // The real constraint, now stated where it belongs. inner_sweeps = 0 is legal and meaningful (prime the
+  if (inner_n_measure_samples_ < 1)
+    APP_ABORT("Error in StochasticWfn: inner_n_measure_samples must be >= 1.");
+  // The real constraint, now stated where it belongs. inner_sample_update_steps = 0 is legal and meaningful (prime the
   // chains, then freeze them) -- but only at nm == 1, because replicas that share a pool state are the
   // same measurement repeated and reduce neither variance nor lag. Previously this was enforced by
   // silently clamping the measurement stride's default to max(1, equil), which made a legal
-  // inner_equil_steps = 0 derive an illegal stride and abort about a key the user never set.
-  if (inner_measure_replicas_ > 1 && inner_sweeps_ < 1)
-    APP_ABORT("Error in StochasticWfn: inner_measure_replicas > 1 requires inner_sweeps >= 1; with zero "
+  if (inner_n_measure_samples_ > 1 && inner_sample_update_steps_ < 1)
+    APP_ABORT("Error in StochasticWfn: inner_n_measure_samples > 1 requires inner_sample_update_steps >= 1; with zero "
               "sweeps every replica measures the same frozen pool, which is one measurement repeated.");
-  if (inner_measure_replicas_ > 1 && not inner_persistence())
-    APP_ABORT("Error in StochasticWfn: inner_measure_replicas > 1 (measurement-replica averaging) requires "
-              "a conditioned dynamic trial (inner_conditioning = true, inner_nsteps > 0); a replica IS one "
+  if (inner_n_measure_samples_ > 1 && not inner_persistence())
+    APP_ABORT("Error in StochasticWfn: inner_n_measure_samples > 1 (measurement-replica averaging) requires "
+              "a conditioned dynamic trial (inner_sampling_target = walker_overlap, inner_nsteps > 0); a replica IS one "
               "advance of the persistent walker-conditioned field chain, and the static and "
               "free-projection ensembles have no chain to advance.");
   app_log(2, "\nStochasticWfn input:\n{}\n", io::to_string(pt));
@@ -194,84 +195,35 @@ template<MEMORY_SPACE MEM, class devPsiT>
 ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
 {
   ptree pt1 = nomsd_inputs(pt0);
-  int inner_nwalkers = pt0.get<int>("inner_nwalkers", 1);
-  if (inner_nwalkers < 1)
-    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_nwalkers must be >= 1.");
+  int inner_n_samples = pt0.get<int>("inner_n_samples", 1);
+  if (inner_n_samples < 1)
+    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_n_samples must be >= 1.");
   int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
   if (inner_nsteps < 0)
     APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_nsteps must be >= 0.");
 
-  // The sampling mode and the migration off the four booleans it replaces. resolve_inner_mode is shared
+  // The sampling mode and the migration off the four booleans it replaces. resolve_sampling_target is shared
   // with WavefunctionFactory::interpret_inputs -- see its comment for why that sharing is load-bearing.
-  const std::string inner_mode = resolve_inner_mode(pt0, inner_nsteps);
+  const std::string inner_sampling_target = resolve_sampling_target(pt0, inner_nsteps);
 
-  // inner_condition_on_new is REMOVED outright: it re-tethered the pool to phi_new at end-of-step to make
-  // the leapfrog |s_p| unity at measurement, which was MEASURED not to happen (|s_p| 0.62 vs 0.65) because
-  // orthogonalisation, population control and further propagation intervene before the block estimator.
-  // hafqmc gets that freshness from the MEASUREMENT seam instead, which SAFIRE now matches
-  // (measure_advances_pool). Any value is rejected -- there is nothing left for the key to select.
-  if (pt0.get_optional<bool>("inner_condition_on_new"))
-    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_condition_on_new has been REMOVED. It moved "
-              "the pool re-tether to end-of-step against phi_new, which never achieved the unit-magnitude "
-              "leapfrog weight it was written for. Pool freshness at measurement now comes from the "
-              "measurement seam, which advances the pool unconditionally.");
-  // inner_measure_restore is REMOVED: the measurement advance FEEDS FORWARD into propagation, matching
-  // hafqmc, which keeps the pool its measurement produced. `true` was the old default and is the behaviour
-  // this engine no longer has, so unlike the other migrations there is no value that still means what it
-  // used to -- reject either.
-  if (pt0.get_optional<bool>("inner_measure_restore"))
-    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_measure_restore has been REMOVED. Measuring "
-              "now advances the persistent pool and KEEPS it, as hafqmc does; restoring the chain fields "
-              "afterwards pretended the measurement had no effect on the chain and is no longer available.");
-  if (auto v = pt0.get_optional<int>("inner_pool_burn_in"); v && *v != 0)
-    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_pool_burn_in has been REMOVED (it was 0 in "
-              "every production run). Extra sweeps at the one-time prime are subsumed by "
-              "inner_sweeps, which sweeps the pool on every advance from the prime onwards; use "
-              "inner_sweeps to control mixing.");
-  int inner_measure_replicas = pt0.get<int>("inner_measure_replicas", 1);
+  int inner_n_measure_samples = pt0.get<int>("inner_n_measure_samples", 1);
 
-  // ONE SWEEP COUNT FOR BOTH SEAMS. inner_equil_steps (propagation) and inner_measure_stride
-  // (measurement) counted the same thing -- chain_pool_sweep() calls -- and production always ran them
-  // equal, because the stride's own default WAS the equil count. hafqmc drives both of its seams from a
-  // single sample_update_steps, so one knob is also the matching choice.
-  //
-  // This also retires a clamp that was papering over the split: the stride was validated >= 1 while
-  // inner_equil_steps = 0 was legal, so a legal input derived an illegal one and aborted about a key the
-  // user never set. The real constraint -- nm > 1 needs at least one sweep, or every replica measures the
-  // same frozen pool -- is now stated directly in the constructor's validation.
-  //
-  // Legacy inputs translate when they agree and are REJECTED when they do not: a genuinely different
-  // stride is a request this engine can no longer honour, and silently picking one of the two values
-  // would change what the deck asked for.
-  auto legacy_equil  = pt0.get_optional<int>("inner_equil_steps");
-  auto legacy_stride = pt0.get_optional<int>("inner_measure_stride");
-  auto sweeps_opt    = pt0.get_optional<int>("inner_sweeps");
-  if (sweeps_opt && (legacy_equil || legacy_stride))
-    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_sweeps cannot be combined with the removed "
-              "inner_equil_steps / inner_measure_stride keys. Keep inner_sweeps and delete the others.");
-  if (legacy_equil && legacy_stride && *legacy_equil != *legacy_stride)
-    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_equil_steps = " + std::to_string(*legacy_equil) +
-              " and inner_measure_stride = " + std::to_string(*legacy_stride) + " are both REMOVED, replaced "
-              "by one inner_sweeps driving the propagation-side AND measurement-side pool advances. They "
-              "differ here, so no single value preserves this input's meaning -- pick one, write inner_sweeps.");
-  const int inner_sweeps =
-      sweeps_opt ? *sweeps_opt : (legacy_equil ? *legacy_equil : (legacy_stride ? *legacy_stride : 1));
-  std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "pcn");
+  const int inner_sample_update_steps = pt0.get<int>("inner_sample_update_steps", 1);
+
+  std::string inner_sampler = pt0.get<std::string>("inner_sampler", "pcn");
   // proposal step size s: kernel-dependent default. pcn: s = 1 (independence proposal) -- the validated
   // conditioned-path default; the per-step conditioning target moves, so an independence proposal
   // re-equilibrates each step (a P=8 single-rank check reproduced the reference energy to -0.1 mHa),
-  // whereas smaller steps lag it at inner_sweeps = 1. gaussian random walk: s = 0.05.
-  double inner_mcmc_step = pt0.get<double>("inner_mcmc_step", inner_mcmc == "gaussian" ? 0.05 : 1.0);
-  bool inner_log_aggregate = pt0.get<bool>("inner_log_aggregate", false);
+  // whereas smaller steps lag it at inner_sample_update_steps = 1. gaussian random walk: s = 0.05.
+  double inner_sampler_step = pt0.get<double>("inner_sampler_step", inner_sampler == "gaussian" ? 0.05 : 1.0);
   int inner_seed = pt0.get<int>("inner_seed", 777);
-  pt1.put("inner_nwalkers", inner_nwalkers);
+  pt1.put("inner_n_samples", inner_n_samples);
   pt1.put("inner_nsteps", inner_nsteps);
-  pt1.put("inner_mode", inner_mode);
-  pt1.put("inner_sweeps", inner_sweeps);
-  pt1.put("inner_measure_replicas", inner_measure_replicas);
-  pt1.put("inner_mcmc", inner_mcmc);
-  pt1.put("inner_mcmc_step", inner_mcmc_step);
-  pt1.put("inner_log_aggregate", inner_log_aggregate);
+  pt1.put("inner_sampling_target", inner_sampling_target);
+  pt1.put("inner_sample_update_steps", inner_sample_update_steps);
+  pt1.put("inner_n_measure_samples", inner_n_measure_samples);
+  pt1.put("inner_sampler", inner_sampler);
+  pt1.put("inner_sampler_step", inner_sampler_step);
   pt1.put("inner_seed", inner_seed);
   if (auto prop_pt = pt0.get_child_optional("inner_propagator"))
     pt1.put_child("inner_propagator", *prop_pt);
@@ -282,17 +234,42 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "restart_file",
       "filename",
       "type",
-      "inner_nwalkers",
+      "inner_n_samples",
       "inner_nsteps",
-      "inner_mode",
-      "inner_sweeps",
-      "inner_measure_replicas",
-      "inner_mcmc",
-      "inner_mcmc_step",
-      "inner_log_aggregate",
+      "inner_sampling_target",
+      "inner_sample_update_steps",
+      "inner_n_measure_samples",
+      "inner_sampler",
+      "inner_sampler_step",
       "inner_seed",
       "inner_propagator",
   };
+  // THE inner_* SURFACE IS CLOSED: an unknown inner_* key is a hard error, not a warning.
+  //
+  // compare_known_keys only warns, and it is shared with every other factory (NOMSD warns routinely on
+  // the stripped tree it is handed), so it cannot be made strict globally. But the stochastic keys are
+  // ours alone, and a warning is the wrong response to a misspelled one: the run continues with the
+  // engine's default while the input file says otherwise -- silently, which is the exact failure mode
+  // this surface was cleaned up to remove. Every removed key therefore lands here too, so a deck written
+  // against the old names fails loudly and is a one-line fix rather than a quiet reinterpretation.
+  {
+    std::vector<std::string> unknown;
+    for (auto const& item : pt0)
+      if (item.first.rfind("inner_", 0) == 0 && pass_through_keys.count(item.first) == 0 &&
+          item.first != "inner_hamiltonian") // factory-level: consumed by fromHDF5, never reaches here
+        unknown.push_back(item.first);
+    if (not unknown.empty())
+    {
+      std::string names;
+      for (auto const& u : unknown)
+        names += (names.empty() ? "" : ", ") + u;
+      APP_ABORT("Error in StochasticWfn::interpret_inputs: unknown stochastic input key(s): " + names +
+                ".\nThe inner_* surface is closed and has no backward compatibility. Settable keys are: "
+                "inner_sampling_target, inner_n_samples, inner_nsteps, "
+                "inner_sample_update_steps, inner_sampler, inner_sampler_step, inner_n_measure_samples, "
+                "inner_seed, inner_propagator, inner_hamiltonian.");
+    }
+  }
   io::compare_known_keys("Stochastic trial wavefunction (StochasticWfn)", pt1, pt0, pass_through_keys);
   return pt1;
 }
@@ -333,7 +310,7 @@ void StochasticWfn<MEM, devPsiT>::initialize_inner_walkers(
     APP_ABORT("Error in StochasticWfn::initialize_inner_walkers: inner walkers already initialized.");
   auto wt = WalkerSet<MEM>::parse_walker_type(walker_pt);
   inner_ensemble_.wset =
-      std::make_unique<WalkerSet<MEM>>(mpi_, walker_pt, inner_ensemble_.rng, wt, initial_guess, inner_nwalkers_);
+      std::make_unique<WalkerSet<MEM>>(mpi_, walker_pt, inner_ensemble_.rng, wt, initial_guess, inner_n_samples_);
   inner_anchor_ = stochastic_wfn_detail::guess_matrices_to_rank3(initial_guess, NAEB);
   // Cache the construction inputs so mean_field_scratch_ensemble() can build a dedicated scratch walker
   // set on demand via this SAME constructor (see mf_scratch_wset_).
@@ -370,7 +347,7 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
   // old_ovlp = Sum_p S_p and the step overlap RATIO new/old is exactly Eq. 25 (N(phi) cancels). Without
   // leapfrog, the absolute (1/P) Sum_p <psi_p|phi_w> reduction is kept.
   const bool leapfrog    = (conditioned && inner_leapfrog());
-  const int P            = (conditioned ? inner_nwalkers_ : int(inner.size()));
+  const int P            = (conditioned ? inner_n_samples_ : int(inner.size()));
   utils::check(Ov.size() >= nw, "Size mismatch");
   utils::check(P >= 1, "inner ensemble must be non-empty");
   if (conditioned)
@@ -383,14 +360,6 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
   auto all              = nda::range::all;
 
   Ov() = ComplexType(0.0);
-
-  const bool log_agg = inner_log_aggregate_;
-  memory::buffered_array<MEM, ComplexType, 2> ov_terms;
-  if (log_agg)
-  {
-    ov_terms = memory::buffered_array<MEM, ComplexType, 2>(nw, P);
-    ov_terms() = ComplexType(0.0);
-  }
 
   // Per-rank-local, exactly like NOMSD::Log_Overlap: each rank scores its OWN nw outer walkers against
   // the full inner ensemble (loop the full nw*P pairs) with NO cross-rank distribution / all_reduce. The
@@ -437,46 +406,27 @@ void StochasticWfn<MEM, devPsiT>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int
       // conditioned -- the logsw form is the correct one.
       if ((not inner_chains_primed_) && inner_logsw_.size() == inner_cond_mag_.size())
       {
-        ComplexType term = std::exp(inner_logsw_(tk)) * ov;
-        if (log_agg)
-          ov_terms(iw, ip) = term;
-        else
-          Ov(iw) += term;
+        Ov(iw) += std::exp(inner_logsw_(tk)) * ov;
       }
       else
       {
         double mag = double(inner_cond_mag_(tk));
         if (mag > 0.0)
         {
-          ComplexType term = ov / ComplexType(mag, 0.0);
-          if (log_agg)
-            ov_terms(iw, ip) = term;
-          else
-            Ov(iw) += term;
+          Ov(iw) += ov / ComplexType(mag, 0.0);
         }
       }
     }
     else
     {
-      ComplexType term = inv_P * ov;
-      if (log_agg)
-        ov_terms(iw, ip) = term;
-      else
-        Ov(iw) += term;
+      Ov(iw) += inv_P * ov;
     }
   }
 
-  if (log_agg)
-  {
-    for (int iw = 0; iw < nw; ++iw)
-      Ov(iw) = std::log(stable_complex_sum_row(ov_terms(), iw, P));
-  }
-  else
-  {
     // The pair loop accumulates the LINEAR effective overlap; OVLP stores the log overlap.
     for (int iw = 0; iw < nw; ++iw)
       Ov(iw) = std::log(Ov(iw));
-  }
+
   }
   else
   {
@@ -568,7 +518,7 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
     {
       using nda::range;
       auto all             = range::all;
-      const int P          = inner_nwalkers_;
+      const int P          = inner_n_samples_;
       const bool cond      = (inner_conditioning());
       WalkerSet<MEM>& innr = *inner_ensemble_.wset;
       const long rows      = wset.SlaterMatrices(Alpha).extent(1); // npol*NMO
@@ -626,7 +576,7 @@ template<MEMORY_SPACE MEM, class devPsiT>
 template<class WlkSet, class Mat, class TVec>
 void StochasticWfn<MEM, devPsiT>::measure_energy(WlkSet& wset, Mat&& E, TVec&& Ov, int nt)
 {
-  // Average local energy over inner_measure_replicas pool advances at fixed walkers:
+  // Average local energy over inner_n_measure_samples pool advances at fixed walkers:
   // E = (1/nm) sum_j Energy_j, where each Energy_j is one replica's per-walker ratio estimate. The pool
   // advances before EVERY replica including the first, and the advance is KEPT -- see
   // measure_advances_pool() for why both of those match hafqmc rather than the old nm-gated behaviour.
@@ -638,7 +588,7 @@ void StochasticWfn<MEM, devPsiT>::measure_energy(WlkSet& wset, Mat&& E, TVec&& O
   }
 
   const int nwalk = int(wset.size());
-  const int nm    = inner_measure_replicas_;
+  const int nm    = inner_n_measure_samples_;
 
   memory::buffered_array<MEM, ComplexType, 2> E_j(nwalk, 3);
   memory::buffered_array<MEM, ComplexType, 1> Ov_j(nwalk);
@@ -773,7 +723,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   bp_refs_drawn_ = false;
   // Persistent chains: this is the one seam with NON-const access to the outer walker set (whose
   // buffer holds the chain fields), so ALL chain mutation happens here -- prime on first use, then
-  // inner_sweeps_ MH sweeps targeting the CURRENT (old) walkers. The updated pool serves every
+  // inner_sample_update_steps_ MH sweeps targeting the CURRENT (old) walkers. The updated pool serves every
   // reduction of this step (latch cleared below), so the step's overlap RATIO new/old shares one
   // ensemble (Eq. 25). Runs on every rank at every step -- uniform control flow, no communication.
   // Persistent field-chain pool update (device-ported: host-RNG hybrid chain MCMC).
@@ -809,7 +759,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
     // after the principled version proved unusable. Matching a stabilised remnant is not the same as
     // matching the method, which is why this seam is where we stop matching.
     //
-      // MEASURED (N2 equilibrium, P=8, 30 walkers, inner_sweeps=1, tau in (5,20], 9 seeds, paired):
+      // MEASURED (N2 equilibrium, P=8, 30 walkers, inner_sample_update_steps=1, tau in (5,20], 9 seeds, paired):
     // enabling the handoff moved the energy -2.44 +/- 1.67 mHa (1.46 sigma -- NOT significant) and total
     // walker weight over the window from 1.005 to 0.991, i.e. the predicted decay showed up while the
     // energy shift did not resolve. ⚠️ N2-equilibrium is the EASIEST system here and equil=1 is not the
@@ -838,7 +788,7 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(const WlkSet& w
   // CPU-only) rebuild_inner_dets_from_chain_fields, but persistent trials are blocked at construction on
   // device, so that branch is unreachable on GPU.
   const int nw          = int(wset.size());
-  const int P           = inner_nwalkers_;
+  const int P           = inner_n_samples_;
 
   // Persistent chains: the chain fields live inside walker_buffer, so branch()'s row copies and the
   // load-balance payload have ALREADY moved them with their walkers -- clones inherited their parent's
@@ -927,7 +877,7 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
     // only question left here is whether the chains have been primed yet.)
     if (inner_chains_primed_)
     {
-      if (inner_dets_stale_ || inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_)
+      if (inner_dets_stale_ || inner_ensemble_.wset->size() != long(nw) * inner_n_samples_)
       {
         rebuild_inner_dets_from_chain_fields(wset);
         inner_dets_stale_ = false;
@@ -943,7 +893,7 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
     // ensemble is already conditioned for this configuration -- reuse it.
     //
     // The size check alone is NOT a reliable bootstrap signal at nw == 1: initialize_inner_walkers sizes
-    // the freshly-constructed ensemble to inner_nwalkers_ (= P), which coincidentally already equals
+    // the freshly-constructed ensemble to inner_n_samples_ (= P), which coincidentally already equals
     // nw*P when nw == 1, so an un-conditioned ensemble is indistinguishable from a resampled one by
     // size alone. A driver's pre-loop initial-energy call (Energy/Log_Overlap before the first
     // begin_inner_step) hits exactly this case with a single outer walker per rank and would leave
@@ -953,7 +903,7 @@ void StochasticWfn<MEM, devPsiT>::conditioned_resample(const WlkSet& wset)
     // that ensemble by exp(logsw) because inner_chains_primed_ is still false (see Log_Overlap).
     const bool need_resample =
         inner_step_pending_ || (not inner_chains_primed_) ||
-        (inner_ensemble_.wset->size() != long(nw) * inner_nwalkers_);
+        (inner_ensemble_.wset->size() != long(nw) * inner_n_samples_);
     if (not need_resample)
       return;
     // Importance-sample the inner fields conditioned on each outer walker phi_w (Eq. 23 of
@@ -995,7 +945,7 @@ void StochasticWfn<MEM, devPsiT>::compute_inner_cond_mag(const WlkSet& wset)
   // FairDivided Log_Overlap reads it per pair). CLOSED-only in practice (leapfrog gate), beta included
   // for completeness. The magnitude loop is shared with the Metropolis accept/reject via
   // cross_overlap_magnitudes; this method just sizes the member and delegates.
-  inner_cond_mag_ = nda::array<RealType, 1>(long(wset.size()) * inner_nwalkers_);
+  inner_cond_mag_ = nda::array<RealType, 1>(long(wset.size()) * inner_n_samples_);
   cross_overlap_magnitudes(wset, *inner_ensemble_.wset, inner_cond_mag_);
 }
 
@@ -1005,7 +955,7 @@ void StochasticWfn<MEM, devPsiT>::cross_overlap_magnitudes(const WlkSet& wset, W
                                                            nda::array<RealType, 1>& mag)
 {
   const int nw          = int(wset.size());
-  const int P           = inner_nwalkers_;
+  const int P           = inner_n_samples_;
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   auto all              = nda::range::all;
   utils::check(mag.size() == long(nw) * P, "cross_overlap_magnitudes: mag must be sized nw*P.");
@@ -1053,7 +1003,7 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
   memory::check_memory_space<MEM>(D, Ov);
   if (at_delegate_limit())
     APP_ABORT("Error in StochasticWfn::reduce_inner_cross_dm: called at delegate limit "
-              "(inner_nwalkers=1, inner_nsteps=0); use nomsd_ reductions instead.");
+              "(inner_n_samples=1, inner_nsteps=0); use nomsd_ reductions instead.");
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::reduce_inner_cross_dm: inner walkers not initialized.");
   conditioned_resample(wset);
@@ -1073,7 +1023,7 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
   // magnitude. At the top of the step chi == phi_cond, so w_p == S_p and the force-bias DM / conditioned
   // sampling path are unchanged. |<psi_p|phi_cond>| is inner_cond_mag_, set at the conditioned resample.
   const bool leapfrog    = (conditioned && inner_leapfrog());
-  const int P            = (conditioned ? inner_nwalkers_ : int(inner.size()));
+  const int P            = (conditioned ? inner_n_samples_ : int(inner.size()));
   utils::check(P >= 1, "inner ensemble must be non-empty");
   if (conditioned)
     utils::check(inner.size() == long(nwalk) * P, "conditioned inner ensemble size mismatch (expect nwalk*P)");
@@ -1097,17 +1047,6 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
 
   D()  = zero;
   Ov() = zero;
-
-  const bool log_agg = inner_log_aggregate_;
-  memory::buffered_array<MEM, ComplexType, 2> s_store;
-  memory::buffered_array<MEM, ComplexType, 2> ov_lin_store;
-  if (log_agg)
-  {
-    s_store     = memory::buffered_array<MEM, ComplexType, 2>(nwalk, P);
-    ov_lin_store = memory::buffered_array<MEM, ComplexType, 2>(nwalk, P);
-    s_store()     = zero;
-    ov_lin_store() = zero;
-  }
 
   memory::array<MEM, ComplexType, 2> ref_alpha(NMO, nup);
   memory::array<MEM, ComplexType, 2> ref_beta(NMO, ndown);
@@ -1204,43 +1143,27 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
         s          = (mag > 0.0) ? (lin_ov / ComplexType(mag, 0.0)) : zero;
       }
       Sp(w) = s;
-      if (log_agg)
-      {
-        s_store(w, ip)      = s;
-        ov_lin_store(w, ip) = leapfrog ? s : (inv_P * lin_ov);
-      }
-      else
-      {
-        Ov(w) = Ov(w) + (leapfrog ? s : (inv_P * lin_ov));
-        D(w)  = D(w) + s;
-      }
+      Ov(w) = Ov(w) + (leapfrog ? s : (inv_P * lin_ov));
+      D(w)  = D(w) + s;
     }
     }
     else
     {
 #if defined(ENABLE_DEVICE)
-      if (not leapfrog and not log_agg)
+      if (not leapfrog)
       {
         // Common path: one fused kernel does Sp/Ov/D per walker (phase reduction).
         kernels::device::inner_scalar_reduce(ov_, Sp, Ov, D, 1.0 / static_cast<double>(P));
       }
       else
       {
-        // Leapfrog reweight (by the host inner_cond_mag_) and log-aggregate storing are small per-walker
-        // scalar work over [nwalk]; do them on host (ov_ pulled down, results pushed back). Correctness-
-        // first; these modes are not perf-critical (leapfrog/log-agg tests use small P).
+        // Leapfrog reweight (by the host inner_cond_mag_) is small per-walker scalar work over [nwalk];
+        // do it on host (ov_ pulled down, results pushed back). Correctness-first; this mode is not
+        // perf-critical (the leapfrog tests use small P).
         auto ovh = nda::to_host(ov_);
-        nda::array<ComplexType, 1> Sp_h(nwalk), Ov_h, D_h, sstore_col, ovlin_col;
-        if (log_agg)
-        {
-          sstore_col = nda::array<ComplexType, 1>(nwalk);
-          ovlin_col  = nda::array<ComplexType, 1>(nwalk);
-        }
-        else
-        {
-          Ov_h = nda::to_host(Ov);
-          D_h  = nda::to_host(D);
-        }
+        nda::array<ComplexType, 1> Sp_h(nwalk);
+        auto Ov_h = nda::to_host(Ov);
+        auto D_h  = nda::to_host(D);
         for (int w = 0; w < nwalk; ++w)
         {
           ComplexType lin_ov = std::exp(ovh(w));
@@ -1262,28 +1185,12 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
             s          = (mag > 0.0) ? (lin_ov / ComplexType(mag, 0.0)) : zero;
           }
           Sp_h(w) = s;
-          if (log_agg)
-          {
-            sstore_col(w) = s;
-            ovlin_col(w)  = leapfrog ? s : (inv_P * lin_ov);
-          }
-          else
-          {
-            Ov_h(w) += leapfrog ? s : (inv_P * lin_ov);
-            D_h(w) += s;
-          }
+          Ov_h(w) += leapfrog ? s : (inv_P * lin_ov);
+          D_h(w) += s;
         }
         Sp() = Sp_h(); // host -> device
-        if (log_agg)
-        {
-          s_store(nda::range::all, ip)      = sstore_col();
-          ov_lin_store(nda::range::all, ip) = ovlin_col();
-        }
-        else
-        {
-          Ov() = Ov_h();
-          D()  = D_h();
-        }
+        Ov() = Ov_h();
+        D()  = D_h();
       }
 #endif
     }
@@ -1291,32 +1198,6 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_cross_dm(const WlkSet& wset,
     mpi_->comm.barrier();
   }
 
-  if (log_agg)
-  {
-    if constexpr (MEM == HOST_MEMORY)
-    {
-      for (int w = 0; w < nwalk; ++w)
-      {
-        D(w)  = stable_complex_sum_row(s_store(), w, P);
-        Ov(w) = leapfrog ? D(w) : stable_complex_sum_row(ov_lin_store(), w, P);
-      }
-    }
-    else
-    {
-      // Device: stable log-sum over the P columns is small per-walker work -> host round-trip of the
-      // [nwalk, P] stores, then push D/Ov back.
-      auto ss = nda::to_host(s_store());
-      auto ol = nda::to_host(ov_lin_store());
-      nda::array<ComplexType, 1> D_h(nwalk), Ov_h(nwalk);
-      for (int w = 0; w < nwalk; ++w)
-      {
-        D_h(w)  = stable_complex_sum_row(ss, w, P);
-        Ov_h(w) = leapfrog ? D_h(w) : stable_complex_sum_row(ol, w, P);
-      }
-      D()  = D_h();
-      Ov() = Ov_h();
-    }
-  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -1531,7 +1412,7 @@ void StochasticWfn<MEM, devPsiT>::accumulate_estimators(int iav, WlkSet& wset,
 // bra), then Gsum/Osum are all-reduced. Multi-rank consistency of the per-rank-decorrelated dynamic
 // ensemble is part of the deferred -np>1 gate; at the static limit (and -np 1) it is exact.
 //
-// P is inner_nwalkers_ (the walker-INDEPENDENT sample count), NOT inner.size(): `inner` MUST be a
+// P is inner_n_samples_ (the walker-INDEPENDENT sample count), NOT inner.size(): `inner` MUST be a
 // walker-independent P-sample ensemble (asserted below). vMF/G_MF pass either the forward ensemble when
 // it is already in that form (mean_field_uses_inner_ensemble) or a dedicated free-projection scratch draw
 // (mean_field_scratch_ensemble) when the forward ensemble has been expanded to the conditioned nw*P form
@@ -1548,7 +1429,7 @@ void StochasticWfn<MEM, devPsiT>::reduce_inner_mean_field_dm(WalkerSet<MEM>& inn
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   const int nspin       = (wt == COLLINEAR ? 2 : 1);
   const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
-  const int P           = inner_nwalkers_;
+  const int P           = inner_n_samples_;
   const long full_size  = long(nspin) * npol * NMO * npol * NMO;
   const ComplexType zero(0.0);
   const double invP2    = 1.0 / (static_cast<double>(P) * static_cast<double>(P));
@@ -1688,10 +1569,10 @@ void StochasticWfn<MEM, devPsiT>::vMF(nda::MemoryVector auto&& v, double dt)
   // several frames down -- and so a future operator can never quietly reinterpret the buffer instead.
   // G_MF is deliberately NOT gated: it needs no Hamiltonian operator and is correct on every family.
   utils::check(nomsd_.has_fullG_vbias(),
-               "StochasticWfn::vMF: inner_nwalkers > 1 needs the trial's own mean field, which is a full "
+               "StochasticWfn::vMF: inner_n_samples > 1 needs the trial's own mean field, which is a full "
                "un-rotated G, but this Hamiltonian operator implements vbias only for a half-rotated "
                "compact G. Supported: Real3IndexFactorization (molecules) and ModelHamOps "
-               "(lattice/Hubbard). Use inner_nwalkers = 1 with this Hamiltonian.");
+               "(lattice/Hubbard). Use inner_n_samples = 1 with this Hamiltonian.");
   utils::check(v.size() == number_of_cholesky_vectors(), "Size mismatch");
   utils::check(v.strides()[0] == 1, "Strides mismatch");
 
@@ -1735,8 +1616,8 @@ void StochasticWfn<MEM, devPsiT>::fill_references_from_draw(int number_of_refere
   if (number_of_references == 0)
     return;
   if (number_of_references < 0)
-    number_of_references = inner_nwalkers_;
-  utils::check(number_of_references > 0 and number_of_references <= inner_nwalkers_ and
+    number_of_references = inner_n_samples_;
+  utils::check(number_of_references > 0 and number_of_references <= inner_n_samples_ and
                    number_of_references <= int(Refs.extent(0)),
                "Invalid number_of_references: {}", number_of_references);
   utils::check(Refs.extent(1) == npol * NMO and Refs.extent(2) == nel, "Size mismatch");
@@ -1761,8 +1642,8 @@ void StochasticWfn<MEM, devPsiT>::getReferences(RefMat&& Refs)
   const WALKER_TYPES wt = nomsd_.getWalkerType();
   const int nel         = nup + (wt == COLLINEAR ? ndown : 0);
   const int npol        = (wt == NONCOLLINEAR ? 2 : 1);
-  Refs.resize(inner_nwalkers_, npol * NMO, nel);
-  fill_references_from_draw(inner_nwalkers_, Refs);
+  Refs.resize(inner_n_samples_, npol * NMO, nel);
+  fill_references_from_draw(inner_n_samples_, Refs);
 }
 
 } // namespace afqmc

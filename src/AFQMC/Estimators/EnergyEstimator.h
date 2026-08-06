@@ -124,7 +124,7 @@ public:
       nda::array<ComplexType,2> eloc(nwalk,3);
       nda::array<ComplexType,1> ovlp(nwalk);
       int nt = wset.getTauStep();
-      // StochasticWfn::measure_energy averages over inner_measure_replicas pool advances at fixed
+      // StochasticWfn::measure_energy averages over inner_n_measure_samples pool advances at fixed
       // walkers; every other wavefunction, and nm == 1, use Energy.
       if constexpr (MEM == HOST_MEMORY) {
         wfn0->measure_energy(wset, eloc, ovlp, nt);

@@ -37,57 +37,61 @@ class Wavefunction;
 template<MEMORY_SPACE MEM>
 class Propagator;
 
-// How the inner (trial) field ensemble is sampled. ONE key -- inner_mode -- replaces the
+// How the inner (trial) field ensemble is sampled. ONE key -- inner_sampling_target -- replaces the
 // inner_conditioning / inner_leapfrog / inner_persistence booleans. Those were never independent: their
 // legal combinations formed a strict chain (leapfrog required conditioning, persistence required
 // conditioning, replicas required persistence) enforced by four separate runtime APP_ABORTs, so 2^3
 // spellings selected 3 behaviours and the illegal 5 were only caught after construction. An enum makes
 // them unrepresentable instead.
-enum class InnerMode
+enum class SamplingTarget
 {
   // inner_nsteps == 0. Replicated anchor ensemble; every reduction delegates to NOMSD, so observables are
-  // independent of inner_nwalkers. This is the EXACTNESS LIMIT the NOMSD-parity tests are written against
+  // independent of inner_n_samples. This is the EXACTNESS LIMIT the NOMSD-parity tests are written against
   // -- keep it: it is what proves the estimator right, not a production sampler.
   Static,
   // Dynamic (inner_nsteps > 0) with an unconditioned free-projection draw: fields from the bare prior
   // p_T(Y), the plain (1/P) sum reduction, no reweight. REFERENCE / TEST MODE, correct but not usable:
   // <psi(Y)|phi> is sharply peaked in Y, so prior sampling has catastrophic variance. Needed by the
   // back-propagation reference-draw and dynamic-ensemble tests.
-  Free,
+  Gaussian,
   // Dynamic, walker-conditioned. Persistent per-slot field-space Markov chains targeting
   // p_T(Y)|<psi(Y)|phi_w>|, with the leapfrog 1/|<psi_q|phi_cond>| reweight so the step's overlap ratio
   // is exactly Eq. 25 and N(phi) cancels. THE PRODUCTION MODE, and the only one with a convergence story.
-  Conditioned,
+  WalkerOverlap,
 };
 
-inline std::string to_string(InnerMode m)
+inline std::string to_string(SamplingTarget m)
 {
   switch (m)
   {
-  case InnerMode::Static:
+  case SamplingTarget::Static:
     return "static";
-  case InnerMode::Free:
-    return "free";
-  case InnerMode::Conditioned:
-    return "conditioned";
+  case SamplingTarget::Gaussian:
+    return "gaussian";
+  case SamplingTarget::WalkerOverlap:
+    return "walker_overlap";
   }
   return "unknown";
 }
 
-inline InnerMode parse_inner_mode(std::string const& s)
+inline SamplingTarget parse_sampling_target(std::string const& s)
 {
   if (s == "static")
-    return InnerMode::Static;
-  if (s == "free")
-    return InnerMode::Free;
-  if (s == "conditioned")
-    return InnerMode::Conditioned;
-  APP_ABORT("Error in StochasticWfn: inner_mode = '" + s +
-            "' is not a sampling mode. Choose one of: 'static' (inner_nsteps = 0 replicated anchor "
-            "ensemble, delegates to NOMSD), 'free' (dynamic unconditioned free projection -- a reference "
-            "mode; correct but catastrophically noisy), 'conditioned' (dynamic walker-conditioned "
-            "persistent field chains with the leapfrog reweight -- the production sampler).");
-  return InnerMode::Static; // unreachable; APP_ABORT throws
+    return SamplingTarget::Static;
+  if (s == "gaussian")
+    return SamplingTarget::Gaussian;
+  if (s == "walker_overlap")
+    return SamplingTarget::WalkerOverlap;
+  APP_ABORT("Error in StochasticWfn: inner_sampling_target = '" + s +
+            "' is not a sampling target. Choose one of: 'walker_overlap' (dynamic walker-conditioned "
+            "persistent field chains with the leapfrog reweight -- the production sampler), 'gaussian' "
+            "(dynamic unconditioned draw from the prior p_T -- a reference target; correct but "
+            "catastrophically noisy), 'static' (inner_nsteps = 0 replicated anchor ensemble, delegates "
+            "to NOMSD). "
+            "NOTE: 'gaussian' here names the TARGET DENSITY, and is unrelated to inner_sampler = "
+            "'gaussian', which names a random-walk PROPOSAL. hafqmc overloads the word the same way "
+            "(sampling_target vs sampler_name); the two keys are independent.");
+  return SamplingTarget::Static; // unreachable; APP_ABORT throws
 }
 
 // Resolve the sampling mode from an input ptree, translating the four removed booleans it replaces.
@@ -100,81 +104,34 @@ inline InnerMode parse_inner_mode(std::string const& s)
 // propagator and abort at the first step. One function, two call sites, no second source of truth.
 //
 // `inner_nsteps` is passed in rather than read here: callers have already validated it.
-inline std::string resolve_inner_mode(ptree const& pt0, int inner_nsteps)
+inline std::string resolve_sampling_target(ptree const& pt0, int inner_nsteps)
 {
-  auto legacy_cond      = pt0.get_optional<bool>("inner_conditioning");
-  auto legacy_leap      = pt0.get_optional<bool>("inner_leapfrog");
-  auto legacy_persist   = pt0.get_optional<bool>("inner_persistence");
-  auto mode_opt         = pt0.get_optional<std::string>("inner_mode");
-  const bool any_legacy = legacy_cond || legacy_leap || legacy_persist;
+  // Resolve and validate the sampling target. Shared by WavefunctionFactory::interpret_inputs (whose
+  // output decides how the inner PROPAGATOR is built) and StochasticWfn::interpret_inputs (which selects
+  // the sampler). The propagator is built first, so resolving in one place is what stops the two
+  // disagreeing and pairing a conditioned sampler with a free-projection propagator.
+  auto target_opt = pt0.get_optional<std::string>("inner_sampling_target");
 
-  if (mode_opt && any_legacy)
-    APP_ABORT("Error in StochasticWfn: inner_mode cannot be combined with the removed inner_conditioning "
-              "/ inner_leapfrog / inner_persistence keys -- two spellings of the sampler in one input is "
-              "exactly the ambiguity inner_mode exists to remove. Keep inner_mode and delete the others.");
+  // NOT DEFAULTED for a dynamic trial: 'gaussian' is correct but has catastrophic variance, so it must
+  // never be reachable by forgetting a key. Static needs no sampler settings and is the safe default.
+  if (not target_opt && inner_nsteps > 0)
+    APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 selects a dynamic inner ensemble, so "
+              "inner_sampling_target must be given explicitly -- 'walker_overlap' for the production "
+              "walker-conditioned persistent chains, or 'gaussian' for the unconditioned prior-sampling "
+              "reference target (correct, but its variance makes it unusable in production). It is NOT "
+              "defaulted, because defaulting it is how a production run silently gets prior sampling.");
 
-  std::string inner_mode;
-  if (mode_opt)
-  {
-    inner_mode = *mode_opt;
-  }
-  else if (any_legacy)
-  {
-    // Translate the legacy triple. For inner_conditioning and inner_leapfrog, ABSENT MEANS FALSE -- that
-    // was the old default, so absent carries a real request. inner_persistence is different: only its
-    // explicit `false` asks for something this engine no longer has, while absent means unspecified and
-    // `true` is now implied by the conditioned mode, so both of those translate cleanly. Keying that one
-    // on presence rather than on value_or(false) is what lets a deck that never mentioned persistence
-    // still be understood.
-    const bool c = legacy_cond.value_or(false);
-    const bool l = legacy_leap.value_or(false);
-    if (legacy_persist && not *legacy_persist)
-      APP_ABORT("Error in StochasticWfn: inner_persistence = false requests the removed reset-then-redraw "
-                "conditioned pool; persistent field chains are the only conditioned sampler. Use "
-                "inner_mode = conditioned, or inner_mode = free for an unconditioned draw.");
-    if (l && not c)
-      APP_ABORT("Error in StochasticWfn: inner_leapfrog = true requires inner_conditioning = true. Both "
-                "keys are removed; write inner_mode = conditioned.");
-    if (legacy_persist && *legacy_persist && not c)
-      APP_ABORT("Error in StochasticWfn: inner_persistence = true requires inner_conditioning = true. "
-                "Both keys are removed; write inner_mode = conditioned.");
-    if (c && not l)
-      // The deleted rung. Conditioning tilts the sampling density toward the walker; the leapfrog
-      // reweight by 1/|<psi_q|phi_cond>| is what corrects for that tilt. Conditioning WITHOUT it selects
-      // the plain (1/P) sum, i.e. a conditioned ensemble scored as if it were prior-sampled -- an
-      // estimator with no N(phi) cancellation. It had no production use and no test pinning it as a
-      // reference, so it is gone rather than promoted to a mode. Mapping it to `conditioned` would ADD a
-      // reweight the input never asked for; mapping it to `free` would keep the tilt and drop the weight.
-      APP_ABORT("Error in StochasticWfn: inner_conditioning = true with inner_leapfrog = false selected a "
-                "conditioned ensemble scored by the plain (1/P) sum, with no reweight correcting the "
-                "conditioning tilt and hence no N(phi) cancellation. That combination is REMOVED, not "
-                "renamed. Use inner_mode = conditioned (conditioned sampling + the leapfrog reweight) or "
-                "inner_mode = free (prior sampling + the (1/P) sum).");
-    inner_mode = c ? "conditioned" : (inner_nsteps > 0 ? "free" : "static");
-  }
-  else if (inner_nsteps > 0)
-  {
-    APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 selects a dynamic inner ensemble, so inner_mode "
-              "must be given explicitly -- 'conditioned' for the production walker-conditioned persistent "
-              "chains, or 'free' for the unconditioned free-projection reference sampler (correct, but its "
-              "variance makes it unusable in production). It is NOT defaulted, because defaulting it is "
-              "how a production run silently gets free projection.");
-  }
-  else
-  {
-    inner_mode = "static";
-  }
+  const std::string inner_sampling_target = target_opt ? *target_opt : std::string("static");
 
-  // Validate spelling and mode/inner_nsteps agreement here, at the input seam.
-  const InnerMode parsed = parse_inner_mode(inner_mode);
-  if (parsed == InnerMode::Static && inner_nsteps > 0)
-    APP_ABORT("Error in StochasticWfn: inner_mode = static is the inner_nsteps = 0 replicated anchor "
-              "ensemble, but inner_nsteps = " +
+  const SamplingTarget parsed = parse_sampling_target(inner_sampling_target);
+  if (parsed == SamplingTarget::Static && inner_nsteps > 0)
+    APP_ABORT("Error in StochasticWfn: inner_sampling_target = static is the inner_nsteps = 0 replicated "
+              "anchor ensemble, but inner_nsteps = " +
               std::to_string(inner_nsteps) + " was given.");
-  if (parsed != InnerMode::Static && inner_nsteps <= 0)
-    APP_ABORT("Error in StochasticWfn: inner_mode = " + inner_mode +
+  if (parsed != SamplingTarget::Static && inner_nsteps <= 0)
+    APP_ABORT("Error in StochasticWfn: inner_sampling_target = " + inner_sampling_target +
               " is a dynamic sampler and requires inner_nsteps > 0.");
-  return inner_mode;
+  return inner_sampling_target;
 }
 
 inline ptree strip_stochastic_input_keys(ptree pt)
@@ -184,13 +141,9 @@ inline ptree strip_stochastic_input_keys(ptree pt)
   // (see interpret_inputs) but stay listed here: this list is "keys StochasticWfn owns OR HAS EVER
   // OWNED", so a legacy input is rejected by interpret_inputs rather than leaking through to the inner
   // wavefunction as an unknown key.
-  for (auto const& key : {"type", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
-                          "inner_mode", "inner_conditioning", "inner_leapfrog", "inner_persistence",
-                          "inner_equil_steps",
-                          "inner_sweeps", "inner_mcmc", "inner_mcmc_step", "inner_pool_burn_in",
-                          "inner_log_aggregate",
-                          "inner_measure_replicas", "inner_measure_stride",
-                          "inner_measure_restore"}) // last two: REMOVED keys, see interpret_inputs
+  for (auto const& key : {"type", "inner_n_samples", "inner_nsteps", "inner_seed", "inner_propagator",
+                          "inner_sampling_target", "inner_sample_update_steps",
+                          "inner_sampler", "inner_sampler_step", "inner_n_measure_samples"})
     pt.erase(key);
   return pt;
 }
@@ -242,18 +195,18 @@ public:
                                 int NAEB);
 
   bool inner_walkers_initialized() const { return inner_ensemble_.initialized; }
-  int inner_nwalkers() const { return inner_nwalkers_; }
+  int inner_n_samples() const { return inner_n_samples_; }
   int inner_nsteps() const { return inner_nsteps_; }
-  InnerMode inner_mode() const { return inner_mode_; }
-  // The three predicates below are SYNONYMS for inner_mode_ == Conditioned, kept because the algorithm
+  SamplingTarget inner_sampling_target() const { return inner_sampling_target_; }
+  // The three predicates below are SYNONYMS for inner_sampling_target_ == Conditioned, kept because the algorithm
   // bodies read better naming the mechanism in play at each site ("conditioned resample" vs "leapfrog
   // reweight" vs "persistent pool") than repeating the mode test. They are no longer independent knobs:
   // one mode turns on the conditioned target, the leapfrog reweight that makes it unbiased, and the
   // persistent chains that draw it -- the three are one algorithm, and any two without the third was
   // either rejected at construction or (conditioning without leapfrog) an estimator with no N(phi)
   // cancellation, i.e. wrong. Do NOT reintroduce them as separate inputs.
-  bool inner_conditioning() const { return inner_mode_ == InnerMode::Conditioned; }
-  bool inner_leapfrog() const { return inner_mode_ == InnerMode::Conditioned; }
+  bool inner_conditioning() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
+  bool inner_leapfrog() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
   // Persistent (tethered) inner sampling -- the ONLY conditioned inner sampler, not an option. Each
   // (outer walker, p) slot owns a Markov chain whose STATE is the auxiliary-field configuration Y that
   // generates its trial sample psi = B_T(Y)|phi_T>; chains are kept across outer steps and
@@ -263,7 +216,7 @@ public:
   // walkers and the determinants can be rebuilt exactly wherever a walker lands.
   // True exactly when the persistent chains are the active sampler, i.e. in Conditioned mode; Static and
   // Free have no chains.
-  bool inner_persistence() const { return inner_mode_ == InnerMode::Conditioned; }
+  bool inner_persistence() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
   // MH sweeps applied to the field-chain pool each time the pool is advanced. ONE knob for BOTH seams,
   // matching hafqmc's sample_update_steps, which drives its propagation-side re-tether
   // (update_tethered_samples_state) and its measurement-side advance (measure_block_energy_state) from
@@ -276,13 +229,13 @@ public:
   // tracking a MOVING target and its lag has a floor no sweep count removes; at the measurement seam the
   // walkers are fixed, so the lag decays geometrically to zero and extra sweeps also decorrelate
   // successive replicas.
-  int inner_sweeps() const { return inner_sweeps_; }
-  std::string const& inner_mcmc() const { return inner_mcmc_; }
-  double inner_mcmc_step() const { return inner_mcmc_step_; }
-  // Measurement-side replica averaging (inner_measure_replicas). inner_equil_steps equilibrates the pool
+  int inner_sample_update_steps() const { return inner_sample_update_steps_; }
+  std::string const& inner_sampler() const { return inner_sampler_; }
+  double inner_sampler_step() const { return inner_sampler_step_; }
+  // Measurement-side replica averaging (inner_n_measure_samples). inner_equil_steps equilibrates the pool
   // against walkers that move every propagation step; these knobs advance the pool at fixed walkers and
-  // average the local energy over inner_measure_replicas such advances.
-  int inner_measure_replicas() const { return inner_measure_replicas_; }
+  // average the local energy over inner_n_measure_samples such advances.
+  int inner_n_measure_samples() const { return inner_n_measure_samples_; }
   // True when the measurement seam advances the pool, i.e. whenever a live persistent chain exists.
   //
   // ⚠️ THIS NO LONGER REQUIRES nm > 1, and that is a deliberate hafqmc-matching change. hafqmc advances
@@ -315,7 +268,6 @@ public:
       s += inner_cond_mag_(i);
     return s;
   }
-  bool inner_log_aggregate() const { return inner_log_aggregate_; }
 
   WalkerSet<MEM>& inner_wset();
   WalkerSet<MEM> const& inner_wset() const;
@@ -348,12 +300,12 @@ public:
   // walkers (via the per-walker SLOT_LINEAGE map recorded through branch/load-balance), or -- when a
   // walker arrived from another rank, whose inner block this rank does not hold -- rebuilds them with a
   // fresh conditioned resample on the next reduction.
-  // No-op unless this is a conditioned dynamic trial (InnerMode::Conditioned); static,
+  // No-op unless this is a conditioned dynamic trial (SamplingTarget::WalkerOverlap); static,
   // free-projection, and delegate-limit trials carry no slot-conditioned inner blocks.
   template<class WlkSet>
   void permute_inner_blocks_after_pop(const WlkSet& wset);
 
-  bool at_delegate_limit() const { return inner_nwalkers_ == 1 && inner_nsteps_ == 0; }
+  bool at_delegate_limit() const { return inner_n_samples_ == 1 && inner_nsteps_ == 0; }
 
   NOMSD<MEM, devPsiT>& outer_nomsd() { return nomsd_; }
   NOMSD<MEM, devPsiT> const& outer_nomsd() const { return nomsd_; }
@@ -371,7 +323,7 @@ public:
   // ensemble against the OUTER walkers -- they reduce the inner ensemble against ITSELF:
   //   G_MF = <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T>
   //        = [sum_{p,q} <psi_p|c+c|psi_q>] / [sum_{p,q} <psi_p|psi_q>]
-  // over the P = inner_nwalkers_ walker-INDEPENDENT inner samples {psi_p} (uniform weight 1/P) -- the
+  // over the P = inner_n_samples_ walker-INDEPENDENT inner samples {psi_p} (uniform weight 1/P) -- the
   // inner-ensemble analogue of NOMSD's multi-determinant mean field, with the inner walkers playing the
   // role of the determinant expansion. vMF contracts that mean-field DM against the True Ham (estimator
   // 4, L.G_MF). Both collapse to the anchor density -- i.e. plain NOMSD::G_MF / vMF -- at the static
@@ -398,8 +350,8 @@ public:
   template<class WlkSet, class Mat, class TVec>
   void Energy(const WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0);
 
-  // Measurement entry point for the estimators: Energy() averaged over inner_measure_replicas_ replicas
-  // of the field pool at FIXED walkers (see inner_measure_replicas()). Needs non-const wset because the
+  // Measurement entry point for the estimators: Energy() averaged over inner_n_measure_samples_ replicas
+  // of the field pool at FIXED walkers (see inner_n_measure_samples()). Needs non-const wset because the
   // chain state lives in the outer walker buffer's TrialFields block, so advancing it writes there.
   //
   // Reduces to exactly Energy(wset, E, Ov, nt) -- same call, same values -- unless the replica path is
@@ -500,7 +452,7 @@ public:
   // regimes, selected by bp_uses_inner_ensemble():
   //  - OUTER-NOMSD DELEGATE (static limit / P==1): expose the OUTER nomsd_'s reference set -- the anchor
   //    {phi_T} = OrbMats(0) (weight 1) for the single-determinant trial, or its CI expansion otherwise.
-  //    Identical to plain NOMSD. Used at inner_nsteps==0 and inner_nwalkers==1.
+  //    Identical to plain NOMSD. Used at inner_nsteps==0 and inner_n_samples==1.
   //  - DEDICATED FREE-PROJECTION DRAW (the faithful set): for a dynamic trial (inner_nsteps>0, P>1),
   //    getReferences draws a FRESH, walker-INDEPENDENT free-projection ensemble {psi_p = B_T(Y^[p])|phi_T>}
   //    (bare p_T(Y)) and exposes those P samples with uniform weight 1/P, so back-propagation scores
@@ -517,20 +469,20 @@ public:
   //    block). Reduces to the delegate at inner_nsteps==0 / P==1.
   bool bp_uses_inner_ensemble() const
   {
-    return inner_nsteps_ > 0 && inner_nwalkers_ > 1
+    return inner_nsteps_ > 0 && inner_n_samples_ > 1
            && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr;
   }
 
   int total_number_of_references() const
   {
-    return bp_uses_inner_ensemble() ? inner_nwalkers_ : nomsd_.total_number_of_references();
+    return bp_uses_inner_ensemble() ? inner_n_samples_ : nomsd_.total_number_of_references();
   }
 
   int getNMO() const { return NMO; }
 
   ComplexType getReferenceWeight(int i) const
   {
-    return bp_uses_inner_ensemble() ? ComplexType(1.0 / static_cast<double>(inner_nwalkers_), 0.0)
+    return bp_uses_inner_ensemble() ? ComplexType(1.0 / static_cast<double>(inner_n_samples_), 0.0)
                                     : nomsd_.getReferenceWeight(i);
   }
 
@@ -544,7 +496,7 @@ public:
   HamiltonianTypes getHamType() const { return nomsd_.getHamType(); }
 
   // True iff this wavefunction's Hamiltonian operator can contract a FULL (un-rotated) mean-field G.
-  // StochasticWfn::vMF requires it at inner_nwalkers > 1; see HamiltonianOperations::has_fullG_vbias.
+  // StochasticWfn::vMF requires it at inner_n_samples > 1; see HamiltonianOperations::has_fullG_vbias.
   bool has_fullG_vbias() const { return nomsd_.has_fullG_vbias(); }
   auto getFieldTypes() { return nomsd_.getFieldTypes(); }
 
@@ -609,9 +561,11 @@ private:
   int ndown{-1};
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_;
   StochasticInnerEnsemble inner_ensemble_;
-  int inner_nwalkers_{1};
+  int inner_n_samples_{1};
   int inner_nsteps_{0};
-  double inner_timestep_{0.01};
+  // Set from the variational Hamiltonian's stamp (or, for a synthetic trial, the input).
+  // Deliberately NOT defaulted to a plausible value -- see the constructor.
+  double inner_timestep_{0.0};
   bool inner_step_pending_{false};
   // Guards the back-propagation reference draw so it happens at most ONCE per BP window.
   // Set true by draw_bp_reference_ensemble() after a draw; a repeated getReferences in the same window
@@ -621,24 +575,24 @@ private:
   // The inner-sampling mode. Static is the safe default: it is the only mode that needs no sampler
   // settings at all, and a dynamic trial must name its mode explicitly (see interpret_inputs) so that
   // Free -- correct but catastrophically noisy -- can never be reached by forgetting a key.
-  InnerMode inner_mode_{InnerMode::Static};
+  SamplingTarget inner_sampling_target_{SamplingTarget::Static};
   // Persistent-chain controls. There is no on/off member: the chains ARE the conditioned sampler, so
-  // inner_persistence() is derived from inner_mode_ == Conditioned. inner_sweeps_: MH sweeps per pool
+  // inner_persistence() is derived from inner_sampling_target_ == Conditioned. inner_sample_update_steps_: MH sweeps per pool
   // advance, applied from the one-time prime onwards -- there is no separate burn-in count, because the
-  // prime is followed by inner_sweeps_ sweeps every step and the outer equilibration window discards
+  // prime is followed by inner_sample_update_steps_ sweeps every step and the outer equilibration window discards
   // those steps anyway.
-  // inner_mcmc_: proposal kernel -- "pcn" (preconditioned Crank-Nicolson, prior-preserving:
+  // inner_sampler_: proposal kernel -- "pcn" (preconditioned Crank-Nicolson, prior-preserving:
   // Y* = sqrt(1-s^2) Y + s xi) or "gaussian" (random walk: Y* = Y + s xi, prior ratio in the
-  // acceptance). inner_mcmc_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
+  // acceptance). inner_sampler_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
   // independence redraw; gaussian: s > 0).
-  int inner_sweeps_{1};
-  std::string inner_mcmc_{"pcn"};
-  double inner_mcmc_step_{0.5};
+  int inner_sample_update_steps_{1};
+  std::string inner_sampler_{"pcn"};
+  double inner_sampler_step_{0.5};
   // Measurement-replica count. There is no restore flag: the measurement advance FEEDS FORWARD into
   // propagation, matching hafqmc, which keeps the pool its measurement produced. Restoring was a way of
   // pretending the measurement had no side effect on the chain, which is not what the reference
   // implementation does and cost a snapshot/restore of the whole field block per measurement.
-  int inner_measure_replicas_{1};
+  int inner_n_measure_samples_{1};
   // inner_chains_primed_: the per-walker field blocks hold live chain states (set at the first
   // persistent pool update, which runs inside begin_inner_step -- the one seam with non-const access
   // to the outer walker set). inner_dets_stale_: the cached inner determinants no longer match the
@@ -655,7 +609,6 @@ private:
   long energy_dump_call_{0};
   // Counts vbias() calls so the force-bias dump can limit itself to the first few. SAFIRE_DUMP_VBIAS only.
   long vbias_dump_call_{0};
-  bool inner_log_aggregate_{false};
   nda::array<ComplexType, 3> inner_anchor_;
   // Construction inputs for the inner walker set, cached at initialize_inner_walkers so a dedicated
   // mean-field scratch ensemble (mf_scratch_wset_) can be built on demand via the SAME (known-good)
@@ -685,7 +638,7 @@ private:
   // by getReferences. Defined in StochasticWfn.cpp (does not depend on the RefMat template).
   void draw_bp_reference_ensemble();
 
-  // Reset `target` to the anchor |phi_T>, size it to P = inner_nwalkers_, then advance inner_nsteps_ BARE
+  // Reset `target` to the anchor |phi_T>, size it to P = inner_n_samples_, then advance inner_nsteps_ BARE
   // free-projection steps (inner_propagator().Propagate_free) to produce a walker-INDEPENDENT P-sample
   // draw {psi_p = B_T(Y^[p])|phi_T>} of the trial. The one place the free-projection draw lives; shared by
   // draw_bp_reference_ensemble (back-propagation references) and mean_field_scratch_ensemble (the trial
@@ -726,7 +679,7 @@ private:
   void rebuild_inner_dets_from_chain_fields(WalkerSet<MEM> const& wset);
 
   // One Metropolis-Hastings sweep over all nw*P chains, in FIELD space (the chain state is the field
-  // configuration Y, not the determinant). Proposal per inner_mcmc_: pCN (prior-preserving) or
+  // configuration Y, not the determinant). Proposal per inner_sampler_: pCN (prior-preserving) or
   // random-walk gaussian (prior ratio in the acceptance). Target on slot q = ip*nw + w:
   // p_T(Y) * |<psi(Y)|phi_w>|. Batched: one Propagate_given_fields build of all proposal determinants
   // + one cross-overlap pass; rejected slots restore their determinant row (fields untouched).
@@ -734,11 +687,11 @@ private:
 
   // Per-outer-step persistent chain update, called from begin_inner_step (the non-const seam):
   // lazily size the TrialFields block, prime the chains on first use (+ burn-in), rebuild stale
-  // determinants, run inner_sweeps_ sweeps against the CURRENT (old) walkers, and refresh the
+  // determinants, run inner_sample_update_steps_ sweeps against the CURRENT (old) walkers, and refresh the
   // leapfrog conditioning magnitudes. Purely rank-local: no communication, no collectives.
   void update_persistent_chain_pool(WalkerSet<MEM>& wset);
 
-  // Advance the persistent pool by inner_sweeps_ sweeps against the CURRENT (fixed) walkers and
+  // Advance the persistent pool by inner_sample_update_steps_ sweeps against the CURRENT (fixed) walkers and
   // refresh the leapfrog conditioning magnitudes -- one measurement replica's worth of pool motion.
   // Same tail as update_persistent_chain_pool, minus the priming/sizing/staleness handling: the caller
   // (measure_energy) only runs when the chains are already live.
@@ -784,9 +737,9 @@ private:
                              Accumulate&& accumulate);
 
   // Whether vMF / G_MF can reduce the FORWARD inner ensemble directly (true), i.e. it is already in its
-  // walker-INDEPENDENT P-sample form (inner.size() == inner_nwalkers_) with P > 1. When false, vMF/G_MF do
+  // walker-INDEPENDENT P-sample form (inner.size() == inner_n_samples_) with P > 1. When false, vMF/G_MF do
   // NOT simply fall back to the anchor -- they branch on bp_uses_inner_ensemble():
-  //  - inner_nwalkers_ == 1 OR inner_nsteps_ == 0 (bp_uses_inner_ensemble() false): the trial IS the
+  //  - inner_n_samples_ == 1 OR inner_nsteps_ == 0 (bp_uses_inner_ensemble() false): the trial IS the
   //    anchor (a single/degenerate sample, or no free projection), so delegate to nomsd_'s anchor mean
   //    field -- exact, and avoids a redundant reduction. Subsumes the single-determinant delegate limit.
   //  - inner_nsteps_ > 0 && P > 1 but the ensemble has been expanded by a conditioned/leapfrog/persistent
@@ -799,22 +752,22 @@ private:
   {
     // A conditioned dynamic trial's forward ensemble is the slot-major nwalk*P walker-CONDITIONED form.
     // At nwalk==1 (a single outer walker per rank -- the normal MPI layout, and an explicitly-tested
-    // regime) that size collapses to 1*P == inner_nwalkers_ and would SPOOF the size test below, making
+    // regime) that size collapses to 1*P == inner_n_samples_ and would SPOOF the size test below, making
     // vMF/G_MF reduce the phi_w-conditioned ensemble as if it were the walker-independent trial. So gate
     // conditioned dynamic trials OUT explicitly: they always take the dedicated free-projection scratch
     // draw (mean_field_scratch_ensemble) regardless of nwalk. Persistence IS Conditioned mode, so
     // this covers the persistent path too. (The same nwalk==1 size ambiguity is handled in
     // conditioned_resample via the latch/flags rather than size -- see that routine.)
-    return inner_nwalkers_ > 1 && not inner_conditioning()
+    return inner_n_samples_ > 1 && not inner_conditioning()
            && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr
-           && int(inner_ensemble_.wset->size()) == inner_nwalkers_;
+           && int(inner_ensemble_.wset->size()) == inner_n_samples_;
   }
 
   // Build the normalized stochastic trial mean-field one-body Green's function <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T> into `Gsum` (full [1, nspin*npol*NMO*npol*NMO] layout) by reducing
-  // the P = inner_nwalkers_ walker-independent samples in `inner` against each other (the double sum
+  // the P = inner_n_samples_ walker-independent samples in `inner` against each other (the double sum
   // above). Shared by vMF (contracts it) and G_MF (returns it). Trial-only -- no outer walker set, no
   // conditioned resample. `inner` MUST be in the walker-INDEPENDENT P-sample form (inner.size() ==
-  // inner_nwalkers_): either the forward ensemble when mean_field_uses_inner_ensemble() is true, or the
+  // inner_n_samples_): either the forward ensemble when mean_field_uses_inner_ensemble() is true, or the
   // dedicated mean-field scratch draw (mean_field_scratch_ensemble()) when the forward ensemble has been
   // expanded to the conditioned nw*P form.
   void reduce_inner_mean_field_dm(WalkerSet<MEM>& inner, memory::buffered_array<MEM, ComplexType, 2>& Gsum);

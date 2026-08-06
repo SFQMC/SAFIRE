@@ -50,7 +50,7 @@ public:
 
   // Does vbias() accept a FULL [nwalk, nspin*npol*NMO*npol*NMO] density matrix, in addition to the
   // half-rotated compact one? NOMSD needs it for ndet>1 trials, and StochasticWfn::vMF needs it for
-  // ANY trial once inner_nwalkers > 1, because the stochastic mean field is a reduction of the inner
+  // ANY trial once inner_n_samples > 1, because the stochastic mean field is a reduction of the inner
   // ensemble against itself and has no half-rotated form. Callers that can hand over a full G must
   // gate on this: the operators that lack it must reject such a G, never reinterpret it.
   constexpr bool has_fullG_vbias() const { return true; }

@@ -49,7 +49,6 @@
 #include "AFQMC/Wavefunctions/WavefunctionFactory.h"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 
-#include <filesystem>
 
 #include "numerics/sparse/sparse.hpp"
 
@@ -412,14 +411,15 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     // The two-argument WavefunctionFactory constructor wires in HamFac so the factory can build the
     // inner (Variational) Hamiltonian on demand.
     WavefunctionFactory<MEM> WfnFac(HamFac);
+
     auto build_pt = [&](std::string id, bool with_inner_ham) {
       ptree pt;
       pt.put("name", id);
       pt.put("filename", wfn_file);
       mark_stochastic_wfn_input(pt);
-      pt.put("inner_nwalkers", 4);
+      pt.put("inner_n_samples", 4);
       pt.put("inner_nsteps", 1);
-      pt.put("inner_mode", "free"); // dynamic trials must name a mode; the bare draw suffices here
+      pt.put("inner_sampling_target", "gaussian"); // dynamic trials must name a mode; the bare draw suffices here
       ptree inner_prop;
       inner_prop.put("timestep", 0.01);
       pt.put_child("inner_propagator", inner_prop);
@@ -531,7 +531,7 @@ void wfn_factory_stochasticwfn_type_smoke(
     wfn_pt.put("name", "wfn_stoch");
     wfn_pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(wfn_pt);
-    wfn_pt.put("inner_nwalkers", 1);
+    wfn_pt.put("inner_n_samples", 1);
     WfnFac.push("wfn_stoch", wfn_pt);
     auto& wfn_stoch = WfnFac.getWavefunction(mpi, "wfn_stoch", type, &ham, 4);
     REQUIRE(wfn_stoch.is_stochastic_wavefunction());

@@ -293,7 +293,7 @@ void stochastic_back_propagation_driver_smoke(
     ptree wfn_min;
     wfn_min.put("filename", wfn_file);
     mark_stochastic_wfn_input(wfn_min);
-    wfn_min.put("inner_nwalkers", 4);
+    wfn_min.put("inner_n_samples", 4);
     wfn_min.put("inner_nsteps", 0);
 
     ptree ham_min;

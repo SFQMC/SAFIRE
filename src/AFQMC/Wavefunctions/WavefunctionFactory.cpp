@@ -137,20 +137,15 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
 
   if (pt.get<int>("inner_nsteps", 0) > 0)
   {
-    // Read the MODE, not the removed inner_conditioning boolean. This is a second consumer of the
-    // sampler selection, and it is the one that decides how the inner propagator is BUILT -- so if it
-    // and StochasticWfn ever disagree, the wavefunction runs a conditioned sampler against a
-    // free-projection propagator and Propagate_conditioned aborts at the first step. `pt` here is
-    // WavefunctionFactory::interpret_inputs' output, which carries inner_mode verbatim; StochasticWfn's
-    // own interpret_inputs does the legacy translation, so the two can only agree if that translation
-    // has already happened -- hence the abort below rather than a silent default to free projection.
-    auto mode_opt = pt.get_optional<std::string>("inner_mode");
+    // This is the SECOND consumer of the sampler selection, and the one that decides how the inner
+    // propagator is BUILT. If it and StochasticWfn ever disagree, the wavefunction runs a conditioned
+    // sampler against a free-projection propagator and Propagate_conditioned aborts at the first step.
+    // `pt` is WavefunctionFactory::interpret_inputs' output, which resolved the target once for both.
+    auto mode_opt = pt.get_optional<std::string>("inner_sampling_target");
     if (not mode_opt)
-      APP_ABORT("Error in buildStochasticInnerStack: inner_nsteps > 0 but no inner_mode -- the inner "
-                "propagator cannot be built without knowing whether the sampler is conditioned. A "
-                "legacy inner_conditioning / inner_leapfrog / inner_persistence input must be "
-                "translated to inner_mode before it reaches here.");
-    if (parse_inner_mode(*mode_opt) == InnerMode::Conditioned)
+      APP_ABORT("Error in buildStochasticInnerStack: inner_nsteps > 0 but no inner_sampling_target -- the inner "
+                "propagator cannot be built without knowing whether the sampler is conditioned.");
+    if (parse_sampling_target(*mode_opt) == SamplingTarget::WalkerOverlap)
     {
       // Walker-conditioned sampling: build the inner propagator in importance-sampling mode
       // mode (free_projection = false) so assemble_X applies the per-walker conditioning force bias.

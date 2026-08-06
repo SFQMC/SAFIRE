@@ -286,7 +286,7 @@ void require_finite_bp_one_rdm(h5::file const& file, std::string const& avg_path
 // runs backward propagation + FullObsHandler; asserts the accumulated 1-RDM is finite. Two regimes (one
 // function, `dynamic_leapfrog`):
 //   - static (default): inner_nsteps = 0 -- the static delegate limit.
-//   - dynamic: inner_nsteps = 1 with conditioned + leapfrog sampling -- a genuinely field-sampled trial
+//   - dynamic: inner_nsteps = 1 with walker_overlap sampling -- a genuinely field-sampled trial
 //     trial whose forward walk is numerically stable. (Plain free-projection, inner_nsteps > 0 +
 //     non-conditioned, is NOT exercised: its effective overlap Sum_p S_p collapses toward zero, blowing
 //     the hybrid weight ratio to NaN within the first population-control block -- a known free-projection
@@ -348,12 +348,11 @@ void stochastic_back_propagation_estimator_smoke(
     wfn_pt.put("name", "wfn_stoch_bp_est");
     wfn_pt.put("filename", wfn_file);
     mark_stochastic_wfn_input(wfn_pt);
-    wfn_pt.put("inner_nwalkers", 4);
+    wfn_pt.put("inner_n_samples", 4);
     wfn_pt.put("inner_nsteps", dynamic_leapfrog ? 1 : 0);
     if (dynamic_leapfrog)
     {
-      wfn_pt.put("inner_conditioning", true);
-      wfn_pt.put("inner_leapfrog", true);
+      wfn_pt.put("inner_sampling_target", "walker_overlap");
       ptree inner_prop;
       inner_prop.put("timestep", 0.01);
       wfn_pt.put_child("inner_propagator", inner_prop);
@@ -441,7 +440,7 @@ TEST_CASE("stochastic_back_propagation_estimator_smoke", "[estimator_handler][st
 }
 
 // Dynamic BP integration smoke: the SAME BackPropagatedEstimator path on a genuinely field-sampled
-// (inner_nsteps = 1) stochastic trial, using conditioned + leapfrog sampling. This is the resolution of
+// (inner_nsteps = 1) stochastic trial, using walker_overlap sampling. This is the resolution of
 // the earlier "dynamic BP -> NaN" footnote: the NaN was the free-projection forward-walk instability, not
 // a BP-path bug; importance sampling keeps the forward weights well-scaled (~1) over a full run, so the
 // back-propagated 1-RDM is finite. (With conditioned sampling the BP references are the outer-NOMSD
