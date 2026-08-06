@@ -414,13 +414,17 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     // Copy the fixture and stamp the trained-timestep attribute onto it (fixtures are shared and must
     // not be modified in place).
     const std::string stamped_hamil = "stamped_inner_hamil.h5";
+    // MATCHES the value the clone arm sets by hand: this test's premise is that the two arms are the
+    // same calculation, so they must share a timestep. That the stamp is what DRIVES the hvar arm is
+    // asserted separately, with a distinctive value, in stochastic_inner_timestep_comes_from_the_stamp.
+    const double stamped_dt = 0.01;
     std::filesystem::remove(stamped_hamil);
     std::filesystem::copy_file(hamil_file, stamped_hamil);
     {
       h5::file fh5(stamped_hamil, 'a');
       h5::group grp(fh5);
       h5::group hgrp = grp.open_group("Hamiltonian");
-      h5::h5_write_attribute(hgrp, "inner_timestep", 0.01);
+      h5::h5_write_attribute(hgrp, "inner_timestep", stamped_dt);
     }
 
     auto build_pt = [&](std::string id, bool with_inner_ham) {
@@ -431,9 +435,16 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
       pt.put("inner_n_samples", 4);
       pt.put("inner_nsteps", 1);
       pt.put("inner_sampling_target", "gaussian"); // dynamic trials must name a mode; the bare draw suffices here
-      ptree inner_prop;
-      inner_prop.put("timestep", 0.01);
-      pt.put_child("inner_propagator", inner_prop);
+      if (not with_inner_ham)
+      {
+        // ONLY the no-inner_hamiltonian arm sets the timestep by hand -- that is the one configuration
+        // where the input is still the source. Setting it alongside inner_hamiltonian is now a hard
+        // error (it would be silently overwritten by the stamp), and setting it here for BOTH arms is
+        // what previously let the factory's stamp-to-ptree store be dead without any test noticing.
+        ptree inner_prop;
+        inner_prop.put("timestep", 0.01);
+        pt.put_child("inner_propagator", inner_prop);
+      }
       if (with_inner_ham)
       {
         ptree inner_ham_block;
@@ -458,6 +469,10 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     // The factory built (and registered) a second Ham for the inner_hamiltonian trial only.
     REQUIRE(HamFac.has_input("wfn_hvar__inner_hamiltonian__"));
     REQUIRE_FALSE(HamFac.has_input("wfn_clone__inner_hamiltonian__"));
+
+    // Both arms are driving B_T with the same dt -- the precondition for everything compared below.
+    CHECK_THAT(wfn_hvar.stochastic_inner_timestep(), utils::Approx(stamped_dt));
+    CHECK_THAT(wfn_clone.stochastic_inner_timestep(), utils::Approx(0.01));
 
     std::shared_ptr<utils::RandomGenerator_t<>> rng_a = std::make_shared<utils::RandomGenerator_t<>>();
     std::shared_ptr<utils::RandomGenerator_t<>> rng_b = std::make_shared<utils::RandomGenerator_t<>>();
@@ -512,6 +527,106 @@ TEST_CASE("stochastic_inner_hamiltonian_same_as_true", "[wfn_factory]")
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_inner_hamiltonian_same_as_true<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
+}
+
+// -----------------------------------------------------------------------------------------------------
+// WHERE THE TRAINED TIMESTEP COMES FROM.
+//
+// dt = ts_v^2 parameterizes B_T built from the variational Hamiltonian, so the two travel together in
+// one file: export_safire stamps Hamiltonian/inner_timestep and the factory reads it. The input key is
+// gone. Three things have to hold, and only the first is about reading the file:
+//   (1) the stamped value REACHES the wavefunction -- a factory that reads the attribute into a ptree
+//       nobody consumes looks identical to one that works, so this asserts the built object's own dt,
+//       against a value that matches no default and no other arm of any test;
+//   (2) an unstamped inner_hamiltonian is a hard error, not a silent fallback to some default;
+//   (3) a hand-set inner_propagator.timestep alongside inner_hamiltonian is REFUSED, not overwritten --
+//       a deck that sets it must fail rather than run with a number it did not ask for.
+// -----------------------------------------------------------------------------------------------------
+template<MEMORY_SPACE MEM>
+void stochastic_inner_timestep_comes_from_the_stamp(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return; // Un-rotated full-G kernels are CPU-only today.
+  else
+  {
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    if (not utils::dynamic_inner_supports(type))
+      return; // dynamic inner ensemble: CLOSED/COLLINEAR only
+    if (type != CLOSED)
+      return;
+
+    ptree ham_pt;
+    ham_pt.put("name", "ham0");
+    ham_pt.put("filename", hamil_file);
+    HamiltonianFactory HamFac;
+    HamFac.push("ham0", ham_pt);
+    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+    // A value that is neither the retired input default nor any other test's dt: if this comes back
+    // out of the wavefunction, it can only have come through the attribute.
+    const double stamped_dt         = 0.0123;
+    const std::string stamped_ham   = "timestep_stamp_hamil.h5";
+    const std::string unstamped_ham = "timestep_unstamped_hamil.h5";
+    for (auto const& f : {stamped_ham, unstamped_ham})
+    {
+      std::filesystem::remove(f);
+      std::filesystem::copy_file(hamil_file, f); // fixtures are shared; never stamp them in place
+    }
+    {
+      h5::file fh5(stamped_ham, 'a');
+      h5::group grp(fh5);
+      h5::group hgrp = grp.open_group("Hamiltonian");
+      h5::h5_write_attribute(hgrp, "inner_timestep", stamped_dt);
+    }
+
+    auto build_pt = [&](std::string id, std::string inner_ham_file) {
+      ptree pt;
+      pt.put("name", id);
+      pt.put("filename", wfn_file);
+      mark_stochastic_wfn_input(pt);
+      pt.put("inner_n_samples", 4);
+      pt.put("inner_nsteps", 1);
+      pt.put("inner_sampling_target", "gaussian");
+      ptree inner_ham_block;
+      inner_ham_block.put("filename", inner_ham_file);
+      pt.put_child("inner_hamiltonian", inner_ham_block);
+      return pt; // NOTE: no inner_propagator -- production cannot supply one here
+    };
+
+    WavefunctionFactory<MEM> WfnFac(HamFac);
+    const int nwalk = 4;
+
+    // (1) the stamp drives the built object
+    WfnFac.push("wfn_stamped", build_pt("wfn_stamped", stamped_ham));
+    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stamped", type, &ham, nwalk);
+    CHECK_THAT(wfn.stochastic_inner_timestep(), utils::Approx(stamped_dt));
+
+    // (2) no stamp is fatal
+    WfnFac.push("wfn_unstamped", build_pt("wfn_unstamped", unstamped_ham));
+    REQUIRE_THROWS_AS(WfnFac.getWavefunction(mpi, "wfn_unstamped", type, &ham, nwalk), AppAbortException);
+
+    // (3) a hand-set timestep next to inner_hamiltonian is refused, not silently overwritten
+    ptree both = build_pt("wfn_both", stamped_ham);
+    ptree inner_prop;
+    inner_prop.put("timestep", 0.05);
+    both.put_child("inner_propagator", inner_prop);
+    WfnFac.push("wfn_both", both);
+    REQUIRE_THROWS_AS(WfnFac.getWavefunction(mpi, "wfn_both", type, &ham, nwalk), AppAbortException);
+  }
+}
+
+TEST_CASE("stochastic_inner_timestep_comes_from_the_stamp", "[wfn_factory]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "Trained inner timestep is read from inner_hamiltonian's stamp, and only from there.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_inner_timestep_comes_from_the_stamp<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 

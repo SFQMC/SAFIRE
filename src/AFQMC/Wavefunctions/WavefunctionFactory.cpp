@@ -357,6 +357,12 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
           // a propagator nobody trained, silently, because the input key defaulted to 0.01. Both the key
           // and the default are gone: we read the stamp export_safire writes, and fail closed without it.
           {
+            // A hand-set timestep alongside inner_hamiltonian is exactly the silent-override this change
+            // exists to kill: we would overwrite it below and the deck would read as if it took effect.
+            if (pt.get_optional<double>("inner_propagator.timestep"))
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_propagator.timestep may not be set "
+                        "when inner_hamiltonian is given -- the trained timestep is read from that "
+                        "Hamiltonian's 'inner_timestep' attribute. Remove the input key.");
             std::string var_file = var_pt.get<std::string>("filename");
             double inner_dt      = 0.0;
             bool have_dt         = false;
@@ -383,7 +389,12 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
             if (inner_dt <= 0.0)
               APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_hamiltonian '" + var_file +
                         "' has a non-positive inner_timestep.");
-            pt_in.put("inner_propagator.timestep", inner_dt);
+            // Write into `pt`, NOT `pt_in`: `pt` is what is moved into the wavefunction below.
+            // `pt_in` was consumed by interpret_inputs at the top of this function and is never read
+            // again, so putting the timestep there is a dead store and every dynamic trial then aborts
+            // on "needs an inner_propagator block". interpret_inputs has already run, so this key is
+            // deliberately factory-supplied and not re-validated -- it cannot come from the input.
+            pt.put("inner_propagator.timestep", inner_dt);
             app_log(2, " Inner propagator timestep read from {}: dt = {}", var_file, inner_dt);
           }
         }
