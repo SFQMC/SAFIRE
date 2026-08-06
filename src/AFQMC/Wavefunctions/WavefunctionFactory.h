@@ -109,7 +109,7 @@ public:
     // when stochastic is off and (b) lists it as a known pass-through key for compare_known_keys.
     //
     for (auto const& key :
-         {"inner_sampling_target", "inner_n_samples", "inner_nsteps",
+         {"inner_sampling_target", "inner_n_samples", "inner_nsteps", "inner_burn_in",
           "inner_sample_update_steps", "inner_sampler", "inner_sampler_step",
           "inner_n_measure_samples", "inner_seed", "inner_propagator", "inner_hamiltonian"})
       if (not stochastic && pt0.get_child_optional(key))
@@ -127,7 +127,7 @@ public:
       // read them (it runs before StochasticWfn's own interpret_inputs) and it would silently build a
       // free-projection propagator for a conditioned sampler.
       pt1.put("inner_sampling_target", resolve_sampling_target(pt0, inner_nsteps));
-      for (auto const& key : {"inner_sample_update_steps"})
+      for (auto const& key : {"inner_sample_update_steps", "inner_burn_in"})
         if (auto v = pt0.get_optional<int>(key))
           pt1.put(key, *v);
       pt1.put("inner_n_measure_samples", inner_n_measure_samples);

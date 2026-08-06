@@ -107,6 +107,7 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   inner_n_samples_    = pt.get<int>("inner_n_samples");
   inner_nsteps_      = pt.get<int>("inner_nsteps");
   inner_sampling_target_        = parse_sampling_target(pt.get<std::string>("inner_sampling_target"));
+  inner_burn_in_ = pt.get<int>("inner_burn_in");
   inner_sample_update_steps_ = pt.get<int>("inner_sample_update_steps");
   inner_n_measure_samples_ = pt.get<int>("inner_n_measure_samples");
   inner_sampler_        = pt.get<std::string>("inner_sampler");
@@ -161,6 +162,8 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   {
     if (inner_sample_update_steps_ < 0)
       APP_ABORT("Error in StochasticWfn: inner_sample_update_steps must be >= 0.");
+    if (inner_burn_in_ < 0)
+      APP_ABORT("Error in StochasticWfn: inner_burn_in must be >= 0.");
     if (inner_sampler_ == "metropolis")
       APP_ABORT("Error in StochasticWfn: inner_sampler = 'metropolis' (the determinant-space independence "
                 "sampler) has been replaced by field-space kernels; use 'pcn' (equivalent physics at "
@@ -209,6 +212,9 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
   int inner_n_measure_samples = pt0.get<int>("inner_n_measure_samples", 1);
 
   const int inner_sample_update_steps = pt0.get<int>("inner_sample_update_steps", 1);
+  // hafqmc: burn_in (--trial-burn-in, default 100). One-time equilibration of the field chains at the
+  // prime, before the walk starts; inner_sample_update_steps is what every later advance costs.
+  const int inner_burn_in = pt0.get<int>("inner_burn_in", 100);
 
   std::string inner_sampler = pt0.get<std::string>("inner_sampler", "pcn");
   // proposal step size s: kernel-dependent default. pcn: s = 1 (independence proposal) -- the validated
@@ -221,6 +227,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
   pt1.put("inner_nsteps", inner_nsteps);
   pt1.put("inner_sampling_target", inner_sampling_target);
   pt1.put("inner_sample_update_steps", inner_sample_update_steps);
+  pt1.put("inner_burn_in", inner_burn_in);
   pt1.put("inner_n_measure_samples", inner_n_measure_samples);
   pt1.put("inner_sampler", inner_sampler);
   pt1.put("inner_sampler_step", inner_sampler_step);
@@ -238,6 +245,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "inner_nsteps",
       "inner_sampling_target",
       "inner_sample_update_steps",
+      "inner_burn_in",
       "inner_n_measure_samples",
       "inner_sampler",
       "inner_sampler_step",
@@ -265,7 +273,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
         names += (names.empty() ? "" : ", ") + u;
       APP_ABORT("Error in StochasticWfn::interpret_inputs: unknown stochastic input key(s): " + names +
                 ".\nThe inner_* surface is closed and has no backward compatibility. Settable keys are: "
-                "inner_sampling_target, inner_n_samples, inner_nsteps, "
+                "inner_sampling_target, inner_n_samples, inner_nsteps, inner_burn_in, "
                 "inner_sample_update_steps, inner_sampler, inner_sampler_step, inner_n_measure_samples, "
                 "inner_seed, inner_propagator, inner_hamiltonian.");
     }

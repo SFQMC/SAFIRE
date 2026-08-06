@@ -529,6 +529,11 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
     inner_chains_primed_ = true;
     rebuild_inner_dets_from_chain_fields(wset);
     inner_dets_stale_ = false;
+    // One-time burn-in of the freshly primed chains, matching hafqmc's burn_in. The per-advance sweeps
+    // below are paid every step thereafter; this is the only equilibration that happens before the walk
+    // has moved a walker, so it is what stops the first steps sampling a pool still at its prior draw.
+    for (int sweep = 0; sweep < inner_burn_in_; ++sweep)
+      chain_pool_sweep(wset);
   }
   else if (inner_dets_stale_ || inner_ensemble_.wset->size() != long(nw) * P)
   {

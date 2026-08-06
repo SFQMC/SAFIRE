@@ -142,7 +142,7 @@ inline ptree strip_stochastic_input_keys(ptree pt)
   // OWNED", so a legacy input is rejected by interpret_inputs rather than leaking through to the inner
   // wavefunction as an unknown key.
   for (auto const& key : {"type", "inner_n_samples", "inner_nsteps", "inner_seed", "inner_propagator",
-                          "inner_sampling_target", "inner_sample_update_steps",
+                          "inner_sampling_target", "inner_burn_in", "inner_sample_update_steps",
                           "inner_sampler", "inner_sampler_step", "inner_n_measure_samples"})
     pt.erase(key);
   return pt;
@@ -229,6 +229,7 @@ public:
   // tracking a MOVING target and its lag has a floor no sweep count removes; at the measurement seam the
   // walkers are fixed, so the lag decays geometrically to zero and extra sweeps also decorrelate
   // successive replicas.
+  int inner_burn_in() const { return inner_burn_in_; }
   int inner_sample_update_steps() const { return inner_sample_update_steps_; }
   std::string const& inner_sampler() const { return inner_sampler_; }
   double inner_sampler_step() const { return inner_sampler_step_; }
@@ -585,6 +586,10 @@ private:
   // Y* = sqrt(1-s^2) Y + s xi) or "gaussian" (random walk: Y* = Y + s xi, prior ratio in the
   // acceptance). inner_sampler_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
   // independence redraw; gaussian: s > 0).
+  // MH sweeps run ONCE when the chains are primed, before the walk starts -- hafqmc's burn_in
+  // (--trial-burn-in, default 100 in the production runner). Distinct from inner_sample_update_steps,
+  // which is paid on every pool advance thereafter.
+  int inner_burn_in_{0};
   int inner_sample_update_steps_{1};
   std::string inner_sampler_{"pcn"};
   double inner_sampler_step_{0.5};
