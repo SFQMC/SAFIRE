@@ -48,6 +48,13 @@ public:
   static const HamiltonianTypes HamOpType = ModelHamiltonian; 
   HamiltonianTypes getHamType() const { return ModelHamiltonian; }
 
+  // Does vbias() accept a FULL [nwalk, nspin*npol*NMO*npol*NMO] density matrix, in addition to the
+  // half-rotated compact one? NOMSD needs it for ndet>1 trials, and StochasticWfn::vMF needs it for
+  // ANY trial once inner_nwalkers > 1, because the stochastic mean field is a reduction of the inner
+  // ensemble against itself and has no half-rotated form. Callers that can hand over a full G must
+  // gate on this: the operators that lack it must reject such a G, never reinterpret it.
+  constexpr bool has_fullG_vbias() const { return true; }
+
   ModelHamOps() {};
 
   ModelHamOps(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,
@@ -368,11 +375,35 @@ public:
     int nelec = nel[0]+nel[1];
     utils::check(v.extent(1) == nCV, "Size mismatch");
 
-    memory::array_view<MEM,const ComplexType,3> G3d(std::array<long,3>{nwalk,nelec,npol*NMO},G.data());
+    // Dispatch on the G LAYOUT, not on the trial determinant count. Both branches end in the same
+    // copy_select over the same fixed index list n2IJ (I*M+J, M = npol*NMO), which addresses the FULL
+    // [nspin*npol*NMO, npol*NMO] density matrix; the half-rotated branch only differs in that it first
+    // reconstructs that full G from a compact one using the trial. So the branch is a property of what
+    // the caller handed us, and nci does not determine that:
+    //   - NOMSD passes a compact G at ndet==1 and a full G at ndet>1 (hence the old nci test worked),
+    //   - StochasticWfn::vMF / G_MF pass a FULL G built by reducing the inner ensemble against itself,
+    //     while the underlying trial is single-determinant (nci == 1).
+    // Keying on nci therefore reinterpreted the stochastic full G through a compact array_view over the
+    // same buffer. Because a compact G is SMALLER than a full one for any less-than-full filling, that
+    // read stayed in bounds and returned a quietly wrong, P-dependent vMF instead of aborting -- unlike
+    // the solid-state operators, which trip their size check and abort loudly on the same input.
+    long const half_size = long(nelec)*npol*NMO;
+    long const full_size = long(nspin)*npol*NMO*npol*NMO;
+    utils::check(G.extent(0) == nwalk, "ModelHamOps::vbias: Size mismatch");
+    utils::check(G.extent(1) == half_size || G.extent(1) == full_size,
+                 "ModelHamOps::vbias: Size mismatch");
+    // Precedence matches Real3IndexFactorization::vbias. The two sizes coincide only at complete
+    // filling (nelec == nspin*npol*NMO), where G is the identity and the branches agree anyway.
+    bool const half_rotated = (G.extent(1) == half_size);
+
     memory::buffered_array<MEM,ComplexType,2> GIJ(nwalk, nIJ);
     GIJ() = ComplexType(0.0);
 
-    if( nci == 1 ) {
+    if( half_rotated ) {
+      // Un-rotating a compact G needs the determinant it was rotated against, so this layout is only
+      // meaningful for a single-determinant trial.
+      utils::check(nci == 1, "ModelHamOps::vbias: half-rotated G requires a single-determinant trial");
+      memory::array_view<MEM,const ComplexType,3> G3d(std::array<long,3>{nwalk,nelec,npol*NMO},G.data());
       if( sparse_G_eval ) {
          getGIJ_for_vbias(G3d,GIJ);
       } else {
@@ -382,17 +413,14 @@ public:
         // B[:][n] = A[:][ I[n] ]
         nda::copy_select(false, 1, n2IJ_dev, ComplexType(1.0), Gfull, ComplexType(0.0), GIJ);
       }
-      for(int i=0; i<Hams.size(); i++) 
-        Hams[i].vbias(GIJ, v(all,field_ranges[i]), dt); 
     } else {
-      // if nci > 1, we expect [...][nwalk]
-      utils::check(G.shape() == std::array<long,2>{nwalk, nspin*npol*NMO*npol*NMO}, "Size mismatch");
+      // Full G, already in the layout n2IJ addresses -- valid for any nci.
       // B[:][n] = A[:][ I[n] ]
       nda::copy_select(false, 1, n2IJ_dev, ComplexType(1.0), G, ComplexType(0.0), GIJ);
-
-      for(int i=0; i<Hams.size(); i++) 
-        Hams[i].vbias(GIJ, v(all,field_ranges[i]), dt);
     }
+
+    for(int i=0; i<Hams.size(); i++)
+      Hams[i].vbias(GIJ, v(all,field_ranges[i]), dt);
   }
 
   template<class... Args> void generalizedFockMatrix([[maybe_unused]] Args&&... args)

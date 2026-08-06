@@ -213,6 +213,14 @@ public:
     return std::visit([&](auto&& a) { return a.getHamType(); }, var);
   }
 
+  // True iff the underlying Hamiltonian operator accepts a FULL (un-rotated) G in vbias. Callers that
+  // build a mean field with no half-rotated form -- StochasticWfn::vMF at inner_nwalkers > 1 -- must
+  // gate on this rather than discover the gap as a size mismatch deep in the operator.
+  bool has_fullG_vbias() const
+  {
+    return std::visit([&](auto&& a) { return a.has_fullG_vbias(); }, var);
+  }
+
   auto getFieldTypes()
   {
     return std::visit([&](auto&& a) { return a.getFieldTypes(); }, var);

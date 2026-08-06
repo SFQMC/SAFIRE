@@ -45,6 +45,12 @@ public:
   static const HamiltonianTypes HamOpType = KPFactorized;
   HamiltonianTypes getHamType() const { return HamOpType; }
 
+  // See has_fullG_vbias() in Real3IndexFactorization. Not implemented here: vbias()'s ndet>1 branch is
+  // a stub, and there is no Guu_from_full to build the intermediate from an un-rotated G. A full G
+  // handed to vbias() is rejected by its size check rather than reinterpreted, so this is a loud
+  // capability gap, not a silent wrong answer -- but callers should gate on it and say so plainly.
+  constexpr bool has_fullG_vbias() const { return false; }
+
   // since arrays can be in host, can't assume that types are consistent
   KP3IndexFactorization(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,
           WALKER_TYPES type,

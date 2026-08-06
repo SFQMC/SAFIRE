@@ -45,6 +45,13 @@ public:
   static const HamiltonianTypes HamOpType = RealDenseFactorized;
   HamiltonianTypes getHamType() const { return HamOpType; }
 
+  // Does vbias() accept a FULL [nwalk, nspin*npol*NMO*npol*NMO] density matrix, in addition to the
+  // half-rotated compact one? NOMSD needs it for ndet>1 trials, and StochasticWfn::vMF needs it for
+  // ANY trial once inner_nwalkers > 1, because the stochastic mean field is a reduction of the inner
+  // ensemble against itself and has no half-rotated form. Callers that can hand over a full G must
+  // gate on this: the operators that lack it must reject such a G, never reinterpret it.
+  constexpr bool has_fullG_vbias() const { return true; }
+
   Real3IndexFactorization(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> ctxt,
         WALKER_TYPES type,
         int NMO_,

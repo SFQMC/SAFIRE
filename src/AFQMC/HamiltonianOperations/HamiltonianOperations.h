@@ -126,6 +126,10 @@ public:
     energy_fullG_impl(E_, G(), addH1, addEJ, addEXX);
   }
 
+  // True iff vbias() accepts a FULL [nwalk, nspin*npol*NMO*npol*NMO] G as well as the half-rotated
+  // compact one. See the per-operator definitions for what "full" costs each factorization.
+  bool has_fullG_vbias() const;
+
   int number_of_cholesky_vectors() const;
 
   int number_of_ke_vectors() const;
