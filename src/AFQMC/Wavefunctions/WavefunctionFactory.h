@@ -103,13 +103,10 @@ public:
     // unclamped default made it derive an illegal stride. See the comment there for why max() and not a
     // relaxed validation.
     int inner_measure_stride = pt0.get<int>("inner_measure_stride", std::max(1, inner_equil_steps));
-    bool inner_measure_restore = pt0.get<bool>("inner_measure_restore", true);
     std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "pcn");
     // pcn default s = 1 (independence proposal): validated conditioned-path default (see StochasticWfn).
     double inner_mcmc_step = pt0.get<double>("inner_mcmc_step", inner_mcmc == "gaussian" ? 0.05 : 1.0);
     bool inner_log_aggregate = pt0.get<bool>("inner_log_aggregate", false);
-    // Current-walker conditioning: advance persistent pool at end-of-step against phi_new.
-    bool inner_condition_on_new = pt0.get<bool>("inner_condition_on_new", false);
     int inner_seed   = pt0.get<int>("inner_seed", 777);
     auto inner_propagator_block = pt0.get_child_optional("inner_propagator");
     // inner_hamiltonian: optional block naming the second (Variational) Hamiltonian HDF5 file for the
@@ -126,8 +123,8 @@ public:
          {"inner_nwalkers", "inner_nsteps", "inner_mode",
           "inner_conditioning", "inner_leapfrog", "inner_persistence",
           "inner_equil_steps", "inner_pool_burn_in", "inner_measure_replicas", "inner_measure_stride",
-          "inner_measure_restore", "inner_mcmc", "inner_mcmc_step",
-          "inner_log_aggregate", "inner_condition_on_new", "inner_seed", "inner_propagator",
+          "inner_measure_restore", "inner_condition_on_new",
+          "inner_mcmc", "inner_mcmc_step", "inner_log_aggregate", "inner_seed", "inner_propagator",
           "inner_hamiltonian"})
       if (not stochastic && pt0.get_child_optional(key))
         APP_ABORT("Error in WavefunctionFactory::interpret_inputs: " + std::string(key) +
@@ -147,11 +144,9 @@ public:
       pt1.put("inner_equil_steps", inner_equil_steps);
       pt1.put("inner_measure_replicas", inner_measure_replicas);
       pt1.put("inner_measure_stride", inner_measure_stride);
-      pt1.put("inner_measure_restore", inner_measure_restore);
       pt1.put("inner_mcmc", inner_mcmc);
       pt1.put("inner_mcmc_step", inner_mcmc_step);
       pt1.put("inner_log_aggregate", inner_log_aggregate);
-      pt1.put("inner_condition_on_new", inner_condition_on_new);
       pt1.put("inner_seed", inner_seed);
       if (inner_propagator_block)
         pt1.put_child("inner_propagator", *inner_propagator_block);
@@ -169,11 +164,9 @@ public:
       "inner_equil_steps",
       "inner_measure_replicas",
       "inner_measure_stride",
-      "inner_measure_restore",
       "inner_mcmc",
       "inner_mcmc_step",
       "inner_log_aggregate",
-      "inner_condition_on_new",
       "inner_seed",
       "inner_propagator",
       "inner_hamiltonian",

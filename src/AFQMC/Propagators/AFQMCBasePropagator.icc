@@ -150,9 +150,6 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
     hybrid_walker_update(wset, dt, apply_constrain, importance_sampling, Eshift, new_overlaps, MFfactor,
                          hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, symmetric_split, step0,
                          debug_verbosity, use_cp_constraint, eloc_bound_stats);
-    // end_inner_step: re-tether pool to phi_new after hybrid_walker_update, before popControl.
-    if (wfn->conditions_on_new_walker())
-      wfn->end_inner_step(wset, new_overlaps);
   }
   else
   {

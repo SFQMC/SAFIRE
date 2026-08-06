@@ -241,51 +241,6 @@ void StochasticWfn<MEM, devPsiT>::dump_vbias_row(long call, int rows, int naea, 
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
-bool StochasticWfn<MEM, devPsiT>::cwc_measure_mag()
-{
-  return std::getenv("SAFIRE_CWC_MEASURE_MAG") != nullptr;
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-int StochasticWfn<MEM, devPsiT>::pool_seam_handoff_mode()
-{
-  // Optional pool-advance weight handoff (env SAFIRE_POOL_HANDOFF). begin_inner_step re-syncs OVLP after
-  // the pool advances, so the pool-change ratio r = O_pool_new(phi)/O_pool_old(phi) at fixed walker is
-  // normally dropped from WEIGHT. Modes: off (default); phase -> w *= max(0, cos arg r);
-  // full -> w *= |r| * max(0, cos arg r). Resolved once at first call.
-  static const int mode = [] {
-    const char* v = std::getenv("SAFIRE_POOL_HANDOFF");
-    if (v == nullptr)
-      return 0;
-    if (std::string(v) == "full")
-      return 2;
-    return 1;
-  }();
-  return mode;
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-void StochasticWfn<MEM, devPsiT>::dump_poolseam_row(long call, int w, ComplexType lo_old, ComplexType lo_new)
-{
-  // Debug-only: append one row per walker per step to $SAFIRE_DUMP_POOLSEAM, measuring the pool-change
-  // ratio the production path discards. Columns:
-  //   call w Re(lo_old) Im(lo_old) Re(lo_new) Im(lo_new) log|r| arg(r) max(0,cos arg r)
-  // with lo_old/lo_new = log O(phi_t) against the pre/post-advance pool and r = exp(lo_new - lo_old).
-  // Offline: the energy the missing handoff is worth is <1 - max(0,cos arg r)>/dt.
-  const char* path = std::getenv("SAFIRE_DUMP_POOLSEAM");
-  if (path == nullptr)
-    return;
-  std::ofstream f(path, (call == 0 && w == 0) ? std::ios::trunc : std::ios::app);
-  if (!f)
-    return;
-  const double dtheta = double(lo_new.imag() - lo_old.imag());
-  const double c      = std::cos(dtheta);
-  f << call << ' ' << w << ' ' << std::setprecision(14) << std::scientific << lo_old.real() << ' '
-    << lo_old.imag() << ' ' << lo_new.real() << ' ' << lo_new.imag() << ' '
-    << double(lo_new.real() - lo_old.real()) << ' ' << dtheta << ' ' << (c > 0.0 ? c : 0.0) << '\n';
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
 bool StochasticWfn<MEM, devPsiT>::want_slater_dump()
 {
   return std::getenv("SAFIRE_DUMP_SLATER") != nullptr;
@@ -598,7 +553,7 @@ void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
   // One measurement replica's pool motion: inner_measure_stride_ sweeps against the CURRENT walkers,
   // then refresh the leapfrog conditioning magnitudes so the next reduction's weights match the pool it
   // is about to measure with. This is update_persistent_chain_pool's tail with the priming, sizing and
-  // staleness branches removed -- measure_replicas_active() already guarantees primed, non-stale chains,
+  // staleness branches removed -- measure_advances_pool() already guarantees primed, non-stale chains,
   // and a measurement must never be the thing that first creates them.
   //
   // The walkers do not move across these sweeps, so unlike the propagation-side advance the chain is

@@ -326,13 +326,13 @@ public:
   // (false for a non-stochastic wavefunction, and for a stochastic one whose nm == 1 or whose pool is
   // not a live persistent chain). Read-only; exists so a test can assert the replica path is LIVE
   // rather than pass vacuously on the plain-Energy fallback.
-  bool stochastic_measure_replicas_active() const
+  bool stochastic_measure_advances_pool() const
   {
     return std::visit(
         [](auto&& a) -> bool {
           using Wfn = std::decay_t<decltype(a)>;
           if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.measure_replicas_active();
+            return a.measure_advances_pool();
           return false;
         },
         var);
@@ -394,34 +394,6 @@ public:
             a.measure_energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
           else
             a.Energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
-        },
-        var);
-  }
-
-  // End-of-step seam for the current-walker-conditioning path (StochasticWfn only; no-op otherwise and
-  // internally no-op unless inner_condition_on_new is active). See StochasticWfn::end_inner_step.
-  template<class WlkSet, class TVec>
-  void end_inner_step(WlkSet& wset, TVec const& old_new_logovlp)
-  {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.end_inner_step(wset, old_new_logovlp);
-        },
-        var);
-  }
-
-  // True only for a StochasticWfn running the current-walker-conditioning path.
-  bool conditions_on_new_walker() const
-  {
-    return std::visit(
-        [&](auto&& a) -> bool {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.conditions_on_new_walker();
-          else
-            return false;
         },
         var);
   }

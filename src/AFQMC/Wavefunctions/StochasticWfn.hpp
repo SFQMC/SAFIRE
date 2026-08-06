@@ -187,9 +187,11 @@ inline ptree strip_stochastic_input_keys(ptree pt)
   for (auto const& key : {"type", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
                           "inner_mode", "inner_conditioning", "inner_leapfrog", "inner_persistence",
                           "inner_equil_steps",
-                          "inner_mcmc", "inner_mcmc_step", "inner_pool_burn_in", "inner_log_aggregate",
-                          "inner_condition_on_new", "inner_measure_replicas", "inner_measure_stride",
-                          "inner_measure_restore"})
+                          "inner_mcmc", "inner_mcmc_step", "inner_pool_burn_in",
+                          "inner_log_aggregate",
+                          "inner_measure_replicas", "inner_measure_stride",
+                          "inner_equil_steps",
+                          "inner_measure_restore"}) // last: REMOVED key, see interpret_inputs
     pt.erase(key);
   return pt;
 }
@@ -264,22 +266,27 @@ public:
   // Free have no chains.
   bool inner_persistence() const { return inner_mode_ == InnerMode::Conditioned; }
   int inner_equil_steps() const { return inner_equil_steps_; }
+  int inner_measure_stride() const { return inner_measure_stride_; }
   std::string const& inner_mcmc() const { return inner_mcmc_; }
   double inner_mcmc_step() const { return inner_mcmc_step_; }
   // Measurement-side replica averaging (inner_measure_replicas). inner_equil_steps equilibrates the pool
   // against walkers that move every propagation step; these knobs advance the pool at fixed walkers and
   // average the local energy over inner_measure_replicas such advances.
   int inner_measure_replicas() const { return inner_measure_replicas_; }
-  int inner_measure_stride() const { return inner_measure_stride_; }
-  bool inner_measure_restore() const { return inner_measure_restore_; }
-  // True when measure_energy should average over replicas: nm > 1 AND the pool is a live persistent
-  // walker-conditioned chain, since advancing it is what a replica IS. The other modes (static anchor,
-  // free projection) have no chain to sweep, so measure_energy falls straight through to Energy().
-  // Public so a test can assert the replica path is LIVE instead of passing vacuously on that fallback.
-  bool measure_replicas_active() const
+  // True when the measurement seam advances the pool, i.e. whenever a live persistent chain exists.
+  //
+  // ⚠️ THIS NO LONGER REQUIRES nm > 1, and that is a deliberate hafqmc-matching change. hafqmc advances
+  // its pool by sample_update_steps sweeps against the CURRENT walkers before EVERY block measurement
+  // (trial/stochastic_runtime_methods.py, measure_block_energy_state -> advance_steps), including the
+  // n_measure_samples == 1 case. SAFIRE used to skip the advance entirely at nm == 1, so it measured with
+  // a pool tethered to the walker as of the START of the last propagation step -- several steps, an
+  // orthogonalisation and possibly a population-control event stale. nm is now purely the number of
+  // replicas AVERAGED; whether the pool advances is not a knob.
+  //
+  // Public so a test can assert the path is LIVE instead of passing vacuously on the fallback.
+  bool measure_advances_pool() const
   {
-    return inner_measure_replicas_ > 1 && inner_persistence() && inner_chains_primed_ &&
-        not inner_dets_stale_;
+    return inner_persistence() && inner_chains_primed_ && not inner_dets_stale_;
   }
   // Cumulative Metropolis acceptance fraction of the field-space chain updates on this rank
   // (1.0 before any proposal has been made).
@@ -320,19 +327,6 @@ public:
   // walker φ, so the step's overlap RATIO new/old (Eq. 25) shares one ensemble and 𝒩(φ) cancels.
   template<class WlkSet>
   void begin_inner_step(WlkSet& wset);
-
-  // Current-walker conditioning (inner_condition_on_new_ only). Called after the phaseless weight update
-  // with old_new_logovlp = log O_pool_old(phi_new). Re-tethers the pool to phi_new, applies a phase-only
-  // handoff on WEIGHT, and overwrites OVLP with log O_pool_new(phi_new). Must run before popControl.
-  template<class WlkSet, class TVec>
-  void end_inner_step(WlkSet& wset, TVec const& old_new_logovlp);
-
-  // True when the current-walker conditioning path is active, so the propagator knows to call
-  // end_inner_step (and to skip it for every other mode/wavefunction).
-  bool conditions_on_new_walker() const
-  {
-    return inner_condition_on_new_ && inner_persistence();
-  }
 
   // Realign the conditioned inner ensemble with the outer walker set after an outer population-control
   // event (branch + load balance); the driver calls this immediately after wset.popControl(). The
@@ -399,7 +393,7 @@ public:
   // chain state lives in the outer walker buffer's TrialFields block, so advancing it writes there.
   //
   // Reduces to exactly Energy(wset, E, Ov, nt) -- same call, same values -- unless the replica path is
-  // active (measure_replicas_active()), so every existing input is bit-for-bit unchanged.
+  // active (measure_advances_pool()).
   //
   // Estimator convention: E is the mean of per-replica energy ratios; Ov is the walker's stored log
   // overlap (the pool weights were accumulated against), so EnergyEstimator's exp(ovlp - OVLP) stays 1.
@@ -627,18 +621,15 @@ private:
   // Y* = sqrt(1-s^2) Y + s xi) or "gaussian" (random walk: Y* = Y + s xi, prior ratio in the
   // acceptance). inner_mcmc_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
   // independence redraw; gaussian: s > 0).
-  // Current-walker conditioning: advance the persistent pool at end-of-step against phi_new so leapfrog
-  // weights have unit magnitude at measurement. Default false preserves the begin-of-step phi_old path.
-  bool inner_condition_on_new_{false};
   int inner_equil_steps_{1};
+  int inner_measure_stride_{1};
   std::string inner_mcmc_{"pcn"};
   double inner_mcmc_step_{0.5};
-  // Measurement-replica controls (default 1 => measure_energy is Energy).
-  // inner_measure_stride_ defaults to inner_equil_steps. inner_measure_restore_ snapshots chain fields
-  // before the replica loop and restores them after so measurement does not advance propagation.
+  // Measurement-replica count. There is no restore flag: the measurement advance FEEDS FORWARD into
+  // propagation, matching hafqmc, which keeps the pool its measurement produced. Restoring was a way of
+  // pretending the measurement had no side effect on the chain, which is not what the reference
+  // implementation does and cost a snapshot/restore of the whole field block per measurement.
   int inner_measure_replicas_{1};
-  int inner_measure_stride_{1};
-  bool inner_measure_restore_{true};
   // inner_chains_primed_: the per-walker field blocks hold live chain states (set at the first
   // persistent pool update, which runs inside begin_inner_step -- the one seam with non-const access
   // to the outer walker set). inner_dets_stale_: the cached inner determinants no longer match the
@@ -744,7 +735,7 @@ private:
   // (measure_energy) only runs when the chains are already live.
   void advance_measure_pool(WalkerSet<MEM>& wset);
 
-  // Snapshot / restore the chain state for inner_measure_restore_. The chain STATE is the field
+  // UNUSED-BY-PRODUCTION helpers kept for tests/diagnostics only. The chain STATE is the field
   // configuration, so the fields alone are a complete snapshot: restoring them and rebuilding the
   // determinants deterministically (rebuild_inner_dets_from_chain_fields) returns the pool exactly
   // where the measurement found it. Cheap in memory -- [nwalk, P*nsteps*nCV] -- versus copying the
@@ -827,9 +818,6 @@ private:
   static void dump_persample_row(long call, int ip, ComplexType lin_ov, ComplexType s, ComplexType e0,
                                  ComplexType e1, ComplexType e2);
 
-  // Env SAFIRE_CWC_MEASURE_MAG: normalize leapfrog weights by |<psi|phi_measured>| (diagnostic only).
-  static bool cwc_measure_mag();
-
   // Env SAFIRE_DUMP_VBIAS: dump walker-0 phi and its force bias for offline cross-checks. First 32 calls.
   static bool want_vbias_dump();
   void dump_vbias_row(long call, int rows, int naea, ComplexType const* phi, int nCV,
@@ -843,14 +831,6 @@ private:
   static bool want_walker_dump();
   // Env SAFIRE_DUMP_WALKERS: append walker-0 phi per measurement event for offline reference eloc.
   static void dump_walker_row(long call, int rows, int naea, ComplexType const* phi);
-
-  // Env SAFIRE_POOL_HANDOFF: optionally apply the pool-change ratio r to WEIGHT when OVLP is re-synced.
-  // Returns 0 (off), 1 (phase only), or 2 (magnitude and phase).
-  static int pool_seam_handoff_mode();
-  // Env SAFIRE_DUMP_POOLSEAM: log overlap before/after OVLP re-sync and derived pool-change statistics.
-  static void dump_poolseam_row(long call, int w, ComplexType lo_old, ComplexType lo_new);
-  // Counts begin_inner_step re-sync events for the two diagnostics above.
-  long pool_seam_call_{0};
 
   int dm_size(bool full) const;
   bool compact_G_for_vbias() const;
