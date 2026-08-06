@@ -42,9 +42,8 @@ Propagator<MEM> const& StochasticWfn<MEM, devPsiT>::inner_propagator() const
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::reset_inner_to_anchor(WalkerSet<MEM>& inner, int count)
 {
-  // Reset the first `count` inner walkers to the anchor |phi_T>. The single place that knows the
-  // anchor/collinear layout -- shared by maybe_advance_inner_ensemble, advance_inner_ensemble_conditioned,
-  // and draw_bp_reference_ensemble (so future spin/collinear fixes live in one spot).
+  // The single place that knows the anchor/collinear layout, so future spin/collinear fixes live in one
+  // spot; shared by every routine that rebuilds the pool.
   const bool collinear = (inner_stack_->nomsd().getWalkerType() == COLLINEAR);
   auto all             = nda::range::all;
   nda::array<ComplexType, 3> anchor_on_mem = inner_anchor_;
@@ -92,15 +91,9 @@ void StochasticWfn<MEM, devPsiT>::maybe_advance_inner_ensemble()
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::draw_bp_reference_ensemble()
 {
-  // A FRESH, walker-INDEPENDENT free-projection draw of P trial samples {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references (standard Motta-Zhang BP with the trial
-  // represented stochastically). Decoupled from the forward inner ensemble: the trial |Psi_T> is
-  // walker-independent, and the forward walk's conditioning/leapfrog is only a forward-overlap
-  // importance-sampling device -- irrelevant to the references. So we always draw BARE free-projection
-  // samples here via Propagate_free (which forces bare field sampling regardless of the forward
-  // propagator's build mode). inner_ensemble_.wset is reused as scratch and sized to P: every forward
-  // resample resets it to the anchor (maybe_advance_inner_ensemble / advance_inner_ensemble_conditioned),
-  // so transiently overwriting it (and resizing P <-> nwalk*P) is safe -- the next begin_inner_step
-  // resamples it from scratch. getReferences calls this each BP block, giving a fresh MC draw per block.
+  // A fresh, walker-INDEPENDENT free-projection draw of the trial for the BP references, decoupled from
+  // the forward inner ensemble. inner_ensemble_.wset is reused as scratch and resized to P: every forward
+  // resample resets it to the anchor, so transiently overwriting it is safe.
   if (inner_nsteps_ <= 0 || inner_n_samples_ <= 1)
     return;
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
@@ -109,21 +102,15 @@ void StochasticWfn<MEM, devPsiT>::draw_bp_reference_ensemble()
     APP_ABORT("Error in StochasticWfn::draw_bp_reference_ensemble: inner propagator not built.");
 
   const int P           = inner_n_samples_;
-  // Idempotency guard: at most ONE draw per BP window. If this window already drew (and the ensemble is
-  // still at the P-sample form), reuse it -- a repeated getReferences in the same window must NOT silently
-  // produce a different ensemble. The flag is reset by begin_inner_step() (forward walk advances => next
-  // window). If the flag is set but the ensemble was somehow resized, fall through and redraw (safe).
+  // Idempotency guard: at most ONE draw per BP window, so a repeated getReferences cannot silently
+  // produce a different ensemble. If the flag is set but the ensemble was resized, redraw (safe).
   if (bp_refs_drawn_ && int(inner_ensemble_.wset->size()) == P)
     return;
 
-  // Draw the walker-independent P-sample free-projection ensemble into inner_ensemble_.wset (used as
-  // scratch; every forward resample resets it to the anchor, so transiently overwriting it is safe).
   draw_free_projection_samples(*inner_ensemble_.wset);
-  // Mark this window as drawn (idempotency guard) and force a fresh forward resample on the next outer
-  // step so the reductions never see this transient P-sized draw. For persistent chains only the CACHED
-  // DETERMINANTS were overwritten -- the chain fields live in the outer walker buffer and are untouched
-  // -- so flag the determinants stale for a deterministic rebuild from the fields; the chains themselves
-  // survive every back-propagation draw.
+  // Force a fresh forward resample next step so the reductions never see this transient P-sized draw.
+  // Only the CACHED DETERMINANTS were overwritten -- the chain fields are untouched in the outer walker
+  // buffer -- so flag them for a deterministic rebuild; the chains survive every BP draw.
   bp_refs_drawn_      = true;
   inner_step_pending_ = true;
   inner_dets_stale_   = true;
@@ -132,12 +119,9 @@ void StochasticWfn<MEM, devPsiT>::draw_bp_reference_ensemble()
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::draw_free_projection_samples(WalkerSet<MEM>& target)
 {
-  // Reset `target` to the anchor |phi_T>, size it to P, and advance inner_nsteps_ BARE free-projection
-  // steps: this materializes a walker-INDEPENDENT P-sample draw {psi_p = B_T(Y^[p])|phi_T>} of the trial
-  // (Propagate_free forces bare field sampling regardless of the forward propagator's build mode, so the
-  // draw is decoupled from any conditioning/leapfrog of the forward walk). The single home of the
-  // free-projection draw, shared by draw_bp_reference_ensemble and mean_field_scratch_ensemble. Sets NO
-  // forward-walk flags -- the caller owns its own state (BP window idempotency, mean-field scratch, ...).
+  // Propagate_free forces bare field sampling regardless of the forward propagator's build mode, which is
+  // what decouples this draw from any conditioning/leapfrog of the forward walk. Sets NO forward-walk
+  // flags -- the caller owns its own state.
   if (not inner_stack_->has_propagator())
     APP_ABORT("Error in StochasticWfn::draw_free_projection_samples: inner propagator not built.");
   const int P = inner_n_samples_;
@@ -159,13 +143,9 @@ void StochasticWfn<MEM, devPsiT>::draw_free_projection_samples(WalkerSet<MEM>& t
 template<MEMORY_SPACE MEM, class devPsiT>
 WalkerSet<MEM>& StochasticWfn<MEM, devPsiT>::mean_field_scratch_ensemble()
 {
-  // Provide a walker-INDEPENDENT P-sample draw of the trial for vMF/G_MF WITHOUT perturbing the forward
-  // inner ensemble. The trial mean field <Psi_T|.|Psi_T> is a walker-independent quantity, so it must be
-  // reduced from a fresh free-projection draw -- but at the point vMF is consumed (generateP1, after
-  // begin_inner_step) the forward ensemble is in the conditioned nw*P form and its determinants/flags are
-  // live state of the running walk. Drawing into a DEDICATED scratch set (mf_scratch_wset_, lazily built
-  // once via the same known-good WalkerSet constructor initialize_inner_walkers used) keeps
-  // inner_ensemble_.wset, the persistent chain pool, the latch and the leapfrog magnitudes all untouched.
+  // A walker-INDEPENDENT P-sample draw of the trial for vMF/G_MF that leaves inner_ensemble_.wset, the
+  // persistent chain pool, the latch and the leapfrog magnitudes untouched -- at the point vMF is
+  // consumed those are live state of the running walk.
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::mean_field_scratch_ensemble: inner walkers not initialized.");
   if (not inner_stack_->has_propagator())
@@ -173,11 +153,9 @@ WalkerSet<MEM>& StochasticWfn<MEM, devPsiT>::mean_field_scratch_ensemble()
   if (mf_scratch_wset_ == nullptr)
   {
     auto wt = WalkerSet<MEM>::parse_walker_type(inner_walker_pt_); // identical to initialize_inner_walkers
-    // Give the scratch set its OWN walker-set RNG so it never shares (and cannot perturb) the forward
-    // inner ensemble's RNG stream -- the persistent field-space chains draw from inner_ensemble_.rng.
-    // Construction is deterministic (populate_from_guess sets every walker to the anchor) and the
-    // free-projection draw uses the inner PROPAGATOR's RNG, so the scratch's own generator is unused
-    // beyond construction; a fresh one just makes the decoupling explicit.
+    // Its OWN walker-set RNG, so it cannot perturb the stream the persistent chains draw from. Unused
+    // beyond construction (that is deterministic, and the draw uses the propagator's RNG) -- a fresh one
+    // just makes the decoupling explicit.
     if (mf_scratch_rng_ == nullptr)
       mf_scratch_rng_ = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>();
     mf_scratch_wset_ = std::make_unique<WalkerSet<MEM>>(mpi_, inner_walker_pt_, mf_scratch_rng_, wt,
@@ -190,14 +168,11 @@ WalkerSet<MEM>& StochasticWfn<MEM, devPsiT>::mean_field_scratch_ensemble()
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::prime_chain_fields(WalkerSet<MEM>& wset)
 {
-  // Chain start: draw Y ~ p_T (i.i.d. standard normals, the same probit(uniform) convention as
-  // construct_X's bare field assembly) into every chain's slot of the walker set's TrialFields block.
-  // Uniforms come from the wavefunction's own rank-decorrelated inner RNG -- the chain machinery never
-  // touches the propagator's RNG stream, whose draws are kept synchronized across ranks.
-  // Device port (hybrid): draw the uniforms on the HOST inner RNG (same rank-decorrelated mt19937 stream
-  // as a CPU build -> identical field values, so persistent parity tests stay bitwise-comparable), assemble
-  // the fields on a host buffer, then copy into the (device) TrialFields view. The field block is small; a
-  // device-cuRAND draw would be a localized perf follow-up but would break CPU/GPU reproducibility.
+  // Chain start: Y ~ p_T (i.i.d. standard normals, the same probit(uniform) convention as construct_X's
+  // bare field assembly). Uniforms come from the wavefunction's own rank-decorrelated inner RNG -- the
+  // chain machinery never touches the propagator's stream, whose draws stay synchronized across ranks.
+  // The HOST draw + copy into the (device) TrialFields view is what keeps the field values, and so the
+  // persistent parity tests, bitwise-comparable between CPU and GPU builds.
   const int nw    = int(wset.size());
   const int block = wset.trial_fields_size();
   auto Yw         = wset.TrialFields();
@@ -214,13 +189,10 @@ void StochasticWfn<MEM, devPsiT>::prime_chain_fields(WalkerSet<MEM>& wset)
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::rebuild_inner_dets_from_chain_fields(WalkerSet<MEM> const& wset)
 {
-  // psi_q = B_T(Y_q)|phi_T> for every chain, from the fields stored in the outer walker buffer: reset
-  // the slot-major nw*P pool to the anchor and apply the inner propagator with the stored fields one
-  // inner step at a time. Deterministic (no RNG), so it reproduces the pool exactly wherever the fields
-  // came from -- after population control moved chains between slots or ranks, or after the
-  // back-propagation reference draw reused the pool storage. Rank-local; no communication.
-  // Device-safe: deterministic rebuild from the stored fields. The field gather X(q,:) = Yw(w, slice) is a
-  // device->device slice-copy (both are MEM), and Propagate_given_fields runs on device.
+  // psi_q = B_T(Y_q)|phi_T> for every chain, from the fields stored in the outer walker buffer.
+  // Deterministic (no RNG), so it reproduces the pool exactly wherever the fields came from -- after
+  // population control moved chains between slots or ranks, or after the BP draw reused the pool
+  // storage. Rank-local; no communication.
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::rebuild_inner_dets_from_chain_fields: inner walkers not initialized.");
   if (not inner_stack_->has_propagator())
@@ -264,21 +236,12 @@ void StochasticWfn<MEM, devPsiT>::rebuild_inner_dets_from_chain_fields(WalkerSet
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
 {
-  // One Metropolis-Hastings sweep of all nw*P field-space chains against their tethered walkers.
-  // Chain q = ip*nw + w targets p_T(Y)*|<psi(Y)|phi_w>| -- the walker-conditioned field distribution
-  // the estimator reductions assume (their normalizations cancel against it). The proposal moves the
-  // FIELDS; determinants are derived: one batched B_T(Y*) build for the whole pool + one cross-overlap
-  // pass per sweep. Kernels:
-  //   pcn:      Y* = sqrt(1-s^2) Y + s xi  -- preserves the Gaussian prior exactly, so the acceptance
-  //             is the bare overlap-magnitude ratio; s = 1 is an independence redraw.
-  //   gaussian: Y* = Y + s xi              -- random walk; the prior ratio exp((|Y|^2-|Y*|^2)/2)
-  //             multiplies the acceptance.
-  // A zero current magnitude (walker orthogonal to the chain's sample) always accepts, moving off it.
-  // Rejected chains keep their fields and restore their determinant row from the snapshot. Rank-local.
-  // Device port (hybrid): the per-chain proposal and accept/reject are small scalar logic -- run them on
-  // host over to_host copies using the HOST inner RNG (identical mt19937 stream to a CPU build, so the
-  // persistent parity tests stay bitwise-comparable), and apply the big-array updates (proposal-field
-  // determinant build, accepted-field write-back, rejected-determinant restore) with device copies.
+  // One Metropolis-Hastings sweep of all nw*P field-space chains against their tethered walkers. Chain
+  // q = ip*nw + w targets p_T(Y)*|<psi(Y)|phi_w>| -- the distribution the estimator reductions assume,
+  // and against whose normalization theirs cancels. The proposal moves the FIELDS; determinants are
+  // derived, one batched B_T(Y*) build + one cross-overlap pass per sweep. Rank-local. The per-chain
+  // proposal and accept/reject run on host over to_host copies, using the HOST inner RNG so a GPU build
+  // draws the identical mt19937 stream; only the big-array updates use device copies.
   {
     WalkerSet<MEM>& inner = *inner_ensemble_.wset;
     const int nw          = int(wset.size());
@@ -306,7 +269,9 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
     if (coll)
       old_b() = inner.SlaterMatrices(Beta)();
 
-    // 3. propose fields per chain (slot-major scratch; written back only on acceptance).
+    // 3. propose fields per chain -- pcn Y* = sqrt(1-s^2) Y + s xi (prior-preserving, so the acceptance
+    //    is the bare magnitude ratio) or gaussian random walk Y* = Y + s xi (prior ratio in prior_lr).
+    //    Slot-major scratch; written back only on acceptance.
     auto Yw        = wset.TrialFields();
     auto Yw_h      = nda::to_host(Yw); // host copy for the per-element proposal reads (no-op-ish on host)
     const bool pcn = (inner_sampler_ == "pcn");
@@ -354,7 +319,8 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
     nda::array<RealType, 1> mag_prop(ntot);
     cross_overlap_magnitudes(wset, inner, mag_prop);
 
-    // 6. accept/reject per chain.
+    // 6. accept/reject per chain. A zero current magnitude (walker orthogonal to the chain's sample)
+    //    always accepts, moving off it.
     nda::array<double, 1> u_acc(ntot);
     inner_ensemble_.rng->sampleUniformFields(u_acc);
     auto SMa_now = inner.SlaterMatrices(Alpha);
@@ -385,12 +351,9 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& wset)
 {
-  // Per-outer-step persistent chain update, called from begin_inner_step (the one seam with non-const
-  // access to the outer walker set): size the TrialFields block on first use, start the chains (prime +
-  // burn-in) or repair stale determinants, then run inner_sample_update_steps_ MH sweeps against the CURRENT
-  // walkers and refresh the leapfrog conditioning magnitudes. Unconditional per step and rank-local, so
-  // every rank performs the same sequence of propagator/reduction calls -- no rank-dependent control
-  // flow, no communication.
+  // Per-outer-step persistent chain update. Unconditional per step and
+  // rank-local, so every rank performs the same sequence of propagator/reduction calls -- no
+  // rank-dependent control flow, no communication.
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::update_persistent_chain_pool: inner walkers not initialized.");
   if (not inner_stack_->has_propagator())
@@ -410,17 +373,13 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
 
   if (not inner_chains_primed_)
   {
-    // Prime only. There is no separate burn-in count: the priming step falls through to the
-    // inner_sample_update_steps_ sweeps below, and every subsequent outer step sweeps again, so the chains have
-    // taken inner_sample_update_steps_ * (steps so far) sweeps by the time any measurement is kept -- the outer
-    // equilibration window discards the early steps regardless.
     prime_chain_fields(wset);
     inner_chains_primed_ = true;
     rebuild_inner_dets_from_chain_fields(wset);
     inner_dets_stale_ = false;
-    // One-time burn-in of the freshly primed chains, matching hafqmc's burn_in. The per-advance sweeps
-    // below are paid every step thereafter; this is the only equilibration that happens before the walk
-    // has moved a walker, so it is what stops the first steps sampling a pool still at its prior draw.
+    // One-time burn-in of the freshly primed chains (hafqmc's burn_in). The only equilibration that
+    // happens before the walk has moved a walker, so it is what stops the first steps sampling a pool
+    // still at its prior draw; the per-advance sweeps below are paid every step thereafter.
     for (int sweep = 0; sweep < inner_burn_in_; ++sweep)
       chain_pool_sweep(wset);
   }
@@ -444,14 +403,10 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
 {
-  // One measurement replica's pool motion: inner_sample_update_steps_ sweeps against the CURRENT walkers,
-  // then refresh the leapfrog conditioning magnitudes so the next reduction's weights match the pool it
-  // is about to measure with. This is update_persistent_chain_pool's tail with the priming, sizing and
-  // staleness branches removed -- measure_advances_pool() already guarantees primed, non-stale chains,
-  // and a measurement must never be the thing that first creates them.
-  //
-  // The walkers do not move across these sweeps, so unlike the propagation-side advance the chain is
-  // relaxing toward a FIXED target: the lag decays geometrically with no floor.
+  // One measurement replica's pool motion: sweeps against the CURRENT walkers, then a refresh of the
+  // leapfrog magnitudes so the next reduction's weights match the pool it is about to measure with.
+  // update_persistent_chain_pool's tail without the priming/sizing/staleness branches -- the caller
+  // guarantees live chains, and a measurement must never be the thing that first creates them.
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
     APP_ABORT("Error in StochasticWfn::advance_measure_pool: inner walkers not initialized.");
   if (not inner_stack_->has_propagator())
@@ -471,10 +426,10 @@ template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::advance_inner_ensemble_conditioned(
     memory::array<MEM, ComplexType, 2> const& X_bias, int nw)
 {
-  // Walker-conditioned resample. The inner ensemble is grown to nw*P walkers (slot-major index q = ip*nw + w), every walker reset to the anchor |phi_T>, then advanced inner_nsteps_
-  // conditioned field-sampling steps. Block w shares the conditioning bias x_bar(phi_w) = X_bias(w,:)
-  // (computed by the caller from the anchor-to-outer-walker cross DM), so its P samples are
-  // importance-sampled toward phi_w. Recovers the static anchor exactly at inner_nsteps_ == 0.
+  // Walker-conditioned resample: grow the ensemble to nw*P (slot-major q = ip*nw + w), reset every walker
+  // to the anchor, then advance inner_nsteps_ conditioned field-sampling steps. Block w shares the
+  // conditioning bias X_bias(w,:), so its P samples are importance-sampled toward phi_w. Recovers the
+  // static anchor exactly at inner_nsteps_ == 0.
   inner_step_pending_ = false;
 
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
