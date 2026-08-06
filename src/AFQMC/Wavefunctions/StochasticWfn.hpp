@@ -594,9 +594,7 @@ private:
   std::string inner_sampler_{"pcn"};
   double inner_sampler_step_{0.5};
   // Measurement-replica count. There is no restore flag: the measurement advance FEEDS FORWARD into
-  // propagation, matching hafqmc, which keeps the pool its measurement produced. Restoring was a way of
-  // pretending the measurement had no side effect on the chain, which is not what the reference
-  // implementation does and cost a snapshot/restore of the whole field block per measurement.
+  // propagation, matching hafqmc, which keeps the pool its measurement produced.
   int inner_n_measure_samples_{1};
   // inner_chains_primed_: the per-walker field blocks hold live chain states (set at the first
   // persistent pool update, which runs inside begin_inner_step -- the one seam with non-const access
@@ -609,11 +607,6 @@ private:
   long chain_proposed_{0};
   long chain_accepted_{0};
   long chain_updates_{0};
-  // Debug instrumentation: counts Energy() reductions so the per-sample dump (dump_persample_row) can
-  // limit itself to the first few measurement events. Only touched when SAFIRE_DUMP_PERSAMPLE is set.
-  long energy_dump_call_{0};
-  // Counts vbias() calls so the force-bias dump can limit itself to the first few. SAFIRE_DUMP_VBIAS only.
-  long vbias_dump_call_{0};
   nda::array<ComplexType, 3> inner_anchor_;
   // Construction inputs for the inner walker set, cached at initialize_inner_walkers so a dedicated
   // mean-field scratch ensemble (mf_scratch_wset_) can be built on demand via the SAME (known-good)
@@ -702,14 +695,6 @@ private:
   // (measure_energy) only runs when the chains are already live.
   void advance_measure_pool(WalkerSet<MEM>& wset);
 
-  // UNUSED-BY-PRODUCTION helpers kept for tests/diagnostics only. The chain STATE is the field
-  // configuration, so the fields alone are a complete snapshot: restoring them and rebuilding the
-  // determinants deterministically (rebuild_inner_dets_from_chain_fields) returns the pool exactly
-  // where the measurement found it. Cheap in memory -- [nwalk, P*nsteps*nCV] -- versus copying the
-  // determinants themselves.
-  void snapshot_chain_fields(WalkerSet<MEM> const& wset, nda::array<ComplexType, 2>& save) const;
-  void restore_chain_fields(WalkerSet<MEM>& wset, nda::array<ComplexType, 2> const& save);
-
   // Resample the inner ensemble conditioned on each outer walker phi_w. Computes the custom inner force bias x_bar(phi_w) = sqrt(dt)*L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (the inner
   // trial IS the anchor phi_T, so this reuses inner_nomsd()'s mixed DM + vbias on the OUTER wset) and
   // drives the nw*P inner ensemble through the inner propagator's conditioned field-sampling seam.
@@ -776,28 +761,6 @@ private:
   // dedicated mean-field scratch draw (mean_field_scratch_ensemble()) when the forward ensemble has been
   // expanded to the conditioned nw*P form.
   void reduce_inner_mean_field_dm(WalkerSet<MEM>& inner, memory::buffered_array<MEM, ComplexType, 2>& Gsum);
-
-  // Debug: append one per-inner-sample row for outer walker 0 -- {call, ip, <psi_ip|phi_0>, weight s,
-  // eloc components} -- to the file named by env SAFIRE_DUMP_PERSAMPLE, for the first few Energy()
-  // measurement events (`call` < cap). No-op when the env var is unset. Lets the P-sample estimator be
-  // dissected offline (leapfrog weight s=<psi|phi>/|<psi|phi_cond>| vs the plain ratio-of-sums over the
-  // raw overlaps). Defined in StochasticWfn.cpp (does the file I/O); host-only caller.
-  static void dump_persample_row(long call, int ip, ComplexType lin_ov, ComplexType s, ComplexType e0,
-                                 ComplexType e1, ComplexType e2);
-
-  // Env SAFIRE_DUMP_VBIAS: dump walker-0 phi and its force bias for offline cross-checks. First 32 calls.
-  static bool want_vbias_dump();
-  void dump_vbias_row(long call, int rows, int naea, ComplexType const* phi, int nCV,
-                      ComplexType const* vb);
-
-  static bool want_slater_dump(); // true iff env SAFIRE_DUMP_SLATER is set.
-  // Env SAFIRE_DUMP_SLATER: dump walker-0 phi and P inner determinants as text for offline eloc checks.
-  static void dump_slater_snapshot(int rows, int naea, int P, ComplexType const* phi, ComplexType const* psis);
-
-  // Debug: true iff env SAFIRE_DUMP_WALKERS is set.
-  static bool want_walker_dump();
-  // Env SAFIRE_DUMP_WALKERS: append walker-0 phi per measurement event for offline reference eloc.
-  static void dump_walker_row(long call, int rows, int naea, ComplexType const* phi);
 
   int dm_size(bool full) const;
   bool compact_G_for_vbias() const;

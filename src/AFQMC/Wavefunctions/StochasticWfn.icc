@@ -493,19 +493,12 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
 
   reduce_inner_cross_dm(
       wset, compact, Gsize, D, Ov,
-      [&](auto& Gp, auto& ov_, auto& Sp, int ip, int /*r0*/, int /*rN*/) {
+      [&](auto& Gp, auto& /*ov_*/, auto& Sp, int /*ip*/, int /*r0*/, int /*rN*/) {
         eloc2() = zero;
         if (full)
           nomsd_.energy_from_fullG(eloc2, Gp);
         else
           nomsd_.energy_from_G(eloc2, Gp, 0);
-        // Debug per-sample dump (env SAFIRE_DUMP_PERSAMPLE): raw <psi_ip|phi_0>, the weight s actually used
-        // (Sp), and the per-sample local energy, for outer walker 0. Lets us reconstruct E offline as
-        // SAFIRE's weighting (sum_p Sp*eloc / sum_p Sp) vs the plain ratio-of-sums (sum_p ov*eloc / sum_p ov).
-        if constexpr (MEM == HOST_MEMORY)
-          if (nwalk > 0 && mpi_->comm.root())
-            dump_persample_row(energy_dump_call_, ip, std::exp(ov_(0)), Sp(0), eloc2(0, 0), eloc2(0, 1),
-                               eloc2(0, 2));
         // E[w,:] += Sp[w] * eloc2[w,:]  (per-outer-walker scaled accumulate over the P inner samples).
         if constexpr (MEM == HOST_MEMORY)
           for (int w = 0; w < nwalk; ++w)
@@ -517,38 +510,6 @@ void StochasticWfn<MEM, devPsiT>::Energy(const WlkSet& wset, Mat&& E, TVec&& Ov,
 #endif
         }
       });
-
-  // Debug (env SAFIRE_DUMP_SLATER): on the first Energy event, snapshot walker-0's ket phi and the P inner
-  // determinants psi_ip (walker 0's block, conditioned slot idx = ip*nwalk) so an external code can
-  // recompute <psi_ip|phi> and eloc on the identical determinants. CLOSED/Alpha only (N2 test).
-  if constexpr (MEM == HOST_MEMORY)
-    if (energy_dump_call_ == 0 && mpi_->comm.root() && want_slater_dump() && inner_ensemble_.wset != nullptr)
-    {
-      using nda::range;
-      auto all             = range::all;
-      const int P          = inner_n_samples_;
-      const bool cond      = (inner_conditioning());
-      WalkerSet<MEM>& innr = *inner_ensemble_.wset;
-      const long rows      = wset.SlaterMatrices(Alpha).extent(1); // npol*NMO
-      const long naea      = wset.SlaterMatrices(Alpha).extent(2);
-      nda::array<ComplexType, 2> phi = wset.SlaterMatrices(Alpha)(0, all, all); // [rows, naea] contiguous
-      nda::array<ComplexType, 3> psis(P, rows, naea);
-      for (int ip = 0; ip < P; ++ip)
-        psis(ip, all, all) = innr.SlaterMatrices(Alpha)(cond ? (long(ip) * nwalk + 0) : long(ip), all, all);
-      dump_slater_snapshot(int(rows), int(naea), P, phi.data(), psis.data());
-    }
-  // Debug (env SAFIRE_DUMP_WALKERS): append walker-0's ket phi for EVERY measurement event (first 32), so
-  // an external code can evaluate the true trial local energy on the identical walkers.
-  if constexpr (MEM == HOST_MEMORY)
-    if (energy_dump_call_ < 32 && mpi_->comm.root() && want_walker_dump())
-    {
-      auto all                       = nda::range::all;
-      const long rows                = wset.SlaterMatrices(Alpha).extent(1);
-      const long naea                = wset.SlaterMatrices(Alpha).extent(2);
-      nda::array<ComplexType, 2> phi = wset.SlaterMatrices(Alpha)(0, all, all);
-      dump_walker_row(energy_dump_call_, int(rows), int(naea), phi.data());
-    }
-  ++energy_dump_call_;
 
   // NO all_reduce over E here. nomsd_.energy_from_G / energy_from_fullG (-> HamOp.energy) returns the
   // COMPLETE per-walker energy on every rank -- it performs any internal Cholesky-distribution reduction
@@ -701,23 +662,6 @@ void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int n
   // at the anchor (inner_nsteps == 0) and a full NMO*NMO G once it has moved off (inner_nsteps > 0),
   // so a single seam covers both. (full is still used above to size G via dm_size.)
   nomsd_.vbias_from_G(G, std::forward<MatA>(v), dt);
-
-  // SAFIRE_DUMP_VBIAS: dump walker-0 phi and force bias for offline comparison. First 32 calls.
-  if constexpr (MEM == HOST_MEMORY)
-  {
-    if (want_vbias_dump() && vbias_dump_call_ < 32 && nwalk > 0)
-    {
-      auto all                       = nda::range::all;
-      const long rows                = wset.SlaterMatrices(Alpha).extent(1);
-      const long naea                = wset.SlaterMatrices(Alpha).extent(2);
-      nda::array<ComplexType, 2> phi = wset.SlaterMatrices(Alpha)(0, all, all);
-      nda::array<ComplexType, 1> vb0(v.extent(1));
-      for (long m = 0; m < v.extent(1); ++m)
-        vb0(m) = v(0, m);
-      dump_vbias_row(vbias_dump_call_, int(rows), int(naea), phi.data(), int(v.extent(1)), vb0.data());
-    }
-    ++vbias_dump_call_;
-  }
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>

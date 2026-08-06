@@ -18,10 +18,6 @@
 #include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Utilities/probit.h"
 
-#include <cstdlib>
-#include <fstream>
-#include <iomanip>
-
 namespace sfqmc
 {
 namespace afqmc
@@ -189,113 +185,6 @@ WalkerSet<MEM>& StochasticWfn<MEM, devPsiT>::mean_field_scratch_ensemble()
   }
   draw_free_projection_samples(*mf_scratch_wset_);
   return *mf_scratch_wset_;
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-void StochasticWfn<MEM, devPsiT>::dump_persample_row(long call, int ip, ComplexType lin_ov, ComplexType s,
-                                                     ComplexType e0, ComplexType e1, ComplexType e2)
-{
-  // Debug-only: append one per-inner-sample row to $SAFIRE_DUMP_PERSAMPLE (first 32 Energy events only).
-  // No-op unless the env var is set. Columns: call ip Re(ov) Im(ov) Re(s) Im(s) Re(e0) Im(e0) Re(e1) Im(e1)
-  // Re(e2) Im(e2), where ov=<psi_ip|phi_0>, s is the weight actually used by the estimator, e0..e2 are the
-  // per-sample energy components (e0 total). Offline: SAFIRE E = sum_p s*e0 / sum_p s; plain ratio-of-sums
-  // reference = sum_p ov*e0 / sum_p ov.
-  const char* path = std::getenv("SAFIRE_DUMP_PERSAMPLE");
-  if (path == nullptr || call >= 32)
-    return;
-  std::ofstream f(path, std::ios::app);
-  if (!f)
-    return;
-  f << call << ' ' << ip << ' ' << std::setprecision(14) << std::scientific << lin_ov.real() << ' '
-    << lin_ov.imag() << ' ' << s.real() << ' ' << s.imag() << ' ' << e0.real() << ' ' << e0.imag() << ' '
-    << e1.real() << ' ' << e1.imag() << ' ' << e2.real() << ' ' << e2.imag() << '\n';
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-bool StochasticWfn<MEM, devPsiT>::want_vbias_dump()
-{
-  return std::getenv("SAFIRE_DUMP_VBIAS") != nullptr;
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-void StochasticWfn<MEM, devPsiT>::dump_vbias_row(long call, int rows, int naea, ComplexType const* phi,
-                                                 int nCV, ComplexType const* vb)
-{
-  // APPEND, for call `call`: a "VB <call>" header, then rows*naea "re im" lines of walker-0's phi
-  // (row-major), then nCV "re im" lines of its force bias. Header "rows naea nCV" written on call 0.
-  const char* path = std::getenv("SAFIRE_DUMP_VBIAS");
-  if (path == nullptr)
-    return;
-  std::ofstream f(path, call == 0 ? std::ios::trunc : std::ios::app);
-  if (!f)
-    return;
-  f << std::setprecision(15) << std::scientific;
-  if (call == 0)
-    f << rows << ' ' << naea << ' ' << nCV << '\n';
-  f << "VB " << call << '\n';
-  const long mat = long(rows) * naea;
-  for (long k = 0; k < mat; ++k)
-    f << phi[k].real() << ' ' << phi[k].imag() << '\n';
-  for (int m = 0; m < nCV; ++m)
-    f << vb[m].real() << ' ' << vb[m].imag() << '\n';
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-bool StochasticWfn<MEM, devPsiT>::want_slater_dump()
-{
-  return std::getenv("SAFIRE_DUMP_SLATER") != nullptr;
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-void StochasticWfn<MEM, devPsiT>::dump_slater_snapshot(int rows, int naea, int P, ComplexType const* phi,
-                                                       ComplexType const* psis)
-{
-  // Write phi (the walker-0 ket) then the P inner determinants psi_ip as text; row-major [rows, naea].
-  // Format: "rows naea P" ; then rows*naea "re im" lines for phi ; then per ip: "PSI ip" + rows*naea lines.
-  const char* path = std::getenv("SAFIRE_DUMP_SLATER");
-  if (path == nullptr)
-    return;
-  std::ofstream f(path);
-  if (!f)
-    return;
-  f << std::setprecision(15) << std::scientific;
-  f << rows << ' ' << naea << ' ' << P << '\n';
-  const long mat = long(rows) * naea;
-  for (long k = 0; k < mat; ++k)
-    f << phi[k].real() << ' ' << phi[k].imag() << '\n';
-  for (int ip = 0; ip < P; ++ip)
-  {
-    f << "PSI " << ip << '\n';
-    ComplexType const* p = psis + long(ip) * mat;
-    for (long k = 0; k < mat; ++k)
-      f << p[k].real() << ' ' << p[k].imag() << '\n';
-  }
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-bool StochasticWfn<MEM, devPsiT>::want_walker_dump()
-{
-  return std::getenv("SAFIRE_DUMP_WALKERS") != nullptr;
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-void StochasticWfn<MEM, devPsiT>::dump_walker_row(long call, int rows, int naea, ComplexType const* phi)
-{
-  // APPEND walker-0's ket phi for measurement event `call`. Header "rows naea" written on call 0; then a
-  // "WALKER <call>" block + rows*naea "re im" lines (row-major). Reader loops WALKER blocks until EOF.
-  const char* path = std::getenv("SAFIRE_DUMP_WALKERS");
-  if (path == nullptr)
-    return;
-  std::ofstream f(path, call == 0 ? std::ios::trunc : std::ios::app);
-  if (!f)
-    return;
-  f << std::setprecision(15) << std::scientific;
-  if (call == 0)
-    f << rows << ' ' << naea << '\n';
-  f << "WALKER " << call << '\n';
-  const long mat = long(rows) * naea;
-  for (long k = 0; k < mat; ++k)
-    f << phi[k].real() << ' ' << phi[k].imag() << '\n';
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -574,38 +463,6 @@ void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
   for (int sweep = 0; sweep < inner_sample_update_steps_; ++sweep)
     chain_pool_sweep(wset);
 
-  if (inner_leapfrog())
-    compute_inner_cond_mag(wset);
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-void StochasticWfn<MEM, devPsiT>::snapshot_chain_fields(WalkerSet<MEM> const& wset,
-                                                        nda::array<ComplexType, 2>& save) const
-{
-  // The chain state is the field configuration, so this is a complete snapshot. Host-side buffer: the
-  // TrialFields view is strided over the walker buffer, and on device this is the same small host copy
-  // prime_chain_fields already round-trips.
-  utils::check(wset.has_trial_fields(), "snapshot_chain_fields: TrialFields block missing.");
-  auto Yw = wset.TrialFields();
-  save.resize(std::array<long, 2>{Yw.extent(0), Yw.extent(1)});
-  save() = Yw();
-}
-
-template<MEMORY_SPACE MEM, class devPsiT>
-void StochasticWfn<MEM, devPsiT>::restore_chain_fields(WalkerSet<MEM>& wset,
-                                                       nda::array<ComplexType, 2> const& save)
-{
-  // Put the fields back and rebuild the determinants deterministically from them, which is exactly the
-  // repair path population control already relies on -- so the pool returns to the state the measurement
-  // found it in, bit for bit. Then refresh the conditioning magnitudes, which the replica sweeps moved.
-  utils::check(wset.has_trial_fields(), "restore_chain_fields: TrialFields block missing.");
-  auto Yw = wset.TrialFields();
-  utils::check(save.extent(0) == Yw.extent(0) && save.extent(1) == Yw.extent(1),
-               "restore_chain_fields: snapshot shape mismatch (population control moved between the "
-               "snapshot and the restore?).");
-  Yw() = save();
-  rebuild_inner_dets_from_chain_fields(wset);
-  inner_dets_stale_ = false;
   if (inner_leapfrog())
     compute_inner_cond_mag(wset);
 }
