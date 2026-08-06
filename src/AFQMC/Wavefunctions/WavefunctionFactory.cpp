@@ -348,6 +348,44 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
           if (not HamFac_->has_input(var_id))
             HamFac_->push(var_id, var_pt);
           inner_ham_ptr = &HamFac_->getHamiltonian(mpi, var_id);
+
+          // THE TRAINED INNER TIMESTEP COMES FROM THE VARIATIONAL HAMILTONIAN, NOT FROM THE INPUT.
+          //
+          // dt = ts_v**2 parameterizes B_T = exp(-dt * ...) built from THIS operator, so the two must
+          // travel together. It used to be carried by an inner_timestep.json sidecar that a human copied
+          // into wavefunction.inner_propagator.timestep; a wrong copy drove the trained parameters with
+          // a propagator nobody trained, silently, because the input key defaulted to 0.01. Both the key
+          // and the default are gone: we read the stamp export_safire writes, and fail closed without it.
+          {
+            std::string var_file = var_pt.get<std::string>("filename");
+            double inner_dt      = 0.0;
+            bool have_dt         = false;
+            {
+              h5::file fh5(var_file, 'r');
+              h5::group grp(fh5);
+              if (grp.has_key("Hamiltonian"))
+              {
+                h5::group hgrp = grp.open_group("Hamiltonian");
+                if (H5Aexists(h5::hid_t(hgrp), "inner_timestep"))
+                {
+                  h5::h5_read_attribute(hgrp, "inner_timestep", inner_dt);
+                  have_dt = true;
+                }
+              }
+            }
+            if (not have_dt)
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_hamiltonian '" + var_file +
+                        "' carries no 'inner_timestep' attribute. The trained B_T timestep must travel "
+                        "with the variational Hamiltonian it parameterizes; SAFIRE no longer accepts it "
+                        "from the input and has no default. Re-export this trial with a current "
+                        "export_safire (which stamps Hamiltonian/inner_timestep), or drop "
+                        "inner_hamiltonian if this trial has no trained propagator.");
+            if (inner_dt <= 0.0)
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_hamiltonian '" + var_file +
+                        "' has a non-positive inner_timestep.");
+            pt_in.put("inner_propagator.timestep", inner_dt);
+            app_log(2, " Inner propagator timestep read from {}: dt = {}", var_file, inner_dt);
+          }
         }
         Hamiltonian& inner_ham = *inner_ham_ptr;
         if (dense_trial)

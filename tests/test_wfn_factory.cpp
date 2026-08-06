@@ -411,6 +411,17 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     // The two-argument WavefunctionFactory constructor wires in HamFac so the factory can build the
     // inner (Variational) Hamiltonian on demand.
     WavefunctionFactory<MEM> WfnFac(HamFac);
+    // Copy the fixture and stamp the trained-timestep attribute onto it (fixtures are shared and must
+    // not be modified in place).
+    const std::string stamped_hamil = "stamped_inner_hamil.h5";
+    std::filesystem::remove(stamped_hamil);
+    std::filesystem::copy_file(hamil_file, stamped_hamil);
+    {
+      h5::file fh5(stamped_hamil, 'a');
+      h5::group grp(fh5);
+      h5::group hgrp = grp.open_group("Hamiltonian");
+      h5::h5_write_attribute(hgrp, "inner_timestep", 0.01);
+    }
 
     auto build_pt = [&](std::string id, bool with_inner_ham) {
       ptree pt;
@@ -426,7 +437,12 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
       if (with_inner_ham)
       {
         ptree inner_ham_block;
-        inner_ham_block.put("filename", hamil_file); // same integrals as the True Ham
+        // A STAMPED copy, not the bare fixture. inner_hamiltonian is how a trained trial supplies its
+        // variational Hamiltonian, and SAFIRE now reads the trained B_T timestep from that file's
+        // Hamiltonian/inner_timestep attribute rather than from the input (there is no default, so a
+        // missing stamp is a hard error). Pointing at an unstamped fixture would test a configuration
+        // production can no longer have; copying and stamping exercises the real contract.
+        inner_ham_block.put("filename", stamped_hamil);
         pt.put_child("inner_hamiltonian", inner_ham_block);
       }
       return pt;
