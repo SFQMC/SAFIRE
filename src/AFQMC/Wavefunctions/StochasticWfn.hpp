@@ -187,11 +187,10 @@ inline ptree strip_stochastic_input_keys(ptree pt)
   for (auto const& key : {"type", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
                           "inner_mode", "inner_conditioning", "inner_leapfrog", "inner_persistence",
                           "inner_equil_steps",
-                          "inner_mcmc", "inner_mcmc_step", "inner_pool_burn_in",
+                          "inner_sweeps", "inner_mcmc", "inner_mcmc_step", "inner_pool_burn_in",
                           "inner_log_aggregate",
                           "inner_measure_replicas", "inner_measure_stride",
-                          "inner_equil_steps",
-                          "inner_measure_restore"}) // last: REMOVED key, see interpret_inputs
+                          "inner_measure_restore"}) // last two: REMOVED keys, see interpret_inputs
     pt.erase(key);
   return pt;
 }
@@ -265,8 +264,19 @@ public:
   // True exactly when the persistent chains are the active sampler, i.e. in Conditioned mode; Static and
   // Free have no chains.
   bool inner_persistence() const { return inner_mode_ == InnerMode::Conditioned; }
-  int inner_equil_steps() const { return inner_equil_steps_; }
-  int inner_measure_stride() const { return inner_measure_stride_; }
+  // MH sweeps applied to the field-chain pool each time the pool is advanced. ONE knob for BOTH seams,
+  // matching hafqmc's sample_update_steps, which drives its propagation-side re-tether
+  // (update_tethered_samples_state) and its measurement-side advance (measure_block_energy_state) from
+  // the same number. It replaced inner_equil_steps + inner_measure_stride, which counted the identical
+  // thing -- chain_pool_sweep() calls -- and which production always set equal anyway, since the stride
+  // defaulted to the equil count.
+  //
+  // The two seams do differ in what the sweeps are chasing, and that is worth knowing even though it
+  // does not warrant two inputs: at the propagation seam the walker has just moved, so the chain is
+  // tracking a MOVING target and its lag has a floor no sweep count removes; at the measurement seam the
+  // walkers are fixed, so the lag decays geometrically to zero and extra sweeps also decorrelate
+  // successive replicas.
+  int inner_sweeps() const { return inner_sweeps_; }
   std::string const& inner_mcmc() const { return inner_mcmc_; }
   double inner_mcmc_step() const { return inner_mcmc_step_; }
   // Measurement-side replica averaging (inner_measure_replicas). inner_equil_steps equilibrates the pool
@@ -613,16 +623,15 @@ private:
   // Free -- correct but catastrophically noisy -- can never be reached by forgetting a key.
   InnerMode inner_mode_{InnerMode::Static};
   // Persistent-chain controls. There is no on/off member: the chains ARE the conditioned sampler, so
-  // inner_persistence() is derived from inner_mode_ == Conditioned. inner_equil_steps_:
-  // MH sweeps per outer step, applied from the one-time prime onwards -- there is no separate burn-in
-  // count, because the prime is followed by inner_equil_steps_ sweeps every step and the outer
-  // equilibration window discards those steps anyway.
+  // inner_persistence() is derived from inner_mode_ == Conditioned. inner_sweeps_: MH sweeps per pool
+  // advance, applied from the one-time prime onwards -- there is no separate burn-in count, because the
+  // prime is followed by inner_sweeps_ sweeps every step and the outer equilibration window discards
+  // those steps anyway.
   // inner_mcmc_: proposal kernel -- "pcn" (preconditioned Crank-Nicolson, prior-preserving:
   // Y* = sqrt(1-s^2) Y + s xi) or "gaussian" (random walk: Y* = Y + s xi, prior ratio in the
   // acceptance). inner_mcmc_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
   // independence redraw; gaussian: s > 0).
-  int inner_equil_steps_{1};
-  int inner_measure_stride_{1};
+  int inner_sweeps_{1};
   std::string inner_mcmc_{"pcn"};
   double inner_mcmc_step_{0.5};
   // Measurement-replica count. There is no restore flag: the measurement advance FEEDS FORWARD into
@@ -725,11 +734,11 @@ private:
 
   // Per-outer-step persistent chain update, called from begin_inner_step (the non-const seam):
   // lazily size the TrialFields block, prime the chains on first use (+ burn-in), rebuild stale
-  // determinants, run inner_equil_steps_ sweeps against the CURRENT (old) walkers, and refresh the
+  // determinants, run inner_sweeps_ sweeps against the CURRENT (old) walkers, and refresh the
   // leapfrog conditioning magnitudes. Purely rank-local: no communication, no collectives.
   void update_persistent_chain_pool(WalkerSet<MEM>& wset);
 
-  // Advance the persistent pool by inner_measure_stride_ sweeps against the CURRENT (fixed) walkers and
+  // Advance the persistent pool by inner_sweeps_ sweeps against the CURRENT (fixed) walkers and
   // refresh the leapfrog conditioning magnitudes -- one measurement replica's worth of pool motion.
   // Same tail as update_persistent_chain_pool, minus the priming/sizing/staleness handling: the caller
   // (measure_energy) only runs when the chains are already live.

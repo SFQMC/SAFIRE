@@ -498,7 +498,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
 {
   // Per-outer-step persistent chain update, called from begin_inner_step (the one seam with non-const
   // access to the outer walker set): size the TrialFields block on first use, start the chains (prime +
-  // burn-in) or repair stale determinants, then run inner_equil_steps_ MH sweeps against the CURRENT
+  // burn-in) or repair stale determinants, then run inner_sweeps_ MH sweeps against the CURRENT
   // walkers and refresh the leapfrog conditioning magnitudes. Unconditional per step and rank-local, so
   // every rank performs the same sequence of propagator/reduction calls -- no rank-dependent control
   // flow, no communication.
@@ -522,8 +522,8 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
   if (not inner_chains_primed_)
   {
     // Prime only. There is no separate burn-in count: the priming step falls through to the
-    // inner_equil_steps_ sweeps below, and every subsequent outer step sweeps again, so the chains have
-    // taken inner_equil_steps_ * (steps so far) sweeps by the time any measurement is kept -- the outer
+    // inner_sweeps_ sweeps below, and every subsequent outer step sweeps again, so the chains have
+    // taken inner_sweeps_ * (steps so far) sweeps by the time any measurement is kept -- the outer
     // equilibration window discards the early steps regardless.
     prime_chain_fields(wset);
     inner_chains_primed_ = true;
@@ -536,7 +536,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
     inner_dets_stale_ = false;
   }
 
-  for (int sweep = 0; sweep < inner_equil_steps_; ++sweep)
+  for (int sweep = 0; sweep < inner_sweeps_; ++sweep)
     chain_pool_sweep(wset);
 
   if (inner_leapfrog())
@@ -550,7 +550,7 @@ void StochasticWfn<MEM, devPsiT>::update_persistent_chain_pool(WalkerSet<MEM>& w
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
 {
-  // One measurement replica's pool motion: inner_measure_stride_ sweeps against the CURRENT walkers,
+  // One measurement replica's pool motion: inner_sweeps_ sweeps against the CURRENT walkers,
   // then refresh the leapfrog conditioning magnitudes so the next reduction's weights match the pool it
   // is about to measure with. This is update_persistent_chain_pool's tail with the priming, sizing and
   // staleness branches removed -- measure_advances_pool() already guarantees primed, non-stale chains,
@@ -566,7 +566,7 @@ void StochasticWfn<MEM, devPsiT>::advance_measure_pool(WalkerSet<MEM>& wset)
     APP_ABORT("Error in StochasticWfn::advance_measure_pool: persistent chains not primed; a measurement "
               "replica may not be the first thing to start them.");
 
-  for (int sweep = 0; sweep < inner_measure_stride_; ++sweep)
+  for (int sweep = 0; sweep < inner_sweeps_; ++sweep)
     chain_pool_sweep(wset);
 
   if (inner_leapfrog())

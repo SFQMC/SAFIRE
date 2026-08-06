@@ -95,14 +95,9 @@ public:
     if (inner_nwalkers < 1)
       APP_ABORT("Error in WavefunctionFactory::interpret_inputs: inner_nwalkers must be >= 1.");
     int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
-    int inner_equil_steps = pt0.get<int>("inner_equil_steps", 1);
     // Measurement-replica averaging (nm). Stride default tracks inner_equil_steps -- keep this in step
     // with StochasticWfn::interpret_inputs, which computes the same default.
     int inner_measure_replicas = pt0.get<int>("inner_measure_replicas", 1);
-    // Clamped to >= 1, matching StochasticWfn::interpret_inputs -- inner_equil_steps = 0 is legal and the
-    // unclamped default made it derive an illegal stride. See the comment there for why max() and not a
-    // relaxed validation.
-    int inner_measure_stride = pt0.get<int>("inner_measure_stride", std::max(1, inner_equil_steps));
     std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "pcn");
     // pcn default s = 1 (independence proposal): validated conditioned-path default (see StochasticWfn).
     double inner_mcmc_step = pt0.get<double>("inner_mcmc_step", inner_mcmc == "gaussian" ? 0.05 : 1.0);
@@ -122,7 +117,8 @@ public:
     for (auto const& key :
          {"inner_nwalkers", "inner_nsteps", "inner_mode",
           "inner_conditioning", "inner_leapfrog", "inner_persistence",
-          "inner_equil_steps", "inner_pool_burn_in", "inner_measure_replicas", "inner_measure_stride",
+          "inner_sweeps", "inner_equil_steps", "inner_measure_stride",
+          "inner_pool_burn_in", "inner_measure_replicas",
           "inner_measure_restore", "inner_condition_on_new",
           "inner_mcmc", "inner_mcmc_step", "inner_log_aggregate", "inner_seed", "inner_propagator",
           "inner_hamiltonian"})
@@ -141,9 +137,12 @@ public:
       // read them (it runs before StochasticWfn's own interpret_inputs) and it would silently build a
       // free-projection propagator for a conditioned sampler.
       pt1.put("inner_mode", resolve_inner_mode(pt0, inner_nsteps));
-      pt1.put("inner_equil_steps", inner_equil_steps);
+      // Sweep count: forward whatever spelling the user wrote and let StochasticWfn::interpret_inputs do
+      // the one-knob migration, so there is a single owner of it (same reasoning as inner_mode).
+      for (auto const& key : {"inner_sweeps", "inner_equil_steps", "inner_measure_stride"})
+        if (auto v = pt0.get_optional<int>(key))
+          pt1.put(key, *v);
       pt1.put("inner_measure_replicas", inner_measure_replicas);
-      pt1.put("inner_measure_stride", inner_measure_stride);
       pt1.put("inner_mcmc", inner_mcmc);
       pt1.put("inner_mcmc_step", inner_mcmc_step);
       pt1.put("inner_log_aggregate", inner_log_aggregate);
@@ -161,9 +160,8 @@ public:
       "inner_nwalkers",
       "inner_nsteps",
       "inner_mode",
-      "inner_equil_steps",
+      "inner_sweeps",
       "inner_measure_replicas",
-      "inner_measure_stride",
       "inner_mcmc",
       "inner_mcmc_step",
       "inner_log_aggregate",

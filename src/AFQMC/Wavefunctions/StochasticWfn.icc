@@ -117,8 +117,7 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   inner_nwalkers_    = pt.get<int>("inner_nwalkers");
   inner_nsteps_      = pt.get<int>("inner_nsteps");
   inner_mode_        = parse_inner_mode(pt.get<std::string>("inner_mode"));
-  inner_equil_steps_ = pt.get<int>("inner_equil_steps");
-  inner_measure_stride_ = pt.get<int>("inner_measure_stride");
+  inner_sweeps_ = pt.get<int>("inner_sweeps");
   inner_measure_replicas_ = pt.get<int>("inner_measure_replicas");
   inner_mcmc_        = pt.get<std::string>("inner_mcmc");
   inner_mcmc_step_   = pt.get<double>("inner_mcmc_step");
@@ -158,11 +157,8 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   // mode rather than those of an opt-in path.
   if (inner_persistence())
   {
-    if (inner_equil_steps_ < 0)
-      APP_ABORT("Error in StochasticWfn: inner_equil_steps must be >= 0.");
-    if (inner_measure_stride_ < 1)
-      APP_ABORT("Error in StochasticWfn: inner_measure_stride must be >= 1; replicas that share a pool "
-                "state must advance by at least one sweep.");
+    if (inner_sweeps_ < 0)
+      APP_ABORT("Error in StochasticWfn: inner_sweeps must be >= 0.");
     if (inner_mcmc_ == "metropolis")
       APP_ABORT("Error in StochasticWfn: inner_mcmc = 'metropolis' (the determinant-space independence "
                 "sampler) has been replaced by field-space kernels; use 'pcn' (equivalent physics at "
@@ -178,10 +174,14 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   }
   if (inner_measure_replicas_ < 1)
     APP_ABORT("Error in StochasticWfn: inner_measure_replicas must be >= 1.");
-  if (inner_measure_replicas_ > 1 && inner_measure_stride_ < 1)
-    APP_ABORT("Error in StochasticWfn: inner_measure_replicas > 1 requires inner_measure_stride >= 1; with zero "
-              "sweeps every replica measures the same frozen pool.");
-
+  // The real constraint, now stated where it belongs. inner_sweeps = 0 is legal and meaningful (prime the
+  // chains, then freeze them) -- but only at nm == 1, because replicas that share a pool state are the
+  // same measurement repeated and reduce neither variance nor lag. Previously this was enforced by
+  // silently clamping the measurement stride's default to max(1, equil), which made a legal
+  // inner_equil_steps = 0 derive an illegal stride and abort about a key the user never set.
+  if (inner_measure_replicas_ > 1 && inner_sweeps_ < 1)
+    APP_ABORT("Error in StochasticWfn: inner_measure_replicas > 1 requires inner_sweeps >= 1; with zero "
+              "sweeps every replica measures the same frozen pool, which is one measurement repeated.");
   if (inner_measure_replicas_ > 1 && not inner_persistence())
     APP_ABORT("Error in StochasticWfn: inner_measure_replicas > 1 (measurement-replica averaging) requires "
               "a conditioned dynamic trial (inner_conditioning = true, inner_nsteps > 0); a replica IS one "
@@ -226,26 +226,48 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
   if (auto v = pt0.get_optional<int>("inner_pool_burn_in"); v && *v != 0)
     APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_pool_burn_in has been REMOVED (it was 0 in "
               "every production run). Extra sweeps at the one-time prime are subsumed by "
-              "inner_equil_steps, which sweeps the pool on every outer step from the prime onwards; use "
-              "inner_equil_steps to control mixing.");
+              "inner_sweeps, which sweeps the pool on every advance from the prime onwards; use "
+              "inner_sweeps to control mixing.");
   int inner_measure_replicas = pt0.get<int>("inner_measure_replicas", 1);
 
-  int inner_equil_steps = pt0.get<int>("inner_equil_steps", 1);
-  // inner_measure_stride defaults to inner_equil_steps unless overridden -- but CLAMPED TO >= 1.
-  int inner_measure_stride = pt0.get<int>("inner_measure_stride", std::max(1, inner_equil_steps));
+  // ONE SWEEP COUNT FOR BOTH SEAMS. inner_equil_steps (propagation) and inner_measure_stride
+  // (measurement) counted the same thing -- chain_pool_sweep() calls -- and production always ran them
+  // equal, because the stride's own default WAS the equil count. hafqmc drives both of its seams from a
+  // single sample_update_steps, so one knob is also the matching choice.
+  //
+  // This also retires a clamp that was papering over the split: the stride was validated >= 1 while
+  // inner_equil_steps = 0 was legal, so a legal input derived an illegal one and aborted about a key the
+  // user never set. The real constraint -- nm > 1 needs at least one sweep, or every replica measures the
+  // same frozen pool -- is now stated directly in the constructor's validation.
+  //
+  // Legacy inputs translate when they agree and are REJECTED when they do not: a genuinely different
+  // stride is a request this engine can no longer honour, and silently picking one of the two values
+  // would change what the deck asked for.
+  auto legacy_equil  = pt0.get_optional<int>("inner_equil_steps");
+  auto legacy_stride = pt0.get_optional<int>("inner_measure_stride");
+  auto sweeps_opt    = pt0.get_optional<int>("inner_sweeps");
+  if (sweeps_opt && (legacy_equil || legacy_stride))
+    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_sweeps cannot be combined with the removed "
+              "inner_equil_steps / inner_measure_stride keys. Keep inner_sweeps and delete the others.");
+  if (legacy_equil && legacy_stride && *legacy_equil != *legacy_stride)
+    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_equil_steps = " + std::to_string(*legacy_equil) +
+              " and inner_measure_stride = " + std::to_string(*legacy_stride) + " are both REMOVED, replaced "
+              "by one inner_sweeps driving the propagation-side AND measurement-side pool advances. They "
+              "differ here, so no single value preserves this input's meaning -- pick one, write inner_sweeps.");
+  const int inner_sweeps =
+      sweeps_opt ? *sweeps_opt : (legacy_equil ? *legacy_equil : (legacy_stride ? *legacy_stride : 1));
   std::string inner_mcmc = pt0.get<std::string>("inner_mcmc", "pcn");
   // proposal step size s: kernel-dependent default. pcn: s = 1 (independence proposal) -- the validated
   // conditioned-path default; the per-step conditioning target moves, so an independence proposal
   // re-equilibrates each step (a P=8 single-rank check reproduced the reference energy to -0.1 mHa),
-  // whereas smaller steps lag it at inner_equil_steps = 1. gaussian random walk: s = 0.05.
+  // whereas smaller steps lag it at inner_sweeps = 1. gaussian random walk: s = 0.05.
   double inner_mcmc_step = pt0.get<double>("inner_mcmc_step", inner_mcmc == "gaussian" ? 0.05 : 1.0);
   bool inner_log_aggregate = pt0.get<bool>("inner_log_aggregate", false);
   int inner_seed = pt0.get<int>("inner_seed", 777);
   pt1.put("inner_nwalkers", inner_nwalkers);
   pt1.put("inner_nsteps", inner_nsteps);
   pt1.put("inner_mode", inner_mode);
-  pt1.put("inner_equil_steps", inner_equil_steps);
-  pt1.put("inner_measure_stride", inner_measure_stride);
+  pt1.put("inner_sweeps", inner_sweeps);
   pt1.put("inner_measure_replicas", inner_measure_replicas);
   pt1.put("inner_mcmc", inner_mcmc);
   pt1.put("inner_mcmc_step", inner_mcmc_step);
@@ -263,8 +285,7 @@ ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
       "inner_nwalkers",
       "inner_nsteps",
       "inner_mode",
-      "inner_equil_steps",
-      "inner_measure_stride",
+      "inner_sweeps",
       "inner_measure_replicas",
       "inner_mcmc",
       "inner_mcmc_step",
@@ -752,7 +773,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
   bp_refs_drawn_ = false;
   // Persistent chains: this is the one seam with NON-const access to the outer walker set (whose
   // buffer holds the chain fields), so ALL chain mutation happens here -- prime on first use, then
-  // inner_equil_steps_ MH sweeps targeting the CURRENT (old) walkers. The updated pool serves every
+  // inner_sweeps_ MH sweeps targeting the CURRENT (old) walkers. The updated pool serves every
   // reduction of this step (latch cleared below), so the step's overlap RATIO new/old shares one
   // ensemble (Eq. 25). Runs on every rank at every step -- uniform control flow, no communication.
   // Persistent field-chain pool update (device-ported: host-RNG hybrid chain MCMC).
@@ -788,7 +809,7 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WlkSet& wset)
     // after the principled version proved unusable. Matching a stabilised remnant is not the same as
     // matching the method, which is why this seam is where we stop matching.
     //
-      // MEASURED (N2 equilibrium, P=8, 30 walkers, inner_equil_steps=1, tau in (5,20], 9 seeds, paired):
+      // MEASURED (N2 equilibrium, P=8, 30 walkers, inner_sweeps=1, tau in (5,20], 9 seeds, paired):
     // enabling the handoff moved the energy -2.44 +/- 1.67 mHa (1.46 sigma -- NOT significant) and total
     // walker weight over the window from 1.005 to 0.991, i.e. the predicted decay showed up while the
     // energy shift did not resolve. ⚠️ N2-equilibrium is the EASIEST system here and equil=1 is not the

@@ -68,10 +68,10 @@ struct StochasticWfnOptions
   // "" = let the caller's inner_nsteps decide (static when 0). Otherwise "free" or "conditioned".
   std::string inner_mode   = "";
   // Persistent field chains are not an option: they ARE the conditioned sampler, so a trial with
-  // inner_mode = conditioned is persistent by construction. inner_equil_steps is the only pool-mixing knob:
+  // inner_mode = conditioned is persistent by construction. inner_sweeps is the only pool-mixing knob:
   // one sweep count for BOTH the propagation-side and measurement-side pool advances, and no separate
   // one-time burn-in count.
-  int inner_equil_steps         = 1;
+  int inner_sweeps         = 1;
   std::string inner_mcmc   = ""; // empty = input default ("pcn")
   double inner_mcmc_step   = 0.0; // <= 0 = kernel default
   bool inner_log_aggregate = false;
@@ -92,8 +92,8 @@ ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_
     pt.put("inner_mode", opt.inner_mode);
   else if (opt.inner_nsteps > 0)
     pt.put("inner_mode", "free"); // dynamic trials must name a mode; these decks want the bare draw
-  if (opt.inner_equil_steps != 1)
-    pt.put("inner_equil_steps", opt.inner_equil_steps);
+  if (opt.inner_sweeps != 1)
+    pt.put("inner_sweeps", opt.inner_sweeps);
   if (not opt.inner_mcmc.empty())
     pt.put("inner_mcmc", opt.inner_mcmc);
   if (opt.inner_mcmc_step > 0.0)
@@ -2163,7 +2163,7 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
       pt.put("inner_nwalkers", inner_nwalkers);
       pt.put("inner_nsteps", 1);
       pt.put("inner_mode", "conditioned");
-      pt.put("inner_equil_steps", equil_steps);
+      pt.put("inner_sweeps", equil_steps);
       pt.put("inner_mcmc", mcmc);
       if (mcmc_step > 0.0)
         pt.put("inner_mcmc_step", mcmc_step);
@@ -2265,7 +2265,7 @@ void stochastic_log_aggregate_smoke(std::shared_ptr<utils::mpi_context_t<boost::
     pt.put("inner_nsteps", 1);
     pt.put("inner_mode", "conditioned");
     pt.put("inner_log_aggregate", true);
-    pt.put("inner_equil_steps", 1);
+    pt.put("inner_sweeps", 1);
     ptree inner_prop;
     inner_prop.put("timestep", 0.01);
     pt.put_child("inner_propagator", inner_prop);
@@ -2351,7 +2351,7 @@ void stochastic_persistent_pool_nwalk1_bootstrap(std::shared_ptr<utils::mpi_cont
     stoch_opt.inner_nwalkers     = inner_nwalkers;
     stoch_opt.inner_nsteps       = 1;
     stoch_opt.inner_mode = "conditioned";
-    stoch_opt.inner_equil_steps = 1;
+    stoch_opt.inner_sweeps = 1;
     auto& wfn                    = env.push_stochastic_wfn(mpi, "wfn_stoch_nwalk1", wfn_file, stoch_opt, nwalk);
 
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nwalk1");
@@ -2455,7 +2455,7 @@ void stochastic_persistent_permute_after_pop_control(
     pt.put("inner_nwalkers", inner_nwalkers);
     pt.put("inner_nsteps", 1);
     pt.put("inner_mode", "conditioned");
-    pt.put("inner_equil_steps", 1);
+    pt.put("inner_sweeps", 1);
     ptree inner_prop;
     inner_prop.put("timestep", 0.01);
     pt.put_child("inner_propagator", inner_prop);
@@ -2555,7 +2555,7 @@ TEST_CASE("stochastic_persistent_permute_after_pop_control", "[stochastic_wfn]")
 
 // Case 2 -- chain-transport semantics of the coupling: the pool determinants always follow the chain
 // FIELDS stored in the outer walker buffer, with no chain restart in either direction. Made observable
-// with inner_equil_steps = 0 (zero sweeps per advance, so the only thing that can change the pool is the
+// with inner_sweeps = 0 (zero sweeps per advance, so the only thing that can change the pool is the
 // post-pop rebuild itself):
 //   (A) identity lineage, fields untouched -> the rebuild reproduces the same pool -> overlaps UNCHANGED
 //       (an all-or-nothing "re-prime on pop" would have destroyed them);
@@ -2614,7 +2614,7 @@ void stochastic_persistent_pool_survives_pop_control(
     // across the pop event is the post-pop rebuild itself -- transported fields => identical
     // determinants; replaced fields => different determinants at exactly that slot. (How well-mixed the
     // frozen pool is does not matter to the identity being checked, only that it cannot move.)
-    pt.put("inner_equil_steps", 0);
+    pt.put("inner_sweeps", 0);
     ptree inner_prop;
     inner_prop.put("timestep", 0.01);
     pt.put_child("inner_propagator", inner_prop);
@@ -2753,7 +2753,7 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     pt.put("inner_nwalkers", inner_nwalkers);
     pt.put("inner_nsteps", 1);
     pt.put("inner_mode", "conditioned");
-    pt.put("inner_equil_steps", 1);
+    pt.put("inner_sweeps", 1);
     ptree inner_prop;
     inner_prop.put("timestep", 0.01);
     pt.put_child("inner_propagator", inner_prop);
@@ -2830,7 +2830,7 @@ void stochastic_measure_replicas_nm1_advances_pool(std::shared_ptr<utils::mpi_co
   opt.inner_nwalkers     = inner_nwalkers;
   opt.inner_nsteps       = 1;
   opt.inner_mode = "conditioned";
-  opt.inner_equil_steps = 1;
+  opt.inner_sweeps = 1;
   // nm left at its default of 1 -- that IS the case under test.
   auto& wfn = env.push_stochastic_wfn(mpi, "wfn_stoch_nm1", wfn_file, opt, nwalk);
 
@@ -2890,7 +2890,7 @@ void stochastic_measure_replicas_ovlp_is_stored(std::shared_ptr<utils::mpi_conte
   opt.inner_nwalkers         = inner_nwalkers;
   opt.inner_nsteps           = 1;
   opt.inner_mode = "conditioned";
-  opt.inner_equil_steps = 1;
+  opt.inner_sweeps = 1;
   opt.inner_measure_replicas = 4;
   auto& wfn = env.push_stochastic_wfn(mpi, "wfn_stoch_nm4", wfn_file, opt, nwalk);
 
@@ -2981,7 +2981,7 @@ void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi
   opt.inner_nwalkers         = 4;
   opt.inner_nsteps           = 1;
   opt.inner_mode = "conditioned";
-  opt.inner_equil_steps = 1;
+  opt.inner_sweeps = 1;
   // Restore OFF is what makes the two arms comparable: the pool must carry over between the split calls.
 
   auto measure = [&](Wavefunction<MEM>& wfn, WalkerSet<MEM>& wset, nda::array<ComplexType, 2>& E) {
@@ -3140,7 +3140,7 @@ TEST_CASE("stochastic_removed_options_are_rejected_not_reinterpreted", "[stochas
     // The legacy triple must have been TRANSLATED to the mode, not merely dropped.
     CHECK(out.get<std::string>("inner_mode") == "conditioned");
     CHECK(out.get<int>("inner_nsteps") == 1);
-    CHECK(out.get<int>("inner_equil_steps") == 1);
+    CHECK(out.get<int>("inner_sweeps") == 1);
     CHECK(not out.get_optional<bool>("inner_conditioning"));
     CHECK(not out.get_optional<bool>("inner_leapfrog"));
   }
@@ -3207,6 +3207,71 @@ TEST_CASE("stochastic_removed_options_are_rejected_not_reinterpreted", "[stochas
     CHECK(out.get<int>("inner_nsteps") == 0);
   }
 
+  // -- inner_sweeps: the collapse of inner_equil_steps + inner_measure_stride -----------------------
+  SECTION("legacy equil/stride translate to inner_sweeps when they agree, or are absent")
+  {
+    for (auto keys : {std::vector<std::string>{"inner_equil_steps"},
+                      std::vector<std::string>{"inner_measure_stride"},
+                      std::vector<std::string>{"inner_equil_steps", "inner_measure_stride"}})
+    {
+      ptree pt = base();
+      pt.put("inner_mode", "conditioned");
+      for (auto const& k : keys)
+        pt.put(k, 8);
+      ptree out;
+      REQUIRE_NOTHROW(out = Wfn::interpret_inputs(pt));
+      CHECK(out.get<int>("inner_sweeps") == 8);
+      CHECK(not out.get_optional<int>("inner_equil_steps"));
+      CHECK(not out.get_optional<int>("inner_measure_stride"));
+    }
+  }
+
+  SECTION("legacy equil != stride is rejected -- no single value preserves that input's meaning")
+  {
+    ptree pt = base();
+    pt.put("inner_mode", "conditioned");
+    pt.put("inner_equil_steps", 32);
+    pt.put("inner_measure_stride", 4); // genuinely different: the engine can no longer honour it
+    REQUIRE_THROWS_AS(Wfn::interpret_inputs(pt), AppAbortException);
+  }
+
+  SECTION("inner_sweeps cannot be combined with the keys it replaced")
+  {
+    ptree pt = base();
+    pt.put("inner_mode", "conditioned");
+    pt.put("inner_sweeps", 8);
+    pt.put("inner_equil_steps", 8); // even agreeing, two spellings of one knob is the ambiguity we removed
+    REQUIRE_THROWS_AS(Wfn::interpret_inputs(pt), AppAbortException);
+  }
+
+  SECTION("inner_sweeps = 0 is legal at nm = 1 and rejected at nm > 1")
+  {
+    // 0 means "prime the chains, then freeze them" -- a real diagnostic mode, and the case the old
+    // stride clamp made unreachable. At nm > 1 it is incoherent: every replica measures the same pool.
+    ptree pt = base();
+    pt.put("inner_mode", "conditioned");
+    pt.put("inner_sweeps", 0);
+    REQUIRE_NOTHROW(Wfn::interpret_inputs(pt));
+    pt.put("inner_measure_replicas", 4);
+    ptree out;
+    REQUIRE_NOTHROW(out = Wfn::interpret_inputs(pt)); // interpret_inputs passes it; the ctor rejects it
+    CHECK(out.get<int>("inner_sweeps") == 0);
+  }
+
+  SECTION("inner_mode = free round-trips, and legacy conditioning = false translates to it")
+  {
+    ptree pt = base();
+    pt.put("inner_mode", "free");
+    ptree out;
+    REQUIRE_NOTHROW(out = Wfn::interpret_inputs(pt));
+    CHECK(out.get<std::string>("inner_mode") == "free");
+
+    ptree legacy = base();
+    legacy.put("inner_conditioning", false);
+    ptree out2;
+    REQUIRE_NOTHROW(out2 = Wfn::interpret_inputs(legacy));
+    CHECK(out2.get<std::string>("inner_mode") == "free");
+  }
 }
 
 } // namespace sfqmc
