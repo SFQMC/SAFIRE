@@ -282,74 +282,43 @@ public:
 
   bool stochastic_inner_walkers_initialized() const
   {
-    return std::visit(
-        [](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.inner_walkers_initialized();
-          return false;
-        },
-        var);
+    return visit_stochastic_or([](auto&& a) { return a.inner_walkers_initialized(); }, false);
   }
 
-  // Current inner trial-ensemble walker count: P (= inner_n_samples) in the walker-independent P-sample
-  // form, or nwalk*P after a conditioned/leapfrog resample; -1 for a non-stochastic or uninitialized
-  // wavefunction. Read-only diagnostic (used by stochastic_mean_field_production_order).
+  // Inner ensemble size: P in the walker-independent form, or nwalk*P after a conditioned resample;
+  // -1 if non-stochastic or uninitialized. Read-only diagnostic.
   long stochastic_inner_ensemble_size() const
   {
-    return std::visit(
+    return visit_stochastic_or(
         [](auto&& a) -> long {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.inner_walkers_initialized() ? long(a.inner_wset().size()) : -1L;
-          return -1L;
+          return a.inner_walkers_initialized() ? long(a.inner_wset().size()) : -1L;
         },
-        var);
+        -1L);
   }
 
-  // Cumulative Metropolis acceptance fraction of a stochastic trial's persistent field-space chain
-  // updates on this rank (1.0 before any proposal; -1 for a non-stochastic wavefunction). Read-only
-  // diagnostic.
+  // Cumulative field-chain Metropolis acceptance on this rank (-1 if non-stochastic).
   double stochastic_inner_chain_acceptance() const
   {
-    return std::visit(
-        [](auto&& a) -> double {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.inner_chain_acceptance();
-          return -1.0;
-        },
-        var);
+    return visit_stochastic_or([](auto&& a) { return a.inner_chain_acceptance(); }, -1.0);
   }
 
-  // True when a stochastic trial's measure_energy will actually average over measurement replicas
-  // (false for a non-stochastic wavefunction, and for a stochastic one whose nm == 1 or whose pool is
-  // not a live persistent chain). Read-only; exists so a test can assert the replica path is LIVE
-  // rather than pass vacuously on the plain-Energy fallback.
+  // True when measure_energy advances a live persistent pool (so replica-path tests are not vacuous).
   bool stochastic_measure_advances_pool() const
   {
-    return std::visit(
-        [](auto&& a) -> bool {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.measure_advances_pool();
-          return false;
-        },
-        var);
+    return visit_stochastic_or([](auto&& a) { return a.measure_advances_pool(); }, false);
   }
 
-  // Sum of a stochastic trial's leapfrog conditioning magnitudes (test/diagnostic checksum; -1 for a
-  // non-stochastic wavefunction). See StochasticWfn::inner_cond_mag_sum.
+  // Leapfrog conditioning-magnitude checksum (-1 if non-stochastic). See StochasticWfn::inner_cond_mag_sum.
   double stochastic_inner_cond_mag_sum() const
   {
-    return std::visit(
-        [](auto&& a) -> double {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.inner_cond_mag_sum();
-          return -1.0;
-        },
-        var);
+    return visit_stochastic_or([](auto&& a) { return a.inner_cond_mag_sum(); }, -1.0);
+  }
+
+  // Trained B_T timestep in force on a stochastic trial (-1 if non-stochastic). See
+  // StochasticWfn::inner_timestep -- exists so a test can prove the factory's stamp reached the object.
+  double stochastic_inner_timestep() const
+  {
+    return visit_stochastic_or([](auto&& a) { return a.inner_timestep(); }, -1.0);
   }
 
   void initialize_stochastic_inner_walkers(
@@ -357,33 +326,17 @@ public:
       std::vector<nda::matrix<ComplexType>> const& initial_guess,
       int NAEB)
   {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.initialize_inner_walkers(walker_pt, initial_guess, NAEB);
-        },
-        var);
+    visit_stochastic([&](auto&& a) { a.initialize_inner_walkers(walker_pt, initial_guess, NAEB); });
   }
 
   template<class WlkSet>
   void begin_inner_step(WlkSet& wset)
   {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.begin_inner_step(wset);
-        },
-        var);
+    visit_stochastic([&](auto&& a) { a.begin_inner_step(wset); });
   }
 
-  // Measurement entry point for the estimators. For a StochasticWfn this is Energy averaged over
-  // inner_n_measure_samples replicas of the field pool at fixed walkers (see
-  // StochasticWfn::measure_energy); for every other wavefunction, and for a StochasticWfn with
-  // inner_n_measure_samples = 1, it IS Energy -- same call, same values. Takes wset by non-const
-  // reference because advancing the pool writes the chain state back into the walker buffer's
-  // TrialFields block.
+  // Estimator entry: StochasticWfn averages Energy over measurement replicas; every other wavefunction
+  // (and nm == 1) is plain Energy. Non-const because advancing the pool writes TrialFields.
   template<class WlkSet, class Mat, class TVec>
   void measure_energy(WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0)
   {
@@ -398,26 +351,48 @@ public:
         var);
   }
 
-  // Realign the conditioned inner ensemble with the outer walker set after an outer population-control
-  // event. The driver calls this immediately after wset.popControl(). No-op for non-stochastic
-  // wavefunctions and for stochastic trials that carry no slot-conditioned blocks.
+  // Realign conditioned inner blocks after an outer population-control event. THE DRIVER MUST CALL THIS
+  // IMMEDIATELY AFTER wset.popControl() -- that ordering is the contract, and it is not visible from
+  // this signature. No-op unless StochasticWfn + WalkerOverlap.
   template<class WlkSet>
   void permute_inner_blocks_after_pop(const WlkSet& wset)
   {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.permute_inner_blocks_after_pop(wset);
-        },
-        var);
+    visit_stochastic([&](auto&& a) { a.permute_inner_blocks_after_pop(wset); });
   }
 
   template<MEMORY_SPACE MEM2, class MType2>
   friend struct wavefunction_detail::StochasticInnerStackImpl;
 
-  private:
+private:
+  // Dispatch to the held StochasticWfn; no-op for every other variant alternative. Non-const only:
+  // every mutating seam (initialize / begin_inner_step / permute) needs a mutable trial, and the
+  // read-only accessors all want a return value, so they go through visit_stochastic_or instead.
+  template<class F>
+  void visit_stochastic(F&& f)
+  {
+    std::visit(
+        [&](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            f(a);
+        },
+        var);
+  }
 
+  // Dispatch to StochasticWfn and return its result; otherwise return fallback.
+  template<class F, class R>
+  R visit_stochastic_or(F&& f, R fallback) const
+  {
+    return std::visit(
+        [&](auto&& a) -> R {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return f(a);
+          else
+            return fallback;
+        },
+        var);
+  }
 
   std::variant<NOMSD<MEM,PsiT_Matrix<MEM>>,
                NOMSD<MEM,memory::const_shared_array<MEM,ComplexType,2>>,

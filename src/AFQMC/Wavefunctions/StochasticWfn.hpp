@@ -194,6 +194,11 @@ public:
   int inner_n_samples() const { return inner_n_samples_; }
   int inner_nsteps() const { return inner_nsteps_; }
   SamplingTarget inner_sampling_target() const { return inner_sampling_target_; }
+  // The trained B_T timestep actually in force. Exposed so a test can assert that the value the factory
+  // read from inner_hamiltonian's 'inner_timestep' attribute REACHED the wavefunction -- a factory that
+  // reads the stamp and then drops it on the floor is indistinguishable from one that works, unless the
+  // built object is asked what it got.
+  double inner_timestep() const { return inner_timestep_; }
   // True for SamplingTarget::WalkerOverlap: walker-conditioned persistent field chains with the leapfrog
   // reweight. Those three mechanisms are one algorithm, not independent knobs.
   bool is_conditioned() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
