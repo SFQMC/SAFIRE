@@ -130,7 +130,8 @@ html_css_files = [
 
 html_theme_options = {
     "logo": {
-        "image_light": "images/logo.svg"
+        "image_light": "images/logo.svg",
+        "link": "https://safire.flatironinstitute.org/",
     },
     "globaltoc_maxdepth": 3,        # -1 for unlimited
     "globaltoc_collapse": False,    # expand whole tree or not
@@ -144,6 +145,14 @@ html_theme_options = {
     "navbar_end": ["navbar-icon-links"],
     "navbar_align": "left",
     "secondary_sidebar_items": ["page-toc"],
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": "https://github.com/SFQMC/SAFIRE",
+            "icon": "fa-brands fa-github",
+            "type": "fontawesome",
+        }
+   ]
 }
 
 # Force light mode (disables dark mode / the auto switcher default).

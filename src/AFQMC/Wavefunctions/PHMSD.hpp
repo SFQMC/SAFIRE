@@ -32,6 +32,7 @@
 
 #include "AFQMC/Wavefunctions/phmsd_helpers.hpp"
 #include "AFQMC/Wavefunctions/Excitations.hpp"
+#include "AFQMC/Walkers/WalkerSet.hpp"
 
 namespace sfqmc
 {
@@ -121,29 +122,24 @@ public:
   bool isFiniteTemperature() const { return false; }
 
   /*
+   * Returns the memory space.
+   */
+  constexpr auto get_memory_space() const { return MEM; }
+
+  /*
    *  Performs runtime optimizations.
    */
-  template<class WlkSet>
-  void runtime_optimization(WlkSet& wset)
-  {
-    const int nw   = wset.size();
-    const int nel = (walker_type==COLLINEAR ? nup+ndown : nup );
-    const int npol = (walker_type==NONCOLLINEAR ? 2 : 1 );
-    memory::array<MEM,ComplexType,2> G(nw,nel*npol*NMO);
-    // don't use buffered_array!!!
-// This needs to depend on algorithm!!!
-    HamOp.runtime_optimization(G);
-  }
+  void runtime_optimization(WalkerSet<MEM>& wset);
 
   /*
    * Expectation value of Hubbard-Stratonovich potential with respect to trial wave-function.
    */
-  void vMF(nda::MemoryVector auto&& v, double dt); 
+  void vMF(memory::array_view<MEM,ComplexType,1> v, double dt);
 
   /*
    * Green function of the trial wave-funtion. 
    */
-  auto G_MF();
+  memory::const_shared_array<HOST_MEMORY,ComplexType,3> G_MF();
 
   template<class... Args>
   void generalizedFockMatrix(Args&&... args)
@@ -185,25 +181,7 @@ public:
   /*
    * Calculates the bias potential.
    */
-  template<class WlkSet>
-  void vbias(WlkSet& wset, nda::MemoryMatrix auto && v, double dt, int nt = 0)
-  { 
-    memory::check_memory_space<MEM>(v);
-    AFQMCTimer.start(G_for_vbias_timer);
-    int nact  = OrbMats(0).extent(0) + (walker_type==COLLINEAR ? OrbMats(OrbMats.extent(0)-1).extent(0) : 0);
-    int npol  = (walker_type==NONCOLLINEAR ? 2 : 1);
-    int nw = wset.size();
-    utils::check(v.shape() == std::array<long,2>{nw,HamOp.number_of_cholesky_vectors()},
-                 "Shape mismatch");
-    memory::buffered_array<MEM,ComplexType,2> G(nw,nact*npol*NMO);
-    memory::buffered_array<MEM,ComplexType,1> ovlp(nw);
-    MixedDensityMatrix(wset, G, ovlp);
-    AFQMCTimer.stop(G_for_vbias_timer);
-    AFQMCTimer.start(vbias_timer);
-    v() = ComplexType(0.0);
-    HamOp.vbias(G, v, dt);
-    AFQMCTimer.stop(vbias_timer);
-  }
+  void vbias(WalkerSet<MEM>& wset, memory::array_view<MEM,ComplexType,2> v, double dt, int nt = 0);
 
   /*
    * Returns the Hubbard-Stratonovich potential. 
@@ -223,33 +201,13 @@ public:
    * Calculates the local energy and overlaps of all the walkers in the set and stores
    * them in the wset data
    */
-  template<class WlkSet>
-  void Energy(WlkSet& wset, int nt = 0)
-  {
-    auto all = nda::range::all;
-    int nw = wset.size();
-    memory::buffered_array<MEM,ComplexType,1> ovlp(nw,ComplexType(0.0));
-    memory::buffered_array<MEM,ComplexType,2> eloc(nw,3);
-    eloc() = ComplexType(0.0);
-    Energy(wset, eloc(), ovlp());
-    wset.setProperty(OVLP, ovlp);
-    wset.setProperty(E1_, eloc(all, 0));
-    wset.setProperty(EXX_, eloc(all, 1));
-    wset.setProperty(EJ_, eloc(all, 2));
-  }
+  void Energy(WalkerSet<MEM>& wset, int nt = 0);
 
   /*
    * Calculates the local energy and overlaps of all the walkers in the set and 
    * returns them in the appropriate data structures
    */
-  template<class WlkSet,  nda::MemoryMatrix TMat, nda::MemoryVector TVec>
-  void Energy(const WlkSet& wset, TMat&& E, TVec&& Ov, int nt = 0)
-  {
-    if(energy_algorithm == PHMSDEnergyAlgorithm::reference)
-      energy_alg0(wset,E,Ov);
-    else
-      energy_alg1(wset,E,Ov);
-  }
+  void Energy(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E, memory::array_view<MEM,ComplexType,1> Ov, int nt = 0);
 
   /*
    * Calculates the mixed density matrix for all walkers in the walker set. 
@@ -257,16 +215,9 @@ public:
    *  - compact:   If true (default), returns compact form with Dim: [NEL*NMO], 
    *                 otherwise returns full form with Dim: [NMO*NMO]. 
    */
-  template<class WlkSet, nda::MemoryMatrix MatG>
-  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, bool compact = true)
-  {
-    int nw = wset.size();
-    memory::buffered_array<MEM,ComplexType,1> ovlp(nw,ComplexType(0.0));
-    MixedDensityMatrix(wset, std::forward<MatG>(G), ovlp, compact);
-  }
+  void MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> G, bool compact = true);
 
-  template<class WlkSet, nda::MemoryMatrix MatG, nda::MemoryVector TVec>
-  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true);
+  void MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> G, memory::array_view<MEM,ComplexType,1> Ov, bool compact = true);
 
   /*
    * Calculates the density matrix with respect to a given Reference
@@ -280,20 +231,12 @@ public:
   /*
    * Calculates the overlaps of all walkers in the set. Returns values in arrays. 
    */
-  template<class WlkSet, nda::MemoryArrayOfRank<1> TVec>
-  void Log_Overlap(const WlkSet& wset, TVec && Ov, int nt = 0);
+  void Log_Overlap(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,1> Ov, int nt = 0);
 
   /*
    * Calculates the overlaps of all walkers in the set. Updates values in wset. 
    */
-  template<class WlkSet>
-  void Log_Overlap(WlkSet& wset)
-  {
-    int nw = wset.size();
-    memory::buffered_array<MEM,ComplexType,1> ovlp(nw,ComplexType(0.0));
-    Log_Overlap(wset, ovlp);
-    wset.setProperty(OVLP, ovlp);
-  }
+  void Log_Overlap(WalkerSet<MEM>& wset);
 
   template<class WlkSet, class Observable>
   void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
@@ -325,7 +268,7 @@ public:
   /*
    * Returns the reference Slater Matrices needed for back propagation.  
    */
-  void getReferences(nda::MemoryArrayOfRank<3> auto& Refs) 
+  void getReferences(memory::buffered_array<MEM,ComplexType,3>& Refs) 
   {
     using nda::range;
     auto all = range::all;
@@ -440,17 +383,13 @@ protected:
   }
 
   /* Implementation of various energy evaluation algorithms. */
-  template<class WlkSet,  nda::MemoryMatrix Mat, nda::MemoryVector TVec>
-  void energy_alg0(const WlkSet& wset, Mat&& E, TVec&& Ov);
+  void energy_alg0(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E, memory::array_view<MEM,ComplexType,1> Ov);
 
-  template<class WlkSet,  nda::MemoryMatrix Mat, nda::MemoryVector TVec>
-  void energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov);
+  void energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E, memory::array_view<MEM,ComplexType,1> Ov);
 
 };
 
 } // namespace afqmc
 
 } // namespace sfqmc
-
-#include "AFQMC/Wavefunctions/PHMSD.icc"
 

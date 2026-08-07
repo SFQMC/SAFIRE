@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "numerics/operations/determinants.hpp"
 #include "AFQMC/config.h"
 #include "AFQMC/Wavefunctions/detail/phmsd_impl.hpp"
 #include "AFQMC/Wavefunctions/Excitations.hpp"

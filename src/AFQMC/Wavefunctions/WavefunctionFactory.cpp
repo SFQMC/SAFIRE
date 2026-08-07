@@ -14,7 +14,6 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <random>
 #include "AFQMC/config.h"
 #include "utilities/h5_utils.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
@@ -460,12 +459,12 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
             });
           }
         }
-        return Wavefunction(NOMSD<MEM,MType>(params, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
+        return Wavefunction<MEM>(NOMSD<MEM,MType>(params, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT_dense),targetNW));
       }
       else
       {
-        return Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>>(params, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
+        return Wavefunction<MEM>(NOMSD<MEM,PsiT_Matrix<MEM>>(params, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT),targetNW)); 
       }
     }
@@ -513,12 +512,12 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
             }
           }
         }
-        return Wavefunction(NOMSD_FT<MEM,MType>(params, NMO, ntau, walker_type, mpi, std::move(HOps), 
+        return Wavefunction<MEM>(NOMSD_FT<MEM,MType>(params, NMO, ntau, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT_dense),targetNW));
       }
       else
       {
-        return Wavefunction(NOMSD_FT<MEM,PsiT_Matrix<MEM>>(params, NMO, ntau, walker_type, mpi, std::move(HOps), 
+        return Wavefunction<MEM>(NOMSD_FT<MEM,PsiT_Matrix<MEM>>(params, NMO, ntau, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT),targetNW));
       }
 

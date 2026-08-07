@@ -17,6 +17,8 @@
 #pragma once
 
 #include <memory>
+#include <span>
+#include <utility>
 
 #include "configuration.hpp"
 #include "config.h"
@@ -128,7 +130,7 @@ public:
                 const WalkerSetParameters& params,
                 std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
                 WALKER_TYPES walker_type,
-                nda::MemoryArrayOfRank<4> auto const& UDV,
+                memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV,
                 int nWalkers
                )
       : WalkerSetBase(_mpi_, params, r, walker_type, dims_from_guess_ft(UDV), nWalkers, true)
@@ -239,7 +241,7 @@ public:
    * rank-4 guess {3, nspin, rows, naea} (D is a full matrix; its diagonal is
    * used). The set must already be sized.
    */
-  void populate_from_guess_ft(nda::MemoryArrayOfRank<4> auto const& UDV);
+  void populate_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV);
 
   /*
    * Finite temperature reset walkers at the beginning of each sweep
@@ -303,7 +305,7 @@ public:
   /// Dimensions {rows, naea, naeb} of a finite-temperature walker set holding
   /// the given rank-4 UDV guess {3, nspin, rows, naea}. nspin == 2 signals
   /// collinear-ft (naeb == naea); otherwise naeb == 0.
-  static std::array<int, 3> dims_from_guess_ft(nda::MemoryArrayOfRank<4> auto const& UDV)
+  static std::array<int, 3> dims_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV)
   {
     utils::check(UDV.extent(0) == 3, "Invalid finite-T initial guess.");
     int rows = int(UDV.extent(2));
@@ -461,13 +463,17 @@ public:
   // Note: the following overload is deprecated
   void popControl(std::vector<ComplexType>& curData, bool skip = false);
 
-  void push_walkers(nda::MemoryArrayOfRank<2> auto&& M);
+  // M holds the incoming walkers packed as {walker_buffer row, bp_buffer row}; it comes
+  // from an MPI receive buffer, so it is on the host even when the set lives on a device.
+  void push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M);
 
-  void pop_walkers(nda::MemoryArrayOfRank<2> auto&& M);
+  void pop_walkers(memory::array_view<HOST_MEMORY, ComplexType, 2> M);
 
-  // given a list of new weights and counts, add/remove walkers and reassign weight accordingly
-  template<class It>
-  void branch(It itbeg, It itend, nda::MemoryArrayOfRank<2> auto&& M); 
+  // given a list of new weights and counts, add/remove walkers and reassign weight accordingly.
+  // counts is one {weight, multiplicity} entry per local walker and is reordered in place;
+  // walkers beyond the target population are written to M.
+  void branch(std::span<std::pair<double, int>> counts,
+              memory::array_view<_MEM_, ComplexType, 2> M);
 
   template<class T>
   void scaleWeight(const T& w0, bool scale_last_history = false)
@@ -708,6 +714,4 @@ protected:
 } // namespace afqmc
 
 } // namespace sfqmc
-
-#include "AFQMC/Walkers/WalkerSetBase.icc"
 

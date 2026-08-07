@@ -10,9 +10,15 @@ target_sources(safire_lib
     Drivers/FTAFQMCDriver.cpp
     Propagators/AFQMCBasePropagator.cpp
     Propagators/PropagatorFactory.cpp
+    Walkers/WalkerSetBase.cpp
     Wavefunctions/WavefunctionFactory.cpp
+    Wavefunctions/Wavefunction.cpp
+    Wavefunctions/NOMSD.cpp
+    Wavefunctions/PHMSD.cpp
+    Wavefunctions/NOMSD_FT.cpp
     Wavefunctions/StochasticWfn.cpp
     HamiltonianOperations/HamiltonianOperations.cpp
+    Estimators/EstimatorHandler.cpp
     Hamiltonians/KPFactorizedHamiltonian.cpp
     Hamiltonians/RealDenseHamiltonian.cpp
     Hamiltonians/ModelHamOpsGenerator.cpp
@@ -20,5 +26,3 @@ target_sources(safire_lib
     Hamiltonians/THCHamiltonian.cpp
     Hamiltonians/KPTHCHamiltonian.cpp
 )
-
-

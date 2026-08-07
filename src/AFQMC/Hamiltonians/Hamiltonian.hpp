@@ -37,18 +37,15 @@ class Hamiltonian
 {
 
 public:
-  Hamiltonian() = delete;
-  explicit Hamiltonian(THCHamiltonian&& other) : var(std::move(other)) {}
-  explicit Hamiltonian(KPTHCHamiltonian&& other) : var(std::move(other)) {}
-  explicit Hamiltonian(ModelHamOpsGenerator&& other) : var(std::move(other)) {}
-  explicit Hamiltonian(KPFactorizedHamiltonian&& other) : var(std::move(other)) {}
-  explicit Hamiltonian(RealDenseHamiltonian&& other) : var(std::move(other)) {}
 
-  explicit Hamiltonian(THCHamiltonian const& other) : var(other) {}  
-  explicit Hamiltonian(KPTHCHamiltonian const& other) : var(other) {}  
-  explicit Hamiltonian(ModelHamOpsGenerator const& other) : var(other) {}
-  explicit Hamiltonian(KPFactorizedHamiltonian const& other) : var(other) {}
-  explicit Hamiltonian(RealDenseHamiltonian const& other) : var(other) {}
+  template<typename Ham>
+  Hamiltonian(Ham&& other) : var(std::forward<Ham>(other)) {}
+
+  template<typename Ham>
+  Hamiltonian& operator=(Ham&& other) {
+    var = std::forward<Ham>(other);
+    return *this;
+  }
 
   template<MEMORY_SPACE MEM, class... Args>
   HamiltonianOperations<MEM> getHamiltonianOperations(Args&&... args)

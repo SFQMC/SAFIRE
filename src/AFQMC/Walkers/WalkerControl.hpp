@@ -19,7 +19,9 @@
 #include <tuple>
 #include <cassert>
 #include <memory>
+#include <span>
 #include <stack>
+#include <utility>
 #include <mpi.h>
 #include "AFQMC/config.h"
 #include "utilities/FairDivide.hpp"
@@ -440,7 +442,7 @@ inline void SerialBranching(WalkerSet& wset,
 
   // perform local branching
   // walkers beyond target go in Wexcess
-  wset.branch(buffer.begin() + target * comm.rank(), buffer.begin() + target * (comm.rank() + 1), Wexcess);
+  wset.branch(std::span(buffer).subspan(target * comm.rank(), target), Wexcess);
 }
 
 /**
@@ -662,8 +664,7 @@ void correlatedPopulationControl(std::vector<std::reference_wrapper<WalkerSet>>&
     // perform local branching
     // walkers beyond target go in Wexcess
     auto buff_s = buffer(s,nda::range::all);
-    wlks[s].get().branch(buff_s.begin() + target * mpi.comm.rank(), 
-                         buff_s.begin() + target * (mpi.comm.rank() + 1), Wexcess);
+    wlks[s].get().branch(std::span(buff_s.data() + target * mpi.comm.rank(), target), Wexcess);
     AFQMCTimer.stop(Branching_timer);
 
     // load balance

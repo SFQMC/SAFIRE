@@ -14,10 +14,10 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-
 #include <cassert>
 #include <cstdlib>
+
+#include "AFQMC/Walkers/WalkerSetBase.h"
 #include "utilities/check_shape.hpp"
 #include "utilities/parser.h"
 
@@ -487,7 +487,7 @@ void WalkerSetBase<_M_>::populate_from_guess(const std::vector<nda::matrix<Compl
  * LOGSCL_*, IS_UNITARY) by allocate_walkers, so this only fills U/D/V.
 */
 template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::populate_from_guess_ft(nda::MemoryArrayOfRank<4> auto const& UDV)
+void WalkerSetBase<_M_>::populate_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV)
 {
   auto all = nda::range::all;
   int nspin = (walkerType == COLLINEAR ? 2 : 1);
@@ -650,7 +650,7 @@ void WalkerSetBase<_M_>::resize_trial_fields(int n)
 }
 
 template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::push_walkers(nda::MemoryArrayOfRank<2> auto&& M)
+void WalkerSetBase<_M_>::push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M)
 {
   utils::check(tot_num_walkers + M.extent(0) <= capacity(), "Insufficient capacity");
   utils::check(single_walker_size() + single_walker_bp_size() == M.extent(1), 
@@ -674,7 +674,7 @@ void WalkerSetBase<_M_>::push_walkers(nda::MemoryArrayOfRank<2> auto&& M)
 }
 
 template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::pop_walkers(nda::MemoryArrayOfRank<2> auto&& M)
+void WalkerSetBase<_M_>::pop_walkers(memory::array_view<HOST_MEMORY, ComplexType, 2> M)
 {
   utils::check(tot_num_walkers >= M.extent(0), "Insufficient walkers");
   utils::check(walker_size + (wlk_desc[3]>0 ? bp_walker_size : 0 ) == int(M.extent(1)),
@@ -691,11 +691,11 @@ void WalkerSetBase<_M_>::pop_walkers(nda::MemoryArrayOfRank<2> auto&& M)
 }
 
 template<MEMORY_SPACE _M_>
-template<class It>
-void WalkerSetBase<_M_>::branch(It itbegin, It itend, nda::MemoryArrayOfRank<2> auto&& M)
+void WalkerSetBase<_M_>::branch(std::span<std::pair<double, int>> counts,
+                                memory::array_view<_M_, ComplexType, 2> M)
 {
-  static_assert(std::is_same_v<std::pair<double, int>,std::decay_t<decltype(*itbegin)>>,
-                "Type mismatch.");
+  auto itbegin = counts.begin();
+  auto itend   = counts.end();
   utils::check(std::distance(itbegin, itend) == tot_num_walkers,
                "Error in WalkerSetBase::branch(): ptr_range != # walkers. ");
 
@@ -872,6 +872,11 @@ void WalkerSetBase<_M_>::benchmark(std::string& blist, int maxnW, int delnW, int
       out.open("benchmark.comm.dat");
   }
 }
+
+template class WalkerSetBase<HOST_MEMORY>;
+#if defined(ENABLE_DEVICE)
+template class WalkerSetBase<DEVICE_MEMORY>;
+#endif
 
 } // namespace afqmc
 

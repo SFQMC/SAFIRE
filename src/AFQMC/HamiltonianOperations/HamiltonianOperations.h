@@ -31,93 +31,68 @@ namespace afqmc
 {
 
 template<MEMORY_SPACE MEM>
-class HamiltonianOperations 
+class HamiltonianOperations
 {
 
 public:
-
-  HamiltonianOperations() = delete;
+  template<typename HOps>
+  HamiltonianOperations(HOps&& other) : var(std::forward<HOps>(other)) {}
 
   template<typename HOps>
-  HamiltonianOperations(HOps&& other);
-
-  template<typename HOps>
-  HamiltonianOperations(HOps const& other);
-
-  void runtime_optimization(nda::MemoryArrayOfRank<2> auto const& G)
-  {
-    std::visit([&](auto&& a) { a.runtime_optimization(G); }, var);
+  HamiltonianOperations& operator=(HOps&& other) {
+    var = std::forward<HOps>(other);
+    return *this;
   }
+
+  void runtime_optimization(memory::array_view<MEM,const ComplexType,2> G);
 
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
-                                                       nda::MemoryVector auto const& vMF) 
-  {
-    return getOneBodyPropagatorMatrix_impl(dt,vMF());
-  }
+                       memory::array_view<HOST_MEMORY,const ComplexType,1> vMF);
 
-  void energy(nda::MemoryArrayOfRank<2> auto && E, nda::MemoryArrayOfRank<2> auto const& G,
-              int idet, bool addH1  = true, bool addEJ  = true,bool addEXX = true)
-  {
-    auto E_=E();
-    energy_impl(E_,G(),idet,addH1,addEJ,addEXX);
-  }
+  void energy(memory::array_view<MEM,ComplexType,2> E,
+              memory::array_view<MEM,const ComplexType,2> G,
+              int idet, bool addH1  = true, bool addEJ  = true, bool addEXX = true);
 
-  void energy(SpinTypes spin, nda::MemoryArrayOfRank<2> auto && E, nda::MemoryArrayOfRank<2> auto const& G, int idet, nda::MemoryArrayOfRank<2> auto && EJn,  bool addH1  = true, bool addEJ  = true,bool addEXX = true)
-  { 
-    std::visit([&](auto&& s) { s.energy(spin,E,G,idet,EJn,addH1,addEJ,addEXX); }, var);
-  }
+  void energy(SpinTypes spin, memory::array_view<MEM,ComplexType,2> E,
+              memory::array_view<MEM,const ComplexType,2> G, int idet,
+              memory::array_view<MEM,ComplexType,2> EJn,
+              bool addH1  = true, bool addEJ  = true, bool addEXX = true);
 
-  template<class... Args>
-  void generalizedFockMatrix(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.generalizedFockMatrix(std::forward<Args>(args)...); }, var);
-  }
+  void generalizedFockMatrix(memory::array_view<MEM,const ComplexType,2> G,
+                             memory::array_view<MEM,ComplexType,2> Fp,
+                             memory::array_view<MEM,ComplexType,2> Fm);
 
-  template<nda::MemoryMatrix X_t>
-  //memory::buffered_array<memory::get_memory_space<X_t>(),ComplexType,4> vHS(X_t&& X, double dt)
-  auto vHS(X_t&& X, double dt)
-  {
-    //auto X_ = X();
-    //return vHS_impl(X_,dt);
-    return std::visit([&](auto&& a) { return a.vHS(X,dt); }, var);
-  }
+  memory::buffered_array<MEM,ComplexType,4> vHS(memory::array_view<MEM,ComplexType,2> X, double dt);
 
-  auto vHS_sparse(nda::MemoryArrayOfRank<2> auto const& X, double dt)
-  {
-    return std::visit([&](auto&& a) { return a.vHS_sparse(X,dt); }, var);
-  }
+  nda::array_view<math::sparse::csr_matrix<ComplexType,MEM,int,int>,1>
+      vHS_sparse(memory::array_view<MEM,const ComplexType,2> X, double dt);
 
-  // instantiate!!!
-  void update_potentials(double dt, nda::MemoryVector auto const& nMF, nda::MemoryVector auto&& vMF, bool natural_shift)
-  {
-    auto n_ = nMF();
-    auto v_ = vMF();
-    update_potentials_impl(dt,n_,v_,natural_shift);
-  }
+  // nMF is accumulated on the host even when the operations live on the device
+  void update_potentials(double dt, memory::array_view<HOST_MEMORY,const ComplexType,1> nMF,
+                         memory::array_view<MEM,ComplexType,1> vMF, bool natural_shift);
 
-  template<class... Args>
-  void ph_reference_energy(Args&&... args)
-  { 
-    std::visit([&](auto&& s) { s.ph_reference_energy(std::forward<Args>(args)...); }, var);
-  }
+  void ph_reference_energy(SpinTypes spin, memory::array_view<MEM,ComplexType,2> E,
+                           memory::array_view<MEM,const ComplexType,2> G,
+                           memory::array_view<MEM,ComplexType,2> EJn, bool addH1 = true);
 
-  template<class... Args>
-  void ph_excited_energy(Args&&... args)
-  { 
-    std::visit([&](auto&& s) { s.ph_excited_energy(std::forward<Args>(args)...); }, var);
-  }
+  void ph_excited_energy(SpinTypes spin, int nelec,
+                         memory::array_view<MEM,const int,1> iexcit,
+                         memory::array_view<MEM,const int,1> refc,
+                         memory::array_view<MEM,ComplexType,2> E,
+                         memory::array_view<MEM,ComplexType,2> wgt,
+                         memory::array_view<MEM,const ComplexType,4> R,
+                         memory::array_view<MEM,ComplexType,3> K,
+                         bool addH1 = true);
 
-  void vbias(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto&& v, double dt)
-  {  
-    auto v_ = v();
-    vbias_impl(G(),v_,dt);
-  }
+  void vbias(memory::array_view<MEM,const ComplexType,2> G,
+             memory::array_view<MEM,ComplexType,2> v, double dt);
 
+  // Full (un-rotated) G energy path used by StochasticWfn. Kept as a header template so it
+  // accepts the same MemoryArrayOfRank layouts as the per-operator energy_fullG overloads.
   void energy_fullG(nda::MemoryArrayOfRank<2> auto && E, nda::MemoryArrayOfRank<2> auto const& G,
                     bool addH1 = true, bool addEJ = true, bool addEXX = true)
   {
-    auto E_ = E();
-    energy_fullG_impl(E_, G(), addH1, addEJ, addEXX);
+    std::visit([&](auto&& a) { a.energy_fullG(E, G, addH1, addEJ, addEXX); }, var);
   }
 
   // True iff vbias() accepts a FULL [nwalk, nspin*npol*NMO*npol*NMO] G as well as the half-rotated
@@ -137,27 +112,10 @@ public:
   private:
 
   std::variant<THCOps<MEM,true>, THCOps<MEM,false>, KPTHCOps<MEM>,
-               ModelHamOps<MEM,true>, ModelHamOps<MEM,false>, 
-               Real3IndexFactorization<MEM>, KP3IndexFactorization<MEM> > var;
-
-  // makes instantiations easier
-  nda::array<ComplexType,3> getOneBodyPropagatorMatrix_impl(double dt,
-                                                       nda::MemoryVector auto const& vMF); 
-
-  void energy_impl(nda::MemoryArrayOfRank<2> auto& E, nda::MemoryArrayOfRank<2> auto const& G,
-              int idet, bool addH1, bool addEJ,bool addEXX);
-
-  void vbias_impl(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto& v, double dt);
-
-  void energy_fullG_impl(nda::MemoryArrayOfRank<2> auto& E, nda::MemoryArrayOfRank<2> auto const& G,
-                         bool addH1, bool addEJ, bool addEXX);
-
-  auto vHS_impl(nda::MemoryMatrix auto& X, double dt);
-
-  void update_potentials_impl(double dt, nda::MemoryVector auto const& nMF, nda::MemoryVector auto& vMF, bool natural_shift);
+               ModelHamOps<MEM,true>, ModelHamOps<MEM,false>,
+               Real3IndexFactorization<MEM>, KP3IndexFactorization<MEM>> var;
 };
 
 } // namespace afqmc
 
 } // namespace sfqmc
-

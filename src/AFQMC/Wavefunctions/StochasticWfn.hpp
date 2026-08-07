@@ -607,6 +607,8 @@ public:
 
   int getNMO() const { return NMO; }
 
+  bool isFiniteTemperature() const { return false; }
+
   /**
    * @brief Weight of back-propagation reference `i`: uniform 1/P for a dynamic trial.
    *

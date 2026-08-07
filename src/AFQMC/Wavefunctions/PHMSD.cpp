@@ -20,6 +20,9 @@
 
 #include "AFQMC/config.h"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
+#include "AFQMC/SlaterDeterminantOperations/density_matrix.hpp"
+#include "numerics/operations/product.hpp"
+#include "numerics/operations/determinants.hpp"
 #if defined(ENABLE_DEVICE)
 #include "numerics/device_kernels/cuda/phmsd_routines.cuh"
 #endif
@@ -28,6 +31,84 @@ namespace sfqmc
 {
 namespace afqmc
 {
+
+
+template<MEMORY_SPACE MEM>
+void PHMSD<MEM>::runtime_optimization(WalkerSet<MEM>& wset)
+{
+  const int nw   = wset.size();
+  const int nel = (walker_type==COLLINEAR ? nup+ndown : nup );
+  const int npol = (walker_type==NONCOLLINEAR ? 2 : 1 );
+  memory::array<MEM,ComplexType,2> G(nw,nel*npol*NMO);
+  // don't use buffered_array!!!
+// This needs to depend on algorithm!!!
+  HamOp.runtime_optimization(G);
+}
+
+/*
+ * Calculates the bias potential.
+ */
+template<MEMORY_SPACE MEM>
+void PHMSD<MEM>::vbias(WalkerSet<MEM>& wset, memory::array_view<MEM,ComplexType,2> v, double dt, [[maybe_unused]] int nt)
+{
+  memory::check_memory_space<MEM>(v);
+  AFQMCTimer.start(G_for_vbias_timer);
+  int nact  = OrbMats(0).extent(0) + (walker_type==COLLINEAR ? OrbMats(OrbMats.extent(0)-1).extent(0) : 0);
+  int npol  = (walker_type==NONCOLLINEAR ? 2 : 1);
+  int nw = wset.size();
+  utils::check(v.shape() == std::array<long,2>{nw,HamOp.number_of_cholesky_vectors()},
+               "Shape mismatch");
+  memory::buffered_array<MEM,ComplexType,2> G(nw,nact*npol*NMO);
+  memory::buffered_array<MEM,ComplexType,1> ovlp(nw);
+  MixedDensityMatrix(wset, G, ovlp);
+  AFQMCTimer.stop(G_for_vbias_timer);
+  AFQMCTimer.start(vbias_timer);
+  v() = ComplexType(0.0);
+  HamOp.vbias(G, v, dt);
+  AFQMCTimer.stop(vbias_timer);
+}
+
+template<MEMORY_SPACE MEM>
+void PHMSD<MEM>::Energy(WalkerSet<MEM>& wset, [[maybe_unused]] int nt)
+{
+  auto all = nda::range::all;
+  int nw = wset.size();
+  memory::buffered_array<MEM,ComplexType,1> ovlp(nw,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,2> eloc(nw,3);
+  eloc() = ComplexType(0.0);
+  Energy(wset, eloc(), ovlp());
+  wset.setProperty(OVLP, ovlp);
+  wset.setProperty(E1_, eloc(all, 0));
+  wset.setProperty(EXX_, eloc(all, 1));
+  wset.setProperty(EJ_, eloc(all, 2));
+}
+
+template<MEMORY_SPACE MEM>
+void PHMSD<MEM>::Energy(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E, memory::array_view<MEM,ComplexType,1> Ov, [[maybe_unused]] int nt)
+{
+  if(energy_algorithm == PHMSDEnergyAlgorithm::reference)
+    energy_alg0(wset,E,Ov);
+  else
+    energy_alg1(wset,E,Ov);
+}
+
+template<MEMORY_SPACE MEM>
+void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> G, bool compact)
+{
+  int nw = wset.size();
+  memory::buffered_array<MEM,ComplexType,1> ovlp(nw,ComplexType(0.0));
+  MixedDensityMatrix(wset, G, ovlp, compact);
+}
+
+template<MEMORY_SPACE MEM>
+void PHMSD<MEM>::Log_Overlap(WalkerSet<MEM>& wset)
+{
+  int nw = wset.size();
+  memory::buffered_array<MEM,ComplexType,1> ovlp(nw,ComplexType(0.0));
+  Log_Overlap(wset, ovlp);
+  wset.setProperty(OVLP, ovlp);
+}
+
 /*
  * Calculates the local energy and overlaps of all the walkers in the set and 
  * returns them in the appropriate data structures
@@ -35,8 +116,7 @@ namespace afqmc
  * Reference implementation, uses the least amount of memory, slow/inefficient. 
  */
 template<MEMORY_SPACE MEM>
-template<class WlkSet,  nda::MemoryMatrix Mat, nda::MemoryVector TVec>
-void PHMSD<MEM>::energy_alg0(const WlkSet& wset, Mat&& E, TVec&& Ov)
+void PHMSD<MEM>::energy_alg0(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E, memory::array_view<MEM,ComplexType,1> Ov)
 {
   using nda::range;
   auto all = range::all;
@@ -291,8 +371,7 @@ void PHMSD<MEM>::energy_alg0(const WlkSet& wset, Mat&& E, TVec&& Ov)
  * returns them in the appropriate data structures
  */
 template<MEMORY_SPACE MEM>
-template<class WlkSet,  nda::MemoryMatrix Mat, nda::MemoryVector TVec>
-void PHMSD<MEM>::energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov)
+void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E, memory::array_view<MEM,ComplexType,1> Ov)
 {
   using nda::range;
   auto all = range::all;
@@ -465,8 +544,7 @@ void PHMSD<MEM>::energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov)
  * Computes the mixed density matrix
  */
 template<MEMORY_SPACE MEM>
-template<class WlkSet, nda::MemoryMatrix MatG, nda::MemoryVector TVec>
-void PHMSD<MEM>::MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact)
+void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> G, memory::array_view<MEM,ComplexType,1> Ov, bool compact)
 {
   using nda::range;
   auto all = nda::range::all;
@@ -721,8 +799,7 @@ void PHMSD<MEM>::MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, boo
  * Ov is assumed to be local to the core
  */
 template<MEMORY_SPACE MEM>
-template<class WlkSet, nda::MemoryArrayOfRank<1> TVec>
-void PHMSD<MEM>::Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt)
+void PHMSD<MEM>::Log_Overlap(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,1> Ov, [[maybe_unused]] int nt)
 {
   using nda::range;
   auto all = range::all;
@@ -1038,7 +1115,7 @@ void PHMSD<MP>::accumulate_estimators(int iav, WlkSet& wset, TVec& wgt,
  * Calculate mean field Green function 
  */
 template<MEMORY_SPACE MEM>
-auto PHMSD<MEM>::G_MF()
+memory::const_shared_array<HOST_MEMORY,ComplexType,3> PHMSD<MEM>::G_MF()
 {
   constexpr MEMORY_SPACE M = HOST_MEMORY;
   using nda::range;
@@ -1247,7 +1324,7 @@ auto PHMSD<MEM>::G_MF()
  * This is a collective call.
  */ 
 template<MEMORY_SPACE MEM>
-void PHMSD<MEM>::vMF(nda::MemoryVector  auto&& v, double dt)
+void PHMSD<MEM>::vMF(memory::array_view<MEM,ComplexType,1> v, double dt)
 {
   // Implementing this routine on HOST_MEMORY regardless of MEM!!!
   // Move to device if it is too slow!!!
@@ -1490,6 +1567,11 @@ void PHMSD<MEM>::vMF(nda::MemoryVector  auto&& v, double dt)
   }
   mpi->comm.barrier();
 }
+
+template class PHMSD<HOST_MEMORY>;
+#if defined(ENABLE_DEVICE)
+template class PHMSD<DEVICE_MEMORY>;
+#endif
 
 } // namespace afqmc
 } // namespace sfqmc

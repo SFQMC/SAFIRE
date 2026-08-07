@@ -124,7 +124,8 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
         initUDV_h(2,1,i,i) = Type(0.77);
       }
 
-    auto initUDV = memory::to_memory_space<MEM>(initUDV_h);
+    // the guess is always supplied on the host, mirroring the T=0 constructor
+    auto initUDV = initUDV_h();
 
     auto ws = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initUDV, nwalkers);
 

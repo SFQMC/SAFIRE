@@ -19,175 +19,99 @@
 #include "AFQMC/config.h"
 
 #include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
-#include "AFQMC/HamiltonianOperations/THCOps.hpp"
-#include "AFQMC/HamiltonianOperations/KPTHCOps.hpp"
-#include "AFQMC/HamiltonianOperations/KP3IndexFactorization.hpp"
-#include "AFQMC/HamiltonianOperations/Real3IndexFactorization.hpp"
-#include "AFQMC/HamiltonianOperations/ModelHamOps.hpp"
-
-
-// MAM: Once all hamiltonians are implemented, measure the compilation time 
-//      with and without instantiations. Remove all this and go back to the
-//      header only version if the compilation times are not reduced significantly
 
 namespace sfqmc
 {
 namespace afqmc
 {
-
-  // move constructor
   template<MEMORY_SPACE M>
-  template<typename HOps>
-  HamiltonianOperations<M>::HamiltonianOperations(HOps&& other) : var(std::move(other)) {}
-
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(THCOps<HOST_MEMORY,true>&&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(THCOps<HOST_MEMORY,false>&&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(KPTHCOps<HOST_MEMORY>&&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(ModelHamOps<HOST_MEMORY,true>&&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(ModelHamOps<HOST_MEMORY,false>&&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(Real3IndexFactorization<HOST_MEMORY>&&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(KP3IndexFactorization<HOST_MEMORY>&&);
-
-#if defined(ENABLE_DEVICE)
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(THCOps<DEVICE_MEMORY,true>&&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(THCOps<DEVICE_MEMORY,false>&&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(KPTHCOps<DEVICE_MEMORY>&&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(ModelHamOps<DEVICE_MEMORY,true>&&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(ModelHamOps<DEVICE_MEMORY,false>&&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(Real3IndexFactorization<DEVICE_MEMORY>&&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(KP3IndexFactorization<DEVICE_MEMORY>&&);
-#endif
-
-  // copy constructor
-  template<MEMORY_SPACE M>
-  template<typename HOps>
-  HamiltonianOperations<M>::HamiltonianOperations(HOps const& other) : var(other) {}
-
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(THCOps<HOST_MEMORY,true>const&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(THCOps<HOST_MEMORY,false>const&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(KPTHCOps<HOST_MEMORY>const&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(ModelHamOps<HOST_MEMORY,true>const&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(ModelHamOps<HOST_MEMORY,false>const&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(Real3IndexFactorization<HOST_MEMORY>const&);
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations(KP3IndexFactorization<HOST_MEMORY>const&);
-
-#if defined(ENABLE_DEVICE)
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(THCOps<DEVICE_MEMORY,true>const&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(THCOps<DEVICE_MEMORY,false>const&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(KPTHCOps<DEVICE_MEMORY>const&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(ModelHamOps<DEVICE_MEMORY,true>const&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(ModelHamOps<DEVICE_MEMORY,false>const&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(Real3IndexFactorization<DEVICE_MEMORY>const&);
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations(KP3IndexFactorization<DEVICE_MEMORY>const&);
-#endif
-
-
-  // getOneBodyPropagatorMatrix_impl
-  template<MEMORY_SPACE M>
-  nda::array<ComplexType,3> HamiltonianOperations<M>::getOneBodyPropagatorMatrix_impl(double dt,
-                                                       nda::MemoryVector auto const& vMF)
+  void HamiltonianOperations<M>::runtime_optimization(memory::array_view<M,const ComplexType,2> G)
   {
-    return std::visit([&](auto&& a) { return a.getOneBodyPropagatorMatrix(dt,vMF); },
-                                var);
+    std::visit([&](auto&& a) { a.runtime_optimization(G); }, var);
   }
 
-#define __getOneBodyPropagatorMatrix__(M)    \
-  template nda::array<ComplexType,3> HamiltonianOperations<M>::getOneBodyPropagatorMatrix_impl(double, memory::array_view<HOST_MEMORY,const ComplexType,1> const&);   \
-  template nda::array<ComplexType,3> HamiltonianOperations<M>::getOneBodyPropagatorMatrix_impl(double, memory::array_view<HOST_MEMORY,const ComplexType,1,nda::C_layout> const&);   \
-  template nda::array<ComplexType,3> HamiltonianOperations<M>::getOneBodyPropagatorMatrix_impl(double, memory::array_view<HOST_MEMORY,const ComplexType,1,nda::basic_layout<0,nda::C_stride_order<1>,nda::layout_prop_e::strided_1d>> const&);
-__getOneBodyPropagatorMatrix__(HOST_MEMORY)
-#if defined(ENABLE_DEVICE)
-__getOneBodyPropagatorMatrix__(DEVICE_MEMORY)
-#endif
-
-  //energy_impl
   template<MEMORY_SPACE M>
-  void HamiltonianOperations<M>::energy_impl(nda::MemoryArrayOfRank<2> auto& E, 
-                                        nda::MemoryArrayOfRank<2> auto const& G,
-              int idet, bool addH1, bool addEJ, bool addEXX)
+  nda::array<ComplexType,3> HamiltonianOperations<M>::getOneBodyPropagatorMatrix(double dt,
+                       memory::array_view<HOST_MEMORY,const ComplexType,1> vMF)
+  {
+    return std::visit([&](auto&& a) { return a.getOneBodyPropagatorMatrix(dt,vMF); }, var);
+  }
+
+  template<MEMORY_SPACE M>
+  void HamiltonianOperations<M>::energy(memory::array_view<M,ComplexType,2> E,
+                                        memory::array_view<M,const ComplexType,2> G,
+                                        int idet, bool addH1, bool addEJ, bool addEXX)
   {
     std::visit([&](auto&& a) { a.energy(E,G,idet,addH1,addEJ,addEXX); }, var);
   }
 
-#define __energy__(M) \
-  template void HamiltonianOperations<M>::energy_impl(memory::array_view<M,ComplexType,2>&, memory::array_view<M,const ComplexType,2>const&,int,bool,bool,bool); \
-  template void HamiltonianOperations<M>::energy_impl(memory::array_view<M,ComplexType,2>&, memory::array_view<M,const ComplexType,2,nda::C_layout>const&,int,bool,bool,bool); \
-  template void HamiltonianOperations<M>::energy_impl(memory::array_view<M,ComplexType,2,nda::C_layout>&, memory::array_view<M,const ComplexType,2>const&,int,bool,bool,bool); \
-  template void HamiltonianOperations<M>::energy_impl(memory::array_view<M,ComplexType,2,nda::C_layout>&, memory::array_view<M,const ComplexType,2,nda::C_layout>const&,int,bool,bool,bool);  
-__energy__(HOST_MEMORY) 
-#if defined(ENABLE_DEVICE)
-__energy__(DEVICE_MEMORY) 
-#endif
-
-/*
-  // vHS_impl
-  template<MEMORY_SPACE M> 
-  auto HamiltonianOperations<M>::vHS_impl(nda::MemoryMatrix auto& X, double dt)
-  {
-    return std::visit([&](auto&& s) { return s.vHS(X,dt); }, var);
-  }
-#define __vHS__(M) \
-  template memory::buffered_array<M,ComplexType,4> HamiltonianOperations<M>::vHS_impl(memory::array_view<M, ComplexType,2>&,double); \
-  template memory::buffered_array<M,ComplexType,4> HamiltonianOperations<M>::vHS_impl(memory::array_view<M, ComplexType,2,nda::C_layout>&,double); 
-__vHS__(HOST_MEMORY)
-#if defined(ENABLE_DEVICE)
-__vHS__(DEVICE_MEMORY)
-#endif
-*/
-
-  // vbias_impl
   template<MEMORY_SPACE M>
-  void HamiltonianOperations<M>::vbias_impl(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto& v, double dt)
+  void HamiltonianOperations<M>::energy(SpinTypes spin, memory::array_view<M,ComplexType,2> E,
+                                        memory::array_view<M,const ComplexType,2> G, int idet,
+                                        memory::array_view<M,ComplexType,2> EJn,
+                                        bool addH1, bool addEJ, bool addEXX)
   {
-    std::visit([&](auto&& s) { s.vbias(G,v,dt); }, var);
-  }
-#define __vbias__(M) \
-  template void HamiltonianOperations<M>::vbias_impl(memory::array_view<M,ComplexType const,2>const&,memory::array_view<M,ComplexType,2>&,double); \
-  template void HamiltonianOperations<M>::vbias_impl(memory::array_view<M,ComplexType const,2,nda::C_layout>const&,memory::array_view<M,ComplexType,2>&,double); \
-  template void HamiltonianOperations<M>::vbias_impl(memory::array_view<M,ComplexType const,2>const&,memory::array_view<M,ComplexType,2,nda::C_layout>&,double); \
-  template void HamiltonianOperations<M>::vbias_impl(memory::array_view<M,ComplexType const,2,nda::C_layout>const&,memory::array_view<M,ComplexType,2,nda::C_layout>&,double); 
-__vbias__(HOST_MEMORY)
-#if defined(ENABLE_DEVICE)
-__vbias__(DEVICE_MEMORY)
-#endif
-
-  template<MEMORY_SPACE M>
-  void HamiltonianOperations<M>::energy_fullG_impl(nda::MemoryArrayOfRank<2> auto& E,
-                                                   nda::MemoryArrayOfRank<2> auto const& G,
-                                                   bool addH1,
-                                                   bool addEJ,
-                                                   bool addEXX)
-  {
-    std::visit([&](auto&& a) { a.energy_fullG(E, G, addH1, addEJ, addEXX); }, var);
+    std::visit([&](auto&& s) { s.energy(spin,E,G,idet,EJn,addH1,addEJ,addEXX); }, var);
   }
 
-#define __energy_fullG__(M) \
-  template void HamiltonianOperations<M>::energy_fullG_impl(memory::array_view<M,ComplexType,2>&, memory::array_view<M,const ComplexType,2>const&,bool,bool,bool); \
-  template void HamiltonianOperations<M>::energy_fullG_impl(memory::array_view<M,ComplexType,2>&, memory::array_view<M,const ComplexType,2,nda::C_layout>const&,bool,bool,bool); \
-  template void HamiltonianOperations<M>::energy_fullG_impl(memory::array_view<M,ComplexType,2,nda::C_layout>&, memory::array_view<M,const ComplexType,2>const&,bool,bool,bool); \
-  template void HamiltonianOperations<M>::energy_fullG_impl(memory::array_view<M,ComplexType,2,nda::C_layout>&, memory::array_view<M,const ComplexType,2,nda::C_layout>const&,bool,bool,bool);
-__energy_fullG__(HOST_MEMORY)
-#if defined(ENABLE_DEVICE)
-__energy_fullG__(DEVICE_MEMORY)
-#endif
-
-  // update_potential
   template<MEMORY_SPACE M>
-  void HamiltonianOperations<M>::update_potentials_impl(double dt, nda::MemoryVector auto const& nMF, nda::MemoryVector auto& vMF, bool natural_shift)
+  void HamiltonianOperations<M>::generalizedFockMatrix(memory::array_view<M,const ComplexType,2> G,
+                                                       memory::array_view<M,ComplexType,2> Fp,
+                                                       memory::array_view<M,ComplexType,2> Fm)
+  {
+    std::visit([&](auto&& a) { a.generalizedFockMatrix(G,Fp,Fm); }, var);
+  }
+
+  template<MEMORY_SPACE M>
+  memory::buffered_array<M,ComplexType,4> HamiltonianOperations<M>::vHS(
+                       memory::array_view<M,ComplexType,2> X, double dt)
+  {
+    return std::visit([&](auto&& a) { return a.vHS(X,dt); }, var);
+  }
+
+  template<MEMORY_SPACE M>
+  nda::array_view<math::sparse::csr_matrix<ComplexType,M,int,int>,1>
+      HamiltonianOperations<M>::vHS_sparse(memory::array_view<M,const ComplexType,2> X, double dt)
+  {
+    return std::visit([&](auto&& a) { return a.vHS_sparse(X,dt); }, var);
+  }
+
+  template<MEMORY_SPACE M>
+  void HamiltonianOperations<M>::update_potentials(double dt,
+                       memory::array_view<HOST_MEMORY,const ComplexType,1> nMF,
+                       memory::array_view<M,ComplexType,1> vMF, bool natural_shift)
   {
     std::visit([&](auto&& s) { s.update_potentials(dt,nMF,vMF,natural_shift); }, var);
   }
 
-#define __update_potentials__(M1,M2) \
-  template void HamiltonianOperations<M1>::update_potentials_impl(double,memory::array_view<M2,ComplexType const,1>const&,memory::array_view<M1,ComplexType,1>&,bool); \
-  template void HamiltonianOperations<M1>::update_potentials_impl(double,memory::array_view<M2,ComplexType const,1>const&,memory::array_view<M1,ComplexType,1,nda::C_layout>&,bool); \
-  template void HamiltonianOperations<M1>::update_potentials_impl(double,memory::array_view<M2,ComplexType const,1,nda::C_layout>const&,memory::array_view<M1,ComplexType,1>&,bool); \
-  template void HamiltonianOperations<M1>::update_potentials_impl(double,memory::array_view<M2,ComplexType const,1,nda::C_layout>const&,memory::array_view<M1,ComplexType,1,nda::C_layout>&,bool); 
-__update_potentials__(HOST_MEMORY,HOST_MEMORY)
-#if defined(ENABLE_DEVICE)
-__update_potentials__(DEVICE_MEMORY,DEVICE_MEMORY)
-__update_potentials__(DEVICE_MEMORY,HOST_MEMORY)
-#endif
+  template<MEMORY_SPACE M>
+  void HamiltonianOperations<M>::ph_reference_energy(SpinTypes spin,
+                       memory::array_view<M,ComplexType,2> E,
+                       memory::array_view<M,const ComplexType,2> G,
+                       memory::array_view<M,ComplexType,2> EJn, bool addH1)
+  {
+    std::visit([&](auto&& s) { s.ph_reference_energy(spin,E,G,EJn,addH1); }, var);
+  }
+
+  template<MEMORY_SPACE M>
+  void HamiltonianOperations<M>::ph_excited_energy(SpinTypes spin, int nelec,
+                       memory::array_view<M,const int,1> iexcit,
+                       memory::array_view<M,const int,1> refc,
+                       memory::array_view<M,ComplexType,2> E,
+                       memory::array_view<M,ComplexType,2> wgt,
+                       memory::array_view<M,const ComplexType,4> R,
+                       memory::array_view<M,ComplexType,3> K,
+                       bool addH1)
+  {
+    std::visit([&](auto&& s) { s.ph_excited_energy(spin,nelec,iexcit,refc,E,wgt,R,K,addH1); }, var);
+  }
+
+  template<MEMORY_SPACE M>
+  void HamiltonianOperations<M>::vbias(memory::array_view<M,const ComplexType,2> G,
+                                       memory::array_view<M,ComplexType,2> v, double dt)
+  {
+    std::visit([&](auto&& s) { s.vbias(G,v,dt); }, var);
+  }
 
   // accessors
   template<MEMORY_SPACE M>
@@ -226,23 +150,11 @@ __update_potentials__(DEVICE_MEMORY,HOST_MEMORY)
     return std::visit([&](auto&& a) { return a.has_fullG_vbias(); }, var);
   }
 
-  template int HamiltonianOperations<HOST_MEMORY>::number_of_cholesky_vectors() const;
-  template int HamiltonianOperations<HOST_MEMORY>::number_of_ke_vectors() const;
-  template std::tuple<int,int> HamiltonianOperations<HOST_MEMORY>::vHS_dims() const;
-  template HamiltonianTypes HamiltonianOperations<HOST_MEMORY>::getHamType() const;
-  template nda::array<int,1> HamiltonianOperations<HOST_MEMORY>::getFieldTypes() const;
-  template bool HamiltonianOperations<HOST_MEMORY>::has_fullG_vbias() const;
-
+  template class HamiltonianOperations<HOST_MEMORY>;
 #if defined(ENABLE_DEVICE)
-  template int HamiltonianOperations<DEVICE_MEMORY>::number_of_cholesky_vectors() const;
-  template int HamiltonianOperations<DEVICE_MEMORY>::number_of_ke_vectors() const;
-  template std::tuple<int,int> HamiltonianOperations<DEVICE_MEMORY>::vHS_dims() const;
-  template HamiltonianTypes HamiltonianOperations<DEVICE_MEMORY>::getHamType() const;
-  template nda::array<int,1> HamiltonianOperations<DEVICE_MEMORY>::getFieldTypes() const;
-  template bool HamiltonianOperations<DEVICE_MEMORY>::has_fullG_vbias() const;
+  template class HamiltonianOperations<DEVICE_MEMORY>;
 #endif
 
 } // namespace afqmc
 
 } // namespace sfqmc
-
