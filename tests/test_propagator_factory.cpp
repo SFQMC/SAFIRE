@@ -24,6 +24,7 @@
 #include "utilities/Random.hpp"
 #include "utilities/Timer.hpp"
 #include "test_common.hpp"
+#include "test_stochastic_common.hpp"
 #include "utilities/check.hpp"
 
 #include <string>
@@ -218,7 +219,6 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   auto [wfn_NMO, nup, ndown] = read_info_from_wfn(wfn_file, "any");
   utils::check(NMO == wfn_NMO, "Error: NMO != wfn_NMO.");
   WALKER_TYPES type = getWalkerType(wfn_file);
-  // finite-T uses a different field/step layout; not the target of this smoke.
 
   ptree ham_pt;
   ham_pt.put("name", "ham0");
@@ -277,7 +277,7 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   CHECK(maxdiff > 1e-8); // fields were applied: the determinants moved off their input value
 }
 
-TEST_CASE("propagator_free_projection_step", "[propagator_factory]")
+TEST_CASE("propagator_factory: free projection step", "[propagator_factory]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "AFQMCBasePropagator::Propagate_free applies bare fields on an importance-sampling propagator.");
@@ -291,10 +291,6 @@ TEST_CASE("propagator_free_projection_step", "[propagator_factory]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::MOLECULES | TestFiles::SOLIDS);
 }
 
-
-namespace {
-void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
-} // namespace
 
 // Does a stochastic trial survive real outer propagation?
 //
@@ -348,7 +344,7 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
     ptree pt;
     pt.put("name", tag);
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     pt.put("inner_nsteps", 1);
     pt.put("inner_sampling_target", inner_sampling_target);
@@ -399,7 +395,7 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
   }
 }
 
-TEST_CASE("stochastic_free_trial_survives_propagation", "[propagator_factory][stochastic_wfn]")
+TEST_CASE("propagator_factory: stochastic free trial survives", "[propagator_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn free-projection inner sampling over a real outer propagator.");
@@ -409,7 +405,7 @@ TEST_CASE("stochastic_free_trial_survives_propagation", "[propagator_factory][st
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
-TEST_CASE("stochastic_conditioned_trial_survives_propagation", "[propagator_factory][stochastic_wfn]")
+TEST_CASE("propagator_factory: stochastic conditioned trial survives", "[propagator_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   // The production sampler: walker-conditioned persistent field chains plus the leapfrog reweight, so the

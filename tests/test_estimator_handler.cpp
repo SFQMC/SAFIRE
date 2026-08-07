@@ -23,6 +23,7 @@
 #include "utilities/Random.hpp"
 #include "IO/app_loggers.h"
 #include "test_common.hpp"
+#include "test_stochastic_common.hpp"
 
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
@@ -258,46 +259,14 @@ TEST_CASE("estimator_handler: measure schedule", "[estimator_handler]")
 #endif
 }
 
-namespace {
-void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
-
-template<MEMORY_SPACE MEM>
-void require_finite_bp_one_rdm(h5::file const& file, std::string const& avg_path, int iblock)
-{
-  std::string suffix = std::format("{:09d}", iblock);
-  nda::array<ComplexType, 1> read_data;
-  ComplexType denom{};
-  {
-    h5::group root(file);
-    utils::h5_read(root, avg_path + "/one_rdm_" + suffix, read_data);
-    h5::read(root, avg_path + "/denominator_" + suffix, denom);
-  }
-  REQUIRE(read_data.size() > 0);
-  REQUIRE(std::abs(denom) > 0.0);
-  for (auto v : read_data)
-  {
-    REQUIRE(std::isfinite(real(v)));
-    REQUIRE(std::isfinite(imag(v)));
-  }
-}
-} // namespace
-
-// Integration smoke: exercise BackPropagatedEstimator through EstimatorHandler on a stochastic trial. Drives real Propagate() steps so the propagator advances the BP history, then accumulate_block
-// runs backward propagation + FullObsHandler; asserts the accumulated 1-RDM is finite. Two regimes (one
-// function, `dynamic_leapfrog`):
-//   - static (default): inner_nsteps = 0 -- the static delegate limit.
-//   - dynamic: inner_nsteps = 1 with walker_overlap sampling -- a genuinely field-sampled trial
-//     trial whose forward walk is numerically stable. (Plain free-projection, inner_nsteps > 0 +
-//     non-conditioned, is NOT exercised: its effective overlap Sum_p S_p collapses toward zero, blowing
-//     the hybrid weight ratio to NaN within the first population-control block -- a known free-projection
-//     pathology of the forward walk, not a back-propagation bug. The NaN is in the forward weights; the
-//     BP RDM is NaN only because it is built from them. Conditioned/leapfrog importance sampling is what
-//     stabilizes it -- verified: max|weight| stays ~1.0-1.1 over the run and the BP RDM is finite.)
-// Finiteness only.
+// Integration smoke: BackPropagatedEstimator through EstimatorHandler on a DYNAMIC stochastic trial.
+// Asserts a finite accumulated 1-RDM. The static BP path is covered by `driver_factory: stochastic bp driver`
+// (same estimator block via executeDriver); this keeps the dynamic leg, which has no driver counterpart.
+// Free-projection (unconditioned) is not exercised: hybrid weights NaN under pop control.
 template<MEMORY_SPACE MEM>
 void stochastic_back_propagation_estimator_smoke(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
-    std::string wfn_file, bool dynamic_leapfrog = false)
+    std::string wfn_file)
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
@@ -306,8 +275,10 @@ void stochastic_back_propagation_estimator_smoke(
   else
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (not utils::dynamic_inner_supports(type))
-      return; // dynamic inner ensemble: CLOSED/COLLINEAR only
+    // CLOSED only. Narrower than the engine allows, and narrower than DYNAMIC_INNER supplies: these are
+    // whole-run integration smokes, and the BH CLOSED fixture is the one whose forward walk is known
+    // stable over a full population-control schedule. (dynamic_inner_supports() would admit COLLINEAR and
+    // the next line would discard it, which is what this used to do.)
     if (type != CLOSED)
       return;
 
@@ -318,7 +289,7 @@ void stochastic_back_propagation_estimator_smoke(
     HamFac.push("ham0", ham_pt);
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
-    const std::string title               = dynamic_leapfrog ? "stoch_bp_dyn_smoke" : "stoch_bp_est_smoke";
+    const std::string title               = "stoch_bp_dyn_smoke";
     const int nwalk                       = 11;
     const int population_control_interval = DEFAULT_POPULATION_CONTROL_INTERVAL;
     const int bp_measure_multiplier       = 2;
@@ -347,12 +318,11 @@ void stochastic_back_propagation_estimator_smoke(
     ptree wfn_pt;
     wfn_pt.put("name", "wfn_stoch_bp_est");
     wfn_pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(wfn_pt);
+    utils::mark_stochastic_wfn_input(wfn_pt);
     wfn_pt.put("inner_n_samples", 4);
-    wfn_pt.put("inner_nsteps", dynamic_leapfrog ? 1 : 0);
-    if (dynamic_leapfrog)
+    wfn_pt.put("inner_nsteps", 1);
+    wfn_pt.put("inner_sampling_target", "walker_overlap");
     {
-      wfn_pt.put("inner_sampling_target", "walker_overlap");
       ptree inner_prop;
       inner_prop.put("timestep", 0.01);
       wfn_pt.put_child("inner_propagator", inner_prop);
@@ -421,7 +391,7 @@ void stochastic_back_propagation_estimator_smoke(
     if (mpi->comm.root())
     {
       h5::file h5file(title + ".stat.h5", 'r');
-      require_finite_bp_one_rdm<MEM>(h5file, "Observables/BackPropagated/FullOneRDM/Average_0", 1);
+      utils::require_finite_bp_one_rdm(h5file, "Observables/BackPropagated/FullOneRDM/Average_0", 1);
       std::remove((title + ".stat.h5").c_str());
       std::remove((title + ".scalar.dat").c_str());
     }
@@ -429,30 +399,16 @@ void stochastic_back_propagation_estimator_smoke(
   }
 }
 
-TEST_CASE("stochastic_back_propagation_estimator_smoke", "[estimator_handler][stochastic_wfn]")
-{
-  auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "BackPropagatedEstimator + EstimatorHandler on a static stochastic trial.");
-  using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
-    stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file);
-  }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
-}
-
-// Dynamic BP integration smoke: the SAME BackPropagatedEstimator path on a genuinely field-sampled
-// (inner_nsteps = 1) stochastic trial, using walker_overlap sampling. This is the resolution of
-// the earlier "dynamic BP -> NaN" footnote: the NaN was the free-projection forward-walk instability, not
-// a BP-path bug; importance sampling keeps the forward weights well-scaled (~1) over a full run, so the
-// back-propagated 1-RDM is finite. (With conditioned sampling the BP references are the outer-NOMSD
-// anchor; the dedicated free-projection reference draw applies to the forward-unstable free-projection
-// regime.) CLOSED/CPU. Finiteness only.
-TEST_CASE("stochastic_back_propagation_dynamic_smoke", "[estimator_handler][stochastic_wfn]")
+// With conditioned sampling the BP references are the outer-NOMSD anchor; the dedicated free-projection
+// reference draw applies to the forward-unstable free-projection regime, covered in test_stochastic_wfn.
+TEST_CASE("estimator_handler: stochastic bp dynamic",
+          "[estimator_handler][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "BackPropagatedEstimator on a DYNAMIC conditioned+leapfrog stochastic trial.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
-    stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file, /*dynamic_leapfrog=*/true);
+    stochastic_back_propagation_estimator_smoke<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 

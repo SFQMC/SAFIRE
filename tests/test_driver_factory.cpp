@@ -21,6 +21,7 @@
 #include "utilities/Random.hpp"
 #include "utilities/Timer.hpp"
 #include "test_common.hpp"
+#include "test_stochastic_common.hpp"
 #include "utilities/check.hpp"
 
 #include <string>
@@ -236,30 +237,6 @@ TEST_CASE("driver_factory: build", "[driver_factory]")
 }
 
 
-namespace {
-void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
-
-template<MEMORY_SPACE MEM>
-void require_finite_bp_one_rdm(h5::file const& file, std::string const& avg_path, int iblock)
-{
-  std::string suffix = std::format("{:09d}", iblock);
-  nda::array<ComplexType, 1> read_data;
-  ComplexType denom{};
-  {
-    h5::group root(file);
-    utils::h5_read(root, avg_path + "/one_rdm_" + suffix, read_data);
-    h5::read(root, avg_path + "/denominator_" + suffix, denom);
-  }
-  REQUIRE(read_data.size() > 0);
-  REQUIRE(std::abs(denom) > 0.0);
-  for (auto v : read_data)
-  {
-    REQUIRE(std::isfinite(real(v)));
-    REQUIRE(std::isfinite(imag(v)));
-  }
-}
-} // namespace
-
 // Integration smoke: minimal DriverFactory run with type: stochasticwfn (static delegate limit,
 // inner_nsteps = 0) and a back_propagation estimator block.
 template<MEMORY_SPACE MEM>
@@ -274,8 +251,10 @@ void stochastic_back_propagation_driver_smoke(
   else
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (not utils::dynamic_inner_supports(type))
-      return; // dynamic inner ensemble: CLOSED/COLLINEAR only
+    // CLOSED only. Narrower than the engine allows, and narrower than DYNAMIC_INNER supplies: these are
+    // whole-run integration smokes, and the BH CLOSED fixture is the one whose forward walk is known
+    // stable over a full population-control schedule. (dynamic_inner_supports() would admit COLLINEAR and
+    // the next line would discard it, which is what this used to do.)
     if (type != CLOSED)
       return;
 
@@ -292,7 +271,7 @@ void stochastic_back_propagation_driver_smoke(
 
     ptree wfn_min;
     wfn_min.put("filename", wfn_file);
-    mark_stochastic_wfn_input(wfn_min);
+    utils::mark_stochastic_wfn_input(wfn_min);
     wfn_min.put("inner_n_samples", 4);
     wfn_min.put("inner_nsteps", 0);
 
@@ -347,7 +326,7 @@ void stochastic_back_propagation_driver_smoke(
       CHECK(in.good());
       in.close();
       h5::file h5file(title + ".stat.h5", 'r');
-      require_finite_bp_one_rdm<MEM>(h5file, "Observables/BackPropagated/FullOneRDM/Average_0", 1);
+      utils::require_finite_bp_one_rdm(h5file, "Observables/BackPropagated/FullOneRDM/Average_0", 1);
       std::remove(scalar_file.c_str());
       std::remove((title + ".stat.h5").c_str());
     }
@@ -355,7 +334,7 @@ void stochastic_back_propagation_driver_smoke(
   }
 }
 
-TEST_CASE("stochastic_back_propagation_driver_smoke", "[driver_factory][stochastic_wfn]")
+TEST_CASE("driver_factory: stochastic bp driver", "[driver_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "DriverFactory AFQMC run with stochastic trial + back_propagation estimator.");

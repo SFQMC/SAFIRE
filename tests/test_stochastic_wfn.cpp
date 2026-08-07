@@ -35,6 +35,7 @@
 #include <memory>
 
 #include "test_common.hpp"
+#include "test_stochastic_common.hpp"
 #include "utilities/check.hpp"
 #include "test_utils.hpp"
 #include "AFQMC/Utilities/readWfn.h"
@@ -58,9 +59,6 @@ using namespace afqmc;
 
 namespace {
 
-void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
-constexpr bool is_ft_walker_type([[maybe_unused]] WALKER_TYPES type) { return false; }
-
 struct StochasticWfnOptions
 {
   int inner_n_samples     = 1;
@@ -83,7 +81,7 @@ ptree make_stochastic_wfn_ptree(std::string const& name, std::string const& wfn_
   ptree pt;
   pt.put("name", name);
   pt.put("filename", wfn_file);
-  mark_stochastic_wfn_input(pt);
+  utils::mark_stochastic_wfn_input(pt);
   pt.put("inner_n_samples", opt.inner_n_samples);
   if (opt.inner_nsteps > 0)
     pt.put("inner_nsteps", opt.inner_nsteps);
@@ -187,20 +185,11 @@ struct StochasticHamWfnEnv
 
 } // namespace
 
-// ----------------------------------------------------------------------------
-// StochasticWfn delegate-limit parity (static inner ensemble, tag [stochastic_wfn]).
-//
-// At the delegate limit (inner_n_samples = 1, inner_nsteps = 0) the inner trial ensemble collapses to the
-// single trial-determinant anchor, so every stochastic override (Log_Overlap, Energy,
-// MixedDensityMatrix_for_vbias -> vbias) must reproduce a plain NOMSD on the same outer walkers, for a
-// single-determinant (ndet == 1) trial. A multi-determinant trial diverges by design (a single-det inner
-// ensemble cannot reproduce a CI-weighted NOMSD).
-//
-// This check is HamOp-agnostic: at inner_nsteps = 0 the stochastic vbias uses the *compact* path, so it
-// runs on any cholesky/THC NOMSD fixture (including the harness's built-in utils/tests/functional/ files).
-// Full-G (inner_nsteps > 0) parity is a separate test that needs the Ne_cc-pvdz DenseFactorized + RHF
-// fixture (-> Real3IndexFactorization).
-// ----------------------------------------------------------------------------
+// Delegate-limit parity (inner_n_samples = 1, inner_nsteps = 0) through ONE walker set in production
+// call order: Log_Overlap -> runtime_optimization -> Energy -> vbias. Per-quantity cases below each use
+// a fresh walker set; this is the only case that catches cross-call coupling, and the only call to
+// StochasticWfn::runtime_optimization. Soft-skip when ndet != 1 (CI-weighted NOMSD cannot match a
+// single-det inner ensemble). Compact vbias path -- any cholesky/THC NOMSD fixture.
 template<MEMORY_SPACE MEM>
 void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                   std::string hamil_file, std::string wfn_file)
@@ -211,18 +200,9 @@ void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mp
 
   const auto info  = read_info_from_wfn(wfn_file, "any");
   const int  NMO   = std::get<0>(info);
-  const int  nup   = std::get<1>(info);
-  const int  ndown = std::get<2>(info);
-  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  // Finite-temperature trials are out of scope for the stochastic delegate limit.
-  if (is_ft_walker_type(type))
-    return;
-  const int nspin = (type == COLLINEAR) ? 2 : 1;
-  const int npol  = (type == NONCOLLINEAR) ? 2 : 1;
   const double dt(0.01);
 
-  auto env_opt = StochasticHamWfnEnv<MEM>::build(
-      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file);
   if (not env_opt)
     return;
   auto& env = *env_opt;
@@ -236,31 +216,12 @@ void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mp
   auto& wfn_stoch          = env.push_stochastic_wfn(mpi, "wfn_stoch", wfn_file, stoch_opt, nwalk);
   REQUIRE(wfn_stoch.is_stochastic_wavefunction());
   REQUIRE(wfn_stoch.stochastic_inner_walkers_initialized());
-
-  // Bisection checkpoints (pinpoint SIGSEGV; trim once the test is stable).
-  REQUIRE(wfn_nomsd.number_of_cholesky_vectors() > 0);
-  REQUIRE(wfn_stoch.number_of_cholesky_vectors() > 0);
   REQUIRE(wfn_nomsd.number_of_cholesky_vectors() == wfn_stoch.number_of_cholesky_vectors());
-  const bool delegate_limit = (wfn_nomsd.total_number_of_references() == 1);
-  REQUIRE(delegate_limit);
 
-  // Deterministic, identical perturbation of the outer walkers (mirrors wfn_factory_sdet),
-  // so the two walker sets are bit-for-bit identical going into the reductions.
-  auto perturb = [&](auto& wset) {
-    std::array<int,2> nels = {nup, ndown};
-    for (int spin = 0; spin < nspin; spin++) {
-      nda::array<ComplexType, 1> p_h(long(nwalk) * npol * NMO * nels[spin]);
-      for (long k = 0; k < p_h.size(); ++k) {
-        double v = 0.1 * (k + 1);
-        p_h[k] = {std::cos(v), std::sin(v * v)};
-      }
-      memory::array<MEM, ComplexType, 3> p(reshape(p_h, nwalk, npol * NMO, nels[spin]));
-      auto SM = wset.SlaterMatrices(static_cast<SpinTypes>(spin));
-      nda::tensor::add(p, "ijk", SM, "ijk");
-    }
-  };
-
-  // Run Log_Overlap / Energy / vbias and harvest per-walker quantities.
+  // THE ORDER IS THE POINT: Log_Overlap, then runtime_optimization, then Energy, then vbias, all against
+  // the SAME walker set -- production's sequence. Both arms run the identical lambda, so the comparison
+  // cannot be biased by the two arms being driven differently (which is what the previous inline NOMSD
+  // copy of this sequence risked).
   auto harvest = [&](auto& wfn, auto& wset) {
     wfn.Log_Overlap(wset);
     wfn.runtime_optimization(wset);
@@ -282,49 +243,28 @@ void stochastic_wfn_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::mp
     return std::make_tuple(std::move(ov), std::move(e1), std::move(exx), std::move(ej), nda::to_host(X));
   };
 
-  auto wset_nomsd = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd");
-  REQUIRE(wset_nomsd.size() == nwalk);
-  perturb(wset_nomsd);
-  REQUIRE(wset_nomsd.size() == nwalk);
-  wfn_nomsd.Log_Overlap(wset_nomsd);
-  REQUIRE(wset_nomsd.size() == nwalk);
-  wfn_nomsd.runtime_optimization(wset_nomsd);
-  REQUIRE(wset_nomsd.size() == nwalk);
-  wfn_nomsd.Energy(wset_nomsd);
-  REQUIRE(wset_nomsd.size() == nwalk);
-  nda::array<ComplexType, 1> ov_n(nwalk), e1_n(nwalk), exx_n(nwalk), ej_n(nwalk);
-  wset_nomsd.getProperty(OVLP, ov_n);
-  wset_nomsd.getProperty(E1_, e1_n);
-  wset_nomsd.getProperty(EXX_, exx_n);
-  wset_nomsd.getProperty(EJ_, ej_n);
-  REQUIRE(ov_n.size() == nwalk);
-  // Discrete (model) propagators must initialize potentials before vbias.
-  if (wfn_nomsd.getHamType() == ModelHamiltonian) {
-    const long ncv = wfn_nomsd.number_of_cholesky_vectors();
-    memory::array<MEM, ComplexType, 1> vMF_discrete(ncv, ComplexType(0.0, 0.0));
-    memory::host_array<ComplexType, 1> nMF(2 * NMO, ComplexType(0.0, 0.0));
-    wfn_nomsd.update_potentials(dt, nMF, vMF_discrete, false);
-  }
-  memory::array<MEM, ComplexType, 2> X_n(nwalk, wfn_nomsd.number_of_cholesky_vectors());
-  wfn_nomsd.vbias(wset_nomsd, X_n, dt);
-  REQUIRE(X_n.extent(0) == nwalk);
+  auto run = [&](auto& wfn, const std::string& guess_id) {
+    auto wset = env.make_resized_walker_set(mpi, nwalk, guess_id);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    return harvest(wfn, wset);
+  };
+  // Same initial-guess id for both arms so the outer walkers are identical before reductions.
+  auto [ov_n, e1_n, exx_n, ej_n, X_n] = run(wfn_nomsd, "wfn_nomsd");
+  auto [ov_s, e1_s, exx_s, ej_s, X_s] = run(wfn_stoch, "wfn_nomsd");
 
-  auto wset_stoch = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch");
-  REQUIRE(wset_stoch.size() == nwalk);
-  perturb(wset_stoch);
-  auto [ov_s, e1_s, exx_s, ej_s, X_s] = harvest(wfn_stoch, wset_stoch);
-  REQUIRE(ov_s.size() == nwalk);
-
-  if (delegate_limit) {
-    CHECK_THAT(ov_s, utils::Approx(ov_n));
-    CHECK_THAT(e1_s, utils::Approx(e1_n));
-    CHECK_THAT(exx_s, utils::Approx(exx_n));
-    CHECK_THAT(ej_s, utils::Approx(ej_n));
-    CHECK_THAT(X_s, utils::Approx(nda::to_host(X_n)));
-  }
+  // Delegate-limit parity is a property of a SINGLE-determinant trial; a CI-weighted NOMSD is expected to
+  // differ, so skip rather than fail. (Every NOMSD fixture in the suite is ndet == 1 today, but a REQUIRE
+  // here would turn adding a multi-det one into a false failure.)
+  if (wfn_nomsd.total_number_of_references() != 1)
+    return;
+  CHECK_THAT(ov_s, utils::Approx(ov_n));
+  CHECK_THAT(e1_s, utils::Approx(e1_n));
+  CHECK_THAT(exx_s, utils::Approx(exx_n));
+  CHECK_THAT(ej_s, utils::Approx(ej_n));
+  CHECK_THAT(X_s, utils::Approx(X_n));
 }
 
-TEST_CASE("stochastic_wfn_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: delegate limit production order", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
 
@@ -338,19 +278,9 @@ TEST_CASE("stochastic_wfn_matches_nomsd", "[stochastic_wfn]")
 
 }
 
-// ----------------------------------------------------------------------------
-// StochasticWfn build + inner-init smoke test (tag [stochastic_wfn]).
-//
-// Isolates the StochasticWfn *construction* and inner-walker initialization from
-// the reductions and from the plain-NOMSD path: it builds ONLY a stochastic trial
-// and initializes its inner ensemble -- no outer walker set, no Log_Overlap/Energy/
-// vbias, no second wavefunction. Triangulating the SIGSEGV in stochastic_wfn_matches_nomsd:
-//   - If THIS test SIGSEGVs   -> fault is in the stochastic build / inner-walker init.
-//   - If THIS test passes but `wfn_factory: sdet` SIGSEGVs on the same fixture
-//                              -> fault is in the plain dense-Hamiltonian path (not stochastic).
-//   - If both pass            -> fault is specific to running reductions after the stochastic
-//                                 build (e.g. shared buffer-manager / global state interaction).
-// ----------------------------------------------------------------------------
+// Build + initialize the inner ensemble only (no outer walkers / reductions). Widest fixture mask in
+// the suite (incl. solids/lattice that dynamic cases exclude); also covers the old narrow
+// `wfn_factory: stochasticwfn` smoke.
 template<MEMORY_SPACE MEM>
 void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                             std::string hamil_file, std::string wfn_file)
@@ -359,8 +289,6 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
     return;
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (is_ft_walker_type(type))
-    return;
 
   ptree ham_pt;
   ham_pt.put("name", "ham0");
@@ -377,7 +305,7 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   ptree stoch_pt;
   stoch_pt.put("name", "wfn_stoch");
   stoch_pt.put("filename", wfn_file);
-  mark_stochastic_wfn_input(stoch_pt);
+  utils::mark_stochastic_wfn_input(stoch_pt);
   stoch_pt.put("inner_n_samples", 1);
   WfnFac.push("wfn_stoch", stoch_pt);
 
@@ -390,7 +318,7 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   app_log(0, "[stochastic_build_smoke] inner walkers initialized OK");
 }
 
-TEST_CASE("stochastic_build_smoke", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: build and inner init", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
 
@@ -417,28 +345,6 @@ TEST_CASE("stochastic_build_smoke", "[stochastic_wfn]")
 //       result. Multi-determinant trials diverge by design (a single-determinant inner ensemble cannot
 //       reproduce a CI-weighted NOMSD), so (2) is gated on ndet == 1.
 // ============================================================================
-
-// Deterministic, reproducible perturbation of the outer walker Slater matrices, identical to the
-// sequence in stochastic_wfn_matches_nomsd, so independently-built walker sets are bit-for-bit
-// identical going into the reductions (a meaningful parity check needs non-trivial overlaps).
-template<MEMORY_SPACE MEM>
-void perturb_stochastic_walkers(WalkerSet<MEM>& wset, WALKER_TYPES type, int NMO, int nup, int ndown)
-{
-  const int nspin = (type == COLLINEAR) ? 2 : 1;
-  const int npol  = (type == NONCOLLINEAR) ? 2 : 1;
-  const int nwalk = wset.size();
-  std::array<int, 2> nels = {nup, ndown};
-  for (int spin = 0; spin < nspin; spin++) {
-    nda::array<ComplexType, 1> p_h(long(nwalk) * npol * NMO * nels[spin]);
-    for (long k = 0; k < p_h.size(); ++k) {
-      double v = 0.1 * (k + 1);
-      p_h[k] = {std::cos(v), std::sin(v * v)};
-    }
-    memory::array<MEM, ComplexType, 3> p(reshape(p_h, nwalk, npol * NMO, nels[spin]));
-    auto SM = wset.SlaterMatrices(static_cast<SpinTypes>(spin));
-    nda::tensor::add(p, "ijk", SM, "ijk");
-  }
-}
 
 // One-line premise gate for the inner_n_samples-invariance comparisons. Returns true when the test should
 // SKIP because the fixture's initial guess is not the trial reference.
@@ -530,8 +436,7 @@ void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost
                                       std::string hamil_file, std::string wfn_file)
 {
   // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
-  auto env_opt = StochasticHamWfnEnv<MEM>::build(
-      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file);
   if (not env_opt)
     return;
   auto& env = *env_opt;
@@ -555,7 +460,7 @@ void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost
   // three wavefunctions see bit-for-bit identical outer walkers.
   auto collect_overlaps = [&](Wavefunction<MEM>& wfn) {
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_ov");
-    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     wfn.Log_Overlap(wset);
     nda::array<ComplexType, 1> ov(nwalk);
     wset.getProperty(OVLP, ov);
@@ -578,7 +483,7 @@ void stochastic_overlap_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost
     CHECK_THAT(linear_overlap(ov_s1), utils::Approx(linear_overlap(ov_ref)));
 }
 
-TEST_CASE("stochastic_overlap_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: log_overlap matches nomsd", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn Log_Overlap delegate-limit parity.");
@@ -596,8 +501,7 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
 {
   // PR-3: the off-anchor Energy reduction is device-ported (row_accumulate / row_divide /
   // inner_scalar_reduce / elementwise_log kernels), so this runs on DEVICE_MEMORY too.
-  auto env_opt = StochasticHamWfnEnv<MEM>::build(
-      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file);
   if (not env_opt)
     return;
   auto& env = *env_opt;
@@ -620,7 +524,7 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
   };
   auto collect_energies = [&](Wavefunction<MEM>& wfn) {
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_en");
-    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     wfn.Energy(wset);
     WalkerEnergies out;
     out.ov.resize(nwalk);
@@ -662,7 +566,7 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
   // computed through a different code path, so the two must agree.
   {
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_en");
-    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     wfn_s1.Log_Overlap(wset);
     nda::array<ComplexType, 1> ov_ovlp(nwalk);
     wset.getProperty(OVLP, ov_ovlp);
@@ -674,7 +578,7 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
   // Energy(wset). Exercises the 3-arg overload with caller-allocated buffers.
   {
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_en");
-    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     memory::array<MEM, ComplexType, 2> E_direct(nwalk, 3);
     memory::array<MEM, ComplexType, 1> Ov_direct(nwalk);
     wfn_s1.Energy(wset, E_direct, Ov_direct);
@@ -694,7 +598,7 @@ void stochastic_energy_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost:
   }
 }
 
-TEST_CASE("stochastic_energy_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: energy matches nomsd", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn Energy delegate-limit parity.");
@@ -714,8 +618,7 @@ void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::
                                     std::string hamil_file, std::string wfn_file)
 {
   // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
-  auto env_opt = StochasticHamWfnEnv<MEM>::build(
-      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file);
   if (not env_opt)
     return;
   auto& env = *env_opt;
@@ -735,7 +638,7 @@ void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::
 
   auto collect_vbias = [&](Wavefunction<MEM>& wfn) {
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_vb");
-    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     // Discrete (model) propagators must initialize potentials before vbias.
     if (wfn.getHamType() == ModelHamiltonian)
     {
@@ -765,7 +668,7 @@ void stochastic_vbias_matches_nomsd(std::shared_ptr<utils::mpi_context_t<boost::
     CHECK_THAT(X_s1, utils::Approx(X_ref));
 }
 
-TEST_CASE("stochastic_vbias_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: vbias matches nomsd", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn vbias delegate-limit parity.");
@@ -786,8 +689,7 @@ void stochastic_mixed_density_matrix_matches_nomsd(
     std::string wfn_file)
 {
   // PR-3: this off-anchor path is device-ported; runs on DEVICE_MEMORY too.
-  auto env_opt = StochasticHamWfnEnv<MEM>::build(
-      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file);
   if (not env_opt)
     return;
   auto& env = *env_opt;
@@ -810,7 +712,7 @@ void stochastic_mixed_density_matrix_matches_nomsd(
 
   auto collect_dm = [&](Wavefunction<MEM>& wfn, bool compact) {
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_dm");
-    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     const int Gsize = compact ? nel * npol * env.NMO : nspin * npol * env.NMO * npol * env.NMO;
     memory::array<MEM, ComplexType, 2> G(nwalk, Gsize);
     memory::array<MEM, ComplexType, 1> Ov(nwalk);
@@ -821,7 +723,7 @@ void stochastic_mixed_density_matrix_matches_nomsd(
   };
 
   // log overlaps differ from NOMSD's only by an integer multiple of 2*pi*i (principal branch); compare
-  // exp() to dodge that ambiguity, as stochastic_overlap_matches_nomsd does.
+  // exp() to dodge that ambiguity, as `stochastic_wfn: log_overlap matches nomsd` does.
   auto exp_of = [&](nda::array<ComplexType, 1> const& Ov) {
     nda::array<ComplexType, 1> e(Ov.size());
     for (int w = 0; w < int(Ov.size()); ++w)
@@ -854,7 +756,7 @@ void stochastic_mixed_density_matrix_matches_nomsd(
   }
 }
 
-TEST_CASE("stochastic_mixed_density_matrix_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: mixed dm matches nomsd", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn observable MixedDensityMatrix delegate-limit parity.");
@@ -883,8 +785,6 @@ void stochastic_mean_field_matches_nomsd(
   const auto info   = read_info_from_wfn(wfn_file, "any");
   const int  NMO    = std::get<0>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (is_ft_walker_type(type))
-    return;
   const double dt(0.01);
 
   ptree ham_pt;
@@ -913,7 +813,7 @@ void stochastic_mean_field_matches_nomsd(
     ptree pt;
     pt.put("name", name);
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     WfnFac.push(name, pt);
     auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
@@ -1016,7 +916,7 @@ void stochastic_mean_field_matches_nomsd(
     CHECK_THAT(G_s1, utils::Approx(G_ref));
 }
 
-TEST_CASE("stochastic_mean_field_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: vMF and G_MF match nomsd", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn vMF / G_MF mean-field delegate-limit parity.");
@@ -1043,7 +943,7 @@ namespace
 {
 // Shared helpers for the mean-field + back-propagation reference tests: max |A-B| over two views (1D/2D),
 // finiteness checks (1D/3D), and tr(G) (electron count -- a physical invariant, exact and noise-free
-// regardless of the stochastic sampling). Defined before their first use (stochastic_mean_field_production_order).
+// regardless of the stochastic sampling). Defined before their first use (`stochastic_wfn: mean field production order`).
 template<class A, class B>
 double max_abs_diff2d(A const& X, B const& Y)
 {
@@ -1113,9 +1013,8 @@ void stochastic_mean_field_production_order(
   // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
-    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
-    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    // Walker types the dynamic inner path supports; see dynamic_inner_supports in test_common.hpp for
+    // the COLLINEAR-coverage note (including what widening this gate did NOT buy).
     if (not utils::dynamic_inner_supports(type))
       return;
     const double dt(0.01);
@@ -1148,7 +1047,7 @@ void stochastic_mean_field_production_order(
     ptree pt;
     pt.put("name", "wfn_stoch_mfp");
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     pt.put("inner_nsteps", 1);
     pt.put("inner_sampling_target", "walker_overlap");
@@ -1208,7 +1107,7 @@ void stochastic_mean_field_production_order(
   }
 }
 
-TEST_CASE("stochastic_mean_field_production_order", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: mean field production order", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn vMF / G_MF survive the begin_inner_step-before-generateP1 order.");
@@ -1224,7 +1123,7 @@ TEST_CASE("stochastic_mean_field_production_order", "[stochastic_wfn]")
 // ensemble. So total_number_of_references / getReferenceWeight / getReferences equal plain NOMSD's
 // UNCONDITIONALLY (not just at ndet==1) and INDEPENDENT of inner_n_samples (1 and 3 both delegate). (For a
 // DYNAMIC trial, inner_nsteps > 0 with P > 1, getReferences instead performs a dedicated free-projection
-// draw -- exercised by stochastic_back_propagation_inner_refs and _production_order.) This test verifies
+// draw -- exercised by `stochastic_wfn: bp free projection ensemble` and the production-order cases.) This test verifies
 // that static-limit reference parity (COUNT, per-reference WEIGHT, reference Slater matrices) plus
 // layout/metadata parity (Cholesky count, Ham type, walker type). NOTE: reference-API + layout only;
 // the integration smokes below exercise the full estimator/driver BP path (static at inner_nsteps = 0;
@@ -1239,8 +1138,6 @@ void stochastic_back_propagation_matches_nomsd(
   // PR-3: free-projection BP / accumulate is device-ported (getReferences + accumulate_estimators); runs on DEVICE_MEMORY.
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (is_ft_walker_type(type))
-    return;
 
   ptree ham_pt;
   ham_pt.put("name", "ham0");
@@ -1267,7 +1164,7 @@ void stochastic_back_propagation_matches_nomsd(
     ptree pt;
     pt.put("name", name);
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     WfnFac.push(name, pt);
     auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
@@ -1309,7 +1206,7 @@ void stochastic_back_propagation_matches_nomsd(
   CHECK(wfn_s3.getWalkerType() == wfn_nomsd.getWalkerType());
 }
 
-TEST_CASE("stochastic_back_propagation_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: bp refs match nomsd", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn back-propagation reference API (outer-NOMSD delegate) parity.");
@@ -1339,9 +1236,8 @@ void stochastic_back_propagation_production_order(
   // PR-3: conditioned + leapfrog inner sampling is device-ported; runs on DEVICE_MEMORY too.
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
-    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
-    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    // Walker types the dynamic inner path supports; see dynamic_inner_supports in test_common.hpp for
+    // the COLLINEAR-coverage note (including what widening this gate did NOT buy).
     if (not utils::dynamic_inner_supports(type))
       return;
 
@@ -1371,7 +1267,7 @@ void stochastic_back_propagation_production_order(
     ptree pt;
     pt.put("name", "wfn_stoch_bpp");
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     pt.put("inner_nsteps", 1);
     pt.put("inner_sampling_target", "walker_overlap");
@@ -1424,7 +1320,7 @@ void stochastic_back_propagation_production_order(
   }
 }
 
-TEST_CASE("stochastic_back_propagation_production_order", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: bp refs production order", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn BP references are a dedicated free-projection draw, decoupled from a "
@@ -1441,10 +1337,10 @@ TEST_CASE("stochastic_back_propagation_production_order", "[stochastic_wfn]")
 // CPU) builds a non-conditioned dynamic trial and verifies (1) P references each at weight 1/P, (2) the
 // references are a finite free-projection draw, each PROPAGATED off the anchor (one B_T step), and (3)
 // the draw is IDEMPOTENT within a BP window (a repeated getReferences reuses the same ensemble; cross-
-// window freshness after begin_inner_step is checked in _production_order). (At inner_nsteps == 0 / P == 1,
+// window freshness after begin_inner_step is checked in the production-order cases). (At inner_nsteps == 0 / P == 1,
 // BP delegates to the anchor == NOMSD -- covered by
-// stochastic_back_propagation_matches_nomsd; the conditioned/leapfrog decoupling is covered by
-// _production_order.)
+// `stochastic_wfn: bp refs match nomsd`; the conditioned/leapfrog decoupling is covered by
+// the production-order cases.)
 template<MEMORY_SPACE MEM>
 void stochastic_back_propagation_inner_refs(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1455,9 +1351,8 @@ void stochastic_back_propagation_inner_refs(
   // PR-3: free-projection BP references are device-ported (getReferences); runs on DEVICE_MEMORY.
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
-    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
-    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    // Walker types the dynamic inner path supports; see dynamic_inner_supports in test_common.hpp for
+    // the COLLINEAR-coverage note (including what widening this gate did NOT buy).
     if (not utils::dynamic_inner_supports(type))
       return;
 
@@ -1488,7 +1383,7 @@ void stochastic_back_propagation_inner_refs(
     ptree pt;
     pt.put("name", "wfn_stoch_bpir");
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", P);
     pt.put("inner_nsteps", 1);
     pt.put("inner_sampling_target", "gaussian"); // this test IS the free-projection reference draw
@@ -1522,14 +1417,14 @@ void stochastic_back_propagation_inner_refs(
 
     // (3) IDEMPOTENT within a BP window: a repeated getReferences with no intervening forward step
     // (begin_inner_step) reuses the SAME draw -- the guard prevents a silent re-draw within a window
-    // (cross-window freshness, after begin_inner_step, is checked in _production_order).
+    // (cross-window freshness, after begin_inner_step, is checked in the production-order cases).
     auto R_draw2 = get_refs(wfn_s);
     CHECK(all_finite3d(R_draw2));
     CHECK_THAT(R_draw2, utils::Approx(R_draw1));
   }
 }
 
-TEST_CASE("stochastic_back_propagation_inner_refs", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: bp free projection ensemble", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn back-propagation draws a fresh free-projection reference ensemble.");
@@ -1539,28 +1434,6 @@ TEST_CASE("stochastic_back_propagation_inner_refs", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
-namespace
-{
-template<MEMORY_SPACE MEM>
-void require_finite_bp_one_rdm(h5::file const& file, std::string const& avg_path, int iblock)
-{
-  std::string suffix = std::format("{:09d}", iblock);
-  nda::array<ComplexType, 1> read_data;
-  ComplexType denom{};
-  {
-    h5::group root(file);
-    utils::h5_read(root, avg_path + "/one_rdm_" + suffix, read_data);
-    h5::read(root, avg_path + "/denominator_" + suffix, denom);
-  }
-  REQUIRE(read_data.size() > 0);
-  REQUIRE(std::abs(denom) > 0.0);
-  for (auto v : read_data)
-  {
-    REQUIRE(std::isfinite(real(v)));
-    REQUIRE(std::isfinite(imag(v)));
-  }
-}
-} // namespace
 template<MEMORY_SPACE MEM>
 void stochastic_accumulate_estimators_matches_nomsd(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1575,8 +1448,6 @@ void stochastic_accumulate_estimators_matches_nomsd(
   const int  nup    = std::get<1>(info);
   const int  ndown  = std::get<2>(info);
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-  if (is_ft_walker_type(type))
-    return;
 
   ptree ham_pt;
   ham_pt.put("name", "ham0");
@@ -1604,7 +1475,7 @@ void stochastic_accumulate_estimators_matches_nomsd(
     ptree pt;
     pt.put("name", name);
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     WfnFac.push(name, pt);
     auto& w = WfnFac.getWavefunction(mpi, name, type, &ham, nwalk);
@@ -1653,7 +1524,7 @@ void stochastic_accumulate_estimators_matches_nomsd(
   auto collect_one_rdm = [&](Wavefunction<MEM>& wfn, const std::string& tag, bool time_evolved) {
     auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_ae");
     auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     nda::array<ComplexType, 1> wgt(nwalk);
     wgt() = ComplexType(1.0, 0.0);
@@ -1725,7 +1596,7 @@ void stochastic_accumulate_estimators_matches_nomsd(
   }
 }
 
-TEST_CASE("stochastic_accumulate_estimators_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: accumulate_estimators matches nomsd", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn accumulate_estimators (one_rdm) delegate-limit parity.");
@@ -1762,13 +1633,11 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    // Was `type != CLOSED` with the comment "full-G kernels support CLOSED (RHF) trials only" -- that
-    // predated full_g::energy_collinear landing, and it meant this comparison (the ONLY thing that
-    // validates an un-rotated full-G energy kernel against the compact/NOMSD reference) silently
-    // skipped COLLINEAR. So energy_collinear shipped unvalidated, and it is the kernel every
-    // broken-symmetry production panel runs through (N2-stretched, C2, Fe2S2). NONCOLLINEAR full-G
-    // really is unimplemented -- Real3IndexFactorization::energy_fullG APP_ABORTs on it -- so that is
-    // the only type still excluded.
+    // This test is the only thing comparing an un-rotated full-G energy kernel against the
+    // compact/NOMSD reference, so which walker types reach it is load-bearing. Gated on the engine's
+    // capability, not on CLOSED -- but energy_collinear's two-spin path is still NOT covered here: the
+    // only premise-passing COLLINEAR fixture has an empty beta block. See the coverage note on
+    // dynamic_inner_supports (test_common.hpp).
     if (not utils::dynamic_inner_supports(type))
       return;
     const double dt(0.01);
@@ -1799,7 +1668,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
       ptree pt;
       pt.put("name", name);
       pt.put("filename", wfn_file);
-      mark_stochastic_wfn_input(pt);
+      utils::mark_stochastic_wfn_input(pt);
       pt.put("inner_n_samples", inner_n_samples);
       pt.put("inner_nsteps", inner_nsteps);
       // inner_nsteps is the parameter under test here: 0 selects the compact/static arm, 1 the
@@ -1845,7 +1714,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     auto collect_energies = [&](Wavefunction<MEM>& wfn) {
       auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_fg");
       auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
-      perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+      utils::perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
       wfn.Energy(wset); // never calls begin_inner_step -> full-G evaluated at the anchor
       WalkerEnergies out;
       out.ov.resize(nwalk);
@@ -1880,7 +1749,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
     auto collect_vbias = [&](Wavefunction<MEM>& wfn) {
       auto const& initial_guess = WfnFac.getInitialGuess("wfn_nomsd_fg");
       auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
-      perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+      utils::perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
       memory::array<MEM, ComplexType, 2> X(nwalk, wfn.number_of_cholesky_vectors());
       wfn.vbias(wset, X, dt);
       return nda::to_host(X);
@@ -1891,7 +1760,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
   }
 }
 
-TEST_CASE("stochastic_full_g_matches_compact", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: full_g matches compact", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn un-rotated full-G vs compact at the anchor.");
@@ -1901,18 +1770,8 @@ TEST_CASE("stochastic_full_g_matches_compact", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
-// Isolates G from the energy kernels. stochastic_full_g_matches_compact shows full-G energies drifting
-// from the compact reference on COLLINEAR fixtures (~2e-5 relative) while CLOSED holds to 1e-8, and the
-// error scales 1 : 2 : 2 across E1 : EXX : EJ -- E1 is LINEAR in G and involves no Cholesky at all, EXX
-// and EJ are QUADRATIC in G. That is the signature of G itself being off, not of the Cholesky or the
-// one-body. This checks G directly.
-//
-// The gap this fills: stochastic_mixed_density_matrix_matches_nomsd already compares the non-compact DM
-// against NOMSD for every walker type -- but only at inner_nsteps = 0 (the STATIC replicated ensemble,
-// which delegates to NOMSD). The full-G energy path requires inner_nsteps > 0, whose DM is assembled by
-// a different route (reduce_inner_cross_dm, [nwalk][nspin*NMO*NMO]). That assembly has never been
-// compared to anything. Held at the anchor (begin_inner_step never called, inner_n_samples = 1) the
-// dynamic DM must equal NOMSD's exactly, so any deviation localizes the defect to the assembly.
+// Dynamic MixedDensityMatrix vs NOMSD at the anchor (inner_nsteps > 0, begin_inner_step never called).
+// Isolates G assembly from the energy kernels; static mixed_dm_matches_nomsd does not cover this path.
 template<MEMORY_SPACE MEM>
 void stochastic_dynamic_full_g_dm_matches_nomsd(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -1920,8 +1779,7 @@ void stochastic_dynamic_full_g_dm_matches_nomsd(
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  auto env_opt = StochasticHamWfnEnv<MEM>::build(
-      mpi, hamil_file, wfn_file, [](WALKER_TYPES t) { return !is_ft_walker_type(t); });
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file);
   if (not env_opt)
     return;
   auto& env = *env_opt;
@@ -1952,7 +1810,7 @@ void stochastic_dynamic_full_g_dm_matches_nomsd(
   auto collect_dm = [&](Wavefunction<MEM>& wfn, bool perturb) {
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_nomsd_dyndm");
     if (perturb)
-      perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+      utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     memory::array<MEM, ComplexType, 2> G(nwalk, Gsize);
     memory::array<MEM, ComplexType, 1> Ov(nwalk);
     wfn.MixedDensityMatrix(wset, G, Ov, false); // never begin_inner_step => ensemble at the anchor
@@ -2024,7 +1882,7 @@ void stochastic_dynamic_full_g_dm_matches_nomsd(
   CHECK_THAT(exp_of(Ov_pert_dyn), utils::Approx(exp_of(Ov_pert_ref)));
 }
 
-TEST_CASE("stochastic_dynamic_full_g_dm_matches_nomsd", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: dynamic full_g dm matches nomsd", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn dynamic (inner_nsteps>0) full-G mixed DM vs NOMSD at the anchor.");
@@ -2063,7 +1921,7 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
     auto& wfn                = env.push_stochastic_wfn(mpi, "wfn_stoch_dyn", wfn_file, stoch_opt, nwalk);
 
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_dyn");
-    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
 
     // Each "step" mimics one outer propagator step: arm the latch, then run the hot-path overrides in
     // order. begin_inner_step() + the first reduction resamples the inner ensemble once; the rest
@@ -2096,7 +1954,7 @@ void stochastic_dynamic_ensemble_smoke(std::shared_ptr<utils::mpi_context_t<boos
   }
 }
 
-TEST_CASE("stochastic_dynamic_ensemble_smoke", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: dynamic free projection ensemble", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn dynamic free-projection ensemble smoke.");
@@ -2130,9 +1988,8 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
-    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
-    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    // Walker types the dynamic inner path supports; see dynamic_inner_supports in test_common.hpp for
+    // the COLLINEAR-coverage note (including what widening this gate did NOT buy).
     if (not utils::dynamic_inner_supports(type))
       return;
     const double dt(0.01);
@@ -2151,19 +2008,22 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
     wlk_pt.put("name", "wset0");
     wlk_pt.put("walker_type", walkerTypeToString(type));
 
-    // Persistent decks: for each proposal kernel, (1) equil_steps = 1 (a genuine short MCMC), and
-    // (2) equil_steps = 0 (zero equilibration after prime -- chains drawn once, then frozen).
-    auto run_persistent = [&](const std::string& name, int equil_steps,
+    // Persistent decks: for each proposal kernel, a genuine short MCMC (update_steps = 1), plus the two
+    // degenerate ends of the sweep schedule. `burn_in` is explicit in every leg because it is NOT
+    // independent of the acceptance claim below: it defaults to 100, so a deck that sets only
+    // update_steps = 0 is not frozen at all -- it still pays 100 proposing sweeps at the prime.
+    auto run_persistent = [&](const std::string& name, int equil_steps, int burn_in,
                               const std::string& mcmc, double mcmc_step) {
       WavefunctionFactory<MEM> WfnFac{};
       ptree pt;
       pt.put("name", name);
       pt.put("filename", wfn_file);
-      mark_stochastic_wfn_input(pt);
+      utils::mark_stochastic_wfn_input(pt);
       pt.put("inner_n_samples", inner_n_samples);
       pt.put("inner_nsteps", 1);
       pt.put("inner_sampling_target", "walker_overlap");
       pt.put("inner_sample_update_steps", equil_steps);
+      pt.put("inner_burn_in", burn_in);
       pt.put("inner_sampler", mcmc);
       if (mcmc_step > 0.0)
         pt.put("inner_sampler_step", mcmc_step);
@@ -2176,7 +2036,7 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
 
       auto const& initial_guess = WfnFac.getInitialGuess(name);
       auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
-      perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+      utils::perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
       for (int step = 0; step < 4; ++step)
       {
@@ -2206,22 +2066,36 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
           for (int g = 0; g < X_h.extent(1); ++g)
             REQUIRE(std::isfinite(real(X_h(w, g))));
       }
-      // Acceptance bookkeeping: with equil/burn-in sweeps the chains proposed at least once and the
-      // cumulative acceptance is a valid fraction; the frozen (equil = 0, burn-in = 0) leg makes no
-      // proposals and reports the 1.0 sentinel.
+      // Acceptance bookkeeping. inner_chain_acceptance() is accepted/proposed, or exactly 1.0 when
+      // NOTHING was ever proposed -- so on a deck that makes no proposals the value is a sentinel, not a
+      // measurement, and the two are only distinguishable if the deck's sweep counts are known. Hence
+      // the split: a deck with zero sweeps of either kind must report the sentinel EXACTLY, which a
+      // stray proposal (or a burn-in that ignores its count) would break.
       const double acc = wfn.stochastic_inner_chain_acceptance();
-      REQUIRE(acc >= 0.0);
-      REQUIRE(acc <= 1.0);
+      if (equil_steps == 0 && burn_in == 0)
+        CHECK_THAT(acc, utils::Approx(1.0)); // no proposals possible => the sentinel, bit-exact
+      else
+      {
+        // Sweeps ran. A valid fraction is all that is claimed here: with no public proposal counter,
+        // "at least one proposal happened" is not separable from "every proposal was accepted", and the
+        // pool motion that proves the sweeps did something is asserted in
+        // stochastic_wfn: measure replicas nm1 advances pool via the cond_mag checksum.
+        REQUIRE(acc >= 0.0);
+        REQUIRE(acc <= 1.0);
+      }
     };
 
-    run_persistent("wfn_stoch_persist_pcn", 1, "pcn", 0.5);
-    run_persistent("wfn_stoch_persist_pcn_indep", 1, "pcn", 1.0); // s = 1: independence redraw limit
-    run_persistent("wfn_stoch_persist_gauss", 1, "gaussian", 0.05);
-    run_persistent("wfn_stoch_persist_noequil", 0, "pcn", 0.5);
+    run_persistent("wfn_stoch_persist_pcn", 1, 1, "pcn", 0.5);
+    run_persistent("wfn_stoch_persist_pcn_indep", 1, 1, "pcn", 1.0); // s = 1: independence redraw limit
+    run_persistent("wfn_stoch_persist_gauss", 1, 1, "gaussian", 0.05);
+    // Zero per-advance sweeps but the default-sized burn-in: chains equilibrate once, then hold.
+    run_persistent("wfn_stoch_persist_noequil", 0, 100, "pcn", 0.5);
+    // Genuinely frozen: no burn-in, no per-advance sweeps. The only leg that can report the sentinel.
+    run_persistent("wfn_stoch_persist_frozen", 0, 0, "pcn", 0.5);
   }
 }
 
-TEST_CASE("stochastic_persistent_pool_smoke", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: persistent inner pool", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn persistent conditioned/leapfrog inner pool smoke.");
@@ -2264,7 +2138,7 @@ void stochastic_persistent_pool_nwalk1_bootstrap(std::shared_ptr<utils::mpi_cont
     auto& wfn                    = env.push_stochastic_wfn(mpi, "wfn_stoch_nwalk1", wfn_file, stoch_opt, nwalk);
 
     auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nwalk1");
-    perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
 
     // The driver's initial-energy report: Energy() called directly, with NO prior begin_inner_step.
     REQUIRE(wfn.stochastic_inner_ensemble_size() == inner_n_samples); // pre-resample: still the P-sized anchor.
@@ -2283,7 +2157,7 @@ void stochastic_persistent_pool_nwalk1_bootstrap(std::shared_ptr<utils::mpi_cont
   }
 }
 
-TEST_CASE("stochastic_persistent_pool_nwalk1_bootstrap", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: persistent pool nwalk1 bootstrap", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn persistent/leapfrog pool: nwalk=1 pre-begin_inner_step bootstrap regression.");
@@ -2293,31 +2167,15 @@ TEST_CASE("stochastic_persistent_pool_nwalk1_bootstrap", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
-// The two non-persistent permute tests that used to live here (stochastic_inner_permute_after_pop_control
-// and stochastic_inner_permute_cross_rank_fallback) are GONE, not moved: both built a conditioned trial
-// with persistence off, a mode the input layer can no longer express. The local-clone contract they
-// checked is covered by stochastic_persistent_permute_after_pop_control below; the cross-rank sentinel
-// case they uniquely covered is now a block inside that same test, which already has the setup.
+// Non-persistent permute tests removed with the input mode they required; local-clone contract lives in
+// persistent_permute_after_pop below (incl. cross-rank sentinel SECTION).
 
-// -----------------------------------------------------------------------------------------------------
-// Persistent inner pool x population-control permute coupling.
-//
-// Both features touch the same slot-major inner ensemble but were validated separately:
-// permute_inner_blocks_after_pop was written for the reset-then-redraw path (where the pool is thrown
-// away at the next begin_inner_step anyway), and the persistent pool was validated without an
-// intervening popControl. In production they run back to back every pop step (AFQMCDriver: popControl ->
-// permute_inner_blocks_after_pop -> accumulate_step), and the persistent pool must survive that permute.
-// The two cases below pin the contract at both ends of the branch.
-// -----------------------------------------------------------------------------------------------------
+// Persistent pool x popControl: production order is popControl -> permute_inner_blocks_after_pop ->
+// accumulate_step. Cases below pin both ends of that coupling.
 
-// Case 1 -- pop control transports the PERSISTENT chains with their walkers, and the post-pop hook
-// rebuilds the pool determinants from the transported fields exactly. Same clone-3-into-0 exact
-// overlap-identity check as stochastic_inner_permute_after_pop_control, but driven far enough for the
-// chains to be live: the chain state (fields) lives inside the outer walker buffer, so the clone is simulated by
-// copying the walker's Slater matrix AND its TrialFields row (production branch() copies the whole
-// buffer row -- see stochastic_branch_lineage_metadata for the row-copy contract). The rebuild is
-// deterministic, so Ov_after[0] must equal Ov_before[3] exactly; a spurious re-prime, a chain restart,
-// or dets rebuilt from the wrong slot's fields all break the identity.
+// Case 1 -- pop control transports persistent chains with their walkers; post-pop hook rebuilds dets
+// from transported fields. Clone-3-into-0 overlap identity (fields live in the outer walker buffer;
+// see `sharedwset: stochastic branch lineage`).
 template<MEMORY_SPACE MEM>
 void stochastic_persistent_permute_after_pop_control(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -2332,9 +2190,8 @@ void stochastic_persistent_permute_after_pop_control(
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
-    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
-    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    // Walker types the dynamic inner path supports; see dynamic_inner_supports in test_common.hpp for
+    // the COLLINEAR-coverage note (including what widening this gate did NOT buy).
     if (not utils::dynamic_inner_supports(type))
       return;
     if (mpi->comm.size() != 1)
@@ -2360,7 +2217,7 @@ void stochastic_persistent_permute_after_pop_control(
     ptree pt;
     pt.put("name", "wfn_stoch_pp_persist");
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     pt.put("inner_nsteps", 1);
     pt.put("inner_sampling_target", "walker_overlap");
@@ -2374,7 +2231,7 @@ void stochastic_persistent_permute_after_pop_control(
 
     auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_pp_persist");
     auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     // Prime + equilibrate the persistent pool conditioned on the distinct walkers, then record overlaps.
     wfn_s.begin_inner_step(wset);
@@ -2452,7 +2309,7 @@ void stochastic_persistent_permute_after_pop_control(
   }
 }
 
-TEST_CASE("stochastic_persistent_permute_after_pop_control", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: persistent permute after pop", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn permute_inner_blocks_after_pop realigns the PERSISTENT inner pool after pop control.");
@@ -2488,9 +2345,8 @@ void stochastic_persistent_pool_survives_pop_control(
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
-    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
-    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    // Walker types the dynamic inner path supports; see dynamic_inner_supports in test_common.hpp for
+    // the COLLINEAR-coverage note (including what widening this gate did NOT buy).
     if (not utils::dynamic_inner_supports(type))
       return;
     if (mpi->comm.size() != 1)
@@ -2515,7 +2371,7 @@ void stochastic_persistent_pool_survives_pop_control(
     ptree pt;
     pt.put("name", "wfn_stoch_persist_pop");
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     pt.put("inner_nsteps", 1);
     pt.put("inner_sampling_target", "walker_overlap");
@@ -2533,7 +2389,7 @@ void stochastic_persistent_pool_survives_pop_control(
 
     auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_persist_pop");
     auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     auto identity_lineage = [&]() {
       nda::array<ComplexType, 1> lin(nwalk);
@@ -2596,7 +2452,7 @@ void stochastic_persistent_pool_survives_pop_control(
   }
 }
 
-TEST_CASE("stochastic_persistent_pool_survives_pop_control", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: persistent pool survives pop", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn persistent chains survive pop control; a replaced chain rebuilds its own slot only.");
@@ -2632,9 +2488,8 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    // See the COLLINEAR-coverage note in stochastic_full_g_matches_compact: the dynamic inner path
-    // runs the full-G kernels, which implement CLOSED and COLLINEAR and abort only on NONCOLLINEAR.
-    // This read `type != CLOSED` with no stated reason, leaving COLLINEAR unexercised.
+    // Walker types the dynamic inner path supports; see dynamic_inner_supports in test_common.hpp for
+    // the COLLINEAR-coverage note (including what widening this gate did NOT buy).
     if (not utils::dynamic_inner_supports(type))
       return;
     if (mpi->comm.size() != 1)
@@ -2658,7 +2513,7 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
     ptree pt;
     pt.put("name", "wfn_stoch_condmag");
     pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", inner_n_samples);
     pt.put("inner_nsteps", 1);
     pt.put("inner_sampling_target", "walker_overlap");
@@ -2672,7 +2527,7 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
 
     auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_condmag");
     auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown); // distinct walkers => distinct cond_mag
+    utils::perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown); // distinct walkers => distinct cond_mag
 
     // Equilibrate the chains against the CURRENT walkers phi_cond and set inner_cond_mag_ (leapfrog).
     wfn_s.begin_inner_step(wset);
@@ -2681,7 +2536,7 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
 
     // Move the walkers (mimic the propagation that runs before pop control) WITHOUT re-equilibrating
     // the chains -- the leapfrog ensemble and its phi_cond-referenced magnitudes must stay fixed.
-    perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset, type, NMO, nup, ndown);
 
     // A count-preserving local pop event: identity lineage (no clone, no cross-rank arrival).
     {
@@ -2698,7 +2553,7 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
   }
 }
 
-TEST_CASE("stochastic_persistent_cond_mag_invariant_under_permute", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: cond_mag permute invariant", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn leapfrog inner_cond_mag_ is permuted (not recomputed) across a pop-control realignment.");
@@ -2744,7 +2599,7 @@ void stochastic_measure_replicas_nm1_advances_pool(std::shared_ptr<utils::mpi_co
   auto& wfn = env.push_stochastic_wfn(mpi, "wfn_stoch_nm1", wfn_file, opt, nwalk);
 
   auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nm1");
-  perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+  utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
   wfn.begin_inner_step(wset); // prime the chains
   REQUIRE(wfn.stochastic_measure_advances_pool()); // live at nm == 1, which is the point of this test
 
@@ -2767,7 +2622,7 @@ void stochastic_measure_replicas_nm1_advances_pool(std::shared_ptr<utils::mpi_co
     }
 }
 
-TEST_CASE("stochastic_measure_replicas_nm1_advances_pool", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: measure replicas nm1 advances pool", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn measure_energy advances the pool at nm=1 too (hafqmc-matching).");
@@ -2804,7 +2659,7 @@ void stochastic_measure_replicas_ovlp_is_stored(std::shared_ptr<utils::mpi_conte
   auto& wfn = env.push_stochastic_wfn(mpi, "wfn_stoch_nm4", wfn_file, opt, nwalk);
 
   auto wset = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nm4");
-  perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
+  utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
   wfn.begin_inner_step(wset);
   // Without this the test would pass vacuously through the plain-Energy fallback, where the invariant
   // holds trivially and the fixed bug could return unnoticed.
@@ -2834,7 +2689,7 @@ void stochastic_measure_replicas_ovlp_is_stored(std::shared_ptr<utils::mpi_conte
   }
 }
 
-TEST_CASE("stochastic_measure_replicas_ovlp_is_stored", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: measure replicas ovlp stored", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn measure_energy at nm>1 returns the STORED OVLP (deno_real == 1 invariant).");
@@ -2844,42 +2699,21 @@ TEST_CASE("stochastic_measure_replicas_ovlp_is_stored", "[stochastic_wfn]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
-// ----------------------------------------------------------------------------
-// nm ENERGY correctness (the two tests above cover the nm == 1 identity and the OVLP invariant, both of
-// which hold even if the returned energy is wrong). nm is documented as a pure VARIANCE knob, so the
-// claim under test is arithmetic, not statistical: measure_energy must return exactly the unweighted mean
-// of nm consecutive replica measurements, and (with restore on) must hand the propagation chain back
-// untouched. Both are checkable deterministically, which is worth more here than a 2-sigma band on a
-// 3-walker fixture -- a statistical check on this fixture would be too loose to catch a 1/nm scale error
-// and too tight to run without flaking.
-//
-// What these two do NOT cover, stated plainly so it is not mistaken for full coverage: that each replica's
-// own Energy is an unbiased estimate of the trial energy (that is Energy(), covered upstream by
-// stochastic_mean_field_matches_nomsd), and the nm error-scaling claim (~1/sqrt(nm)), which is a
-// production-scale measurement, not a unit test.
-// ----------------------------------------------------------------------------
-
-// The nm-replica average must be the true unweighted mean of nm CONSECUTIVE replicas. Verified without a
-// reference energy: with restore OFF the pool motion is cumulative across calls, so two nm=2 measurements
-// visit exactly the same four pool states, in the same order, as one nm=4 measurement -- every
-// StochasticWfn seeds its own inner RNG from inner_seed (default 777), so the two wavefunctions get
-// identical, non-interleaved streams, and Energy() itself draws nothing. Hence
-// (E_call1 + E_call2) / 2 == E_nm4 up to floating-point reassociation alone.
-//
-// Catches, as a hard failure: a wrong divisor (1/nm), an accumulator not zeroed on entry, an off-by-one in
-// the advance-per-replica loop (2+2 advances would stop lining up with 4), and any host/device
-// accumulation mismatch (row_accumulate/row_divide vs the host loop), since each MEM runs separately.
+// nm energy: measure_energy must return the unweighted mean of nm consecutive replicas. Two nm=2
+// calls with the same inner_seed visit the same four pool states as one nm=4, so
+// (E1+E2)/2 == E_nm4 (deterministic; catches wrong divisor / accumulator / off-by-one).
 template<MEMORY_SPACE MEM>
 void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                                      std::string hamil_file, std::string wfn_file)
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
-  // CLOSED *and* COLLINEAR: both checks are reference-free (SAFIRE against itself), so neither is
-  // affected by the Psi0 != PsiT fixtures that tripped the retracted COLLINEAR full-G report.
-  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file, [](WALKER_TYPES t) {
-    return t == CLOSED || t == COLLINEAR;
-  });
+  // CLOSED *and* COLLINEAR -- i.e. everything the dynamic path supports, so this asks the capability
+  // predicate rather than open-coding the same two types. Both checks here are reference-free (SAFIRE
+  // against itself), so unlike the parity tests neither is affected by the Psi0 != PsiT fixtures, and
+  // this is one of the few dynamic cases that genuinely exercises a two-spin COLLINEAR trial.
+  auto env_opt = StochasticHamWfnEnv<MEM>::build(mpi, hamil_file, wfn_file,
+                                                 utils::dynamic_inner_supports);
   if (not env_opt)
     return;
   auto& env = *env_opt;
@@ -2904,7 +2738,7 @@ void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi
   opt2.inner_n_measure_samples = 2;
   auto& wfn2  = env.push_stochastic_wfn(mpi, "wfn_stoch_nm2_split", wfn_file, opt2, nwalk);
   auto wset2  = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nm2_split");
-  perturb_stochastic_walkers<MEM>(wset2, env.type, env.NMO, env.nup, env.ndown);
+  utils::perturb_stochastic_walkers<MEM>(wset2, env.type, env.NMO, env.nup, env.ndown);
   wfn2.begin_inner_step(wset2);
   REQUIRE(wfn2.stochastic_measure_advances_pool());
   nda::array<ComplexType, 2> E_a(nwalk, 3), E_b(nwalk, 3);
@@ -2916,7 +2750,7 @@ void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi
   opt4.inner_n_measure_samples = 4;
   auto& wfn4  = env.push_stochastic_wfn(mpi, "wfn_stoch_nm4_whole", wfn_file, opt4, nwalk);
   auto wset4  = env.make_resized_walker_set(mpi, nwalk, "wfn_stoch_nm4_whole");
-  perturb_stochastic_walkers<MEM>(wset4, env.type, env.NMO, env.nup, env.ndown);
+  utils::perturb_stochastic_walkers<MEM>(wset4, env.type, env.NMO, env.nup, env.ndown);
   wfn4.begin_inner_step(wset4);
   REQUIRE(wfn4.stochastic_measure_advances_pool());
   nda::array<ComplexType, 2> E_c(nwalk, 3);
@@ -2938,7 +2772,7 @@ void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi
   REQUIRE(dev <= tol * scale);
 }
 
-TEST_CASE("stochastic_measure_replicas_average_is_true_mean", "[stochastic_wfn]")
+TEST_CASE("stochastic_wfn: measure replicas average is mean", "[stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn measure_energy at nm>1 is the exact mean of nm consecutive replicas.");
@@ -2957,21 +2791,11 @@ TEST_CASE("stochastic_measure_replicas_average_is_true_mean", "[stochastic_wfn]"
 // stochastic_measure_replicas_restore_is_invisible was DELETED with the inner_measure_restore knob it
 // tested. It asserted that a measurement leaves the propagation chain bit-identical -- the opposite of
 // what the engine now does, and of what hafqmc does: the measurement advance feeds forward. The
-// feed-forward itself is pinned by stochastic_measure_replicas_nm1_advances_pool.
+// feed-forward itself is pinned by `stochastic_wfn: measure replicas nm1 advances pool`.
 
-// -----------------------------------------------------------------------------------------------------
-// THE INPUT SURFACE: what is settable, what a wrong name does, and the one key that must never default.
-//
-// Back-compatibility is deliberately NOT provided. The removed keys (inner_conditioning, inner_leapfrog,
-// inner_persistence, inner_equil_steps, inner_measure_stride, inner_pool_burn_in, inner_condition_on_new,
-// inner_measure_restore, inner_log_aggregate) are simply unknown now, and an unknown inner_* key ABORTS.
-// That is the whole safety argument: the danger of renaming a key is never that old decks stop working,
-// it is that they keep parsing and quietly mean something else. A hard abort makes every stale deck a
-// one-line fix instead of a silent reinterpretation.
-//
-// interpret_inputs is static and pure, so this needs no Hamiltonian, walker set or MPI fixture.
-// -----------------------------------------------------------------------------------------------------
-TEST_CASE("stochastic_input_surface_is_closed_and_explicit", "[stochastic_wfn]")
+// Closed inner_* input surface: unknown / removed keys abort; dynamic trials must name
+// inner_sampling_target (never defaulted). interpret_inputs is static -- no Ham/walker fixture.
+TEST_CASE("stochastic_wfn: input surface closed", "[stochastic_wfn]")
 {
   app_log(0, "StochasticWfn input surface: unknown keys abort, sampling target never defaults.");
   using Wfn = StochasticWfn<HOST_MEMORY, PsiT_Matrix<HOST_MEMORY>>;
@@ -2980,7 +2804,7 @@ TEST_CASE("stochastic_input_surface_is_closed_and_explicit", "[stochastic_wfn]")
     ptree pt;
     pt.put("name", "wfn_surface");
     pt.put("filename", "unused.h5"); // interpret_inputs never opens it
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", 4);
     pt.put("inner_nsteps", 1);
     return pt;
@@ -3040,7 +2864,7 @@ TEST_CASE("stochastic_input_surface_is_closed_and_explicit", "[stochastic_wfn]")
     ptree pt;
     pt.put("name", "wfn_static_default");
     pt.put("filename", "unused.h5");
-    mark_stochastic_wfn_input(pt);
+    utils::mark_stochastic_wfn_input(pt);
     pt.put("inner_n_samples", 1);
     ptree out;
     REQUIRE_NOTHROW(out = Wfn::interpret_inputs(pt));
@@ -3078,10 +2902,9 @@ TEST_CASE("stochastic_input_surface_is_closed_and_explicit", "[stochastic_wfn]")
     CHECK(out.get<int>("inner_burn_in") == 0);
   }
 
-  SECTION("inner_sample_update_steps = 0 is legal at nm = 1 and rejected at nm > 1")
+  SECTION("inner_sample_update_steps = 0 is legal at nm = 1")
   {
-    // 0 means "prime the chains, then freeze them" -- a real diagnostic mode. At nm > 1 it is incoherent:
-    // every replica would measure the same frozen pool, which is one measurement repeated.
+    // 0 means "prime the chains, then freeze them" -- a real diagnostic mode.
     ptree pt = base();
     pt.put("inner_sampling_target", "walker_overlap");
     pt.put("inner_sample_update_steps", 0);
@@ -3089,6 +2912,21 @@ TEST_CASE("stochastic_input_surface_is_closed_and_explicit", "[stochastic_wfn]")
     REQUIRE_NOTHROW(out = Wfn::interpret_inputs(pt));
     CHECK(out.get<int>("inner_sample_update_steps") == 0);
   }
+
+  // ⚠️ COVERAGE BOUNDARY, stated so the title of the section above is not read as more than it is.
+  // interpret_inputs holds only THREE validations -- inner_n_samples >= 1, inner_nsteps >= 0, and the
+  // unknown-key sweep -- plus whatever resolve_sampling_target enforces. Everything else lives in the
+  // CONSTRUCTOR and is therefore unreachable from this test case, which calls the static function
+  // directly and never builds a wavefunction. Not covered anywhere in the suite today:
+  //   inner_sample_update_steps >= 0 · inner_burn_in >= 0 · inner_n_measure_samples >= 1
+  //   inner_n_measure_samples > 1 requires inner_sample_update_steps >= 1  (the other half of the
+  //     section title above, which used to claim it and could not reach it)
+  //   inner_n_measure_samples > 1 requires is_conditioned()
+  //   inner_sampler = 'metropolis' is rejected · inner_sampler in {pcn, gaussian}
+  //   pcn requires 0 < inner_sampler_step <= 1 · gaussian requires inner_sampler_step > 0
+  //   a dynamic trial requires an inner_propagator timestep · dynamic requires CLOSED/COLLINEAR
+  // Reaching those needs a fixture that constructs the trial and expects AppAbortException; the
+  // metropolis rejection is the one with production history behind it.
 }
 
 } // namespace sfqmc

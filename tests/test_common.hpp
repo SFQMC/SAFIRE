@@ -76,7 +76,7 @@ namespace TestFiles {
   // on input it does not implement:
   //   - THCOps, KP3IndexFactorization (solids) -> StochasticWfn::vbias's has_fullG_vbias() gate, and
   //     behind it "energy_fullG not implemented". NOTE the STATIC path is a separate question and is
-  //     NOT excluded: stochastic_mean_field_matches_nomsd runs ALL_SYSTEMS and asserts the refusal.
+  //     NOT excluded: `stochastic_wfn: vMF and G_MF match nomsd` runs ALL_SYSTEMS and asserts the refusal.
   //   - Discrete_GeneralUJ (lattice/Hubbard)   -> "Using uninitialized Discrete_GeneralUJ object".
   //     This is the propagator-initialization order, NOT the full-G vbias gap: ModelHamOps DOES
   //     implement the full-G contraction (has_fullG_vbias() == true).
@@ -88,12 +88,14 @@ namespace TestFiles {
 };
 
 // Does the DYNAMIC (inner_nsteps > 0) StochasticWfn path support this walker type?
+// CLOSED and COLLINEAR only (mirrors StochasticWfn). Prefer this predicate over open-coding types.
 //
-// Mirrors StochasticWfn's own constructor rule -- CLOSED and COLLINEAR only, everything else aborts.
-// This exists because TestFiles::DYNAMIC_INNER cannot express the restriction on its own: it keeps the
-// GHF/NONCOLLINEAR fixtures out, but FULLYPOLARIZED arrives through the UHF flag
-// (Li/rohf_nomsd_fullypolarized), so a `type == NONCOLLINEAR` guard lets it straight through to the abort.
-// Test the CAPABILITY, not one of the types that lacks it.
+// COLLINEAR coverage note: widening the gate alone does not deliver two-spin parity. Under
+// DYNAMIC_INNER the BH UHF fixtures are skipped by the Psi0==PsiT premise (anchor_reference_mismatch,
+// test_stochastic_wfn.cpp); Li polarized passes it but is nup=3,ndn=0 -- Psi0_beta is (14,0,2) and PsiT_1
+// is empty, so beta and the alpha-beta EJ cross term contract against nothing. energy_collinear's
+// two-spin path still needs a COLLINEAR NOMSD fixture with Psi0==PsiT. Reference-free COLLINEAR checks
+// (SAFIRE vs itself) are unaffected.
 inline bool dynamic_inner_supports(afqmc::WALKER_TYPES t)
 {
   return t == afqmc::CLOSED || t == afqmc::COLLINEAR;

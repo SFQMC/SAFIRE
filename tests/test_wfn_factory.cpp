@@ -40,6 +40,7 @@
 
 #include "utilities/Timer.hpp"
 #include "test_common.hpp"
+#include "test_stochastic_common.hpp"
 #include "utilities/check.hpp"
 #include "test_utils.hpp"
 #include "AFQMC/Utilities/readWfn.h"
@@ -339,31 +340,6 @@ TEST_CASE("wfn_factory: sdet", "[wfn_factory]")
 
 }
 
-namespace {
-void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
-
-template<MEMORY_SPACE MEM>
-void perturb_stochastic_walkers(WalkerSet<MEM>& wset, WALKER_TYPES type, int NMO, int nup, int ndown)
-{
-  const int nspin = (type == COLLINEAR) ? 2 : 1;
-  const int npol  = (type == NONCOLLINEAR) ? 2 : 1;
-  const int nwalk = wset.size();
-  std::array<int, 2> nels = {nup, ndown};
-  for (int spin = 0; spin < nspin; spin++)
-  {
-    nda::array<ComplexType, 1> p_h(long(nwalk) * npol * NMO * nels[spin]);
-    for (long k = 0; k < p_h.size(); ++k)
-    {
-      double v = 0.1 * (k + 1);
-      p_h[k] = {std::cos(v), std::sin(v * v)};
-    }
-    memory::array<MEM, ComplexType, 3> p(reshape(p_h, nwalk, npol * NMO, nels[spin]));
-    auto SM = wset.SlaterMatrices(static_cast<SpinTypes>(spin));
-    nda::tensor::add(p, "ijk", SM, "ijk");
-  }
-}
-} // namespace
-
 // inner_hamiltonian factory anchor: the stochastic inner (Variational) stack can be built from a separate
 // Hamiltonian named by the `inner_hamiltonian` input key, which the WavefunctionFactory builds on demand
 // through the HamiltonianFactory passed to its two-argument constructor. Two trials are built in one
@@ -390,8 +366,10 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     const int  nup   = std::get<1>(info);
     const int  ndown = std::get<2>(info);
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (not utils::dynamic_inner_supports(type))
-      return; // dynamic inner ensemble: CLOSED/COLLINEAR only
+    // CLOSED only, and this is narrower than the engine allows on purpose: both arms of this test write
+    // and read a stamped copy of the Hamiltonian file, so it is about the factory's file handling, not
+    // about walker types. (dynamic_inner_supports() would admit COLLINEAR here and the next line would
+    // then throw it away, which is what this used to do.)
     if (type != CLOSED)
       return;
     const double dt(0.01);
@@ -416,7 +394,7 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     const std::string stamped_hamil = "stamped_inner_hamil.h5";
     // MATCHES the value the clone arm sets by hand: this test's premise is that the two arms are the
     // same calculation, so they must share a timestep. That the stamp is what DRIVES the hvar arm is
-    // asserted separately, with a distinctive value, in stochastic_inner_timestep_comes_from_the_stamp.
+    // asserted separately, with a distinctive value, in `wfn_factory: stochastic inner timestep from stamp`.
     const double stamped_dt = 0.01;
     std::filesystem::remove(stamped_hamil);
     std::filesystem::copy_file(hamil_file, stamped_hamil);
@@ -431,7 +409,7 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
       ptree pt;
       pt.put("name", id);
       pt.put("filename", wfn_file);
-      mark_stochastic_wfn_input(pt);
+      utils::mark_stochastic_wfn_input(pt);
       pt.put("inner_n_samples", 4);
       pt.put("inner_nsteps", 1);
       pt.put("inner_sampling_target", "gaussian"); // dynamic trials must name a mode; the bare draw suffices here
@@ -480,13 +458,13 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
     auto const& initial_guess_b = WfnFac.getInitialGuess("wfn_hvar");
     auto wset_a = WalkerSet<MEM>(mpi, wlk_pt, rng_a, type, initial_guess_a, nwalk);
     auto wset_b = WalkerSet<MEM>(mpi, wlk_pt, rng_b, type, initial_guess_b, nwalk);
-    perturb_stochastic_walkers<MEM>(wset_a, type, NMO, nup, ndown); // deterministic -> wset_a == wset_b
-    perturb_stochastic_walkers<MEM>(wset_b, type, NMO, nup, ndown);
+    utils::perturb_stochastic_walkers<MEM>(wset_a, type, NMO, nup, ndown); // deterministic -> wset_a == wset_b
+    utils::perturb_stochastic_walkers<MEM>(wset_b, type, NMO, nup, ndown);
 
     const double tol = 1e-9;
     for (int step = 0; step < 3; ++step)
     {
-      // Same hot-path order as stochastic_dynamic_ensemble_smoke, lockstep on both trials.
+      // Same hot-path order as `stochastic_wfn: dynamic free projection ensemble`, lockstep on both trials.
       wfn_clone.begin_inner_step(wset_a);
       wfn_hvar.begin_inner_step(wset_b);
       memory::array<MEM, ComplexType, 2> Xa(nwalk, wfn_clone.number_of_cholesky_vectors());
@@ -520,7 +498,7 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
   }
 }
 
-TEST_CASE("stochastic_inner_hamiltonian_same_as_true", "[wfn_factory]")
+TEST_CASE("wfn_factory: stochastic inner_hamiltonian same as true", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "StochasticWfn inner_hamiltonian (same integral file) reproduces the clone path.");
@@ -530,19 +508,9 @@ TEST_CASE("stochastic_inner_hamiltonian_same_as_true", "[wfn_factory]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
-// -----------------------------------------------------------------------------------------------------
-// WHERE THE TRAINED TIMESTEP COMES FROM.
-//
-// dt = ts_v^2 parameterizes B_T built from the variational Hamiltonian, so the two travel together in
-// one file: export_safire stamps Hamiltonian/inner_timestep and the factory reads it. The input key is
-// gone. Three things have to hold, and only the first is about reading the file:
-//   (1) the stamped value REACHES the wavefunction -- a factory that reads the attribute into a ptree
-//       nobody consumes looks identical to one that works, so this asserts the built object's own dt,
-//       against a value that matches no default and no other arm of any test;
-//   (2) an unstamped inner_hamiltonian is a hard error, not a silent fallback to some default;
-//   (3) a hand-set inner_propagator.timestep alongside inner_hamiltonian is REFUSED, not overwritten --
-//       a deck that sets it must fail rather than run with a number it did not ask for.
-// -----------------------------------------------------------------------------------------------------
+// Trained B_T timestep comes from Hamiltonian/inner_timestep on the variational file (no input key).
+// Asserts: stamp reaches the built object; unstamped inner_hamiltonian aborts; hand-set
+// inner_propagator.timestep alongside inner_hamiltonian is refused.
 template<MEMORY_SPACE MEM>
 void stochastic_inner_timestep_comes_from_the_stamp(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
@@ -555,8 +523,10 @@ void stochastic_inner_timestep_comes_from_the_stamp(
   else
   {
     WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (not utils::dynamic_inner_supports(type))
-      return; // dynamic inner ensemble: CLOSED/COLLINEAR only
+    // CLOSED only, and this is narrower than the engine allows on purpose: both arms of this test write
+    // and read a stamped copy of the Hamiltonian file, so it is about the factory's file handling, not
+    // about walker types. (dynamic_inner_supports() would admit COLLINEAR here and the next line would
+    // then throw it away, which is what this used to do.)
     if (type != CLOSED)
       return;
 
@@ -588,7 +558,7 @@ void stochastic_inner_timestep_comes_from_the_stamp(
       ptree pt;
       pt.put("name", id);
       pt.put("filename", wfn_file);
-      mark_stochastic_wfn_input(pt);
+      utils::mark_stochastic_wfn_input(pt);
       pt.put("inner_n_samples", 4);
       pt.put("inner_nsteps", 1);
       pt.put("inner_sampling_target", "gaussian");
@@ -620,7 +590,7 @@ void stochastic_inner_timestep_comes_from_the_stamp(
   }
 }
 
-TEST_CASE("stochastic_inner_timestep_comes_from_the_stamp", "[wfn_factory]")
+TEST_CASE("wfn_factory: stochastic inner timestep from stamp", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "Trained inner timestep is read from inner_hamiltonian's stamp, and only from there.");
@@ -630,56 +600,12 @@ TEST_CASE("stochastic_inner_timestep_comes_from_the_stamp", "[wfn_factory]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
-// type: stochasticwfn builds StochasticWfn via WavefunctionFactory.
-template<MEMORY_SPACE MEM>
-void wfn_factory_stochasticwfn_type_smoke(
-    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
-    std::string wfn_file)
-{
-  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
-    return;
-  if constexpr (MEM != HOST_MEMORY)
-    return;
-  else
-  {
-    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
-    if (type != CLOSED)
-      return;
-
-    ptree ham_pt;
-    ham_pt.put("name", "ham0");
-    ham_pt.put("filename", hamil_file);
-    HamiltonianFactory HamFac;
-    HamFac.push("ham0", ham_pt);
-    Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
-
-    ptree wlk_pt;
-    wlk_pt.put("name", "wset0");
-    wlk_pt.put("walker_type", walkerTypeToString(type));
-
-    WavefunctionFactory<MEM> WfnFac{};
-    ptree wfn_pt;
-    wfn_pt.put("name", "wfn_stoch");
-    wfn_pt.put("filename", wfn_file);
-    mark_stochastic_wfn_input(wfn_pt);
-    wfn_pt.put("inner_n_samples", 1);
-    WfnFac.push("wfn_stoch", wfn_pt);
-    auto& wfn_stoch = WfnFac.getWavefunction(mpi, "wfn_stoch", type, &ham, 4);
-    REQUIRE(wfn_stoch.is_stochastic_wavefunction());
-    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_stoch, "wfn_stoch", type, wlk_pt);
-    REQUIRE(wfn_stoch.stochastic_inner_walkers_initialized());
-  }
-}
-
-TEST_CASE("wfn_factory: stochasticwfn", "[wfn_factory]")
-{
-  auto& mpi = utils::make_unit_test_mpi_context();
-  app_log(0, "type: stochasticwfn builds StochasticWfn via WavefunctionFactory.");
-  using namespace utils;
-  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
-    wfn_factory_stochasticwfn_type_smoke<MEM>(mpi, hamil_file, wfn_file);
-  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
-}
+// NOTE: the `wfn_factory: stochasticwfn` case that stood here is GONE, and deliberately not moved. It
+// built a stochastic trial through the input `type` key and asserted is_stochastic_wavefunction() +
+// stochastic_inner_walkers_initialized() -- a strict subset of `stochastic_wfn: build and inner-walker
+// init`, which asserts the same two things on the same code path over ALL_SYSTEMS at nwalk = 11 instead of
+// CLOSED-only at nwalk = 4. The HDF5-marker path below is a DIFFERENT path (no input `type` at all) and
+// stays.
 
 // Wavefunction/StochasticWfn HDF5 marker is detected and builds StochasticWfn without input type.
 template<MEMORY_SPACE MEM>
@@ -736,7 +662,7 @@ void stochastic_hdf5_type_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3
   }
 }
 
-TEST_CASE("stochastic_hdf5_type_smoke", "[wfn_factory]")
+TEST_CASE("wfn_factory: stochastic hdf5 type", "[wfn_factory][stochastic_wfn]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
   app_log(0, "Wavefunction/StochasticWfn HDF5 marker builds StochasticWfn.");

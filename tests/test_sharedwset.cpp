@@ -423,12 +423,12 @@ TEST_CASE("sharedwset: walker io", "[sharedwset]")
 template<MEMORY_SPACE MEM>
 void stochastic_branch_lineage_metadata()
 {
-  using Type = std::complex<double>;
-  auto& mpi  = utils::make_unit_test_mpi_context();
+  auto& mpi = utils::make_unit_test_mpi_context();
   if (mpi->comm.size() != 1)
     return; // single-rank lineage check; the cross-rank path is covered separately
 
-  const int NMO = 6, nup = 2, ndown = 2, nwalk = 6;
+  // CLOSED walkers, so there is no separate beta count to declare (a `ndown` here was unused).
+  const int NMO = 6, nup = 2, nwalk = 6;
   ptree wlk_pt;
   wlk_pt.put("name", "wset0");
   wlk_pt.put("walker_type", "closed");
@@ -481,7 +481,7 @@ void stochastic_branch_lineage_metadata()
     REQUIRE(hist[i] == counts[i]);
 }
 
-TEST_CASE("stochastic_branch_lineage_metadata", "[stochastic_wfn]")
+TEST_CASE("sharedwset: stochastic branch lineage", "[sharedwset][stochastic_wfn]")
 {
   app_log(0, "WalkerSetBase::branch() carries SLOT_LINEAGE through compaction + replication.");
   stochastic_branch_lineage_metadata<HOST_MEMORY>();
