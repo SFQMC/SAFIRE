@@ -276,8 +276,7 @@ double anchor_reference_mismatch(Wavefunction<MEM>& wfn_nomsd, WalkerSet<MEM>& w
   const int nwalk = int(wset_at_guess.size());
   const int rows = npol * NMO, cols = npol * NMO;
   memory::array<MEM, ComplexType, 2> G(nwalk, nspin * rows * cols);
-  memory::array<MEM, ComplexType, 1> Ov(nwalk);
-  wfn_nomsd.MixedDensityMatrix(wset_at_guess, G, Ov, false);
+  wfn_nomsd.MixedDensityMatrix(wset_at_guess, G, false);
   nda::array<ComplexType, 2> Gh(nda::to_host(G));
   double herm = 0.0;
   for (int w = 0; w < nwalk; ++w)
@@ -572,7 +571,12 @@ void stochastic_delegate_limit_matches_nomsd(std::shared_ptr<utils::mpi_context_
         const int Gsize = compact ? nel * npol * env.NMO : nspin * npol * env.NMO * npol * env.NMO;
         memory::array<MEM, ComplexType, 2> G(nwalk, Gsize);
         memory::array<MEM, ComplexType, 1> Ov(nwalk);
-        wfn.MixedDensityMatrix(wset, G, Ov, compact);
+        // G and Ov come from two calls, not one fused call: the second reduction of an outer step
+        // reuses the ensemble the first one resampled (the inner_step_pending_ latch in
+        // StochasticWfn::conditioned_resample), so the pair is consistent. Measured bit-identical to
+        // the fused form. Do NOT insert a begin_inner_step between these two lines.
+        wfn.MixedDensityMatrix(wset, G, compact);
+        wfn.Log_Overlap(wset, Ov);
         return std::make_pair(nda::array<ComplexType, 2>(nda::to_host(G)),
                               nda::array<ComplexType, 1>(nda::to_host(Ov)));
       });
@@ -1012,7 +1016,7 @@ void stochastic_back_propagation_matches_nomsd(
   // (3) the reference Slater matrices themselves match NOMSD (shape [nrefs, npol*NMO, nel], as
   // BackPropagatedEstimator requests them).
   auto collect_refs = [&](Wavefunction<MEM>& wfn) {
-    memory::array<MEM, ComplexType, 3> Refs;
+    memory::buffered_array<MEM, ComplexType, 3> Refs;
     wfn.getReferences(Refs);
     return nda::to_host(Refs);
   };
@@ -1093,7 +1097,7 @@ void stochastic_back_propagation_production_order(
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpp", type, wlk_pt);
 
     auto get_refs = [&](Wavefunction<MEM>& wfn) {
-      memory::array<MEM, ComplexType, 3> Refs;
+      memory::buffered_array<MEM, ComplexType, 3> Refs;
       wfn.getReferences(Refs);
       return nda::to_host(Refs);
     };
@@ -1206,7 +1210,7 @@ void stochastic_back_propagation_inner_refs(
       CHECK_THAT(wfn_s.getReferenceWeight(p), utils::Approx(ComplexType(1.0 / P, 0.0)));
 
     auto get_refs = [&](Wavefunction<MEM>& wfn) {
-      memory::array<MEM, ComplexType, 3> Refs;
+      memory::buffered_array<MEM, ComplexType, 3> Refs;
       wfn.getReferences(Refs);
       return nda::to_host(Refs);
     };
@@ -1594,7 +1598,9 @@ void stochastic_dynamic_full_g_dm_matches_nomsd(
       utils::perturb_stochastic_walkers<MEM>(wset, env.type, env.NMO, env.nup, env.ndown);
     memory::array<MEM, ComplexType, 2> G(nwalk, Gsize);
     memory::array<MEM, ComplexType, 1> Ov(nwalk);
-    wfn.MixedDensityMatrix(wset, G, Ov, false); // never begin_inner_step => ensemble at the anchor
+    // never begin_inner_step => ensemble at the anchor, so both reductions see the same ensemble
+    wfn.MixedDensityMatrix(wset, G, false);
+    wfn.Log_Overlap(wset, Ov);
     return std::make_pair(nda::array<ComplexType, 2>(nda::to_host(G)),
                           nda::array<ComplexType, 1>(nda::to_host(Ov)));
   };
@@ -2345,8 +2351,10 @@ void stochastic_measure_replicas_nm1_advances_pool(std::shared_ptr<utils::mpi_co
   REQUIRE(wfn.stochastic_measure_advances_pool()); // live at nm == 1, which is the point of this test
 
   const double cond_before = wfn.stochastic_inner_cond_mag_sum();
-  nda::array<ComplexType, 2> E_m(nwalk, 3), E_e(nwalk, 3);
-  nda::array<ComplexType, 1> Ov_m(nwalk), Ov_e(nwalk);
+  // MEM-space buffers: Energy/measure_energy take memory::array_view<MEM,...>, so a host nda::array
+  // does not bind in a DEVICE_MEMORY instantiation (it converts, so it cannot bind).
+  memory::array<MEM, ComplexType, 2> E_m(nwalk, 3), E_e(nwalk, 3);
+  memory::array<MEM, ComplexType, 1> Ov_m(nwalk), Ov_e(nwalk);
   wfn.measure_energy(wset, E_m, Ov_m);
   const double cond_after = wfn.stochastic_inner_cond_mag_sum();
   // The pool advanced, and it was KEPT (no restore) -- so the checksum moved and stays moved.
@@ -2355,11 +2363,12 @@ void stochastic_measure_replicas_nm1_advances_pool(std::shared_ptr<utils::mpi_co
 
   // Energy() run afterwards sees the SAME (advanced, retained) pool, so it reproduces measure_energy's
   // per-walker estimate exactly. That is the check that the advance fed forward rather than being undone.
+  nda::array<ComplexType, 2> E_m_h(nda::to_host(E_m)), E_e_h(nda::to_host(E_e));
   for (int w = 0; w < nwalk; ++w)
     for (int k = 0; k < 3; ++k)
     {
-      REQUIRE(real(E_m(w, k)) == real(E_e(w, k)));
-      REQUIRE(imag(E_m(w, k)) == imag(E_e(w, k)));
+      REQUIRE(real(E_m_h(w, k)) == real(E_e_h(w, k)));
+      REQUIRE(imag(E_m_h(w, k)) == imag(E_e_h(w, k)));
     }
 }
 
@@ -2409,9 +2418,10 @@ void stochastic_measure_replicas_ovlp_is_stored(std::shared_ptr<utils::mpi_conte
   nda::array<ComplexType, 1> ovlp_before(nwalk);
   wset.getProperty(OVLP, ovlp_before);
 
-  nda::array<ComplexType, 2> E(nwalk, 3);
-  nda::array<ComplexType, 1> Ov(nwalk);
+  memory::array<MEM, ComplexType, 2> E(nwalk, 3);
+  memory::array<MEM, ComplexType, 1> Ov(nwalk);
   wfn.measure_energy(wset, E, Ov);
+  nda::array<ComplexType, 1> Ov_h(nda::to_host(Ov));
 
   nda::array<ComplexType, 1> ovlp_after(nwalk);
   wset.getProperty(OVLP, ovlp_after);
@@ -2419,14 +2429,14 @@ void stochastic_measure_replicas_ovlp_is_stored(std::shared_ptr<utils::mpi_conte
   for (int w = 0; w < nwalk; ++w)
   {
     // The returned Ov IS the stored OVLP: this is deno_real == 1 exactly, by construction.
-    REQUIRE(real(Ov(w)) == real(ovlp_before(w)));
-    REQUIRE(imag(Ov(w)) == imag(ovlp_before(w)));
+    REQUIRE(real(Ov_h(w)) == real(ovlp_before(w)));
+    REQUIRE(imag(Ov_h(w)) == imag(ovlp_before(w)));
     // ...and measuring left the stored property alone, so the next step's reweight is inert too.
     REQUIRE(real(ovlp_after(w)) == real(ovlp_before(w)));
     REQUIRE(imag(ovlp_after(w)) == imag(ovlp_before(w)));
   }
   // The replica-averaged energy is still a usable number (the averaging ran, nothing overflowed).
-  REQUIRE(all_finite2d(E));
+  REQUIRE(all_finite2d(nda::array<ComplexType, 2>(nda::to_host(E))));
 }
 
 TEST_CASE("stochastic_wfn: measure replicas ovlp stored", "[stochastic_wfn]")
@@ -2467,8 +2477,9 @@ void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi
   opt.inner_sample_update_steps = 1;
   // Restore OFF is what makes the two arms comparable: the pool must carry over between the split calls.
 
-  auto measure = [&](Wavefunction<MEM>& wfn, WalkerSet<MEM>& wset, nda::array<ComplexType, 2>& E) {
-    nda::array<ComplexType, 1> Ov(nwalk);
+  auto measure = [&](Wavefunction<MEM>& wfn, WalkerSet<MEM>& wset,
+                     memory::array<MEM, ComplexType, 2>& E) {
+    memory::array<MEM, ComplexType, 1> Ov(nwalk);
     E() = ComplexType(0.0); // a caller-side zero, so a missing zero INSIDE measure_energy still shows up
     wfn.measure_energy(wset, E, Ov);
   };
@@ -2481,7 +2492,7 @@ void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi
   utils::perturb_stochastic_walkers<MEM>(wset2, env.type, env.NMO, env.nup, env.ndown);
   wfn2.begin_inner_step(wset2);
   REQUIRE(wfn2.stochastic_measure_advances_pool());
-  nda::array<ComplexType, 2> E_a(nwalk, 3), E_b(nwalk, 3);
+  memory::array<MEM, ComplexType, 2> E_a(nwalk, 3), E_b(nwalk, 3);
   measure(wfn2, wset2, E_a);
   measure(wfn2, wset2, E_b);
 
@@ -2493,19 +2504,20 @@ void stochastic_measure_replicas_average_is_true_mean(std::shared_ptr<utils::mpi
   utils::perturb_stochastic_walkers<MEM>(wset4, env.type, env.NMO, env.nup, env.ndown);
   wfn4.begin_inner_step(wset4);
   REQUIRE(wfn4.stochastic_measure_advances_pool());
-  nda::array<ComplexType, 2> E_c(nwalk, 3);
+  memory::array<MEM, ComplexType, 2> E_c(nwalk, 3);
   measure(wfn4, wset4, E_c);
 
   // Only reassociation separates ((a+b)+c)+d)/4 from ((a+b)/2 + (c+d)/2)/2, so this is tight on purpose:
   // every failure mode above is O(1) in the energy, not O(eps).
   const double tol = 1e-10;
+  nda::array<ComplexType, 2> E_a_h(nda::to_host(E_a)), E_b_h(nda::to_host(E_b)), E_c_h(nda::to_host(E_c));
   double dev = 0.0, scale = 1.0;
   for (int w = 0; w < nwalk; ++w)
     for (int k = 0; k < 3; ++k)
     {
-      const ComplexType split = 0.5 * (E_a(w, k) + E_b(w, k));
-      dev   = std::max(dev, std::abs(split - E_c(w, k)));
-      scale = std::max(scale, std::abs(E_c(w, k)));
+      const ComplexType split = 0.5 * (E_a_h(w, k) + E_b_h(w, k));
+      dev   = std::max(dev, std::abs(split - E_c_h(w, k)));
+      scale = std::max(scale, std::abs(E_c_h(w, k)));
     }
   app_log(0, "  nm split-vs-whole: max|mean(E_nm2 x2) - E_nm4| = {:e} (scale {:.3f}, tol {:e})", dev, scale,
           tol * scale);

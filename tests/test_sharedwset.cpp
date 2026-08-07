@@ -28,7 +28,9 @@
 #include "IO/app_loggers.h"
 
 #include <stdio.h>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 #include <complex>
 
@@ -465,7 +467,7 @@ void stochastic_branch_lineage_metadata()
     buffer[i] = {1.0, counts[i]};
 
   memory::array<MEM, ComplexType, 2> Wexcess(0, wset.single_walker_size());
-  wset.branch(buffer.begin(), buffer.end(), Wexcess);
+  wset.branch(std::span(buffer), Wexcess);
   REQUIRE(wset.size() == nwalk);
 
   // The multiset of post-branch lineage values must equal the branching counts.
