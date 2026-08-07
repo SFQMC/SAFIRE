@@ -241,11 +241,7 @@ public:
    *
    * @param wset the outer walker set, whose buffer holds the field-chain state
    */
-  template<class WlkSet>
-  void begin_inner_step(WlkSet& wset)
-  {
-    visit_stochastic([&](auto&& a) { a.begin_inner_step(wset); });
-  }
+  void begin_inner_step(WalkerSet<MEM>& wset);
 
   /**
    * @brief Estimator entry point for the local energy.
@@ -258,19 +254,8 @@ public:
    * @param Ov output LOG overlap per walker
    * @param nt time slice index
    */
-  template<class WlkSet, class Mat, class TVec>
-  void measure_energy(WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0)
-  {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.measure_energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
-          else
-            a.Energy(wset, std::forward<Mat>(E), std::forward<TVec>(Ov), nt);
-        },
-        var);
-  }
+  void measure_energy(WalkerSet<MEM>& wset, memory::array_view<MEM,ComplexType,2> E,
+                      memory::array_view<MEM,ComplexType,1> Ov, int nt = 0);
 
   /**
    * @brief Realign a stochastic trial's conditioned inner blocks after an outer population-control
@@ -283,11 +268,7 @@ public:
    *
    * @param wset the post-population-control outer walker set
    */
-  template<class WlkSet>
-  void permute_inner_blocks_after_pop(const WlkSet& wset)
-  {
-    visit_stochastic([&](auto&& a) { a.permute_inner_blocks_after_pop(wset); });
-  }
+  void permute_inner_blocks_after_pop(WalkerSet<MEM> const& wset);
 
   template<MEMORY_SPACE MEM2, class MType2>
   friend struct wavefunction_detail::StochasticInnerStackImpl;
