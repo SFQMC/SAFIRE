@@ -223,14 +223,18 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   WalkerSetParameters wlk_pt{.name = "wset0", .walker_type = type};
 
   WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", WavefunctionParameters{.name = "wfn0", .filename = wfn_file});
+  auto wfn0_pt = WavefunctionParameters{.name = "wfn0", .filename = wfn_file};
+  utils::apply_wfn_defaults(wfn0_pt, ham);
+  WfnFac.push("wfn0", wfn0_pt);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
   auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
   auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
   // Standard propagator: free_projection defaults to false (importance sampling / hybrid).
   PropagatorFactory<MEM> PropgFac;
-  PropgFac.push("prop0", PropagatorParameters{.name = "prop0", .denseP2 = true});
+  PropagatorParameters fp_prop_params{.name = "prop0", .denseP2 = true};
+  utils::apply_prop_defaults(fp_prop_params, ham);
+  PropgFac.push("prop0", fp_prop_params);
   auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
 
   // Owning copies: nda::to_host on HOST_MEMORY aliases the live walker storage, so snapshot into owning
@@ -319,6 +323,7 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
                               .inner_nsteps = 1, .inner_sampling_target = inner_sampling_target,
                               .inner_propagator = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push(tag, pt);
     auto& wfn = WfnFac.getWavefunction(mpi, tag, type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, tag, type, wlk_pt);
@@ -333,14 +338,16 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
     RealType Eshift(0.0);
     {
       ComplexType e_sum(0.0);
-      for (auto it = wset.begin(); it != wset.end(); ++it)
-        e_sum += it->energy();
-      Eshift = real(e_sum) / RealType(nwalk);
+      for (int iw = 0; iw < wset.size(); ++iw)
+        e_sum += ComplexType(wset[iw].energy());
+      Eshift = std::real(e_sum) / RealType(nwalk);
     }
 
     // Build the OUTER propagator (default hybrid) bound to the stochastic trial.
     PropagatorFactory<MEM> PropgFac;
-    PropgFac.push("prop_" + tag, PropagatorParameters{.name = "prop_" + tag});
+    PropagatorParameters st_prop_params{.name = "prop_" + tag};
+    utils::apply_prop_defaults(st_prop_params, ham);
+    PropgFac.push("prop_" + tag, st_prop_params);
     auto& prop = PropgFac.getPropagator(mpi, "prop_" + tag, wfn, rng_dev);
 
     RealType dt = 0.01;
@@ -349,12 +356,14 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
       prop.Propagate(wset, Eshift, dt); // one full hot-path step, inner ensemble resampled per the mode
       prop.Orthogonalize(wset);
       wfn.Energy(wset);
-      for (auto it = wset.begin(); it != wset.end(); ++it)
+      for (int iw = 0; iw < wset.size(); ++iw)
       {
-        REQUIRE(std::isfinite(real(it->get_property(WEIGHT))));
-        REQUIRE(std::isfinite(real(it->energy())));
-        REQUIRE(std::isfinite(imag(it->energy())));
-        REQUIRE(std::isfinite(real(it->get_property(OVLP))));
+        auto w = wset[iw];
+        const ComplexType e(w.energy());
+        REQUIRE(std::isfinite(std::real(ComplexType(w.get_property(WEIGHT)))));
+        REQUIRE(std::isfinite(std::real(e)));
+        REQUIRE(std::isfinite(std::imag(e)));
+        REQUIRE(std::isfinite(std::real(ComplexType(w.get_property(OVLP)))));
       }
     }
   }

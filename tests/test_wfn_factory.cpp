@@ -409,8 +409,12 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
       return pt;
     };
 
-    WfnFac.push("wfn_clone", build_params("wfn_clone", false));
-    WfnFac.push("wfn_hvar", build_params("wfn_hvar", true));
+    auto clone_pt = build_params("wfn_clone", false);
+    auto hvar_pt  = build_params("wfn_hvar", true);
+    utils::apply_wfn_defaults(clone_pt, ham);
+    utils::apply_wfn_defaults(hvar_pt, ham);
+    WfnFac.push("wfn_clone", clone_pt);
+    WfnFac.push("wfn_hvar", hvar_pt);
     auto& wfn_clone = WfnFac.getWavefunction(mpi, "wfn_clone", type, false, &ham, nwalk);
     auto& wfn_hvar  = WfnFac.getWavefunction(mpi, "wfn_hvar", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_clone, "wfn_clone", type, wlk_pt);
@@ -535,17 +539,22 @@ void stochastic_inner_timestep_comes_from_the_stamp(
     const int nwalk = 4;
 
     // (1) the stamp drives the built object
-    WfnFac.push("wfn_stamped", build_params("wfn_stamped", stamped_ham));
+    auto stamped_pt = build_params("wfn_stamped", stamped_ham);
+    utils::apply_wfn_defaults(stamped_pt, ham); // outer ham decides dense_trial
+    WfnFac.push("wfn_stamped", stamped_pt);
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stamped", type, false, &ham, nwalk);
     CHECK_THAT(wfn.stochastic_inner_timestep(), utils::Approx(stamped_dt));
 
     // (2) no stamp is fatal
-    WfnFac.push("wfn_unstamped", build_params("wfn_unstamped", unstamped_ham));
+    auto unstamped_pt = build_params("wfn_unstamped", unstamped_ham);
+    utils::apply_wfn_defaults(unstamped_pt, ham);
+    WfnFac.push("wfn_unstamped", unstamped_pt);
     REQUIRE_THROWS_AS(WfnFac.getWavefunction(mpi, "wfn_unstamped", type, false, &ham, nwalk), AppAbortException);
 
     // (3) a hand-set timestep next to inner_hamiltonian is refused, not silently overwritten
     WavefunctionParameters both = build_params("wfn_both", stamped_ham);
     both.inner_propagator       = PropagatorParameters{.timestep = 0.05};
+    utils::apply_wfn_defaults(both, ham);
     WfnFac.push("wfn_both", both);
     REQUIRE_THROWS_AS(WfnFac.getWavefunction(mpi, "wfn_both", type, false, &ham, nwalk), AppAbortException);
   }
@@ -603,7 +612,9 @@ void stochastic_hdf5_type_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     WalkerSetParameters wlk_pt{.name = "wset0", .walker_type = type};
 
     WavefunctionFactory<MEM> WfnFac{};
-    WfnFac.push("wfn_marked", WavefunctionParameters{.name = "wfn_marked", .filename = marked});
+    auto marked_pt = WavefunctionParameters{.name = "wfn_marked", .filename = marked};
+    utils::apply_wfn_defaults(marked_pt, ham);
+    WfnFac.push("wfn_marked", marked_pt);
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_marked", type, false, &ham, 4);
     REQUIRE(wfn.is_stochastic_wavefunction());
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_marked", type, wlk_pt);

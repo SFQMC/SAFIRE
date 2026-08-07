@@ -30,6 +30,8 @@
 
 #include "AFQMC/config.h"
 #include "AFQMC/parameters.hpp"
+#include "AFQMC/parameter_defaults.hpp"
+#include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 
 namespace sfqmc {
 namespace utils {
@@ -37,6 +39,27 @@ namespace utils {
 // Select the StochasticWfn branch of WavefunctionFactory. The NOMSD trial file is unchanged; only the
 // input `type` differs, which is what makes a stochastic-vs-NOMSD parity comparison meaningful.
 inline void mark_stochastic_wfn_input(afqmc::WavefunctionParameters& p) { p.type = afqmc::WavefunctionInputType::stochasticwfn; }
+
+// Fill in the Hamiltonian-dependent parameter defaults that resolve_defaults() supplies in production.
+//
+// A unit test that hands a hand-built WavefunctionParameters / PropagatorParameters straight to a factory
+// bypasses resolve_defaults, and reading an unresolved optional is a hard abort -- "The parameter
+// 'dense_trial' was not resolved. Did resolve_defaults run?" (and 'vbias_bound' for the propagator). That
+// abort is a REAL guard for production and must not be weakened; the caller that skipped resolution is
+// what has to fix itself.
+//
+// Takes the built Hamiltonian and asks it for its type, which is upstream's own idiom
+// (`apply_defaults(prop_params, ham.getHamType())` in propagator_factory: build) and avoids re-opening the
+// integral file. Same escape hatch WavefunctionFactory uses for the inner propagator, which likewise never
+// sees resolve_defaults.
+inline void apply_wfn_defaults(afqmc::WavefunctionParameters& p, afqmc::Hamiltonian& ham)
+{
+  afqmc::apply_defaults(p, ham.getHamType());
+}
+inline void apply_prop_defaults(afqmc::PropagatorParameters& p, afqmc::Hamiltonian& ham)
+{
+  afqmc::apply_defaults(p, ham.getHamType());
+}
 
 // Deterministic, reproducible perturbation of the outer walker Slater matrices. Independently built
 // walker sets come out bit-for-bit identical, which is what lets a parity check compare two

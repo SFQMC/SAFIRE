@@ -268,6 +268,7 @@ void stochastic_back_propagation_estimator_smoke(
                                   .inner_nsteps = 1, .inner_sampling_target = StochasticSamplingTarget::WalkerOverlap,
                                   .inner_propagator = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(wfn_pt);
+    utils::apply_wfn_defaults(wfn_pt, ham);
     WfnFac.push("wfn_stoch_bp_est", wfn_pt);
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_bp_est", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_bp_est", type, wlk_pt);
@@ -275,7 +276,9 @@ void stochastic_back_propagation_estimator_smoke(
     auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
     PropagatorFactory<MEM> PropgFac;
-    PropgFac.push("prop_stoch_bp_est", PropagatorParameters{.name = "prop_stoch_bp_est"});
+    PropagatorParameters bp_prop_params{.name = "prop_stoch_bp_est"};
+    utils::apply_prop_defaults(bp_prop_params, ham);
+    PropgFac.push("prop_stoch_bp_est", bp_prop_params);
     auto& prop = PropgFac.getPropagator(mpi, "prop_stoch_bp_est", wfn, rng_dev);
 
     wfn.Energy(wset);

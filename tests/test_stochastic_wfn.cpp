@@ -148,6 +148,7 @@ struct StochasticHamWfnEnv
                                          StochasticWfnOptions const& opt, int nwalk, bool init_inner_walkers = true)
   {
     WavefunctionParameters pt = make_stochastic_wfn_params(name, wfn_file, opt);
+    utils::apply_wfn_defaults(pt, *ham);
     wfn_fac.push(name, pt);
     auto& wfn = wfn_fac.getWavefunction(mpi, name, type, false, ham, nwalk);
     if (init_inner_walkers)
@@ -158,7 +159,9 @@ struct StochasticHamWfnEnv
   Wavefunction<MEM>& push_nomsd_wfn(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                     std::string const& name, std::string const& wfn_file, int nwalk)
   {
-    wfn_fac.push(name, make_nomsd_wfn_params(name, wfn_file));
+    auto nomsd_pt = make_nomsd_wfn_params(name, wfn_file);
+    utils::apply_wfn_defaults(nomsd_pt, *ham);
+    wfn_fac.push(name, nomsd_pt);
     return wfn_fac.getWavefunction(mpi, name, type, false, ham, nwalk);
   }
 
@@ -193,6 +196,7 @@ void stochastic_build_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3::co
   WavefunctionFactory<MEM> WfnFac{};
   WavefunctionParameters stoch_pt{.name = "wfn_stoch", .filename = wfn_file, .inner_n_samples = 1};
   utils::mark_stochastic_wfn_input(stoch_pt);
+  utils::apply_wfn_defaults(stoch_pt, ham);
   WfnFac.push("wfn_stoch", stoch_pt);
 
   app_log(0, "[stochastic_build_smoke] building stochastic wavefunction");
@@ -575,7 +579,7 @@ void stochastic_delegate_limit_matches_nomsd(std::shared_ptr<utils::mpi_context_
     };
     for (bool compact : {true, false})
     {
-      INFO(compact ? "compact layout" : "full layout");
+      INFO((compact ? "compact layout" : "full layout")); // parens: INFO expands to `<< x`, which binds tighter than ?:
       auto [G_ref, Ov_ref] = collect(wfn_nomsd, compact);
       auto [G_s1, Ov_s1]   = collect(wfn_s1, compact);
       auto [G_s3, Ov_s3]   = collect(wfn_s3, compact);
@@ -634,12 +638,15 @@ void stochastic_mean_field_matches_nomsd(
 
   WavefunctionFactory<MEM> WfnFac{};
 
-  WfnFac.push("wfn_nomsd_mf", WavefunctionParameters{.name = "wfn_nomsd_mf", .filename = wfn_file});
+  auto nomsd_pt_1 = WavefunctionParameters{.name = "wfn_nomsd_mf", .filename = wfn_file};
+  utils::apply_wfn_defaults(nomsd_pt_1, ham);
+  WfnFac.push("wfn_nomsd_mf", nomsd_pt_1);
   auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_mf", type, false, &ham, nwalk);
 
   auto build_stoch = [&](const std::string& name, int inner_n_samples) -> Wavefunction<MEM>& {
     WavefunctionParameters pt{.name = name, .filename = wfn_file, .inner_n_samples = inner_n_samples};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push(name, pt);
     auto& w = WfnFac.getWavefunction(mpi, name, type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
@@ -865,7 +872,9 @@ void stochastic_mean_field_production_order(
 
     WavefunctionFactory<MEM> WfnFac{};
 
-    WfnFac.push("wfn_nomsd_mfp", WavefunctionParameters{.name = "wfn_nomsd_mfp", .filename = wfn_file});
+    auto nomsd_pt_2 = WavefunctionParameters{.name = "wfn_nomsd_mfp", .filename = wfn_file};
+    utils::apply_wfn_defaults(nomsd_pt_2, ham);
+    WfnFac.push("wfn_nomsd_mfp", nomsd_pt_2);
     auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_mfp", type, false, &ham, nwalk);
 
     // Leapfrog stochastic trial: begin_inner_step will conditioned-resample (expand to nwalk*P).
@@ -876,6 +885,7 @@ void stochastic_mean_field_production_order(
                               .inner_sampling_target = StochasticSamplingTarget::WalkerOverlap,
                               .inner_propagator = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push("wfn_stoch_mfp", pt);
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_mfp", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_mfp", type, wlk_pt);
@@ -970,12 +980,15 @@ void stochastic_back_propagation_matches_nomsd(
 
   WavefunctionFactory<MEM> WfnFac{};
 
-  WfnFac.push("wfn_nomsd_bp", WavefunctionParameters{.name = "wfn_nomsd_bp", .filename = wfn_file});
+  auto nomsd_pt_3 = WavefunctionParameters{.name = "wfn_nomsd_bp", .filename = wfn_file};
+  utils::apply_wfn_defaults(nomsd_pt_3, ham);
+  WfnFac.push("wfn_nomsd_bp", nomsd_pt_3);
   auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_bp", type, false, &ham, nwalk);
 
   auto build_stoch = [&](const std::string& name, int inner_n_samples) -> Wavefunction<MEM>& {
     WavefunctionParameters pt{.name = name, .filename = wfn_file, .inner_n_samples = inner_n_samples};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push(name, pt);
     auto& w = WfnFac.getWavefunction(mpi, name, type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
@@ -1062,7 +1075,9 @@ void stochastic_back_propagation_production_order(
 
     WavefunctionFactory<MEM> WfnFac{};
 
-    WfnFac.push("wfn_nomsd_bpp", WavefunctionParameters{.name = "wfn_nomsd_bpp", .filename = wfn_file});
+    auto nomsd_pt_4 = WavefunctionParameters{.name = "wfn_nomsd_bpp", .filename = wfn_file};
+    utils::apply_wfn_defaults(nomsd_pt_4, ham);
+    WfnFac.push("wfn_nomsd_bpp", nomsd_pt_4);
     auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_bpp", type, false, &ham, nwalk);
 
     WavefunctionParameters pt{.name             = "wfn_stoch_bpp",
@@ -1072,6 +1087,7 @@ void stochastic_back_propagation_production_order(
                               .inner_sampling_target = StochasticSamplingTarget::WalkerOverlap,
                               .inner_propagator = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push("wfn_stoch_bpp", pt);
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_bpp", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpp", type, wlk_pt);
@@ -1165,7 +1181,9 @@ void stochastic_back_propagation_inner_refs(
 
     WavefunctionFactory<MEM> WfnFac{};
 
-    WfnFac.push("wfn_nomsd_bpir", WavefunctionParameters{.name = "wfn_nomsd_bpir", .filename = wfn_file});
+    auto nomsd_pt_5 = WavefunctionParameters{.name = "wfn_nomsd_bpir", .filename = wfn_file};
+    utils::apply_wfn_defaults(nomsd_pt_5, ham);
+    WfnFac.push("wfn_nomsd_bpir", nomsd_pt_5);
     auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_bpir", type, false, &ham, nwalk);
 
     // Non-conditioned, free-projection, dynamic (inner_nsteps = 1) trial -> dedicated reference draw active.
@@ -1176,6 +1194,7 @@ void stochastic_back_propagation_inner_refs(
                               .inner_sampling_target = StochasticSamplingTarget::Gaussian,
                               .inner_propagator = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push("wfn_stoch_bpir", pt);
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_bpir", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_bpir", type, wlk_pt);
@@ -1245,12 +1264,15 @@ void stochastic_accumulate_estimators_matches_nomsd(
 
   WavefunctionFactory<MEM> WfnFac{};
 
-  WfnFac.push("wfn_nomsd_ae", WavefunctionParameters{.name = "wfn_nomsd_ae", .filename = wfn_file});
+  auto nomsd_pt_6 = WavefunctionParameters{.name = "wfn_nomsd_ae", .filename = wfn_file};
+  utils::apply_wfn_defaults(nomsd_pt_6, ham);
+  WfnFac.push("wfn_nomsd_ae", nomsd_pt_6);
   auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_ae", type, false, &ham, nwalk);
 
   auto build_stoch = [&](const std::string& name, int inner_n_samples) -> Wavefunction<MEM>& {
     WavefunctionParameters pt{.name = name, .filename = wfn_file, .inner_n_samples = inner_n_samples};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push(name, pt);
     auto& w = WfnFac.getWavefunction(mpi, name, type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
@@ -1426,7 +1448,9 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
 
     WavefunctionFactory<MEM> WfnFac{};
 
-    WfnFac.push("wfn_nomsd_fg", WavefunctionParameters{.name = "wfn_nomsd_fg", .filename = wfn_file});
+    auto nomsd_pt_7 = WavefunctionParameters{.name = "wfn_nomsd_fg", .filename = wfn_file};
+    utils::apply_wfn_defaults(nomsd_pt_7, ham);
+    WfnFac.push("wfn_nomsd_fg", nomsd_pt_7);
     auto& wfn_nomsd = WfnFac.getWavefunction(mpi, "wfn_nomsd_fg", type, false, &ham, nwalk);
 
     auto build_stoch = [&](const std::string& name, int inner_n_samples, int inner_nsteps) -> Wavefunction<MEM>& {
@@ -1439,6 +1463,7 @@ void stochastic_full_g_matches_compact(std::shared_ptr<utils::mpi_context_t<boos
       opt.inner_n_samples = inner_n_samples;
       opt.inner_nsteps    = inner_nsteps;
       WavefunctionParameters pt = make_stochastic_wfn_params(name, wfn_file, opt);
+      utils::apply_wfn_defaults(pt, ham);
       WfnFac.push(name, pt);
       auto& w = WfnFac.getWavefunction(mpi, name, type, false, &ham, nwalk);
       WfnFac.maybe_initialize_stochastic_inner_walkers(w, name, type, wlk_pt);
@@ -1773,6 +1798,7 @@ void stochastic_persistent_pool_smoke(std::shared_ptr<utils::mpi_context_t<boost
                                 .inner_sampler_step         = mcmc_step > 0.0 ? std::optional<double>(mcmc_step) : std::nullopt,
                                 .inner_propagator           = PropagatorParameters{.timestep = 0.01}};
       utils::mark_stochastic_wfn_input(pt);
+      utils::apply_wfn_defaults(pt, ham);
       WfnFac.push(name, pt);
       auto& wfn = WfnFac.getWavefunction(mpi, name, type, false, &ham, nwalk);
       WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, name, type, wlk_pt);
@@ -1953,6 +1979,7 @@ void stochastic_persistent_permute_after_pop_control(
                               .inner_sample_update_steps = 1,
                               .inner_propagator          = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push("wfn_stoch_pp_persist", pt);
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_pp_persist", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_pp_persist", type, wlk_pt);
@@ -2103,6 +2130,7 @@ void stochastic_persistent_pool_survives_pop_control(
                               .inner_sample_update_steps = 0,
                               .inner_propagator          = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push("wfn_stoch_persist_pop", pt);
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_persist_pop", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_persist_pop", type, wlk_pt);
@@ -2233,6 +2261,7 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
                               .inner_sample_update_steps = 1,
                               .inner_propagator          = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(pt);
+    utils::apply_wfn_defaults(pt, ham);
     WfnFac.push("wfn_stoch_condmag", pt);
     auto& wfn_s = WfnFac.getWavefunction(mpi, "wfn_stoch_condmag", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_s, "wfn_stoch_condmag", type, wlk_pt);
