@@ -92,11 +92,8 @@ void thc_vs_chol_energy_agreement(
 
   // Build HamiltonianOperations from a file-backed Hamiltonian
   auto make_ham_ops = [&](std::string hamil_file) {
-    ptree ham_pt;
-    ham_pt.put("name",     "ham0");
-    ham_pt.put("filename", hamil_file);
     HamiltonianFactory HamFac;
-    HamFac.push("ham0", ham_pt);
+    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
     auto& ham = HamFac.getHamiltonian(mpi, "ham0");
     return ham.template getHamiltonianOperations<HOST_MEMORY>(walker_type, mpi, PsiT);
   };
@@ -179,12 +176,8 @@ void hamiltonian_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3:
   int NMO = read_nmo_from_hdf(hamil_file);
   CHECK(NMO > 0);
 
-  ptree ham_pt;
-  ham_pt.put("name","ham0");
-  ham_pt.put("filename",hamil_file);
-
   HamiltonianFactory HamFac;
-  HamFac.push("ham0", ham_pt);
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
   [[maybe_unused]] Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 }
 
@@ -239,11 +232,8 @@ TEST_CASE("hamiltonian_factory: closed_vs_collinear_energy_offset", "[hamiltonia
     h5::group nomsd_grp = wfn_grp.open_group("Wavefunction").open_group("NOMSD");
     auto PsiT = read_nomsd_wavefunction<HOST_MEMORY>(nomsd_grp, 1, wt, NMO, nup, ndown);
 
-    ptree ham_pt;
-    ham_pt.put("name",     "ham0");
-    ham_pt.put("filename", chol_file);
     HamiltonianFactory HamFac;
-    HamFac.push("ham0", ham_pt);
+    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = chol_file});
     auto& ham = HamFac.getHamiltonian(mpi, "ham0");
     auto H = ham.template getHamiltonianOperations<HOST_MEMORY>(wt, mpi, PsiT);
 

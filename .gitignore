@@ -236,13 +236,3 @@ Sessionx.vim
 tags
 # Persistent undo
 [._]*.un~
-
-# Local IDE and top-level CMake scratch artifacts
-.cursor/
-CMakeFiles/
-CTestTestfile.cmake
-DartConfiguration.tcl
-_deps/
-cmake_install.cmake
-drv_test.scalar.dat
-test_est_handler.stat.h5

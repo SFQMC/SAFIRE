@@ -30,21 +30,38 @@ namespace sfqmc
 {
 namespace afqmc
 {
+/**
+ * @brief Local-energy kernels contracting a FULL (un-rotated) density matrix against a bare Cholesky.
+ *
+ * @details The compact path half-rotates the Cholesky against the trial determinant, which a
+ * stochastic trial has no single form of: its density matrix is an inner-ensemble reduction and exists
+ * only in the full layout. Reached via Real3IndexFactorization::energy_fullG.
+ */
 namespace full_g
 {
 
-// StochasticWfn: per-spin contribution of the un-rotated full-G local energy (inner_nsteps > 0).
-// Accumulates the one-body (E1) and exchange (EXX) energies for ONE spin's full density matrix into
-// E, and accumulates the RAW per-spin Coulomb vector K_n = sum_a (sum_k G[a][k] L[a][k][n]) into Kl.
-// The caller owns zeroing E, adding E0, and the EJ finalization 0.5*scl^2*|Kl|^2 -- so for COLLINEAR
-// the two spin calls share one Kl and the EJ finalization contracts the TOTAL (alpha+beta) density.
-//   scl : 2 (CLOSED, doubles the single alpha spin) or 1 (COLLINEAR, per spin).
-//   G3  : [nwalk][NMO][NMO] view of G_sigma[i][k]. MAY BE STRIDED -- e.g. a COLLINEAR spin block of a
-//         [nwalk][2*NMO*NMO] buffer -- since it is only element-accessed (contract + the GF repack),
-//         never reshaped. The EXX gemm still needs the contiguous [nwalk*NMO][NMO] GF, so one repack is
-//         unavoidable; this avoids a *separate* per-spin block copy in energy_collinear.
-//   Lankf : [NMO*local_nCV][NMO], Lankf(i*local_nCV + n, k) = L(i,k,n) (bare, spin-independent Cholesky).
-//   hijf  : [NMO*NMO], bare (spin-independent) one-body h_ik.
+/**
+ * @brief Accumulate ONE spin's contribution to the un-rotated full-G local energy.
+ *
+ * @details Adds E1 and EXX for a single spin into E, and the RAW Coulomb vector
+ * K_n = sum_a (sum_k G[a][k] L[a][k][n]) into Kl. The caller owns zeroing E, adding E0 and the EJ
+ * finalization 0.5*scl^2*|Kl|^2, which is what lets the two COLLINEAR spin calls share one Kl so the
+ * Coulomb term contracts the TOTAL (alpha+beta) density.
+ *
+ * @param E [nwalk, 3] energies (one-body, exchange, Coulomb); accumulated into, not zeroed
+ * @param G3 [nwalk][NMO][NMO] view of G_sigma[i][k]. MAY BE STRIDED -- e.g. a COLLINEAR spin block of
+ *        a [nwalk][2*NMO*NMO] buffer -- since it is only element-accessed, never reshaped; accepting a
+ *        strided view avoids a second per-spin block copy in energy_collinear. The EXX gemm still
+ *        repacks it contiguously.
+ * @param Lankf [NMO*local_nCV][NMO] bare, spin-independent Cholesky, Lankf(i*local_nCV + n, k) = L(i,k,n)
+ * @param hijf [NMO*NMO] bare, spin-independent one-body h_ik
+ * @param local_nCV Cholesky vectors held on this rank
+ * @param scl spin prefactor: 2 for CLOSED (doubling the single alpha spin), 1 for COLLINEAR
+ * @param Kl accumulated Coulomb vector, shared across the spin calls of one walker set
+ * @param addH1 include the one-body term
+ * @param addEJ accumulate the Coulomb vector; the finalization is the caller's
+ * @param addEXX include the exchange term
+ */
 template<MEMORY_SPACE MEM, class MatE, class MatG, class MatLan, class VecHij, class MatK>
 void accumulate_spin_full_g(MatE&& E,
                             MatG const& G3,
@@ -164,14 +181,26 @@ void accumulate_spin_full_g(MatE&& E,
   }
 }
 
-// StochasticWfn: un-rotated full-G local-energy contraction for CLOSED (RHF) trials (inner_nsteps > 0).
-// G layout: [nwalk][NMO*NMO]. The Cholesky (Lankf) is REPLICATED on every rank -- exactly as the compact
-// Real3IndexFactorization::energy_impl path is (it iterates the full nCV with no MPI reduction, which is
-// why NOMSD::Energy needs no external all_reduce). So this kernel computes the COMPLETE E for ALL walkers
-// on every rank (redundant across ranks) and the caller does NOT reduce. (Earlier it distributed BOTH the
-// walker loop [n % comm.size()] AND the (i,nc) index [FairDivide] across the comm with no reduction --
-// correct only at -np 1; at -np > 1 that left EXX/EJ walker-incomplete and CV-partial -> garbage, while
-// the ungated E1 was already complete, so no single caller all_reduce could fix it.)
+/**
+ * @brief Un-rotated full-G local energy for CLOSED (RHF) trials.
+ *
+ * @details Computes the COMPLETE E for ALL walkers on EVERY rank, redundantly; the caller does NOT
+ * reduce. That matches the compact energy_impl path, which iterates the full nCV with no MPI reduction
+ * -- the reason NOMSD::Energy needs no external all_reduce. Distributing the walker loop or the (i,nc)
+ * index without a reduction is correct only at -np 1: beyond that EXX/EJ come out walker-incomplete
+ * and CV-partial while E1 is already complete, so no caller-side all_reduce can repair it.
+ *
+ * @param mpi MPI context; unused, the kernel is replicated rather than distributed
+ * @param E [nwalk, 3] energies (one-body, exchange, Coulomb)
+ * @param Gfull [nwalk][NMO*NMO] full density matrix, row-major G[i][k]
+ * @param Lankf [NMO*local_nCV][NMO] bare Cholesky
+ * @param hijf [NMO*NMO] bare one-body
+ * @param local_nCV Cholesky vectors held on this rank
+ * @param E0 zero of energy, added once per walker
+ * @param addH1 include the one-body term
+ * @param addEJ include the Coulomb term
+ * @param addEXX include the exchange term
+ */
 template<MEMORY_SPACE MEM, class MatE, class MatG, class MatLan, class VecHij>
 void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> const& mpi,
                    MatE&& E,
@@ -233,12 +262,26 @@ void energy_closed(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> con
 }
 
 // StochasticWfn: un-rotated full-G local-energy contraction for COLLINEAR (UHF) trials (inner_nsteps > 0).
-// G layout: [nwalk][2*NMO*NMO] = alpha block [0, NMO*NMO) followed by beta block [NMO*NMO, 2*NMO*NMO),
-// each row-major G_sigma[i][k] (the layout reduce_inner_cross_dm builds for COLLINEAR). Mirrors the
-// compact COLLINEAR energy: per-spin E1 and EXX with scl=1 (no closed doubling), and a single EJ on the
-// TOTAL (alpha+beta) density. Both spins reuse the bare spin-independent Cholesky/one-body from
-// ensure_full_cholesky() (Likn(0)); spin-dependent integrals (Likn.extent(0)>1) are rejected upstream.
-// Replicated per rank, no all_reduce.
+/**
+ * @brief Un-rotated full-G local energy for COLLINEAR (UHF) trials.
+ *
+ * @details Mirrors the compact COLLINEAR energy: per-spin E1 and EXX with no closed-shell doubling,
+ * and a SINGLE EJ contracted on the TOTAL (alpha+beta) density. Both spins reuse the same bare
+ * Cholesky and one-body, so a spin-dependent Hamiltonian would score beta with the alpha integrals;
+ * Real3IndexFactorization::energy_fullG rejects that upstream. Replicated per rank, no all_reduce.
+ *
+ * @param mpi MPI context; unused, the kernel is replicated rather than distributed
+ * @param E [nwalk, 3] energies (one-body, exchange, Coulomb)
+ * @param Gfull [nwalk][2*NMO*NMO]: alpha block then beta block, each row-major G_sigma[i][k] -- the
+ *        layout the inner-ensemble cross reduction builds for COLLINEAR
+ * @param Lankf [NMO*local_nCV][NMO] bare, spin-independent Cholesky
+ * @param hijf [NMO*NMO] bare, spin-independent one-body
+ * @param local_nCV Cholesky vectors held on this rank
+ * @param E0 zero of energy, added once per walker
+ * @param addH1 include the one-body term
+ * @param addEJ include the Coulomb term
+ * @param addEXX include the exchange term
+ */
 template<MEMORY_SPACE MEM, class MatE, class MatG, class MatLan, class VecHij>
 void energy_collinear(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> const& mpi,
                       MatE&& E,

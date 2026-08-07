@@ -4,7 +4,6 @@
 #include "utilities/check.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/arch.h"
 #include "arch/atomics.hpp"
 #include "nda/nda.hpp"
 #include <cuda/std/mdspan>
@@ -284,8 +283,6 @@ void ph_excited_1body_energy_impl(int const* refc, int const* iexcit, S_t const&
   
   dim3 grid_dim(ndet*nwalk,nex,1);
   kernel_ph_excited_1body_energy<<<grid_dim, __BZ__>>>(iexcit,refc,S_d,R_d,w_d,E_d);
-  
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename T_t, typename R_t, typename W_t, typename EX_t, typename EJ_t, typename KE_t>
@@ -321,8 +318,6 @@ void ph_excited_2body_energy_dense_cholesky_Tpna_impl(int const* refc, int const
     kernel_ph_excited_energy_real_dense_chol_Tpna_second<<<grid_dim2,__BZ__,sm_size>>>(iexcit,refc,T_d,R_d,w_d,&EX_d(iw));
 
   }
-
-  sfqmc::arch::synchronize_if_set();
 }
 
 using memory::device_array_view;

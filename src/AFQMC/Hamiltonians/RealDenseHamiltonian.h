@@ -21,11 +21,11 @@
 #include <map>
 #include <fstream>
 
-#include "IO/ptree/ptree_utilities.hpp"
 #include "IO/app_loggers.h"
 #include "utilities/mpi_context.h"
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include "nda/h5.hpp"
 
 #include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
@@ -37,25 +37,10 @@ namespace afqmc
 class RealDenseHamiltonian
 {
 public:
-  RealDenseHamiltonian(ptree pt_in)
-      : fileName(""),
-        max_memory_MB(2000)
-  {
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(2,"\nReal Cholesky input:");
-    app_log(2, "{}", io::to_string(pt));
-    // initialize using verbose input
-    fileName  = pt.get<std::string>("filename");
-    max_memory_MB = pt.get<int>("max_memory");
-  }
-
-  ~RealDenseHamiltonian() = default;
-
-  RealDenseHamiltonian(RealDenseHamiltonian const& other) = default;
-  RealDenseHamiltonian(RealDenseHamiltonian&& other)      = default;
-  RealDenseHamiltonian& operator=(RealDenseHamiltonian const& other) = default; 
-  RealDenseHamiltonian& operator=(RealDenseHamiltonian&& other) = default; 
+  RealDenseHamiltonian(const HamiltonianParameters& params)
+      : fileName(params.filename),
+        max_memory_MB(params.max_memory)
+  {}
 
   HamiltonianTypes getHamType() const {return RealDenseFactorized; }
 
@@ -63,24 +48,6 @@ public:
   HamiltonianOperations<MEM> getHamiltonianOperations(WALKER_TYPES type,
                  std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
                  nda::array<PsiT_Matrix<MEM>,2> const& PsiT);
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    std::string name, filename;
-    int mmem_mb;
-    name      = pt0.get<std::string>("name", "ham0");
-    filename  = pt0.get<std::string>("filename");
-    mmem_mb = pt0.get<int>("max_memory", 2000);
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("name", name);
-    pt1.put("filename", filename);
-    pt1.put("max_memory", mmem_mb);
-    std::unordered_set<std::string> pass_through_keys = {};
-    io::compare_known_keys("Dense, Real Factorized (Cholesky) Hamiltonian",pt1, pt0,pass_through_keys);
-    return pt1;
-  }
 
 protected:
   std::string fileName;

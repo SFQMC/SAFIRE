@@ -48,7 +48,7 @@
 #include "AFQMC/HamiltonianOperations/Real3IndexFactorization.hpp"
 #include "AFQMC/HamiltonianOperations/THCOps.hpp"
 #include "AFQMC/Hamiltonians/ModelHamOpsGenerator.h"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
 #include "numerics/sparse/sparse.hpp"
 #include "utilities/check.hpp"
@@ -600,19 +600,15 @@ HamiltonianOperations<MEM> build_kpthc(
 class HubbardModelHamOpsAccess : public ModelHamOpsGenerator {
 public:
   explicit HubbardModelHamOpsAccess()
-      : ModelHamOpsGenerator(dummy_pt()) {}
+      : ModelHamOpsGenerator(dummy_params()) {}
 
   using ModelHamOpsGenerator::addComponent;
   using ModelHamOpsGenerator::find_occupied_pairs;
   using ModelHamOpsGenerator::make_SparseEnergy;
 
 private:
-  static ptree dummy_pt() {
-    ptree pt;
-    pt.put("name", "test_hubbard");
-    pt.put("filename", "/dev/null");
-    pt.put("shift_1body", true);
-    return pt;
+  static HamiltonianParameters dummy_params() {
+    return {.name = "test_hubbard", .filename = "/dev/null", .shift_1body = true};
   }
 };
 

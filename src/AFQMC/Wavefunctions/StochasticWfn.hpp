@@ -19,7 +19,7 @@
 #include <memory>
 #include <string>
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/mpi_context.h"
 #include "AFQMC/config.h"
@@ -37,18 +37,78 @@ class Wavefunction;
 template<MEMORY_SPACE MEM>
 class Propagator;
 
-inline ptree strip_stochastic_input_keys(ptree pt)
+/**
+ * @brief How the inner (trial) auxiliary-field ensemble of a StochasticWfn is sampled.
+ *
+ * @details Alias of StochasticSamplingTarget (AFQMC/parameters.hpp), kept under this name because the
+ * modes form a strict chain (the leapfrog reweight requires conditioning, persistent chains require
+ * conditioning, measurement replicas require persistence): one key rather than independent booleans
+ * makes the illegal combinations unrepresentable instead of rejecting them at runtime after
+ * construction.
+ */
+using SamplingTarget = StochasticSamplingTarget;
+
+/**
+ * @brief Input spelling of a SamplingTarget.
+ *
+ * @param m the sampling target to spell
+ */
+inline std::string to_string(SamplingTarget m)
 {
-  // Must list every [stochastic_wfn] key stripped before passing the ptree to the inner wavefunction.
-  for (auto const& key : {"type", "inner_nwalkers", "inner_nsteps", "inner_seed", "inner_propagator",
-                          "inner_conditioning", "inner_leapfrog", "inner_persistence", "inner_equil_steps",
-                          "inner_mcmc", "inner_mcmc_step", "inner_pool_burn_in", "inner_log_aggregate",
-                          "inner_condition_on_new", "inner_measure_replicas", "inner_measure_stride",
-                          "inner_measure_restore"})
-    pt.erase(key);
-  return pt;
+  switch (m)
+  {
+  case SamplingTarget::Static:
+    return "static";
+  case SamplingTarget::Gaussian:
+    return "gaussian";
+  case SamplingTarget::WalkerOverlap:
+    return "walker_overlap";
+  }
+  return "unknown";
 }
 
+/**
+ * @brief Resolve and validate the inner sampling mode from the (already schema-parsed) wavefunction
+ *        parameters.
+ *
+ * @details Single owner of that translation for WavefunctionFactory (propagator build) and
+ * StochasticWfn (sampler selection). The propagator is built first, so resolving it twice risks
+ * pairing a conditioned sampler with a free-projection propagator, which aborts on the first step.
+ * Not defaulted when inner_nsteps > 0: defaulting to "gaussian" would silently give prior sampling in
+ * production. "static" is the safe default at inner_nsteps == 0.
+ *
+ * @param params the wavefunction input block
+ */
+inline StochasticSamplingTarget resolve_sampling_target(WavefunctionParameters const& params)
+{
+  if (not params.inner_sampling_target && params.inner_nsteps > 0)
+    APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 selects a dynamic inner ensemble, so "
+              "inner_sampling_target must be given explicitly -- 'walker_overlap' for the production "
+              "walker-conditioned persistent chains, or 'gaussian' for the unconditioned prior-sampling "
+              "reference target (correct, but its variance makes it unusable in production). It is NOT "
+              "defaulted, because defaulting it is how a production run silently gets prior sampling.");
+  const StochasticSamplingTarget target =
+      params.inner_sampling_target.value_or(StochasticSamplingTarget::Static);
+  if (target == StochasticSamplingTarget::Static && params.inner_nsteps > 0)
+    APP_ABORT("Error in StochasticWfn: inner_sampling_target = static is the inner_nsteps = 0 replicated "
+              "anchor ensemble, but inner_nsteps = " + std::to_string(params.inner_nsteps) + " was given.");
+  if (target != StochasticSamplingTarget::Static && params.inner_nsteps <= 0)
+    APP_ABORT("Error in StochasticWfn: inner_sampling_target = " + to_string(target) +
+              " is a dynamic sampler and requires inner_nsteps > 0.");
+  return target;
+}
+
+/**
+ * @brief Type-erased handle on the inner (variational) stack a StochasticWfn samples its trial from.
+ *
+ * @details The inner stack is a NOMSD whose trial IS the anchor determinant, the Wavefunction variant
+ * wrapping it, and the propagator carrying the trained B_T. StochasticWfn holds it behind this
+ * interface so it does not have to name the concrete inner wavefunction/propagator types, which are
+ * only known to WavefunctionFactory (see StochasticInnerStackImpl in WavefunctionFactory.cpp).
+ *
+ * @param MEM memory space of the inner stack, matching the owning StochasticWfn
+ * @param devPsiT storage type of the trial orbital matrices
+ */
 template<MEMORY_SPACE MEM, class devPsiT>
 struct StochasticInnerStack
 {
@@ -65,15 +125,52 @@ struct StochasticInnerStack
   virtual Propagator<MEM> const& propagator() const = 0;
 };
 
+/**
+ * @brief Trial wavefunction represented by a Monte-Carlo ensemble of auxiliary-field samples rather
+ *        than by a fixed determinant expansion.
+ *
+ * @details |Psi_T> ~ (1/P) sum_p B_T(Y^[p]) |phi_T> with P = inner_n_samples (arXiv:2505.18519). An
+ * outer NOMSD scores against the True Hamiltonian; a StochasticInnerStack holds the variational
+ * sampler. Overrides are either CROSS (inner vs outer walkers: Energy, Log_Overlap, mixed DM) or SELF
+ * (inner vs itself: vMF, G_MF); everything else delegates. At at_delegate_limit() the trial is the
+ * anchor and every override forwards to NOMSD. Do not distinguish walker-independent vs
+ * walker-conditioned layouts by size alone: they coincide at nwalk == 1.
+ *
+ * @param MEM memory space the wavefunction and its ensembles live in
+ * @param devPsiT storage type of the trial orbital matrices
+ */
 template<MEMORY_SPACE MEM, class devPsiT>
 class StochasticWfn
 {
 public:
+  /**
+   * @brief Build the stochastic trial: outer NOMSD from the True Hamiltonian, sampler settings from
+   *        `params` (validated here via validate_stochastic_inputs), inner stack adopted from the
+   *        factory.
+   *
+   * @details Validates the sampler settings via validate_stochastic_inputs and aborts on an
+   * inconsistent combination. A dynamic trial (inner_nsteps > 0) requires CLOSED or COLLINEAR walkers
+   * and an explicit inner propagator timestep -- there is no default, because a wrong one is
+   * indistinguishable from a working run.
+   *
+   * @param system name of the system this wavefunction belongs to
+   * @param NMO_ number of molecular orbitals
+   * @param nup_ number of spin-up electrons
+   * @param ndown_ number of spin-down electrons
+   * @param params the wavefunction input block
+   * @param mpi_in MPI context shared with the rest of the calculation
+   * @param outer_hop_ HamiltonianOperations of the TRUE Hamiltonian, moved into the outer NOMSD
+   * @param ci_ CI coefficients of the anchor expansion
+   * @param orbs_ orbital matrices of the anchor expansion
+   * @param inner_stack_in the inner (variational) NOMSD + propagator; must not be null
+   * @param wlk walker type; a dynamic trial supports CLOSED and COLLINEAR only
+   * @param targetNW target walker count, forwarded to the outer NOMSD
+   */
   StochasticWfn(std::string system,
                 int NMO_,
                 int nup_,
                 int ndown_,
-                ptree pt_in,
+                WavefunctionParameters params,
                 std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_in,
                 HamiltonianOperations<MEM>&& outer_hop_,
                 nda::array<ComplexType, 1>&& ci_,
@@ -82,7 +179,16 @@ public:
                 WALKER_TYPES wlk,
                 [[maybe_unused]] int targetNW = 1);
 
-  static ptree interpret_inputs(const ptree pt0);
+  /**
+   * @brief Validate `params` in place, defaulting and resolving every stochastic field.
+   *
+   * @details Unknown-key rejection is the JSON schema's job, not this function's -- the inner_* surface
+   * is closed at the schema level. This only fills defaults that depend on other fields (e.g. the
+   * sampling target, the sampler step) and checks cross-field consistency.
+   *
+   * @param params the wavefunction input block, updated in place
+   */
+  static void validate_stochastic_inputs(WavefunctionParameters& params);
 
   ~StochasticWfn() = default;
 
@@ -91,53 +197,87 @@ public:
   StochasticWfn(StochasticWfn&& other)                   = default;
   StochasticWfn& operator=(StochasticWfn&& other)        = delete;
 
-  void initialize_inner_walkers(ptree const& walker_pt,
+  /**
+   * @brief Allocate the inner walker set and cache the anchor determinant it is reset to.
+   *
+   * @details Must be called once before any reduction. The construction inputs are cached so the
+   * mean-field scratch ensemble can later be built through this same known-good WalkerSet
+   * constructor.
+   *
+   * @param walker_params the walker-set input block, shared with the outer walkers
+   * @param initial_guess per-spin Slater matrices of the anchor |phi_T>
+   * @param NAEB number of spin-down electrons, used to size the beta block of a COLLINEAR anchor
+   */
+  void initialize_inner_walkers(WalkerSetParameters const& walker_params,
                                 std::vector<nda::matrix<ComplexType>> const& initial_guess,
                                 int NAEB);
 
+  /// @brief True once initialize_inner_walkers() has run.
   bool inner_walkers_initialized() const { return inner_ensemble_.initialized; }
-  int inner_nwalkers() const { return inner_nwalkers_; }
+  /// @brief P, the number of auxiliary-field samples representing the trial.
+  int inner_n_samples() const { return inner_n_samples_; }
+  /// @brief Length of the inner auxiliary-field path; 0 is the static (anchor) ensemble.
   int inner_nsteps() const { return inner_nsteps_; }
-  bool inner_conditioning() const { return inner_conditioning_; }
-  bool inner_leapfrog() const { return inner_leapfrog_; }
-  // Persistent (tethered) inner sampling. When on, each (outer walker, p) slot owns a Markov chain
-  // whose STATE is the auxiliary-field configuration Y that generates its trial sample
-  // psi = B_T(Y)|phi_T>; chains are kept across outer steps and re-equilibrated by a short
-  // Metropolis-Hastings walk in field space targeting p_T(Y)*|<psi(Y)|phi_w>| instead of
-  // reset-then-redraw with Gaussian-shift resampling. The field configurations live in a per-walker
-  // block of the OUTER walker buffer (WalkerSetBase::TrialFields), so population control clones and
-  // ships the chains with their walkers and the determinants can be rebuilt exactly wherever a walker
-  // lands.
-  bool inner_persistence() const { return inner_persistence_; }
-  int inner_equil_steps() const { return inner_equil_steps_; }
-  std::string const& inner_mcmc() const { return inner_mcmc_; }
-  double inner_mcmc_step() const { return inner_mcmc_step_; }
-  // Measurement-side replica averaging (inner_measure_replicas). inner_equil_steps equilibrates the pool
-  // against walkers that move every propagation step; these knobs advance the pool at fixed walkers and
-  // average the local energy over inner_measure_replicas such advances.
-  int inner_measure_replicas() const { return inner_measure_replicas_; }
-  int inner_measure_stride() const { return inner_measure_stride_; }
-  bool inner_measure_restore() const { return inner_measure_restore_; }
-  // True when measure_energy should average over replicas: nm > 1 AND the pool is a live persistent
-  // walker-conditioned chain, since advancing it is what a replica IS. Every other mode (static anchor,
-  // free projection, non-persistent conditioned resample) has no chain to sweep, so measure_energy
-  // falls straight through to Energy(). Public so a test can assert the replica path is LIVE instead of
-  // passing vacuously on that fallback.
-  bool measure_replicas_active() const
+  /// @brief How the inner ensemble is sampled.
+  SamplingTarget inner_sampling_target() const { return inner_sampling_target_; }
+  /**
+   * @brief The trained B_T timestep actually in force.
+   *
+   * @details Exposed so a test can assert the value the factory read from the variational
+   * Hamiltonian's inner_timestep attribute REACHED the wavefunction; a factory that reads the stamp
+   * and drops it is indistinguishable from one that works unless the built object is asked.
+   */
+  double inner_timestep() const { return inner_timestep_; }
+  /**
+   * @brief True for SamplingTarget::WalkerOverlap, the walker-conditioned production sampler.
+   *
+   * @details There is no separate persistence or leapfrog predicate: conditioning, the persistent
+   * field chains and the leapfrog reweight are one algorithm, not independent knobs.
+   */
+  bool is_conditioned() const { return inner_sampling_target_ == SamplingTarget::WalkerOverlap; }
+  /// @brief One-time Metropolis-Hastings sweeps applied when the field chains are primed (hafqmc's burn_in).
+  int inner_burn_in() const { return inner_burn_in_; }
+  /**
+   * @brief Metropolis-Hastings sweeps per pool advance.
+   *
+   * @details ONE knob for BOTH the propagation and the measurement seam, matching hafqmc's
+   * sample_update_steps, which drives its re-tether and its block-measurement advance from the same
+   * number. The seams differ in what the sweeps chase -- a moving target at propagation, where the lag
+   * has a floor no sweep count removes, and a fixed one at measurement, where it decays geometrically
+   * -- but not enough to warrant two inputs.
+   */
+  int inner_sample_update_steps() const { return inner_sample_update_steps_; }
+  /// @brief Field-space proposal kernel: "pcn" (prior-preserving) or "gaussian" (random walk).
+  std::string const& inner_sampler() const { return inner_sampler_; }
+  /// @brief Proposal step size s; pcn takes 0 < s <= 1 (s = 1 is an independence redraw), gaussian s > 0.
+  double inner_sampler_step() const { return inner_sampler_step_; }
+  /// @brief Number of measurement replicas averaged at fixed walkers.
+  int inner_n_measure_samples() const { return inner_n_measure_samples_; }
+  /**
+   * @brief True when the measurement seam advances the field pool, i.e. whenever live chains exist.
+   *
+   * @details Deliberately NOT gated on inner_n_measure_samples > 1: hafqmc advances its pool before
+   * EVERY block measurement, including the single-replica case, so the replica count is purely how
+   * many measurements are AVERAGED and whether the pool advances is not a knob. Public so a test can
+   * assert the replica path is LIVE rather than passing vacuously on the fallback.
+   */
+  bool measure_advances_pool() const
   {
-    return inner_measure_replicas_ > 1 && inner_persistence_ && inner_conditioning_ && inner_nsteps_ > 0 &&
-        inner_chains_primed_ && not inner_dets_stale_;
+    return is_conditioned() && inner_chains_primed_ && not inner_dets_stale_;
   }
-  // Cumulative Metropolis acceptance fraction of the field-space chain updates on this rank
-  // (1.0 before any proposal has been made).
+  /// @brief Cumulative Metropolis acceptance fraction of the field-space chain updates on this rank; 1.0
+  /// before any proposal has been made.
   double inner_chain_acceptance() const
   {
     return chain_proposed_ > 0 ? double(chain_accepted_) / double(chain_proposed_) : 1.0;
   }
-  // Sum of the leapfrog conditioning magnitudes |<psi_q|phi_cond>| (test/diagnostic checksum; 0 when
-  // unset). A pop-control realignment that only re-indexes the ensemble must leave this sum invariant
-  // -- it references phi_cond (the walker the chains were equilibrated against), not the post-pop
-  // walker -- so a test can pin "permute must not recompute cond_mag against the current walker".
+  /**
+   * @brief Checksum over the leapfrog conditioning magnitudes |<psi_q|phi_cond>|; 0 when unset.
+   *
+   * @details Test/diagnostic only. A population-control realignment that merely re-indexes the
+   * ensemble must leave this invariant, since the magnitudes reference the walker the chains were
+   * equilibrated against and not the post-pop walker.
+   */
   double inner_cond_mag_sum() const
   {
     double s = 0.0;
@@ -145,11 +285,21 @@ public:
       s += inner_cond_mag_(i);
     return s;
   }
-  bool inner_log_aggregate() const { return inner_log_aggregate_; }
 
+  /// @brief The inner ensemble; aborts if initialize_inner_walkers() has not run.
   WalkerSet<MEM>& inner_wset();
   WalkerSet<MEM> const& inner_wset() const;
 
+  /**
+   * @name Inner stack accessors
+   *
+   * @brief The variational NOMSD whose trial is the anchor |phi_T>, and the Wavefunction wrapping it.
+   *
+   * @details inner_wfn() and inner_nomsd() are the same object under two names, kept because callers
+   * read naturally either way. The inner NOMSD is what supplies the conditioning force bias, since
+   * the inner trial IS the anchor.
+   * @{
+   */
   NOMSD<MEM, devPsiT>& inner_wfn() { return inner_stack_->nomsd(); }
   NOMSD<MEM, devPsiT> const& inner_wfn() const { return inner_stack_->nomsd(); }
 
@@ -158,78 +308,97 @@ public:
 
   Wavefunction<MEM>& inner_wavefunction() { return inner_stack_->wavefunction(); }
   Wavefunction<MEM> const& inner_wavefunction() const { return inner_stack_->wavefunction(); }
+  /// @}
 
+  /// @brief True once the factory has built the inner propagator carrying B_T.
   bool inner_propagator_built() const { return inner_stack_->has_propagator(); }
+  /// @brief The propagator carrying B_T; aborts if the factory did not build one.
   Propagator<MEM>& inner_propagator();
   Propagator<MEM> const& inner_propagator() const;
 
-  // Arms the per-outer-step inner-resample latch. In leapfrog mode it also refreshes the stored OVLP = ⟨Ψ_T|φ⟩ against the ensemble freshly resampled conditioned on the current (old)
-  // walker φ, so the step's overlap RATIO new/old (Eq. 25) shares one ensemble and 𝒩(φ) cancels.
+  /**
+   * @brief Open an outer propagation step: arm the resample latch, advance the persistent field-chain
+   *        pool, and refresh the stored overlap.
+   *
+   * @details Sole seam with non-const access to the outer walker buffer (chain fields). The updated
+   * pool serves every reduction of the step. Runs on every rank; no communication.
+   *
+   * @param wset the outer walker set, taken non-const because the chain state lives in its buffer
+   */
   template<class WlkSet>
   void begin_inner_step(WlkSet& wset);
 
-  // Current-walker conditioning (inner_condition_on_new_ only). Called after the phaseless weight update
-  // with old_new_logovlp = log O_pool_old(phi_new). Re-tethers the pool to phi_new, applies a phase-only
-  // handoff on WEIGHT, and overwrites OVLP with log O_pool_new(phi_new). Must run before popControl.
-  template<class WlkSet, class TVec>
-  void end_inner_step(WlkSet& wset, TVec const& old_new_logovlp);
-
-  // True when the current-walker conditioning path is active, so the propagator knows to call
-  // end_inner_step (and to skip it for every other mode/wavefunction).
-  bool conditions_on_new_walker() const
-  {
-    return inner_condition_on_new_ && inner_persistence_ && inner_leapfrog_ && inner_conditioning_ &&
-        inner_nsteps_ > 0;
-  }
-
-  // Realign the conditioned inner ensemble with the outer walker set after an outer population-control
-  // event (branch + load balance); the driver calls this immediately after wset.popControl(). The
-  // slot-major inner ensemble (index q = ip*nw + w, block w conditioned on outer walker phi_w) lives
-  // OUTSIDE the outer walker buffer, so popControl's clone/shuffle would otherwise leave block w attached
-  // to the OLD phi_w -- a reduction between popControl and the next propagation step (e.g.
-  // accumulate_estimators when the measure and population-control intervals coincide) would then pair
-  // post-branch outer walkers with pre-branch inner blocks. This permutes the inner blocks to follow the
-  // walkers (via the per-walker SLOT_LINEAGE map recorded through branch/load-balance), or -- when a
-  // walker arrived from another rank, whose inner block this rank does not hold -- rebuilds them with a
-  // fresh conditioned resample on the next reduction.
-  // No-op unless this is a conditioned dynamic trial (inner_conditioning_ && inner_nsteps_ > 0); static,
-  // free-projection, and delegate-limit trials carry no slot-conditioned inner blocks.
+  /**
+   * @brief Realign the conditioned inner ensemble with the outer walkers after population control.
+   *
+   * @details The driver calls this immediately after wset.popControl(). The slot-major inner ensemble
+   * lives OUTSIDE the outer walker buffer, so popControl's clone/shuffle would otherwise leave block w
+   * attached to the old phi_w, and a reduction before the next propagation step would pair post-branch
+   * walkers with pre-branch inner blocks. No-op unless is_conditioned(): the other modes carry no
+   * slot-conditioned blocks.
+   *
+   * @param wset the post-population-control outer walker set
+   */
   template<class WlkSet>
   void permute_inner_blocks_after_pop(const WlkSet& wset);
 
-  bool at_delegate_limit() const { return inner_nwalkers_ == 1 && inner_nsteps_ == 0; }
+  /// @brief True when the trial IS the anchor determinant (P == 1 and no free projection), so every override
+  /// delegates and the class is exactly a single-determinant NOMSD.
+  bool at_delegate_limit() const { return inner_n_samples_ == 1 && inner_nsteps_ == 0; }
 
+  /// @brief The outer NOMSD carrying the TRUE Hamiltonian, against which every reduction is scored.
   NOMSD<MEM, devPsiT>& outer_nomsd() { return nomsd_; }
   NOMSD<MEM, devPsiT> const& outer_nomsd() const { return nomsd_; }
 
   int number_of_cholesky_vectors() const { return nomsd_.number_of_cholesky_vectors(); }
 
+  /**
+   * @brief Per-run optimization hook, delegated to the outer NOMSD.
+   *
+   * @param wset the outer walker set
+   */
   template<class WlkSet>
   void runtime_optimization(WlkSet& wset) { nomsd_.runtime_optimization(wset); }
 
   WALKER_TYPES getWalkerType() const { return nomsd_.getWalkerType(); }
   constexpr auto get_memory_space() const { return MEM; }
 
-  // Stochastic mean-field subtraction. vMF / G_MF are TRIAL-AGAINST-ITSELF quantities (no outer walker),
-  // so -- unlike the propagator hot-path mixed estimators that pair the inner ensemble against the OUTER
-  // ensemble against the OUTER walkers -- they reduce the inner ensemble against ITSELF:
-  //   G_MF = <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T>
-  //        = [sum_{p,q} <psi_p|c+c|psi_q>] / [sum_{p,q} <psi_p|psi_q>]
-  // over the P = inner_nwalkers_ walker-INDEPENDENT inner samples {psi_p} (uniform weight 1/P) -- the
-  // inner-ensemble analogue of NOMSD's multi-determinant mean field, with the inner walkers playing the
-  // role of the determinant expansion. vMF contracts that mean-field DM against the True Ham (estimator
-  // 4, L.G_MF). Both collapse to the anchor density -- i.e. plain NOMSD::G_MF / vMF -- at the static
-  // replicated limit (every psi_p == anchor). They DELEGATE to nomsd_ (the anchor mean field) (a) at the
-  // single-determinant delegate limit, and (b) whenever the inner ensemble is NOT in its
-  // walker-independent P-sample form -- i.e. after a conditioned/leapfrog resample has expanded it to
-  // expanded it to nwalk*P walker-CONDITIONED samples, which `begin_inner_step` can trigger BEFORE
-  // `generateP1` calls vMF (see Propagate ordering). A conditioned ensemble has no walker-independent
-  // subset to average for the trial mean field, and the anchor mean field is exact at the
-  // static-limit-first scope (and a valid variance-reduction choice). See `mean_field_uses_inner_ensemble`.
+  /**
+   * @brief Mean-field expectation of the Cholesky/HS potentials for the FULL stochastic trial,
+   *        v_n = L_n . G_MF (estimator 4).
+   *
+   * @details Self-reduction over the P walker-independent samples (no outer walker). Must use the
+   * full trial's mean field, not the anchor's, for consistency with the force bias and energy.
+   * Ensemble choice follows mean_field_uses_inner_ensemble() / bp_uses_inner_ensemble(). Requires
+   * has_fullG_vbias().
+   *
+   * @param v output potential vector, one entry per Cholesky vector
+   * @param dt timestep the potentials are scaled by
+   */
   void vMF(nda::MemoryVector auto&& v, double dt);
 
+  /**
+   * @brief Mean-field one-body Green's function of the FULL stochastic trial,
+   *        <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T>, in the full [nspin][npol*NMO][npol*NMO] layout.
+   *
+   * @details Same self-reduction and same ensemble choice as vMF, but returned rather than contracted,
+   * and deliberately NOT gated on the Hamiltonian's full-G capability because it needs no Hamiltonian
+   * operator at all. Only the discrete/model-Hamiltonian propagator setup consumes it; continuous
+   * Cholesky propagators use vMF only.
+   */
   auto G_MF();
 
+  /**
+   * @brief Force bias of the outer walkers against the stochastic trial.
+   *
+   * @details Off the anchor the inner-ensemble-reduced density matrix has no half-rotated form, so
+   * this builds a full un-rotated G and requires a Hamiltonian operator that can contract one.
+   *
+   * @param wset the outer walker set
+   * @param v output force bias, [nwalk, number_of_cholesky_vectors]
+   * @param dt timestep the potentials are scaled by
+   * @param nt time slice index, unused for a ground-state trial
+   */
   template<class WlkSet, nda::MemoryMatrix MatA>
   void vbias(WlkSet& wset, MatA&& v, double dt, int nt = 0);
 
@@ -239,25 +408,41 @@ public:
     return nomsd_.vHS(std::forward<Args>(args)...);
   }
 
+  /**
+   * @brief Local energy of each outer walker against the stochastic trial.
+   *
+   * @details Inner ensemble vs outer walkers; leapfrog-reweighted under the conditioned sampler.
+   * Complete on every rank (HamOps reduces internally; do not all_reduce).
+   *
+   * @param wset the outer walker set
+   * @param E output energies, [nwalk, 3] as (one-body, exchange, Coulomb)
+   * @param Ov output LOG overlap per walker, matching the OVLP property convention
+   * @param nt time slice index, unused for a ground-state trial
+   */
   template<class WlkSet, class Mat, class TVec>
   void Energy(const WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0);
 
-  // Measurement entry point for the estimators: Energy() averaged over inner_measure_replicas_ replicas
-  // of the field pool at FIXED walkers (see inner_measure_replicas()). Needs non-const wset because the
-  // chain state lives in the outer walker buffer's TrialFields block, so advancing it writes there.
-  //
-  // Reduces to exactly Energy(wset, E, Ov, nt) -- same call, same values -- unless the replica path is
-  // active (measure_replicas_active()), so every existing input is bit-for-bit unchanged.
-  //
-  // Estimator convention: E is the mean of per-replica energy ratios; Ov is the walker's stored log
-  // overlap (the pool weights were accumulated against), so EnergyEstimator's exp(ovlp - OVLP) stays 1.
-  // Do not return a replica's own overlap -- replicas are measured after advance_measure_pool.
+  /**
+   * @brief Measurement entry: Energy() averaged over inner_n_measure_samples_ pool advances at fixed
+   *        walkers.
+   *
+   * @details Reduces to Energy() unless measure_advances_pool(). The pool advances before every
+   * replica including the first, and the advance is kept (hafqmc convention).
+   *
+   * @param wset the outer walker set, non-const because advancing the pool writes its field block
+   * @param E output energies, [nwalk, 3]; mean of per-replica energy ratios
+   * @param Ov output LOG overlap; the walker's STORED overlap (not a replica's), so
+   *        EnergyEstimator's exp(ovlp - OVLP) stays 1
+   * @param nt time slice index, unused for a ground-state trial
+   */
   template<class WlkSet, class Mat, class TVec>
   void measure_energy(WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0);
 
+  /// @brief Energy of every walker, written back into the walker set's OVLP / E1_ / EXX_ / EJ_ properties.
   template<class WlkSet>
   void Energy(WlkSet& wset);
 
+  /// @brief Overload ignoring the time slice index, for interface parity with the finite-temperature trials.
   template<class WlkSet>
   void Energy(WlkSet& wset, int nt)
   {
@@ -265,12 +450,18 @@ public:
     Energy(wset);
   }
 
-  // Stochastic mixed density matrix for observable evaluation -- estimator 3 of arXiv:2505.18519, G[w] = (sum_p w_p <psi_p|c+c|phi_w>/<psi_p|phi_w>) / sum_p w_p, reduced over
-  // the inner ensemble and scored against the True Ham. This is the observable analogue of
-  // MixedDensityMatrix_for_vbias: the same inner-ensemble reduction, but returned in the caller's
-  // observable layout (and with the LOG overlap convention NOMSD's observable DM uses). Delegates to
-  // nomsd_ at the single-determinant delegate limit. The 2-arg overload mirrors NOMSD -- it builds a
-  // scratch overlap vector and routes through the 3-arg workhorse.
+  /**
+   * @brief Stochastic mixed density matrix for observables (estimator 3 of arXiv:2505.18519).
+   *
+   * @details Same inner-ensemble reduction as MixedDensityMatrix_for_vbias, in the observable layout
+   * with NOMSD's LOG-overlap convention. Compact layout is static-ensemble only: off the anchor each
+   * sample lives in a different orbital space. The 2-arg overload builds a scratch overlap and routes
+   * to the 3-arg workhorse.
+   *
+   * @param wset the outer walker set
+   * @param G output density matrix, [nwalk, dm_size]
+   * @param compact request the half-rotated layout; rejected once inner_nsteps > 0
+   */
   template<class WlkSet, class MatG>
   void MixedDensityMatrix(const WlkSet& wset, MatG&& G, bool compact = true)
   {
@@ -279,15 +470,31 @@ public:
     MixedDensityMatrix(wset, std::forward<MatG>(G), Ov, compact);
   }
 
+  /**
+   * @brief Stochastic mixed density matrix, also returning the per-walker LOG overlap.
+   *
+   * @param wset the outer walker set
+   * @param G output density matrix, [nwalk, dm_size]
+   * @param Ov output LOG overlap per walker
+   * @param compact request the half-rotated layout; rejected once inner_nsteps > 0
+   */
   template<class WlkSet, class MatG, class TVec>
   void MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true);
 
-  // DM w.r.t. an EXTERNALLY supplied reference orbital set `Ref`. The bra is `Ref` (not the stochastic
-  // trial) and the ket is the walker, so this is pure orbital algebra independent of both the trial
-  // wavefunction and the Hamiltonian -- NOMSD's implementation never touches its own OrbMats. The
-  // stochastic trial therefore plays no role, and delegating to `nomsd_` is exact. (Which reference set
-  // a stochastic trial exposes for back-propagation is the outer-NOMSD set, inner-ensemble-agnostic; it
-  // does not change this Ref-parameterized method.)
+  /**
+   * @brief Density matrix against an EXTERNALLY supplied reference orbital set.
+   *
+   * @details The bra is Ref and the ket the walker, so this is pure orbital algebra independent of
+   * both the trial wavefunction and the Hamiltonian -- the stochastic trial plays no role and
+   * delegating to the outer NOMSD is exact.
+   *
+   * @param wset the outer walker set
+   * @param Ref the reference orbital set forming the bra
+   * @param G output density matrix
+   * @param Ov output overlap per walker
+   * @param compact request the half-rotated layout
+   * @param herm treat Ref as already conjugate-transposed
+   */
   template<class WlkSet, class RVec, class MatG, class TVec>
   void DensityMatrix(const WlkSet& wset,
                      RVec&& Ref,
@@ -300,21 +507,52 @@ public:
                          herm);
   }
 
+  /**
+   * @brief Inner-ensemble-reduced mixed density matrix in the layout vbias consumes.
+   *
+   * @details Forces the full un-rotated layout once the ensemble has moved off the anchor, for the
+   * same basis reason as MixedDensityMatrix.
+   *
+   * @param wset the outer walker set
+   * @param G output density matrix, [nwalk, dm_size]
+   */
   template<class WlkSet, class MatG>
   void MixedDensityMatrix_for_vbias(const WlkSet& wset, MatG&& G);
 
+  /**
+   * @brief Log overlap of each outer walker with the stochastic trial.
+   *
+   * @details Per-rank local and complete (like NOMSD): each rank scores its own walkers against the
+   * full inner ensemble. Do not all_reduce per-walker overlaps.
+   *
+   * @param wset the outer walker set
+   * @param Ov output LOG overlap per walker
+   * @param nt time slice index, unused for a ground-state trial
+   */
   template<class WlkSet, class TVec>
   void Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt = 0);
 
+  /// @brief Log overlap of every walker, written back into the walker set's OVLP property.
   template<class WlkSet>
   void Log_Overlap(WlkSet& wset);
 
-  // Accumulate observable contributions from the inner-ensemble-reduced (stochastic) Green's function. The full mixed Green's function fed to the observables is the stochastic
-  // `MixedDensityMatrix` (estimator 3, full NMO x NMO layout). For time-evolved / back-propagated
-  // observables (X/Yc/M != null) that DM is transformed through the evolved operators exactly as NOMSD
-  // does (`M + T(X) . G_full . Yc`); the transform is linear in the DM, so the inner-ensemble average
-  // commutes with it. Delegates to `nomsd_` at the delegate limit. The 5-arg overload mirrors NOMSD
-  // (null X/Yc/M, time_evolved = false) and routes through the full one.
+  /**
+   * @brief Accumulate observables from the inner-ensemble-reduced Green's function (estimator 3).
+   *
+   * @details Same accumulation loop as NOMSD's single-determinant path. Time-evolved transforms are
+   * linear in G, so averaging then transforming matches transforming per sample then averaging.
+   *
+   * @param iav averaging slot the observables accumulate into
+   * @param wset the outer walker set
+   * @param wgt per-walker weights
+   * @param properties_1body one-body observables to accumulate
+   * @param properties general observables to accumulate
+   * @param X evolved creation-operator transform, or null when not time-evolved
+   * @param Yc evolved annihilation-operator transform, or null when not time-evolved
+   * @param M operator state added once, or null when not time-evolved
+   * @param time_evolved whether X/Yc/M carry a back-propagated transform
+   * @param importanceSampling must be true; the non-IS path is unfinished, as in NOMSD
+   */
   template<class WlkSet, class Observable>
   void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
                              std::vector<Observable>& properties_1body, std::vector<Observable>& properties,
@@ -322,6 +560,7 @@ public:
                              nda::MemoryArrayOfRank<4> auto* M, bool time_evolved,
                              bool importanceSampling = true);
 
+  /// @brief Overload for observables with no back-propagated transform (null X/Yc/M), mirroring NOMSD.
   template<class WlkSet, class Observable>
   void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
                              std::vector<Observable>& properties_1body, std::vector<Observable>& properties,
@@ -331,60 +570,80 @@ public:
     accumulate_estimators(iav, wset, wgt, properties_1body, properties, X, X, X, false, importanceSampling);
   }
 
-  // Generalized Fock matrix of a SUPPLIED density matrix against the True Ham. Like NOMSD, this is a `HamOp` contraction on a caller-provided G (no trial reduction), so it
-  // delegates to `nomsd_` (the True Ham). Reached only via the `generalizedFockMatrix` observable.
+  /**
+   * @brief Generalized Fock matrix of a SUPPLIED density matrix against the True Hamiltonian.
+   *
+   * @details A Hamiltonian-operator contraction on a caller-provided G with no trial reduction, so
+   * delegating is exact. Reached only via the generalizedFockMatrix observable.
+   *
+   * @param args forwarded to NOMSD::generalizedFockMatrix
+   */
   template<class... Args>
   void generalizedFockMatrix(Args&&... args)
   {
     nomsd_.generalizedFockMatrix(std::forward<Args>(args)...);
   }
 
-  // Back-propagation reference set. This is standard Motta-Zhang back-propagation (arXiv:1707.02684): the trial is back-propagated through the recorded OUTER fields and contracted
-  // against the stored forward walker; the references are the determinants that represent <Psi_T|. Two
-  // regimes, selected by bp_uses_inner_ensemble():
-  //  - OUTER-NOMSD DELEGATE (static limit / P==1): expose the OUTER nomsd_'s reference set -- the anchor
-  //    {phi_T} = OrbMats(0) (weight 1) for the single-determinant trial, or its CI expansion otherwise.
-  //    Identical to plain NOMSD. Used at inner_nsteps==0 and inner_nwalkers==1.
-  //  - DEDICATED FREE-PROJECTION DRAW (the faithful set): for a dynamic trial (inner_nsteps>0, P>1),
-  //    getReferences draws a FRESH, walker-INDEPENDENT free-projection ensemble {psi_p = B_T(Y^[p])|phi_T>}
-  //    (bare p_T(Y)) and exposes those P samples with uniform weight 1/P, so back-propagation scores
-  //    against the true stochastic trial <Psi_T| ~ (1/P) sum_p <psi_p| (Eq. 24 of arXiv:2505.18519). The
-  //    trial |Psi_T> is walker-INDEPENDENT, so its references must be too -- the forward walk's
-  //    conditioning/leapfrog is a forward-only importance-sampling device, IRRELEVANT to the BP
-  //    BP references; hence this draw is DECOUPLED from the forward inner ensemble and works for BOTH
-  //    free-projection and conditioned/leapfrog forward walks. The estimator already carries the complex
-  //    per-reference overlap exp(Ov_p)=<psi_p|phi_BP> (phase folded in) and uniform 1/P cancels in its
-  //    normalization ratio; the explicit S_p/(1/|O_p|) reweighting of the forward path is the
-  //    importance-sampling correction for WALKER-CONDITIONED draws (Eq. 23), absent here because these
-  //    are bare free-projection samples. getReferences performs the draw and the estimator copies the
-  //    references it reads, freezing them for the BP window (a fresh Monte-Carlo draw of the trial per
-  //    block). Reduces to the delegate at inner_nsteps==0 / P==1.
+  /**
+   * @brief Selects which back-propagation reference set getReferences() exposes.
+   *
+   * @details False delegates to the outer NOMSD's anchor / CI expansion (static limit or P == 1);
+   * true takes a dedicated walker-INDEPENDENT free-projection draw of the trial, so back-propagation
+   * scores against <Psi_T| ~ (1/P) sum_p <psi_p| (Eq. 24). That draw is decoupled from the forward
+   * ensemble on purpose: the trial is walker-independent, so its references must be too, and the
+   * forward walk's conditioning is a forward-only importance-sampling device.
+   */
   bool bp_uses_inner_ensemble() const
   {
-    return inner_nsteps_ > 0 && inner_nwalkers_ > 1
+    return inner_nsteps_ > 0 && inner_n_samples_ > 1
            && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr;
   }
 
+  /// @brief Number of back-propagation references: P for a dynamic trial, the anchor expansion otherwise.
   int total_number_of_references() const
   {
-    return bp_uses_inner_ensemble() ? inner_nwalkers_ : nomsd_.total_number_of_references();
+    return bp_uses_inner_ensemble() ? inner_n_samples_ : nomsd_.total_number_of_references();
   }
 
   int getNMO() const { return NMO; }
 
+  /**
+   * @brief Weight of back-propagation reference `i`: uniform 1/P for a dynamic trial.
+   *
+   * @param i reference index
+   */
   ComplexType getReferenceWeight(int i) const
   {
-    return bp_uses_inner_ensemble() ? ComplexType(1.0 / static_cast<double>(inner_nwalkers_), 0.0)
+    return bp_uses_inner_ensemble() ? ComplexType(1.0 / static_cast<double>(inner_n_samples_), 0.0)
                                     : nomsd_.getReferenceWeight(i);
   }
 
-  // Fills the [nref, npol*NMO, nel] reference Slater matrices (H-conjugated bras), as
-  // BackPropagatedEstimator requests. For a dynamic trial (bp_uses_inner_ensemble()) it first performs a
-  // dedicated free-projection draw (draw_bp_reference_ensemble()) and fills from those P samples;
-  // otherwise it delegates to nomsd_ (the anchor / CI expansion). Defined in the .icc.
+  /**
+   * @brief Fill the reference Slater matrices BackPropagatedEstimator requests.
+   *
+   * @details For a dynamic trial this first performs a fresh free-projection draw, giving one
+   * Monte-Carlo realization of the trial per back-propagation block; otherwise it delegates.
+   *
+   * @param Refs output references, [nref, npol*NMO, nel], as H-conjugated bras
+   */
   template<class RefMat>
   void getReferences(RefMat&& Refs);
 
+  /// @brief True iff this wavefunction's Hamiltonian operator can contract a FULL (un-rotated) mean-field G,
+  /// which vMF requires once inner_n_samples > 1. See HamiltonianOperations::has_fullG_vbias.
+  bool has_fullG_vbias() const { return nomsd_.has_fullG_vbias(); }
+
+  /**
+   * @name Pass-through interface
+   *
+   * @brief Members that carry no inner-ensemble reduction and forward unchanged to the outer NOMSD.
+   *
+   * @details These describe the True Hamiltonian, the walker layout, or the Hubbard-Stratonovich
+   * machinery -- none of which the stochastic representation of the trial changes -- so delegating is
+   * exact at every sampling target, not only at the delegate limit. See the corresponding NOMSD
+   * members for their semantics.
+   * @{
+   */
   HamiltonianTypes getHamType() const { return nomsd_.getHamType(); }
   auto getFieldTypes() { return nomsd_.getFieldTypes(); }
 
@@ -429,13 +688,9 @@ public:
   }
 
   auto getLogPT0() const { return nomsd_.getLogPT0(); }
+  /// @}
 
 private:
-  static ptree nomsd_inputs(ptree const& pt0)
-  {
-    return NOMSD<MEM, devPsiT>::interpret_inputs(strip_stochastic_input_keys(pt0));
-  }
-
   struct StochasticInnerEnsemble
   {
     std::unique_ptr<WalkerSet<MEM>> wset;
@@ -449,67 +704,48 @@ private:
   int ndown{-1};
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_;
   StochasticInnerEnsemble inner_ensemble_;
-  int inner_nwalkers_{1};
+  int inner_n_samples_{1};
   int inner_nsteps_{0};
-  double inner_timestep_{0.01};
+  // Set from the variational Hamiltonian's stamp (or, for a synthetic trial, the input).
+  // Deliberately NOT defaulted to a plausible value -- see the constructor.
+  double inner_timestep_{0.0};
   bool inner_step_pending_{false};
-  // Guards the back-propagation reference draw so it happens at most ONCE per BP window.
-  // Set true by draw_bp_reference_ensemble() after a draw; a repeated getReferences in the same window
-  // then reuses that draw (idempotent -- no silent re-draw). Reset to false by begin_inner_step(), i.e.
-  // when the forward walk advances to the next step (the next BP window draws fresh).
+  // Guards the back-propagation reference draw to at most ONCE per BP window; cleared by
+  // begin_inner_step() so the next window draws fresh.
   bool bp_refs_drawn_{false};
-  bool inner_conditioning_{false};
-  bool inner_leapfrog_{false};
-  // Persistent-chain controls (default OFF => reset-then-redraw conditioned resample is byte-for-byte
-  // unchanged). inner_persistence_: keep per-slot field-space Markov chains across outer steps and
-  // re-equilibrate them in place (see inner_persistence() above). inner_equil_steps_: MH sweeps per
-  // outer step once the chains exist. inner_pool_burn_in_: extra sweeps at the one-time prime.
-  // inner_mcmc_: proposal kernel -- "pcn" (preconditioned Crank-Nicolson, prior-preserving:
-  // Y* = sqrt(1-s^2) Y + s xi) or "gaussian" (random walk: Y* = Y + s xi, prior ratio in the
-  // acceptance). inner_mcmc_step_: the proposal step size s (pcn: 0 < s <= 1, s = 1 is an
-  // independence redraw; gaussian: s > 0).
-  bool inner_persistence_{false};
-  // Current-walker conditioning: advance the persistent pool at end-of-step against phi_new so leapfrog
-  // weights have unit magnitude at measurement. Default false preserves the begin-of-step phi_old path.
-  bool inner_condition_on_new_{false};
-  int inner_equil_steps_{1};
-  int inner_pool_burn_in_{0};
-  std::string inner_mcmc_{"pcn"};
-  double inner_mcmc_step_{0.5};
-  // Measurement-replica controls (default 1 => measure_energy is Energy).
-  // inner_measure_stride_ defaults to inner_equil_steps. inner_measure_restore_ snapshots chain fields
-  // before the replica loop and restores them after so measurement does not advance propagation.
-  int inner_measure_replicas_{1};
-  int inner_measure_stride_{1};
-  bool inner_measure_restore_{true};
-  // inner_chains_primed_: the per-walker field blocks hold live chain states (set at the first
-  // persistent pool update, which runs inside begin_inner_step -- the one seam with non-const access
-  // to the outer walker set). inner_dets_stale_: the cached inner determinants no longer match the
-  // chain fields (the BP reference draw reused the pool storage, or population control moved chains
-  // between slots/ranks) and must be rebuilt -- deterministically -- from the fields before use.
+  // The inner-sampling mode; Static is the safe default (it needs no sampler settings at all).
+  SamplingTarget inner_sampling_target_{SamplingTarget::Static};
+  // Persistent-chain controls. There is no on/off member: the chains ARE the conditioned sampler
+  // (is_conditioned()). inner_burn_in_: one-time sweeps at the prime. inner_sample_update_steps_: sweeps
+  // per pool advance thereafter. inner_sampler_ / inner_sampler_step_: proposal kernel ("pcn" or
+  // "gaussian") and its step size s (pcn: 0 < s <= 1, s = 1 an independence redraw; gaussian: s > 0).
+  int inner_burn_in_{0};
+  int inner_sample_update_steps_{1};
+  std::string inner_sampler_{"pcn"};
+  double inner_sampler_step_{0.5};
+  // Measurement-replica count. There is no restore flag: the measurement advance FEEDS FORWARD into
+  // propagation, matching hafqmc, which keeps the pool its measurement produced.
+  int inner_n_measure_samples_{1};
+  // inner_chains_primed_: the per-walker field blocks hold live chain states. inner_dets_stale_: the
+  // cached inner determinants no longer match the chain fields and must be rebuilt from them
+  // (deterministically) before use.
   bool inner_chains_primed_{false};
   bool inner_dets_stale_{false};
   // Cumulative per-rank Metropolis statistics of the field-space chain updates.
   long chain_proposed_{0};
   long chain_accepted_{0};
   long chain_updates_{0};
-  // Debug instrumentation: counts Energy() reductions so the per-sample dump (dump_persample_row) can
-  // limit itself to the first few measurement events. Only touched when SAFIRE_DUMP_PERSAMPLE is set.
-  long energy_dump_call_{0};
-  // Counts vbias() calls so the force-bias dump can limit itself to the first few. SAFIRE_DUMP_VBIAS only.
-  long vbias_dump_call_{0};
-  bool inner_log_aggregate_{false};
   nda::array<ComplexType, 3> inner_anchor_;
-  // Construction inputs for the inner walker set, cached at initialize_inner_walkers so a dedicated
-  // mean-field scratch ensemble (mf_scratch_wset_) can be built on demand via the SAME (known-good)
-  // WalkerSet constructor, without touching the forward ensemble. mf_scratch_wset_ holds a P-sample
-  // walker-independent draw of the trial used ONLY by vMF/G_MF (lazily allocated on first use).
-  ptree inner_walker_pt_;
+  // Construction inputs for the inner walker set, cached at initialize_inner_walkers so the mean-field
+  // scratch ensemble can be built on demand via the SAME (known-good) WalkerSet constructor.
+  // mf_scratch_wset_ holds a P-sample walker-independent draw used ONLY by vMF/G_MF, lazily allocated.
+  WalkerSetParameters inner_walker_params_;
   std::vector<nda::matrix<ComplexType>> inner_initial_guess_;
   std::unique_ptr<WalkerSet<MEM>> mf_scratch_wset_;
   std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> mf_scratch_rng_;
-  // Leapfrog: per inner walker q (slot-major q = ip*nwalk + w), the magnitude |⟨ψ_q|φ_w^cond⟩| of its cross overlap with the walker its block was conditioned on. Set at each
-  // conditioned resample; the leapfrog overlap reweights by 1/inner_cond_mag_ so the step ratio is Eq. 25.
+  // Leapfrog: per inner walker q (slot-major q = ip*nwalk + w), the magnitude |<psi_q|phi_w^cond>| of its
+  // cross overlap with the walker its block was conditioned on. The leapfrog overlap divides by it, so
+  // the step ratio is Eq. 25.
   nda::array<RealType, 1> inner_cond_mag_;
   // Per inner sample q: accumulated log importance weight logsw = sum_step HW from conditioned resample.
   // Used for leapfrog reweighting exp(logsw) on the non-persistent path; empty on the persistent path.
@@ -519,102 +755,72 @@ private:
 
   void maybe_advance_inner_ensemble();
 
-  // Draw a FRESH, walker-INDEPENDENT free-projection ensemble of P trial samples {psi_p = B_T(Y^[p])|phi_T>} into inner_ensemble_.wset for use as back-propagation references. Resets
-  // to the anchor, sizes the ensemble to P, then advances inner_nsteps_ BARE free-projection steps via
-  // inner_propagator().Propagate_free (which forces bare field sampling regardless of the forward
-  // propagator's build mode -- so this is decoupled from any 3c conditioning/leapfrog of the forward
-  // walk). Reuses inner_ensemble_.wset as scratch: every forward resample resets it to the anchor, so
-  // transiently overwriting it here is safe (the next begin_inner_step resamples from scratch). Called
-  // by getReferences. Defined in StochasticWfn.cpp (does not depend on the RefMat template).
+  // Draw a fresh walker-INDEPENDENT free-projection ensemble into inner_ensemble_.wset (used as scratch)
+  // for use as back-propagation references, and set the flags that make the draw idempotent within a BP
+  // window. Called by getReferences.
   void draw_bp_reference_ensemble();
 
-  // Reset `target` to the anchor |phi_T>, size it to P = inner_nwalkers_, then advance inner_nsteps_ BARE
-  // free-projection steps (inner_propagator().Propagate_free) to produce a walker-INDEPENDENT P-sample
-  // draw {psi_p = B_T(Y^[p])|phi_T>} of the trial. The one place the free-projection draw lives; shared by
-  // draw_bp_reference_ensemble (back-propagation references) and mean_field_scratch_ensemble (the trial
-  // mean field). Sets NO forward-walk flags -- callers own their own state. Defined in StochasticWfn.cpp
-  // (needs the complete Propagator type). Device-safe (reset_inner_to_anchor + device-ported Propagate_free).
+  // Reset `target` to the anchor, size it to P, and advance inner_nsteps_ BARE free-projection steps to
+  // produce a walker-INDEPENDENT P-sample draw {psi_p = B_T(Y^[p])|phi_T>} of the trial. THE one home of
+  // the free-projection draw, shared by draw_bp_reference_ensemble and mean_field_scratch_ensemble.
+  // Sets NO forward-walk flags -- callers own their own state.
   void draw_free_projection_samples(WalkerSet<MEM>& target);
 
-  // Lazily build (once) a DEDICATED scratch walker set, draw a fresh walker-independent P-sample
-  // free-projection ensemble into it, and return it. Used by vMF/G_MF to reduce the FULL-trial mean field
-  // <Psi_T|.|Psi_T> when the forward inner ensemble has been expanded to the conditioned nw*P form (so
-  // reducing it would be wrong AND clobbering it would corrupt the forward walk). Keeping the draw in its
-  // own scratch leaves inner_ensemble_.wset and every forward-walk flag untouched -- the mean field is a
-  // trial-only quantity and must not perturb the conditioned/persistent/leapfrog walk. Defined in
-  // StochasticWfn.cpp (needs the complete Propagator type).
+  // Lazily build (once) a DEDICATED scratch walker set and draw a fresh walker-independent P-sample
+  // ensemble into it, so vMF/G_MF can reduce the FULL trial's mean field without perturbing the
+  // conditioned forward walk, whose ensemble and flags must not be perturbed by a trial-only quantity.
   WalkerSet<MEM>& mean_field_scratch_ensemble();
 
   // Copy the P inner-walker Slater matrices (post draw_bp_reference_ensemble) into Refs.
   template<class RefMat>
   void fill_references_from_draw(int number_of_references, RefMat&& Refs);
 
-  // Reset the first `count` inner walkers in `inner` to the anchor |phi_T> (the per-spin Slater matrices
-  // cached in inner_anchor_; handles CLOSED/COLLINEAR). The single place that knows the anchor/collinear
-  // layout -- shared by the free-projection advance, the conditioned resample, and the BP reference draw.
+  // Reset the first `count` inner walkers to the anchor |phi_T> (from inner_anchor_; handles
+  // CLOSED/COLLINEAR). The single place that knows the anchor/collinear layout.
   void reset_inner_to_anchor(WalkerSet<MEM>& inner, int count);
 
-  // ---- Persistent field-space chain machinery (all defined in StochasticWfn.cpp: the propagator
-  // ---- calls need the complete Propagator type, unavailable to the .icc templates).
+  // ---- Persistent field-space chain machinery. All defined in StochasticWfn.cpp, whose propagator
+  // ---- calls need the complete Propagator type, unavailable to the .icc templates.
 
-  // Draw a fresh field configuration Y ~ p_T (i.i.d. standard normals) into every chain's slot of the
-  // outer walker set's TrialFields block -- the chain start. Requires the block to be sized.
+  // Draw the chain start Y ~ p_T into every chain's slot of the outer walker set's TrialFields block.
+  // Requires the block to be sized.
   void prime_chain_fields(WalkerSet<MEM>& wset);
 
-  // Rebuild the inner determinants from the chain fields: reset the (slot-major nw*P) pool to the
-  // anchor |phi_T>, then apply the inner propagator's B_T with the STORED fields, one inner step at a
-  // time (Propagate_given_fields). Deterministic -- the single source of truth for what psi_q is --
-  // and therefore exact after population control moved chains between slots or ranks, and after the
-  // back-propagation reference draw reused the pool storage.
+  // Rebuild the inner determinants from the stored chain fields. Deterministic -- the single source of
+  // truth for what psi_q is, and therefore exact after population control or a BP reference draw.
   void rebuild_inner_dets_from_chain_fields(WalkerSet<MEM> const& wset);
 
-  // One Metropolis-Hastings sweep over all nw*P chains, in FIELD space (the chain state is the field
-  // configuration Y, not the determinant). Proposal per inner_mcmc_: pCN (prior-preserving) or
-  // random-walk gaussian (prior ratio in the acceptance). Target on slot q = ip*nw + w:
-  // p_T(Y) * |<psi(Y)|phi_w>|. Batched: one Propagate_given_fields build of all proposal determinants
-  // + one cross-overlap pass; rejected slots restore their determinant row (fields untouched).
+  // One Metropolis-Hastings sweep over all nw*P chains in FIELD space, targeting p_T(Y)|<psi(Y)|phi_w>|
+  // on slot q = ip*nw + w. Batched: one determinant build of the whole pool + one cross-overlap pass;
+  // rejected slots restore their determinant row and keep their fields.
   void chain_pool_sweep(WalkerSet<MEM>& wset);
 
-  // Per-outer-step persistent chain update, called from begin_inner_step (the non-const seam):
-  // lazily size the TrialFields block, prime the chains on first use (+ burn-in), rebuild stale
-  // determinants, run inner_equil_steps_ sweeps against the CURRENT (old) walkers, and refresh the
-  // leapfrog conditioning magnitudes. Purely rank-local: no communication, no collectives.
+  // Per-outer-step persistent chain update, called from begin_inner_step (the non-const seam): size,
+  // prime (+ burn-in) or repair, sweep against the CURRENT walkers, refresh the leapfrog magnitudes.
+  // Purely rank-local: no communication, no collectives.
   void update_persistent_chain_pool(WalkerSet<MEM>& wset);
 
-  // Advance the persistent pool by inner_measure_stride_ sweeps against the CURRENT (fixed) walkers and
-  // refresh the leapfrog conditioning magnitudes -- one measurement replica's worth of pool motion.
-  // Same tail as update_persistent_chain_pool, minus the priming/sizing/staleness handling: the caller
-  // (measure_energy) only runs when the chains are already live.
+  // One measurement replica's pool motion: update_persistent_chain_pool's tail without the
+  // priming/sizing/staleness handling, since measure_advances_pool() guarantees live chains.
   void advance_measure_pool(WalkerSet<MEM>& wset);
 
-  // Snapshot / restore the chain state for inner_measure_restore_. The chain STATE is the field
-  // configuration, so the fields alone are a complete snapshot: restoring them and rebuilding the
-  // determinants deterministically (rebuild_inner_dets_from_chain_fields) returns the pool exactly
-  // where the measurement found it. Cheap in memory -- [nwalk, P*nsteps*nCV] -- versus copying the
-  // determinants themselves.
-  void snapshot_chain_fields(WalkerSet<MEM> const& wset, nda::array<ComplexType, 2>& save) const;
-  void restore_chain_fields(WalkerSet<MEM>& wset, nda::array<ComplexType, 2> const& save);
-
-  // Resample the inner ensemble conditioned on each outer walker phi_w. Computes the custom inner force bias x_bar(phi_w) = sqrt(dt)*L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (the inner
-  // trial IS the anchor phi_T, so this reuses inner_nomsd()'s mixed DM + vbias on the OUTER wset) and
-  // drives the nw*P inner ensemble through the inner propagator's conditioned field-sampling seam.
+  // Bootstrap (non-persistent) resample of the inner ensemble conditioned on each outer walker phi_w,
+  // driven by the caller-supplied conditioning force bias X_bias (Eq. 23).
   void advance_inner_ensemble_conditioned(memory::array<MEM, ComplexType, 2> const& X_bias, int nw);
 
-  // Resample dispatch: walker-conditioned when inner_conditioning_, else the walker-independent
+  // Resample dispatch: walker-conditioned when is_conditioned(), else the walker-independent
   // free-projection path. Honors the per-step latch armed by begin_inner_step().
   template<class WlkSet>
   void conditioned_resample(const WlkSet& wset);
 
-  // Fill inner_cond_mag_ with |⟨ψ_q|φ_w^cond⟩| after a conditioned resample (φ_cond = the outer walker
-  // its block was conditioned on). The leapfrog overlap divides by this.
+  // Fill inner_cond_mag_ after a conditioned resample. The leapfrog overlap divides by it.
   template<class WlkSet>
   void compute_inner_cond_mag(const WlkSet& wset);
 
-  // Fill mag(q) = |⟨inner_q | φ_w⟩| for the slot-major (q = ip*nw + w) inner ensemble against the outer
-  // walker set (same det(A^dag B) / CLOSED-doubling / COLLINEAR-product convention as the Log_Overlap
-  // reduction). Shared by compute_inner_cond_mag (leapfrog reweight denominator) and the Metropolis
-  // accept/reject (conditioned target ∝ p_T(Y)·|⟨ψ|φ_w⟩|). Per-rank-local. `mag` must be
-  // sized nw*P; `inner` must be in the slot-major nw*P conditioned form.
+  // Fill mag(q) = |<inner_q|phi_w>| for the slot-major inner ensemble against the outer walker set (same
+  // det(A^dag B) / CLOSED-doubling / COLLINEAR-product convention as the Log_Overlap reduction). Shared
+  // by compute_inner_cond_mag and the Metropolis accept/reject. Rank-local. `mag` must be sized nw*P and
+  // `inner` must be in the slot-major nw*P conditioned form.
   template<class WlkSet>
   void cross_overlap_magnitudes(const WlkSet& wset, WalkerSet<MEM>& inner, nda::array<RealType, 1>& mag);
 
@@ -626,74 +832,24 @@ private:
                              TVecOv&& Ov,
                              Accumulate&& accumulate);
 
-  // Whether vMF / G_MF can reduce the FORWARD inner ensemble directly (true), i.e. it is already in its
-  // walker-INDEPENDENT P-sample form (inner.size() == inner_nwalkers_) with P > 1. When false, vMF/G_MF do
-  // NOT simply fall back to the anchor -- they branch on bp_uses_inner_ensemble():
-  //  - inner_nwalkers_ == 1 OR inner_nsteps_ == 0 (bp_uses_inner_ensemble() false): the trial IS the
-  //    anchor (a single/degenerate sample, or no free projection), so delegate to nomsd_'s anchor mean
-  //    field -- exact, and avoids a redundant reduction. Subsumes the single-determinant delegate limit.
-  //  - inner_nsteps_ > 0 && P > 1 but the ensemble has been expanded by a conditioned/leapfrog/persistent
-  //    resample to the nwalk*P walker-CONDITIONED form (bp_uses_inner_ensemble() true): there is no
-  //    walker-independent subset to average here, so vMF/G_MF draw a DEDICATED free-projection scratch
-  //    ensemble (mean_field_scratch_ensemble) and reduce the FULL trial's mean field from that -- NOT the
-  //    anchor. Reducing the anchor here (the historical behavior) made the HS-contour shift inconsistent
-  //    with the full-trial force bias/energy and biased the phaseless constraint toward overbinding.
+  // Whether vMF / G_MF can reduce the FORWARD inner ensemble directly, i.e. it is already in its
+  // walker-INDEPENDENT P-sample form with P > 1. When false they do NOT simply fall back to the anchor --
+  // they branch on bp_uses_inner_ensemble(): the anchor mean field when the trial IS the anchor, else a
+  // dedicated free-projection scratch draw of the FULL trial.
   bool mean_field_uses_inner_ensemble() const
   {
-    // A conditioned dynamic trial's forward ensemble is the slot-major nwalk*P walker-CONDITIONED form.
-    // At nwalk==1 (a single outer walker per rank -- the normal MPI layout, and an explicitly-tested
-    // regime) that size collapses to 1*P == inner_nwalkers_ and would SPOOF the size test below, making
-    // vMF/G_MF reduce the phi_w-conditioned ensemble as if it were the walker-independent trial. So gate
-    // conditioned dynamic trials OUT explicitly: they always take the dedicated free-projection scratch
-    // draw (mean_field_scratch_ensemble) regardless of nwalk. Persistence implies inner_conditioning_, so
-    // this covers the persistent path too. (The same nwalk==1 size ambiguity is handled in
-    // conditioned_resample via the latch/flags rather than size -- see that routine.)
-    return inner_nwalkers_ > 1 && not(inner_conditioning_ && inner_nsteps_ > 0)
+    // is_conditioned() is gated out EXPLICITLY rather than by size: at nwalk == 1 the conditioned
+    // nwalk*P form collapses to inner_n_samples_ and would spoof the size test below.
+    return inner_n_samples_ > 1 && not is_conditioned()
            && inner_ensemble_.initialized && inner_ensemble_.wset != nullptr
-           && int(inner_ensemble_.wset->size()) == inner_nwalkers_;
+           && int(inner_ensemble_.wset->size()) == inner_n_samples_;
   }
 
-  // Build the normalized stochastic trial mean-field one-body Green's function <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T> into `Gsum` (full [1, nspin*npol*NMO*npol*NMO] layout) by reducing
-  // the P = inner_nwalkers_ walker-independent samples in `inner` against each other (the double sum
-  // above). Shared by vMF (contracts it) and G_MF (returns it). Trial-only -- no outer walker set, no
-  // conditioned resample. `inner` MUST be in the walker-INDEPENDENT P-sample form (inner.size() ==
-  // inner_nwalkers_): either the forward ensemble when mean_field_uses_inner_ensemble() is true, or the
-  // dedicated mean-field scratch draw (mean_field_scratch_ensemble()) when the forward ensemble has been
-  // expanded to the conditioned nw*P form.
+  // Build the normalized trial mean-field Green's function <Psi_T|c+c|Psi_T>/<Psi_T|Psi_T> into `Gsum`
+  // (full [1, nspin*npol*NMO*npol*NMO] layout) by reducing the P samples in `inner` against each other.
+  // Shared by vMF (contracts it) and G_MF (returns it). `inner` MUST be in the walker-INDEPENDENT
+  // P-sample form -- asserted.
   void reduce_inner_mean_field_dm(WalkerSet<MEM>& inner, memory::buffered_array<MEM, ComplexType, 2>& Gsum);
-
-  // Debug: append one per-inner-sample row for outer walker 0 -- {call, ip, <psi_ip|phi_0>, weight s,
-  // eloc components} -- to the file named by env SAFIRE_DUMP_PERSAMPLE, for the first few Energy()
-  // measurement events (`call` < cap). No-op when the env var is unset. Lets the P-sample estimator be
-  // dissected offline (leapfrog weight s=<psi|phi>/|<psi|phi_cond>| vs the plain ratio-of-sums over the
-  // raw overlaps). Defined in StochasticWfn.cpp (does the file I/O); host-only caller.
-  static void dump_persample_row(long call, int ip, ComplexType lin_ov, ComplexType s, ComplexType e0,
-                                 ComplexType e1, ComplexType e2);
-
-  // Env SAFIRE_CWC_MEASURE_MAG: normalize leapfrog weights by |<psi|phi_measured>| (diagnostic only).
-  static bool cwc_measure_mag();
-
-  // Env SAFIRE_DUMP_VBIAS: dump walker-0 phi and its force bias for offline cross-checks. First 32 calls.
-  static bool want_vbias_dump();
-  void dump_vbias_row(long call, int rows, int naea, ComplexType const* phi, int nCV,
-                      ComplexType const* vb);
-
-  static bool want_slater_dump(); // true iff env SAFIRE_DUMP_SLATER is set.
-  // Env SAFIRE_DUMP_SLATER: dump walker-0 phi and P inner determinants as text for offline eloc checks.
-  static void dump_slater_snapshot(int rows, int naea, int P, ComplexType const* phi, ComplexType const* psis);
-
-  // Debug: true iff env SAFIRE_DUMP_WALKERS is set.
-  static bool want_walker_dump();
-  // Env SAFIRE_DUMP_WALKERS: append walker-0 phi per measurement event for offline reference eloc.
-  static void dump_walker_row(long call, int rows, int naea, ComplexType const* phi);
-
-  // Env SAFIRE_POOL_HANDOFF: optionally apply the pool-change ratio r to WEIGHT when OVLP is re-synced.
-  // Returns 0 (off), 1 (phase only), or 2 (magnitude and phase).
-  static int pool_seam_handoff_mode();
-  // Env SAFIRE_DUMP_POOLSEAM: log overlap before/after OVLP re-sync and derived pool-change statistics.
-  static void dump_poolseam_row(long call, int w, ComplexType lo_old, ComplexType lo_new);
-  // Counts begin_inner_step re-sync events for the two diagnostics above.
-  long pool_seam_call_{0};
 
   int dm_size(bool full) const;
   bool compact_G_for_vbias() const;

@@ -76,6 +76,10 @@ Supported Wavefunction Types
    Single and (typically) multi-determinant trial wavefunctions built from 
    occupation strings ( i.e. explicit lists of occupied orbital indices ).
    Fast Woodbury updates implemented for some Hamiltonians / computational architectures (See below).
+**StochasticWfn (Stochastic Trial)**
+   NOMSD-based trial whose overlap and local energy are estimated from an auxiliary-field
+   inner ensemble (static anchor, free projection, or walker-conditioned sampling).
+   Compatible with Dense Cholesky Hamiltonians and CLOSED/COLLINEAR walkers (See below).
 
 See :ref:`Wavefunction File Formats <Wavefunction-classes>` for format specifications.
 
@@ -93,8 +97,6 @@ Supported Walker Types
    For systems with noncollinear spin arrangements.
    Uses a single Slater matrix represented in an explicit spin-orbital basis.
    Essential for systems with spin-orbit coupling or frustrated magnetism.
-**FULLYPOLARIZED**
-   For fully spin-polarized systems - i.e. for :math:`N^\downarrow = 0`.
 
 See :ref:`Random Walker Classes <Walker-classes>` for details.
 
@@ -147,9 +149,11 @@ We indicate in parentheses whether the combination supports CPU, GPU, or is in t
         * CLOSED walkers (CPU, GPU)
         * COLLINEAR walkers (CPU, GPU)  
         * NONCOLLINEAR walkers (CPU, GPU)
-        * FULLYPOLARIZED walkers (CPU, GPU)
     **PHMSD Wavefunction**
         * COLLINEAR walkers - with fast Woodbury algorithm (CPU, GPU)
+    **StochasticWfn Wavefunction**
+        * CLOSED walkers (CPU, GPU)
+        * COLLINEAR walkers (CPU, GPU)
 
 **K-Point Factorized Hamiltonian**
     **NOMSD Wavefunction**
@@ -173,3 +177,4 @@ Not Currently Supported
 * Discrete Hubbard-Stratonovich Transformation on GPU for Lattice Model Hamiltonian **please use CPU instead**.
 * PHMSD trial wavefunctions with THC Hamiltonians or Lattice Model Hamiltonians
 * PHMSD trial wavefunctions with K-Point Factorized Hamiltonians *on CPU* - **please use GPU instead.**
+* StochasticWfn with NONCOLLINEAR walkers, or with Hamiltonians other than Dense Cholesky.

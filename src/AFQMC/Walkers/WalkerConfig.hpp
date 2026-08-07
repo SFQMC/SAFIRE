@@ -68,22 +68,23 @@ enum walker_data
   TRIAL_FIELDS,
 };
 
+enum class LoadBalanceAlgorithm
+{
+  undefined,
+  simple,
+  async
+};
+enum class BranchingAlgorithm
+{
+  undefined,
+  pair,
+  comb,
+  min_branch,
+  serial_comb
+};
+
 } // namespace afqmc
 } // namespace sfqmc
 
-enum LOAD_BALANCE_ALGORITHM
-{
-  UNDEFINED_LOAD_BALANCE,
-  SIMPLE,
-  ASYNC
-};
-enum BRANCHING_ALGORITHM
-{
-  UNDEFINED_BRANCHING,
-  PAIR,
-  COMB,
-  MIN_BRANCH,
-  SERIAL_COMB
-};
 
 #endif

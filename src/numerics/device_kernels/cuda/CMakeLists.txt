@@ -16,8 +16,5 @@ target_sources(safire_lib
     apply.cu
     stochastic_reductions.cu
     probe.cu
-#    symmetry_tools.cu
-#    potentials.cu
-#    kpoint_tools.cu
 )
 

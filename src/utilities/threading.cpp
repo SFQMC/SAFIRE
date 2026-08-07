@@ -14,7 +14,6 @@
 #include "utilities/threading.h"
 
 #include <cstdlib>
-#include <thread>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -24,42 +23,39 @@
 
 namespace sfqmc::utils {
 
-// File-scope flags recording whether each threading variable was already present
-// in the environment when SAFIRE started (i.e. the user provided it explicitly).
-static bool s_tblis_user_set = false;
-static bool s_omp_user_set   = false;
-
-bool tblis_threads_was_user_set() { return s_tblis_user_set; }
-bool omp_threads_was_user_set()   { return s_omp_user_set; }
-
 /// @copydoc sfqmc::utils::init_threading
 void init_threading()
 {
-  auto parse_env_int = [](const char* name) -> int {
-    const char* val = std::getenv(name);
-    if (!val) return 1;
-    try { return std::max(1, std::stoi(val)); } catch (...) { return 1; }
-  };
+  const char* tblis_env = std::getenv("TBLIS_NUM_THREADS");
+  const char* omp_env = std::getenv("OMP_NUM_THREADS");
 
-  // Set OMP_NUM_THREADS and TBLIS_NUM_THREADS to 1 unless the user has already
-  // set them. This prevents accidental CPU oversubscription in MPI parallel runs.
-  s_omp_user_set = (std::getenv("OMP_NUM_THREADS") != nullptr);
-  if (!s_omp_user_set) {
+
+  bool potential_problem{};
+  
+  if(!omp_env) {
     ::setenv("OMP_NUM_THREADS", "1", 1);
 #ifdef _OPENMP
     omp_set_num_threads(1);
 #endif
+    app_log(1, "OMP_NUM_THREADS:   1 (default)", omp_env);
+  } else {
+    if(std::strtol(omp_env, nullptr, 10) != 1) {
+      potential_problem = true;
+    }
+    app_log(1, "OMP_NUM_THREADS:   {} (user-provided)", omp_env);
   }
-  s_tblis_user_set = (std::getenv("TBLIS_NUM_THREADS") != nullptr);
 
-  // Warn if user-set threading variables are > 1 (oversubscription awareness).
-  if (s_omp_user_set && parse_env_int("OMP_NUM_THREADS") > 1)
-    app_warning("OMP_NUM_THREADS={} is set in the environment. Assuming intentional; "
-                "be aware of potential CPU oversubscription in MPI runs.",
-                parse_env_int("OMP_NUM_THREADS"));
-  if (s_tblis_user_set && parse_env_int("TBLIS_NUM_THREADS") > 1)
-    app_warning("TBLIS_NUM_THREADS={} is set in the environment. Assuming intentional; "
-                "be aware of potential CPU oversubscription in MPI runs.",
-                parse_env_int("TBLIS_NUM_THREADS"));
+  if(!tblis_env) {
+    app_log(1, "TBLIS_NUM_THREADS: (unset)", tblis_env);
+  } else {
+    if(std::strtol(tblis_env, nullptr, 10) != 1) {
+      potential_problem = true;
+    }
+    app_log(1, "TBLIS_NUM_THREADS: {} (user-provided)", tblis_env);
+  }
+
+  if(potential_problem) {
+    app_warning("OMP_NUM_THREADS or TBLIS_NUM_THREADS were set != 1 by the user. Be aware of potential oversubscription in MPI runs.");
+  }
 }
 } // namespace sfqmc::utils

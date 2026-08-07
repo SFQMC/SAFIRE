@@ -19,6 +19,7 @@
 #include "AFQMC/config.h"
 #include "numerics/device_kernels/cuda/add_scalar.cuh"
 #include "utilities/check_strides.hpp"
+#include "utilities/check_shape.hpp"
 #include "numerics/operations/determinants.hpp"
 #include "numerics/operations/product.hpp"
 #include "numerics/operations/split_singular_vals.hpp"
@@ -128,12 +129,16 @@ void log_overlap_impl(A_t const& A, B_t const& B, O_t && ovlp, T_t && TNN, bool 
   using Type = nda::get_value_t<B_t>;
 
   auto [nbatch, NMO, NEL] = B.shape();
+  if(NEL == 0) {
+    return;
+  }
+
   if(herm)
-    utils::check(A.shape() == std::array<long,2>{NEL,NMO}, "Size mismatch");
+    utils::check_shape(A, "A", NEL, NMO);
   else
-    utils::check(A.shape() == std::array<long,2>{NMO,NEL}, "Size mismatch");
+    utils::check_shape(A, "A", NMO, NEL);
   utils::check(ovlp.size() >= nbatch, "");
-  utils::check(TNN.shape() == std::array<long,3>{nbatch,NEL,NEL}, "Size mismatch"); 
+  utils::check_shape(TNN, "TNN", nbatch,NEL,NEL);
 
   memory::buffered_array<MEM,int,2> ipiv(nbatch,NEL);
   memory::buffered_array<MEM,Type,1> work;
@@ -169,9 +174,12 @@ void log_overlap_impl(A_t const& A, B_t const& B, O_t && ovlp, T_t && TNN, bool 
   using Type = nda::get_value_t<B_t>;
 
   auto [nbatch, NMO, NEL] = B.shape();
-  utils::check(A.shape() == B.shape(), "Size mismatch");
+  utils::check_shape(A, "A", nbatch, NMO, NEL);
   utils::check(ovlp.size() >= nbatch, "");
-  utils::check(TNN.shape() == std::array<long,3>{nbatch,NEL,NEL}, "Size mismatch");
+  utils::check_shape(TNN, "TNN", nbatch, NEL, NEL);
+  if(NEL == 0) {
+    return;
+  }
 
   memory::buffered_array<MEM,int,2> ipiv(nbatch,NEL);
   memory::buffered_array<MEM,Type,1> work;
@@ -211,6 +219,9 @@ void log_overlap_impl(UL_t const& UL, DL_t const& DL, VL_t const& VL,
   using Type = nda::get_value_t<UR_t>;
 
   auto [nbatch, NMO, NEL] = UR.shape();
+  if(NEL == 0) {
+    return;
+  }
 
   utils::check(UL.shape() == std::array<long,2>{NMO,NMO}, "Size mismatch");
   utils::check(ovlp.size() >= nbatch, "");
@@ -437,7 +448,8 @@ void Log_Overlap(A_t const& A, B_t const& B, O_t && ovlp, bool herm = true)
   constexpr MEMORY_SPACE MEM = memory::get_memory_space<A_t>(); 
   using Type = nda::get_value_t<B_t>;
   auto [nbatch, NMO, NEL] = B.shape();
-  memory::buffered_array<MEM,Type,3> TNN(nbatch,NEL,NEL); 
+
+  memory::buffered_array<MEM,Type,3> TNN(nbatch,NEL,NEL);
 
   detail::log_overlap_impl(A,B,ovlp,TNN,herm);
 }
@@ -545,14 +557,22 @@ void MixedDensityMatrix(A_t const& A, B_t const& B, C_t && C, O_t && ovlp, bool 
 
   auto [nbatch, NMO, NEL] = B.shape();
   if(herm)
-    utils::check(A.shape() == std::array<long,2>{NEL,NMO}, "Size mismatch");
+    utils::check_shape(A, "A", NEL, NMO);
   else
-    utils::check(A.shape() == std::array<long,2>{NMO,NEL}, "Size mismatch");
+    utils::check_shape(A, "A", NMO, NEL);
   utils::check(ovlp.size() >= nbatch, "");
   if(compact)
-    utils::check(C.shape() == std::array<long,3>{nbatch, NEL,NMO}, "Size mismatch");
+    utils::check_shape(C, "C", nbatch, NEL, NMO);
   else
-    utils::check(C.shape() == std::array<long,3>{nbatch, NMO,NMO}, "Size mismatch");
+    utils::check_shape(C, "C", nbatch, NMO, NMO);
+
+  // Empty sector (e.g. ndown==0 fully polarized): no electrons, so the overlap
+  // factor is 1 (log 0, leaving the accumulated ovlp unchanged) and the density
+  // matrix is zero. Return before the 0-dimension getrf/getri/gemm calls.
+  if(NEL == 0) {
+    if(C.size() > 0) C() = Type(0.0);  // only the non-compact block has elements to zero
+    return;
+  }
 
   memory::buffered_array<MEM,Type,3> TNN(nbatch,NEL,NEL);
 
@@ -560,23 +580,18 @@ void MixedDensityMatrix(A_t const& A, B_t const& B, C_t && C, O_t && ovlp, bool 
   detail::log_overlap_impl(A,B,ovlp,TNN,herm,true);
 
   if(compact) {
-
     // C = T(TNN) * T(B)
     math::product<'T','T'>(TNN,B,C);
-
   } else {
     memory::buffered_array<MEM,Type,3> TNM(nbatch,NEL,NMO);
 
-    if (herm)
-    {
+    if (herm) {
       // T2 = T(T1) * T(B)
       math::product<'T','T'>(TNN,B,TNM);
 
       // C = conj(A) * T2
       math::product<'T'>(A,TNM,C);
-    }
-    else
-    {
+    } else {
       // T2 = T1 * H(A)
       if constexpr (CSRMatrix<A_t>) {
         utils::check(false, "finish implementation!!!");
@@ -606,12 +621,19 @@ void MixedDensityMatrix(A_t const& A, B_t const& B, C_t && C, O_t && ovlp, bool 
   using Type = nda::get_value_t<B_t>;
 
   auto [nbatch, NMO, NEL] = A.shape();
-  utils::check(A.shape() == B.shape(), "Size mismatch");
+  utils::check_shape(B, "B", nbatch, NMO, NEL);
   utils::check(ovlp.size() >= nbatch, "");
   if(compact)
-    utils::check(C.shape() == std::array<long,3>{nbatch, NEL,NMO}, "Size mismatch");
+    utils::check_shape(C, "C", nbatch, NEL, NMO);
   else
-    utils::check(C.shape() == std::array<long,3>{nbatch, NMO,NMO}, "Size mismatch");
+    utils::check_shape(C, "C", nbatch, NMO, NMO);
+
+  // Empty sector (e.g. ndown==0 fully polarized): no electrons, so the overlap
+  // factor is 1 and the density matrix is zero. Return before the 0-dimension getrf/getri/gemm calls.
+  if(NEL == 0) {
+    if(C.size() > 0) C() = Type(0.0);  // only the non-compact block has elements to zero
+    return;
+  }
 
   memory::buffered_array<MEM,Type,3> TNN(nbatch,NEL,NEL);
 
@@ -619,11 +641,8 @@ void MixedDensityMatrix(A_t const& A, B_t const& B, C_t && C, O_t && ovlp, bool 
   detail::log_overlap_impl(A,B,ovlp,TNN,true);
 
   if(compact) {
-
     math::product<'T','T'>(TNN,B,C);
-
   } else {
-
     memory::buffered_array<MEM,Type,3> TNM(nbatch,NEL,NMO);
 
     // T2 = T1 * H(A)
@@ -632,7 +651,6 @@ void MixedDensityMatrix(A_t const& A, B_t const& B, C_t && C, O_t && ovlp, bool 
     // T2 = T(T1) * T(B)
     // C = T( B * T2) = T(T2) * T(B)
     math::product<'T','T'>(TNM,B,C);
-
   }
 }
 

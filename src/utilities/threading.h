@@ -39,10 +39,4 @@ namespace sfqmc::utils {
    */
   void init_threading();
 
-  /// Returns true if `TBLIS_NUM_THREADS` was present in the environment at startup.
-  bool tblis_threads_was_user_set();
-
-  /// Returns true if `OMP_NUM_THREADS` was present in the environment at startup.
-  bool omp_threads_was_user_set();
-
 } // namespace sfqmc::utils

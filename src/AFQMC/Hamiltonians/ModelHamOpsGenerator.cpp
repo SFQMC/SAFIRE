@@ -87,8 +87,7 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
   using ValueType = typename std::conditional_t<REAL, RealType, ComplexType>;
   using csrMat    = math::sparse::csr_matrix<ValueType, HOST_MEMORY, int, int>;   
 
-  if(type == CLOSED)
-  utils::check(type != CLOSED and type != FULLYPOLARIZED, " Error in ModelHamOpsGenerator::getHamiltonianOperations: CLOSED or FULLYPOLARIZED walker types not allowed with Model Hamiltonians. "); 
+  utils::check(type != CLOSED, " Error in ModelHamOpsGenerator::getHamiltonianOperations: CLOSED walker type not allowed with Model Hamiltonians. ");
 
   // make sure there is at least 1 one-body hamiltonian in the components
   bool one_body_term(false);

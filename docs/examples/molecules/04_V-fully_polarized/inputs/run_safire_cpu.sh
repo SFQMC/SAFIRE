@@ -10,5 +10,5 @@ module load safire-run
 
 date
 # Launch MPI code...
-srun --cpu-bind=cores safire --filenames afqmc.json &> afqmc.out
+srun --cpu-bind=cores safire afqmc.json &> afqmc.out
 date

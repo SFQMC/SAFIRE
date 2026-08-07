@@ -35,18 +35,6 @@ namespace sfqmc
 namespace afqmc
 {
 
-  // disabled default constructor
-  template<MEMORY_SPACE M>
-  HamiltonianOperations<M>::HamiltonianOperations()  
-  {
-    APP_ABORT(" Error: Calling default constructor of HamiltonianOperations. ");
-  } 
-
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations();
-#if defined(ENABLE_DEVICE)
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations();
-#endif
-
   // move constructor
   template<MEMORY_SPACE M>
   template<typename HOps>
@@ -231,12 +219,19 @@ __update_potentials__(DEVICE_MEMORY,HOST_MEMORY)
   {
     return std::visit([&](auto&& a) { return a.getFieldTypes(); }, var);
   }
-  
+
+  template<MEMORY_SPACE M>
+  bool HamiltonianOperations<M>::has_fullG_vbias() const
+  {
+    return std::visit([&](auto&& a) { return a.has_fullG_vbias(); }, var);
+  }
+
   template int HamiltonianOperations<HOST_MEMORY>::number_of_cholesky_vectors() const;
   template int HamiltonianOperations<HOST_MEMORY>::number_of_ke_vectors() const;
   template std::tuple<int,int> HamiltonianOperations<HOST_MEMORY>::vHS_dims() const;
   template HamiltonianTypes HamiltonianOperations<HOST_MEMORY>::getHamType() const;
   template nda::array<int,1> HamiltonianOperations<HOST_MEMORY>::getFieldTypes() const;
+  template bool HamiltonianOperations<HOST_MEMORY>::has_fullG_vbias() const;
 
 #if defined(ENABLE_DEVICE)
   template int HamiltonianOperations<DEVICE_MEMORY>::number_of_cholesky_vectors() const;
@@ -244,6 +239,7 @@ __update_potentials__(DEVICE_MEMORY,HOST_MEMORY)
   template std::tuple<int,int> HamiltonianOperations<DEVICE_MEMORY>::vHS_dims() const;
   template HamiltonianTypes HamiltonianOperations<DEVICE_MEMORY>::getHamType() const;
   template nda::array<int,1> HamiltonianOperations<DEVICE_MEMORY>::getFieldTypes() const;
+  template bool HamiltonianOperations<DEVICE_MEMORY>::has_fullG_vbias() const;
 #endif
 
 } // namespace afqmc

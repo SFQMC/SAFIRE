@@ -32,12 +32,23 @@ namespace afqmc
 
 namespace wavefunction_detail
 {
+/**
+ * @brief Trait identifying the StochasticWfn alternatives of the Wavefunction variant.
+ *
+ * @details Only StochasticWfn carries an inner ensemble, so the variant's stochastic-only members
+ * must compile away for every other alternative rather than requiring them all to grow no-op
+ * overloads. This trait is what the `if constexpr` in those members tests.
+ *
+ * @param T the wavefunction alternative being tested
+ */
 template<class T>
 struct is_stochastic_wfn : std::false_type
 {};
 template<MEMORY_SPACE MEM, class devPsiT>
 struct is_stochastic_wfn<StochasticWfn<MEM, devPsiT>> : std::true_type
 {};
+/// @brief Concrete StochasticInnerStack, defined in WavefunctionFactory.cpp where the inner
+/// wavefunction and propagator types are known.
 template<MEMORY_SPACE MEM, class MType2>
 struct StochasticInnerStackImpl;
 } // namespace wavefunction_detail
@@ -46,7 +57,7 @@ template<MEMORY_SPACE MEM>
 class Wavefunction 
 {
 public:
-  Wavefunction() { APP_ABORT(" Error: Reached default constructor of Wavefunction. "); }
+  Wavefunction() = delete;
 
   explicit Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>>&& other) : var(std::move(other)) {}
   explicit Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>> const& other) : var(other) {} 
@@ -213,6 +224,15 @@ public:
     return std::visit([&](auto&& a) { return a.getHamType(); }, var);
   }
 
+  /// @brief True iff the underlying Hamiltonian operator accepts a FULL (un-rotated) G in vbias.
+  /// Callers that build a mean field with no half-rotated form -- StochasticWfn::vMF at
+  /// inner_n_samples > 1 -- must gate on this rather than discover the gap as a size mismatch deep in
+  /// the operator.
+  bool has_fullG_vbias() const
+  {
+    return std::visit([&](auto&& a) { return a.has_fullG_vbias(); }, var);
+  }
+
   auto getFieldTypes()
   {
     return std::visit([&](auto&& a) { return a.getFieldTypes(); }, var);
@@ -266,116 +286,98 @@ public:
 
 
 
+  /// @brief True iff the held alternative is a StochasticWfn; false for every other trial.
   bool is_stochastic_wavefunction() const
   {
     return std::visit(
         [](auto&& a) { return wavefunction_detail::is_stochastic_wfn<std::decay_t<decltype(a)>>::value; }, var);
   }
 
+  /// @brief True once a stochastic trial's inner ensemble has been allocated; false if non-stochastic.
   bool stochastic_inner_walkers_initialized() const
   {
-    return std::visit(
-        [](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.inner_walkers_initialized();
-          return false;
-        },
-        var);
+    return visit_stochastic_or([](auto&& a) { return a.inner_walkers_initialized(); }, false);
   }
 
-  // Current inner trial-ensemble walker count: P (= inner_nwalkers) in the walker-independent P-sample
-  // form, or nwalk*P after a conditioned/leapfrog resample; -1 for a non-stochastic or uninitialized
-  // wavefunction. Read-only diagnostic (used by stochastic_mean_field_production_order).
+  /**
+   * @brief Read-only diagnostic: size of a stochastic trial's inner ensemble.
+   *
+   * @details P in the walker-independent form, or nwalk*P once a conditioned resample has expanded it;
+   * -1 if the trial is not stochastic or its ensemble is not yet initialized.
+   */
   long stochastic_inner_ensemble_size() const
   {
-    return std::visit(
+    return visit_stochastic_or(
         [](auto&& a) -> long {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.inner_walkers_initialized() ? long(a.inner_wset().size()) : -1L;
-          return -1L;
+          return a.inner_walkers_initialized() ? long(a.inner_wset().size()) : -1L;
         },
-        var);
+        -1L);
   }
 
-  // Cumulative Metropolis acceptance fraction of a stochastic trial's persistent field-space chain
-  // updates on this rank (1.0 before any proposal; -1 for a non-stochastic wavefunction). Read-only
-  // diagnostic.
+  /// @brief Cumulative field-chain Metropolis acceptance on this rank; -1 if non-stochastic.
   double stochastic_inner_chain_acceptance() const
   {
-    return std::visit(
-        [](auto&& a) -> double {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.inner_chain_acceptance();
-          return -1.0;
-        },
-        var);
+    return visit_stochastic_or([](auto&& a) { return a.inner_chain_acceptance(); }, -1.0);
   }
 
-  // True when a stochastic trial's measure_energy will actually average over measurement replicas
-  // (false for a non-stochastic wavefunction, and for a stochastic one whose nm == 1 or whose pool is
-  // not a live persistent chain). Read-only; exists so a test can assert the replica path is LIVE
-  // rather than pass vacuously on the plain-Energy fallback.
-  bool stochastic_measure_replicas_active() const
+  /// @brief True when measure_energy() advances a live persistent pool, so replica-path tests can
+  /// assert they are not passing vacuously; false if non-stochastic.
+  bool stochastic_measure_advances_pool() const
   {
-    return std::visit(
-        [](auto&& a) -> bool {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.measure_replicas_active();
-          return false;
-        },
-        var);
+    return visit_stochastic_or([](auto&& a) { return a.measure_advances_pool(); }, false);
   }
 
-  // Sum of a stochastic trial's leapfrog conditioning magnitudes (test/diagnostic checksum; -1 for a
-  // non-stochastic wavefunction). See StochasticWfn::inner_cond_mag_sum.
+  /// @brief Leapfrog conditioning-magnitude checksum; -1 if non-stochastic. See
+  /// StochasticWfn::inner_cond_mag_sum.
   double stochastic_inner_cond_mag_sum() const
   {
-    return std::visit(
-        [](auto&& a) -> double {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.inner_cond_mag_sum();
-          return -1.0;
-        },
-        var);
+    return visit_stochastic_or([](auto&& a) { return a.inner_cond_mag_sum(); }, -1.0);
   }
 
+  /// @brief Trained inner timestep in force on a stochastic trial; -1 if non-stochastic. Exists so a
+  /// test can prove the factory's stamp reached the built object. See StochasticWfn::inner_timestep.
+  double stochastic_inner_timestep() const
+  {
+    return visit_stochastic_or([](auto&& a) { return a.inner_timestep(); }, -1.0);
+  }
+
+  /**
+   * @brief Allocate a stochastic trial's inner ensemble; no-op for every other trial.
+   *
+   * @param walker_params the walker-set input block, shared with the outer walkers
+   * @param initial_guess per-spin Slater matrices of the anchor determinant
+   * @param NAEB number of spin-down electrons, sizing the beta block of a COLLINEAR anchor
+   */
   void initialize_stochastic_inner_walkers(
-      ptree const& walker_pt,
+      WalkerSetParameters const& walker_params,
       std::vector<nda::matrix<ComplexType>> const& initial_guess,
       int NAEB)
   {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.initialize_inner_walkers(walker_pt, initial_guess, NAEB);
-        },
-        var);
+    visit_stochastic([&](auto&& a) { a.initialize_inner_walkers(walker_params, initial_guess, NAEB); });
   }
 
+  /**
+   * @brief Open an outer propagation step on a stochastic trial; no-op for every other trial.
+   *
+   * @param wset the outer walker set, whose buffer holds the field-chain state
+   */
   template<class WlkSet>
   void begin_inner_step(WlkSet& wset)
   {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.begin_inner_step(wset);
-        },
-        var);
+    visit_stochastic([&](auto&& a) { a.begin_inner_step(wset); });
   }
 
-  // Measurement entry point for the estimators. For a StochasticWfn this is Energy averaged over
-  // inner_measure_replicas replicas of the field pool at fixed walkers (see
-  // StochasticWfn::measure_energy); for every other wavefunction, and for a StochasticWfn with
-  // inner_measure_replicas = 1, it IS Energy -- same call, same values. Takes wset by non-const
-  // reference because advancing the pool writes the chain state back into the walker buffer's
-  // TrialFields block.
+  /**
+   * @brief Estimator entry point for the local energy.
+   *
+   * @details A StochasticWfn averages over measurement replicas of its field pool; every other trial
+   * is plain Energy(), as is a stochastic trial with a single replica.
+   *
+   * @param wset the outer walker set, non-const because advancing the pool writes its field block
+   * @param E output energies, [nwalk, 3]
+   * @param Ov output LOG overlap per walker
+   * @param nt time slice index
+   */
   template<class WlkSet, class Mat, class TVec>
   void measure_energy(WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0)
   {
@@ -390,54 +392,56 @@ public:
         var);
   }
 
-  // End-of-step seam for the current-walker-conditioning path (StochasticWfn only; no-op otherwise and
-  // internally no-op unless inner_condition_on_new is active). See StochasticWfn::end_inner_step.
-  template<class WlkSet, class TVec>
-  void end_inner_step(WlkSet& wset, TVec const& old_new_logovlp)
-  {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.end_inner_step(wset, old_new_logovlp);
-        },
-        var);
-  }
-
-  // True only for a StochasticWfn running the current-walker-conditioning path.
-  bool conditions_on_new_walker() const
-  {
-    return std::visit(
-        [&](auto&& a) -> bool {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            return a.conditions_on_new_walker();
-          else
-            return false;
-        },
-        var);
-  }
-
-  // Realign the conditioned inner ensemble with the outer walker set after an outer population-control
-  // event. The driver calls this immediately after wset.popControl(). No-op for non-stochastic
-  // wavefunctions and for stochastic trials that carry no slot-conditioned blocks.
+  /**
+   * @brief Realign a stochastic trial's conditioned inner blocks after an outer population-control
+   *        event.
+   *
+   * @details THE DRIVER MUST CALL THIS IMMEDIATELY AFTER wset.popControl(). That ordering is the
+   * contract and it is not visible from the signature: any reduction taken between the two would pair
+   * post-branch walkers with pre-branch inner blocks. No-op unless the trial is stochastic and
+   * walker-conditioned.
+   *
+   * @param wset the post-population-control outer walker set
+   */
   template<class WlkSet>
   void permute_inner_blocks_after_pop(const WlkSet& wset)
   {
-    std::visit(
-        [&](auto&& a) {
-          using Wfn = std::decay_t<decltype(a)>;
-          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
-            a.permute_inner_blocks_after_pop(wset);
-        },
-        var);
+    visit_stochastic([&](auto&& a) { a.permute_inner_blocks_after_pop(wset); });
   }
 
   template<MEMORY_SPACE MEM2, class MType2>
   friend struct wavefunction_detail::StochasticInnerStackImpl;
 
-  private:
+private:
+  // Dispatch to the held StochasticWfn; no-op for every other variant alternative. Non-const only:
+  // every mutating seam (initialize / begin_inner_step / permute) needs a mutable trial, and the
+  // read-only accessors all want a return value, so they go through visit_stochastic_or instead.
+  template<class F>
+  void visit_stochastic(F&& f)
+  {
+    std::visit(
+        [&](auto&& a) {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            f(a);
+        },
+        var);
+  }
 
+  // Dispatch to StochasticWfn and return its result; otherwise return fallback.
+  template<class F, class R>
+  R visit_stochastic_or(F&& f, R fallback) const
+  {
+    return std::visit(
+        [&](auto&& a) -> R {
+          using Wfn = std::decay_t<decltype(a)>;
+          if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+            return f(a);
+          else
+            return fallback;
+        },
+        var);
+  }
 
   std::variant<NOMSD<MEM,PsiT_Matrix<MEM>>,
                NOMSD<MEM,memory::const_shared_array<MEM,ComplexType,2>>,

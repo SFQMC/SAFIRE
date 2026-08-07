@@ -25,7 +25,7 @@ target_include_directories(safire_lib PUBLIC
   ${PROJECT_BINARY_DIR}/src/
 )
 
-target_link_libraries(safire_lib PUBLIC nda::nda_c mpi3 Boost::headers cxxopts::cxxopts safire_warnings hdf5::hdf5 hdf5::hdf5_hl)
+target_link_libraries(safire_lib PUBLIC nda::nda_c mpi3 Boost::headers cxxopts::cxxopts safire_warnings hdf5::hdf5 hdf5::hdf5_hl nlohmann_json::nlohmann_json)
 
 # Boost::headers is INTERFACE-only; ensure its include path is visible when compiling
 # safire_lib (otherwise GCC may pick up the stale system Boost under /usr/include).

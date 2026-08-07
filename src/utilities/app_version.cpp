@@ -43,6 +43,13 @@ void print_version() {
       "";
   #endif
 
+  constexpr const char* device_rng_from_host_feature =
+  #ifdef DEVICE_RNG_FROM_HOST
+      " DeviceRNGFromHost";
+  #else
+      "";
+  #endif
+
   constexpr const char* git_info =
   #ifdef AF_APP_GIT_BRANCH
       "Git branch:  " AF_APP_GIT_BRANCH "\n"
@@ -56,10 +63,11 @@ void print_version() {
       "Version:     " AF_APP_VERSION "\n"
       "{}"
       "Build type:  " AF_APP_BUILD_TYPE "\n"
-      "Features:   {}{}{}\n",
+      "Features:   {}{}{}{}\n",
       git_info,
       mkl_feature,
       cuda_feature,
-      cpptrace_feature
+      cpptrace_feature,
+      device_rng_from_host_feature
   );
 }

@@ -192,6 +192,9 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         {ndet,npol,ncv,nel[is],NMO},
         [&,is](std::array<long,1> idx, auto&& block) {
       auto [id] = idx;
+      if(nel[is] == 0) {
+        return;  // empty sector (ndown==0): no rows to half-rotate
+      }
       auto Aai = math::sparse::to_array<'N'>(PsiT(id,is));
       auto Aai_r = memory::to_real_view(Aai);
       auto L_r = memory::to_real_view(block);

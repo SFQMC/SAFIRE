@@ -20,10 +20,12 @@
 #include <type_traits>
 
 #include "AFQMC/config.h"
+#include "IO/banner.hpp"
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
 #include "utilities/check.hpp"
 #include "utilities/freemem.h"
+#include "utilities/memory_utils.hpp"
 #include "utilities/mpi_context.h"
 #include "utilities/check_strides.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
@@ -44,6 +46,13 @@ class Real3IndexFactorization
 public:
   static const HamiltonianTypes HamOpType = RealDenseFactorized;
   HamiltonianTypes getHamType() const { return HamOpType; }
+
+  // Does vbias() accept a FULL [nwalk, nspin*npol*NMO*npol*NMO] density matrix, in addition to the
+  // half-rotated compact one? NOMSD needs it for ndet>1 trials, and StochasticWfn::vMF needs it for
+  // ANY trial once inner_n_samples > 1, because the stochastic mean field is a reduction of the inner
+  // ensemble against itself and has no half-rotated form. Callers that can hand over a full G must
+  // gate on this: the operators that lack it must reject such a G, never reinterpret it.
+  constexpr bool has_fullG_vbias() const { return true; }
 
   Real3IndexFactorization(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> ctxt,
         WALKER_TYPES type,
@@ -94,21 +103,12 @@ public:
                    "Real3IndexFactorization: Size mismatch");
     utils::check(vexx.shape() == std::array<long,3>{nspin_H2*npol_H2,NMO,NMO},
                  "Real3IndexFactorization: Size mismatch");
-    app_log(1,"****************************************************************** ");
-    app_log(1,"  Static memory usage by Real3IndexFactorization (node 0 in MB) ");
-    app_log(1,"  Likn: {}", double(Likn.size() * sizeof(RealType)) / 1024.0 / 1024.0);
-    app_log(1,"  Lnak: {}", double((Lnak(0).size() + (nspin==2?Lnak(1).size():0.0)) 
-                * sizeof(ComplexType)) / 1024.0 / 1024.0);
-    app_log(1,"  Buffer memory limited to (not yet allocated) : {} MB", max_memory_MB);
+    app_log(1, section("Static memory usage by Real3IndexFactorization (node 0)"));
+    app_log(1,"Likn: {}", utils::format_bytes(Likn.size() * sizeof(RealType)));
+    app_log(1,"Lnak: {}", utils::format_bytes((Lnak(0).size() + (nspin==2?Lnak(1).size():0.0)) * sizeof(ComplexType)));
+    app_log(1,"Buffer memory limited to (not yet allocated) : {} MB", max_memory_MB);
     utils::memory_report();
   }
-
-  ~Real3IndexFactorization() = default; 
-
-  Real3IndexFactorization(const Real3IndexFactorization& other) = default;
-  Real3IndexFactorization& operator=(const Real3IndexFactorization& other) = default;
-  Real3IndexFactorization(Real3IndexFactorization&& other)                 = default;
-  Real3IndexFactorization& operator=(Real3IndexFactorization&& other) = default;
 
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
                                                        nda::MemoryVector auto const& vMF)
@@ -392,8 +392,13 @@ public:
         }
       } else {
         for (int is = 0; is < nspin; is++) {
+          int nel_is = (is == 0 ? nup : ndown);
+          // Empty spin sector, nothing to do.
+          if(nel_is == 0) {
+            continue;
+          }
           for (int ip = 0; ip < npol; ip++) {
-            auto Ln = Lnak(is)()(0,ip,all,range(is==0?nup:ndown),all);
+            auto Ln = Lnak(is)()(0,ip,all,range(nel_is),all);
             auto G_ = G3d(all,range(is*nup,nup+is*ndown),range(ip*NMO,(ip+1)*NMO));
             // KE: Likely need to transpose Ln, check on GPU build first!
             nda::tensor::contract(ComplexType(a), G_, "wak",  Ln, "nak", ComplexType(1.0), v, "wn");
@@ -902,6 +907,10 @@ private:
     utils::check(E.extent(0)==nwalk and E.extent(1)==3, "Size mismatch");
     if (addEJ)
       utils::check(Kl.extent(0) == nwalk and Kl.extent(1) == nCV, "Size mismatch");
+
+    // Empty spin sector, nothing to do.
+    if (nel[ispin] == 0)
+      return;
 
     // one-body contribution
     // haj(ndet,nel,npol*nmo)

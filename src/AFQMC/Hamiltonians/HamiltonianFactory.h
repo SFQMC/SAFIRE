@@ -22,10 +22,11 @@
 #include <vector>
 #include <map>
 #include <fstream>
-#include "IO/ptree/ptree_utilities.hpp"
 #include "IO/app_loggers.h"
+#include "IO/banner.hpp"
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 
 namespace sfqmc
@@ -36,20 +37,11 @@ namespace afqmc
 class HamiltonianFactory
 {
 public:
-  HamiltonianFactory() {}
-
-  ~HamiltonianFactory()
-  {
-    // delete Hamiltonian objects
-    //for (auto it = hamiltonians.begin(); it != hamiltonians.end(); ++it)
-    //  delete it->second;
-  }
-
   bool is_constructed(const std::string& ID)
   {
-    auto xml = hamBlocks.find(ID);
-    utils::check(xml != hamBlocks.end(),
-                 " Error in WavefunctionFactory::is_constructed(string&): Missing xml block. ");
+    auto block = hamBlocks.find(ID);
+    utils::check(block != hamBlocks.end(),
+                 "Error in HamiltonianFactory::is_constructed(string&): Missing input block.");
     auto ham = hamiltonians.find(ID);
     if (ham == hamiltonians.end())
       return false;
@@ -66,74 +58,54 @@ public:
   }
 
   // returns a pointer to the base Hamiltonian class associated with a given ID
-  Hamiltonian& getHamiltonian(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi, 
+  Hamiltonian& getHamiltonian(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
                               const std::string& ID)
   {
-    auto xml = hamBlocks.find(ID);
-    utils::check(xml != hamBlocks.end(),
-                 " Error in WavefunctionFactory::is_constructed(string&): Missing xml block. "); 
+    auto block = hamBlocks.find(ID);
+    utils::check(block != hamBlocks.end(),
+                 "Error in HamiltonianFactory::getHamiltonian(string&): Missing input block.");
     auto ham = hamiltonians.find(ID);
     if (ham == hamiltonians.end())
     {
-      auto newham = hamiltonians.insert(std::make_pair(ID, buildHamiltonian(mpi, xml->second)));
+      auto newham = hamiltonians.insert(std::make_pair(ID, buildHamiltonian(mpi, block->second)));
       if (!newham.second)
-        APP_ABORT(" Error: Problems inserting new hamiltonian in HamiltonianFactory::getHamiltonian. ");
+        APP_ABORT("Error: Problems inserting new hamiltonian in HamiltonianFactory::getHamiltonian.");
       return (newham.first)->second;
     }
     else
       return ham->second;
   }
 
-  // adds a xml block from which a Hamiltonian can be built
-  void push(const std::string& ID, ptree pt)
+  // adds an input block from which a Hamiltonian can be built
+  void push(const std::string& ID, HamiltonianParameters params)
   {
-    auto xml = hamBlocks.find(ID);
-    utils::check(xml == hamBlocks.end(),
-                 "Error: Repeated Hamiltonian block in HamiltonianFactory. Hamiltonian names must be unique. ");
-    hamBlocks.insert(std::make_pair(ID, pt));
+    auto block = hamBlocks.find(ID);
+    utils::check(block == hamBlocks.end(),
+                 "Error: Repeated Hamiltonian block in HamiltonianFactory. Hamiltonian names must be unique.");
+    hamBlocks.insert(std::make_pair(ID, std::move(params)));
   }
 
-  ptree get_input(const std::string& ID) const
+  const HamiltonianParameters& get_input(const std::string& ID) const
   {
-    auto xml = hamBlocks.find(ID);
-    utils::check(xml != hamBlocks.end(),"Error: failed to find Hamiltonian with above name.");
-    return xml->second;
-  }
-
-  // this routine allows you to modify the input block associated with ID 
-  ptree& get_input(const std::string& ID)
-  {
-    auto xml = hamBlocks.find(ID);
-    utils::check(xml != hamBlocks.end(),"Error: failed to find Hamiltonian with above name.");
-    return xml->second;
+    auto block = hamBlocks.find(ID);
+    utils::check(block != hamBlocks.end(),"Error: failed to find Hamiltonian with above name.");
+    return block->second;
   }
 
 protected:
   // generates a new Hamiltonian and returns the pointer to the base class
-  Hamiltonian buildHamiltonian(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi, 
-                               ptree pt)
+  Hamiltonian buildHamiltonian(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+                               const HamiltonianParameters& params)
   {
-    std::string fham_type;
-    fham_type = pt.get<std::string>("filetype", "hdf5");
+    app_log(1, section(std::format("Initializing Hamiltonian \"{}\"", params.name)));
 
-    app_log(1,"\n****************************************************");
-    app_log(1,"               Initializing Hamiltonian ");
-    app_log(1,"\n****************************************************\n");
-    app_log(2, " Hamiltonian Factory input: ");
-    app_log(2, "{}", io::to_string(pt));
-
-    if (fham_type == "hdf5")
-      return fromHDF5(mpi, pt);
-    else
-    {
-      utils::check(false," Error: Unknown Hamiltonian filetype in HamiltonianFactory::buildHamiltonian(). ");
-    }
-    return Hamiltonian{};
+    return fromHDF5(mpi, params);
   }
 
-  Hamiltonian fromHDF5(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi, ptree pt);
+  Hamiltonian fromHDF5(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+                       const HamiltonianParameters& params);
 
-  std::map<std::string, ptree> hamBlocks;
+  std::map<std::string, HamiltonianParameters> hamBlocks;
 
   std::map<std::string, Hamiltonian> hamiltonians;
 

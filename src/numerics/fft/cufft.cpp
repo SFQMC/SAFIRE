@@ -183,7 +183,6 @@ void fwdfft(fftplan_t& p, ComplexType *in, ComplexType *out)
 		   reinterpret_cast<cufftDoubleComplex*>(in),
 		   reinterpret_cast<cufftDoubleComplex*>(out),
 		   CUFFT_FORWARD), "cufftExecZ2Z");
-  cudaDeviceSynchronize();
 }
 void fwdfft(fftplan_t& p, RealType *in, ComplexType *out)
 {
@@ -193,7 +192,6 @@ void fwdfft(fftplan_t& p, RealType *in, ComplexType *out)
   cufft_check(cufftExecD2Z(*plan,
                    reinterpret_cast<cufftDoubleReal*>(in),
                    reinterpret_cast<cufftDoubleComplex*>(out)), "cufftExecD2Z");
-  cudaDeviceSynchronize();
 }
 void fwdfft(fftplan_t& p, ComplexType *in, RealType *out)
 {
@@ -203,7 +201,6 @@ void fwdfft(fftplan_t& p, ComplexType *in, RealType *out)
   cufft_check(cufftExecZ2D(*plan,
                    reinterpret_cast<cufftDoubleComplex*>(in),
                    reinterpret_cast<cufftDoubleReal*>(out)), "cufftExecZ2D");
-  cudaDeviceSynchronize();
 }
 void fwdfft(fftplan_t& p, [[maybe_unused]]  RealType *in, [[maybe_unused]]  RealType *out)
 {
@@ -222,7 +219,6 @@ void invfft(fftplan_t& p, ComplexType *in, ComplexType *out)
                    reinterpret_cast<cufftDoubleComplex*>(in),
                    reinterpret_cast<cufftDoubleComplex*>(out),
 		   CUFFT_INVERSE), "cufftExecZ2Z");
-  cudaDeviceSynchronize();
 }
 void invfft(fftplan_t& p, RealType *in, ComplexType *out)
 {
@@ -232,7 +228,6 @@ void invfft(fftplan_t& p, RealType *in, ComplexType *out)
   cufft_check(cufftExecD2Z(*plan,
                    reinterpret_cast<cufftDoubleReal*>(in),
                    reinterpret_cast<cufftDoubleComplex*>(out)), "cufftExecD2Z");
-  cudaDeviceSynchronize();
 }
 void invfft(fftplan_t& p, ComplexType *in, RealType *out)
 { 
@@ -242,7 +237,6 @@ void invfft(fftplan_t& p, ComplexType *in, RealType *out)
   cufft_check(cufftExecZ2D(*plan,
                    reinterpret_cast<cufftDoubleComplex*>(in),
                    reinterpret_cast<cufftDoubleReal*>(out)), "cufftExecZ2D");
-  cudaDeviceSynchronize();
 }
 void invfft(fftplan_t& p, [[maybe_unused]] RealType *in, [[maybe_unused]] RealType *out)
 { 

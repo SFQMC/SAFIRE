@@ -87,8 +87,6 @@ def _make_slater(walker_type: _SlaterType, mo_coeffs: np.ndarray, nocc: Iterable
         return _make_slater_collinear(mo_coeffs, nocc, nelec)
     elif walker_type == _SlaterType.NONCOLLINEAR:
         return _make_slater_closed(mo_coeffs, nocc[0], sum(nelec))
-    elif walker_type == _SlaterType.FULLYPOLARIZED:
-        return np.array([_make_slater_closed(mo_coeffs[0,:,:], nocc[0], nelec[0])])
 
 
 def _transform_slater(wfn: np.ndarray, X: np.ndarray):
@@ -131,16 +129,6 @@ def _get_occupied_indices(mo_occ, walker_type, nfzc=0, nfzv=0):
         occ = np.flatnonzero(mo_occ >= 1)
         return _trim_active_space(occ), None
 
-    if walker_type == _SlaterType.FULLYPOLARIZED:
-        if mo_occ.ndim == 1:
-            occa = np.flatnonzero(mo_occ > 0)
-        elif mo_occ.ndim == 2:
-            occa = np.flatnonzero(mo_occ[0] > 0)
-        else:
-            raise ValueError("Invalid mo_occ shape for fully polarized walkers")
-
-        return _trim_active_space(occa), None
-
     raise ValueError("Invalid Slater determinant type")
 
 
@@ -159,10 +147,6 @@ def generate_wavefunction(scf_data, basis_scf_data=None, ortho_ao=False, cas=Non
 
     nelec = tuple(n-nfzc for n in nelec)
     norb -= (nfzc + nfzv)
-
-    # a collinear walker can become fully-polarized with a sufficiently large frozen core!
-    if walker_type == _SlaterType.COLLINEAR and nelec[1] == 0:
-        walker_type = _SlaterType.FULLYPOLARIZED
 
     occa, occb = _get_occupied_indices(
         scf_data["mo_occ"],

@@ -387,7 +387,7 @@ template<class WalkerSet,
          typename = typename std::enable_if<(WalkerSet::contiguous_walker)>::type,
          typename = typename std::enable_if<(WalkerSet::fixed_population)>::type>
 inline void SerialBranching(WalkerSet& wset,
-                            BRANCHING_ALGORITHM type,
+                            BranchingAlgorithm type,
                             double min_,
                             double max_,
                             std::vector<int>& wlk_counts,
@@ -404,11 +404,11 @@ inline void SerialBranching(WalkerSet& wset,
   // using global weight list, use pair branching algorithm
   if (comm.root())
   {
-    if (type == PAIR)
+    if (type == BranchingAlgorithm::pair)
       pair_branch(buffer, rng, max_, min_);
-    else if (type == MIN_BRANCH)
+    else if (type == BranchingAlgorithm::min_branch)
       min_branch(buffer, rng, max_, min_);
-    else if (type == SERIAL_COMB)
+    else if (type == BranchingAlgorithm::serial_comb)
       serial_comb(buffer, rng);
     else
       APP_ABORT("Error: Unknown branching type in SerialBranching. ");
@@ -450,7 +450,7 @@ inline void SerialBranching(WalkerSet& wset,
  * New weights and branching counts, for each system, are calculated and updated in the buffer.
  * comm is a communicator with the roots of all Global communicators. 
  */
-inline void correlatedSerialBranching(BRANCHING_ALGORITHM branch_type,
+inline void correlatedSerialBranching(BranchingAlgorithm branch_type,
 			    std::string combine_type,		
                             double min_,
                             double max_,
@@ -485,7 +485,7 @@ inline void correlatedSerialBranching(BRANCHING_ALGORITHM branch_type,
     if(combine_type == "mean" or combine_type == "mod-mean")
       for(int i=0; i<nW; i++)
         collW[i] = collW[i]/double(comm.size());
-    if (branch_type == PAIR) {
+    if (branch_type == BranchingAlgorithm::pair) {
       pair_branch_for_correlated(collW, branch_data, rng, max_, min_);
     } else {
       APP_ABORT("Error: Unknown branching type in correlatedSerialBranching. ");
@@ -495,7 +495,7 @@ inline void correlatedSerialBranching(BRANCHING_ALGORITHM branch_type,
 
   // modify original buffer, with new weights and branching counts for each walker
   // depends on branch_type
-  if(branch_type == PAIR) {     
+  if(branch_type == BranchingAlgorithm::pair) {     
     for(int i=0; i<nW; i++) {
       if(branch_data(i,0)==2) { // branch 
 	int I_coupled = branch_data(i,1);   	
@@ -536,7 +536,7 @@ template<class WalkerSet,
          typename = typename std::enable_if<(WalkerSet::contiguous_walker)>::type,
          typename = typename std::enable_if<(WalkerSet::fixed_population)>::type>
 inline void CombBranching([[maybe_unused]] WalkerSet& wset,
-                          [[maybe_unused]] BRANCHING_ALGORITHM type,
+                          [[maybe_unused]] BranchingAlgorithm type,
                           [[maybe_unused]] std::vector<int>& wlk_counts,
                           [[maybe_unused]] nda::MemoryArrayOfRank<2> auto& Wexcess,
                           [[maybe_unused]] utils::HostRandomGenerator& rng,
@@ -623,7 +623,8 @@ void correlatedPopulationControl(std::vector<std::reference_wrapper<WalkerSet>>&
 //      in mpi_context. FIX FIX FIX
   if( mpi.comm.root() ) { 
     // population control on master node
-    if (pop_control == PAIR || pop_control == SERIAL_COMB || pop_control == MIN_BRANCH) {
+    if (pop_control == BranchingAlgorithm::pair || pop_control == BranchingAlgorithm::serial_comb ||
+        pop_control == BranchingAlgorithm::min_branch) {
       correlatedSerialBranching(pop_control, combine_type, min_weight, max_weight, buffer, *rng, mpi.comm);
     } else {
       APP_ABORT("Error: Unknown population control algorithm.");

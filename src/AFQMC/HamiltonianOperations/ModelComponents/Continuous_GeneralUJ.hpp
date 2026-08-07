@@ -36,9 +36,7 @@ class Continuous_GeneralUJ
 
 public:
 
-  Continuous_GeneralUJ() {
-   utils::check(false, "Error in Continuous_GeneralUJ: Reached disabled default constructor.");
-  }
+  Continuous_GeneralUJ() = delete;
 
   Continuous_GeneralUJ(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,
                        WALKER_TYPES type,
@@ -67,13 +65,6 @@ public:
     utils::check(SpVn.extent(1) == SpVnT.extent(0), "Size mismatch");
     utils::check(SpVn.extent(0) == h0.size(), "Size mismatch");
   }
-
-  ~Continuous_GeneralUJ() {}
-
-  Continuous_GeneralUJ(const Continuous_GeneralUJ<MEM>& other)            = default;
-  Continuous_GeneralUJ& operator=(const Continuous_GeneralUJ<MEM>& other) = default;
-  Continuous_GeneralUJ(Continuous_GeneralUJ<MEM>&& other)                 = default;
-  Continuous_GeneralUJ& operator=(Continuous_GeneralUJ<MEM>&& other)      = default;
 
   /*
    * n2IJ maps an index in the ordering of the sparse structures to the ordering 

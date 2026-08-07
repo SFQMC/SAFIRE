@@ -48,10 +48,10 @@ extern std::shared_ptr<mpi_context_t<boost::mpi3::communicator>> __unit_test_mpi
 }
 
 /* Path to unit test files included in the code base */
-inline constexpr std::string unit_test_base() 
+inline constexpr std::string unit_test_base()
 {
   //std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/unit_test_files/";
-  std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/utils/tests/functional/";
+  std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/functional/afqmc_inputs/";
   return pre;
 }
 
@@ -67,7 +67,39 @@ namespace TestFiles {
   constexpr Flags LATTICES = 1<<7;
   constexpr Flags SOLIDS = 1<<8;
   constexpr Flags ALL_SYSTEMS = MOLECULES | LATTICES | SOLIDS;
+
+  // Fixture set for tests that build a DYNAMIC StochasticWfn inner ensemble (inner_nsteps > 0).
+  //
+  // MOLECULES, not ALL_SYSTEMS, and this is a CAPABILITY LIMIT rather than a convenience: the dynamic
+  // inner path routes its reductions through the un-rotated full-G energy / force-bias kernels, which
+  // exist only for Real3IndexFactorization. On the other fixture families the engine aborts, correctly,
+  // on input it does not implement:
+  //   - THCOps, KP3IndexFactorization (solids) -> StochasticWfn::vbias's has_fullG_vbias() gate, and
+  //     behind it "energy_fullG not implemented". NOTE the STATIC path is a separate question and is
+  //     NOT excluded: `stochastic_wfn: vMF and G_MF match nomsd` runs ALL_SYSTEMS and asserts the refusal.
+  //   - Discrete_GeneralUJ (lattice/Hubbard)   -> "Using uninitialized Discrete_GeneralUJ object".
+  //     This is the propagator-initialization order, NOT the full-G vbias gap: ModelHamOps DOES
+  //     implement the full-G contraction (has_fullG_vbias() == true).
+  //   - NONCOLLINEAR walkers                   -> rejected by StochasticWfn's own constructor
+  // Requesting those fixtures for a dynamic test therefore asserts nothing about the code under test; it
+  // just converts unsupported-input aborts into red, which is how 80-odd failures sat in this suite
+  // masking the ones that mattered. RHF|UHF covers CLOSED and COLLINEAR, the two supported walker types.
+  constexpr Flags DYNAMIC_INNER = RHF | UHF | NOMSD | MOLECULES;
 };
+
+// Does the DYNAMIC (inner_nsteps > 0) StochasticWfn path support this walker type?
+// CLOSED and COLLINEAR only (mirrors StochasticWfn). Prefer this predicate over open-coding types.
+//
+// COLLINEAR coverage note: widening the gate alone does not deliver two-spin parity. Under
+// DYNAMIC_INNER the BH UHF fixtures are skipped by the Psi0==PsiT premise (anchor_reference_mismatch,
+// test_stochastic_wfn.cpp); Li polarized passes it but is nup=3,ndn=0 -- Psi0_beta is (14,0,2) and PsiT_1
+// is empty, so beta and the alpha-beta EJ cross term contract against nothing. energy_collinear's
+// two-spin path still needs a COLLINEAR NOMSD fixture with Psi0==PsiT. Reference-free COLLINEAR checks
+// (SAFIRE vs itself) are unaffected.
+inline bool dynamic_inner_supports(afqmc::WALKER_TYPES t)
+{
+  return t == afqmc::CLOSED || t == afqmc::COLLINEAR;
+}
 
 
 // struct to store test file info with finiteT flag
@@ -83,33 +115,33 @@ struct UnitTestFile {
 inline constexpr auto molecule_unit_tests_files(TestFiles::Flags flags)
 {
   std::vector< UnitTestFile > files;
-  auto pre = unit_test_base() + "molecules/";
+  auto pre = unit_test_base();
   if(flags & TestFiles::NOMSD) {
     if(flags & TestFiles::RHF) {
-      files.emplace_back(pre + "BH/afqmc_inputs/afqmc_H_rhf_closed.h5", 
-                                          pre + "BH/afqmc_inputs/afqmc_rhf_nomsd.h5",
+      files.emplace_back(pre + "BH/afqmc_H_rhf_closed.h5", 
+                                          pre + "BH/afqmc_rhf_nomsd.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
     } 
     if(flags & TestFiles::UHF) {
-      files.emplace_back(pre + "BH/afqmc_inputs/afqmc_H_rhf_collinear.h5",
-                                          pre + "BH/afqmc_inputs/afqmc_uhf_nomsd.h5",
+      files.emplace_back(pre + "BH/afqmc_H_rhf_collinear.h5",
+                                          pre + "BH/afqmc_uhf_nomsd.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "BH/afqmc_inputs/afqmc_H_rhf_collinear.h5",
-                                          pre + "BH/afqmc_inputs/afqmc_uhf_nomsd_init_rhf.h5",
+      files.emplace_back(pre + "BH/afqmc_H_rhf_collinear.h5",
+                                          pre + "BH/afqmc_uhf_nomsd_init_rhf.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "Li/afqmc_inputs/hamil_closed.h5",
-                                          pre + "Li/afqmc_inputs/rohf_nomsd_fullypolarized.h5",
-                                          afqmc::FULLYPOLARIZED);
+      files.emplace_back(pre + "Li/hamil_closed.h5",
+                                          pre + "Li/rohf_nomsd_polarized.h5",
+                                          afqmc::COLLINEAR);
     }
     if(flags & TestFiles::GHF) {
-      files.emplace_back(pre + "BH/afqmc_inputs/afqmc_H_rhf_noncollinear.h5",
-                                          pre + "BH/afqmc_inputs/afqmc_ghf_nomsd.h5",
+      files.emplace_back(pre + "BH/afqmc_H_rhf_noncollinear.h5",
+                                          pre + "BH/afqmc_ghf_nomsd.h5",
                                           afqmc::NONCOLLINEAR);
-      files.emplace_back(pre + "Pb/afqmc_inputs/afqmc_H_rhf_basis_noncollinear_sf.h5",
-                                          pre + "Pb/afqmc_inputs/afqmc_ghf_sf_nomsd.h5",
+      files.emplace_back(pre + "Pb/afqmc_H_rhf_basis_noncollinear_sf.h5",
+                                          pre + "Pb/afqmc_ghf_sf_nomsd.h5",
                                           afqmc::NONCOLLINEAR);
-      files.emplace_back(pre + "Pb/afqmc_inputs/afqmc_H_rhf_basis_noncollinear_soc.h5",
-                                          pre + "Pb/afqmc_inputs/afqmc_ghf_soc_nomsd.h5",
+      files.emplace_back(pre + "Pb/afqmc_H_rhf_basis_noncollinear_soc.h5",
+                                          pre + "Pb/afqmc_ghf_soc_nomsd.h5",
                                           afqmc::NONCOLLINEAR);
 
     }
@@ -117,15 +149,15 @@ inline constexpr auto molecule_unit_tests_files(TestFiles::Flags flags)
   if (flags & TestFiles::PHMSD) {
     if (flags & TestFiles::UHF) {
       // edge case: leading det only
-      files.emplace_back(pre + "BH/afqmc_inputs/afqmc_H_rhf_collinear.h5",
-                                          pre + "BH/afqmc_inputs/afqmc_casci_uhf_1phmsd.h5",
+      files.emplace_back(pre + "BH/afqmc_H_rhf_collinear.h5",
+                                          pre + "BH/afqmc_casci_uhf_1phmsd.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "BH/afqmc_inputs/afqmc_H_rhf_collinear.h5",
-                                          pre + "BH/afqmc_inputs/afqmc_casci_uhf_phmsd.h5",
+      files.emplace_back(pre + "BH/afqmc_H_rhf_collinear.h5",
+                                          pre + "BH/afqmc_casci_uhf_phmsd.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
       // may be redundant with above test: good for diversity of inputs
-      files.emplace_back(pre + "N2/afqmc_inputs/cas_basis_hamil.h5",
-                                        pre + "N2/afqmc_inputs/cas_wfn.h5",
+      files.emplace_back(pre + "N2/cas_basis_hamil.h5",
+                                        pre + "N2/cas_wfn.h5",
                                         afqmc::UNDEFINED_WALKER_TYPE);
       }
   }
@@ -136,38 +168,38 @@ inline constexpr auto molecule_unit_tests_files(TestFiles::Flags flags)
 inline constexpr auto lattice_unit_test_files(TestFiles::Flags flags) 
 {
   std::vector< UnitTestFile > files;
-  auto pre = unit_test_base() + "models/";
+  auto pre = unit_test_base();
   if(flags & TestFiles::NOMSD) {
     if(flags & TestFiles::RHF) {
       // Closed spin symmetry is not implemented - no tests expected to pass
     } 
     if(flags & TestFiles::UHF) {
       // HST is discrete spin for the following case
-      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/ham_collinear.h5",
-                                          pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/uhf_U0.1_wfn_nup5_ndn5.h5",
+      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/ham_collinear.h5",
+                                          pre + "square_4x4_hubbard_nup5_ndn5/uhf_U0.1_wfn_nup5_ndn5.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/ham_collinear_cont_spin.h5",
-                                          pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/uhf_U0.1_wfn_nup5_ndn5.h5",
+      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/ham_collinear_cont_spin.h5",
+                                          pre + "square_4x4_hubbard_nup5_ndn5/uhf_U0.1_wfn_nup5_ndn5.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/ham_collinear_Um4_cont_charge.h5",
-                                          pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/uhf_U0.1_wfn_nup5_ndn5.h5",
+      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/ham_collinear_Um4_cont_charge.h5",
+                                          pre + "square_4x4_hubbard_nup5_ndn5/uhf_U0.1_wfn_nup5_ndn5.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/ham_collinear_Um4_disc_charge.h5",
-                                          pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/uhf_U0.1_wfn_nup5_ndn5.h5",
+      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/ham_collinear_Um4_disc_charge.h5",
+                                          pre + "square_4x4_hubbard_nup5_ndn5/uhf_U0.1_wfn_nup5_ndn5.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
 
-      files.emplace_back(pre + "square_6x1_hubbard_kanamori_nup6_ndn6/afqmc_inputs/ham_collinear.h5",
-                                          pre + "square_6x1_hubbard_kanamori_nup6_ndn6/afqmc_inputs/wfn_fe_collinear.h5",
+      files.emplace_back(pre + "square_6x1_hubbard_kanamori_nup6_ndn6/ham_collinear.h5",
+                                          pre + "square_6x1_hubbard_kanamori_nup6_ndn6/wfn_fe_collinear.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
     }    
     if(flags & TestFiles::GHF) {
-      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/ham_noncollinear.h5",
-                                          pre + "square_4x4_hubbard_nup5_ndn5/afqmc_inputs/wfn_fe_noncollinear.h5",
+      files.emplace_back(pre + "square_4x4_hubbard_nup5_ndn5/ham_noncollinear.h5",
+                                          pre + "square_4x4_hubbard_nup5_ndn5/wfn_fe_noncollinear.h5",
                                           afqmc::NONCOLLINEAR);
     }
     if(flags & TestFiles::FINITE_T) {
-      files.emplace_back(pre + "finiteT/square_2x2_hubbard_Beta3_nt100/afqmc_inputs/ham_collinear.h5",
-                                          pre + "finiteT/square_2x2_hubbard_Beta3_nt100/afqmc_inputs/wfn_collinear.h5",
+      files.emplace_back(pre + "square_2x2_hubbard_Beta3_nt100/ham_collinear.h5",
+                                          pre + "square_2x2_hubbard_Beta3_nt100/wfn_collinear.h5",
                                           afqmc::COLLINEAR, /*finiteT=*/true);
     }
   }
@@ -180,37 +212,37 @@ inline constexpr auto lattice_unit_test_files(TestFiles::Flags flags)
 
 inline constexpr auto solid_unit_test_files(TestFiles::Flags flags) {
   std::vector< UnitTestFile > files;
-  auto pre = unit_test_base() + "solids/";
+  auto pre = unit_test_base();
   if(flags & TestFiles::NOMSD) {
     if(flags & TestFiles::RHF) {
       // Closed spin symmetry is not implemented - no tests expected to pass
     } 
     if(flags & TestFiles::UHF) {
       // Cholesky cases
-      files.emplace_back(pre + "C_diamond_coqui/afqmc_inputs/ham_chol_1e-5.h5",
-                                          pre + "C_diamond_coqui/afqmc_inputs/wfn_mf_pbe_closed.h5",
+      files.emplace_back(pre + "C_diamond_coqui/ham_chol_1e-5.h5",
+                                          pre + "C_diamond_coqui/wfn_mf_pbe_closed.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "C_diamond_coqui/afqmc_inputs/ham_chol_1e-5.h5",
-                                          pre + "C_diamond_coqui/afqmc_inputs/wfn_mf_pbe.h5",
+      files.emplace_back(pre + "C_diamond_coqui/ham_chol_1e-5.h5",
+                                          pre + "C_diamond_coqui/wfn_mf_pbe.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);                          
-      files.emplace_back(pre + "C_diamond_coqui/afqmc_inputs/ham_2x2x2_chol_1e-5.h5",
-                                          pre + "C_diamond_coqui/afqmc_inputs/wfn_mf_2x2x2_pbe.h5",
+      files.emplace_back(pre + "C_diamond_coqui/ham_2x2x2_chol_1e-5.h5",
+                                          pre + "C_diamond_coqui/wfn_mf_2x2x2_pbe.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
       // THC cases
-      files.emplace_back(pre + "C_diamond_coqui/afqmc_inputs/ham_thc_1e-6.h5",
-                                          pre + "C_diamond_coqui/afqmc_inputs/wfn_mf_pbe_closed.h5",
+      files.emplace_back(pre + "C_diamond_coqui/ham_thc_1e-6.h5",
+                                          pre + "C_diamond_coqui/wfn_mf_pbe_closed.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "C_diamond_coqui/afqmc_inputs/ham_thc_1e-6.h5",
-                                          pre + "C_diamond_coqui/afqmc_inputs/wfn_mf_pbe.h5",
+      files.emplace_back(pre + "C_diamond_coqui/ham_thc_1e-6.h5",
+                                          pre + "C_diamond_coqui/wfn_mf_pbe.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
 
     }    
     if(flags & TestFiles::GHF) {
-      files.emplace_back(pre + "C_diamond_coqui/afqmc_inputs/ham_chol_1e-5.h5",
-                                          pre + "C_diamond_coqui/afqmc_inputs/wfn_mf_pbe_noncollinear.h5",
+      files.emplace_back(pre + "C_diamond_coqui/ham_chol_1e-5.h5",
+                                          pre + "C_diamond_coqui/wfn_mf_pbe_noncollinear.h5",
                                           afqmc::NONCOLLINEAR);
-      files.emplace_back(pre + "C_diamond_coqui/afqmc_inputs/ham_thc_1e-6.h5",
-                                          pre + "C_diamond_coqui/afqmc_inputs/wfn_mf_pbe_noncollinear.h5",
+      files.emplace_back(pre + "C_diamond_coqui/ham_thc_1e-6.h5",
+                                          pre + "C_diamond_coqui/wfn_mf_pbe_noncollinear.h5",
                                           afqmc::NONCOLLINEAR);
     }
   }

@@ -180,7 +180,7 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
             f.write(text)
 
 def read_info(fwfn):
-    walker_types = ['NONE', 'CLOSED', 'COLLINEAR', 'NONCOLLINEAR', 'FULLYPOLARIZED']
+    walker_types = ['NONE', 'CLOSED', 'COLLINEAR', 'NONCOLLINEAR']
     info = dict()
     with h5.File(fwfn, 'r') as f:
         has_wfn = False

@@ -4,7 +4,6 @@
 #include "utilities/check.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/arch.h"
 #include "arch/atomics.hpp"
 #include "nda/nda.hpp"
 #include <cuda/std/mdspan>
@@ -120,7 +119,6 @@ void vmf_offdiag_impl(long total_pairs, int nrows, int rank, int size, int nelec
                                          pair_off, coup_rbegin, coup_rend, coup_jdet,
                                          cuda_std_ptr_cast(coup_val),
                                          configs, O_d, G_d);
-  sfqmc::arch::synchronize_if_set();
 }
 
 using memory::device_array_view;

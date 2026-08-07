@@ -35,7 +35,7 @@ namespace detail
 
 /*
  * Calculate S = exp(im*V)*S using a Taylor expansion of exp(V)
- * Can be used for fully polarized, closed shell, collinear (call each spin separately)
+ * Can be used for closed shell, collinear (call each spin separately)
  * or noncollinear with full spin-orbit potential.
  */
 template<char TA, nda::MemoryArrayOfRank<3> V_t, nda::MemoryArrayOfRank<3> S_t>
@@ -112,7 +112,7 @@ void apply_expM(int npol, V_t const& V, S_t && S, int order = 6)
 /*
  * Calculate S = exp(im*V)*S using a Taylor expansion of exp(V)
  * In this case, V is a csr_matrix with dimensions [Nw*M, Nw*M].
- * Can be used for fully polarized, closed shell, collinear (call each spin separately)
+ * Can be used for closed shell, collinear (call each spin separately)
  * or noncollinear with full spin-orbit potential.
  */
 template<char TA, math::sparse::CSRMatrix V_t, nda::MemoryArrayOfRank<3> S_t>
@@ -222,6 +222,7 @@ void propagate_impl(int npol, S_t && SM, P_t const& P1, V_t const& V, int order 
   using Type = nda::get_value_t<S_t>;
   static_assert( nda::is_complex_v<Type>, "Type mismatch");
   auto [Nw, Mtot, Nel] = SM.shape();
+  if(Nel == 0) return;  // empty sector (e.g. COLLINEAR ndown==0): nothing to propagate
   utils::check(Mtot%npol==0, "npol:{} incompatible with M:{}",npol,Mtot);
   long M = Mtot/npol;
   utils::check( P1.shape() == std::array<long,2>{Mtot,Mtot}, "Shape mismatch");

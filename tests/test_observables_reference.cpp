@@ -28,7 +28,7 @@
 #include "catch2/catch_test_macros.hpp"
 
 #include "config.h"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/check.hpp"
 #include "test_common.hpp"
 #include "utilities/h5_utils.hpp"
@@ -136,8 +136,7 @@ void observables_reference_diagonal2rdm(std::string const& case_group, WALKER_TY
     h5::read(avg, "denominator_000000000", ref_denom);
   }
 
-  ptree obs_pt;
-  diagonal2rdm<MEM> obs(mpi, obs_pt, wt, ref.NMO, ref.nave);
+  diagonal2rdm<MEM> obs(mpi, DiagTwoRDMParameters{}, wt, ref.NMO, ref.nave);
 
   auto G_mem = memory::to_memory_space<MEM>(ref.G);
   obs.accumulate(0, G_mem, ref.G, ref.Xw, true);
@@ -190,8 +189,7 @@ void observables_reference_spinspin(std::string const& case_group, WALKER_TYPES 
     h5::read(avg, "denominator_000000000", ref_denom);
   }
 
-  ptree obs_pt;
-  spinspinobs obs(mpi, obs_pt, wt, ref.NMO, ref.nave);
+  spinspinobs obs(mpi, SpinSpinCorrParameters{}, wt, ref.NMO, ref.nave);
 
   obs.accumulate(0, ref.G, nda::to_host(ref.G), ref.Xw, true);
 
@@ -243,8 +241,7 @@ void observables_reference_full2rdm()
     h5::read(avg, "denominator_000000000", ref_denom);
   }
 
-  ptree obs_pt;
-  full2rdm<MEM> obs(mpi, obs_pt, COLLINEAR, ref.NMO, ref.nave);
+  full2rdm<MEM> obs(mpi, TwoRDMParameters{}, COLLINEAR, ref.NMO, ref.nave);
 
   auto G_mem = memory::to_memory_space<MEM>(ref.G);
   obs.accumulate(0, G_mem, ref.G, ref.Xw, true);

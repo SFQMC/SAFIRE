@@ -16,8 +16,10 @@
 
 #pragma once
 
-#include <boost/iterator/iterator_facade.hpp>
+#include <compare>
+#include <cstddef>
 #include <map>
+#include <type_traits>
 #include "AFQMC/config.h"
 #include "numerics/sparse/array_of_sequences.hpp"
 
@@ -212,80 +214,69 @@ private:
   using confg_aos  = math::sparse::array_of_sequences<configuration_type,HOST_MEMORY,int>;
   using index_aos  = math::sparse::array_of_sequences<integer_type,HOST_MEMORY,int>; 
   using dev_index_aos  = math::sparse::array_of_sequences<integer_type,MEM,int>; 
+  // Iterates over a packed list of particle-hole excitations. Each element is a block of 2*D
+  // indices (D holes followed by D particles); dereferencing yields a pointer to the block.
+  // Integer may be const-qualified, which yields Excitation_const_Iterator.
   template<typename Integer>
   class Iterator
-      : public boost::
-            iterator_facade<Iterator<Integer>, Integer*, std::random_access_iterator_tag, Integer*, std::ptrdiff_t>
   {
   public:
     using difference_type = std::ptrdiff_t;
-    using reference       = Integer*;
-    using const_reference = Integer const*;
     using value_type      = Integer*;
+    using reference       = Integer*;
 
+    Iterator() = default;
     Iterator(Integer* index, long d_) : p_index(index), D(d_) {}
 
-    // What we implement is determined by the boost::forward_traversal_tag
+    // non-const -> const conversion
+    template<typename U>
+      requires(std::is_same_v<Integer, U const>)
+    Iterator(Iterator<U> const& other) : p_index(other.p_index), D(other.D) {}
+
+    reference operator*() const { return p_index; }
+
+    Iterator& operator++() {
+      p_index += 2 * D;
+      return *this;
+    }
+    Iterator operator++(int) {
+      auto tmp = *this;
+      ++(*this);
+      return tmp;
+    }
+
+    friend bool operator==(Iterator const& a, Iterator const& b) { return a.p_index == b.p_index; }
+    friend auto operator<=>(Iterator const& a, Iterator const& b) { return a.p_index <=> b.p_index; }
+
   private:
-    friend class boost::iterator_core_access;
+    template<typename>
+    friend class Iterator;
 
-    void increment() { p_index += 2 * D; }
-
-    bool equal(Iterator const& other) const { return this->p_index == other.p_index; }
-
-    reference dereference() const { return reference(p_index); }
-
-    void decrement() { p_index -= 2 * D; }
-
-    void advance(int n) { p_index += 2 * D * n; }
-
-    difference_type distance_to(Iterator const& z) const { return ((z.p_index - p_index) / 2 / D); }
-
-  private:
-    Integer* p_index;
-    long D;
+    Integer* p_index = nullptr;
+    long D           = 1;
   };
 
-  template<typename Integer>
-  class Iterator_const : public boost::iterator_facade<Iterator_const<Integer>,
-                                                       Integer const*,
-                                                       std::random_access_iterator_tag,
-                                                       Integer const*,
-                                                       std::ptrdiff_t>
-  {
-  public:
-    using difference_type = std::ptrdiff_t;
-    using reference       = Integer const*;
-    using const_reference = Integer const*;
-    using value_type      = Integer*;
+  template<typename It, typename AOS>
+  static It excitation_begin(AOS& u, int n) {
+    utils::check(n > 0, "ph_excitations: excitation number must be > 0, got {}", n);
+    if(n < u.size()) {
+      return It(u.sequence(n).data(), n);
+    }
+    return excitation_end<It>(u, n);
+  }
 
-    Iterator_const(Integer* index, long d_) : p_index(index), D(d_) {}
-    Iterator_const(Integer const* index, long d_) : p_index(index), D(d_) {}
-
-    // What we implement is determined by the boost::forward_traversal_tag
-  private:
-    friend class boost::iterator_core_access;
-
-    void increment() { p_index += 2 * D; }
-
-    bool equal(Iterator_const const& other) const { return this->p_index == other.p_index; }
-
-    reference dereference() const { return reference(p_index); }
-
-    void decrement() { p_index -= 2 * D; }
-
-    void advance(int n) { p_index += 2 * D * n; }
-
-    difference_type distance_to(Iterator_const const& z) const { return ((z.p_index - p_index) / 2 / D); }
-
-  private:
-    Integer const* p_index;
-    long D;
-  };
+  template<typename It, typename AOS>
+  static It excitation_end(AOS& u, int n) {
+    utils::check(n > 0, "ph_excitations: excitation number must be > 0, got {}", n);
+    if(n < u.size()) {
+      return It(u.values().data() + u.sequence_end(n), n);
+    }
+    return It(u.values().data() + u.sequence_end(u.size() - 1), 1);
+  }
 
 public:
   using Excitation_Iterator       = Iterator<integer_type>;
-  using Excitation_const_Iterator = Iterator_const<integer_type>;
+  using Excitation_const_Iterator = Iterator<integer_type const>;
 
   ph_excitations() = default;
 
@@ -322,11 +313,6 @@ public:
     for (long n = unique_beta.size() + 1; n <= emax; n++)
       sum_of_exct[n][1] = sum_of_exct[n - 1][1];
   }
-
-  ph_excitations(ph_excitations const& other) = default;
-  ph_excitations(ph_excitations && other) = default;
-  ph_excitations& operator=(ph_excitations const& other) = default;
-  ph_excitations& operator=(ph_excitations&& other) = default;
 
   std::array<long, 2> maximum_excitation_number() const { return {unique_alpha.size(), unique_beta.size()}; }
   long number_of_unique_alpha_excitations(int n) const
@@ -391,12 +377,12 @@ public:
     configurations.emplace_back(0, configuration_type{alpha_indx, beta_index, ci});
   }
 
-  typename Excitation_Iterator::const_reference reference_configuration(int spin = 0) const
+  integer_type const* reference_configuration(int spin = 0) const
   {
     return reference.values().data() + (spin == 0 ? 0 : nup);
   }
 
-  typename Excitation_Iterator::reference reference_configuration(int spin = 0)
+  integer_type* reference_configuration(int spin = 0)
   {
     return reference.values().data() + (spin == 0 ? 0 : nup);
   }
@@ -410,84 +396,28 @@ public:
 
   auto configuration(int i) const { return configurations.values().begin() + i; }
 
-  Excitation_Iterator alpha_begin(int n)
-  {
-    utils::check(n > 0, "out of bounds");
-    if (n < unique_alpha.size())
-    {
-      return Excitation_Iterator(unique_alpha.sequence(n).data(), n);
-    }
-    else
-      return alpha_end(n);
+  Excitation_Iterator alpha_begin(int n) { return excitation_begin<Excitation_Iterator>(unique_alpha, n); }
+
+  Excitation_Iterator alpha_end(int n) { return excitation_end<Excitation_Iterator>(unique_alpha, n); }
+
+  Excitation_const_Iterator alpha_begin(int n) const {
+    return excitation_begin<Excitation_const_Iterator>(unique_alpha, n);
   }
 
-  Excitation_Iterator alpha_end(int n)
-  {
-    utils::check(n > 0, "out of bounds");
-    if (n < unique_alpha.size())
-      return Excitation_Iterator(unique_alpha.values().data() + unique_alpha.sequence_end(n), n);
-    else
-      return Excitation_Iterator(unique_alpha.values().data() +
-                                 unique_alpha.sequence_end(unique_alpha.size() - 1),1);
+  Excitation_const_Iterator alpha_end(int n) const {
+    return excitation_end<Excitation_const_Iterator>(unique_alpha, n);
   }
 
-  Excitation_const_Iterator alpha_begin(int n) const
-  {
-    utils::check(n > 0, "out of bounds");
-    if (n < unique_alpha.size())
-    {
-      return Excitation_const_Iterator(unique_alpha.sequence(n).data(), n);
-    }
-    else
-      return alpha_end(n);
+  Excitation_Iterator beta_begin(int n) { return excitation_begin<Excitation_Iterator>(unique_beta, n); }
+
+  Excitation_Iterator beta_end(int n) { return excitation_end<Excitation_Iterator>(unique_beta, n); }
+
+  Excitation_const_Iterator beta_begin(int n) const {
+    return excitation_begin<Excitation_const_Iterator>(unique_beta, n);
   }
 
-  Excitation_const_Iterator alpha_end(int n) const
-  {
-    utils::check(n > 0, "");
-    if (n < unique_alpha.size())
-      return Excitation_const_Iterator(unique_alpha.values().data() + unique_alpha.sequence_end(n), n);
-    else
-      return Excitation_const_Iterator(unique_alpha.values().data() +
-                                       unique_alpha.sequence_end(unique_alpha.size() - 1),1);
-  }
-
-  Excitation_Iterator beta_begin(int n)
-  {
-    utils::check(n > 0, "");
-    if (n < unique_beta.size())
-      return Excitation_Iterator(unique_beta.sequence(n).data(), n);
-    else
-      return beta_end(n);
-  }
-
-  Excitation_Iterator beta_end(int n)
-  {
-    utils::check(n > 0, "");
-    if (n < unique_beta.size())
-      return Excitation_Iterator(unique_beta.values().data() + unique_beta.sequence_end(n), n);
-    else
-      return Excitation_Iterator(unique_beta.values().data() +
-                                  unique_beta.sequence_end(unique_beta.size() - 1),1);
-  }
-
-  Excitation_const_Iterator beta_begin(int n) const
-  {
-    utils::check(n > 0, "");
-    if (n < unique_beta.size())
-      return Excitation_const_Iterator(unique_beta.sequence(n).data(), n);
-    else
-      return beta_end(n);
-  }
-
-  Excitation_const_Iterator beta_end(int n) const
-  {
-    utils::check(n > 0, "");
-    if (n < unique_beta.size())
-      return Excitation_const_Iterator(unique_beta.values().data() + unique_beta.sequence_end(n), n);
-    else
-      return Excitation_const_Iterator(unique_beta.values().data() +
-                                  unique_beta.sequence_end(unique_beta.size() - 1),1);
+  Excitation_const_Iterator beta_end(int n) const {
+    return excitation_end<Excitation_const_Iterator>(unique_beta, n);
   }
 
   // for generic access

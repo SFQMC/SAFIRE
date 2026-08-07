@@ -71,7 +71,6 @@ def mf_from_chkfile(chkfile, scf_class, scf):
 
 
 def load_from_pyscf_chk(chkfile,hcore=None,orthoAO=False):
-
     cell = load_cell(chkfile)
     assert(cell is not None)
 
@@ -86,7 +85,6 @@ def load_from_pyscf_chk(chkfile,hcore=None,orthoAO=False):
     kpts = numpy.reshape(kpts,(-1,3))
     nkpts = len(kpts)
     nao = cell.nao_nr()
-    nao_tot = nao*nkpts
 
     Xocc = lib.chkfile.load(chkfile, 'scf/mo_occ')
     mo_energy = lib.chkfile.load(chkfile, 'scf/mo_energy')

@@ -15,8 +15,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <random>
-#include <numeric>
-#include <boost/optional.hpp>
 #include "AFQMC/config.h"
 #include "utilities/h5_utils.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
@@ -26,6 +24,7 @@
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Wavefunctions/StochasticWfn.hpp"
 #include "AFQMC/Propagators/PropagatorFactory.h"
+#include "AFQMC/parameter_defaults.hpp"
 //#include "AFQMC/Wavefunctions/Excitations.hpp"
 
 namespace sfqmc
@@ -33,38 +32,45 @@ namespace sfqmc
 namespace afqmc
 {
 
-namespace
-{
+namespace {
 
 // Convert an array of numbers of electrons per flavor ({nup, ndown}) from one walker type to another.
 // Most of the time, this is is an identity. However, in the noncollinear case, only
 // the first component contains all electrons and the rest is supposed to be zero.
 template<std::size_t N = 2>
-auto broadcast_number_of_electrons(const std::array<int, N>& nel, WALKER_TYPES from, WALKER_TYPES to)
-{
+auto broadcast_number_of_electrons(const std::array<int, N> &nel, WALKER_TYPES from, WALKER_TYPES to) {
   static_assert(N > 0, "Cannot have no electron flavors");
-  utils::check(walkerTypeIsConvertible(from, to), "Cannot convert {} wavefunction to {} walker type",
-               walkerTypeToString(from), walkerTypeToString(to));
-  if (from == CLOSED)
-  {
-    utils::check(!nel.empty() && std::all_of(nel.begin(), nel.end(), [&](auto n) { return n == nel.front(); }),
-                 "Closed wavefunction does not have uniform number of electrons: {}", nel);
+  utils::check(walkerTypeIsConvertible(from, to), "Cannot convert {} wavefunction to {} walker type", walkerTypeToString(from), walkerTypeToString(to));
+  if(from == CLOSED) {
+    utils::check(
+      !nel.empty() && std::all_of(nel.begin(), nel.end(), [&](auto n) { return n == nel.front(); }),
+      "Closed wavefunction does not have uniform number of electrons: {}", nel);
   }
-
-  if (to == NONCOLLINEAR)
-  {
+  
+  if(to == NONCOLLINEAR) {
     std::array<int, N> result{};
     result[0] = std::accumulate(nel.begin(), nel.end(), 0);
     return result;
-  }
+  }    
   return nel;
 }
 
-} // namespace
+}
 
 namespace wavefunction_detail
 {
 
+/**
+ * @brief Concrete inner stack owned by a StochasticWfn: the variational NOMSD wrapped in a
+ *        Wavefunction, plus the propagator carrying the trained B_T.
+ *
+ * @details Lives here rather than in the header because it must name the concrete inner wavefunction
+ * and propagator types, which only the factory knows; StochasticWfn sees it only through the abstract
+ * StochasticInnerStack interface.
+ *
+ * @param MEM memory space of the inner stack
+ * @param MType storage type of the trial orbital matrices
+ */
 template<MEMORY_SPACE MEM, class MType>
 struct StochasticInnerStackImpl final : StochasticInnerStack<MEM, MType>
 {
@@ -93,6 +99,8 @@ struct StochasticInnerStackImpl final : StochasticInnerStack<MEM, MType>
   }
 };
 
+/// @brief Exposes PropagatorFactory's protected buildPropagator so the inner propagator can be built
+/// directly, without registering the inner stack as a named propagator in the input.
 struct InnerPropagatorBuilder : PropagatorFactory<HOST_MEMORY>
 {
   using PropagatorFactory<HOST_MEMORY>::PropagatorFactory;
@@ -100,6 +108,7 @@ struct InnerPropagatorBuilder : PropagatorFactory<HOST_MEMORY>
 };
 
 #if defined(ENABLE_DEVICE)
+/// @brief Device counterpart of InnerPropagatorBuilder.
 struct InnerPropagatorBuilderDevice : PropagatorFactory<DEVICE_MEMORY>
 {
   using PropagatorFactory<DEVICE_MEMORY>::PropagatorFactory;
@@ -107,12 +116,32 @@ struct InnerPropagatorBuilderDevice : PropagatorFactory<DEVICE_MEMORY>
 };
 #endif
 
+/**
+ * @brief Build the inner (variational) stack a StochasticWfn samples its trial from.
+ *
+ * @details Inner NOMSD against the variational HamOps; for a dynamic trial, the B_T propagator as
+ * selected by resolve_sampling_target() (resolved once, before the sampler is chosen).
+ *
+ * @param NMO number of molecular orbitals
+ * @param nup number of spin-up electrons
+ * @param ndown number of spin-down electrons
+ * @param params the wavefunction input block, carrying the inner_* keys and the resolved sampling target
+ * @param inner_ham_type Hamiltonian type of the VARIATIONAL Hamiltonian, needed to resolve the inner
+ *        propagator's defaults (vbias_bound, cutoff scales, ...)
+ * @param mpi MPI context
+ * @param inner_hop HamiltonianOperations of the VARIATIONAL Hamiltonian
+ * @param inner_ci CI coefficients of the anchor expansion
+ * @param inner_orbs orbital matrices of the anchor expansion
+ * @param walker_type walker type the inner ensemble must match
+ * @param targetNW target walker count
+ */
 template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
 std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
     int NMO,
     int nup,
     int ndown,
-    ptree const& pt,
+    WavefunctionParameters const& params,
+    HamiltonianTypes inner_ham_type,
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
     HamiltonianOperations<MEM>&& inner_hop,
     nda::array<ComplexType, 1>&& inner_ci,
@@ -122,67 +151,69 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
 {
   auto stack = std::make_unique<StochasticInnerStackImpl<MEM, MType>>();
 
-  ptree nomsd_pt = NOMSD<MEM, MType>::interpret_inputs(strip_stochastic_input_keys(pt));
-  stack->wfn_    = std::make_unique<Wavefunction<MEM>>(
-      NOMSD<MEM, MType>(std::move(nomsd_pt), NMO, nup, ndown, walker_type, mpi, std::move(inner_hop), std::move(inner_ci),
+  stack->wfn_ = std::make_unique<Wavefunction<MEM>>(
+      NOMSD<MEM, MType>(params, NMO, nup, ndown, walker_type, mpi, std::move(inner_hop), std::move(inner_ci),
                         std::forward<OrbsContainer>(inner_orbs), targetNW));
 
-  ptree prop_pt;
-  if (auto child = pt.get_child_optional("inner_propagator"))
-    prop_pt = *child;
-  if (not prop_pt.get_child_optional("system"))
-    prop_pt.put("system", pt.get<std::string>("system"));
-  if (not prop_pt.get_child_optional("name"))
-    prop_pt.put("name", pt.get<std::string>("name") + "_inner_propagator");
+  PropagatorParameters prop_params = params.inner_propagator.value_or(PropagatorParameters{});
+  if (prop_params.name.empty())
+    prop_params.name = params.name + "_inner_propagator";
 
-  if (pt.get<int>("inner_nsteps", 0) > 0)
+  if (params.inner_nsteps > 0)
   {
-    if (pt.get<bool>("inner_conditioning", false))
+    // This is the SECOND consumer of the sampler selection, and the one that decides how the inner
+    // propagator is BUILT. If it and StochasticWfn ever disagree, the wavefunction runs a conditioned
+    // sampler against a free-projection propagator and Propagate_conditioned aborts at the first step.
+    // fromHDF5 has already validated `params`, so this and StochasticWfn's ctor resolve the SAME target.
+    if (resolve_sampling_target(params) == StochasticSamplingTarget::WalkerOverlap)
     {
       // Walker-conditioned sampling: build the inner propagator in importance-sampling mode
       // mode (free_projection = false) so assemble_X applies the per-walker conditioning force bias.
       // The bias is supplied externally and the walker-weight update is skipped via
       // StochasticWfn -> Propagator::Propagate_conditioned, so hybrid/apply_constrain are inert here.
-      prop_pt.put("free_projection", false);
-      prop_pt.put("hybrid", true);
-      prop_pt.put("importance_sampling", true);
-      prop_pt.put("apply_constrain", false);
+      prop_params.free_projection     = false;
+      prop_params.hybrid              = true;
+      prop_params.importance_sampling = true;
+      prop_params.apply_constrain     = false;
     }
     else
     {
       // Walker-independent free projection (bare Gaussian fields).
-      prop_pt.put("free_projection", true);
-      prop_pt.put("hybrid", true);
-      prop_pt.put("importance_sampling", false);
-      prop_pt.put("apply_constrain", false);
+      prop_params.free_projection     = true;
+      prop_params.hybrid              = true;
+      prop_params.importance_sampling = false;
+      prop_params.apply_constrain     = false;
     }
+    // The inner propagator is never registered under a top-level `propagator` input block, so it
+    // never goes through resolve_defaults -- fill in the Hamiltonian-dependent defaults ourselves.
+    apply_defaults(prop_params, inner_ham_type);
   }
 
-  int inner_seed = pt.get<int>("inner_seed", 777);
+  int inner_seed = params.inner_seed;
   auto iseed     = (inner_seed == 0) ? utils::make_seed(mpi->comm) : utils::split_seed(inner_seed, mpi->comm);
   // Construct in place from the seed: utils::make_rng<MEM> was removed with the curandGenerator_t
   // ownership fix (aed0a52), which deletes CurandRandomGenerator's copy ctor -- so a by-value
   // factory can no longer be handed to make_shared. Matches StochasticWfn.icc's inner-RNG pattern.
-  stack->rng_    = std::make_shared<utils::RandomGenerator_t<MEM>>(iseed);
+  stack->rng_ = std::make_shared<utils::RandomGenerator_t<MEM>>(iseed);
 
   // Inner propagator is only needed when the ensemble is dynamic (inner_nsteps > 0).
   // At the delegate limit (inner_nsteps == 0) it stays dormant; lazy build on first access
   // covers stochastic_inner_propagator_construction when that test is ported.
-  if (pt.get<int>("inner_nsteps", 0) > 0)
+  if (params.inner_nsteps > 0)
   {
     app_log(2, " Building StochasticWfn inner propagator (inner_seed = {}).", inner_seed);
     if constexpr (MEM == HOST_MEMORY)
     {
       InnerPropagatorBuilder prop_builder;
       stack->prop_ = std::make_unique<Propagator<MEM>>(
-          prop_builder.buildPropagator(mpi, std::move(prop_pt), stack->wavefunction(), stack->rng_));
+          prop_builder.buildPropagator(mpi, prop_params, stack->wavefunction(), stack->rng_));
     }
 #if defined(ENABLE_DEVICE)
     else
     {
       InnerPropagatorBuilderDevice prop_builder;
       stack->prop_ = std::make_unique<Propagator<MEM>>(
-          prop_builder.buildPropagator(mpi, std::move(prop_pt), stack->wavefunction(), stack->rng_));
+          prop_builder.buildPropagator(mpi, prop_params, stack->wavefunction(), stack->rng_));
     }
 #endif
   }
@@ -190,14 +221,31 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
   return stack;
 }
 
-// h scores the outer (True Ham) nomsd_; h_var builds the inner (Variational) stack that generates the
-// stochastic trial samples. The factory passes h_var == h to clone the True Ham when no inner_hamiltonian
-// is named; a distinct h_var routes the inner stack to a separate Variational Hamiltonian. Both
-// HamOps are half-rotated with the same trial orbitals (PsiT_for_ham); only the integrals differ.
+/**
+ * @brief Build a StochasticWfn: outer NOMSD against the TRUE Hamiltonian, inner stack against the
+ *        VARIATIONAL one.
+ *
+ * @details The caller passes h_var == h to clone the True Hamiltonian when the input names no
+ * inner_hamiltonian; a distinct h_var routes the inner stack to a separate Variational Hamiltonian.
+ * Both sets of HamiltonianOperations are half-rotated with the SAME trial orbitals -- only the
+ * integrals differ.
+ *
+ * @param params the wavefunction input block, already validated via validate_stochastic_inputs
+ * @param mpi MPI context
+ * @param h the TRUE Hamiltonian, which every reduction is scored against
+ * @param h_var the VARIATIONAL Hamiltonian generating the trial samples; may alias h
+ * @param walker_type walker type the trial must match
+ * @param NMO number of molecular orbitals
+ * @param nup number of spin-up electrons
+ * @param ndown number of spin-down electrons
+ * @param ci CI coefficients of the anchor expansion
+ * @param orbs orbital matrices of the anchor expansion
+ * @param targetNW target walker count
+ * @param PsiT_for_ham trial orbitals both Hamiltonians are half-rotated against
+ */
 template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
 Wavefunction<MEM> buildStochasticNomsdWavefunction(
-    std::string system,
-    ptree pt,
+    WavefunctionParameters params,
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
     Hamiltonian& h,
     Hamiltonian& h_var,
@@ -210,49 +258,43 @@ Wavefunction<MEM> buildStochasticNomsdWavefunction(
     int targetNW,
     nda::array<PsiT_Matrix<MEM>, 2>& PsiT_for_ham)
 {
+  StochasticWfn<MEM, MType>::validate_stochastic_inputs(params);
+
   auto outer_HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
   auto inner_HOps = h_var.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
   auto inner_ci   = ci;
   auto inner_orbs = orbs;
-  // Thread the resolved system id (fromHDF5 defaults it to the wfn name) into pt so the inner stack's
-  // propagator sees it: the stochastic-wfn input block carries no `system` key, and
-  // buildStochasticInnerStack reads pt["system"] WITHOUT a default -> boost ptree "No such node
-  // (system)" otherwise. Mirrors the inner_hamiltonian `var_pt.put("system", system)` in fromHDF5.
-  if (not pt.get_child_optional("system"))
-    pt.put("system", system);
   auto inner_stack =
-      buildStochasticInnerStack<MEM, MType>(NMO, nup, ndown, pt, mpi, std::move(inner_HOps), std::move(inner_ci),
-                                            std::move(inner_orbs), walker_type, targetNW);
-  return Wavefunction<MEM>(StochasticWfn<MEM, MType>(system, NMO, nup, ndown, std::move(pt), mpi, std::move(outer_HOps),
-                                                     std::move(ci), std::move(orbs), std::move(inner_stack),
-                                                     walker_type, targetNW));
+      buildStochasticInnerStack<MEM, MType>(NMO, nup, ndown, params, h_var.getHamType(), mpi, std::move(inner_HOps),
+                                            std::move(inner_ci), std::move(inner_orbs), walker_type, targetNW);
+  std::string system = params.name;
+  return Wavefunction<MEM>(StochasticWfn<MEM, MType>(std::move(system), NMO, nup, ndown, params, mpi,
+                                                     std::move(outer_HOps), std::move(ci), std::move(orbs),
+                                                     std::move(inner_stack), walker_type, targetNW));
 }
 
 } // namespace wavefunction_detail
 
 using wavefunction_detail::buildStochasticNomsdWavefunction;
+
 template<MEMORY_SPACE MEM>
 Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
-                                           ptree pt_in,
+                                           const WavefunctionParameters& params,
                                            WALKER_TYPES walker_type,
                                            bool finiteT,
                                            Hamiltonian& h,
                                            int targetNW)
 {
-  ptree pt = interpret_inputs(pt_in);
-
   bool dense_trial;
-  std::string name          = pt.get<std::string>("name");
-  std::string filename      = pt.get<std::string>("filename");
-  bool recompute_ci  = pt.get<bool>("rediag");
-  int ndets_to_read  = pt.get<int>("ndets_to_read");
-  boost::optional<bool> dense_trial_opt;// = pt.get_optional<bool>("dense_trial");
-  if( auto node = pt.get_child_optional("dense_trial") )
-    dense_trial_opt = node->get_value_optional<bool>(); 
-
+  const std::string& name     = params.name;
+  const std::string& filename = params.filename;
+  utils::check(not name.empty(), "Error in WavefunctionFactory: missing required input: name");
+  utils::check(not filename.empty(), "Error in WavefunctionFactory: missing required input: filename");
+  bool recompute_ci  = params.rediag;
+  int ndets_to_read  = params.ndets_to_read;
 
   const auto [NMO, nup_in_wfn, ndown_in_wfn] = read_info_from_wfn(filename,"any");
-  utils::check(ndown_in_wfn <= nup_in_wfn," Error nup < ndown: Up spin must be the majority spin. nup: {}, ndown: {}",nup_in_wfn,ndown_in_wfn);
+  utils::check(ndown_in_wfn <= nup_in_wfn,"Error nup < ndown: Up spin must be the majority spin. nup: {}, ndown: {}",nup_in_wfn,ndown_in_wfn);
 
   int nspin = walker_type == COLLINEAR ? 2 : 1;
   int npol = walker_type == NONCOLLINEAR ? 2 : 1;
@@ -268,7 +310,13 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     wfn_type = WAVEFUNCTION_TYPES(itype);
   }
 
-  bool build_stochastic = (wfn_type == STOCHASTIC_WFN) || is_stochastic_wavefunction_input(pt_in);
+  bool build_stochastic = (wfn_type == STOCHASTIC_WFN) || is_stochastic_wavefunction_input(params);
+  // Mutable copy: stochastic validation resolves inner_sampling_target / inner_sampler_step in place,
+  // and the inner_hamiltonian branch below stamps the trained inner_propagator.timestep into it.
+  WavefunctionParameters wfn_params = params;
+
+  utils::check(not (build_stochastic && wfn_type == PHMSD_WFN),
+               "Error in WavefunctionFactory::fromHDF5: stochastic trials require NOMSD trial HDF5 data.");
 
   // everyone reading for now, change it problematic
   h5::file file(filename,'r');
@@ -276,26 +324,21 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
   h5::group wgrp = grp.open_group("Wavefunction");
 
   
-  utils::check(not (build_stochastic && wfn_type == PHMSD_WFN),
-               "Error in WavefunctionFactory::fromHDF5: stochastic trials require NOMSD trial HDF5 data.");
-
   if (wfn_type == NOMSD_WFN || wfn_type == STOCHASTIC_WFN)
   {
-    app_log(1, " Wavefunction type: {}", build_stochastic ? "StochasticWfn" : "NOMSD");
-    nda::array<ComplexType, 1> ci;
+    app_log(1, "Wavefunction type: {}", build_stochastic ? "StochasticWfn" : "NOMSD");
+    nda::array<ComplexType,1> ci;
     h5::group ngrp = wgrp.open_group("NOMSD");
     // Read common trial wavefunction input options.
     WALKER_TYPES input_wtype{};
     getCommonInput(ngrp, ndets_to_read, ci, input_wtype);
 
-    if (!finiteT) {
+    if (!finiteT) {      
       // validation blocks
       utils::check(input_wtype != NONCOLLINEAR or walker_type == NONCOLLINEAR,
           "Error: Trial wavefunction is NONCOLLINEAR and requires NONCOLLINEAR walkers. walker_type: {}", walkerTypeToString(walker_type));
       
       auto [nup, ndown] = broadcast_number_of_electrons({nup_in_wfn, ndown_in_wfn}, input_wtype, walker_type);
-
-      std::string system = pt.get<std::string>("system", name);
 
       //mpi->comm.broadcast_n(ci.data(), ci.size());
 
@@ -305,41 +348,80 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       // Set initial walker's Slater matrix.
       getInitialGuess(ngrp, name, NMO, nup, ndown, walker_type);
 
-      // if not set, get default based on HamTYpe
-      // use sparse trial only on KP runs
-      if (dense_trial_opt == boost::none)
-      {
-        dense_trial = true; 
-        if (h.getHamType() == KPFactorized || h.getHamType() == KPTHC)
-          dense_trial = false; 
-      } else {
-        dense_trial = *dense_trial_opt;
-      }
+      dense_trial = resolved(params.dense_trial, "dense_trial");
 
       if (build_stochastic)
       {
         utils::check(not finiteT,
                      "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
                      "finite-temperature walkers.");
-        // Resolve the inner (Variational) Hamiltonian. If the wfn block names one via `inner_hamiltonian`
-        // (read from the raw pt_in -- it is a factory-level key, never forwarded into the wavefunction
-        // ptree), build it on demand through HamFac_ and use it for the inner stack; otherwise clone the
-        // True Ham h. The var Ham inherits the wfn's `system` unless its block sets one, and is registered under a namespaced ID that cannot
-        // collide with a user Hamiltonian.
+        // Resolve the inner (Variational) Hamiltonian. If the wfn block names one via `inner_hamiltonian`,
+        // build it on demand through HamFac_ and use it for the inner stack; otherwise clone the True Ham
+        // h. Registered under a namespaced ID that cannot collide with a user-declared Hamiltonian.
         Hamiltonian* inner_ham_ptr = &h;
-        if (auto var_block = pt_in.get_child_optional("inner_hamiltonian"))
+        if (wfn_params.inner_hamiltonian)
         {
           utils::check(HamFac_ != nullptr,
                        "Error in WavefunctionFactory::fromHDF5: inner_hamiltonian requires the "
                        "WavefunctionFactory to be constructed with a HamiltonianFactory (two-argument "
                        "constructor).");
-          ptree var_pt = *var_block;
-          if (not var_pt.get_child_optional("system"))
-            var_pt.put("system", system);
+          HamiltonianParameters var_params = *wfn_params.inner_hamiltonian;
+          utils::check(not var_params.filename.empty(),
+                       "Error in WavefunctionFactory::fromHDF5: inner_hamiltonian requires a filename.");
           std::string var_id = name + "__inner_hamiltonian__";
+          if (var_params.name.empty())
+            var_params.name = var_id;
           if (not HamFac_->has_input(var_id))
-            HamFac_->push(var_id, var_pt);
+            HamFac_->push(var_id, var_params);
           inner_ham_ptr = &HamFac_->getHamiltonian(mpi, var_id);
+
+          // THE TRAINED INNER TIMESTEP COMES FROM THE VARIATIONAL HAMILTONIAN, NOT FROM THE INPUT.
+          //
+          // dt = ts_v**2 parameterizes B_T = exp(-dt * ...) built from THIS operator, so the two must
+          // travel together. It used to be carried by an inner_timestep.json sidecar that a human copied
+          // into wavefunction.inner_propagator.timestep; a wrong copy drove the trained parameters with
+          // a propagator nobody trained, silently, because the input key defaulted to 0.01. Both the key
+          // and the default are gone: we read the stamp export_safire writes, and fail closed without it.
+          {
+            // A hand-set timestep alongside inner_hamiltonian is exactly the silent-override this change
+            // exists to kill: we would overwrite it below and the deck would read as if it took effect.
+            if (wfn_params.inner_propagator && wfn_params.inner_propagator->timestep)
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_propagator.timestep may not be set "
+                        "when inner_hamiltonian is given -- the trained timestep is read from that "
+                        "Hamiltonian's 'inner_timestep' attribute. Remove the input key.");
+            const std::string& var_file = var_params.filename;
+            double inner_dt = 0.0;
+            bool have_dt     = false;
+            {
+              h5::file fh5(var_file, 'r');
+              h5::group vgrp(fh5);
+              if (vgrp.has_key("Hamiltonian"))
+              {
+                h5::group hgrp = vgrp.open_group("Hamiltonian");
+                if (H5Aexists(h5::hid_t(hgrp), "inner_timestep"))
+                {
+                  h5::h5_read_attribute(hgrp, "inner_timestep", inner_dt);
+                  have_dt = true;
+                }
+              }
+            }
+            if (not have_dt)
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_hamiltonian '" + var_file +
+                        "' carries no 'inner_timestep' attribute. The trained B_T timestep must travel "
+                        "with the variational Hamiltonian it parameterizes; SAFIRE no longer accepts it "
+                        "from the input and has no default. Re-export this trial with a current "
+                        "export_safire (which stamps Hamiltonian/inner_timestep), or drop "
+                        "inner_hamiltonian if this trial has no trained propagator.");
+            if (inner_dt <= 0.0)
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_hamiltonian '" + var_file +
+                        "' has a non-positive inner_timestep.");
+            // Write into `wfn_params`, the block moved into the wavefunction below: interpret/validate
+            // has not consumed this factory-supplied key, so it is never re-validated against the input.
+            if (not wfn_params.inner_propagator)
+              wfn_params.inner_propagator = PropagatorParameters{};
+            wfn_params.inner_propagator->timestep = inner_dt;
+            app_log(2, " Inner propagator timestep read from {}: dt = {}", var_file, inner_dt);
+          }
         }
         Hamiltonian& inner_ham = *inner_ham_ptr;
         if (dense_trial)
@@ -353,10 +435,10 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
               });
             }
           }
-          return buildStochasticNomsdWavefunction<MEM, MType>(system, std::move(pt), mpi, h, inner_ham, walker_type,
+          return buildStochasticNomsdWavefunction<MEM, MType>(wfn_params, mpi, h, inner_ham, walker_type,
                                                               NMO, nup, ndown, ci, PsiT_dense, targetNW, PsiT);
         }
-        return buildStochasticNomsdWavefunction<MEM, PsiT_Matrix<MEM>>(system, std::move(pt), mpi, h, inner_ham,
+        return buildStochasticNomsdWavefunction<MEM, PsiT_Matrix<MEM>>(wfn_params, mpi, h, inner_ham,
                                                                        walker_type, NMO, nup, ndown, ci, PsiT,
                                                                        targetNW, PsiT);
       }
@@ -378,12 +460,12 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
             });
           }
         }
-        return Wavefunction(NOMSD<MEM,MType>(pt, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
+        return Wavefunction(NOMSD<MEM,MType>(params, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT_dense),targetNW));
       }
       else
       {
-        return Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>>(pt, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
+        return Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>>(params, NMO, nup, ndown, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT),targetNW)); 
       }
     }
@@ -407,16 +489,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       // Set initial walker's Slater matrix.
       getInitialGuess_ft(ngrp, *mpi, name, NMO, walker_type, finiteT);
 
-      // if not set, get default based on HamTYpe
-      // use sparse trial only on KP runs
-      if (dense_trial_opt == boost::none)
-      {
-        dense_trial = true; 
-        if (h.getHamType() == KPFactorized || h.getHamType() == KPTHC)
-          dense_trial = false; 
-      } else {
-        dense_trial = *dense_trial_opt;
-      }
+      dense_trial = resolved(params.dense_trial, "dense_trial");
 
       nda::array<PsiT_Matrix<MEM>, 2> IMat(ndets_to_read,nspin);
       // dim = NMO
@@ -440,12 +513,12 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
             }
           }
         }
-        return Wavefunction(NOMSD_FT<MEM,MType>(pt, NMO, ntau, walker_type, mpi, std::move(HOps), 
+        return Wavefunction(NOMSD_FT<MEM,MType>(params, NMO, ntau, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT_dense),targetNW));
       }
       else
       {
-        return Wavefunction(NOMSD_FT<MEM,PsiT_Matrix<MEM>>(pt, NMO, ntau, walker_type, mpi, std::move(HOps), 
+        return Wavefunction(NOMSD_FT<MEM,PsiT_Matrix<MEM>>(params, NMO, ntau, walker_type, mpi, std::move(HOps), 
                                       std::move(ci), std::move(PsiT),targetNW));
       }
 
@@ -455,7 +528,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
   else if (wfn_type == PHMSD_WFN)
   {
 
-    app_log(1," Wavefunction type: PHMSD");
+    app_log(1,"Wavefunction type: PHMSD");
 
     // Implementation notes:
     //  - PsiT: [Nact, NMO] where Nact is the number of active space orbitals,
@@ -477,17 +550,17 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     nda::array<int,2> occs;
     nda::array<ComplexType,1> coeffs;
     // 1. Read occupancies and coefficients.
-    app_log(1," Reading PHMSD wavefunction from {}", filename);
+    app_log(1,"Reading PHMSD wavefunction from {}", filename);
     read_ph_wavefunction_hdf(ngrp, coeffs, occs, ndets_to_read, walker_type, 
 				NMO, nup, ndown, PsiT_MO, orb_type);
     utils::check(occs.shape() == std::array<long,2>{ndets_to_read, nup + ndown}, "Size mismatch");
-    app_log(1," Finished reading PHMSD wavefunction ");
+    app_log(1,"Finished reading PHMSD wavefunction ");
     if(recompute_ci) {
       utils::check(false, "finish");
       // 2. Compute Variational Energy / update coefficients
-      app_log(1," Computing variational energy of trial wavefunction.");
+      app_log(1,"Computing variational energy of trial wavefunction.");
 //      computeVariationalEnergyPHMSD(TGwfn, h, occs, coeffs, ndets_to_read, nup, ndown, NMO, recompute_ci);
-      app_log(1," Finished computing variational energy of trial wavefunction.");
+      app_log(1,"Finished computing variational energy of trial wavefunction.");
     }
 
     // build reference MOs (PsiT_MO) if needed...
@@ -625,7 +698,7 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     getInitialGuess(ngrp, name, NMO, nup, ndown, walker_type);
 
     auto n_unique(abij.number_of_unique_excitations());
-    app_log(1," Number of unique determinants per spin channel: {} {} ",
+    app_log(1,"Number of unique determinants per spin channel: {} {} ",
                 n_unique[0],n_unique[1]);
     nda::array<int,1> counts_alpha(n_unique[0],0);
     nda::array<int,1> counts_beta(n_unique[1],0);
@@ -681,16 +754,14 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       PsiT_1d(i) = std::move(PsiT_MO(i));
     }
 
-    return Wavefunction<MEM>(PHMSD<MEM>(pt, walker_type, NMO, nup, ndown, mpi, std::move(HOps),
+    return Wavefunction<MEM>(PHMSD<MEM>(params, walker_type, NMO, nup, ndown, mpi, std::move(HOps),
                     std::move(abij), std::move(det_coupling_matrix),
                     std::move(PsiT_1d), targetNW));
   }
   else
   {
-    utils::check(false," Error: Unknown wave-function wfn_type: {}", wfn_type);
-    return Wavefunction<MEM>{};
+    APP_ABORT("Error: Unknown wave-function wfn_type: {}", wfn_type);
   }
-  return Wavefunction<MEM>{};
 }
 
 /*
@@ -743,11 +814,11 @@ void WavefunctionFactory<MEM>::getInitialGuess_ft(h5::group grp,
         M(2,1,nda::ellipsis{}) = VRup();
       }
       else
-        utils::check(false," Error: Unknown wtype. ");
+        utils::check(false,"Error: Unknown wtype. ");
     }
     return M;
   })));
-  utils::check(newg.second, " Error: Problems adding new initial guess. ");
+  utils::check(newg.second, "Error: Problems adding new initial guess. ");
 }
 
 /*
@@ -815,7 +886,7 @@ void WavefunctionFactory<MEM>::getInitialGuess(h5::group grp,
   }
 
   auto newg = initial_guess.insert(std::make_pair(name, std::move(M)));
-  utils::check(newg.second, " Error: Problems adding new initial guess. ");
+  utils::check(newg.second, "Error: Problems adding new initial guess.");
 }
 
 /*
@@ -1059,7 +1130,7 @@ void WavefunctionFactory<MEM>::build_PsiT_MO_phmsd(WALKER_TYPES walker_type, int
 
     // reference determinant is non-trivial (occupy bottom nalpha/nbeta states...)
     // build non-trivial reference and redefine excitations with respect to this new reference...
-    app_log(1," Found non-trivial reference determinant. Constructing appropriate reference state.");
+    app_log(1,"Found non-trivial reference determinant. Constructing appropriate reference state.");
 
     // if beta reference configuration has singly occupied states, 
     // you will need separate references
@@ -1188,11 +1259,11 @@ void WavefunctionFactory<MEM>::build_PsiT_MO_phmsd(WALKER_TYPES walker_type, int
 
 // Instantiate templates
 
-template Wavefunction<HOST_MEMORY> WavefunctionFactory<HOST_MEMORY>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,ptree,WALKER_TYPES,bool,Hamiltonian&,int);
+template Wavefunction<HOST_MEMORY> WavefunctionFactory<HOST_MEMORY>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,const WavefunctionParameters&,WALKER_TYPES,bool,Hamiltonian&,int);
 
 #if defined(ENABLE_DEVICE)
 
-template Wavefunction<DEVICE_MEMORY> WavefunctionFactory<DEVICE_MEMORY>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,ptree,WALKER_TYPES,bool,Hamiltonian&,int);
+template Wavefunction<DEVICE_MEMORY> WavefunctionFactory<DEVICE_MEMORY>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,const WavefunctionParameters&,WALKER_TYPES,bool,Hamiltonian&,int);
 
 #endif
 

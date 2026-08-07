@@ -11,7 +11,6 @@ The following list includes all walker types.
 #. :ref:`RHF/Closed Walkers <closed_walker>`
 #. :ref:`UHF/Collinear Walkers <collinear_walker>`
 #. :ref:`GHF/Noncollinear Walkers <noncollinear_walker>`
-#. :ref:`Fully Spin-polarized Walkers <fullypolarized_walker>`
 
 The walker type can be set in the AFQMC input file using the ``walker_type`` keyword 
 within a "walker_set" input block.
@@ -84,25 +83,3 @@ with no partitioning between spin channels.
 .. note::
 
    Noncollinear walkers can be used with Hamiltonians that have any spin symmetry representation ("Closed", "Collinear", "Noncollinear").
-
-
-.. _fullypolarized_walker:
-
-Fully Spin-polarized Walkers
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Fully Spin-polarized walkers are treated as having a single spin channel.
-This can be thought of as a special case of the UHF/Collinear walker in
-which there are no walkers in the spin-down channel.
-
-Formally,
-
-.. math::
-  
-   |\Phi_k\rangle = |\Phi_{k \uparrow}\rangle,
-
-where :math:`|\Phi_{k \uparrow}\rangle` is the spin-up channel walker with walker index :math:`k`.
-
-.. note::
-
-   Fully spin-polarized walkers can only be used with Hamiltonians that have a "Collinear" or "Closed" representation.

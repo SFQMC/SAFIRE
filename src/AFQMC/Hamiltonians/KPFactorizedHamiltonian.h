@@ -21,11 +21,11 @@
 #include <map>
 #include <fstream>
 
-#include "IO/ptree/ptree_utilities.hpp"
 #include "IO/app_loggers.h"
 #include "utilities/mpi_context.h"
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 
 #include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
 
@@ -37,24 +37,9 @@ class KPFactorizedHamiltonian
 {
 public:
 
-  KPFactorizedHamiltonian(ptree pt_in)
-      : fileName("")
-  {
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(2,"\nKPFactorizedHamiltonian input:");
-    app_log(2, "{}", io::to_string(pt));
-    // initialize using verbose input
-    fileName  = pt.get<std::string>("filename");
-    buffer_size = pt.get<int>("buffer_size");
-  }
-
-  ~KPFactorizedHamiltonian() {}
-
-  KPFactorizedHamiltonian(KPFactorizedHamiltonian const& other) = default;
-  KPFactorizedHamiltonian(KPFactorizedHamiltonian&& other)      = default;
-  KPFactorizedHamiltonian& operator=(KPFactorizedHamiltonian const& other) = default;
-  KPFactorizedHamiltonian& operator=(KPFactorizedHamiltonian&& other) = default;
+  KPFactorizedHamiltonian(const HamiltonianParameters& params)
+      : fileName(params.filename), buffer_size(params.buffer_size)
+  {}
 
   HamiltonianTypes getHamType() const { return KPFactorized; }
 
@@ -63,30 +48,12 @@ public:
                  std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
                  nda::array<PsiT_Matrix<MEM>,2> const& PsiT);
 
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    std::string name, filename;
-    int bsize;
-    filename  = pt0.get<std::string>("filename");
-    name      = pt0.get<std::string>("name", "ham0");
-    bsize = pt0.get<int>("buffer_size", 4096);
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("name", name);
-    pt1.put("filename", filename);
-    pt1.put("buffer_size",bsize);
-    std::unordered_set<std::string> pass_through_keys = {};
-    io::compare_known_keys("K-point Factorized Cholesky Hamiltonian",pt1, pt0,pass_through_keys);
-    return pt1;
-  }
-
 protected:
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
   std::string fileName;
 
-  int buffer_size = 4096; 
+  int buffer_size;
 
 };
 

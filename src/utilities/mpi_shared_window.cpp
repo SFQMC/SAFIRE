@@ -24,7 +24,7 @@ void *shared_window::base_ptr(int rank) {
 shared_window_registry::~shared_window_registry() {
   for(const auto& w : windows_) {
     if(!w.unused) {
-      sfqmc::app_warning("shared_window of size {} was not deconstructed before its shared_window_registry. This is UB!");
+      sfqmc::app_warning("shared_window of was not deconstructed before its shared_window_registry. This is UB!");
     }
   }
 }

@@ -25,7 +25,6 @@ class SpinSymm(IntFlag):
     CLOSED=1
     COLLINEAR=2
     NONCOLLINEAR=3
-    FULLYPOLARIZED=4
 
 
 def get_spin_symm_enum(spin_symm):
@@ -38,7 +37,5 @@ def get_spin_symm_enum(spin_symm):
         return SpinSymm.COLLINEAR
     elif spin_symm in ('ghf','noncollinear',"nc",SpinSymm.NONCOLLINEAR,3):
         return SpinSymm.NONCOLLINEAR
-    elif spin_symm in ('fullypolarized','fully polarized','fp',SpinSymm.FULLYPOLARIZED,4):
-        return SpinSymm.FULLYPOLARIZED
     else:
         raise ValueError(f"Unknown Spin symmetry: {spin_symm}")

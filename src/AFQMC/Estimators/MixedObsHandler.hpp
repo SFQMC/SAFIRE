@@ -48,7 +48,7 @@ class MixedObsHandler
 public:
   MixedObsHandler(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
                  std::string name_,
-                 ptree pt,
+                 const EstimatorParameters& params,
                  WALKER_TYPES wlk,
                  int NMO_,
                  Wavefunction<MEM>& wfn_)
@@ -58,63 +58,20 @@ public:
         name(name_),
         denominator(1)
   {
-    for(const ptree::value_type &it : pt)
-    {
-      std::string cname = it.first;
-      io::tolower(cname);
-      if (cname == "onerdm")
-      {
-        properties_1body.emplace_back(full1rdm(mpi, it.second, walker_type, NMO_, 1));
-      }
-      else if (cname == "gfock" || cname == "genfock" || cname == "ekt")
-      {
-//        properties.emplace_back(
-//            generalizedFockMatrix(mpi, info, it.second, walker_type, *wfn, 1, block_size));
-      }
-      else if (cname == "diag2rdm")
-      {
-       properties.emplace_back(diagonal2rdm<MEM>(mpi, it.second, walker_type, NMO_, 1));
-      }
-      else if (cname == "twordm")
-      {
-       properties.emplace_back(full2rdm<MEM>(mpi, it.second, walker_type, NMO_, 1));
-      }
-      else if (cname == "n2r" || cname == "ontop2rdm")
-      {
-#if defined(ENABLE_DEVICE)
-        ptree pt1 = it.second;
-        bool use_host_memory = pt1.get<bool>("use_host_memory", false);
-        if (use_host_memory)
-        {
-//          properties.emplace_back(
-//              n2r<device_allocator<ComplexType>>(mpi, info, it.second, walker_type, false, device_allocator<ComplexType>{},
-//                                                 device_allocator<ComplexType>{}, 1, block_size));
-        }
-        else
-#endif
-        {
-//          properties.emplace_back(
-//              n2r<shared_allocator<ComplexType>>(mpi, info, it.second, walker_type, true,
-//                                                 shared_allocator<ComplexType>{TG.TG_local()},
-//                                                 shared_allocator<ComplexType>{TG.Node()}, 1, block_size));
-        }
-      }
-      else if (cname == "realspace_correlators")
-      {
-//        properties.emplace_back(realspace_correlators(mpi, info, it.second, walker_type, 1, block_size));
-      }
-      else if (cname == "correlators")
-      {
-//        properties.emplace_back(atomcentered_correlators(mpi, info, it.second, walker_type, 1, block_size));
-      }
-      else if (cname == "pair_correlators")
-      {
-        properties.emplace_back(pair_correlator(mpi, it.second, walker_type, NMO_, 1));
-      }
-      else if (cname == "spinspin")
-      {
-        properties.emplace_back(spinspinobs(mpi, it.second, walker_type, NMO_, 1));
-      }
+    if(params.onerdm) {
+      properties_1body.emplace_back(full1rdm(mpi, *params.onerdm, walker_type, NMO_, 1));
+    }
+    if(params.diag2rdm) {
+      properties.emplace_back(diagonal2rdm<MEM>(mpi, *params.diag2rdm, walker_type, NMO_, 1));
+    }
+    if(params.twordm) {
+      properties.emplace_back(full2rdm<MEM>(mpi, *params.twordm, walker_type, NMO_, 1));
+    }
+    if(params.pair_correlators) {
+      properties.emplace_back(pair_correlator(mpi, *params.pair_correlators, walker_type, NMO_, 1));
+    }
+    if(params.spinspin) {
+      properties.emplace_back(spinspinobs(mpi, *params.spinspin, walker_type, NMO_, 1));
     }
 
     ncalls = 0;

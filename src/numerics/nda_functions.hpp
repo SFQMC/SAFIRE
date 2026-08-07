@@ -442,7 +442,6 @@ void reduce([[maybe_unused]] get_value_t<A> alpha, A const& a, std::string_view 
       cutensor::cutensor_desc<get_value_t<A>, get_rank<A>> a_t(a);
       cutensor::cutensor_desc<get_value_t<B>, get_rank<B>> b_t(b);
       cutensor::reduce(alpha, a_t, op::ID, a.data(), indxA, beta, b_t, op::ID, b.data(), indxB, b.data(), oper);
-      cudaDeviceSynchronize(); // for sync in case it is turned off
 #else
       compile_error_no_gpu();
 #endif

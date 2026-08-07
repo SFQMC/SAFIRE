@@ -44,10 +44,13 @@ public:
   static constexpr HamiltonianTypes HamOpType = THC;
   constexpr HamiltonianTypes getHamType() const { return THC; }
 
-  THCOps()
-  {
-    utils::check(false,"Default constructor for THCOps disabled.");
-  }
+  // See has_fullG_vbias() in Real3IndexFactorization. Not implemented here: vbias()'s ndet>1 branch is
+  // a stub, and there is no Guu_from_full to build the intermediate from an un-rotated G. A full G
+  // handed to vbias() is rejected by its size check rather than reinterpreted, so this is a loud
+  // capability gap, not a silent wrong answer -- but callers should gate on it and say so plainly.
+  constexpr bool has_fullG_vbias() const { return false; }
+
+  THCOps() = delete;
 
   /*
    * nup/ndown stands for number of alpha/beta electrons
@@ -111,14 +114,6 @@ public:
     if(_Zuv_rot_.has_value())
       utils::check(_Zuv_rot_->shape() == std::array<long,2>{nu_rot,nu_rot},"THCOps: Size mismatch"); 
   }
-
-  ~THCOps() = default; 
-
-  THCOps(THCOps const& other) = default;
-  THCOps& operator=(THCOps const& other) = default;
-
-  THCOps(THCOps&& other) = default;
-  THCOps& operator=(THCOps&& other) = default;
 
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
                                                        nda::MemoryVector auto const& vMF)
@@ -220,6 +215,10 @@ public:
       Guu() = ComplexType(0.0);
       for (int ispin = 0; ispin < nspin; ++ispin)
       {
+        // An empty spin sector contributes nothing to either EXX or Guu
+        if(nelec[ispin] == 0) {
+          continue;
+        }
         for (int p1 = 0; p1 < npol; ++p1)
         {
           auto [is_,ip1_] = interaction_block(ispin,p1,npol,nspin_in_H,npol_in_H);
@@ -263,12 +262,9 @@ public:
 
             // R[w,u][b] = sum_v Guv[w,u][v] * rotcXau[b][v]
             auto Yau = Ysau(ispin,p2,range(nelec[ispin]),all);
-            if constexpr (MEM==HOST_MEMORY) 
-              for(int iw=0; iw<nw; iw++) 
-                nda::blas::gemm(Guv(iw,all,all),nda::transpose(Yau),Tva(iw,all,all));
-            else {
-              nda::tensor::contract(Yau,"av",Guv,"wuv",Tva,"wua"); 
-            }
+            auto Guv2 = nda::reshape(Guv(), nw*nu, nu);
+            auto Tva2 = nda::reshape(Tva(), nw*nu, nelec[ispin]);
+            nda::blas::gemm(Guv2, nda::transpose(Yau), Tva2);
 
             //T[w][b][k] = sum_u R[w][u][b] * Piu[k][u]
             auto Xiu = Xsiu(is_,range(ip1_*NMO,(ip1_+1)*NMO),all);
@@ -334,13 +330,23 @@ public:
     E() = ComplexType(0.0);
     if (addH1)
     {
-      if(spin_component==Alpha) E(all,0) = E0; 
-      nda::tensor::contract(ComplexType(1.0), G3d, "wai", 
-                            haj()(idet,range(ispin*nup,nup+ispin*ndown),all), "ai", 
-                            ComplexType(1.0), E(all,0), "w");
+      if(spin_component==Alpha) E(all,0) = E0;
+      if(nel > 0) {
+        nda::tensor::contract(ComplexType(1.0), G3d, "wai",
+                              haj()(idet,range(ispin*nup,nup+ispin*ndown),all), "ai",
+                              ComplexType(1.0), E(all,0), "w");
+      }
     }
     if (not(addEJ || addEXX))
       return;
+    // An empty spin sector (e.g. collinear with ndown==0) contributes nothing
+    // beyond E0; everything below would be zero-sized.
+    if (nel == 0) {
+      if (addEJ) {
+        EJn() = 0.0;
+      }
+      return;
+    }
 
     // get array_views to the correct data and correct determinant
     bool has_rot = _Xsiu_rot_.has_value();
@@ -692,18 +698,20 @@ protected:
               Guu(all,iw) += ComplexType(a)*Tau(ia,all)*Yau(ia,all);
           }
         } else {
-          memory::buffered_array<MEM,ComplexType,3> Twau(nw,nelec[is],nu);    
-          if constexpr (REAL) {
-            auto G4d = memory::to_real_view(G);
-            auto Gwaic = G4d(all,range(is*nup,nup+is*ndown),range(ip*NMO,(ip+1)*NMO),all); 
-            auto T4d = memory::to_real_view(Twau);
-            nda::tensor::contract(Gwaic,"waic",Xiu,"iu",T4d,"wauc");
-          } else {
-            auto Gwai = G(all,range(is*nup,nup+is*ndown),range(ip*NMO,(ip+1)*NMO)); 
-            nda::tensor::contract(Gwai,"wai",Xiu,"iu",Twau,"wau");
+          if(nelec[is] > 0) {
+            memory::buffered_array<MEM,ComplexType,3> Twau(nw,nelec[is],nu);    
+            if constexpr (REAL) {
+              auto G4d = memory::to_real_view(G);
+              auto Gwaic = G4d(all,range(is*nup,nup+is*ndown),range(ip*NMO,(ip+1)*NMO),all); 
+              auto T4d = memory::to_real_view(Twau);
+              nda::tensor::contract(Gwaic,"waic",Xiu,"iu",T4d,"wauc");
+            } else {
+              auto Gwai = G(all,range(is*nup,nup+is*ndown),range(ip*NMO,(ip+1)*NMO)); 
+              nda::tensor::contract(Gwai,"wai",Xiu,"iu",Twau,"wau");
+            }
+            // Gwu[w][u] = a * sum_a T1[w][a][u] * cXau[a][u]
+            nda::tensor::contract(ComplexType(a),Twau,"wau",Yau,"au",ComplexType(1.0),Guu,"uw");
           }
-          // Gwu[w][u] = a * sum_a T1[w][a][u] * cXau[a][u]
-          nda::tensor::contract(ComplexType(a),Twau,"wau",Yau,"au",ComplexType(1.0),Guu,"uw");
         }
  
       } // npol 
@@ -807,20 +815,24 @@ protected:
       }
     } else {
       memory::array_view<MEM,ComplexType,3> Twav(std::array<long,3>{nw,nel,nu},Tbuff.data());
-      if constexpr (REAL) {
-        auto G4d = memory::to_real_view(G);
-        auto T4d = memory::to_real_view(Twav);
-        // choose electron range compatible with ispin
-        auto Gwaic = G4d(all,all,range(p2*NMO,(p2+1)*NMO),all);
-        // Twav[w][a][v] = sum_j G[w][a][j] X[j][v]
-        nda::tensor::contract(Gwaic,"wajc",Xiu,"jv",T4d,"wavc");
+      if(nel > 0) {
+        if constexpr (REAL) {
+          auto G4d = memory::to_real_view(G);
+          auto T4d = memory::to_real_view(Twav);
+          // choose electron range compatible with ispin
+          auto Gwaic = G4d(all,all,range(p2*NMO,(p2+1)*NMO),all);
+          // Twav[w][a][v] = sum_j G[w][a][j] X[j][v]
+          nda::tensor::contract(Gwaic,"wajc",Xiu,"jv",T4d,"wavc");
+        } else {
+          auto Gwai = G(all,all,range(p2*NMO,(p2+1)*NMO));
+          // Twav[w][a][v] = sum_j G[w][a][j] X[j][v]
+          nda::tensor::contract(Gwai,"wai",Xiu,"iv",Twav,"wav");
+        }
+        // G[w][u][v] = sum_a X[a][u] Twav[w][a][v]
+        nda::tensor::contract(Yau,"au",Twav,"wav",Guv,"wuv");
       } else {
-        auto Gwai = G(all,all,range(p2*NMO,(p2+1)*NMO));
-        // Twav[w][a][v] = sum_j G[w][a][j] X[j][v]
-        nda::tensor::contract(Gwai,"wai",Xiu,"iv",Twav,"wav");
+        nda::tensor::set(0, Guv);
       }
-      // G[w][u][v] = sum_a X[a][u] Twav[w][a][v]
-      nda::tensor::contract(Yau,"au",Twav,"wav",Guv,"wuv");
     }
 
     // Gwv = Gwvv, 

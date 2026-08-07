@@ -24,7 +24,7 @@
 #include "utilities/Random.hpp"
 #include "test_common.hpp"
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "IO/app_loggers.h"
 
 #include <stdio.h>
@@ -53,9 +53,7 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
   auto& mpi = utils::make_unit_test_mpi_context();
 
   int NMO = 8, nup = 2, ndown = 2, nwalkers = 10;
-  ptree wlk_pt;
-  wlk_pt.put("name","wset0");
-  wlk_pt.put("walker_type",walkerTypeToString(wtype));
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = wtype};
   if (wtype == NONCOLLINEAR)
   {
     nup = 4;
@@ -83,22 +81,23 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
     if(wtype == COLLINEAR)
       initA.emplace_back(initA_h(1, nda::range::all, nda::range(ndown)));
 
-    auto ws = WalkerSet<MEM>(mpi, wlk_pt, rng, wtype, initA, nwalkers);
+    auto ws = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initA, nwalkers);
 
     REQUIRE(ws.size() == nwalkers);
-    for (auto it = ws.begin(); it != ws.end(); ++it)
+    for(int iw = 0; iw < ws.size(); ++iw)
     {
+      auto w = ws[iw];
       for(int spin = 0; spin < nspin; spin++) {
-        auto sm = it->SlaterMatrix(static_cast<SpinTypes>(spin));
+        auto sm = w.SlaterMatrix(static_cast<SpinTypes>(spin));
         REQUIRE( sm.extent(0) == M );
         REQUIRE( sm.extent(1) == (spin == 0 ? nup : ndown) );
         REQUIRE(nda::to_host(sm) == initA[spin]());
       }
-      it->set_property(WEIGHT,base * 1.0 + 0.5);
-      it->set_property(OVLP,base * 1.0 + 0.5);
-      it->set_property(E1_,base * 1.0 + 0.5);
-      it->set_property(EXX_,base * 1.0 + 0.5);
-      it->set_property(EJ_,base * 1.0 + 0.5);
+      w.set_property(WEIGHT,base * 1.0 + 0.5);
+      w.set_property(OVLP,base * 1.0 + 0.5);
+      w.set_property(E1_,base * 1.0 + 0.5);
+      w.set_property(EXX_,base * 1.0 + 0.5);
+      w.set_property(EJ_,base * 1.0 + 0.5);
       tot_weight += base * 1.0 + 0.5;
       base += Type(1.0);
       cnt++;
@@ -127,28 +126,29 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
 
     auto initUDV = memory::to_memory_space<MEM>(initUDV_h);
 
-    auto ws = WalkerSet<MEM>(mpi, wlk_pt, rng, wtype, initUDV, nwalkers);
+    auto ws = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initUDV, nwalkers);
 
     REQUIRE(ws.size() == nwalkers);
-    for (auto it = ws.begin(); it != ws.end(); ++it)
+    for(int iw = 0; iw < ws.size(); ++iw)
     {
-      auto umat = it->UMatrix(Alpha);
+      auto w = ws[iw];
+      auto umat = w.UMatrix(Alpha);
       REQUIRE( umat.extent(0) == initUDV.extent(2) );
       REQUIRE( umat.extent(1) == M );
-      REQUIRE(nda::to_host(it->UMatrix(Alpha)) == nda::to_host(initUDV(0,0,nda::ellipsis{})));
+      REQUIRE(nda::to_host(w.UMatrix(Alpha)) == nda::to_host(initUDV(0,0,nda::ellipsis{})));
       if( ws.getWalkerType() == COLLINEAR ) {
-        auto umatB = it->UMatrix(Beta);
+        auto umatB = w.UMatrix(Beta);
         REQUIRE( umatB.extent(0) == initUDV.extent(2) );
         REQUIRE( umatB.extent(1) == M );
-        REQUIRE( nda::to_host(it->UMatrix(Beta)) == nda::to_host(initUDV(0,1,nda::range::all,nda::range(M))));
+        REQUIRE( nda::to_host(w.UMatrix(Beta)) == nda::to_host(initUDV(0,1,nda::range::all,nda::range(M))));
       }
-      it->set_property(WEIGHT,base * 1.0 + 0.5);
-      it->set_property(OVLP,base * 1.0 + 0.5);
-      it->set_property(E1_,base * 1.0 + 0.5);
-      it->set_property(EXX_,base * 1.0 + 0.5);
-      it->set_property(EJ_,base * 1.0 + 0.5);
-      it->set_property(LOGSCL_UP,base * 1.0 + 0.5);
-      it->set_property(LOGSCL_DN,base * 1.0 + 0.5);
+      w.set_property(WEIGHT,base * 1.0 + 0.5);
+      w.set_property(OVLP,base * 1.0 + 0.5);
+      w.set_property(E1_,base * 1.0 + 0.5);
+      w.set_property(EXX_,base * 1.0 + 0.5);
+      w.set_property(EJ_,base * 1.0 + 0.5);
+      w.set_property(LOGSCL_UP,base * 1.0 + 0.5);
+      w.set_property(LOGSCL_DN,base * 1.0 + 0.5);
       tot_weight += base * 1.0 + 0.5;
       base += Type(1.0);
       cnt++;
@@ -161,17 +161,18 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
   REQUIRE(cnt == nwalkers);
   base = Type(0.0);
   cnt = 0;
-  for (auto it = wset.begin(); it != wset.end(); ++it)
+  for(int iw = 0; iw < wset.size(); ++iw)
   {
+    auto w = wset[iw];
     Type d_(base * 1.0 + 0.5);
-    REQUIRE(Type(it->get_property(WEIGHT)) == d_);
-    REQUIRE(Type(it->get_property(OVLP)) == d_);
-    REQUIRE(Type(it->get_property(E1_)) == d_);
-    REQUIRE(Type(it->get_property(EXX_)) == d_);
-    REQUIRE(Type(it->get_property(EJ_)) == d_);
+    REQUIRE(Type(w.get_property(WEIGHT)) == d_);
+    REQUIRE(Type(w.get_property(OVLP)) == d_);
+    REQUIRE(Type(w.get_property(E1_)) == d_);
+    REQUIRE(Type(w.get_property(EXX_)) == d_);
+    REQUIRE(Type(w.get_property(EJ_)) == d_);
     if(finiteT){
-      REQUIRE(Type(it->get_property(LOGSCL_UP)) == d_);
-      REQUIRE(Type(it->get_property(LOGSCL_DN)) == d_);
+      REQUIRE(Type(w.get_property(LOGSCL_UP)) == d_);
+      REQUIRE(Type(w.get_property(LOGSCL_DN)) == d_);
     }
     base += Type(1.0);
     cnt++;
@@ -180,16 +181,17 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
   REQUIRE(wset.capacity() == 20);
   base = Type(0.0);
   cnt = 0;
-  for (auto it = wset.begin(); it != wset.end(); ++it)
+  for(int iw = 0; iw < wset.size(); ++iw)
   {
-    REQUIRE(Type(it->get_property(WEIGHT)) == base * 1.0 + 0.5);
-    REQUIRE(Type(it->get_property(OVLP)) == base * 1.0 + 0.5);
-    REQUIRE(Type(it->get_property(E1_)) == base * 1.0 + 0.5);
-    REQUIRE(Type(it->get_property(EXX_)) == base * 1.0 + 0.5);
-    REQUIRE(Type(it->get_property(EJ_)) == base * 1.0 + 0.5);
+    auto w = wset[iw];
+    REQUIRE(Type(w.get_property(WEIGHT)) == base * 1.0 + 0.5);
+    REQUIRE(Type(w.get_property(OVLP)) == base * 1.0 + 0.5);
+    REQUIRE(Type(w.get_property(E1_)) == base * 1.0 + 0.5);
+    REQUIRE(Type(w.get_property(EXX_)) == base * 1.0 + 0.5);
+    REQUIRE(Type(w.get_property(EJ_)) == base * 1.0 + 0.5);
     if(finiteT){
-      REQUIRE(Type(it->get_property(LOGSCL_UP)) == base * 1.0 + 0.5);
-      REQUIRE(Type(it->get_property(LOGSCL_DN)) == base * 1.0 + 0.5);
+      REQUIRE(Type(w.get_property(LOGSCL_UP)) == base * 1.0 + 0.5);
+      REQUIRE(Type(w.get_property(LOGSCL_DN)) == base * 1.0 + 0.5);
     }
     base += Type(1.0);
     cnt++;
@@ -329,28 +331,27 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
   if(wtype == COLLINEAR)
     initA.emplace_back(initA_h(1, nda::range::all, nda::range(ndown)));
 
-  ptree pt0;
-  pt0.put("WalkerSet.name","wset0");
-  pt0.put("WalkerSet.walker_type",walkerTypeToString(wtype));
-  auto wset = WalkerSet<MEM>(mpi, pt0.get_child("WalkerSet"), rng, wtype, initA, nwalkers);
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = wtype};
+  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initA, nwalkers);
 
   REQUIRE(wset.size() == nwalkers);
   int cnt(0);
   Type base(0.0);
   Type tot_weight(0.0);
-  for (auto it = wset.begin(); it != wset.end(); ++it)
+  for(int iw = 0; iw < wset.size(); ++iw)
   {
+    auto w = wset[iw];
     for(int spin = 0; spin < nspin; spin++) {
-      auto sm = it->SlaterMatrix(static_cast<SpinTypes>(spin));
+      auto sm = w.SlaterMatrix(static_cast<SpinTypes>(spin));
       REQUIRE(sm.extent(0) == npol * NMO);
       REQUIRE(sm.extent(1) == (spin == 0 ? nup : ndown));
       REQUIRE(nda::to_host(sm) == initA[spin]());
     }
-    it->set_property(WEIGHT,base * 1.0 + 0.1);
-    it->set_property(OVLP,base * 1.0 + 0.2);
-    it->set_property(E1_,base * 1.0 + 0.3);
-    it->set_property(EXX_,base * 1.0 + 0.4);
-    it->set_property(EJ_,base * 1.0 + 0.5);
+    w.set_property(WEIGHT,base * 1.0 + 0.1);
+    w.set_property(OVLP,base * 1.0 + 0.2);
+    w.set_property(E1_,base * 1.0 + 0.3);
+    w.set_property(EXX_,base * 1.0 + 0.4);
+    w.set_property(EJ_,base * 1.0 + 0.5);
     tot_weight += base * 1.0 + 0.5; // not used?
     base += Type(1.0);
     cnt++;
@@ -367,7 +368,7 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
 
   {
     h5::file fh5(std::string("dummy_walkers.h5"),'r');
-    auto wset2 = readWalkersFromHDF5<WalkerSet<MEM>>(mpi, pt0.get_child("WalkerSet"), rng,
+    auto wset2 = readWalkersFromHDF5<WalkerSet<MEM>>(mpi, wlk_params, rng,
                                                      wtype, fh5, nwalkers, true);
     std::array<walker_data,5> tags = {WEIGHT,OVLP,E1_,EXX_,EJ_};
     for (int i = 0; i < nwalkers; i++)
@@ -390,14 +391,12 @@ TEST_CASE("sharedwset: basic walker features", "[sharedwset]")
   sharedwset_basic_walker_features<HOST_MEMORY>(CLOSED, false);
   sharedwset_basic_walker_features<HOST_MEMORY>(COLLINEAR, false);
   sharedwset_basic_walker_features<HOST_MEMORY>(NONCOLLINEAR, false);
-  sharedwset_basic_walker_features<HOST_MEMORY>(FULLYPOLARIZED, false);
   sharedwset_basic_walker_features<HOST_MEMORY>(COLLINEAR, true);
   sharedwset_basic_walker_features<HOST_MEMORY>(NONCOLLINEAR, true);
 #if defined(ENABLE_DEVICE)
   sharedwset_basic_walker_features<DEVICE_MEMORY>(CLOSED, false);
   sharedwset_basic_walker_features<DEVICE_MEMORY>(COLLINEAR, false);
   sharedwset_basic_walker_features<DEVICE_MEMORY>(NONCOLLINEAR, false);
-  sharedwset_basic_walker_features<DEVICE_MEMORY>(FULLYPOLARIZED, false);
   sharedwset_basic_walker_features<DEVICE_MEMORY>(COLLINEAR, true);
   sharedwset_basic_walker_features<DEVICE_MEMORY>(NONCOLLINEAR, true);
 #endif
@@ -407,12 +406,10 @@ TEST_CASE("sharedwset: walker io", "[sharedwset]")
   sharedwset_walker_io<HOST_MEMORY>(CLOSED);
   sharedwset_walker_io<HOST_MEMORY>(COLLINEAR);
   sharedwset_walker_io<HOST_MEMORY>(NONCOLLINEAR);
-  sharedwset_walker_io<HOST_MEMORY>(FULLYPOLARIZED);
 #if defined(ENABLE_DEVICE)
   sharedwset_walker_io<DEVICE_MEMORY>(CLOSED);
   sharedwset_walker_io<DEVICE_MEMORY>(COLLINEAR);
   sharedwset_walker_io<DEVICE_MEMORY>(NONCOLLINEAR);
-  sharedwset_walker_io<DEVICE_MEMORY>(FULLYPOLARIZED);
 #endif
 }
 
@@ -427,15 +424,13 @@ TEST_CASE("sharedwset: walker io", "[sharedwset]")
 template<MEMORY_SPACE MEM>
 void stochastic_branch_lineage_metadata()
 {
-  using Type = std::complex<double>;
-  auto& mpi  = utils::make_unit_test_mpi_context();
+  auto& mpi = utils::make_unit_test_mpi_context();
   if (mpi->comm.size() != 1)
     return; // single-rank lineage check; the cross-rank path is covered separately
 
-  const int NMO = 6, nup = 2, ndown = 2, nwalk = 6;
-  ptree wlk_pt;
-  wlk_pt.put("name", "wset0");
-  wlk_pt.put("walker_type", "closed");
+  // CLOSED walkers, so there is no separate beta count to declare (a `ndown` here was unused).
+  const int NMO = 6, nup = 2, nwalk = 6;
+  const WalkerSetParameters wlk_pt{.name = "wset0", .walker_type = CLOSED};
   auto rng  = std::make_shared<utils::RandomGenerator_t<>>();
   nda::matrix<ComplexType> guess0({NMO, nup});
   guess0 = ComplexType(0.0);
@@ -485,7 +480,7 @@ void stochastic_branch_lineage_metadata()
     REQUIRE(hist[i] == counts[i]);
 }
 
-TEST_CASE("stochastic_branch_lineage_metadata", "[stochastic_wfn]")
+TEST_CASE("sharedwset: stochastic branch lineage", "[sharedwset][stochastic_wfn]")
 {
   app_log(0, "WalkerSetBase::branch() carries SLOT_LINEAGE through compaction + replication.");
   stochastic_branch_lineage_metadata<HOST_MEMORY>();

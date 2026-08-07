@@ -12,7 +12,6 @@
 #include "utilities/type_traits.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/arch.h"
 #include "nda/nda.hpp"
 #include <cuda/std/mdspan>
 #include "cub/device/device_for.cuh"
@@ -55,7 +54,6 @@ void copy_cast_impl(A const& a, B & b)
       cub::DeviceFor::Bulk(sz,f);
     }
   } 
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename A, typename B>
@@ -92,7 +90,6 @@ void accumulate_cast_impl(nda::get_value_t<A> alpha, A const& a, B & b)
       cub::DeviceFor::Bulk(sz,f);
     }
   }
-  sfqmc::arch::synchronize_if_set();
 }
 
 using memory::device_array_view;

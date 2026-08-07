@@ -36,19 +36,13 @@ class HamiltonianOperations
 
 public:
 
-  HamiltonianOperations(); 
+  HamiltonianOperations() = delete;
 
   template<typename HOps>
   HamiltonianOperations(HOps&& other);
 
   template<typename HOps>
   HamiltonianOperations(HOps const& other);
-
-  HamiltonianOperations(HamiltonianOperations const& other) = default;
-  HamiltonianOperations(HamiltonianOperations&& other)      = default;
-
-  HamiltonianOperations& operator=(HamiltonianOperations const& other) = default;
-  HamiltonianOperations& operator=(HamiltonianOperations&& other) = default;
 
   void runtime_optimization(nda::MemoryArrayOfRank<2> auto const& G)
   {
@@ -125,6 +119,10 @@ public:
     auto E_ = E();
     energy_fullG_impl(E_, G(), addH1, addEJ, addEXX);
   }
+
+  // True iff vbias() accepts a FULL [nwalk, nspin*npol*NMO*npol*NMO] G as well as the half-rotated
+  // compact one. See the per-operator definitions for what "full" costs each factorization.
+  bool has_fullG_vbias() const;
 
   int number_of_cholesky_vectors() const;
 

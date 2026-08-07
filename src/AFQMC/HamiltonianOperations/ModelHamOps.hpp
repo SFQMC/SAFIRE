@@ -48,6 +48,13 @@ public:
   static const HamiltonianTypes HamOpType = ModelHamiltonian; 
   HamiltonianTypes getHamType() const { return ModelHamiltonian; }
 
+  // Does vbias() accept a FULL [nwalk, nspin*npol*NMO*npol*NMO] density matrix, in addition to the
+  // half-rotated compact one? NOMSD needs it for ndet>1 trials, and StochasticWfn::vMF needs it for
+  // ANY trial once inner_n_samples > 1, because the stochastic mean field is a reduction of the inner
+  // ensemble against itself and has no half-rotated form. Callers that can hand over a full G must
+  // gate on this: the operators that lack it must reject such a G, never reinterpret it.
+  constexpr bool has_fullG_vbias() const { return true; }
+
   ModelHamOps() {};
 
   ModelHamOps(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,
@@ -105,13 +112,6 @@ public:
     mpi->comm.barrier();
   
   }
-
-  ~ModelHamOps() {}
-
-  ModelHamOps(const ModelHamOps& other) = default;
-  ModelHamOps& operator=(const ModelHamOps& other) = default;
-  ModelHamOps(ModelHamOps&& other)                 = default;
-  ModelHamOps& operator=(ModelHamOps&& other) = default;
 
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
                                                        nda::MemoryVector auto const& vMF)
@@ -368,11 +368,35 @@ public:
     int nelec = nel[0]+nel[1];
     utils::check(v.extent(1) == nCV, "Size mismatch");
 
-    memory::array_view<MEM,const ComplexType,3> G3d(std::array<long,3>{nwalk,nelec,npol*NMO},G.data());
+    // Dispatch on the G LAYOUT, not on the trial determinant count. Both branches end in the same
+    // copy_select over the same fixed index list n2IJ (I*M+J, M = npol*NMO), which addresses the FULL
+    // [nspin*npol*NMO, npol*NMO] density matrix; the half-rotated branch only differs in that it first
+    // reconstructs that full G from a compact one using the trial. So the branch is a property of what
+    // the caller handed us, and nci does not determine that:
+    //   - NOMSD passes a compact G at ndet==1 and a full G at ndet>1 (hence the old nci test worked),
+    //   - StochasticWfn::vMF / G_MF pass a FULL G built by reducing the inner ensemble against itself,
+    //     while the underlying trial is single-determinant (nci == 1).
+    // Keying on nci therefore reinterpreted the stochastic full G through a compact array_view over the
+    // same buffer. Because a compact G is SMALLER than a full one for any less-than-full filling, that
+    // read stayed in bounds and returned a quietly wrong, P-dependent vMF instead of aborting -- unlike
+    // the solid-state operators, which trip their size check and abort loudly on the same input.
+    long const half_size = long(nelec)*npol*NMO;
+    long const full_size = long(nspin)*npol*NMO*npol*NMO;
+    utils::check(G.extent(0) == nwalk, "ModelHamOps::vbias: Size mismatch");
+    utils::check(G.extent(1) == half_size || G.extent(1) == full_size,
+                 "ModelHamOps::vbias: Size mismatch");
+    // Precedence matches Real3IndexFactorization::vbias. The two sizes coincide only at complete
+    // filling (nelec == nspin*npol*NMO), where G is the identity and the branches agree anyway.
+    bool const half_rotated = (G.extent(1) == half_size);
+
     memory::buffered_array<MEM,ComplexType,2> GIJ(nwalk, nIJ);
     GIJ() = ComplexType(0.0);
 
-    if( nci == 1 ) {
+    if( half_rotated ) {
+      // Un-rotating a compact G needs the determinant it was rotated against, so this layout is only
+      // meaningful for a single-determinant trial.
+      utils::check(nci == 1, "ModelHamOps::vbias: half-rotated G requires a single-determinant trial");
+      memory::array_view<MEM,const ComplexType,3> G3d(std::array<long,3>{nwalk,nelec,npol*NMO},G.data());
       if( sparse_G_eval ) {
          getGIJ_for_vbias(G3d,GIJ);
       } else {
@@ -382,17 +406,14 @@ public:
         // B[:][n] = A[:][ I[n] ]
         nda::copy_select(false, 1, n2IJ_dev, ComplexType(1.0), Gfull, ComplexType(0.0), GIJ);
       }
-      for(int i=0; i<Hams.size(); i++) 
-        Hams[i].vbias(GIJ, v(all,field_ranges[i]), dt); 
     } else {
-      // if nci > 1, we expect [...][nwalk]
-      utils::check(G.shape() == std::array<long,2>{nwalk, nspin*npol*NMO*npol*NMO}, "Size mismatch");
+      // Full G, already in the layout n2IJ addresses -- valid for any nci.
       // B[:][n] = A[:][ I[n] ]
       nda::copy_select(false, 1, n2IJ_dev, ComplexType(1.0), G, ComplexType(0.0), GIJ);
-
-      for(int i=0; i<Hams.size(); i++) 
-        Hams[i].vbias(GIJ, v(all,field_ranges[i]), dt);
     }
+
+    for(int i=0; i<Hams.size(); i++)
+      Hams[i].vbias(GIJ, v(all,field_ranges[i]), dt);
   }
 
   template<class... Args> void generalizedFockMatrix([[maybe_unused]] Args&&... args)
@@ -480,6 +501,13 @@ private:
     memory::buffered_array<MEM,ComplexType,2> Gfull(npol * NMO * npol * NMO, nwalk);
     auto Gfull_3d = nda::reshape(Gfull, std::array<long,3>{npol * NMO, npol * NMO, nwalk});
 
+    // Empty spin sector (e.g. COLLINEAR with ndown==0): the sum over occupied
+    // orbitals is empty, and the contraction below would be zero-sized.
+    if(nel[ispin] == 0) {
+      Gfull() = 0.0;
+      return Gfull;
+    }
+
     auto psi = PsiC()(idet,ispin,all,range(nel[ispin]));
     if constexpr (MEM==HOST_MEMORY) {
       memory::buffered_array<MEM,ComplexType,2> G_(npol * NMO, npol * NMO);
@@ -506,22 +534,29 @@ private:
     memory::buffered_array<MEM,ComplexType,2> Gfull(nwalk, nspin * npol * NMO * npol * NMO);
     auto Gfull_4d = nda::reshape(Gfull, std::array<long,4>{nwalk, nspin, npol * NMO, npol * NMO});
 
+    // Empty beta sector (ndown==0): its block stays zero, the products below
+    // would be zero-sized.
+    bool empty_beta = (walker_type == COLLINEAR and nel[1] == 0);
+    if(empty_beta) {
+      Gfull() = 0.0;
+    }
+
     if constexpr (MEM==HOST_MEMORY) {
       auto psi = PsiC()(idet,0,all,range(nel[0]));
       int n0 = 0;
-      for(int iw=0; iw<nwalk; ++iw) 
+      for(int iw=0; iw<nwalk; ++iw)
         nda::blas::gemm(psi,Gc(iw,range(n0,n0+nel[0]),all),Gfull_4d(iw,0,all,all));
-      if( walker_type == COLLINEAR ) {
+      if( walker_type == COLLINEAR and not empty_beta ) {
         auto psi_dn = PsiC()(idet,1,all,range(nel[1]));
         n0 = nel[0];
-        for(int iw=0; iw<nwalk; ++iw) 
+        for(int iw=0; iw<nwalk; ++iw)
           nda::blas::gemm(psi_dn,Gc(iw,range(n0,n0+nel[1]),all),Gfull_4d(iw,1,all,all));
       }
     } else {
       auto psi = PsiC()(idet,0,all,range(nel[0]));
       int n0 = 0;
       nda::tensor::contract(psi,"ia",Gc(all,range(n0,n0+nel[0]),all),"waj",Gfull_4d(all,0,all,all),"wij");
-      if( walker_type == COLLINEAR ) {
+      if( walker_type == COLLINEAR and not empty_beta ) {
         auto psi_dn = PsiC()(idet,1,all,range(nel[1]));
         n0 = nel[0];
         nda::tensor::contract(psi_dn,"ia",Gc(all,range(n0,n0+nel[1]),all),"waj",Gfull_4d(all,1,all,all),"wij");
@@ -543,8 +578,15 @@ private:
     int nIJ = ET_n2IJ.extent(0);
     memory::buffered_array<MEM,ComplexType,2> GIJ(nIJ, nwalk);
 
+    // Empty spin sector (e.g. COLLINEAR with ndown==0): the sum over occupied
+    // orbitals is empty, and the work arrays below would be zero-sized.
+    if(nel[ispin] == 0) {
+      GIJ() = 0.0;
+      return GIJ;
+    }
+
     auto psi = PsiC()(idet,ispin,all,range(nel[ispin]));
- 
+
     if constexpr (MEM==HOST_MEMORY) {
       //C[w][n] = sum_a psi[ I[n] ][a] Gc[w][a][ J[n] ]
       for(int n=0; n<nIJ; ++n) {
@@ -586,7 +628,11 @@ private:
     utils::check( Gc.shape() == std::array<long,3>{nwalk,nel[0]+nel[1],npol*NMO}, "Shape mismatch");
     int nIJ = n2IJ.extent(0);
     utils::check( GIJ.shape() == std::array<long,2>{nwalk,nIJ}, "Shape mismatch");
-      
+
+    // Empty beta sector (ndown==0): the beta IJ terms are all zero, the
+    // products below would be zero-sized.
+    bool empty_beta = (walker_type == COLLINEAR and nel[1] == 0);
+
     if constexpr (MEM==HOST_MEMORY) {
       //C[w][n] = sum_a psi[ I[n] ][a] Gwaj[w][a][ J[n] ]
       {
@@ -598,7 +644,9 @@ private:
           nda::tensor::contract(psi(In,all),"a",Gwaj(all,all,Jn),"wa",GIJ(all,n),"w");
         }
       }
-      if(walker_type == COLLINEAR) {
+      if(empty_beta) {
+        GIJ(all,range(nIJ_first_beta,nIJ)) = 0.0;
+      } else if(walker_type == COLLINEAR) {
         auto psi = PsiC()(0,1,all,range(nel[1]));
         auto Gwaj = Gc(all,range(nel[0],nel[0]+nel[1]),all);
         for(int n=nIJ_first_beta; n<nIJ; ++n) {
@@ -631,7 +679,9 @@ private:
           vC.emplace_back(C(range(n,n+1),all));
         }
       }
-      if(walker_type == COLLINEAR) {
+      if(empty_beta) {
+        C(range(nIJ_first_beta,nIJ),all) = 0.0;
+      } else if(walker_type == COLLINEAR) {
         auto psi = PsiC()(0,1,all,range(nel[1]));
         auto Gjaw = Gt(all,range(nel[0],nel[0]+nel[1]),all);
         for(int n=nIJ_first_beta; n<nIJ; ++n) {
@@ -758,14 +808,14 @@ private:
       Timer.stop("gfull");
     }
 
-    app_log(2," Runtime optimization of Model Hamiltonian Operations"); 
-    app_log(2,"   - G Full: {}",Timer.elapsed("gfull"));
-    app_log(2,"   - G sparse {}",Timer.elapsed("sp"));
+    app_log(2,"Runtime optimization of Model Hamiltonian Operations"); 
+    app_log(2,"  - G Full: {}",Timer.elapsed("gfull"));
+    app_log(2,"  - G sparse {}",Timer.elapsed("sp"));
     sparse_G_eval = (Timer.elapsed("gfull") > Timer.elapsed("sp")); 
     if(sparse_G_eval)
-      app_log(2, " Using sparse algorithm to evaluate GIJ in Model Hamiltonian Operations.");
+      app_log(2, "Using sparse algorithm to evaluate GIJ in Model Hamiltonian Operations.");
     else
-      app_log(2, " Using dense algorithm to evaluate GIJ in Model Hamiltonian Operations.");
+      app_log(2, "Using dense algorithm to evaluate GIJ in Model Hamiltonian Operations.");
   }
 
 };

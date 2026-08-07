@@ -31,7 +31,6 @@
 #include "utilities/type_traits.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/arch.h"
 #include "nda/nda.hpp"
 #include <cuda/std/mdspan>
 #include "cub/device/device_for.cuh"
@@ -93,7 +92,6 @@ void copy_select_impl(bool expand, int dim, V1 const& m, T alpha, V3 const& A, T
       cub::DeviceFor::Bulk(N*M,f);
     }
   }
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename V1, typename V2, typename V3, typename V4, typename T>
@@ -141,7 +139,6 @@ void copy_select_impl(bool expand, int dim, V1 const& m, V2 const& s, T alpha, V
       cub::DeviceFor::Bulk(N*M,f);
     }
   }
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename V1, typename V3, typename V4, typename T>
@@ -164,7 +161,6 @@ void copy_select_impl(bool expand, V1 const& m, T alpha, V3 const& A, T scl, V4&
     };
     cub::DeviceFor::Bulk(N,f);
   }
-  sfqmc::arch::synchronize_if_set();
 }
 
 template<typename V1, typename V2, typename V3, typename V4, typename T>
@@ -188,7 +184,6 @@ void copy_select_impl(bool expand, V1 const& m, V2 const& s, T alpha, V3 const& 
     };
     cub::DeviceFor::Bulk(N,f);
   }
-  sfqmc::arch::synchronize_if_set();
 }
 
 //MAM: can I convert array_views to some type of common base?

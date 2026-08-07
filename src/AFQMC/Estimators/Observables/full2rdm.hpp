@@ -17,6 +17,7 @@
 #pragma once
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include <configuration.hpp>
 #include <string>
 #include <h5/group.hpp>
@@ -41,7 +42,7 @@ template<MEMORY_SPACE MEM>
 class full2rdm
 {
 public:
-  full2rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi_, ptree pt, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
+  full2rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi_, const TwoRDMParameters& params, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
       : mpi{mpi_},
         walker_type{wlk},
         NMO{NMO_},
@@ -50,8 +51,8 @@ public:
     app_log(1,"  --  Adding 2RDM (TwoRDM) estimator. -- ");
 
     std::string rot_file, h5_path;
-    rot_file = pt.get<std::string>("rotation", "");
-    h5_path = pt.get<std::string>("path", "/");
+    rot_file = params.rotation;
+    h5_path = params.path;
 
     int dm_size{};
     if (rot_file != "")

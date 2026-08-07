@@ -653,8 +653,6 @@ inline void NOMSD<MEM,devPsiT>::recompute_ci()
 {
   if (walker_type == NONCOLLINEAR)
     APP_ABORT(" Error: NOMSD::recompute_ci not implemented with NONCOLLINEAR.");
-  if (walker_type == FULLYPOLARIZED)
-    APP_ABORT(" Error: NOMSD::recompute_ci not implemented with FULLYPOLARIZED.");
   double LogOverlapFactor(0.0);
   int ndets = ci.size();
   if (ndets == 1)

@@ -150,9 +150,6 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
     hybrid_walker_update(wset, dt, apply_constrain, importance_sampling, Eshift, new_overlaps, MFfactor,
                          hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, symmetric_split, step0,
                          debug_verbosity, use_cp_constraint, eloc_bound_stats);
-    // end_inner_step: re-tether pool to phi_new after hybrid_walker_update, before popControl.
-    if (wfn->conditions_on_new_walker())
-      wfn->end_inner_step(wset, new_overlaps);
   }
   else
   {
@@ -368,10 +365,13 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
   logdetR() = ComplexType(0.0);
 
   // 0. copy SlaterMatrix to SMA/SMB
-  SMA() = wset.SlaterMatrices(Alpha);
-  if(walker_type==COLLINEAR) 
+  if(nup > 0) {
+    SMA() = wset.SlaterMatrices(Alpha);
+  }
+  if(walker_type==COLLINEAR && ndown > 0) {
     SMB() = wset.SlaterMatrices(Beta);
-
+  }
+  
   for (int ni = nbpsteps - 1; ni >= 0; --ni)
   {
     // 1. Get X(nwalk,nCV) from wset
@@ -389,9 +389,12 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
       for (int nr = 0; nr < nrefs; ++nr)
       {
         // 3. copy reference to SlaterMatrix
-        wset.SlaterMatrices(Alpha) = Refs(all,nr,all,range(nup));
-        if(walker_type==COLLINEAR)
+        if(nup > 0) {
+          wset.SlaterMatrices(Alpha) = Refs(all,nr,all,range(nup));
+        }
+        if(walker_type==COLLINEAR && ndown > 0) {
           wset.SlaterMatrices(Beta) = Refs(all,nr,all,range(nup,nup+ndown));        
+        }
 
         // 4. Propagate walkers 
         apply_propagators<'H'>(wset,vHS); 
@@ -404,8 +407,10 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
         }
 
         // 5. copy reference to back
-        Refs(all,nr,all,range(nup)) = wset.SlaterMatrices(Alpha);
-        if(walker_type==COLLINEAR)
+        if(nup > 0) {
+          Refs(all,nr,all,range(nup)) = wset.SlaterMatrices(Alpha);
+        }
+        if(walker_type==COLLINEAR && ndown > 0)
           Refs(all,nr,all,range(nup,nup+ndown)) = wset.SlaterMatrices(Beta);
       }
 

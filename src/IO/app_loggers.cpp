@@ -22,7 +22,6 @@ namespace sfqmc {
 int __app_debug_level__ = -10000; 
 int __app_output_level__ = -10000; 
 bool __app_stacktrace__  = true;
-bool __app_test_mode__   = false;
 
 // currently using 2 separate loggers
 // app_log: uses "std_console" with a clean format only on Global().root()

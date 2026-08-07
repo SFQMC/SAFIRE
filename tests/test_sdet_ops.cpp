@@ -20,7 +20,6 @@
 
 #include "config.h"
 #include "configuration.hpp"
-#include "IO/ptree/ptree_utilities.hpp"
 #include "IO/app_loggers.h" 
 #include "utilities/check.hpp"
 #include "test_common.hpp"

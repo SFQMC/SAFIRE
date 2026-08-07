@@ -252,6 +252,9 @@ THCHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
         using matrix_t = memory::buffered_array<MEM,ComplexType,2>;
         auto [id, is] = idx;
         long nel = (is==0 ? nup : ndn);
+        if(nel == 0) {
+          return;  // empty sector (ndown==0): no rows to half-rotate
+        }
         auto Aai = math::sparse::to_array<'N'>(PsiT(id,is));
         // need to loop over npol since npol_in_H1 might be != than npol
         if constexpr (REAL) {

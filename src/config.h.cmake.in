@@ -33,6 +33,9 @@
 /* Enable device code, with some backend. */
 #cmakedefine ENABLE_DEVICE
 
+/* Reproduce the result of the host code exactly by using an inefficient copy-from-host random number generator */
+#cmakedefine DEVICE_RNG_FROM_HOST
+
 /* Enable spdlog */
 #cmakedefine ENABLE_SPDLOG
 

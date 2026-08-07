@@ -7,7 +7,6 @@
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "nda/nda.hpp"
-#include "arch/arch.h"
 #include <cuda/std/mdspan>
 #include <cub/device/device_for.cuh>
 #include "numerics/operations/add_diagonal_impl.hpp"
@@ -27,7 +26,6 @@ void add_diagonal_impl(V1 alpha, V2& A)
   auto F = math::detail::add_diagonal_impl<decltype(alpha_d),decltype(A_d)>{alpha_d,A_d};
 
   cub::DeviceFor::Bulk(N,F);
-  sfqmc::arch::synchronize_if_set();
 }
   
 using memory::device_array_view;

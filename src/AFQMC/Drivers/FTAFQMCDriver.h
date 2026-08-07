@@ -17,6 +17,7 @@
 #pragma once
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
@@ -36,7 +37,7 @@ public:
               int blk0,
               int stp0,
               double eshft_,
-              ptree pt_in,
+              const ExecuteParameters& exec,
               Wavefunction<MEM>& wfn_,
               Propagator<MEM>& prpg_,
               EstimatorHandler<MEM>& estim_)
@@ -53,23 +54,21 @@ public:
         Eshift0(eshft_)
   {
     name = "FTAFQMCDriver";
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(2, "\nFTAFQMCDriver input:");
-    app_log(2, "{}\n", io::to_string(pt));
-    // initialize using verbose input
-    hdf_write_restart = pt.get<std::string>("hdf_write_file");
-    nStep = pt.get<int>("steps");
-    nSweep = pt.get<int>("sweeps");
-    measure_interval_multiplier = pt.get<int>("measure_interval_multiplier");
-    nPopulation = pt.get<int>("population_control_interval");
-    nStabilize = pt.get<int>("walker_ortho_interval");
-    nCheckpoint = pt.get<int>("checkpoint_interval");
-    samplePeriod = pt.get<int>("sample_interval");
-    weight_reset_period = pt.get<double>("weight_reset"); // in units of time
-    dt = pt.get<double>("timestep");
-    dShift = pt.get<double>("dshift");  // Etrial shift scale
-    print_sweep_step = pt.get<bool>("print_sweep_step"); 
+    hdf_write_restart = exec.hdf_write_file;
+    nStep = exec.steps;
+    nSweep = exec.sweeps;
+    measure_interval_multiplier = exec.measure_interval_multiplier;
+    nPopulation = exec.population_control_interval;
+    nStabilize = exec.walker_ortho_interval;
+    nCheckpoint = exec.checkpoint_interval;
+    samplePeriod = -1; // KE: hardcoded until relevant feature is implemented
+    weight_reset_period = exec.weight_reset; // in units of time
+    dt = exec.timestep;
+    dShift = exec.dshift;  // Etrial shift scale
+    print_sweep_step = exec.print_sweep_step;
+
+    // the steps/measure_interval commensurability check that the ground state driver does is
+    // not currently relevant for finite-T, but may be useful if backward sweeps are implemented
 
     // KE: to make sure that all Estimators are measured at their own desired intervals
     _measure_interval = estim0.get_max_common_interval();
@@ -79,70 +78,6 @@ public:
     // measurements only happen after full path has been constructed (i.e. at nStep = L)
     //estim0.display_measurement_intervals();
   }
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    std::string hdf_write_file;
-    int steps, sweeps, measure_interval, measure_interval_multiplier, nPopulation, ortho, checkpoint;
-    double weight_reset, timestep, dshift;
-    bool print_info;
-    hdf_write_file = pt0.get<std::string>("hdf_write_file", "");
-    steps         = pt0.get<int>("steps", 1);
-    sweeps        = pt0.get<int>("sweeps", 1);
-    nPopulation = pt0.get<int>("population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL);
-    measure_interval_multiplier = pt0.get<int>("measure_interval_multiplier",DEFAULT_MEASURE_INTERVAL_MULTIPLIER);
-    ortho         = pt0.get<int>("walker_ortho_interval", DEFAULT_WALKER_ORTHO_INTERVAL);
-    checkpoint    = pt0.get<int>("checkpoint_interval", -1);
-    //sample_period = pt0.get<int>("sample_interval", -1); // KE: commented until relevant feature is implemented
-    weight_reset = pt0.get<double>("weight_reset", 0.0);
-    timestep     = pt0.get<double>("timestep", DEFAULT_TIME_STEP);
-    dshift       = pt0.get<double>("dshift", 1.0);
-    print_info   = pt0.get<bool>("print_sweep_step", false);
-
-    measure_interval = measure_interval_multiplier * nPopulation;
-    // if steps and measure_interval are not commensurate, add steps so that
-    //  the last block will be.
-    
-    // measure_interval not currently relevant for finite-T, but may be useful if
-    // backward sweeps are implemented
-    //if (steps % measure_interval != 0)
-    //{
-    //  int scale = int(std::ceil((double)steps/(double)measure_interval));
-    //  steps = scale*measure_interval;
-    //  app_log(1, "Warning: 'steps' is not evenly divisible by 'measure_interval'. Setting 'steps' to {} steps \n", steps);
-    //}
-
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("hdf_write_file", hdf_write_file);
-    pt1.put("steps", steps);
-    pt1.put("sweeps", sweeps);
-    pt1.put("population_control_interval", nPopulation);
-    pt1.put("measure_interval_multiplier", measure_interval_multiplier);
-    pt1.put("walker_ortho_interval", ortho);
-    pt1.put("checkpoint_interval", checkpoint);
-    pt1.put("sample_interval", -1); // KE: hardcoded until relevant feature is implemented
-    pt1.put("weight_reset", weight_reset);
-    pt1.put("timestep", timestep);
-    pt1.put("dshift", dshift);
-    pt1.put("print_sweep_step",print_info);
-    // check for unknown input keys
-    std::unordered_set<std::string> pass_through_keys = {
-      "walker_set",
-      "wavefunction",
-      "propagator",
-      "estimator",
-      "hamiltonian",
-      "seed",
-      "n_walkers_per_mpi_task",
-      "initial_Eshift"
-    };
-    io::compare_known_keys("AFQMC Driver",pt1, pt0, pass_through_keys);
-    return pt1;
-  }
-
-  ~FTAFQMCDriver() {}
 
   bool run(WalkerSet<MEM>&);
 

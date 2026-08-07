@@ -9,7 +9,6 @@
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
-#include "arch/arch.h"
 #include <cuda/std/mdspan>
 #include <cub/device/device_for.cuh>
 #include "numerics/operations/add_diagonal_impl.hpp"
@@ -152,7 +151,6 @@ void apply_impl(nda::get_value_t<V> alpha, V& A, nda::tensor::op::TENSOR_OP oper
       sfqmc::utils::check(false,"Invalid operation in kernel::apply.");
     } 
   };
-  sfqmc::arch::synchronize_if_set();
 }
   
 using memory::device_array_view;

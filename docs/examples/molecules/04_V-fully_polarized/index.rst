@@ -34,9 +34,6 @@ The workflow follows three steps:
 
       mpirun -n 64 safire afqmc.json
 
-   SAFIRE will use fully polarized walkers, which is computationally efficient for systems with only one spin 
-   channel containing all electrons.
-
 4. **analyze the results**: Use the `scalar_stats` command-line tool from afqmctools to analyze the energy output:
 
    .. code-block:: bash
@@ -90,8 +87,8 @@ Files
 .. literalinclude:: scf/scf.py
    :language: python
 
-**Hamiltonian Generation** (``input/setup.py``):
+**Hamiltonian Generation** (``inputs/setup.py``):
 
-.. literalinclude:: input/setup.py
+.. literalinclude:: inputs/setup.py
    :language: python
 

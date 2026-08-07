@@ -3,21 +3,26 @@ properties([
   buildDiscarder(logRotator(numToKeepStr: '8', daysToKeepStr: '20'))
 ])
 
+// --no-deps because dependencies should already be installed in the image
+def pythonEnv = {
+  stage('python env') {
+    sh 'pip install --no-deps $SRC/utils'
+  }
+}
+
 timeout(time: 1, unit: 'HOURS') {
   parallel cpu: {
-    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins') {
+    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins', tag: 'cpu',
+             buildArgs: '--build-arg VARIANT=cpu') {
       withEnv([
         "SRC=$WORKSPACE",
         "BUILD=$WORKSPACE/build",
         "BUILD_CLANG=$WORKSPACE/build-clang"
       ]) {
+        pythonEnv()
         parallel python: {
           stage('build docs') {
             sh '''
-              python3 -m venv $WORKSPACE/venv
-              cd $SRC/utils
-              . $WORKSPACE/venv/bin/activate
-              pip install .[DOCS]
               cd $SRC/docs
               make html
             '''
@@ -64,6 +69,9 @@ timeout(time: 1, unit: 'HOURS') {
             warnError("Tests failed") {
               sh 'cd $BUILD && ctest --output-on-failure'
             }
+            warnError("Snapshot tests failed") {
+              sh 'cd $BUILD && AFQMC_EXEC=$(pwd)/bin/safire python3 ../tests/functional/run_functional.py all --snapshot'
+            }
           }
         },
         cpp_clang: {
@@ -95,11 +103,13 @@ timeout(time: 1, unit: 'HOURS') {
     }
   },
   cuda: {
-    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins_cuda', tag: 'cuda5', gpus: 1) {
+    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins', tag: 'cuda', gpus: 1,
+             buildArgs: '--build-arg VARIANT=cuda') {
       withEnv([
         "SRC=$WORKSPACE",
         "BUILD=$WORKSPACE/build"
       ]) {
+        pythonEnv()
         stage('cuda') {
           sh 'mkdir $BUILD'
           sh '''
@@ -113,11 +123,15 @@ timeout(time: 1, unit: 'HOURS') {
               -DENABLE_CPPTRACE=OFF \
               -DENABLE_SPDLOG=ON \
               -DENABLE_CUDA=ON \
-              -DCUDA_ARCH=70
+              -DCUDA_ARCH=70 \
+              -DDEVICE_RNG_FROM_HOST=ON
           '''
           sh 'ninja -C $BUILD -j $PARALLEL'
           warnError("Tests failed") {
             sh 'cd $BUILD && CUDA_LAUNCH_BLOCKING=1 ctest --output-on-failure'
+          }
+          warnError("Snapshot tests failed") {
+            sh 'cd $BUILD && AFQMC_EXEC=$(pwd)/bin/safire python3 ../tests/functional/run_functional.py all --compute gpu --snapshot'
           }
         }
       }

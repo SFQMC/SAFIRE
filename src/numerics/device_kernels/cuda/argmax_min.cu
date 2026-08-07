@@ -34,7 +34,6 @@
 
 #include "utilities/type_traits.hpp"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/CUDA/cuda_init.h"
 
 namespace kernels::device
 {
@@ -77,9 +76,6 @@ std::tuple<long,T> argmax(T const* x, long N)
     res = thrust::get<0>(*res_d);
   }
 
-  sfqmc::cuda::cuda_check(cudaGetLastError());
-  sfqmc::cuda::cuda_check(cudaDeviceSynchronize());
-
   return std::tuple<long,T> {pos,res};
 }
 
@@ -106,9 +102,6 @@ std::tuple<long,T> argmin(T const* x, long N)
     pos = thrust::get<1>(*res_d);
     res = thrust::get<0>(*res_d);
   }
-
-  sfqmc::cuda::cuda_check(cudaGetLastError());
-  sfqmc::cuda::cuda_check(cudaDeviceSynchronize());
 
   return std::tuple<long,T> {pos,res};
 }
