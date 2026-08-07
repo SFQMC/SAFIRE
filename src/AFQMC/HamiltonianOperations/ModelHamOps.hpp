@@ -113,13 +113,6 @@ public:
   
   }
 
-  ~ModelHamOps() {}
-
-  ModelHamOps(const ModelHamOps& other) = default;
-  ModelHamOps& operator=(const ModelHamOps& other) = default;
-  ModelHamOps(ModelHamOps&& other)                 = default;
-  ModelHamOps& operator=(ModelHamOps&& other) = default;
-
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
                                                        nda::MemoryVector auto const& vMF)
   {
@@ -815,14 +808,14 @@ private:
       Timer.stop("gfull");
     }
 
-    app_log(2," Runtime optimization of Model Hamiltonian Operations"); 
-    app_log(2,"   - G Full: {}",Timer.elapsed("gfull"));
-    app_log(2,"   - G sparse {}",Timer.elapsed("sp"));
+    app_log(2,"Runtime optimization of Model Hamiltonian Operations"); 
+    app_log(2,"  - G Full: {}",Timer.elapsed("gfull"));
+    app_log(2,"  - G sparse {}",Timer.elapsed("sp"));
     sparse_G_eval = (Timer.elapsed("gfull") > Timer.elapsed("sp")); 
     if(sparse_G_eval)
-      app_log(2, " Using sparse algorithm to evaluate GIJ in Model Hamiltonian Operations.");
+      app_log(2, "Using sparse algorithm to evaluate GIJ in Model Hamiltonian Operations.");
     else
-      app_log(2, " Using dense algorithm to evaluate GIJ in Model Hamiltonian Operations.");
+      app_log(2, "Using dense algorithm to evaluate GIJ in Model Hamiltonian Operations.");
   }
 
 };

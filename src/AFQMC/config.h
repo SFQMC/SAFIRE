@@ -31,8 +31,6 @@
 #include "IO/AppAbort.hpp"
 #include "utilities/check.hpp"
 
-#include "IO/ptree/ptree_utilities.hpp"
-
 #include "numerics/sparse/sparse.hpp"
 
 namespace sfqmc

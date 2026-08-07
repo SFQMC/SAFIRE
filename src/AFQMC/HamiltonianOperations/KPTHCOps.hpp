@@ -135,14 +135,6 @@ public:
       utils::check(_Zuv_rot_->shape() == std::array<long,3>{nqpts_ibz,nu_rot,nu_rot},"KPTHCOps: Size mismatch"); 
   }
 
-  ~KPTHCOps() = default; 
-
-  KPTHCOps(KPTHCOps const& other) = default;
-  KPTHCOps& operator=(KPTHCOps const& other) = default;
-
-  KPTHCOps(KPTHCOps&& other) = default;
-  KPTHCOps& operator=(KPTHCOps&& other) = default;
-
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
                                                        nda::MemoryVector auto const& vMF)
   {

@@ -32,17 +32,17 @@ namespace sfqmc
 namespace afqmc
 {
 template<MEMORY_SPACE MEM>
-Propagator<MEM> PropagatorFactory<MEM>::buildAFQMCPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, ptree pt, Wavefunction<MEM>& wfn, std::shared_ptr<utils::RandomGenerator_t<MEM>> rng)
+Propagator<MEM> PropagatorFactory<MEM>::buildAFQMCPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, const PropagatorParameters& params, Wavefunction<MEM>& wfn, std::shared_ptr<utils::RandomGenerator_t<MEM>> rng)
 {
-  return Propagator<MEM>(AFQMCBasePropagator<MEM>(pt, mpi, wfn, rng));
+  return Propagator<MEM>(AFQMCBasePropagator<MEM>(params, mpi, wfn, rng));
 }
 
 template Propagator<HOST_MEMORY> 
-PropagatorFactory<HOST_MEMORY>::buildAFQMCPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,ptree,Wavefunction<HOST_MEMORY>&,std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>>);
+PropagatorFactory<HOST_MEMORY>::buildAFQMCPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,const PropagatorParameters&,Wavefunction<HOST_MEMORY>&,std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>>);
 
 #if defined(ENABLE_DEVICE)
 template Propagator<DEVICE_MEMORY> 
-PropagatorFactory<DEVICE_MEMORY>::buildAFQMCPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,ptree,Wavefunction<DEVICE_MEMORY>&,std::shared_ptr<utils::RandomGenerator_t<DEVICE_MEMORY>>);
+PropagatorFactory<DEVICE_MEMORY>::buildAFQMCPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>,const PropagatorParameters&,Wavefunction<DEVICE_MEMORY>&,std::shared_ptr<utils::RandomGenerator_t<DEVICE_MEMORY>>);
 #endif
 
 

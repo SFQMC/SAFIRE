@@ -18,7 +18,7 @@
 #include <string>
 #include <iostream>
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/check.hpp"
 #include "utilities/mpi_context.h"
 #include "nda/nda.hpp"
@@ -42,24 +42,25 @@ class MixedEstimator : public EstimatorBase<MEM>
 {
 
 public:
+  /// The measurement and equilibration intervals of the input are multiples of
+  /// population_control_interval, which is given in steps.
   MixedEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                           std::string name,
-                          ptree pt,
+                          const EstimatorParameters& params,
+                          int population_control_interval,
                           WALKER_TYPES wlk,
                           Wavefunction<MEM>& wfn)
-      : observ0(mpi, name, pt, wlk, wfn.getNMO(), wfn)
+      : observ0(mpi, name, params, wlk, wfn.getNMO(), wfn)
   {
-    int _pop_control_interval, equil_multiplier;
-    _pop_control_interval = pt.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL);
-    equil_multiplier = pt.get<int>("equil_multiplier", 0); // units of population control interval
-    measure_interval_multiplier = pt.get<int>("measure_interval_multiplier", DEFAULT_MEASURE_INTERVAL_MULTIPLIER); // units of population control interval
-    measure_interval = measure_interval_multiplier * _pop_control_interval;
-    utils::check(equil_multiplier % measure_interval_multiplier==0,"Error in MixedEstimator user input: 'equil_multiplier' must be evenly divisible by 'measure_interval_multiplier'");
-    nblocks_skip = equil_multiplier / measure_interval_multiplier;
+    const std::vector<int> multipliers = measure_interval_multipliers(params);
+    utils::check(multipliers.size() == 1,
+                 "Error in MixedEstimator user input: 'measure_interval_multiplier' has to be a single value");
+    measure_interval = multipliers[0] * population_control_interval;
+    const int equil_steps = params.equil_multiplier * population_control_interval;
+    utils::check(equil_steps % measure_interval==0,"Error in MixedEstimator user input: 'equil_multiplier' must be evenly divisible by 'measure_interval_multiplier'");
+    nblocks_skip = equil_steps / measure_interval;
     writer = (mpi->comm.rank() == 0);
   }
-
-  ~MixedEstimator() {}
 
   void accumulate_step([[maybe_unused]] double time, 
                        [[maybe_unused]] WalkerSet<MEM>& wset,
@@ -123,7 +124,6 @@ private:
   int nblocks_skip = 0;
 
   int measure_interval = 1;
-  int measure_interval_multiplier = 1;
 };
 } // namespace afqmc
 } // namespace sfqmc

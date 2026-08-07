@@ -24,7 +24,9 @@
 #include <nda/nda.hpp>
 
 #include "config.h"
+#include "utilities/mpi_context.h"
 #include "utilities/threading.h"
+#include "IO/app_loggers.h"
 
 
 #if defined(ENABLE_CUDA)
@@ -56,7 +58,6 @@ namespace arch
 void init([[maybe_unused]] bool use_gpu)
 {
   sfqmc::utils::init_threading();
-
 #if defined(ENABLE_CUDA)
   if(use_gpu) { cuda::init(); }
 #endif

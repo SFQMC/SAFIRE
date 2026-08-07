@@ -50,10 +50,7 @@ public:
   // capability gap, not a silent wrong answer -- but callers should gate on it and say so plainly.
   constexpr bool has_fullG_vbias() const { return false; }
 
-  THCOps()
-  {
-    utils::check(false,"Default constructor for THCOps disabled.");
-  }
+  THCOps() = delete;
 
   /*
    * nup/ndown stands for number of alpha/beta electrons
@@ -117,14 +114,6 @@ public:
     if(_Zuv_rot_.has_value())
       utils::check(_Zuv_rot_->shape() == std::array<long,2>{nu_rot,nu_rot},"THCOps: Size mismatch"); 
   }
-
-  ~THCOps() = default; 
-
-  THCOps(THCOps const& other) = default;
-  THCOps& operator=(THCOps const& other) = default;
-
-  THCOps(THCOps&& other) = default;
-  THCOps& operator=(THCOps&& other) = default;
 
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
                                                        nda::MemoryVector auto const& vMF)

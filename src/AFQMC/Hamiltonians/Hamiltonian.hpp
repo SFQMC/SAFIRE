@@ -37,7 +37,7 @@ class Hamiltonian
 {
 
 public:
-  Hamiltonian() = default; 
+  Hamiltonian() = delete;
   explicit Hamiltonian(THCHamiltonian&& other) : var(std::move(other)) {}
   explicit Hamiltonian(KPTHCHamiltonian&& other) : var(std::move(other)) {}
   explicit Hamiltonian(ModelHamOpsGenerator&& other) : var(std::move(other)) {}
@@ -49,12 +49,6 @@ public:
   explicit Hamiltonian(ModelHamOpsGenerator const& other) : var(other) {}
   explicit Hamiltonian(KPFactorizedHamiltonian const& other) : var(other) {}
   explicit Hamiltonian(RealDenseHamiltonian const& other) : var(other) {}
-
-  Hamiltonian(Hamiltonian const& other) = default;
-  Hamiltonian(Hamiltonian&& other)      = default;
-
-  Hamiltonian& operator=(Hamiltonian const& other) = default;
-  Hamiltonian& operator=(Hamiltonian&& other) = default;
 
   template<MEMORY_SPACE MEM, class... Args>
   HamiltonianOperations<MEM> getHamiltonianOperations(Args&&... args)

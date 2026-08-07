@@ -36,19 +36,13 @@ class HamiltonianOperations
 
 public:
 
-  HamiltonianOperations(); 
+  HamiltonianOperations() = delete;
 
   template<typename HOps>
   HamiltonianOperations(HOps&& other);
 
   template<typename HOps>
   HamiltonianOperations(HOps const& other);
-
-  HamiltonianOperations(HamiltonianOperations const& other) = default;
-  HamiltonianOperations(HamiltonianOperations&& other)      = default;
-
-  HamiltonianOperations& operator=(HamiltonianOperations const& other) = default;
-  HamiltonianOperations& operator=(HamiltonianOperations&& other) = default;
 
   void runtime_optimization(nda::MemoryArrayOfRank<2> auto const& G)
   {

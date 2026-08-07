@@ -35,18 +35,6 @@ namespace sfqmc
 namespace afqmc
 {
 
-  // disabled default constructor
-  template<MEMORY_SPACE M>
-  HamiltonianOperations<M>::HamiltonianOperations()  
-  {
-    APP_ABORT(" Error: Calling default constructor of HamiltonianOperations. ");
-  } 
-
-  template HamiltonianOperations<HOST_MEMORY>::HamiltonianOperations();
-#if defined(ENABLE_DEVICE)
-  template HamiltonianOperations<DEVICE_MEMORY>::HamiltonianOperations();
-#endif
-
   // move constructor
   template<MEMORY_SPACE M>
   template<typename HOps>

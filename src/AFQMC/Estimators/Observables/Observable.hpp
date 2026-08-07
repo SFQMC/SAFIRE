@@ -19,7 +19,7 @@
 #include "AFQMC/config.h"
 #include <configuration.hpp>
 #include <variant>
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/check.hpp"
 
 #include "AFQMC/Estimators/Observables/full1rdm.hpp"

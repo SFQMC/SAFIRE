@@ -273,6 +273,16 @@ if(NOT cxxopts_FOUND)
 endif()
 
 ######################################################################
+# nlohmann_json
+# ######################################################################
+find_package(nlohmann_json 3.11.0 QUIET)
+if(NOT nlohmann_json_FOUND)
+  FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.0/json.tar.xz)
+  FetchContent_MakeAvailable(json)
+endif()
+
+
+######################################################################
 # FFTW: not using MKL's FFTW yet, figure out how if requested 
 ######################################################################
 #if(ENABLE_FFTW)
@@ -310,8 +320,6 @@ target_include_directories(mpi3 INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/extern/mpi
 
 
 ######################################################################
-configure_file(${PROJECT_SOURCE_DIR}/src/safire.settings ${PROJECT_BINARY_DIR}/bin/safire.settings)
-install(FILES ${PROJECT_BINARY_DIR}/bin/safire.settings DESTINATION bin)
 
 #Create an Interface target for compiler warnings
 add_library(${PROJECT_NAME}_warnings INTERFACE)

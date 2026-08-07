@@ -118,13 +118,6 @@ public:
     }
   }
 
-  ~csr_matrix_view() = default; 
-
-  csr_matrix_view(csr_matrix_view const& other) = default;
-  csr_matrix_view(csr_matrix_view&&) = default; 
-  csr_matrix_view& operator=(csr_matrix_view const&) = default;
-  csr_matrix_view& operator=(csr_matrix_view&&) = default;
-
   // accessor functions
   auto shape() const { return std::array<long,2>{size1_,size2_}; } 
   auto shape(long i) const { return (i==0?size1_:size2_); } 

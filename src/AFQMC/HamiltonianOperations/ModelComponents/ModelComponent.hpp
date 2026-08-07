@@ -30,19 +30,11 @@ class ModelComponent
 {
 
 public:
-  ModelComponent() = delete; 
-
-  ModelComponent(Continuous_GeneralUJ<MEM> const& other) : var(other) {} 
+  ModelComponent(Continuous_GeneralUJ<MEM> const& other) : var(other) {}
   ModelComponent(Continuous_GeneralUJ<MEM>&& other) : var(std::move(other)) {}
 
   ModelComponent(Discrete_GeneralUJ<MEM,REAL> const& other) : var(other) {} 
   ModelComponent(Discrete_GeneralUJ<MEM,REAL>&& other) : var(std::move(other)) {}
-
-  ModelComponent(ModelComponent const& other) = default;
-  ModelComponent(ModelComponent&& other)      = default;
-
-  ModelComponent& operator=(ModelComponent const& other) = default;
-  ModelComponent& operator=(ModelComponent&& other) = default;
 
   template<class... Args>
   void addOneBodyPropagatorMatrix(Args&&... args)

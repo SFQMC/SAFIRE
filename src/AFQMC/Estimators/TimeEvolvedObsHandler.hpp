@@ -18,7 +18,7 @@
 #include <iostream>
 
 #include "AFQMC/config.h"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/check.hpp"
 #include "utilities/mpi_context.h"
 #include "nda/nda.hpp"
@@ -46,7 +46,7 @@ class TimeEvolvedObsHandler
 public:
   TimeEvolvedObsHandler(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
                  std::string name_,
-                 ptree pt,
+                 const EstimatorParameters& params,
                  WALKER_TYPES wlk,
                  int nave,
                  int NMO_,
@@ -58,69 +58,23 @@ public:
         number_of_averages(nave),
         name(name_)
   {
-    using std::fill_n;
     if(number_of_averages <= 0)
       APP_ABORT("Error:  Empty measure_at.");
 
-    for(const ptree::value_type &it : pt)
-    {
-      std::string cname = it.first;
-      io::tolower(cname);
-      if (cname == "onerdm")
-      {
-        properties_1body.emplace_back(full1rdm(mpi, it.second, walker_type, NMO_, number_of_averages));
-      }
-
-//       else if (cname == "gfock" || cname == "genfock" || cname == "ekt")
-//       {
-//         properties.emplace_back(
-//             generalizedFockMatrix(TG, info, it.second, walker_type, wfn0, number_of_averages, block_size));
-//       }
-      else if (cname == "diag2rdm")
-      {
-        properties.emplace_back(diagonal2rdm<MEM>(mpi, it.second, walker_type, NMO_, number_of_averages));
-      }
-      else if (cname == "twordm")
-      {
-        properties.emplace_back(full2rdm<MEM>(mpi, it.second, walker_type, NMO_, number_of_averages));
-      }
-//       else if (cname == "n2r" || cname == "ontop2rdm")
-//       {
-// #if defined(ENABLE_DEVICE)
-//         ptree pt1 = it.second;
-//         bool use_host_memory = pt1.get<bool>("use_host_memory", false);
-//         if (use_host_memory)
-//         {
-//           properties.emplace_back(
-//               n2r<device_allocator<ComplexType>>(TG, info, it.second, walker_type, false, device_allocator<ComplexType>{},
-//                                                  device_allocator<ComplexType>{}, number_of_averages, block_size));
-//         }
-//         else
-// #endif
-//         {
-//           properties.emplace_back(
-//               n2r<shared_allocator<ComplexType>>(TG, info, it.second, walker_type, true,
-//                                                  shared_allocator<ComplexType>{TG.TG_local()},
-//                                                  shared_allocator<ComplexType>{TG.Node()}, number_of_averages, block_size));
-//         }
-//       }
-//       else if (cname == "realspace_correlators")
-//       {
-//         properties.emplace_back(realspace_correlators(TG, info, it.second, walker_type, number_of_averages, block_size));
-//       }
-//       else if (cname == "correlators")
-//       {
-//         properties.emplace_back(atomcentered_correlators(TG, info, it.second, walker_type, number_of_averages, block_size));
-//       }
-      else if (cname == "pair_correlators")
-      {
-        properties.emplace_back(pair_correlator(mpi, it.second, walker_type, NMO_, number_of_averages));
-      }
-      else if (cname == "spinspin")
-      {
-        properties.emplace_back(spinspinobs(mpi, it.second, walker_type, NMO_, number_of_averages));
-      }
-
+    if(params.onerdm) {
+      properties_1body.emplace_back(full1rdm(mpi, *params.onerdm, walker_type, NMO_, number_of_averages));
+    }
+    if(params.diag2rdm) {
+      properties.emplace_back(diagonal2rdm<MEM>(mpi, *params.diag2rdm, walker_type, NMO_, number_of_averages));
+    }
+    if(params.twordm) {
+      properties.emplace_back(full2rdm<MEM>(mpi, *params.twordm, walker_type, NMO_, number_of_averages));
+    }
+    if(params.pair_correlators) {
+      properties.emplace_back(pair_correlator(mpi, *params.pair_correlators, walker_type, NMO_, number_of_averages));
+    }
+    if(params.spinspin) {
+      properties.emplace_back(spinspinobs(mpi, *params.spinspin, walker_type, NMO_, number_of_averages));
     }
 
     utils::check(properties.size()+properties_1body.size() > 0, "empty observables list is not allowed.");

@@ -29,14 +29,14 @@
 #include <nda/h5.hpp>
 
 #include "AFQMC/config.h"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 
 namespace sfqmc {
 namespace utils {
 
 // Select the StochasticWfn branch of WavefunctionFactory. The NOMSD trial file is unchanged; only the
 // input `type` differs, which is what makes a stochastic-vs-NOMSD parity comparison meaningful.
-inline void mark_stochastic_wfn_input(ptree& pt) { pt.put("type", "stochasticwfn"); }
+inline void mark_stochastic_wfn_input(afqmc::WavefunctionParameters& p) { p.type = afqmc::WavefunctionInputType::stochasticwfn; }
 
 // Deterministic, reproducible perturbation of the outer walker Slater matrices. Independently built
 // walker sets come out bit-for-bit identical, which is what lets a parity check compare two

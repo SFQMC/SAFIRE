@@ -31,6 +31,7 @@ The build system will fetch the following dependencies automatically if they are
 - cxxopts
 - spdlog
 - cpptrace
+- nlohmann_json
 - Catch2 (for tests)
 
 NVIDIA GPU-build

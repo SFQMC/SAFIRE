@@ -21,7 +21,7 @@
 #include "config.h"
 #include "IO/AppAbort.hpp"
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/Random.hpp"
 #include "IO/app_loggers.h"
 
@@ -110,29 +110,17 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
     ndown = NMO;
   }
 
-  ptree ham_pt;
-  ham_pt.put("name","ham0");
-  ham_pt.put("filename",hamil_file);
-
   HamiltonianFactory HamFac;
-  HamFac.push("ham0", ham_pt); 
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
   int nwalk = 11; // choose prime number to force non-trivial splits in shared routines
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
 
-  ptree wlk_pt;
-  wlk_pt.put("name","wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
-  wlk_pt.put("finite_temperature", finiteT);
-
-  ptree wfn_pt;
-  wfn_pt.put("name","wfn0");
-  wfn_pt.put("filename",wfn_file);
-  wfn_pt.put("dense_trial",dense_trial);
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
   WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", wfn_pt);
+  WfnFac.push("wfn0", WavefunctionParameters{.name = "wfn0", .filename = wfn_file, .dense_trial = dense_trial});
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, finiteT, &ham, nwalk);
 
   //nwalk=nw;
@@ -142,13 +130,13 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
       auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
       REQUIRE(int(initial_guess.size()) == nspin);
       REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
-      return WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
+      return WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
     }
     else
     {
       auto initial_guess_ft = WfnFac.getInitialGuess_ft("wfn0");
       REQUIRE(initial_guess_ft.shape() == std::array<long,4>{3,nspin,npol*NMO,NMO});
-      return WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess_ft, nwalk);
+      return WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess_ft, nwalk);
     }
   }();
 
@@ -374,17 +362,12 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
       return;
     const double dt(0.01);
 
-    ptree ham_pt;
-    ham_pt.put("name", "ham0");
-    ham_pt.put("filename", hamil_file);
     HamiltonianFactory HamFac;
-    HamFac.push("ham0", ham_pt);
+    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
     const int nwalk = 11;
-    ptree wlk_pt;
-    wlk_pt.put("name", "wset0");
-    wlk_pt.put("walker_type", walkerTypeToString(type));
+    WalkerSetParameters wlk_pt{.name = "wset0", .walker_type = type};
 
     // The two-argument WavefunctionFactory constructor wires in HamFac so the factory can build the
     // inner (Variational) Hamiltonian on demand.
@@ -405,42 +388,31 @@ void stochastic_inner_hamiltonian_same_as_true(std::shared_ptr<utils::mpi_contex
       h5::h5_write_attribute(hgrp, "inner_timestep", stamped_dt);
     }
 
-    auto build_pt = [&](std::string id, bool with_inner_ham) {
-      ptree pt;
-      pt.put("name", id);
-      pt.put("filename", wfn_file);
+    auto build_params = [&](std::string id, bool with_inner_ham) {
+      WavefunctionParameters pt{.name = id, .filename = wfn_file, .inner_n_samples = 4, .inner_nsteps = 1,
+                                // dynamic trials must name a mode; the bare draw suffices here
+                                .inner_sampling_target = StochasticSamplingTarget::Gaussian};
       utils::mark_stochastic_wfn_input(pt);
-      pt.put("inner_n_samples", 4);
-      pt.put("inner_nsteps", 1);
-      pt.put("inner_sampling_target", "gaussian"); // dynamic trials must name a mode; the bare draw suffices here
       if (not with_inner_ham)
-      {
         // ONLY the no-inner_hamiltonian arm sets the timestep by hand -- that is the one configuration
         // where the input is still the source. Setting it alongside inner_hamiltonian is now a hard
         // error (it would be silently overwritten by the stamp), and setting it here for BOTH arms is
-        // what previously let the factory's stamp-to-ptree store be dead without any test noticing.
-        ptree inner_prop;
-        inner_prop.put("timestep", 0.01);
-        pt.put_child("inner_propagator", inner_prop);
-      }
+        // what previously let the factory's stamp-to-input store be dead without any test noticing.
+        pt.inner_propagator = PropagatorParameters{.timestep = 0.01};
       if (with_inner_ham)
-      {
-        ptree inner_ham_block;
         // A STAMPED copy, not the bare fixture. inner_hamiltonian is how a trained trial supplies its
         // variational Hamiltonian, and SAFIRE now reads the trained B_T timestep from that file's
         // Hamiltonian/inner_timestep attribute rather than from the input (there is no default, so a
         // missing stamp is a hard error). Pointing at an unstamped fixture would test a configuration
         // production can no longer have; copying and stamping exercises the real contract.
-        inner_ham_block.put("filename", stamped_hamil);
-        pt.put_child("inner_hamiltonian", inner_ham_block);
-      }
+        pt.inner_hamiltonian = HamiltonianParameters{.filename = stamped_hamil};
       return pt;
     };
 
-    WfnFac.push("wfn_clone", build_pt("wfn_clone", false));
-    WfnFac.push("wfn_hvar", build_pt("wfn_hvar", true));
-    auto& wfn_clone = WfnFac.getWavefunction(mpi, "wfn_clone", type, &ham, nwalk);
-    auto& wfn_hvar  = WfnFac.getWavefunction(mpi, "wfn_hvar", type, &ham, nwalk);
+    WfnFac.push("wfn_clone", build_params("wfn_clone", false));
+    WfnFac.push("wfn_hvar", build_params("wfn_hvar", true));
+    auto& wfn_clone = WfnFac.getWavefunction(mpi, "wfn_clone", type, false, &ham, nwalk);
+    auto& wfn_hvar  = WfnFac.getWavefunction(mpi, "wfn_hvar", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_clone, "wfn_clone", type, wlk_pt);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn_hvar, "wfn_hvar", type, wlk_pt);
 
@@ -530,11 +502,8 @@ void stochastic_inner_timestep_comes_from_the_stamp(
     if (type != CLOSED)
       return;
 
-    ptree ham_pt;
-    ham_pt.put("name", "ham0");
-    ham_pt.put("filename", hamil_file);
     HamiltonianFactory HamFac;
-    HamFac.push("ham0", ham_pt);
+    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
     // A value that is neither the retired input default nor any other test's dt: if this comes back
@@ -554,17 +523,11 @@ void stochastic_inner_timestep_comes_from_the_stamp(
       h5::h5_write_attribute(hgrp, "inner_timestep", stamped_dt);
     }
 
-    auto build_pt = [&](std::string id, std::string inner_ham_file) {
-      ptree pt;
-      pt.put("name", id);
-      pt.put("filename", wfn_file);
+    auto build_params = [&](std::string id, std::string inner_ham_file) {
+      WavefunctionParameters pt{.name = id, .filename = wfn_file, .inner_n_samples = 4, .inner_nsteps = 1,
+                                .inner_sampling_target = StochasticSamplingTarget::Gaussian,
+                                .inner_hamiltonian = HamiltonianParameters{.filename = inner_ham_file}};
       utils::mark_stochastic_wfn_input(pt);
-      pt.put("inner_n_samples", 4);
-      pt.put("inner_nsteps", 1);
-      pt.put("inner_sampling_target", "gaussian");
-      ptree inner_ham_block;
-      inner_ham_block.put("filename", inner_ham_file);
-      pt.put_child("inner_hamiltonian", inner_ham_block);
       return pt; // NOTE: no inner_propagator -- production cannot supply one here
     };
 
@@ -572,21 +535,19 @@ void stochastic_inner_timestep_comes_from_the_stamp(
     const int nwalk = 4;
 
     // (1) the stamp drives the built object
-    WfnFac.push("wfn_stamped", build_pt("wfn_stamped", stamped_ham));
-    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stamped", type, &ham, nwalk);
+    WfnFac.push("wfn_stamped", build_params("wfn_stamped", stamped_ham));
+    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stamped", type, false, &ham, nwalk);
     CHECK_THAT(wfn.stochastic_inner_timestep(), utils::Approx(stamped_dt));
 
     // (2) no stamp is fatal
-    WfnFac.push("wfn_unstamped", build_pt("wfn_unstamped", unstamped_ham));
-    REQUIRE_THROWS_AS(WfnFac.getWavefunction(mpi, "wfn_unstamped", type, &ham, nwalk), AppAbortException);
+    WfnFac.push("wfn_unstamped", build_params("wfn_unstamped", unstamped_ham));
+    REQUIRE_THROWS_AS(WfnFac.getWavefunction(mpi, "wfn_unstamped", type, false, &ham, nwalk), AppAbortException);
 
     // (3) a hand-set timestep next to inner_hamiltonian is refused, not silently overwritten
-    ptree both = build_pt("wfn_both", stamped_ham);
-    ptree inner_prop;
-    inner_prop.put("timestep", 0.05);
-    both.put_child("inner_propagator", inner_prop);
+    WavefunctionParameters both = build_params("wfn_both", stamped_ham);
+    both.inner_propagator       = PropagatorParameters{.timestep = 0.05};
     WfnFac.push("wfn_both", both);
-    REQUIRE_THROWS_AS(WfnFac.getWavefunction(mpi, "wfn_both", type, &ham, nwalk), AppAbortException);
+    REQUIRE_THROWS_AS(WfnFac.getWavefunction(mpi, "wfn_both", type, false, &ham, nwalk), AppAbortException);
   }
 }
 
@@ -635,23 +596,15 @@ void stochastic_hdf5_type_smoke(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 
     REQUIRE(getWavefunctionType(marked) == STOCHASTIC_WFN);
 
-    ptree ham_pt;
-    ham_pt.put("name", "ham0");
-    ham_pt.put("filename", hamil_file);
     HamiltonianFactory HamFac;
-    HamFac.push("ham0", ham_pt);
+    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
-    ptree wlk_pt;
-    wlk_pt.put("name", "wset0");
-    wlk_pt.put("walker_type", walkerTypeToString(type));
+    WalkerSetParameters wlk_pt{.name = "wset0", .walker_type = type};
 
     WavefunctionFactory<MEM> WfnFac{};
-    ptree wfn_pt;
-    wfn_pt.put("name", "wfn_marked");
-    wfn_pt.put("filename", marked);
-    WfnFac.push("wfn_marked", wfn_pt);
-    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_marked", type, &ham, 4);
+    WfnFac.push("wfn_marked", WavefunctionParameters{.name = "wfn_marked", .filename = marked});
+    auto& wfn = WfnFac.getWavefunction(mpi, "wfn_marked", type, false, &ham, 4);
     REQUIRE(wfn.is_stochastic_wavefunction());
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_marked", type, wlk_pt);
     REQUIRE(wfn.stochastic_inner_walkers_initialized());

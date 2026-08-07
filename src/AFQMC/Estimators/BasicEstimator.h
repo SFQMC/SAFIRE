@@ -37,24 +37,19 @@ template<MEMORY_SPACE MEM>
 class BasicEstimator : public EstimatorBase<MEM>
 {
 public:
-  BasicEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi, [[maybe_unused]] std::string title, ptree pt_in, bool impsamp_)
-      : mpi(_mpi), nwfacts(0), importanceSampling(impsamp_), timers(false)
+  BasicEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
+                 [[maybe_unused]] std::string title, const EstimatorParameters& params,
+                 int measure_interval_, bool impsamp_)
+      : mpi(_mpi), nwfacts(params.nhist), importanceSampling(impsamp_), timers(params.timers)
   {
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(1,"BasicEstimator input:\n{}\n",io::to_string(pt));
-    // initialize using verbose input
-    timers = pt.get<bool>("timers");
-    nwfacts = pt.get<int>("nhist");
-    int population_control_interval = pt.get<int>("_population_control_interval");
-    measure_interval = pt.get<int>("measure_interval_multiplier") * population_control_interval;
+    measure_interval = measure_interval_;
 
     utils::check(nwfacts >= 0, "Error: nwfacts<0");
     weight_product = ComplexType(1.0, 0.0);
     for (int i = 0; i < nwfacts; i++)
       weight_factors.push(weight_product);
 
-    app_log(1,"  BasicEstimator: Number of products in weight history: {}", nwfacts);
+    app_log(1,"BasicEstimator: Number of products in weight history: {}", nwfacts);
 
     data.resize(10);
     data2.resize(10);
@@ -79,26 +74,6 @@ public:
     nwalk_min      = 1000000;
     nwalk_max      = 0;
   }
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    bool timers = pt0.get<bool>("timers", false);
-    int nhist = pt0.get<int>("nhist", 0);
-    int measure_interval_multiplier = pt0.get<int>("measure_interval_multiplier", DEFAULT_MEASURE_INTERVAL_MULTIPLIER);
-    int population_control_interval = pt0.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL);
-    // validate inputs
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("timers", timers);
-    pt1.put("nhist", nhist);
-    pt1.put("measure_interval_multiplier", measure_interval_multiplier);
-    pt1.put("_population_control_interval", population_control_interval);
-    io::compare_known_keys("Basic Estimator",pt1, pt0);
-    return pt1;
-  }
-
-  ~BasicEstimator() {}
 
   void accumulate_block([[maybe_unused]] double time, [[maybe_unused]] WalkerSet<MEM>& wset) {}
 

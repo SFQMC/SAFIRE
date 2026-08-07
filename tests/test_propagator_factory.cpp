@@ -20,7 +20,8 @@
 
 #include "config.h"
 #include "IO/app_loggers.h"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
+#include "AFQMC/parameter_defaults.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/Timer.hpp"
 #include "test_common.hpp"
@@ -76,31 +77,18 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   // finite-T imaginary-time slice count (the wfn "nup" field for a finite-T guess)
   int ntau                  = nup;
 
-  ptree ham_pt;
-  ham_pt.put("name","ham0");
-  ham_pt.put("filename",hamil_file);
-  ham_pt.put("shift_1body",true);
-  //ham_pt.put("shift_1body",false);
-
   HamiltonianFactory HamFac;
-  HamFac.push("ham0", ham_pt);
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file, .shift_1body = true});
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
   int nwalk = 11; 
   std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  ptree wlk_pt;
-  wlk_pt.put("name","wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
-
-  ptree wfn_pt;
-  wfn_pt.put("name","wfn0");
-  wfn_pt.put("filename",wfn_file);
-  wfn_pt.put("dense_trial",dense_trial);
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
   WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", wfn_pt);
+  WfnFac.push("wfn0", WavefunctionParameters{.name = "wfn0", .filename = wfn_file, .dense_trial = dense_trial});
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, finiteT, &ham, nwalk);
 
   auto wset = [&]() {
@@ -109,34 +97,33 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
       auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
       REQUIRE(int(initial_guess.size()) == nspin);
       REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
-      return WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
+      return WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
     }
     else
     {
       auto initial_guess_ft = WfnFac.getInitialGuess_ft("wfn0");
       REQUIRE(initial_guess_ft.shape() == std::array<long,4>{3,nspin,npol*NMO,NMO});
-      return WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess_ft, nwalk);
+      return WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess_ft, nwalk);
     }
   }();
 
-  ptree prop_pt;
-  prop_pt.put("name","prop0");
-  prop_pt.put("denseP2",true);
-
   PropagatorFactory<MEM> PropgFac;
-  PropgFac.push("prop0", prop_pt);
+  PropagatorParameters prop_params{.name = "prop0", .denseP2 = true};
+  apply_defaults(prop_params, ham.getHamType());
+  PropgFac.push("prop0", prop_params);
   auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
 
   std::cout << setprecision(8);
   wfn.Energy(wset);
   {
     ComplexType eav = 0, ov = 0;
-    for (auto it = wset.begin(); it != wset.end(); ++it)
+    for(int iw = 0; iw < wset.size(); ++iw)
     {
-      eav += it->get_property(WEIGHT) * (it->energy());
-      ov += it->get_property(WEIGHT);
+      auto w = wset[iw];
+      eav += w.get_property(WEIGHT) * (w.energy());
+      ov += w.get_property(WEIGHT);
     }
-    app_log(1," Initial Energy: {}", (eav / ov).real()); 
+    app_log(1," Initial Energy: {}", (eav / ov).real());
   }
   double tot_time = 0;
   RealType dt     = 0.01;
@@ -147,10 +134,11 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
       prop.Propagate(wset, Eshift, dt);
       wfn.Energy(wset);
       ComplexType eav = 0, ov = 0;
-      for (auto it = wset.begin(); it != wset.end(); ++it)
+      for(int iw = 0; iw < wset.size(); ++iw)
       {
-        eav += it->get_property(WEIGHT) * (it->energy());
-        ov += it->get_property(WEIGHT);
+        auto w = wset[iw];
+        eav += w.get_property(WEIGHT) * (w.energy());
+        ov += w.get_property(WEIGHT);
       }
       tot_time += dt;
       app_log(1," -- {}  {}  {}",i,tot_time,(eav / ov).real());
@@ -161,10 +149,11 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
       prop.Propagate(wset, Eshift, 2 * dt);
       wfn.Energy(wset);
       ComplexType eav = 0, ov = 0;
-      for (auto it = wset.begin(); it != wset.end(); ++it)
+      for(int iw = 0; iw < wset.size(); ++iw)
       {
-        eav += it->get_property(WEIGHT) * (it->energy());
-        ov += it->get_property(WEIGHT);
+        auto w = wset[iw];
+        eav += w.get_property(WEIGHT) * (w.energy());
+        ov += w.get_property(WEIGHT);
       }
       tot_time += 2 * dt;
       app_log(1," -- {}  {}  {}",i,tot_time,(eav / ov).real());
@@ -180,10 +169,11 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
       prop.Propagate(wset, Eshift, dt, i+1);
       wfn.Energy(wset, i+1);
       ComplexType eav = 0, ov = 0;
-      for (auto it = wset.begin(); it != wset.end(); ++it)
+      for(int iw = 0; iw < wset.size(); ++iw)
       {
-        eav += it->get_property(WEIGHT) * (it->energy());
-        ov += it->get_property(WEIGHT);
+        auto w = wset[iw];
+        eav += w.get_property(WEIGHT) * (w.energy());
+        ov += w.get_property(WEIGHT);
       }
       tot_time += dt;
       app_log(1," -- {}  {}  {}",i,tot_time,(eav / ov).real());
@@ -220,11 +210,8 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   utils::check(NMO == wfn_NMO, "Error: NMO != wfn_NMO.");
   WALKER_TYPES type = getWalkerType(wfn_file);
 
-  ptree ham_pt;
-  ham_pt.put("name", "ham0");
-  ham_pt.put("filename", hamil_file);
   HamiltonianFactory HamFac;
-  HamFac.push("ham0", ham_pt);
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
   const int nwalk = 11;
@@ -233,25 +220,17 @@ void propagator_free_projection_step(std::shared_ptr<utils::mpi_context_t<boost:
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
       std::make_shared<utils::RandomGenerator_t<MEM>>(utils::SeedType(777));
 
-  ptree wlk_pt;
-  wlk_pt.put("name", "wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
+  WalkerSetParameters wlk_pt{.name = "wset0", .walker_type = type};
 
-  ptree wfn_pt;
-  wfn_pt.put("name", "wfn0");
-  wfn_pt.put("filename", wfn_file);
   WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", wfn_pt);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, &ham, nwalk);
+  WfnFac.push("wfn0", WavefunctionParameters{.name = "wfn0", .filename = wfn_file});
+  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
   auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
   auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
   // Standard propagator: free_projection defaults to false (importance sampling / hybrid).
-  ptree prop_pt;
-  prop_pt.put("name", "prop0");
-  prop_pt.put("denseP2", true);
   PropagatorFactory<MEM> PropgFac;
-  PropgFac.push("prop0", prop_pt);
+  PropgFac.push("prop0", PropagatorParameters{.name = "prop0", .denseP2 = true});
   auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
 
   // Owning copies: nda::to_host on HOST_MEMORY aliases the live walker storage, so snapshot into owning
@@ -310,7 +289,7 @@ TEST_CASE("propagator_factory: free projection step", "[propagator_factory]")
 template<MEMORY_SPACE MEM>
 void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                            std::string hamil_file, std::string wfn_file,
-                                           std::string const& inner_sampling_target)
+                                           StochasticSamplingTarget inner_sampling_target)
 {
   if (getWavefunctionType(wfn_file) != NOMSD_WFN)
     return;
@@ -324,35 +303,24 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
 
     const int nwalk          = 5;
     const int inner_n_samples = 4;
-    const std::string tag    = "stoch_" + inner_sampling_target;
+    const std::string tag    = "stoch_" + nlohmann::json(inner_sampling_target).get<std::string>();
 
-    ptree ham_pt;
-    ham_pt.put("name", "ham0");
-    ham_pt.put("filename", hamil_file);
     HamiltonianFactory HamFac;
-    HamFac.push("ham0", ham_pt);
+    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
     std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
     std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
         std::make_shared<utils::RandomGenerator_t<MEM>>(utils::SeedType(7));
-    ptree wlk_pt;
-    wlk_pt.put("name", "wset0");
-    wlk_pt.put("walker_type", walkerTypeToString(type));
+    WalkerSetParameters wlk_pt{.name = "wset0", .walker_type = type};
 
     WavefunctionFactory<MEM> WfnFac{};
-    ptree pt;
-    pt.put("name", tag);
-    pt.put("filename", wfn_file);
+    WavefunctionParameters pt{.name = tag, .filename = wfn_file, .inner_n_samples = inner_n_samples,
+                              .inner_nsteps = 1, .inner_sampling_target = inner_sampling_target,
+                              .inner_propagator = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(pt);
-    pt.put("inner_n_samples", inner_n_samples);
-    pt.put("inner_nsteps", 1);
-    pt.put("inner_sampling_target", inner_sampling_target);
-    ptree inner_prop;
-    inner_prop.put("timestep", 0.01);
-    pt.put_child("inner_propagator", inner_prop);
     WfnFac.push(tag, pt);
-    auto& wfn = WfnFac.getWavefunction(mpi, tag, type, &ham, nwalk);
+    auto& wfn = WfnFac.getWavefunction(mpi, tag, type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, tag, type, wlk_pt);
 
     auto const& initial_guess = WfnFac.getInitialGuess(tag);
@@ -372,10 +340,7 @@ void stochastic_trial_survives_propagation(std::shared_ptr<utils::mpi_context_t<
 
     // Build the OUTER propagator (default hybrid) bound to the stochastic trial.
     PropagatorFactory<MEM> PropgFac;
-    ptree prop_pt;
-    prop_pt.put("name", "prop_" + tag);
-    prop_pt.put("system", "system0");
-    PropgFac.push("prop_" + tag, prop_pt);
+    PropgFac.push("prop_" + tag, PropagatorParameters{.name = "prop_" + tag});
     auto& prop = PropgFac.getPropagator(mpi, "prop_" + tag, wfn, rng_dev);
 
     RealType dt = 0.01;
@@ -401,7 +366,7 @@ TEST_CASE("propagator_factory: stochastic free trial survives", "[propagator_fac
   app_log(0, "StochasticWfn free-projection inner sampling over a real outer propagator.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
-    stochastic_trial_survives_propagation<MEM>(mpi, hamil_file, wfn_file, "gaussian");
+    stochastic_trial_survives_propagation<MEM>(mpi, hamil_file, wfn_file, StochasticSamplingTarget::Gaussian);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
@@ -413,7 +378,7 @@ TEST_CASE("propagator_factory: stochastic conditioned trial survives", "[propaga
   app_log(0, "StochasticWfn walker-conditioned inner sampling over a real outer propagator.");
   using namespace utils;
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
-    stochastic_trial_survives_propagation<MEM>(mpi, hamil_file, wfn_file, "walker_overlap");
+    stochastic_trial_survives_propagation<MEM>(mpi, hamil_file, wfn_file, StochasticSamplingTarget::WalkerOverlap);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 

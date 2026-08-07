@@ -21,7 +21,7 @@
 #include "configuration.hpp"
 #include "config.h"
 #include "IO/AppAbort.hpp"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/mpi_context.h"
 #include "utilities/type_traits.hpp"
@@ -69,12 +69,7 @@ public:
   static const bool fixed_population   = true;
 
   using reference = walker<_MEM_,ComplexType>;
-  using iterator  = walker_iterator<_MEM_,ComplexType>;
   using const_reference = walker<_MEM_,const ComplexType>;
-  using const_iterator  = walker_iterator<_MEM_,const ComplexType>;
-
-  // A walker set cannot be created empty, because it needs to know about the dimensions it is going to hold.
-  WalkerSetBase() = delete;
 
   /// Constructor: build a set of nWalkers walkers with the given dimensions
   /// {rows, naea, naeb}. The walker type is parsed by the caller and passed in
@@ -82,7 +77,7 @@ public:
   /// allocated and initialized to valid default values (unit
   /// weight/overlap/phase, zero Slater matrices).
   WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                ptree pt,
+                const WalkerSetParameters& params,
                 std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
                 WALKER_TYPES walker_type,
                 std::array<int, 3> dims,
@@ -102,13 +97,10 @@ public:
         finite_temperature(finite_temperature_),
         tot_num_walkers(0),
         walker_buffer(0, 1),
-        bp_buffer(0, 0),
-        load_balance(UNDEFINED_LOAD_BALANCE),
-        pop_control(UNDEFINED_BRANCHING),
-        min_weight(0.05),
-        max_weight(4.0)
+        bp_buffer(0, 0)
   {
-    parse(pt);
+    // parse fills load_balance, pop_control, min_weight and max_weight from params
+    parse(params);
     setup(dims);
     allocate_walkers(nWalkers);
   }
@@ -117,13 +109,13 @@ public:
   /// guess matrices. Dimensions are inferred from the guess, so no external
   /// NMO/nup/ndown is needed. Every walker is initialized to the guess.
   WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                ptree pt,
+                const WalkerSetParameters& params,
                 std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
                 WALKER_TYPES walker_type,
                 const std::vector<nda::matrix<ComplexType>>& guess,
                 int nWalkers
                )
-      : WalkerSetBase(_mpi_, pt, r, walker_type, dims_from_guess(guess), nWalkers, false)
+      : WalkerSetBase(_mpi_, params, r, walker_type, dims_from_guess(guess), nWalkers, false)
   {
     populate_from_guess(guess);
   }
@@ -133,13 +125,13 @@ public:
   /// from the guess, so no external NMO/nup/ndown is needed. Every walker is
   /// initialized to the guess.
   WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                ptree pt,
+                const WalkerSetParameters& params,
                 std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
                 WALKER_TYPES walker_type,
                 nda::MemoryArrayOfRank<4> auto const& UDV,
                 int nWalkers
                )
-      : WalkerSetBase(_mpi_, pt, r, walker_type, dims_from_guess_ft(UDV), nWalkers, true)
+      : WalkerSetBase(_mpi_, params, r, walker_type, dims_from_guess_ft(UDV), nWalkers, true)
   {
     populate_from_guess_ft(UDV);
   }
@@ -194,42 +186,6 @@ public:
   void setHistoryPos(int p) { history_pos = p % wlk_desc[6]; }
   void advanceHistoryPos() { history_pos = (history_pos + 1) % wlk_desc[6]; }
 
-
-  /*
-   * Returns iterator to the first walker in the set
-   */
-  auto begin()
-  {
-    utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
-    return iterator(0, walker_buffer, data_displ, wlk_desc);
-  }
-
-  /*
-   * Returns iterator to the first walker in the set
-   */
-  auto begin() const
-  {
-    utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
-    return const_iterator(0, walker_buffer, data_displ, wlk_desc);
-  }
-
-  /*
-   * Returns iterator to the past-the-end walker in the set
-   */
-  auto end()
-  {
-    utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
-    return iterator(tot_num_walkers, walker_buffer, data_displ, wlk_desc);
-  }
-
-  /*
-   * Returns iterator to the past-the-end walker in the set
-   */
-  auto end() const
-  {
-    utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
-    return const_iterator(tot_num_walkers, walker_buffer, data_displ, wlk_desc);
-  } 
 
   /*
    * Returns a reference to a walker
@@ -569,7 +525,7 @@ public:
 
   bool isFiniteTemperature() const { return finite_temperature; }
 
-  std::tuple<BRANCHING_ALGORITHM,int,int> population_control_parameters() const 
+  std::tuple<BranchingAlgorithm,int,int> population_control_parameters() const 
   { return std::make_tuple(pop_control,min_weight,max_weight); }
 
   int walkerSizeIO() const
@@ -672,59 +628,16 @@ public:
     return bp_buffer(range::all,range(i0,i0+wlk_desc[6]));
   }
 
-  // Resolve the walker_type enum directly from a walker-set input block,
-  // without constructing a walker set. Uses the same "collinear" default as
-  // interpret_inputs so it matches what the constructor would parse.
-  static WALKER_TYPES parse_walker_type(const ptree& pt0);
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    std::string name, walker_type, load_balance_type, pop_control_type;
-    double min_weight, max_weight;
-    name              = pt0.get<std::string>("name", "wset0");
-    walker_type       = pt0.get<std::string>("walker_type", "collinear");
-    load_balance_type = pt0.get<std::string>("load_balance_type", "async");
-    pop_control_type  = pt0.get<std::string>("pop_control_type", "pair");
-    min_weight        = pt0.get<double>("min_weight", 0.05);
-    max_weight        = pt0.get<double>("max_weight", 4.0);
-    bool finite_temperature = pt0.get<bool>("finite_temperature", false);
-  
-    // check input validity
-    if (min_weight < 1e-2) APP_ABORT("min_weight too small");
-    //std::map<std::string, std::set<std::string> > options = {
-    //  {"walker_type", {"closed", "collinear", "noncollinear"}}
-    //};
-    //if (options["walker_type"].count(tolower(walker_type)) < 0)
-    //{
-    //  app_log() << walker_type << std::endl;
-    //  APP_ABORT("unknown walker_type");
-    //}
-  
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("name", name);
-    pt1.put("walker_type", walker_type);
-    pt1.put("load_balance_type", load_balance_type);
-    pt1.put("pop_control_type", pop_control_type);
-    pt1.put("min_weight", min_weight);
-    pt1.put("max_weight", max_weight);
-    pt1.put("finite_temperature", finite_temperature);
-    std::unordered_set<std::string> pass_through_keys = {};
-    io::compare_known_keys("Walker set",pt1, pt0,pass_through_keys);
-    return pt1;
-  }
-
   // load balancing algorithm
   void loadBalance(nda::MemoryArrayOfRank<2> auto&& M,  
                    std::vector<int> const& nwalk_counts_old,  
                    std::vector<int> const& nwalk_counts_new)
   {
-    if (load_balance == SIMPLE)
+    if (load_balance == LoadBalanceAlgorithm::simple)
     {
       afqmc::swapWalkersSimple(*this, M, nwalk_counts_old, nwalk_counts_new, mpi->comm);
     }
-    else if (load_balance == ASYNC)
+    else if (load_balance == LoadBalanceAlgorithm::async)
     {
       afqmc::swapWalkersAsync(*this, M, nwalk_counts_old, nwalk_counts_new, mpi->comm);
     }
@@ -768,7 +681,7 @@ protected:
   memory::array<MEM, ComplexType, 2> bp_buffer;
 
   // performs setup
-  void parse(ptree cur);
+  void parse(const WalkerSetParameters& params);
   // lay out the walker buffer given {rows, naea, naeb} (= wlk_desc[0..2])
   void setup(std::array<int, 3> dims);
   // reserve capacity for n walkers and initialize them to valid defaults
@@ -781,12 +694,15 @@ protected:
   // realignment.
   void set_slot_lineage_identity();
 
+  // the four below are set by parse(); the sentinels only guard against a ctor that forgets to
+  // call it
+
   // load balance algorithm
-  LOAD_BALANCE_ALGORITHM load_balance;
+  LoadBalanceAlgorithm load_balance{LoadBalanceAlgorithm::undefined};
 
   // branching algorithm
-  BRANCHING_ALGORITHM pop_control;
-  [[maybe_unused]] double min_weight, max_weight;
+  BranchingAlgorithm pop_control{BranchingAlgorithm::undefined};
+  [[maybe_unused]] double min_weight{}, max_weight{};
 };
 
 } // namespace afqmc

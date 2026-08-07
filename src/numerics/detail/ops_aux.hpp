@@ -55,9 +55,9 @@ struct normal_tag
   static constexpr bool is_stride_order_C() noexcept
     { return Array_t::layout_t::is_stride_order_C(); }
   normal_tag(MA m) : arg1(m) {}
-  normal_tag()    		   = delete;
   normal_tag(normal_tag const&)    = delete;
   normal_tag(normal_tag&&)         = default;
+  normal_tag& operator=(normal_tag const&) = delete;
   static const char tag            = 'N';
 };
 
@@ -72,9 +72,9 @@ struct transpose_tag
   static constexpr bool is_stride_order_C() noexcept
     { return Array_t::layout_t::is_stride_order_C(); }
   transpose_tag(MA m) : arg1(m) {}
-  transpose_tag()                     = delete;
   transpose_tag(transpose_tag const&)    = delete;
   transpose_tag(transpose_tag&&)         = default;
+  transpose_tag& operator=(transpose_tag const&) = delete;
   static const char tag            = 'T';
 };
 
@@ -89,9 +89,9 @@ struct conjugate_transpose_tag
   static constexpr bool is_stride_order_C() noexcept
     { return Array_t::layout_t::is_stride_order_C(); }
   conjugate_transpose_tag(MA m) : arg1(m) {}
-  conjugate_transpose_tag()                     = delete;
   conjugate_transpose_tag(conjugate_transpose_tag const&)    = delete;
   conjugate_transpose_tag(conjugate_transpose_tag&&)         = default;
+  conjugate_transpose_tag& operator=(conjugate_transpose_tag const&) = delete;
   static const char tag            = 'C';
 };
 

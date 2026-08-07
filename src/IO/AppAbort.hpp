@@ -19,6 +19,8 @@
 #include <stdexcept>
 #include <mpi.h>
 #include <source_location>
+#include <string_view>
+#include <concepts>
 #include <cstdint>
 #if defined(ENABLE_CPPTRACE)     
 #include <cpptrace/cpptrace.hpp>
@@ -67,7 +69,7 @@ struct AppAbortException : public std::runtime_error {
 };
 
 template<typename... Args>
-void common_abort(std::optional<std::source_location> loc, Args&&... args) {
+[[noreturn]] void common_abort(std::optional<std::source_location> loc, Args&&... args) {
   auto log_backend = get_abort_log_backend();
   
   log_backend->error("**********************************************");
@@ -99,13 +101,27 @@ void common_abort(std::optional<std::source_location> loc, Args&&... args) {
 
 
 
+/// Format string that also captures the caller's source location, so that
+/// APP_ABORT reports where it was called from without the caller passing a
+/// std::source_location explicitly. A trailing defaulted parameter cannot be
+/// used for this because it would follow a deduced parameter pack.
+struct abort_format {
+  std::string_view fmt;
+  std::source_location loc;
+
+  template<class T>
+    requires std::convertible_to<T const&, std::string_view>
+  abort_format(T const& f, const std::source_location& l = std::source_location::current())
+      : fmt(f), loc(l) {}
+};
+
 template<class... Args>
-void APP_ABORT(Args&&... args) {
-  common_abort(std::nullopt, std::forward<Args>(args)...);
+[[noreturn]] void APP_ABORT(abort_format f, Args&&... args) {
+  common_abort(f.loc, f.fmt, std::forward<Args>(args)...);
 }
 
 template<class... Args>
-void APP_ABORT_with_source(const std::source_location& loc = std::source_location::current(), Args&&... args) {
+[[noreturn]] void APP_ABORT_with_source(const std::source_location& loc = std::source_location::current(), Args&&... args) {
   common_abort(loc, std::forward<Args>(args)...);
 }
 

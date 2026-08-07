@@ -17,6 +17,7 @@
 #pragma once
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include <vector>
 #include <string>
 #include <iostream>
@@ -45,7 +46,7 @@ public:
     utils::check(false, "Error in Observables::full1rdm: Reached disabled default constructor.");
   }
 
-  full1rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi, ptree pt, WALKER_TYPES wlk, int NMO_, int nave = 1)
+  full1rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi, const OneRDMParameters& params, WALKER_TYPES wlk, int NMO_, int nave = 1)
       : mpi(_mpi),
         walker_type(wlk),
         NMO{NMO_},
@@ -57,9 +58,9 @@ public:
   {
     app_log(1,"  --  Adding Full 1RDM (OneRDM) estimator. -- ");
     std::string rot_file, h5_path; 
-    rot_file = pt.get<std::string>("rotation", "");
-    h5_path = pt.get<std::string>("path", "/");
-    print_from_list = pt.get<bool>("with_index_list", false);
+    rot_file = params.rotation;
+    h5_path = params.path;
+    print_from_list = params.with_index_list;
     int nspin = walker_type == COLLINEAR ? 2 : 1;
     int npol = walker_type == NONCOLLINEAR ? 2 : 1;
 

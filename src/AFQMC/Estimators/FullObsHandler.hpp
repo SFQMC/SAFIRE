@@ -21,7 +21,7 @@
 #include <iostream>
 
 #include "AFQMC/config.h"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/check.hpp"
 #include "utilities/mpi_context.h"
 #include "nda/nda.hpp"
@@ -55,7 +55,8 @@ class FullObsHandler
 public:
   FullObsHandler(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
                  std::string name_,
-                 ptree pt,
+                 const EstimatorParameters& params,
+                 int nave_,
                  WALKER_TYPES wlk,
                  int NMO_,
                  Wavefunction<MEM>& wfn)
@@ -63,74 +64,25 @@ public:
         walker_type(wlk),
         wfn0(std::addressof(wfn)),
         ncalls(0),
-        nave(1),
+        nave(nave_),
         name(name_)
   {
-    std::vector<int> nback_prop_interval_multipliers = io::get_value_or_vector<int>(pt, "measure_interval_multiplier", {DEFAULT_MEASURE_INTERVAL_MULTIPLIER});
-    nave = nback_prop_interval_multipliers.size();
-
-    //block_size = pt.get<int>("block_size", 1);
     utils::check(nave>0, "naverages <= 0 is not allowed.");
 
-    for(const ptree::value_type &it : pt)
-    {
-      std::string cname = it.first;
-      io::tolower(cname);
-      if (cname == "onerdm")
-      {
-        properties.emplace_back(full1rdm(mpi, it.second, walker_type, NMO_, nave));
-      }
-
-//       else if (cname == "gfock" || cname == "genfock" || cname == "ekt")
-//       {
-//         properties.emplace_back(
-//             generalizedFockMatrix(TG, info, it.second, walker_type, wfn0, nave, block_size));
-//       }
-      else if (cname == "diag2rdm")
-      {
-        properties.emplace_back(diagonal2rdm<MEM>(mpi, it.second, walker_type, NMO_, nave));
-      }
-      else if (cname == "twordm")
-      {
-        properties.emplace_back(full2rdm<MEM>(mpi, it.second, walker_type, NMO_, nave));
-      }
-//       else if (cname == "n2r" || cname == "ontop2rdm")
-//       {
-// #if defined(ENABLE_DEVICE)
-//         ptree pt1 = it.second;
-//         bool use_host_memory = pt1.get<bool>("use_host_memory", false);
-//         if (use_host_memory)
-//         {
-//           properties.emplace_back(
-//               n2r<device_allocator<ComplexType>>(TG, info, it.second, walker_type, false, device_allocator<ComplexType>{},
-//                                                  device_allocator<ComplexType>{}, nave, block_size));
-//         }
-//         else
-// #endif
-//         {
-//           properties.emplace_back(
-//               n2r<shared_allocator<ComplexType>>(TG, info, it.second, walker_type, true,
-//                                                  shared_allocator<ComplexType>{TG.TG_local()},
-//                                                  shared_allocator<ComplexType>{TG.Node()}, nave, block_size));
-//         }
-//       }
-//       else if (cname == "realspace_correlators")
-//       {
-//         properties.emplace_back(realspace_correlators(TG, info, it.second, walker_type, nave, block_size));
-//       }
-//       else if (cname == "correlators")
-//       {
-//         properties.emplace_back(atomcentered_correlators(TG, info, it.second, walker_type, nave, block_size));
-//       }
-      else if (cname == "pair_correlators")
-      {
-        properties.emplace_back(pair_correlator(mpi, it.second, walker_type, NMO_, nave));
-      }
-      else if (cname == "spinspin")
-      {
-        properties.emplace_back(spinspinobs(mpi, it.second, walker_type, NMO_, nave));
-      }
-
+    if(params.onerdm) {
+      properties.emplace_back(full1rdm(mpi, *params.onerdm, walker_type, NMO_, nave));
+    }
+    if(params.diag2rdm) {
+      properties.emplace_back(diagonal2rdm<MEM>(mpi, *params.diag2rdm, walker_type, NMO_, nave));
+    }
+    if(params.twordm) {
+      properties.emplace_back(full2rdm<MEM>(mpi, *params.twordm, walker_type, NMO_, nave));
+    }
+    if(params.pair_correlators) {
+      properties.emplace_back(pair_correlator(mpi, *params.pair_correlators, walker_type, NMO_, nave));
+    }
+    if(params.spinspin) {
+      properties.emplace_back(spinspinobs(mpi, *params.spinspin, walker_type, NMO_, nave));
     }
 
     utils::check(properties.size() > 0, "empty observables list is not allowed.");

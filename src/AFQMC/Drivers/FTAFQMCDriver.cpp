@@ -25,6 +25,7 @@
 
 #include "AFQMC/config.h"
 #include "IO/app_loggers.h"
+#include "IO/banner.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "FTAFQMCDriver.h"
 #include "AFQMC/Walkers/WalkerIO.hpp"
@@ -37,9 +38,7 @@ template<MEMORY_SPACE MEM>
 bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
 {
 
-  app_log(1,"****************************************************");
-  app_log(1,"              Beginning FT-AFQMC calculation        ");
-  app_log(1,"****************************************************");
+  app_log(1, banner("Beginning FT-AFQMC calculation"));
 
   std::vector<ComplexType> curData;
 
@@ -147,9 +146,7 @@ bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
   // print timers
   if(mpi->comm.root()) AFQMCTimer.print_all();
   
-  app_log(1,"****************************************************");
-  app_log(1,"               Finished AFQMC calculation           ");
-  app_log(1,"****************************************************");
+  app_log(1, banner("Finished AFQMC calculation"));
 
   return true;
 

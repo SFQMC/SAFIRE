@@ -25,6 +25,7 @@
 
 #include "AFQMC/config.h"
 #include "IO/app_loggers.h"
+#include "IO/banner.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "AFQMCDriver.h"
 #include "AFQMC/Walkers/WalkerIO.hpp"
@@ -37,9 +38,7 @@ template<MEMORY_SPACE MEM>
 bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
 {
 
-  app_log(1,"****************************************************");
-  app_log(1,"              Beginning AFQMC calculation           ");
-  app_log(1,"****************************************************");
+  app_log(1, banner("Beginning AFQMC calculation"));
 
   std::vector<ComplexType> curData;
 
@@ -102,7 +101,7 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
     if (nCheckpoint > 0 && (iStep + 1) % nCheckpoint == 0)
       if (!checkpoint(wset, iStep, step_tot))
       {
-        app_error(" Error in AFQMCDriver::checkpoint(). ");
+        app_error("Error in AFQMCDriver::checkpoint(). ");
         app_error_flush();
         return false;
       }
@@ -111,7 +110,7 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
     if (samplePeriod > 0 && (iStep + 1) % samplePeriod == 0)
       if (!writeSamples(wset))
       {
-        app_error(" Error in AFQMCDriver::writeSamples(). ");
+        app_error("Error in AFQMCDriver::writeSamples(). ");
         app_error_flush();
         return false;
       }
@@ -138,9 +137,7 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
   // print timers
   if(mpi->comm.root()) AFQMCTimer.print_all();
 
-  app_log(1,"****************************************************");
-  app_log(1,"               Finished AFQMC calculation           ");
-  app_log(1,"****************************************************");
+  app_log(1, banner("Finished AFQMC calculation"));
 
   return true;
 }

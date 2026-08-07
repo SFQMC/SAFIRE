@@ -116,7 +116,6 @@ inline ComplexType read_energy_offset(h5::group& grp, std::string const& format,
 
 inline std::tuple<int, int, int> read_info_from_wfn(std::string fileName, std::string type)
 {
-  app_log(1, "Reading info from wfn file: {} of type {} ", fileName, type);
   h5::file file(fileName,'r');
   h5::group grp(file);
   h5::group wgrp = grp.open_group("Wavefunction");

@@ -47,22 +47,12 @@ public:
   using SMType  = memory::array_view<MEM,value_type,2,nda::C_layout>;
   using SVType  = memory::array_view<MEM,value_type,1,nda::C_layout>;
 
-  walker() {
-    utils::check(false, "Error: Empty walker not allowed");
-  }
-
-  walker(value_type* p, long sz, const wlk_indices& i_, const wlk_descriptor& d_)
-      : _data(p), _size(sz), indx(i_), desc(d_)
-  { }
-
   walker(nda::MemoryArrayOfRank<1> auto&& a, const wlk_indices& i_, const wlk_descriptor& d_)
       : _data(a.data()), _size(a.size()), 
         indx(i_), desc(d_)
   {
     utils::check(a.strides()[0] == 1, "Stride mismatch."); 
   }
-
-  ~walker() {}
 
   // no copy/move assignment
   walker(walker&& other)      = default;
@@ -151,47 +141,6 @@ private:
       *getw_(P) = val;
     }
   }
-};
-
-// MAM: How to make sure that ptr is allocated consistently with MEM? Would need to work with array_views...
-template<MEMORY_SPACE MEM, typename _value_t_>
-struct walker_iterator
-    : public boost::
-          iterator_facade<walker_iterator<MEM,_value_t_>, void, std::random_access_iterator_tag, walker<MEM,_value_t_>, std::ptrdiff_t>
-{
-public:
-  walker_iterator(int k, nda::MemoryArrayOfRank<2> auto&& w_, const wlk_indices& i_, const wlk_descriptor& d_)
-      : pos(k), ptr(w_.data()), stride(w_.strides()[0]), size(w_.extent(1)), 
-        indx(&i_), desc(&d_)
-  {
-    utils::check(w_.strides()[1] == 1, "Stride mismatch");
-  }
-
-  walker_iterator(int k, _value_t_* _p, long st, long sz, const wlk_indices& i_, const wlk_descriptor& d_)
-      : pos(k), ptr(_p), stride(st), size(sz), indx(&i_), desc(&d_) 
-  { }
-
-  using element         = _value_t_; 
-  using pointer         = element*;
-  using difference_type = std::ptrdiff_t;
-  using reference       = walker<MEM,element>;
-
-private:
-  int pos;
-  mutable element* ptr = nullptr;
-  const long stride = 0;
-  const long size = 0;
-  wlk_indices const* indx;
-  wlk_descriptor const* desc;
-
-  friend class boost::iterator_core_access;
-
-  void increment() { ++pos; }
-  void decrement() { --pos; }
-  bool equal(walker_iterator const& other) const { return pos == other.pos; }
-  void advance(difference_type n) { pos += n; }
-  difference_type distance_to(walker_iterator other) const { return other.pos - pos; }
-  reference dereference() const { return reference(ptr+pos*stride,size,*indx,*desc); }
 };
 
 } // namespace afqmc

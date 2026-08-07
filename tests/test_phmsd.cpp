@@ -21,7 +21,8 @@
 #include "config.h"
 #include "IO/AppAbort.hpp"
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
+#include "AFQMC/parameter_defaults.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/check.hpp"
 #include "utilities/h5_utils.hpp"
@@ -154,28 +155,18 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   double dt         = 0.01;
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
 
-  ptree ham_pt;
-  ham_pt.put("name","ham0");
-  ham_pt.put("filename",hamil_file);
-
   HamiltonianFactory HamFac;
-  HamFac.push("ham0", ham_pt);
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
-  ptree wfn_pt;
-  wfn_pt.put("name","wfn0");
-  wfn_pt.put("filename",wfn_file);
-  wfn_pt.put("rediag","no");
-  wfn_pt.put("ndets_to_read",-1);
-  wfn_pt.put("algorithm",0);
-
   WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", wfn_pt);
+  WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file,
+                                    .algorithm = PHMSDEnergyAlgorithm::reference};
+  apply_defaults(wfn_params, ham.getHamType());
+  WfnFac.push("wfn0", wfn_params);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
 
-  ptree wlk_pt;
-  wlk_pt.put("name","wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
   auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
   REQUIRE(int(initial_guess.size()) == nspin);
@@ -196,7 +187,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
       nda::blas::gemm(R, initial_guess[is], g);
       rotated_initial_guess.push_back(std::move(g));
     }
-    return WalkerSet<MEM>(mpi, wlk_pt, rng, type, rotated_initial_guess, nwalk);
+    return WalkerSet<MEM>(mpi, wlk_params, rng, type, rotated_initial_guess, nwalk);
   }();
 
   // 0. Get raw occupancies and coefficients from file.
@@ -254,11 +245,9 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   }
   mpi->comm.barrier();
 
-  ptree nomsd_pt;
-  nomsd_pt.put("name","nomsd");
-  nomsd_pt.put("filename",nomsd_file);
-
-  WfnFac.push("nomsd", nomsd_pt);
+  WavefunctionParameters nomsd_params{.name = "nomsd", .filename = nomsd_file};
+  apply_defaults(nomsd_params, ham.getHamType());
+  WfnFac.push("nomsd", nomsd_params);
   auto& nomsd = WfnFac.getWavefunction(mpi, "nomsd", type, false, &ham, nwalk);
 
   // 1. Overlap 
@@ -288,8 +277,9 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   ComplexType log_ovlp_sum = std::log(ovlp_sum);
 
   // the phase can be off by 2*pi due to small round-off errors around 0, what to do???
-  for (const auto &w : wset)
-    CHECK_THAT(std::exp(w.get_property(OVLP)), utils::Approx(ovlp_sum));
+  for(int iw = 0; iw < wset.size(); ++iw) {
+    CHECK_THAT(std::exp(wset[iw].get_property(OVLP)), utils::Approx(ovlp_sum));
+  }
 
   {
     memory::array<MEM,ComplexType,1> log_ov(nwalk);
@@ -369,14 +359,10 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
 
   if(wfn.getHamType() == RealDenseFactorized)  // add THC
   {
-    ptree wfn1_pt;
-    wfn1_pt.put("name","wfn1");
-    wfn1_pt.put("filename",wfn_file);
-    wfn1_pt.put("rediag","no");
-    wfn1_pt.put("ndets_to_read",-1);
-    wfn1_pt.put("algorithm",1);
-
-    WfnFac.push("wfn1", wfn1_pt);
+    WavefunctionParameters wfn1_params{.name = "wfn1", .filename = wfn_file,
+                                       .algorithm = PHMSDEnergyAlgorithm::woodbury};
+    apply_defaults(wfn1_params, ham.getHamType());
+    WfnFac.push("wfn1", wfn1_params);
     auto& wfn1 = WfnFac.getWavefunction(mpi, "wfn1", type, false, &ham, nwalk);
 
     memory::array<MEM,ComplexType,2> eloc(nwalk,3);

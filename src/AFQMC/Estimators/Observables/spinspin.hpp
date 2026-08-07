@@ -14,6 +14,7 @@
 #pragma once
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include "nda/layout/range.hpp"
 #include <mpi3/communicator.hpp>
 #include <utilities/mpi_context.h>
@@ -32,7 +33,7 @@ namespace afqmc
 class spinspinobs
 {
 public:
-  spinspinobs(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, ptree pt, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
+  spinspinobs(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, [[maybe_unused]] const SpinSpinCorrParameters& params, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
       : mpi{mpi},
         walker_type{wlk},
         NMO{NMO_}

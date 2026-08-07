@@ -84,13 +84,6 @@ public:
     }
   }
 
-  ~SparseEnergy() {}
-
-  SparseEnergy(const SparseEnergy& other) = default;
-  SparseEnergy& operator=(const SparseEnergy& other) = default;
-  SparseEnergy(SparseEnergy&& other)                 = default;
-  SparseEnergy& operator=(SparseEnergy&& other) = default;
-
   auto get_n2IJ() const { return n2IJ_host(); };
   auto get_n2IJ_dev() const { return n2IJ_dev(); }  
 

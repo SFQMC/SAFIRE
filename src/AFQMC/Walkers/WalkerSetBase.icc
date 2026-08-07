@@ -26,54 +26,53 @@ namespace sfqmc
 namespace afqmc
 {
 
-template<MEMORY_SPACE _M_>
-WALKER_TYPES WalkerSetBase<_M_>::parse_walker_type(const ptree& pt0)
+namespace detail
 {
-  std::string walker_type = pt0.get<std::string>("walker_type", "collinear");
-  return utils::parse_enum<WALKER_TYPES>(walker_type, {
-    {CLOSED, "closed-shell RHF", {"closed"}},
-    {NONCOLLINEAR, "GHF", {"non-collinear", "noncollinear"}},
-    {COLLINEAR, "UHF/ROHF", {"collinear"}},
-  }, "walker");
+inline std::string_view load_balance_explanation(LoadBalanceAlgorithm algorithm)
+{
+  switch(algorithm) {
+    case LoadBalanceAlgorithm::simple: return "blocking 1-1 swap";
+    case LoadBalanceAlgorithm::async: return "nonblocking swap";
+    default: return "";
+  }
 }
 
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::parse(ptree pt_in)
+inline std::string_view branching_explanation(BranchingAlgorithm algorithm)
 {
-  app_log(1,"\n****************************************************");
-  app_log(1,"           Initializing Walker Set ");
-  app_log(1,"****************************************************");
-  // convert user input to verbose input
-  ptree pt = interpret_inputs(pt_in);
-  app_log(2, "");
-  app_log(2,"WalkerSetBase input:");
-  app_log(2, io::to_string(pt));
-  app_log(2, "");
-  // initialize using verbose input. The walker type is resolved by the caller
-  // (parse_walker_type) and passed to the constructor, so it is not parsed here.
-  std::string name, load_balance_type, pop_control_type;
-  name              = pt.get<std::string>("name");
-  load_balance_type = pt.get<std::string>("load_balance_type");
-  pop_control_type  = pt.get<std::string>("pop_control_type");
-  min_weight        = pt.get<double>("min_weight");
-  max_weight        = pt.get<double>("max_weight");
+  switch(algorithm) {
+    case BranchingAlgorithm::pair: return "paired walker branching";
+    case BranchingAlgorithm::comb:
+    case BranchingAlgorithm::serial_comb: return "comb method [Booth, Gubernatis, PRE 2009]";
+    case BranchingAlgorithm::min_branch: return "minimum reconfiguration [Caffarel et al., 2000]";
+    default: return "";
+  }
+}
+} // namespace detail
+
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::parse(const WalkerSetParameters& params)
+{
+  app_log(1, section(std::format("Initializing Walker Set \"{}\"", params.name)));
+  // The walker type is resolved by the caller and passed to the constructor, so it is
+  // not taken from the parameters here.
+  min_weight   = params.min_weight;
+  max_weight   = params.max_weight;
+  load_balance = params.load_balance_type;
+  pop_control  = params.pop_control_type;
+
+  utils::check(min_weight >= 1e-2, "min_weight too small");
+  utils::check(load_balance != LoadBalanceAlgorithm::undefined, "undefined load balancing algorithm");
+  utils::check(pop_control != BranchingAlgorithm::undefined, "undefined population control algorithm");
 
   if constexpr (_M_ == HOST_MEMORY)
     app_log(1, "Walker resides in CPU memory");
   else
     app_log(1, "Walker resides in GPU memory");
 
-  load_balance = utils::parse_enum<LOAD_BALANCE_ALGORITHM>(load_balance_type, {
-    {SIMPLE, "blocking 1-1 swap", {"simple"}},
-    {ASYNC, "nonblocking swap", {"async"}},
-  }, "load balancing algorithm");
-  
-  pop_control = utils::parse_enum<BRANCHING_ALGORITHM>(pop_control_type, {
-    {PAIR, "paired walker branching", {"pair"}},
-    {SERIAL_COMB, "comb method [Booth, Gubernatis, PRE 2009]", {"serial_comb"}},
-    {COMB, "comb method [Booth, Gubernatis, PRE 2009]", {"comb"}},
-    {MIN_BRANCH, "minimum reconfiguration [Caffarel et al., 2000]", {"min"}},
-  }, "population control algorithm");
+  app_log(1, "Using {} ({}) load balancing algorithm.", nlohmann::json(load_balance).get<std::string>(),
+          detail::load_balance_explanation(load_balance));
+  app_log(1, "Using {} ({}) population control algorithm.", nlohmann::json(pop_control).get<std::string>(),
+          detail::branching_explanation(pop_control));
 
   app_log(1, "");
 }
@@ -383,13 +382,14 @@ void WalkerSetBase<_M_>::popControl()
   }
 
   // population control on master node
-  if (pop_control == PAIR || pop_control == SERIAL_COMB || pop_control == MIN_BRANCH)
+  if (pop_control == BranchingAlgorithm::pair || pop_control == BranchingAlgorithm::serial_comb ||
+      pop_control == BranchingAlgorithm::min_branch)
   {
     SerialBranching(*this, pop_control, min_weight, max_weight, nwalk_counts_old, Wexcess, *rng, mpi->comm);
 
     // distributed routines from here
   }
-  else if (pop_control == COMB)
+  else if (pop_control == BranchingAlgorithm::comb)
   {
     utils::check(false," Error: Distributed comb not implemented yet. \n\n");
     //afqmc::DistCombBranching(*this,rng_heads,nwalk_counts_old);

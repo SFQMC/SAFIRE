@@ -17,6 +17,7 @@
 #pragma once
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include <configuration.hpp>
 #include <vector>
 #include <memory>
@@ -39,7 +40,7 @@ template<MEMORY_SPACE MEM>
 class diagonal2rdm
 {
 public:
-  diagonal2rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, ptree pt, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
+  diagonal2rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, [[maybe_unused]] const DiagTwoRDMParameters& params, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
       : mpi{mpi},
         walker_type{wlk},
         NMO{NMO_}

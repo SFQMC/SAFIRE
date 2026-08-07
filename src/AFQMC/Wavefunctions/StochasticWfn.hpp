@@ -19,7 +19,7 @@
 #include <memory>
 #include <string>
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/mpi_context.h"
 #include "AFQMC/config.h"
@@ -40,26 +40,16 @@ class Propagator;
 /**
  * @brief How the inner (trial) auxiliary-field ensemble of a StochasticWfn is sampled.
  *
- * @details One key rather than independent booleans, because the modes form a strict chain (the
- * leapfrog reweight requires conditioning, persistent chains require conditioning, measurement
- * replicas require persistence). An enum makes the illegal combinations unrepresentable instead of
- * rejecting them at runtime after construction.
+ * @details Alias of StochasticSamplingTarget (AFQMC/parameters.hpp), kept under this name because the
+ * modes form a strict chain (the leapfrog reweight requires conditioning, persistent chains require
+ * conditioning, measurement replicas require persistence): one key rather than independent booleans
+ * makes the illegal combinations unrepresentable instead of rejecting them at runtime after
+ * construction.
  */
-enum class SamplingTarget
-{
-  /// @brief inner_nsteps == 0. Replicated anchor ensemble; every reduction delegates to NOMSD. The exactness
-  /// limit the NOMSD-parity tests are written against.
-  Static,
-  /// @brief Dynamic, unconditioned draw from the bare prior p_T(Y). Correct but catastrophically noisy:
-  /// reference / test mode only (back-propagation reference draw, dynamic-ensemble tests).
-  Gaussian,
-  /// @brief Dynamic, walker-conditioned: persistent field-space chains targeting p_T(Y)|<psi(Y)|phi_w>| with
-  /// the leapfrog reweight (Eq. 25). The production mode.
-  WalkerOverlap,
-};
+using SamplingTarget = StochasticSamplingTarget;
 
 /**
- * @brief Input spelling of a SamplingTarget, i.e. the inverse of parse_sampling_target().
+ * @brief Input spelling of a SamplingTarget.
  *
  * @param m the sampling target to spell
  */
@@ -78,36 +68,8 @@ inline std::string to_string(SamplingTarget m)
 }
 
 /**
- * @brief Convert an inner_sampling_target input string to a SamplingTarget; aborts on an unknown name.
- *
- * @details Note that "gaussian" here names the TARGET DENSITY and is unrelated to
- * inner_sampler = "gaussian", which names a random-walk PROPOSAL. hafqmc overloads the word the same
- * way (sampling_target vs sampler_name); the two keys are independent.
- *
- * @param s the input spelling: "static", "gaussian" or "walker_overlap"
- */
-inline SamplingTarget parse_sampling_target(std::string const& s)
-{
-  if (s == "static")
-    return SamplingTarget::Static;
-  if (s == "gaussian")
-    return SamplingTarget::Gaussian;
-  if (s == "walker_overlap")
-    return SamplingTarget::WalkerOverlap;
-  APP_ABORT("Error in StochasticWfn: inner_sampling_target = '" + s +
-            "' is not a sampling target. Choose one of: 'walker_overlap' (dynamic walker-conditioned "
-            "persistent field chains with the leapfrog reweight -- the production sampler), 'gaussian' "
-            "(dynamic unconditioned draw from the prior p_T -- a reference target; correct but "
-            "catastrophically noisy), 'static' (inner_nsteps = 0 replicated anchor ensemble, delegates "
-            "to NOMSD). "
-            "NOTE: 'gaussian' here names the TARGET DENSITY, and is unrelated to inner_sampler = "
-            "'gaussian', which names a random-walk PROPOSAL. hafqmc overloads the word the same way "
-            "(sampling_target vs sampler_name); the two keys are independent.");
-  return SamplingTarget::Static; // unreachable; APP_ABORT throws
-}
-
-/**
- * @brief Resolve and validate the inner sampling mode from an input ptree, returning its spelling.
+ * @brief Resolve and validate the inner sampling mode from the (already schema-parsed) wavefunction
+ *        parameters.
  *
  * @details Single owner of that translation for WavefunctionFactory (propagator build) and
  * StochasticWfn (sampler selection). The propagator is built first, so resolving it twice risks
@@ -115,50 +77,25 @@ inline SamplingTarget parse_sampling_target(std::string const& s)
  * Not defaulted when inner_nsteps > 0: defaulting to "gaussian" would silently give prior sampling in
  * production. "static" is the safe default at inner_nsteps == 0.
  *
- * @param pt0 the raw wavefunction input block
- * @param inner_nsteps the inner path length; passed in rather than read here because callers have
- *        already validated it
+ * @param params the wavefunction input block
  */
-inline std::string resolve_sampling_target(ptree const& pt0, int inner_nsteps)
+inline StochasticSamplingTarget resolve_sampling_target(WavefunctionParameters const& params)
 {
-  auto target_opt = pt0.get_optional<std::string>("inner_sampling_target");
-
-  // Deliberately NOT defaulted for a dynamic trial: defaulting it is how a run silently gets 'gaussian'.
-  if (not target_opt && inner_nsteps > 0)
+  if (not params.inner_sampling_target && params.inner_nsteps > 0)
     APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 selects a dynamic inner ensemble, so "
               "inner_sampling_target must be given explicitly -- 'walker_overlap' for the production "
               "walker-conditioned persistent chains, or 'gaussian' for the unconditioned prior-sampling "
               "reference target (correct, but its variance makes it unusable in production). It is NOT "
               "defaulted, because defaulting it is how a production run silently gets prior sampling.");
-
-  const std::string inner_sampling_target = target_opt ? *target_opt : std::string("static");
-
-  const SamplingTarget parsed = parse_sampling_target(inner_sampling_target);
-  if (parsed == SamplingTarget::Static && inner_nsteps > 0)
+  const StochasticSamplingTarget target =
+      params.inner_sampling_target.value_or(StochasticSamplingTarget::Static);
+  if (target == StochasticSamplingTarget::Static && params.inner_nsteps > 0)
     APP_ABORT("Error in StochasticWfn: inner_sampling_target = static is the inner_nsteps = 0 replicated "
-              "anchor ensemble, but inner_nsteps = " +
-              std::to_string(inner_nsteps) + " was given.");
-  if (parsed != SamplingTarget::Static && inner_nsteps <= 0)
-    APP_ABORT("Error in StochasticWfn: inner_sampling_target = " + inner_sampling_target +
+              "anchor ensemble, but inner_nsteps = " + std::to_string(params.inner_nsteps) + " was given.");
+  if (target != StochasticSamplingTarget::Static && params.inner_nsteps <= 0)
+    APP_ABORT("Error in StochasticWfn: inner_sampling_target = " + to_string(target) +
               " is a dynamic sampler and requires inner_nsteps > 0.");
-  return inner_sampling_target;
-}
-
-/**
- * @brief Erase every stochastic-only key from a copy of `pt`, leaving the tree the inner NOMSD reads.
- *
- * @details Must list every key StochasticWfn owns; one left behind reaches NOMSD's own input check as
- * an unknown key.
- *
- * @param pt the wavefunction input block (taken by value; the caller's tree is untouched)
- */
-inline ptree strip_stochastic_input_keys(ptree pt)
-{
-  for (auto const& key : {"type", "inner_n_samples", "inner_nsteps", "inner_seed", "inner_propagator",
-                          "inner_sampling_target", "inner_burn_in", "inner_sample_update_steps",
-                          "inner_sampler", "inner_sampler_step", "inner_n_measure_samples"})
-    pt.erase(key);
-  return pt;
+  return target;
 }
 
 /**
@@ -208,9 +145,10 @@ class StochasticWfn
 public:
   /**
    * @brief Build the stochastic trial: outer NOMSD from the True Hamiltonian, sampler settings from
-   *        the (already interpreted) input, inner stack adopted from the factory.
+   *        `params` (validated here via validate_stochastic_inputs), inner stack adopted from the
+   *        factory.
    *
-   * @details Validates the sampler settings that survive interpret_inputs and aborts on an
+   * @details Validates the sampler settings via validate_stochastic_inputs and aborts on an
    * inconsistent combination. A dynamic trial (inner_nsteps > 0) requires CLOSED or COLLINEAR walkers
    * and an explicit inner propagator timestep -- there is no default, because a wrong one is
    * indistinguishable from a working run.
@@ -219,7 +157,7 @@ public:
    * @param NMO_ number of molecular orbitals
    * @param nup_ number of spin-up electrons
    * @param ndown_ number of spin-down electrons
-   * @param pt_in the raw wavefunction input block
+   * @param params the wavefunction input block
    * @param mpi_in MPI context shared with the rest of the calculation
    * @param outer_hop_ HamiltonianOperations of the TRUE Hamiltonian, moved into the outer NOMSD
    * @param ci_ CI coefficients of the anchor expansion
@@ -232,7 +170,7 @@ public:
                 int NMO_,
                 int nup_,
                 int ndown_,
-                ptree pt_in,
+                WavefunctionParameters params,
                 std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_in,
                 HamiltonianOperations<MEM>&& outer_hop_,
                 nda::array<ComplexType, 1>&& ci_,
@@ -242,15 +180,15 @@ public:
                 [[maybe_unused]] int targetNW = 1);
 
   /**
-   * @brief Validate the input block and return it with every stochastic key defaulted and resolved.
+   * @brief Validate `params` in place, defaulting and resolving every stochastic field.
    *
-   * @details The inner_* surface is CLOSED: an unknown inner_* key aborts rather than warning, because
-   * a warning would let the run continue on the engine's default while the input file says otherwise.
-   * Removed keys land in the same abort, so a deck written against the old spellings fails loudly.
+   * @details Unknown-key rejection is the JSON schema's job, not this function's -- the inner_* surface
+   * is closed at the schema level. This only fills defaults that depend on other fields (e.g. the
+   * sampling target, the sampler step) and checks cross-field consistency.
    *
-   * @param pt0 the raw wavefunction input block
+   * @param params the wavefunction input block, updated in place
    */
-  static ptree interpret_inputs(const ptree pt0);
+  static void validate_stochastic_inputs(WavefunctionParameters& params);
 
   ~StochasticWfn() = default;
 
@@ -266,11 +204,11 @@ public:
    * mean-field scratch ensemble can later be built through this same known-good WalkerSet
    * constructor.
    *
-   * @param walker_pt the walker-set input block, shared with the outer walkers
+   * @param walker_params the walker-set input block, shared with the outer walkers
    * @param initial_guess per-spin Slater matrices of the anchor |phi_T>
    * @param NAEB number of spin-down electrons, used to size the beta block of a COLLINEAR anchor
    */
-  void initialize_inner_walkers(ptree const& walker_pt,
+  void initialize_inner_walkers(WalkerSetParameters const& walker_params,
                                 std::vector<nda::matrix<ComplexType>> const& initial_guess,
                                 int NAEB);
 
@@ -753,11 +691,6 @@ public:
   /// @}
 
 private:
-  static ptree nomsd_inputs(ptree const& pt0)
-  {
-    return NOMSD<MEM, devPsiT>::interpret_inputs(strip_stochastic_input_keys(pt0));
-  }
-
   struct StochasticInnerEnsemble
   {
     std::unique_ptr<WalkerSet<MEM>> wset;
@@ -806,7 +739,7 @@ private:
   // Construction inputs for the inner walker set, cached at initialize_inner_walkers so the mean-field
   // scratch ensemble can be built on demand via the SAME (known-good) WalkerSet constructor.
   // mf_scratch_wset_ holds a P-sample walker-independent draw used ONLY by vMF/G_MF, lazily allocated.
-  ptree inner_walker_pt_;
+  WalkerSetParameters inner_walker_params_;
   std::vector<nda::matrix<ComplexType>> inner_initial_guess_;
   std::unique_ptr<WalkerSet<MEM>> mf_scratch_wset_;
   std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> mf_scratch_rng_;

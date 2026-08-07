@@ -186,8 +186,6 @@ A back-propagated estimator block with pair correlation functions would look lik
     "name": "back_propagation",
     "path_restoration": true,
     "bp_walker_ortho_interval": 10,
-    "nsteps": 200,
-    "naverages": 4,
     "equil": 200,
     "pair_correlators" : {
         "name" : "my_pair_correlators",
@@ -228,8 +226,7 @@ instead of the above.
       "timestep": 0.01,
       "steps": 12000,
       "n_walkers_per_mpi_task": 80,
-      "accumlate_interval": 10,
-      "measure_interval": 10,
+      "measure_interval_multiplier": 1,
       "population_control_interval": 10,
       "walker_ortho_interval": 10,
       "seed": 42,
@@ -237,8 +234,6 @@ instead of the above.
         "name": "back_propagation",
         "path_restoration": true,
         "bp_walker_ortho_interval": 10,
-        "nsteps": 200,
-        "naverages": 4,
         "equil": 200,
         "pair_correlators" : {
             "name" : "my_pair_correlators",
@@ -294,8 +289,6 @@ afqmc_params = {
         "name": "back_propagation",
         "path_restoration": True,
         "bp_walker_ortho_interval": 10,
-        "nsteps": 200,
-        "naverages": 4,
         "equil": 200,
         "pair_correlators" : {
             "name" : "my_pair_correlators",

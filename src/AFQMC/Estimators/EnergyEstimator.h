@@ -49,61 +49,23 @@ class EnergyEstimator : public EstimatorBase<MEM>
 {
 public:
   EnergyEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                  ptree pt_in,
+                  const EstimatorParameters& params,
+                  int measure_interval_,
                   Wavefunction<MEM>& wfn,
                   bool impsamp_ = true)
       : mpi(_mpi),
-        wfn0(std::addressof(wfn)), 
-        importanceSampling(impsamp_), 
-        energy_components(false)
+        wfn0(std::addressof(wfn)),
+        importanceSampling(impsamp_),
+        energy_components(params.print_components)
   {
-    // convert user input to verbose input
-    int population_control_interval;
-    ptree pt = interpret_inputs(pt_in);
-    app_log(1,"EnergyEstimator input:\n{}\n",io::to_string(pt));
-    // initialize using verbose input
-    print_sign = pt.get<bool>("print_sign");
-//    truncate = pt.get<bool>("truncate");
-    energy_components = pt.get<bool>("print_components");
-    nblocks_equil = pt.get<int>("equil");
-    nblocks_skip = pt.get<int>("skip");
-    population_control_interval = pt.get<int>("_population_control_interval");
-    measure_interval = pt.get<int>("measure_interval_multiplier") * population_control_interval;
+    print_sign    = params.print_sign;
+    nblocks_equil = params.equil;
+    nblocks_skip  = params.skip;
+    utils::check(nblocks_equil >= 0 and nblocks_skip >= 0, "EnergyEstimator: equil, skip must both be > 0");
+    measure_interval = measure_interval_;
 
     data.resize(11); // hardcoded to the current number of working fields
   }
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    bool print_components = pt0.get<bool>("print_components", false);
-    bool print_sign       = pt0.get<bool>("print_sign", false);
-//    bool truncate         = pt0.get<bool>("truncate", false);
-    int equil = pt0.get<int>("equil", 0);
-    int skip  = pt0.get<int>("skip", 0);
-    int measure_interval_multiplier = pt0.get<int>("measure_interval_multiplier", DEFAULT_MEASURE_INTERVAL_MULTIPLIER);
-    int population_control_interval = pt0.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL);
-    // validate inputs
-    utils::check(equil >= 0 and skip >= 0, "EnergyEstimator: equil, skip must both be > 0");
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("print_components", print_components);
-    pt1.put("print_sign", print_sign);
-//    pt1.put("truncate", truncate);
-    pt1.put("equil", equil);
-    pt1.put("skip", skip);
-    pt1.put("measure_interval_multiplier", measure_interval_multiplier);
-    pt1.put("_population_control_interval", population_control_interval);
-    std::unordered_set<std::string> pass_through_keys = {
-      "name",
-      "overwrite",
-      "remove"
-    };
-    io::compare_known_keys("Energy Estimator",pt1, pt0,pass_through_keys);
-    return pt1;
-  }
-
-  ~EnergyEstimator() {}
 
   void accumulate_step([[maybe_unused]] double total_time, [[maybe_unused]] WalkerSet<MEM>& wlks,
                        [[maybe_unused]] std::vector<ComplexType>& curData) {}

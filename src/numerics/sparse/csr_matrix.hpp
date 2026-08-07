@@ -35,7 +35,7 @@
 #include "utilities/check.hpp"
 #include "IO/AppAbort.hpp"
 #include "IO/app_loggers.h"
-#include "utilities/tuple_iterator.hpp"
+#include "utilities/pair_iterator.hpp"
 
 #include "nda/nda.hpp"
 
@@ -57,6 +57,20 @@ class csr_matrix : public ucsr_matrix<ValType, MEM, IndxType, IntType>
   using base::jdata_;
   using base::row_begin_;
   using base::row_end_;
+
+  // orders the column indices within each row, carrying the values along
+  template<typename JArray, typename VArray>
+  void sort_rows_(JArray& jdata_h, VArray& data_h) const
+  {
+    using sfqmc::utils::make_paired_iterator;
+    for(long p = 0; p < size1_; p++) {
+      auto jrow = jdata_h(::nda::range(row_begin_(p), row_end_(p)));
+      auto vrow = data_h(::nda::range(row_begin_(p), row_end_(p)));
+      std::sort(make_paired_iterator(jrow.begin(), vrow.begin()),
+                make_paired_iterator(jrow.end(), vrow.end()),
+                [](auto const& a, auto const& b) { return a.first < b.first; });
+    }
+  }
 
 protected:
   // device copies, only populated if MEM==DEVICE_MEMORY
@@ -126,13 +140,6 @@ public:
     }
   }
 
-  ~csr_matrix() = default;
-
-  csr_matrix(csr_matrix const&) = default;
-  csr_matrix(csr_matrix&&) = default;
-  csr_matrix& operator=(csr_matrix const&) = default;
-  csr_matrix& operator=(csr_matrix&&) = default;
-
   template<typename val_t, MEMORY_SPACE mem_t, typename indx_t, typename int_t,
           typename = std::enable_if_t<not (std::is_same_v<value_type,val_t> and
                                            mem_type == mem_t and
@@ -167,28 +174,19 @@ public:
   template<typename val_t, MEMORY_SPACE mem_t, typename indx_t, typename int_t>
   csr_matrix& operator=(ucsr_matrix<val_t, mem_t, indx_t, int_t> const& other)
   {
-    using sfqmc::utils::make_paired_iterator;
     auto shape_ = other.shape();
     size1_      = shape_[0];
     size2_      = shape_[1];
-    data_       = other.values(); 
-    jdata_      = other.columns(); 
-    row_begin_  = other.row_begin(); 
+    data_       = other.values();
+    jdata_      = other.columns();
+    row_begin_  = other.row_begin();
     row_end_    = other.row_end();
     if (size1_ == 0 || data_.size() == 0)
       return *this;
 
     auto data_h = memory::to_memory_space<HOST_MEMORY>(data_());
     auto jdata_h = memory::to_memory_space<HOST_MEMORY>(jdata_());
-    for (long p = 0; p < size1_; p++)
-    {
-      auto i1 = row_begin_(p); 
-      auto i2 = row_end_(p); 
-      if( i1==i2 ) continue;
-      std::sort(make_paired_iterator(jdata_h.data() + i1, data_h.data() + i1),
-                make_paired_iterator(jdata_h.data() + i2, data_h.data() + i2),
-                [](auto const& a, auto const& b) { return std::get<0>(a) < std::get<0>(b); });
-    }
+    sort_rows_(jdata_h, data_h);
     data_() = data_h();
     jdata_() = jdata_h();
     if constexpr (MEM==DEVICE_MEMORY) {
@@ -201,28 +199,19 @@ public:
   template<typename val_t, MEMORY_SPACE mem_t, typename indx_t, typename int_t>
   csr_matrix& operator=(ucsr_matrix<val_t, mem_t, indx_t, int_t> && other)
   { 
-    using sfqmc::utils::make_paired_iterator;
     auto shape_ = other.shape();
     size1_      = shape_[0];
     size2_      = shape_[1];
-    data_       = std::move(other.values());  
+    data_       = std::move(other.values());
     jdata_      = std::move(other.columns());
     row_begin_  = std::move(other.row_begin());
     row_end_    = std::move(other.row_end());
     if (size1_ == 0 || data_.size() == 0)
       return *this;
-    
+
     auto data_h = memory::to_memory_space<HOST_MEMORY>(data_());
     auto jdata_h = memory::to_memory_space<HOST_MEMORY>(jdata_());
-    for (long p = 0; p < size1_; p++)
-    { 
-      auto i1 = row_begin_(p);
-      auto i2 = row_end_(p); 
-      if( i1==i2 ) continue; 
-      std::sort(make_paired_iterator(jdata_h.data() + i1, data_h.data() + i1),
-                make_paired_iterator(jdata_h.data() + i2, data_h.data() + i2),
-                [](auto const& a, auto const& b) { return std::get<0>(a) < std::get<0>(b); });
-    }
+    sort_rows_(jdata_h, data_h);
     data_() = data_h();
     jdata_() = jdata_h();
     if constexpr (MEM==DEVICE_MEMORY) {

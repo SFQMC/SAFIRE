@@ -18,6 +18,7 @@
 #include <algorithm>
 #include "configuration.hpp"
 #include "IO/app_loggers.h"
+#include "IO/banner.hpp"
 #include "utilities/check.hpp"
 
 #include "nda/nda.hpp"
@@ -51,13 +52,11 @@ auto exp_hermitian(A_t const& A, bool printeV = false)
   // exp(A) = M*exp(V)*dagger(M)
   if (printeV)
   {
-    sfqmc::app_log(1,
-       "***********************  Eigenvalues of exponentiated matrix *********************** ");
+    sfqmc::app_log(1, sfqmc::section("Eigenvalues of exponentiated matrix"));
     sfqmc::app_log(1, " i    eigV[i]    exp(eigV[i]) ");
     for (int j = 0; j < N; j++)
       sfqmc::app_log(1, " {}  {}  {} ", j, V(j), std::exp(V(j)));
-    sfqmc::app_log(1,
-        "************************************************************************************ ");
+    sfqmc::app_log(1, sfqmc::hrule());
     sfqmc::app_log(1, "\n\n");
   } 
   for (int j = 0; j < N; j++)

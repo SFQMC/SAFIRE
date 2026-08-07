@@ -86,10 +86,10 @@ void init()
 
   int num_devices = 0;
   cudaGetDeviceCount(&num_devices);
-  app_log(1, "\nRunning in node with {} GPUs. ", num_devices);
+  app_log(1, "\nRunning on node with {} GPUs.", num_devices);
   cudaDeviceProp dev;
   cuda_check(cudaGetDeviceProperties(&dev, 0), "cudaGetDeviceProperties");
-  app_log(1, "CUDA compute capability: {}.{} \n ", dev.major, dev.minor);
+  app_log(1, "CUDA compute capability: {}.{}", dev.major, dev.minor);
   app_log(1, "Device Name: {} ", dev.name);
 
   cuda_check(cudaSetDevice(node.rank()%num_devices), "cudaSetDevice()");

@@ -20,10 +20,12 @@
 #include <type_traits>
 
 #include "AFQMC/config.h"
+#include "IO/banner.hpp"
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
 #include "utilities/check.hpp"
 #include "utilities/freemem.h"
+#include "utilities/memory_utils.hpp"
 #include "utilities/mpi_context.h"
 #include "utilities/check_strides.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
@@ -101,21 +103,12 @@ public:
                    "Real3IndexFactorization: Size mismatch");
     utils::check(vexx.shape() == std::array<long,3>{nspin_H2*npol_H2,NMO,NMO},
                  "Real3IndexFactorization: Size mismatch");
-    app_log(1,"****************************************************************** ");
-    app_log(1,"  Static memory usage by Real3IndexFactorization (node 0 in MB) ");
-    app_log(1,"  Likn: {}", double(Likn.size() * sizeof(RealType)) / 1024.0 / 1024.0);
-    app_log(1,"  Lnak: {}", double((Lnak(0).size() + (nspin==2?Lnak(1).size():0.0)) 
-                * sizeof(ComplexType)) / 1024.0 / 1024.0);
-    app_log(1,"  Buffer memory limited to (not yet allocated) : {} MB", max_memory_MB);
+    app_log(1, section("Static memory usage by Real3IndexFactorization (node 0)"));
+    app_log(1,"Likn: {}", utils::format_bytes(Likn.size() * sizeof(RealType)));
+    app_log(1,"Lnak: {}", utils::format_bytes((Lnak(0).size() + (nspin==2?Lnak(1).size():0.0)) * sizeof(ComplexType)));
+    app_log(1,"Buffer memory limited to (not yet allocated) : {} MB", max_memory_MB);
     utils::memory_report();
   }
-
-  ~Real3IndexFactorization() = default; 
-
-  Real3IndexFactorization(const Real3IndexFactorization& other) = default;
-  Real3IndexFactorization& operator=(const Real3IndexFactorization& other) = default;
-  Real3IndexFactorization(Real3IndexFactorization&& other)                 = default;
-  Real3IndexFactorization& operator=(Real3IndexFactorization&& other) = default;
 
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
                                                        nda::MemoryVector auto const& vMF)

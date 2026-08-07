@@ -33,7 +33,6 @@ struct mpi_context_t {
 
   shared_window_registry shared_windows;
 
-  mpi_context_t() = delete;
   mpi_context_t(comm_t const& c_, shm_comm_t const& s_, comm_t const& ic_)
     : comm(c_),node_comm(s_),internode_comm(ic_), shared_windows{node_comm}
   {}
@@ -42,9 +41,10 @@ struct mpi_context_t {
     : comm(std::move(c_)),node_comm(std::move(s_)),internode_comm(std::move(ic_)), shared_windows{node_comm}
   {}
 
-  mpi_context_t(mpi_context_t const&) = default;
+  // move-only: the shared window registry owns MPI windows and cannot be copied
+  mpi_context_t(mpi_context_t const&) = delete;
+  mpi_context_t& operator=(mpi_context_t const&) = delete;
   mpi_context_t(mpi_context_t &&) = default;
-  mpi_context_t& operator=(mpi_context_t const&) = default;
   mpi_context_t& operator=(mpi_context_t &&) = default;
 
   // some auxiliary functions for nda

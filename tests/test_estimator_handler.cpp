@@ -19,7 +19,8 @@
 #include "AFQMC/config.h"
 #include "IO/AppAbort.hpp"
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
+#include "AFQMC/parameter_defaults.hpp"
 #include "utilities/Random.hpp"
 #include "IO/app_loggers.h"
 #include "test_common.hpp"
@@ -69,114 +70,67 @@ void estimator_handler_measure_schedule(std::shared_ptr<utils::mpi_context_t<boo
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  ptree ham_pt;
-  ham_pt.put("name","ham0");
-  ham_pt.put("filename",hamil_file);
-
   HamiltonianFactory HamFac;
-  HamFac.push("ham0", ham_pt);
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
   Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
-  ptree wlk_pt;
-  wlk_pt.put("name","wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
   int nspin            = (type == COLLINEAR) ? 2 : 1;
   int npol             = (type == NONCOLLINEAR) ? 2 : 1;
 
-  ptree wfn_pt;
-  wfn_pt.put("name","wfn0");
-  wfn_pt.put("filename",wfn_file);
-  wfn_pt.put("dense_trial",true);
-
   int nwalk = 11;
   WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", wfn_pt);
+  WfnFac.push("wfn0", WavefunctionParameters{.name = "wfn0", .filename = wfn_file, .dense_trial = true});
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
 
-  ptree prop_pt;
-  prop_pt.put("name","prop0");
-
   PropagatorFactory<MEM> PropgFac;
-  PropgFac.push("prop0", prop_pt);
+  PropagatorParameters prop_params{.name = "prop0"};
+  apply_defaults(prop_params, ham.getHamType());
+  PropgFac.push("prop0", prop_params);
   auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
 
   auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
   REQUIRE(int(initial_guess.size()) == nspin);
   REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
-  auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
+  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
   
   // number of steps to propagate
   int nStep = 200;
 
   // define / run test cases
-  std::vector<ptree> cases;
+  struct test_case {
+    std::string name;
+    int meas1; // global measure_interval_multiplier, used by BasicEstimator and EnergyEstimator
+    int meas2; // measure_interval_multiplier of the back propagation estimator
+  };
+  const std::vector<test_case> cases = {
+    {"case1", 5, 20},
+    {"case2", 20, 10},
+    {"case3", 5, 7},
+    {"case4", 11, 7},
+    {"case5", 1, 7}, // test that we default properly
+  };
 
-  ptree test_case;
-
-  test_case.put("name", "case1");
-  test_case.put("meas1", 5);
-  test_case.put("meas2", 20);
-  cases.push_back(test_case);
-  test_case.clear();
-
-  test_case.put("name", "case2");
-  test_case.put("meas1", 20);
-  test_case.put("meas2", 10);
-  cases.push_back(test_case);
-  test_case.clear();
-  
-  test_case.put("name", "case3");
-  test_case.put("meas1", 5);
-  test_case.put("meas2", 7);
-  cases.push_back(test_case);
-  test_case.clear();
-    
-  test_case.put("name", "case4");
-  test_case.put("meas1", 11);
-  test_case.put("meas2", 7);
-  cases.push_back(test_case);
-  test_case.clear();
-  
-  // test that we default properly
-  test_case.put("name", "case5");
-  test_case.put("meas1", 1);
-  test_case.put("meas2", 7);
-  cases.push_back(test_case);
-  test_case.clear();
-
-  ptree one_rdm;
-  one_rdm.put("name","one_rdm");
-
-  for (auto test_ptree: cases)
+  for (auto test : cases)
   {
-    //TODO update the PropertyTee for our test case(s) using new parameter names
-    ptree est_pt_energy;
-    est_pt_energy.put("name","energy");
-    est_pt_energy.put("overwrite",true);
-    
-    app_log(1,"\nEstimator input:\n{}\n",io::to_string(est_pt_energy));
-
-    ptree est_pt_bp;
-    est_pt_bp.put("name","back_propagation");
-    est_pt_bp.put("measure_interval_multiplier",test_ptree.get<int>("meas2"));
-    est_pt_bp.put("equil_multiplier",0);
-    est_pt_bp.put("bp_walker_ortho_interval",1);
-    est_pt_bp.add_child("onerdm",one_rdm);
-
-    app_log(1,"\nEstimator input:\n{}\n",io::to_string(est_pt_bp));
-
-    ptree est_pt;
-    est_pt.add_child("estimator",est_pt_energy);
-    est_pt.add_child("estimator",est_pt_bp);
-    est_pt.put("population_control_interval",population_control_interval);
-    // Set the global measure_interval_multiplier that will be used by BasicEstimator and EnergyEstimator
-    est_pt.put("measure_interval_multiplier",test_ptree.get<int>("meas1"));
-
-    // to verify the ptree
-    std::cout <<" Test case Ptree:  "<< std::endl;
-    std::cout << io::to_string(est_pt) << std::endl;
+    ExecuteParameters exec{
+        .wavefunction = std::string{"wfn0"},
+        .hamiltonian = std::string{"ham0"},
+        .estimator = {
+            EstimatorParameters{.name = EstimatorType::energy, .overwrite = true},
+            EstimatorParameters{.name = EstimatorType::back_propagation,
+                                .equil_multiplier = 0,
+                                .bp_walker_ortho_interval = 1,
+                                .measure_interval_multiplier = std::vector<int>{test.meas2},
+                                .onerdm = OneRDMParameters{}},
+        },
+        .population_control_interval = population_control_interval,
+        // the global multiplier used by BasicEstimator and EnergyEstimator
+        .measure_interval_multiplier = test.meas1,
+    };
+    apply_defaults(exec);
 
     int measure_interval{};
     {
@@ -185,8 +139,8 @@ void estimator_handler_measure_schedule(std::shared_ptr<utils::mpi_context_t<boo
       float total_time = 0.0f;
       double E1 = 0.0;
       EstimatorHandler<MEM> estim0(mpi, "test_est_handler",
-        est_pt, wset, WfnFac, wfn, prop,
-                          HamFac, "ham0", dt);
+        exec, wset, WfnFac, wfn, prop,
+                          HamFac, dt);
     
       // set measurement intervals
       measure_interval = estim0.get_max_common_interval();
@@ -219,7 +173,7 @@ void estimator_handler_measure_schedule(std::shared_ptr<utils::mpi_context_t<boo
     
     }
     // Energy estimator uses meas1 as the global measure_interval_multiplier
-    int energy_interval = test_ptree.get<int>("meas1") * population_control_interval;
+    int energy_interval = test.meas1 * population_control_interval;
     int expected_measurements = nStep / energy_interval;
     // read results from "test_est_handler.scalar.dat"
     std::string filename = "test_est_handler.scalar.dat";
@@ -232,7 +186,7 @@ void estimator_handler_measure_schedule(std::shared_ptr<utils::mpi_context_t<boo
       line_count++;
       std::cout << line << std::endl;
     }
-    app_log(1, "\n[TESTS] Running test case: {} \n",test_ptree.get<std::string>("name","no name"));
+    app_log(1, "\n[TESTS] Running test case: {} \n", test.name);
     CHECK(line_count == expected_measurements);
     in.close();
 
@@ -282,11 +236,8 @@ void stochastic_back_propagation_estimator_smoke(
     if (type != CLOSED)
       return;
 
-    ptree ham_pt;
-    ham_pt.put("name", "ham0");
-    ham_pt.put("filename", hamil_file);
     HamiltonianFactory HamFac;
-    HamFac.push("ham0", ham_pt);
+    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
     Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
 
     const std::string title               = "stoch_bp_dyn_smoke";
@@ -310,55 +261,41 @@ void stochastic_back_propagation_estimator_smoke(
     std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
         std::make_shared<utils::RandomGenerator_t<MEM>>(utils::SeedType(919));
 
-    ptree wlk_pt;
-    wlk_pt.put("name", "wset0");
-    wlk_pt.put("walker_type", walkerTypeToString(type));
+    const WalkerSetParameters wlk_pt{.name = "wset0", .walker_type = type};
 
     WavefunctionFactory<MEM> WfnFac{};
-    ptree wfn_pt;
-    wfn_pt.put("name", "wfn_stoch_bp_est");
-    wfn_pt.put("filename", wfn_file);
+    WavefunctionParameters wfn_pt{.name = "wfn_stoch_bp_est", .filename = wfn_file, .inner_n_samples = 4,
+                                  .inner_nsteps = 1, .inner_sampling_target = StochasticSamplingTarget::WalkerOverlap,
+                                  .inner_propagator = PropagatorParameters{.timestep = 0.01}};
     utils::mark_stochastic_wfn_input(wfn_pt);
-    wfn_pt.put("inner_n_samples", 4);
-    wfn_pt.put("inner_nsteps", 1);
-    wfn_pt.put("inner_sampling_target", "walker_overlap");
-    {
-      ptree inner_prop;
-      inner_prop.put("timestep", 0.01);
-      wfn_pt.put_child("inner_propagator", inner_prop);
-    }
     WfnFac.push("wfn_stoch_bp_est", wfn_pt);
     auto& wfn = WfnFac.getWavefunction(mpi, "wfn_stoch_bp_est", type, false, &ham, nwalk);
     WfnFac.maybe_initialize_stochastic_inner_walkers(wfn, "wfn_stoch_bp_est", type, wlk_pt);
     auto const& initial_guess = WfnFac.getInitialGuess("wfn_stoch_bp_est");
     auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
 
-    ptree prop_pt;
-    prop_pt.put("name", "prop_stoch_bp_est");
     PropagatorFactory<MEM> PropgFac;
-    PropgFac.push("prop_stoch_bp_est", prop_pt);
+    PropgFac.push("prop_stoch_bp_est", PropagatorParameters{.name = "prop_stoch_bp_est"});
     auto& prop = PropgFac.getPropagator(mpi, "prop_stoch_bp_est", wfn, rng_dev);
 
     wfn.Energy(wset);
 
-    ptree one_rdm;
-    one_rdm.put("name", "one_rdm");
-    ptree est_pt_bp;
-    est_pt_bp.put("name", "back_propagation");
-    est_pt_bp.put("measure_interval_multiplier", bp_measure_multiplier);
-    est_pt_bp.put("equil_multiplier", 0);
-    est_pt_bp.put("bp_walker_ortho_interval", 1);
-    est_pt_bp.put("path_restoration", "no");
-    est_pt_bp.put("onerdm.nskip_output", 0);
-    est_pt_bp.add_child("onerdm", one_rdm);
+    ExecuteParameters exec{
+        .wavefunction = std::string{"wfn_stoch_bp_est"},
+        .hamiltonian  = std::string{"ham0"},
+        .estimator    = {EstimatorParameters{.name                      = EstimatorType::back_propagation,
+                                             .equil_multiplier          = 0,
+                                             .bp_walker_ortho_interval  = 1,
+                                             .path_restoration          = false,
+                                             .measure_interval_multiplier = std::vector<int>{bp_measure_multiplier},
+                                             .onerdm                    = OneRDMParameters{.name = "one_rdm"}}},
+        .population_control_interval = population_control_interval,
+        .measure_interval_multiplier = bp_measure_multiplier,
+    };
+    apply_defaults(exec);
 
-    ptree exec_pt;
-    exec_pt.put("population_control_interval", population_control_interval);
-    exec_pt.put("measure_interval_multiplier", bp_measure_multiplier);
-    exec_pt.add_child("estimator", est_pt_bp);
-
-    EstimatorHandler<MEM> estim(mpi, title, exec_pt, wset, WfnFac, wfn, prop,
-                                HamFac, "ham0", dt);
+    EstimatorHandler<MEM> estim(mpi, title, exec, wset, WfnFac, wfn, prop,
+                                HamFac, dt);
 
     const int measure_interval = estim.get_max_common_interval();
     std::vector<ComplexType> curData;

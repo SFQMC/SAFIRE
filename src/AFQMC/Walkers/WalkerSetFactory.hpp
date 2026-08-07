@@ -20,12 +20,12 @@
 #include <vector>
 #include <map>
 #include <fstream>
-#include "IO/ptree/ptree_utilities.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/check.hpp"
 #include "IO/app_loggers.h"
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Walkers/WalkerIO.hpp"
 
@@ -37,15 +37,11 @@ template<MEMORY_SPACE MEM>
 class WalkerSetFactory
 {
 public:
-  WalkerSetFactory() {}
-
-  ~WalkerSetFactory() {}
-
   bool is_constructed(const std::string& ID)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
-      utils::check(false," Error in WalkerSetFactory::is_constructed(string&): Missing xml block. ");
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+      utils::check(false,"Error in WalkerSetFactory::is_constructed(string&): Missing input block.");
     auto wlk = handlers.find(ID);
     if (wlk == handlers.end())
       return false;
@@ -62,16 +58,16 @@ public:
                      const std::vector<nda::matrix<ComplexType>>& guess,
                      int nWalkers)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
-      utils::check(false,"Error: Missing xml Block in WalkerSetFactory::getWalkerSet(string&). ");
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+      utils::check(false,"Error: Missing input block in WalkerSetFactory::getWalkerSet(string&). ");
     auto wlk = handlers.find(ID);
     if (wlk == handlers.end())
     {
       auto newwlk = handlers.insert(std::make_pair(ID,
-          WalkerSet<MEM>(mpi, xml->second, rng, walker_type, guess, nWalkers)));
+          WalkerSet<MEM>(mpi, block->second, rng, walker_type, guess, nWalkers)));
       if (!newwlk.second)
-        utils::check(false," Error: Problems inserting new walker set. ");
+        utils::check(false,"Error: Problems inserting new walker set.");
       return (newwlk.first)->second;
     }
     else
@@ -88,16 +84,16 @@ public:
                        nda::MemoryArrayOfRank<4> auto const& UDV,
                        int nWalkers)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
-      utils::check(false,"Error: Missing xml Block in WalkerSetFactory::getWalkerSetFT(string&). ");
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+      utils::check(false,"Error: Missing input block in WalkerSetFactory::getWalkerSetFT(string&). ");
     auto wlk = handlers.find(ID);
     if (wlk == handlers.end())
     {
       auto newwlk = handlers.insert(std::make_pair(ID,
-          WalkerSet<MEM>(mpi, xml->second, rng, walker_type, UDV, nWalkers)));
+          WalkerSet<MEM>(mpi, block->second, rng, walker_type, UDV, nWalkers)));
       if (!newwlk.second)
-        utils::check(false," Error: Problems inserting new walker set. ");
+        utils::check(false,"Error: Problems inserting new walker set.");
       return (newwlk.first)->second;
     }
     else
@@ -115,63 +111,46 @@ public:
                              int nWalkers,
                              bool set_to_target)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
-      utils::check(false,"Error: Missing xml Block in WalkerSetFactory::getWalkerSetFromHDF5(string&). ");
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+      utils::check(false,"Error: Missing input block in WalkerSetFactory::getWalkerSetFromHDF5(string&). ");
     auto wlk = handlers.find(ID);
     if (wlk != handlers.end())
       return wlk->second;
 
     auto newwlk = handlers.insert(std::make_pair(ID,
-        readWalkersFromHDF5<WalkerSet<MEM>>(mpi, xml->second, rng, walker_type,
+        readWalkersFromHDF5<WalkerSet<MEM>>(mpi, block->second, rng, walker_type,
                                             fh5, nWalkers, set_to_target)));
     if (!newwlk.second)
-      utils::check(false," Error: Problems inserting new walker set. ");
+      utils::check(false,"Error: Problems inserting new walker set.");
     return (newwlk.first)->second;
   }
 
-  ptree get_input(const std::string& ID) const
+  const WalkerSetParameters& get_input(const std::string& ID) const
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
     {
       app_log(1,"WlkFac cannot find {}",ID);
       utils::check(false,"Error: failed to find walker_set with above name.");
-      return ptree{};
     }
-    else
-      return xml->second;
+    return block->second;
   }
 
   // Resolve the walker_type of a walker-set block without constructing it.
-  WALKER_TYPES get_walker_type(const std::string& ID) const
-  {
-    return WalkerSet<MEM>::parse_walker_type(get_input(ID));
-  }
+  WALKER_TYPES get_walker_type(const std::string& ID) const { return get_input(ID).walker_type; }
 
-  // this routine allows you to modify the input block associated with ID 
-  ptree& get_input(const std::string& ID)
+  // adds an input block from which a WalkerSet can be built
+  void push(const std::string& ID, WalkerSetParameters params)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
-    { 
-      app_log(1,"failed to find {}", ID);
-      utils::check(false,"Error: failed to find walker_set with above name.");
-    }
-    return xml->second;
-  }
-
-  // adds a xml block from which a WalkerSet can be built
-  void push(const std::string& ID, ptree pt)
-  {
-    auto xml = wlkBlocks.find(ID);
-    if (xml != wlkBlocks.end())
+    auto block = wlkBlocks.find(ID);
+    if (block != wlkBlocks.end())
       utils::check(false,"Error: Repeated WalkerSet block in WalkerSetFactory. WalkerSet names must be unique. ");
-    wlkBlocks.insert(std::make_pair(ID, pt));
+    wlkBlocks.insert(std::make_pair(ID, std::move(params)));
   }
 
 protected:
-  std::map<std::string, ptree> wlkBlocks;
+  std::map<std::string, WalkerSetParameters> wlkBlocks;
 
   std::map<std::string, WalkerSet<MEM>> handlers;
 };

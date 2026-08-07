@@ -16,10 +16,9 @@
 #include "AFQMC/config.h"
 #include <vector>
 #include <string>
-#include <iostream>
 #include <fstream>
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/check.hpp"
 #include "utilities/mpi_context.h"
 #include "nda/nda.hpp"
@@ -35,17 +34,6 @@ namespace sfqmc
 namespace afqmc
 {
 
-namespace detail
-{
-
-inline int get_number_of_averages(ptree pt)
-{
-  std::vector<int> nback_prop_interval_multipliers = io::get_value_or_vector<int>(pt, "measure_interval_multiplier", {DEFAULT_MEASURE_INTERVAL_MULTIPLIER});
-  return nback_prop_interval_multipliers.size();
-}
-
-}
-
 /*
  * Implements back propagation by evolving operators forward in time.
  * Based on 10.1103/PhysRevA.100.023621.
@@ -55,9 +43,12 @@ class BPWithTimeEvolvedOperators : public EstimatorBase<MEM>
 {
 
 public:
+  /// The measurement and equilibration intervals of the input are multiples of
+  /// population_control_interval, which is given in steps.
   BPWithTimeEvolvedOperators(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
                           std::string name,
-                          ptree pt_in,
+                          const EstimatorParameters& params,
+                          int population_control_interval,
                           WalkerSet<MEM>& wset,
                           Wavefunction<MEM>& wfn,
                           Propagator<MEM>& prop,
@@ -66,49 +57,39 @@ public:
         walker_type(wset.getWalkerType()),
         nspin( (walker_type==COLLINEAR) ? 2 : 1 ),
         npol( (walker_type==NONCOLLINEAR) ? 2 : 1 ),
-        observ0(mpi, name, pt_in, walker_type, detail::get_number_of_averages(pt_in), wfn.getNMO(), wfn),
+        observ0(mpi, name, params, walker_type, measure_interval_multipliers(params).size(), wfn.getNMO(), wfn),
         prop0(std::addressof(prop)),
         ncalls(0),
-        path_restoration(true),
+        path_restoration(params.path_restoration),
         importanceSampling(impsamp_),
-        extra_path_restoration(true),
+        extra_path_restoration(params.extra_path_restoration),
         first(true),
         X(wset.size(), nspin, npol*wfn.getNMO(), npol*wfn.getNMO()),
         Y(wset.size(), nspin, npol*wfn.getNMO(), npol*wfn.getNMO()),
         M(wset.size(), nspin, npol*wfn.getNMO(), npol*wfn.getNMO())
   {
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(1, "\n  --   Back Propagation with Time Evolved Operators -- \n"); 
+    app_log(1, "\n  --   Back Propagation with Time Evolved Operators -- \n");
 
-    // initialize using verbose input
-    int equil_multiplier, _population_control_interval;
-    _population_control_interval = pt.get<int>("_population_control_interval"); // only for computing nback_prop_steps!
-    path_restoration = pt.get<bool>("path_restoration");
-    extra_path_restoration = pt.get<bool>("extra_path_restoration");
-    equil_multiplier  = pt.get<int>("equil_multiplier"); // units of population control interval
-    std::vector<int> nback_prop_interval_multipliers = io::get_value_or_vector<int>(pt, "measure_interval_multiplier", {DEFAULT_MEASURE_INTERVAL_MULTIPLIER}); // units of population control interval
-    naverages = nback_prop_interval_multipliers.size();
-
-    // allocate memory
+    const std::vector<int> multipliers = measure_interval_multipliers(params);
+    naverages = multipliers.size();
     nback_prop_steps.reserve(naverages);
     for (int i = 0; i < naverages; i++){
-      if (nback_prop_interval_multipliers[i] <= 0)
-      utils::check(nback_prop_interval_multipliers[i]>0,
+      utils::check(multipliers[i] > 0,
                    "BPWithTimeEvolvedOperators: measure_interval_multiplier values must be positive.");
-      nback_prop_steps.push_back(nback_prop_interval_multipliers[i] * _population_control_interval);
+      nback_prop_steps.push_back(multipliers[i] * population_control_interval);
       app_log(2, "BPWithTimeEvolvedOperators: nback_prop_steps[{}] = {} ( = measure_interval_multiplier[{}] * population_control_interval) \n", i, nback_prop_steps[i], i);
     }
     max_nback_prop = *std::max_element(nback_prop_steps.begin(), nback_prop_steps.end());
 
-    utils::check((equil_multiplier * _population_control_interval) % max_nback_prop == 0,
+    const int equil_steps = params.equil_multiplier * population_control_interval;
+    utils::check(equil_steps % max_nback_prop == 0,
                  "Error in BPWithTimeEvolvedOperators user input: 'equil_multiplier' must be evenly divisible by the maximum value in 'measure_interval_multiplier'");
-    nblocks_equil = (equil_multiplier *_population_control_interval )/ max_nback_prop; // Note: nback_prop is in steps, so we have to convert equil_multiplier to steps by multiplying by _population_control_interval
+    nblocks_equil = equil_steps / max_nback_prop;
 
     // MAM: In principle, this should be the MCD of the nback_prop_steps.
     //      But it gets complicated if nblocks_equil > 1, so setting this to this
     //      for simplicity. Should not cause serious performance issues.
-    _measure_interval_for_handler = _population_control_interval;
+    _measure_interval_for_handler = population_control_interval;
 
     average_has_run.reserve(naverages);
     average_has_run.assign(naverages, false);
@@ -135,65 +116,6 @@ public:
     app_log(1," Number of equilibration measurements: {}", nblocks_equil);
     app_log(1," Number of time measurements: {}", nback_prop_steps.size());
     app_log(1," Measuring at steps (relative to each BP start in units of population control interval): {}",nback_prop_steps);
-  }
-
-  ~BPWithTimeEvolvedOperators() {}
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    bool path_restoration, extra_path_restoration;
-    int ortho, equil_multiplier, _population_control_interval;
-    std::vector<int> nback_prop_interval_multipliers;
-    path_restoration       = pt0.get<bool>("path_restoration", true);
-    extra_path_restoration = pt0.get<bool>("extra_path_restoration", true);
-    ortho         = pt0.get<int>("bp_walker_ortho_interval", 1);
-    equil_multiplier = pt0.get<int>("equil_multiplier", 0);
-     _population_control_interval = pt0.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL); // only for computing nback_prop_steps!
-
-    // Use utility function to read either a single integer or vector of integers
-    nback_prop_interval_multipliers = io::get_value_or_vector<int>(pt0, "measure_interval_multiplier", 1);
-
-    // check if empty vector was returned
-    if (nback_prop_interval_multipliers.empty())
-      nback_prop_interval_multipliers.push_back(DEFAULT_MEASURE_INTERVAL_MULTIPLIER);
-
-    // validate inputs
-    if (std::any_of(nback_prop_interval_multipliers.begin(), nback_prop_interval_multipliers.end(), [](int x) { return x <= 0; }))
-      APP_ABORT("BPWithTimeEvolvedOperators: measure_interval_multiplier values must be positive.");
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("path_restoration", path_restoration);
-    pt1.put("extra_path_restoration", extra_path_restoration);
-    pt1.put("bp_walker_ortho_interval", ortho);
-    pt1.put("equil_multiplier", equil_multiplier);
-    pt1.put("_population_control_interval", _population_control_interval);
-    ptree temp_tree;
-    for (const auto& value : nback_prop_interval_multipliers) {
-        ptree item;
-        item.put("", value); // empty key for the value
-        temp_tree.push_back(std::make_pair("", item));
-    }
-    pt1.add_child("measure_interval_multiplier", temp_tree);
-
-    // check for unknown input keys
-    std::unordered_set<std::string> pass_through_keys = {
-      "name",
-      "onerdm",
-      "gfock",
-      "genfock",
-      "ekt",
-      "diag2rdm",
-      "twordm",
-      "n2r",
-      "ontop2rdm",
-      "realspace_correlators",
-      "correlators",
-      "pair_correlators",
-      "spinspin"
-    };
-    io::compare_known_keys("Back propagated estimator",pt1, pt0, pass_through_keys);
-    return pt1;
   }
 
   void accumulate_step([[maybe_unused]] double time,
@@ -362,7 +284,7 @@ private:
   // along back propagation path.
   bool path_restoration = true;
   bool importanceSampling = true;
-  bool extra_path_restoration = true;
+  bool extra_path_restoration = false;
 
   int first = true;
 

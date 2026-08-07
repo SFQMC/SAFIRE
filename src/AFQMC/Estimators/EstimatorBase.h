@@ -22,7 +22,7 @@
 #include <fstream>
 
 #include "nda/h5.hpp"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 
 #include "AFQMC/Walkers/WalkerSet.hpp"
 

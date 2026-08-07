@@ -16,9 +16,7 @@
 
 #include <cmath>
 #include <limits>
-#include <unordered_set>
 
-#include "IO/ptree/ptree_utilities.hpp"
 #include "utilities/FairDivide.hpp"
 #include "utilities/check.hpp"
 #include "numerics/operations/product.hpp"
@@ -84,7 +82,7 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
                                              int NMO_,
                                              int nup_,
                                              int ndown_,
-                                             ptree pt_in,
+                                             WavefunctionParameters params,
                                              std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_in,
                                              HamiltonianOperations<MEM>&& outer_hop_,
                                              nda::array<ComplexType, 1>&& ci_,
@@ -97,31 +95,30 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
       nup{nup_},
       ndown{ndown_},
       mpi_(std::move(mpi_in)),
-      nomsd_(nomsd_inputs(pt_in), NMO_, nup_, ndown_, wlk, mpi_, std::move(outer_hop_), std::move(ci_),
+      nomsd_(params, NMO_, nup_, ndown_, wlk, mpi_, std::move(outer_hop_), std::move(ci_),
              std::move(orbs_), targetNW),
       inner_stack_(std::move(inner_stack_in))
 {
   if (inner_stack_ == nullptr)
     APP_ABORT("Error in StochasticWfn: inner stack must be provided (see WavefunctionFactory).");
-  ptree pt = interpret_inputs(pt_in);
-  inner_n_samples_    = pt.get<int>("inner_n_samples");
-  inner_nsteps_      = pt.get<int>("inner_nsteps");
-  inner_sampling_target_        = parse_sampling_target(pt.get<std::string>("inner_sampling_target"));
-  inner_burn_in_ = pt.get<int>("inner_burn_in");
-  inner_sample_update_steps_ = pt.get<int>("inner_sample_update_steps");
-  inner_n_measure_samples_ = pt.get<int>("inner_n_measure_samples");
-  inner_sampler_        = pt.get<std::string>("inner_sampler");
-  inner_sampler_step_   = pt.get<double>("inner_sampler_step");
-  int inner_seed     = pt.get<int>("inner_seed");
+  validate_stochastic_inputs(params);
+  inner_n_samples_            = params.inner_n_samples;
+  inner_nsteps_               = params.inner_nsteps;
+  inner_sampling_target_      = *params.inner_sampling_target;
+  inner_burn_in_              = params.inner_burn_in;
+  inner_sample_update_steps_  = params.inner_sample_update_steps;
+  inner_n_measure_samples_    = params.inner_n_measure_samples;
+  inner_sampler_              = params.inner_sampler;
+  inner_sampler_step_         = *params.inner_sampler_step;
   inner_ensemble_.rng =
-      std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(inner_seed, mpi_->comm));
-  if (auto prop_pt = pt.get_child_optional("inner_propagator"))
+      std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(params.inner_seed, mpi_->comm));
+  if (params.inner_propagator)
   {
     // No default. For a trained trial the factory injects the timestep it read from the variational
     // Hamiltonian's inner_timestep attribute; for a synthetic trial with no inner_hamiltonian the input
     // must state it. Either way an absent timestep on a dynamic trial is an error, never 0.01.
-    if (auto ts = prop_pt->get_optional<double>("timestep"))
-      inner_timestep_ = *ts;
+    if (params.inner_propagator->timestep)
+      inner_timestep_ = *params.inner_propagator->timestep;
     else if (inner_nsteps_ > 0)
       APP_ABORT("Error in StochasticWfn: a dynamic trial needs an inner propagator timestep. It is read "
                 "from the variational Hamiltonian's 'inner_timestep' attribute when inner_hamiltonian is "
@@ -138,8 +135,8 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
     // No device gate: the port covers every inner-sampling mode, with the persistent chains on a
     // host-RNG hybrid MCMC (same mt19937 stream as a CPU build).
   }
-  // Downstream tripwire only: interpret_inputs already rejects these spellings, so reaching either abort
-  // means the mode and the path length were set inconsistently after it ran.
+  // Downstream tripwire only: validate_stochastic_inputs already rejects these spellings, so reaching
+  // either abort means the mode and the path length were set inconsistently after it ran.
   if (inner_sampling_target_ == SamplingTarget::Static && inner_nsteps_ != 0)
     APP_ABORT("Error in StochasticWfn: inner_sampling_target = static is the inner_nsteps = 0 replicated anchor "
               "ensemble, but inner_nsteps = " +
@@ -179,87 +176,25 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
               "a conditioned dynamic trial (inner_sampling_target = walker_overlap, inner_nsteps > 0); a replica IS one "
               "advance of the persistent walker-conditioned field chain, and the static and "
               "free-projection ensembles have no chain to advance.");
-  app_log(2, "\nStochasticWfn input:\n{}\n", io::to_string(pt));
+  app_log(2, "\nStochasticWfn input:\n{}\n", nlohmann::ordered_json(params).dump(2));
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
-ptree StochasticWfn<MEM, devPsiT>::interpret_inputs(const ptree pt0)
+void StochasticWfn<MEM, devPsiT>::validate_stochastic_inputs(WavefunctionParameters& params)
 {
-  ptree pt1 = nomsd_inputs(pt0);
-  int inner_n_samples = pt0.get<int>("inner_n_samples", 1);
-  if (inner_n_samples < 1)
-    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_n_samples must be >= 1.");
-  int inner_nsteps = pt0.get<int>("inner_nsteps", 0);
-  if (inner_nsteps < 0)
-    APP_ABORT("Error in StochasticWfn::interpret_inputs: inner_nsteps must be >= 0.");
+  if (params.inner_n_samples < 1)
+    APP_ABORT("Error in StochasticWfn::validate_stochastic_inputs: inner_n_samples must be >= 1.");
+  if (params.inner_nsteps < 0)
+    APP_ABORT("Error in StochasticWfn::validate_stochastic_inputs: inner_nsteps must be >= 0.");
 
-  // Shared with WavefunctionFactory::interpret_inputs -- see resolve_sampling_target for why.
-  const std::string inner_sampling_target = resolve_sampling_target(pt0, inner_nsteps);
+  // Shared with WavefunctionFactory -- see resolve_sampling_target for why.
+  params.inner_sampling_target = resolve_sampling_target(params);
 
-  int inner_n_measure_samples = pt0.get<int>("inner_n_measure_samples", 1);
-
-  const int inner_sample_update_steps = pt0.get<int>("inner_sample_update_steps", 1);
-  // hafqmc: burn_in (--trial-burn-in, default 100). One-time equilibration at the prime.
-  const int inner_burn_in = pt0.get<int>("inner_burn_in", 100);
-
-  std::string inner_sampler = pt0.get<std::string>("inner_sampler", "pcn");
   // Kernel-dependent proposal step size s. pcn's s = 1 (independence) is the validated conditioned-path
   // default: the conditioning target moves each step, so an independence proposal re-equilibrates while
   // smaller steps lag it at inner_sample_update_steps = 1.
-  double inner_sampler_step = pt0.get<double>("inner_sampler_step", inner_sampler == "gaussian" ? 0.05 : 1.0);
-  int inner_seed = pt0.get<int>("inner_seed", 777);
-  pt1.put("inner_n_samples", inner_n_samples);
-  pt1.put("inner_nsteps", inner_nsteps);
-  pt1.put("inner_sampling_target", inner_sampling_target);
-  pt1.put("inner_sample_update_steps", inner_sample_update_steps);
-  pt1.put("inner_burn_in", inner_burn_in);
-  pt1.put("inner_n_measure_samples", inner_n_measure_samples);
-  pt1.put("inner_sampler", inner_sampler);
-  pt1.put("inner_sampler_step", inner_sampler_step);
-  pt1.put("inner_seed", inner_seed);
-  if (auto prop_pt = pt0.get_child_optional("inner_propagator"))
-    pt1.put_child("inner_propagator", *prop_pt);
-  std::unordered_set<std::string> pass_through_keys = {
-      "system",
-      "name",
-      "ndets_to_read",
-      "restart_file",
-      "filename",
-      "type",
-      "inner_n_samples",
-      "inner_nsteps",
-      "inner_sampling_target",
-      "inner_sample_update_steps",
-      "inner_burn_in",
-      "inner_n_measure_samples",
-      "inner_sampler",
-      "inner_sampler_step",
-      "inner_seed",
-      "inner_propagator",
-  };
-  // THE inner_* SURFACE IS CLOSED: an unknown inner_* key is a hard error, not a warning (which is all
-  // the shared compare_known_keys below can give). A warning would let the run continue on the engine's
-  // default while the input file says otherwise. Removed keys land here too, so an old deck fails loudly.
-  {
-    std::vector<std::string> unknown;
-    for (auto const& item : pt0)
-      if (item.first.rfind("inner_", 0) == 0 && pass_through_keys.count(item.first) == 0 &&
-          item.first != "inner_hamiltonian") // factory-level: consumed by fromHDF5, never reaches here
-        unknown.push_back(item.first);
-    if (not unknown.empty())
-    {
-      std::string names;
-      for (auto const& u : unknown)
-        names += (names.empty() ? "" : ", ") + u;
-      APP_ABORT("Error in StochasticWfn::interpret_inputs: unknown stochastic input key(s): " + names +
-                ".\nThe inner_* surface is closed and has no backward compatibility. Settable keys are: "
-                "inner_sampling_target, inner_n_samples, inner_nsteps, inner_burn_in, "
-                "inner_sample_update_steps, inner_sampler, inner_sampler_step, inner_n_measure_samples, "
-                "inner_seed, inner_propagator, inner_hamiltonian.");
-    }
-  }
-  io::compare_known_keys("Stochastic trial wavefunction (StochasticWfn)", pt1, pt0, pass_through_keys);
-  return pt1;
+  if (not params.inner_sampler_step)
+    params.inner_sampler_step = (params.inner_sampler == "gaussian" ? 0.05 : 1.0);
 }
 
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -292,17 +227,18 @@ WalkerSet<MEM> const& StochasticWfn<MEM, devPsiT>::inner_wset() const
 
 template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::initialize_inner_walkers(
-    ptree const& walker_pt, std::vector<nda::matrix<ComplexType>> const& initial_guess, int NAEB)
+    WalkerSetParameters const& walker_params, std::vector<nda::matrix<ComplexType>> const& initial_guess,
+    int NAEB)
 {
   if (inner_ensemble_.initialized)
     APP_ABORT("Error in StochasticWfn::initialize_inner_walkers: inner walkers already initialized.");
-  auto wt = WalkerSet<MEM>::parse_walker_type(walker_pt);
+  auto wt = walker_params.walker_type;
   inner_ensemble_.wset =
-      std::make_unique<WalkerSet<MEM>>(mpi_, walker_pt, inner_ensemble_.rng, wt, initial_guess, inner_n_samples_);
+      std::make_unique<WalkerSet<MEM>>(mpi_, walker_params, inner_ensemble_.rng, wt, initial_guess, inner_n_samples_);
   inner_anchor_ = stochastic_wfn_detail::guess_matrices_to_rank3(initial_guess, NAEB);
   // Cache the construction inputs so mean_field_scratch_ensemble() can build a dedicated scratch walker
   // set on demand via this SAME constructor (see mf_scratch_wset_).
-  inner_walker_pt_     = walker_pt;
+  inner_walker_params_ = walker_params;
   inner_initial_guess_ = initial_guess;
   (void)NAEB;
   inner_ensemble_.initialized = true;

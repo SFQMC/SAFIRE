@@ -24,7 +24,7 @@
 
 #include "AFQMC/config.h"
 #include "numerics/shared_array/const_shared_array.hpp"
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "AFQMC/Utilities/readWfn.h"
 #include "AFQMC/Utilities/type_conversion.hpp"
 
@@ -48,7 +48,7 @@ class PHMSD
 
 public:
   // temporary
-  PHMSD(ptree pt_in,
+  PHMSD(const WavefunctionParameters& params,
         WALKER_TYPES wlk,
         int NMO_, int nup_, int ndown_,
         std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_,
@@ -60,7 +60,7 @@ public:
   {}
 
   template<class csrM>
-  PHMSD(ptree pt_in,
+  PHMSD(const WavefunctionParameters& params,
         WALKER_TYPES wlk,
         int NMO_, int nup_, int ndown_,
         std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_,
@@ -94,70 +94,24 @@ public:
 
     // setup device structures
 
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(2,"\nPHMSD input:\n{}\n",io::to_string(pt));
-    // initialize using verbose input
+    energy_algorithm = resolved(params.algorithm, "algorithm");
 
-    // optional
-    if( auto val = pt.get_optional<int>("algorithm") ) {
-      energy_algorithm = *val;
-    } else {
-      if(HamOp.getHamType() == RealDenseFactorized)
-        energy_algorithm=1;  // add others as they get implemented...
-      else 
-        energy_algorithm=0;
-    }
-
-    if(energy_algorithm==0)
-      app_log(1, " Using default (slow) energy algorithm. ");
-    else if(energy_algorithm==1)
-      app_log(1, " Using energy algorithm 1. ");
-    else if(energy_algorithm==2)
-      app_log(1, " Using energy algorithm 2. ");
-    else
-      APP_ABORT(" Error in PHMSD constructor: Unknown algorithm. \n\n");
+    app_log(1, "Using the {} energy algorithm. ", nlohmann::json(energy_algorithm).get<std::string>());
     // check that refc is appropriate for the selected algorithm
-    if(energy_algorithm==1) {
+    if(energy_algorithm == PHMSDEnergyAlgorithm::woodbury) {
       auto refc=abij.reference_configuration();
       for(int i=0; i<nup; i++)
-        if( refc[i] != i ) 
-        utils::check(refc[i] == i, " Error: PHMSD algorithm=1 requires refc[i]==i.\n\n");
+        utils::check(refc[i] == i, "Error: PHMSD woodbury algorithm requires refc[i]==i.\n\n");
       for(int i=0; i<ndown; i++)
-        utils::check(refc[nup+i] == i, " Error: PHMSD algorithm=1 requires refc[i]==i.\n\n");
+        utils::check(refc[nup+i] == i, "Error: PHMSD woodbury algorithm requires refc[i]==i.\n\n");
     }
 
-    if( auto val = pt.get_optional<int>("nwalk_block_size") ) nwalk_block_size = *val;
-    if( auto val = pt.get_optional<int>("ndet_block_size") )  ndet_block_size  = *val;
+    nwalk_block_size = params.nwalk_block_size;
+    ndet_block_size  = params.ndet_block_size;
     utils::check(nwalk_block_size > 0, " Error: PHMSD nwalk_block_size must be > 0.");
     utils::check(ndet_block_size  > 0, " Error: PHMSD ndet_block_size must be > 0.");
-    app_log(1, " PHMSD energy batching: nwalk_block_size={}, ndet_block_size={}.",
+    app_log(1, "PHMSD energy batching: nwalk_block_size={}, ndet_block_size={}.",
             nwalk_block_size, ndet_block_size);
-  }
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    // create verbose internal inputs
-    ptree pt1;
-    // leave as a true optional, to bypass issue with default value
-    if( auto val = pt0.get_optional<int>("algorithm") )
-      pt1.put("algorithm", *val);
-    if( auto val = pt0.get_optional<int>("nwalk_block_size") )
-      pt1.put("nwalk_block_size", *val);
-    if( auto val = pt0.get_optional<int>("ndet_block_size") )
-      pt1.put("ndet_block_size", *val);
-    std::unordered_set<std::string> pass_through_keys = {
-      "name",
-      "ndets_to_read",
-      "restart_file",
-      "filename",
-      "rediag",
-      "nwalk_block_size",
-      "ndet_block_size"
-    };
-    io::compare_known_keys("particle-hole multi-Slater det. (PHMSD) Wavefunction", pt1, pt0,pass_through_keys);
-    return pt1;
   }
 
   int number_of_cholesky_vectors() const { return HamOp.number_of_cholesky_vectors(); }
@@ -291,14 +245,10 @@ public:
   template<class WlkSet,  nda::MemoryMatrix TMat, nda::MemoryVector TVec>
   void Energy(const WlkSet& wset, TMat&& E, TVec&& Ov, int nt = 0)
   {
-    if(energy_algorithm==0)
+    if(energy_algorithm == PHMSDEnergyAlgorithm::reference)
       energy_alg0(wset,E,Ov);
-    else if(energy_algorithm==1)
-      energy_alg1(wset,E,Ov);
-    else if(energy_algorithm==2)
-      energy_alg2(wset,E,Ov);
     else
-      utils::check(false," Error: Unknown energy_algorithm. \n\n");
+      energy_alg1(wset,E,Ov);
   }
 
   /*
@@ -456,11 +406,7 @@ protected:
 
   HamiltonianOperations<MEM> HamOp;
 
-  // MAM: use enum when this is settled...
-  // 0: loop over unique configurations, calculate G and evaluate E from scratch
-  // 1: use ph_reference_energy and ph_excited_energy, which requires compact R matrix
-  // 2: calculate Fapbq and call ph_energy_Fapbq
-  int energy_algorithm = 0;
+  PHMSDEnergyAlgorithm energy_algorithm{};
 
   // energy_shared_alg1 batching (optional wavefunction inputs; see interpret_inputs):
   //   nwalk_block_size : walkers processed per energy batch  (bounds KEright/Tdn)
@@ -499,10 +445,6 @@ protected:
 
   template<class WlkSet,  nda::MemoryMatrix Mat, nda::MemoryVector TVec>
   void energy_alg1(const WlkSet& wset, Mat&& E, TVec&& Ov);
-
-  template<class WlkSet,  nda::MemoryMatrix Mat, nda::MemoryVector TVec>
-  void energy_alg2(const WlkSet& wset, Mat&& E, TVec&& Ov)
-  { utils::check(false, "not implemented"); }
 
 };
 

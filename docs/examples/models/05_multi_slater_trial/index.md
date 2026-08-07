@@ -229,8 +229,7 @@ from afqmctools.inputs.from_hdf import write_json
 afqmc_execution_options = {
     "timestep": 0.01,
     "steps": 10000,
-    "accumlate_interval": 10,           # in units of steps
-    "measure_interval": 10,             # in units of steps
+    "measure_interval_multiplier": 1,   # in units of the population control interval
     "population_control_interval" : 10, # in units of steps
     "walker_ortho_interval" : 10 ,      # in units of steps
     "n_walkers_per_mpi_task": 100,

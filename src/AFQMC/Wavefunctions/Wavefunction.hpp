@@ -57,7 +57,7 @@ template<MEMORY_SPACE MEM>
 class Wavefunction 
 {
 public:
-  Wavefunction() { APP_ABORT(" Error: Reached default constructor of Wavefunction. "); }
+  Wavefunction() = delete;
 
   explicit Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>>&& other) : var(std::move(other)) {}
   explicit Wavefunction(NOMSD<MEM,PsiT_Matrix<MEM>> const& other) : var(other) {} 
@@ -344,16 +344,16 @@ public:
   /**
    * @brief Allocate a stochastic trial's inner ensemble; no-op for every other trial.
    *
-   * @param walker_pt the walker-set input block, shared with the outer walkers
+   * @param walker_params the walker-set input block, shared with the outer walkers
    * @param initial_guess per-spin Slater matrices of the anchor determinant
    * @param NAEB number of spin-down electrons, sizing the beta block of a COLLINEAR anchor
    */
   void initialize_stochastic_inner_walkers(
-      ptree const& walker_pt,
+      WalkerSetParameters const& walker_params,
       std::vector<nda::matrix<ComplexType>> const& initial_guess,
       int NAEB)
   {
-    visit_stochastic([&](auto&& a) { a.initialize_inner_walkers(walker_pt, initial_guess, NAEB); });
+    visit_stochastic([&](auto&& a) { a.initialize_inner_walkers(walker_params, initial_guess, NAEB); });
   }
 
   /**

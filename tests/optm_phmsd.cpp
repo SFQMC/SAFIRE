@@ -21,7 +21,6 @@
 #include "config.h"
 #include "IO/AppAbort.hpp"
 
-#include "IO/ptree/ptree_utilities.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/check.hpp"
 #include "utilities/h5_utils.hpp"

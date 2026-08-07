@@ -25,6 +25,7 @@
 #include "config.h"
 #include "IO/AppAbort.hpp"
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 
 #include "nda/h5.hpp"
 
@@ -168,12 +169,12 @@ bool dumpSamplesHDF5([[maybe_unused]] WalkerSet& wset,
 
 // Reads a walker restart file and returns a fully constructed, populated walker
 // set sized to this rank's share of the walkers in the file. fh5 opened on all
-// ranks read-only. The set is built from the given ptree/rng/walker_type with
+// ranks read-only. The set is built from the given parameters/rng/walker_type with
 // dimensions taken from the file, upholding the invariant that a walker set is
 // always born fully populated (no empty intermediate state).
 template<class WalkerSet, class MpiContext, class Rng>
 WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
-                              ptree pt,
+                              const WalkerSetParameters& params,
                               std::shared_ptr<Rng> rng,
                               WALKER_TYPES walker_type,
                               h5::file& fh5,
@@ -224,7 +225,7 @@ WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
   }
   int nw_local = nWN - nW0;
 
-  WalkerSet wset(mpi, pt, rng, walker_type, dims, nw_local, false);
+  WalkerSet wset(mpi, params, rng, walker_type, dims, nw_local, false);
   utils::check(wlk_nterms == wset.walkerSizeIO(),
                " Inconsistent walker restart file: IO size {} != walkerSizeIO {}.",
                wlk_nterms, wset.walkerSizeIO());

@@ -20,7 +20,8 @@
 
 #include "config.h"
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
+#include "AFQMC/parameter_defaults.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/check.hpp"
 #include "test_common.hpp"
@@ -120,42 +121,33 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  ptree ham_pt;
-  ham_pt.put("name","ham0");
-  ham_pt.put("filename",hamil_file);
-
   HamiltonianFactory HamFac;
-  HamFac.push("ham0", ham_pt);
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
   auto& ham = HamFac.getHamiltonian(mpi, "ham0");
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
-  ptree wlk_pt;
-  wlk_pt.put("name","wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
   int nspin = (type == COLLINEAR) ? 2 : 1;
   int npol  = (type == NONCOLLINEAR) ? 2 : 1;
 
-  ptree wfn_pt;
-  wfn_pt.put("name","wfn0");
-  wfn_pt.put("filename",wfn_file);
-
   int nwalk = 2;
   WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", wfn_pt);
+  WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
+  apply_defaults(wfn_params, ham.getHamType());
+  WfnFac.push("wfn0", wfn_params);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
 
-  ptree prop_pt;
-  prop_pt.put("name","prop0");
-
   PropagatorFactory<MEM> PropgFac;
-  PropgFac.push("prop0", prop_pt);
+  PropagatorParameters prop_params{.name = "prop0"};
+  apply_defaults(prop_params, ham.getHamType());
+  PropgFac.push("prop0", prop_params);
   auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
 
   auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
   REQUIRE(int(initial_guess.size()) == nspin);
   REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
-  auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
+  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
 
   // generate P1 with dt=0 so the BP RDM should match the mixed estimate
   // we cannot actually use exactly 0 because that changes the sparsity structure in model hamiltonians
@@ -163,18 +155,18 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
 
   using EstimPtr = std::unique_ptr<EstimatorBase<MEM>>;
 
+  constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
+
   // ---- Run 1: scalar measure_interval_multiplier ----
   {
-    ptree est_pt;
-    est_pt.put("name","back_propagation");
-    est_pt.put("measure_interval_multiplier", 2); // test with single value
-    est_pt.put("path_restoration","no");
-    est_pt.put("onerdm.nskip_output",0);
-    app_log(1,"\nEstimator input:\n{}\n",io::to_string(est_pt));
+    // test with a single value
+    const EstimatorParameters est_params{.name = EstimatorType::back_propagation,
+                                         .measure_interval_multiplier = std::vector<int>{2},
+                                         .onerdm = OneRDMParameters{}};
 
     std::vector<EstimPtr> estimators;
     estimators.push_back(std::make_unique<BackPropagatedEstimator<MEM>>(
-        mpi, "none", est_pt, wset, wfn, prop, true));
+        mpi, "none", est_params, pop_control_interval, wset, wfn, prop, true));
 
     std::string file = test_hdf_name(UTEST_WFN, UTEST_HAMIL, "run1");
     std::ofstream out;
@@ -195,24 +187,13 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
 
   // ---- Run 2: vector measure_interval_multiplier ----
   {
-    ptree est_pt2;
-    est_pt2.put("name","back_propagation");
-
-    std::vector<int> nback_prop_interval_multipliers = {1, 2, 3};
-    ptree temp_tree;
-    for (const auto& value : nback_prop_interval_multipliers) {
-      ptree item;
-      item.put("", value);
-      temp_tree.push_back(std::make_pair("", item));
-    }
-    est_pt2.add_child("measure_interval_multiplier", temp_tree);
-    est_pt2.put("path_restoration","no");
-    est_pt2.put("onerdm.nskip_output",0);
-    app_log(1,"\nEstimator input:\n{}\n",io::to_string(est_pt2));
+    const EstimatorParameters est_params{.name = EstimatorType::back_propagation,
+                                         .measure_interval_multiplier = std::vector<int>{1, 2, 3},
+                                         .onerdm = OneRDMParameters{}};
 
     std::vector<EstimPtr> estimators2;
     estimators2.push_back(std::make_unique<BackPropagatedEstimator<MEM>>(
-        mpi, "none", est_pt2, wset, wfn, prop, true));
+        mpi, "none", est_params, pop_control_interval, wset, wfn, prop, true));
 
     std::string file = test_hdf_name(wfn_file, hamil_file, "run2");
     std::ofstream out;

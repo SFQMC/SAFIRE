@@ -22,7 +22,7 @@
 #include <iostream>
 #include <fstream>
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
 #include "utilities/check.hpp"
 #include "utilities/mpi_context.h"
 #include "nda/nda.hpp"
@@ -52,56 +52,48 @@ class BackPropagatedEstimator : public EstimatorBase<MEM>
 {
 
 public:
+  /// The measurement and equilibration intervals of the input are multiples of
+  /// population_control_interval, which is given in steps.
   BackPropagatedEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
                           std::string name,
-                          ptree pt_in,
+                          const EstimatorParameters& params,
+                          int population_control_interval,
                           WalkerSet<MEM>& wset,
                           Wavefunction<MEM>& wfn,
                           Propagator<MEM>& prop,
                           bool impsamp_ = true)
       : mpi(_mpi),
         walker_type(wset.getWalkerType()),
-        observ0(mpi, name, pt_in, walker_type, wfn.getNMO(), wfn),
+        observ0(mpi, name, params, measure_interval_multipliers(params).size(), walker_type, wfn.getNMO(), wfn),
         wfn0(std::addressof(wfn)),
         prop0(std::addressof(prop)),
         max_nback_prop(10),
-        nStabilize(10),
-        path_restoration(true),
+        nStabilize(params.bp_walker_ortho_interval), // units of steps!!
+        path_restoration(params.path_restoration),
         importanceSampling(impsamp_),
-        extra_path_restoration(false),
+        extra_path_restoration(params.extra_path_restoration),
         first(true)
   {
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(1,"\nBPEstimator input:\n{}\n",io::to_string(pt));
-    // initialize using verbose input
-    int equil_multiplier, _population_control_interval;
-    _population_control_interval = pt.get<int>("_population_control_interval"); // only for computing nback_prop_steps!
-    path_restoration = pt.get<bool>("path_restoration");
-    extra_path_restoration = pt.get<bool>("extra_path_restoration");
-    nStabilize     = pt.get<int>("bp_walker_ortho_interval"); // units of steps!!
-    equil_multiplier  = pt.get<int>("equil_multiplier"); // units of population control interval
-    std::vector<int> nback_prop_interval_multipliers = io::get_value_or_vector<int>(pt, "measure_interval_multiplier", {DEFAULT_MEASURE_INTERVAL_MULTIPLIER}); // units of population control interval
-    naverages = nback_prop_interval_multipliers.size();
-
-    // allocate memory
+    const std::vector<int> multipliers = measure_interval_multipliers(params);
+    naverages = multipliers.size();
     nback_prop_steps.reserve(naverages);
     for (int i = 0; i < naverages; i++){
-      if (nback_prop_interval_multipliers[i] <= 0)
+      if (multipliers[i] <= 0)
         APP_ABORT("BackPropagatedEstimator: measure_interval_multiplier values must be positive.");
-      nback_prop_steps.push_back(nback_prop_interval_multipliers[i] * _population_control_interval);
+      nback_prop_steps.push_back(multipliers[i] * population_control_interval);
       app_log(2, "BackPropagatedEstimator: nback_prop_steps[{}] = {} ( = measure_interval_multiplier[{}] * population_control_interval) \n", i, nback_prop_steps[i], i);
     }
     max_nback_prop = *std::max_element(nback_prop_steps.begin(), nback_prop_steps.end());
-    
-    if ((equil_multiplier * _population_control_interval) % max_nback_prop != 0 )
+
+    const int equil_steps = params.equil_multiplier * population_control_interval;
+    if (equil_steps % max_nback_prop != 0 )
       APP_ABORT("Error in BackPropagatedEstimator user input: 'equil_multiplier' must be evenly divisible by the maximum value in 'measure_interval_multiplier'");
-    nblocks_equil = (equil_multiplier *_population_control_interval )/ max_nback_prop; // Note: nback_prop is in steps, so we have to convert equil_multiplier to steps by multiplying by _population_control_interval
+    nblocks_equil = equil_steps / max_nback_prop;
 
     // MAM: In principle, this should be the MCD of the nback_prop_steps.
     //      But it gets complicated if nblocks_equil > 1, so setting this to this
     //      for simplicity. Should not cause serious performance issues.
-    _measure_interval_for_handler = _population_control_interval; 
+    _measure_interval_for_handler = population_control_interval;
 
     average_has_run.reserve(naverages);
     average_has_run.assign(naverages, false);
@@ -115,68 +107,10 @@ public:
     wset.setBPPos(0);
     // set SMN in case BP begins right away
     if (nblocks_equil == 0)
-      for (auto it = wset.begin(); it < wset.end(); ++it)
-        it->setSlaterMatrixN();
+      for(int iw = 0; iw < wset.size(); ++iw) {
+        wset[iw].setSlaterMatrixN();
+      }
   }
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    bool path_restoration, extra_path_restoration;
-    int ortho, equil_multiplier, _population_control_interval;
-    std::vector<int> nback_prop_interval_multipliers;
-    path_restoration       = pt0.get<bool>("path_restoration", true);
-    extra_path_restoration = pt0.get<bool>("extra_path_restoration", false);
-    ortho         = pt0.get<int>("bp_walker_ortho_interval", 10);
-    equil_multiplier = pt0.get<int>("equil_multiplier", 0);
-     _population_control_interval = pt0.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL); // only for computing nback_prop_steps!
-    
-    // Use utility function to read either a single integer or vector of integers
-    nback_prop_interval_multipliers = io::get_value_or_vector<int>(pt0, "measure_interval_multiplier", 1);
-  
-    // check if empty vector was returned
-    if (nback_prop_interval_multipliers.empty())
-      nback_prop_interval_multipliers.push_back(DEFAULT_MEASURE_INTERVAL_MULTIPLIER);
-    
-    // validate inputs
-    if (std::any_of(nback_prop_interval_multipliers.begin(), nback_prop_interval_multipliers.end(), [](int x) { return x <= 0; }))
-      APP_ABORT("BackPropagatedEstimator: measure_interval_multiplier values must be positive.");
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("path_restoration", path_restoration);
-    pt1.put("extra_path_restoration", extra_path_restoration);
-    pt1.put("bp_walker_ortho_interval", ortho);
-    pt1.put("equil_multiplier", equil_multiplier);
-    pt1.put("_population_control_interval", _population_control_interval);
-    ptree temp_tree;
-    for (const auto& value : nback_prop_interval_multipliers) {
-        ptree item;
-        item.put("", value); // empty key for the value
-        temp_tree.push_back(std::make_pair("", item));
-    }
-    pt1.add_child("measure_interval_multiplier", temp_tree);
-
-    // check for unknown input keys
-    std::unordered_set<std::string> pass_through_keys = {
-      "name",
-      "onerdm",
-      "gfock",
-      "genfock",
-      "ekt",
-      "diag2rdm",
-      "twordm",
-      "n2r",
-      "ontop2rdm",
-      "realspace_correlators",
-      "correlators",
-      "pair_correlators",
-      "spinspin"
-    };
-    io::compare_known_keys("Back propagated estimator",pt1, pt0, pass_through_keys);
-    return pt1;
-  }
-
-  ~BackPropagatedEstimator() {}
 
   void accumulate_step([[maybe_unused]] double time, 
                        [[maybe_unused]] WalkerSet<MEM>& wset,
@@ -212,8 +146,9 @@ public:
       if (bp_step == max_nback_prop)
       {
         if (iblock + 1 == nblocks_equil)
-          for (auto it = wset.begin(); it < wset.end(); ++it)
-            it->setSlaterMatrixN();
+          for(int iw = 0; iw < wset.size(); ++iw) {
+            wset[iw].setSlaterMatrixN();
+          }
         iblock++;
         wset.setBPPos(0);
       }
@@ -276,8 +211,9 @@ public:
     if (bp_step == max_nback_prop)
     {
       // 5. setup for next block
-      for (auto it = wset.begin(); it < wset.end(); ++it)
-        it->setSlaterMatrixN();
+      for(int iw = 0; iw < wset.size(); ++iw) {
+        wset[iw].setSlaterMatrixN();
+      }
       wset.setBPPos(0);
       average_has_run.assign(naverages, false);
 
@@ -367,7 +303,7 @@ private:
   // Whether to restore cosine projection and real local energy approximation for weights
   // along back propagation path.
   bool path_restoration = true, importanceSampling = true;
-  bool extra_path_restoration = true;
+  bool extra_path_restoration = false;
 
   int first = true;
 

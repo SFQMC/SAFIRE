@@ -14,6 +14,7 @@
 #pragma once
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
 #include <utilities/mpi_context.h>
 #include <vector>
 #include <string>
@@ -31,17 +32,17 @@ namespace afqmc
 class pair_correlator
 {
 public:
-   pair_correlator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, ptree pt0, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
+   pair_correlator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, const PairCorrelatorParameters& params, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
       : mpi{mpi},
         num_correlators{0},
         walker_type{wlk},
         NMO{NMO_}
   {
-
-    ptree pt = interpret_inputs(pt0);
-
     app_log(1,"  --  Pair Correlator (PairCorr) estimator. -- ");
-    std::string filename = pt.get<std::string>("filename","");
+    const std::string& filename = params.filename;
+
+    if (params.pair_type.empty())
+      APP_ABORT("pair_correlator: No pair_type specified. Please specify at least one pair_type.");
 
     if (walker_type == CLOSED)
     {
@@ -52,10 +53,9 @@ public:
       h5::file input(filename, 'r');
       app_log(1, "reading pair correlators from: {}", filename);
       h5::group group = h5::group{input}.open_group("PairCorrelator/orbital_map");
-    
-      for (const auto& item : pt0.get_child("pair_type")) {
-        memory::host_array<int,2> current_pair_map;  
-        std::string correlator_name = item.second.get_value<std::string>();
+
+      for (const auto& correlator_name : params.pair_type) {
+        memory::host_array<int,2> current_pair_map;
         h5::read(group, correlator_name, current_pair_map);
 
         pair_map.push_back(current_pair_map);
@@ -68,43 +68,6 @@ public:
 
     pair_corr_average.resize(nave_, num_correlators, num_correlators, dm_size);
     nda::tensor::set(0, pair_corr_average);
-  }
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    std::string hdf_walker_output, filename, name;
-    std::vector<std::string> correlator_names;
-  
-    name = pt0.get<std::string>("name","pair_correlator");
-    hdf_walker_output = pt0.get<std::string>("walker_output", "");
-    filename = pt0.get<std::string>("filename","");
-    
-    for (const auto& item : pt0.get_child("pair_type")) {
-      correlator_names.push_back(item.second.get_value<std::string>());
-    }
-
-    if (correlator_names.empty())
-      APP_ABORT("pair_correlator: No pair_type specified. Please specify at least one pair_type.");
-
-    filename = pt0.get<std::string>("filename","");
-    
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("name", name);
-    pt1.put("walker_output", hdf_walker_output);
-    pt1.put("filename", filename);
-
-    ptree pair_type_node;
-    for (const auto& correlator_name : correlator_names) {
-      ptree child;
-      child.put("", correlator_name);
-      pair_type_node.push_back(std::make_pair("", child));
-    }
-    pt1.add_child("pair_type", pair_type_node);
-
-    io::compare_known_keys("pair_correlators observable",pt1, pt0);
-    return pt1;
   }
 
   /*******   Interface for sum over references, e.g. NOMSD ********/

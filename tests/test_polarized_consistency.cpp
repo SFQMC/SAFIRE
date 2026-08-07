@@ -35,7 +35,8 @@
 
 #include "config.h"
 
-#include "IO/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
+#include "AFQMC/parameter_defaults.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/check.hpp"
 #include "utilities/h5_utils.hpp"
@@ -193,31 +194,25 @@ run_result run_polarized(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commu
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
       std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  ptree ham_pt;
-  ham_pt.put("name", "ham0");
-  ham_pt.put("filename", hamil_file);
   HamiltonianFactory HamFac;
-  HamFac.push("ham0", ham_pt);
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
   auto& ham = HamFac.getHamiltonian(mpi, "ham0");
 
   int nwalk = 2;
-  ptree wfn_pt;
-  wfn_pt.put("name", "wfn0");
-  wfn_pt.put("filename", wfn_file);
   WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", wfn_pt);
+  WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
+  apply_defaults(wfn_params, ham.getHamType());
+  WfnFac.push("wfn0", wfn_params);
   auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
 
-  ptree wlk_pt;
-  wlk_pt.put("name", "wset0");
-  wlk_pt.put("walker_type", walkerTypeToString(type));
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
   auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
-  auto wset = WalkerSet<MEM>(mpi, wlk_pt, rng, type, initial_guess, nwalk);
+  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
 
-  ptree prop_pt;
-  prop_pt.put("name", "prop0");
   PropagatorFactory<MEM> PropFac;
-  PropFac.push("prop0", prop_pt);
+  PropagatorParameters prop_params{.name = "prop0"};
+  apply_defaults(prop_params, ham.getHamType());
+  PropFac.push("prop0", prop_params);
   auto& prop = PropFac.getPropagator(mpi, "prop0", wfn, rng_dev);
 
   wfn.Log_Overlap(wset);

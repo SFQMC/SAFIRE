@@ -152,13 +152,13 @@ WalkerSet<MEM>& StochasticWfn<MEM, devPsiT>::mean_field_scratch_ensemble()
     APP_ABORT("Error in StochasticWfn::mean_field_scratch_ensemble: inner propagator not built.");
   if (mf_scratch_wset_ == nullptr)
   {
-    auto wt = WalkerSet<MEM>::parse_walker_type(inner_walker_pt_); // identical to initialize_inner_walkers
+    auto wt = inner_walker_params_.walker_type; // identical to initialize_inner_walkers
     // Its OWN walker-set RNG, so it cannot perturb the stream the persistent chains draw from. Unused
     // beyond construction (that is deterministic, and the draw uses the propagator's RNG) -- a fresh one
     // just makes the decoupling explicit.
     if (mf_scratch_rng_ == nullptr)
       mf_scratch_rng_ = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>();
-    mf_scratch_wset_ = std::make_unique<WalkerSet<MEM>>(mpi_, inner_walker_pt_, mf_scratch_rng_, wt,
+    mf_scratch_wset_ = std::make_unique<WalkerSet<MEM>>(mpi_, inner_walker_params_, mf_scratch_rng_, wt,
                                                         inner_initial_guess_, inner_n_samples_);
   }
   draw_free_projection_samples(*mf_scratch_wset_);

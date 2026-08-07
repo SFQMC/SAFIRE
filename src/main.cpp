@@ -11,11 +11,11 @@
  *
  */
 
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <vector>
 #include <cxxopts.hpp>
-#include <boost/property_tree/json_parser.hpp>
-#include <boost/property_tree/xml_parser.hpp>
 
 #include "IO/app_loggers.h"
 #include "IO/AppAbort.hpp"
@@ -29,21 +29,7 @@
 #include "utilities/app_version.h"
 
 #include "AFQMC/AFQMCFactory.h"
-
-ptree parse_input(std::string filename) {
-  std::filesystem::path p{filename};
-
-  ptree pt;
-  if(p.extension() == ".json") {
-      boost::property_tree::read_json(filename, pt);
-  } else if(p.extension() == ".xml") {
-      boost::property_tree::read_xml(filename, pt);
-  } else {
-    throw std::runtime_error{std::format("Unknown file extension '{}' for input file '{}'", p.extension().string(), filename)};
-  }
-
-  return pt;
-}
+#include "AFQMC/parameter_defaults.hpp"
 
 /*
  * *** execution blocks are processed sequentially, so order is important.
@@ -76,8 +62,7 @@ int main_impl(int argc, char** argv)
     "███████╗███████║█████╗  ██║██████╔╝█████╗  \n"
     "╚════██║██╔══██║██╔══╝  ██║██╔══██╗██╔══╝  \n"
     "███████║██║  ██║██║     ██║██║  ██║███████╗\n"
-    "╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝\n"
-    "\n"};
+    "╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝\n"};
 
   // parse command line inputs
   std::vector<std::string> inputs;
@@ -158,61 +143,40 @@ int main_impl(int argc, char** argv)
 
   app_log(1, welcome);      
 
-  if(root)
+  if(root && output_level >= 1)
     print_version();
 
+  app_log(1, "\nCompute device:    {} ", compute); 
+  auto mpi = std::make_shared<utils::mpi_context_t<boost::mpi3::communicator>>(utils::make_mpi_context(world));
+  app_log(1, "MPI ranks:         {}", mpi->comm.size());
+  app_log(1, "MPI nodes:         {}", mpi->internode_comm.size());
+  app_log(1, "MPI ranks/node:    {}", mpi->node_comm.size());
 
   sfqmc::arch::init(compute == "gpu");
 
   // !!!! assume a single input for now
   std::string myinput = inputs[0];
-  ptree pt;
+  afqmc::AFQMCParameters params;
   try {
-    pt = parse_input(myinput);
+    params = afqmc::parse_input_file(myinput);
   } catch (std::exception const& e) {
     throw AppAbortException(fmt::format("Could not parse input file: {}", e.what()));
   }
+  // every default the parameter structs cannot express as a member initializer is applied here,
+  // so that the code below only ever sees resolved values
+  afqmc::resolve_defaults(params, *mpi);
+  afqmc::print_parameters(params);
 
-  auto mpi = std::make_shared<utils::mpi_context_t<boost::mpi3::communicator>>(utils::make_mpi_context(world));
-
-  for(auto const& it : pt)
-  { // go through all simulation requests
-    std::string cname = it.first;
-    if (cname == "afqmc") {
-      ptree sim = it.second;
-#if defined(ENABLE_DEVICE)
-      if(compute=="gpu") { 
-        sfqmc::arch::check_device_configuration();
-        auto afqmc_fac = afqmc::AFQMCFactory<DEVICE_MEMORY>("afqmc", mpi, sim);
-      } else 
-#endif
-        auto afqmc_fac = afqmc::AFQMCFactory<HOST_MEMORY>("afqmc", mpi, sim);
-    } else if (cname == "ftafqmc") {
-      ptree sim = it.second;
-#if defined(ENABLE_DEVICE)
-      if(compute=="gpu" or compute=="default") { 
-        sfqmc::arch::check_device_configuration();
-        auto afqmc_fac = afqmc::AFQMCFactory<DEVICE_MEMORY>("ftafqmc", mpi, sim);
-      } else 
-#endif
-        auto afqmc_fac = afqmc::AFQMCFactory<HOST_MEMORY>("ftafqmc", mpi, sim);
-    }
-     else if(cname == "cs_afqmc" || cname == "csafqmc") {
-      ptree sim = it.second;
-      int n_groups = sim.get<int>("project.n_groups", 1);
 // need new strategy for n_group>1, need to add a new "global" communicator to the context.
 #if defined(ENABLE_DEVICE)
-      if(compute=="gpu") { 
-        sfqmc::arch::check_device_configuration();
-        auto afqmc_fac = afqmc::AFQMCFactory<DEVICE_MEMORY>("csafqmc",mpi,sim,n_groups);
-      } else 
+  if(compute=="gpu") {
+    sfqmc::arch::check_device_configuration();
+    auto afqmc_fac = afqmc::AFQMCFactory<DEVICE_MEMORY>(params, mpi);
+  } else
 #endif
-        auto afqmc_fac = afqmc::AFQMCFactory<HOST_MEMORY>("csafqmc",mpi,sim,n_groups);
-    } else {
-      app_error("unknown calculation type: {} \n",cname.c_str());
-      throw sfqmc::AppAbortException("APP_ABORT triggered");
-    }
-  } // simulations end
+  {
+    auto afqmc_fac = afqmc::AFQMCFactory<HOST_MEMORY>(params, mpi);
+  } // keep braces so factory is destructed before next line
 
   mpi->shared_windows.collective_free_unused();
   if(!mpi->shared_windows.isempty()) {

@@ -102,13 +102,6 @@ public:
     sfqmc::utils::check(i0 == capacity_, "Problems assembling array_of_sequences: i0:{}, capacity:{}",i0,capacity_);
   }
 
-  array_of_sequences(this_t const& other) = default;
-  array_of_sequences& operator=(this_t const& other) = default;
-  // pointer movement is handled by derived classes
-  array_of_sequences(this_t&& other) = default; 
-  array_of_sequences& operator=(this_t&& other) = default;
-  ~array_of_sequences() = default; 
-
   void reserve(long nnzpr_unique)
   {
     if(size1_ == 0) return;
