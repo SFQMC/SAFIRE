@@ -36,7 +36,14 @@ namespace sfqmc
 namespace afqmc
 {
 
-// First-class stochastic trial input via type: stochasticwfn.
+/**
+ * @brief True if a wavefunction input block asks for a stochastic trial, i.e. type: stochasticwfn.
+ *
+ * @details The trial kind is a first-class `type` key rather than a boolean flag, so an unknown
+ * spelling aborts instead of quietly selecting a NOMSD.
+ *
+ * @param pt0 the raw wavefunction input block
+ */
 inline bool is_stochastic_wavefunction_input(ptree const& pt0)
 {
   if (auto type_opt = pt0.get_optional<std::string>("type"))
@@ -57,8 +64,14 @@ class WavefunctionFactory
 public:
   WavefunctionFactory() = default;
 
-  // Optional HamiltonianFactory for StochasticWfn `inner_hamiltonian`. Null when
-  // default-constructed; fromHDF5 aborts if a stochastic trial then requests inner_hamiltonian.
+  /**
+   * @brief Construct with the HamiltonianFactory a stochastic trial's inner_hamiltonian is built from.
+   *
+   * @details Optional: a default-constructed factory holds none, and fromHDF5 aborts if a stochastic
+   * trial then requests an inner_hamiltonian, rather than silently reusing the outer one.
+   *
+   * @param hamfac the Hamiltonian factory, borrowed and not owned
+   */
   explicit WavefunctionFactory(HamiltonianFactory& hamfac) : HamFac_(&hamfac) {}
 
   static ptree interpret_inputs(const ptree pt0)
@@ -200,7 +213,15 @@ public:
       return w0->second;
   }
 
-  // Backward-compatible overload for call sites that omit finiteT.
+  /**
+   * @brief Overload for call sites that omit the finite-temperature flag, which defaults to false.
+   *
+   * @param mpi MPI context
+   * @param ID identifier of the wavefunction input block
+   * @param walker_type walker type the trial must match
+   * @param h Hamiltonian to build the wavefunction against
+   * @param targetNW target walker count
+   */
   auto& getWavefunction(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                 const std::string& ID,
                                 WALKER_TYPES walker_type,
@@ -210,6 +231,18 @@ public:
     return getWavefunction(mpi, ID, walker_type, false, h, targetNW);
   }
 
+  /**
+   * @brief Allocate a stochastic trial's inner ensemble once the walker layout is known.
+   *
+   * @details Separate from construction because the inner ensemble is built through the same WalkerSet
+   * constructor as the outer walkers and therefore needs their input block, which the driver only has
+   * later. No-op for a non-stochastic trial, and idempotent for a stochastic one.
+   *
+   * @param wfn the wavefunction to initialize
+   * @param ID identifier of its input block, used to recover the initial guess
+   * @param walker_type walker type; unused, retained for call-site symmetry
+   * @param walker_pt the walker-set input block, shared with the outer walkers
+   */
   void maybe_initialize_stochastic_inner_walkers(Wavefunction<MEM>& wfn,
                                                  const std::string& ID,
                                                  WALKER_TYPES walker_type,
@@ -311,6 +344,8 @@ public:
   }
 
 protected:
+  /// @brief Factory a stochastic trial's inner_hamiltonian is built from; null unless this factory was
+  /// constructed with one. Borrowed, not owned.
   HamiltonianFactory* HamFac_ = nullptr;
 
   // generates a new Wavefunction and returns the pointer to the base class

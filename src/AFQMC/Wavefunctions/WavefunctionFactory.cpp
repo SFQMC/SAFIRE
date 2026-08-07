@@ -65,6 +65,17 @@ auto broadcast_number_of_electrons(const std::array<int, N>& nel, WALKER_TYPES f
 namespace wavefunction_detail
 {
 
+/**
+ * @brief Concrete inner stack owned by a StochasticWfn: the variational NOMSD wrapped in a
+ *        Wavefunction, plus the propagator carrying the trained B_T.
+ *
+ * @details Lives here rather than in the header because it must name the concrete inner wavefunction
+ * and propagator types, which only the factory knows; StochasticWfn sees it only through the abstract
+ * StochasticInnerStack interface.
+ *
+ * @param MEM memory space of the inner stack
+ * @param MType storage type of the trial orbital matrices
+ */
 template<MEMORY_SPACE MEM, class MType>
 struct StochasticInnerStackImpl final : StochasticInnerStack<MEM, MType>
 {
@@ -93,6 +104,8 @@ struct StochasticInnerStackImpl final : StochasticInnerStack<MEM, MType>
   }
 };
 
+/// @brief Exposes PropagatorFactory's protected buildPropagator so the inner propagator can be built
+/// directly, without registering the inner stack as a named propagator in the input.
 struct InnerPropagatorBuilder : PropagatorFactory<HOST_MEMORY>
 {
   using PropagatorFactory<HOST_MEMORY>::PropagatorFactory;
@@ -100,6 +113,7 @@ struct InnerPropagatorBuilder : PropagatorFactory<HOST_MEMORY>
 };
 
 #if defined(ENABLE_DEVICE)
+/// @brief Device counterpart of InnerPropagatorBuilder.
 struct InnerPropagatorBuilderDevice : PropagatorFactory<DEVICE_MEMORY>
 {
   using PropagatorFactory<DEVICE_MEMORY>::PropagatorFactory;
@@ -107,6 +121,23 @@ struct InnerPropagatorBuilderDevice : PropagatorFactory<DEVICE_MEMORY>
 };
 #endif
 
+/**
+ * @brief Build the inner (variational) stack a StochasticWfn samples its trial from.
+ *
+ * @details Inner NOMSD against the variational HamOps; for a dynamic trial, the B_T propagator as
+ * selected by resolve_sampling_target() (resolved once, before the sampler is chosen).
+ *
+ * @param NMO number of molecular orbitals
+ * @param nup number of spin-up electrons
+ * @param ndown number of spin-down electrons
+ * @param pt the wavefunction input block, carrying the inner_* keys and the resolved sampling target
+ * @param mpi MPI context
+ * @param inner_hop HamiltonianOperations of the VARIATIONAL Hamiltonian
+ * @param inner_ci CI coefficients of the anchor expansion
+ * @param inner_orbs orbital matrices of the anchor expansion
+ * @param walker_type walker type the inner ensemble must match
+ * @param targetNW target walker count
+ */
 template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
 std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
     int NMO,
@@ -198,10 +229,29 @@ std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
   return stack;
 }
 
-// h scores the outer (True Ham) nomsd_; h_var builds the inner (Variational) stack that generates the
-// stochastic trial samples. The factory passes h_var == h to clone the True Ham when no inner_hamiltonian
-// is named; a distinct h_var routes the inner stack to a separate Variational Hamiltonian. Both
-// HamOps are half-rotated with the same trial orbitals (PsiT_for_ham); only the integrals differ.
+/**
+ * @brief Build a StochasticWfn: outer NOMSD against the TRUE Hamiltonian, inner stack against the
+ *        VARIATIONAL one.
+ *
+ * @details The caller passes h_var == h to clone the True Hamiltonian when the input names no
+ * inner_hamiltonian; a distinct h_var routes the inner stack to a separate Variational Hamiltonian.
+ * Both sets of HamiltonianOperations are half-rotated with the SAME trial orbitals -- only the
+ * integrals differ.
+ *
+ * @param system name of the system, threaded into the input so the inner propagator can read it
+ * @param pt the wavefunction input block
+ * @param mpi MPI context
+ * @param h the TRUE Hamiltonian, which every reduction is scored against
+ * @param h_var the VARIATIONAL Hamiltonian generating the trial samples; may alias h
+ * @param walker_type walker type the trial must match
+ * @param NMO number of molecular orbitals
+ * @param nup number of spin-up electrons
+ * @param ndown number of spin-down electrons
+ * @param ci CI coefficients of the anchor expansion
+ * @param orbs orbital matrices of the anchor expansion
+ * @param targetNW target walker count
+ * @param PsiT_for_ham trial orbitals both Hamiltonians are half-rotated against
+ */
 template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
 Wavefunction<MEM> buildStochasticNomsdWavefunction(
     std::string system,
