@@ -495,6 +495,26 @@ void NOMSD<MEM,devPsiT>::vMF(memory::array_view<MEM,ComplexType,1> v, double dt)
   }
 }
 
+template<MEMORY_SPACE MEM, class devPsiT>
+void NOMSD<MEM,devPsiT>::energy_from_G(memory::array_view<MEM,ComplexType,2> E,
+                                       memory::array_view<MEM,const ComplexType,2> G,
+                                       int nd, bool addH1) {
+  HamOp.energy(E, G, nd, addH1, true, true);
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void NOMSD<MEM,devPsiT>::energy_from_fullG(memory::array_view<MEM,ComplexType,2,nda::C_layout> E,
+                                           memory::array_view<MEM,const ComplexType,2,nda::C_layout> G,
+                                           bool addH1) {
+  HamOp.energy_fullG(E, G, addH1, true, true);
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void NOMSD<MEM,devPsiT>::vbias_from_G(memory::array_view<MEM,const ComplexType,2> G,
+                                      memory::array_view<MEM,ComplexType,2> v, double dt) {
+  HamOp.vbias(G, v, dt);
+}
+
 template class NOMSD<HOST_MEMORY, PsiT_Matrix<HOST_MEMORY>>;
 template class NOMSD<HOST_MEMORY, memory::const_shared_array<HOST_MEMORY,ComplexType,2>>;
 #if defined(ENABLE_DEVICE)

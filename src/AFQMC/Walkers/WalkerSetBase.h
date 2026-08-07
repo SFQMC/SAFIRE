@@ -227,8 +227,9 @@ public:
 
   /*
    * Adds/removes walkers and initializes new ones from the supplied Slater guess.
+   * The guess is supplied on the host, as it is for populate_from_guess{,_ft}.
    */
-  void resize(int n, nda::MemoryArrayOfRank<3> auto const& A);
+  void resize(int n, memory::array_view<HOST_MEMORY, const ComplexType, 3> A);
 
   /*
    * (Re)populates every walker's Slater matrix from the per-spin guess. The set

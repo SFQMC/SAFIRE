@@ -271,23 +271,17 @@ protected:
   template<MEMORY_SPACE MEM2, class devPsiT2>
   friend class StochasticWfn;
 
-  template<class Mat, class MatG>
-  void energy_from_G(Mat&& E, MatG const& G, int nd, bool addH1 = true)
-  {
-    HamOp.energy(std::forward<Mat>(E), G, nd, addH1, true, true);
-  }
+  // Direct access to the Hamiltonian contractions for a StochasticWfn's inner ensemble, which drives
+  // them from its own reduced G instead of from a walker set. Parameter types mirror HamOp's exactly.
+  void energy_from_G(memory::array_view<MEM,ComplexType,2> E,
+                     memory::array_view<MEM,const ComplexType,2> G, int nd, bool addH1 = true);
 
-  template<class Mat, class MatG>
-  void energy_from_fullG(Mat&& E, MatG const& G, bool addH1 = true)
-  {
-    HamOp.energy_fullG(std::forward<Mat>(E), G, addH1, true, true);
-  }
+  // Contiguous by contract -- see HamiltonianOperations::energy_fullG.
+  void energy_from_fullG(memory::array_view<MEM,ComplexType,2,nda::C_layout> E,
+                         memory::array_view<MEM,const ComplexType,2,nda::C_layout> G, bool addH1 = true);
 
-  template<class MatG, class MatA>
-  void vbias_from_G(MatG const& G, MatA&& v, double dt)
-  {
-    HamOp.vbias(G, std::forward<MatA>(v), dt);
-  }
+  void vbias_from_G(memory::array_view<MEM,const ComplexType,2> G,
+                    memory::array_view<MEM,ComplexType,2> v, double dt);
 
   int dm_size(bool full) const
   {

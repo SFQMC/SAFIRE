@@ -46,11 +46,11 @@ void StochasticWfn<MEM, devPsiT>::reset_inner_to_anchor(WalkerSet<MEM>& inner, i
   // spot; shared by every routine that rebuilds the pool.
   const bool collinear = (inner_stack_->nomsd().getWalkerType() == COLLINEAR);
   auto all             = nda::range::all;
-  nda::array<ComplexType, 3> anchor_on_mem = inner_anchor_;
-#if defined(ENABLE_DEVICE)
-  if constexpr (MEM == DEVICE_MEMORY)
-    anchor_on_mem = nda::to_device(inner_anchor_);
-#endif
+  // The anchor stays on the host: the per-walker assignments below cross into MEM on their own, the
+  // same way populate_from_guess{,_ft} write a host guess into the walker buffer. (The old
+  // ENABLE_DEVICE branch staged it through to_device only to copy it straight back into this host
+  // array, which was a no-op round trip.)
+  nda::array<ComplexType, 3> const& anchor_on_mem = inner_anchor_;
   for (int q = 0; q < count; ++q)
   {
     inner.SlaterMatrices(Alpha)(q, all, all) = anchor_on_mem(0, all, all);
@@ -127,12 +127,7 @@ void StochasticWfn<MEM, devPsiT>::draw_free_projection_samples(WalkerSet<MEM>& t
   const int P = inner_n_samples_;
   if (int(target.size()) != P)
   {
-#if defined(ENABLE_DEVICE)
-    if constexpr (MEM == DEVICE_MEMORY)
-      target.resize(P, nda::to_device(inner_anchor_));
-    else
-#endif
-      target.resize(P, inner_anchor_);
+    target.resize(P, inner_anchor_);
   }
   reset_inner_to_anchor(target, P);
   RealType dt(inner_timestep_);
@@ -208,12 +203,7 @@ void StochasticWfn<MEM, devPsiT>::rebuild_inner_dets_from_chain_fields(WalkerSet
   WalkerSet<MEM>& inner = *inner_ensemble_.wset;
   if (inner.size() != ntot)
   {
-#if defined(ENABLE_DEVICE)
-    if constexpr (MEM == DEVICE_MEMORY)
-      inner.resize(int(ntot), nda::to_device(inner_anchor_));
-    else
-#endif
-      inner.resize(int(ntot), inner_anchor_);
+    inner.resize(int(ntot), inner_anchor_);
   }
   reset_inner_to_anchor(inner, int(ntot));
 
@@ -444,12 +434,7 @@ void StochasticWfn<MEM, devPsiT>::advance_inner_ensemble_conditioned(
   WalkerSet<MEM>& inner = *inner_ensemble_.wset;
   if (inner.size() != ntot)
   {
-#if defined(ENABLE_DEVICE)
-    if constexpr (MEM == DEVICE_MEMORY)
-      inner.resize(int(ntot), nda::to_device(inner_anchor_));
-    else
-#endif
-      inner.resize(int(ntot), inner_anchor_);
+    inner.resize(int(ntot), inner_anchor_);
   }
 
   // reset every inner walker to the anchor

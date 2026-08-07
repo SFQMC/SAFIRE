@@ -275,7 +275,7 @@ void WalkerSetBase<_M_>::resize(int n)
  * Target Populations are set to n.
 */
 template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::resize(int n, nda::MemoryArrayOfRank<3> auto const& A)
+void WalkerSetBase<_M_>::resize(int n, memory::array_view<HOST_MEMORY, const ComplexType, 3> A)
 {
   auto all = nda::range::all;
   int nspin = (walkerType == COLLINEAR ? 2 : 1);

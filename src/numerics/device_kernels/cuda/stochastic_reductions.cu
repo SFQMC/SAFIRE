@@ -12,7 +12,6 @@
 #include "utilities/type_traits.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/arch.h"
 #include "nda/nda.hpp"
 #include <cuda/std/complex>
 #include <cuda/std/mdspan>
@@ -37,7 +36,6 @@ void row_accumulate_impl(VS const& s, MI const& in, ME& e)
     e_d(w, j) += s_d(w) * in_d(w, j);
   };
   cub::DeviceFor::Bulk(sz, f);
-  sfqmc::arch::synchronize_if_set();
 }
 
 // E[w, j] = E[w, j] / D[w]
@@ -55,7 +53,6 @@ void row_divide_impl(VD const& d, ME& e)
     e_d(w, j) = e_d(w, j) / d_d(w);
   };
   cub::DeviceFor::Bulk(sz, f);
-  sfqmc::arch::synchronize_if_set();
 }
 
 // Per-walker phase reduction (non-leapfrog, non-log-aggregate):
@@ -81,7 +78,6 @@ void inner_scalar_reduce_impl(VOVc const& ov, VSP& sp, VOV& Ov, VD& D, double in
     D_d(w)  += s;
   };
   cub::DeviceFor::Bulk(sz, f);
-  sfqmc::arch::synchronize_if_set();
 }
 
 // A[w] = log(A[w])
@@ -93,7 +89,6 @@ void elementwise_log_impl(V& a)
   long const sz = a.size();
   auto f = [=] __device__(long w) { a_d(w) = cuda::std::log(a_d(w)); };
   cub::DeviceFor::Bulk(sz, f);
-  sfqmc::arch::synchronize_if_set();
 }
 
 // Kl[w, c] += sum_a T[w, a, a, c]   (per-walker diagonal trace over the two orbital axes)
@@ -115,7 +110,6 @@ void diag_trace_accumulate_impl(MT const& T, MK& K)
     K_d(w, c) += acc;
   };
   cub::DeviceFor::Bulk(sz, f);
-  sfqmc::arch::synchronize_if_set();
 }
 
 using memory::device_array_view;
