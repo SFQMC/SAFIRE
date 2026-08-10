@@ -44,7 +44,7 @@ void StochasticWfn<MEM, devPsiT>::reset_inner_to_anchor(WalkerSet<MEM>& inner, i
 {
   // The single place that knows the anchor/collinear layout, so future spin/collinear fixes live in one
   // spot; shared by every routine that rebuilds the pool.
-  const bool collinear = (inner_stack_->nomsd().getWalkerType() == COLLINEAR);
+  const bool collinear = has_beta();
   auto all             = nda::range::all;
   // The anchor stays on the host: the per-walker assignments below cross into MEM on their own, the
   // same way populate_from_guess{,_ft} write a host guess into the walker buffer. (The old
@@ -57,7 +57,13 @@ void StochasticWfn<MEM, devPsiT>::reset_inner_to_anchor(WalkerSet<MEM>& inner, i
     if (collinear)
     {
       int naeb = int(inner.SlaterMatrices(Beta).extent(2));
-      inner.SlaterMatrices(Beta)(q, all, all) = anchor_on_mem(1, all, nda::range(naeb));
+      // naeb == 0 is a REAL case, not a degenerate one: a fully polarized system carried as COLLINEAR
+      // (e.g. the Li rohf_nomsd_polarized fixture, dims NAEA=3 NAEB=0). Copying zero columns is a
+      // no-op, but nda's cross-address-space assign_from_ndarray divides by the extent to lay out the
+      // host->device transfer and raises SIGFPE on a zero-extent view. Host->host survives it, so this
+      // only ever shows up on a GPU build.
+      if (naeb > 0)
+        inner.SlaterMatrices(Beta)(q, all, all) = anchor_on_mem(1, all, nda::range(naeb));
     }
   }
 }
@@ -240,7 +246,8 @@ void StochasticWfn<MEM, devPsiT>::chain_pool_sweep(WalkerSet<MEM>& wset)
     const int nCV         = inner_nomsd().number_of_cholesky_vectors();
     const int pathlen     = inner_nsteps_ * nCV;
     const WALKER_TYPES wt = nomsd_.getWalkerType();
-    const bool coll       = (wt == COLLINEAR);
+    // has_beta(), not (wt == COLLINEAR): a zero-column beta block must be skipped entirely.
+    const bool coll       = has_beta();
     auto all              = nda::range::all;
 
     // 1. current-chain target magnitudes |<psi_cur_q | phi_w>|.

@@ -77,6 +77,12 @@ void perturb_stochastic_walkers(WlkSet& wset, afqmc::WALKER_TYPES type, int NMO,
   std::array<int, 2> nels = {nup, ndown};
   for (int spin = 0; spin < nspin; spin++)
   {
+    // A fully polarized system carried as COLLINEAR (the Li rohf_nomsd_polarized fixture) has
+    // nels[Beta] == 0, so this block is EMPTY: there is nothing to perturb, and handing a zero-extent
+    // operand to nda::tensor::add builds a cuTENSOR descriptor that fails CUTENSOR_STATUS_NOT_SUPPORTED
+    // -- which aborts the whole process via MPI_Abort rather than failing one assertion.
+    if (nels[spin] == 0)
+      continue;
     nda::array<ComplexType, 1> p_h(long(nwalk) * npol * NMO * nels[spin]);
     for (long k = 0; k < p_h.size(); ++k)
     {

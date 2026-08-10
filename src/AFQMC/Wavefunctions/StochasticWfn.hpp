@@ -700,6 +700,19 @@ private:
     bool initialized{false};
   };
 
+  /**
+   * @brief True iff there is an actual beta block to operate on.
+   *
+   * @details COLLINEAR alone is NOT enough. A fully polarized system can be carried as COLLINEAR with
+   * ndown == 0 (upstream reclassified the Li rohf_nomsd_polarized fixture that way), leaving a
+   * zero-column beta block. Every beta operation must be gated on THIS, not on the walker type: an
+   * empty block is a no-op mathematically (an empty determinant has det 1, hence log-overlap 0 and no
+   * density-matrix columns) but is a hard error in nda/det_ops/cuTENSOR --
+   * `Precondition !a.empty()` in get_block_layout, a zero-extent divide in the cross-space copy, or
+   * CUTENSOR_STATUS_NOT_SUPPORTED. All three are invisible on a CPU build.
+   */
+  bool has_beta() const { return nomsd_.getWalkerType() == COLLINEAR and ndown > 0; }
+
   std::string system_;
   int NMO{-1};
   int nup{-1};

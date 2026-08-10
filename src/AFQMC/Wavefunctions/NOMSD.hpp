@@ -416,6 +416,11 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Memor
       // Gfull = M + ma::T(X) * ma::T(OrbMats[spin]) * Gc * conj(Y),
       //   where Yc = conj(Y), Yc already comes with the conjugate!
       for(int is=0, is0=0; is<nspin; ++is, is0+=nup) {
+        // A fully polarized system carried as COLLINEAR (upstream 24a9385 reclassified the Li
+        // rohf_nomsd_polarized fixture that way) has nel[Beta] == 0. Its block is empty: it
+        // contributes nothing, but a zero-extent operand makes cuTENSOR fail
+        // CUTENSOR_STATUS_NOT_SUPPORTED. Host tblis accepts it, so CPU builds never see this.
+        if(nel[is] == 0) continue;
         memory::buffered_array<MEM,ComplexType,3> GYc(nw,nel[is],npol*NMO); 
         memory::buffered_array<MEM,ComplexType,3> XOrbM(nw,nel[is],npol*NMO); 
 
@@ -431,8 +436,11 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Memor
     } else {
       Gfull() = ComplexType(0.0);
       // Gfull = ma::T(OrbMats[spin]) * Gc,
+      // Skip an empty spin block: a fully polarized system carried as COLLINEAR has nel[Beta] == 0,
+      // and a zero-extent operand fails CUTENSOR_STATUS_NOT_SUPPORTED (host tblis accepts it).
       for(int is=0, is0=0; is<nspin; ++is, is0+=nup)
-        math::product<'T'>(OrbMats(0,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gfull(all,is,all,all));
+        if(nel[is] > 0)
+          math::product<'T'>(OrbMats(0,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gfull(all,is,all,all));
     }
 
     auto Gfull_h = nda::to_host(Gfull());
@@ -491,6 +499,11 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Memor
         //   where Yc = conj(Y), Yc already comes with the conjugate!
         Gt() = (*M)();
         for(int is=0, is0=0; is<nspin; ++is, is0+=nup) {
+          // A fully polarized system carried as COLLINEAR (upstream 24a9385 reclassified the Li
+          // rohf_nomsd_polarized fixture that way) has nel[Beta] == 0. Its block is empty: it
+          // contributes nothing, but a zero-extent operand makes cuTENSOR fail
+          // CUTENSOR_STATUS_NOT_SUPPORTED. Host tblis accepts it, so CPU builds never see this.
+          if(nel[is] == 0) continue;
           memory::buffered_array<MEM,ComplexType,3> GYc(nw,nel[is],npol*NMO); 
           memory::buffered_array<MEM,ComplexType,3> XOrbM(nw,nel[is],npol*NMO);
         
@@ -505,8 +518,11 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Memor
         }
       } else {
         // Gt = ma::T(OrbMats[spin]) * Gc,
+        // Skip an empty spin block: a fully polarized system carried as COLLINEAR has nel[Beta] == 0,
+        // and a zero-extent operand fails CUTENSOR_STATUS_NOT_SUPPORTED (host tblis accepts it).
         for(int is=0, is0=0; is<nspin; ++is, is0+=nup)
-          math::product<'T'>(OrbMats(d,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gt(all,is,all,all));
+          if(nel[is] > 0)
+            math::product<'T'>(OrbMats(d,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gt(all,is,all,all));
       }
       
       // Ot = conj(ci) * exp(Ot-log_m) 

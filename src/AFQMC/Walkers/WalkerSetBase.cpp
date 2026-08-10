@@ -289,7 +289,9 @@ void WalkerSetBase<_M_>::resize(int n, memory::array_view<HOST_MEMORY, const Com
       walker_buffer(pos, all) = ComplexType(0.0);
       reference w0(walker_buffer(pos, all), data_displ, wlk_desc);
       w0.SlaterMatrix(Alpha) = A(0, nda::ellipsis{});
-      if (walkerType == COLLINEAR)
+      // wlk_desc[2] == 0 (fully polarized carried as COLLINEAR) makes this a zero-extent copy, which
+      // traps in nda's host->device path -- see the naeb == 0 note in StochasticWfn::reset_inner_to_anchor.
+      if (walkerType == COLLINEAR and wlk_desc[2] > 0)
         w0.SlaterMatrix(Beta) = A(1, all, nda::range(wlk_desc[2]));
       pos++;
     }
