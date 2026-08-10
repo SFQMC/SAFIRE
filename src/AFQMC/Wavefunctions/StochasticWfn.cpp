@@ -469,6 +469,559 @@ void StochasticWfn<MEM, devPsiT>::advance_inner_ensemble_conditioned(
   }
 }
 
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::begin_inner_step(WalkerSet<MEM>& wset)
+{
+  inner_step_pending_ = true;
+  // A forward step closes the current BP window: invalidate any cached BP reference draw so the next
+  // back-propagation block draws a fresh free-projection ensemble (and so getReferences sees the forward
+  // ensemble, not a stale draw, after a resample).
+  bp_refs_drawn_ = false;
+  // Persistent chains: this is the one seam with NON-const access to the outer walker set (whose buffer
+  // holds the chain fields), so ALL chain mutation happens here. The updated pool then serves every
+  // reduction of this step (latch cleared), so the step's overlap RATIO new/old shares one ensemble
+  // (Eq. 25). Runs on every rank at every step -- uniform control flow, no communication.
+  if (is_conditioned())
+  {
+    update_persistent_chain_pool(wset);
+    inner_step_pending_ = false;
+  }
+  // Refresh the stored OVLP against the ensemble tied to the current (old) walker, so the
+  // post-propagation Log_Overlap sees the SAME ensemble and N(phi) cancels in the ratio.
+  //
+  // 🔴 NO POOL-CHANGE HANDOFF. The pool advanced while the walker did not, so the stored OVLP jumps by
+  // r = O_pool_new(phi)/O_pool_old(phi); we re-measure and do NOT charge WEIGHT for it. Deliberate, and
+  // the only divergence from hafqmc in the sampler: the sole uncancelled piece of a pool change is a
+  // ratio of conditioned-density normalizations, which is real and positive, so arg r is pure finite-P
+  // noise and charging max(0, cos arg r) is a physics-free penalty. A paired N2 A/B measured -2.44 +/-
+  // 1.67 mHa (1.46 sigma, not significant) with the predicted weight decay. Do not add a handoff back
+  // without a per-system probe -- and then restore |r|, not the phase-only remnant.
+  if (is_conditioned())
+    Log_Overlap(wset);
+}
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(WalkerSet<MEM> const& wset)
+{
+  // Only WalkerOverlap trials carry a slot-conditioned inner ensemble; the other modes have nothing to
+  // realign. THE CONTRACT: the chain FIELDS ride along inside walker_buffer, so the determinants are
+  // simply rebuilt from them; inner_cond_mag_ does NOT ride along and must be PERMUTED, never recomputed
+  // against the post-pop wset -- that wset is the walker AFTER this step's propagation and pop control,
+  // not the phi_cond the stored value means, and recomputing desyncs it from the leapfrog "old" overlap
+  // stored earlier this step. Permuting is what keeps EnergyEstimator's deno_real == 1.
+  if (not is_conditioned())
+    return;
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    return;
+
+  const int nw = int(wset.size());
+  const int P  = inner_n_samples_;
+
+  if (not inner_chains_primed_)
+    return; // chains not started yet (no pop event can precede the first propagation step)
+  rebuild_inner_dets_from_chain_fields(wset);
+  inner_dets_stale_ = false;
+  if (inner_cond_mag_.size() == long(nw) * P)
+  {
+    // Per-slot realignment. A locally-sourced slot (parent in [0,nw)) permutes its old magnitude --
+    // exact. A cross-rank arrival (SLOT_LINEAGE sentinel -1) has no exact value, since its phi_cond
+    // lived on the sending rank and is not shipped, so those slots ONLY are approximated by a recompute
+    // against the current wset. The recompute is done once into scratch; only foreign columns use it.
+    nda::array<int, 1> parent(nw);
+    bool any_foreign = false;
+    {
+      nda::array<ComplexType, 1> lin(nw);
+      wset.getProperty(SLOT_LINEAGE, lin);
+      for (int w = 0; w < nw; ++w)
+      {
+        const int s = int(std::lround(real(lin(w)))); // sentinel -1 rounds to -1, not 0
+        parent(w)   = s;
+        if (s < 0 || s >= nw)
+          any_foreign = true;
+      }
+    }
+    nda::array<RealType, 1> old_mag(inner_cond_mag_);
+    nda::array<RealType, 1> recomputed;
+    if (any_foreign)
+    {
+      recomputed = nda::array<RealType, 1>(long(nw) * P);
+      cross_overlap_magnitudes(wset, *inner_ensemble_.wset, recomputed);
+    }
+    for (int w = 0; w < nw; ++w)
+    {
+      const int s      = parent(w);
+      const bool local = (s >= 0 && s < nw);
+      for (int ip = 0; ip < P; ++ip)
+        inner_cond_mag_(long(ip) * nw + w) =
+            local ? old_mag(long(ip) * nw + s) : recomputed(long(ip) * nw + w);
+    }
+  }
+}
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::Energy(WalkerSet<MEM>& wset)
+{
+  if (at_delegate_limit())
+  {
+    nomsd_.Energy(wset);
+    return;
+  }
+  // Off-anchor: delegates to the device-safe Energy(wset, eloc, ovlp) reduction (static-anchor ported;
+  // dynamic inner_nsteps>0 is forbidden at construction on device).
+  int nw = wset.size();
+  memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
+  memory::buffered_array<MEM, ComplexType, 2> eloc(nw, 3);
+  Energy(wset, eloc, ovlp);
+  wset.setProperty(OVLP, ovlp);
+  wset.setProperty(E1_, eloc(nda::range::all, 0));
+  wset.setProperty(EXX_, eloc(nda::range::all, 1));
+  wset.setProperty(EJ_, eloc(nda::range::all, 2));
+}
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::Log_Overlap(WalkerSet<MEM>& wset)
+{
+  if (at_delegate_limit())
+  {
+    nomsd_.Log_Overlap(wset);
+    return;
+  }
+  // Off-anchor: delegates to the device-safe Log_Overlap(wset, ovlp) (static-anchor ported).
+  int nw = wset.size();
+  memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
+  Log_Overlap(wset, ovlp);
+  wset.setProperty(OVLP, ovlp);
+}
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::conditioned_resample(WalkerSet<MEM> const& wset)
+{
+  if (is_conditioned())
+  {
+    const int nw = int(wset.size());
+    // Once the chains are live they are advanced ONLY in begin_inner_step; a reduction's job here is
+    // REPAIR, not sampling -- rebuild the cached determinants when the BP draw reused the pool storage
+    // or a pop event flagged them stale. Rank-local, read-only on the outer walker set.
+    if (inner_chains_primed_)
+    {
+      if (inner_dets_stale_ || inner_ensemble_.wset->size() != long(nw) * inner_n_samples_)
+      {
+        rebuild_inner_dets_from_chain_fields(wset);
+        inner_dets_stale_ = false;
+        compute_inner_cond_mag(wset); // |<psi_q|phi_w^cond>| for the leapfrog reweighting (Eq. 25)
+      }
+      return;
+    }
+    // Resample when the per-step latch is armed (the first reduction of an outer step owns the resample;
+    // later ones reuse the ensemble), or when the ensemble is not yet sized/conditioned for the current
+    // outer-walker count. The (not inner_chains_primed_) term is load-bearing, not redundant: at nw == 1
+    // the size check cannot tell a fresh ensemble (sized to P) from a conditioned one (sized nw*P), so a
+    // driver's pre-loop initial-energy call would leave inner_cond_mag_ unsized and trip the leapfrog
+    // check. That call instead takes the bootstrap resample below and is reweighted by exp(logsw).
+    const bool need_resample =
+        inner_step_pending_ || (not inner_chains_primed_) ||
+        (inner_ensemble_.wset->size() != long(nw) * inner_n_samples_);
+    if (not need_resample)
+      return;
+    // Conditioning force bias x_bar(phi_w) = sqrt(dt) * L^var . <phi_T|c+c|phi_w>/<phi_T|phi_w> (Eq. 23).
+    // The inner trial IS the anchor, so the inner NOMSD's own mixed DM + vbias on the OUTER walker set
+    // yields it directly -- no bespoke contraction, and the prefactor/normalization match the field-shift
+    // convention assemble_X expects.
+    const int nc  = inner_nomsd().dm_size(false); // compact cross-DM size (inner trial is single-det)
+    const int nCV = inner_nomsd().number_of_cholesky_vectors();
+    memory::buffered_array<MEM, ComplexType, 2> Gcross(nw, nc);
+    memory::buffered_array<MEM, ComplexType, 1> ovcross(nw);
+    Gcross()  = ComplexType(0.0);
+    ovcross() = ComplexType(0.0);
+    inner_nomsd().MixedDensityMatrix(wset, Gcross, ovcross, true);
+    memory::array<MEM, ComplexType, 2> X_bias(nw, nCV);
+    X_bias() = ComplexType(0.0);
+    inner_nomsd().vbias_from_G(Gcross, X_bias, inner_timestep_);
+    advance_inner_ensemble_conditioned(X_bias, nw);
+    compute_inner_cond_mag(wset); // |<psi_q|phi_w^cond>| for the leapfrog overlap reweighting (Eq. 25)
+  }
+  else
+  {
+    // Walker-independent free-projection resample (honors the latch + static no-op).
+    maybe_advance_inner_ensemble();
+  }
+}
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::compute_inner_cond_mag(WalkerSet<MEM> const& wset)
+{
+  // |<psi_q|phi_w^cond>| for each inner walker q, against the outer walker its block was conditioned on
+  // in the resample just completed. The leapfrog overlap divides each per-sample term by this, making the
+  // step ratio Eq. 25. Sizes the member and delegates the magnitude loop, which is shared with the
+  // Metropolis accept/reject.
+  inner_cond_mag_ = nda::array<RealType, 1>(long(wset.size()) * inner_n_samples_);
+  cross_overlap_magnitudes(wset, *inner_ensemble_.wset, inner_cond_mag_);
+}
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::cross_overlap_magnitudes(WalkerSet<MEM> const& wset, WalkerSet<MEM>& inner,
+                                                           nda::array<RealType, 1>& mag)
+{
+  const int nw          = int(wset.size());
+  const int P           = inner_n_samples_;
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  auto all              = nda::range::all;
+  utils::check(mag.size() == long(nw) * P, "cross_overlap_magnitudes: mag must be sized nw*P.");
+  utils::check(inner.size() == long(nw) * P, "cross_overlap_magnitudes: inner must be slot-major nw*P.");
+  memory::buffered_array<MEM, ComplexType, 1> logov(nw);
+  memory::buffered_array<MEM, ComplexType, 1> logov_b(nw);
+  for (int ip = 0; ip < P; ++ip)
+  {
+    auto inner_a = inner.SlaterMatrices(Alpha)(nda::range(long(ip) * nw, long(ip + 1) * nw), all, all);
+    logov() = ComplexType(0.0);
+    det_ops::Log_Overlap(inner_a, wset.SlaterMatrices(Alpha), logov);
+    if (wt == CLOSED)
+      nda::tensor::scale(ComplexType(2.0), logov);
+    else if (has_beta())
+    {
+      auto inner_b = inner.SlaterMatrices(Beta)(nda::range(long(ip) * nw, long(ip + 1) * nw), all, all);
+      logov_b()    = ComplexType(0.0);
+      det_ops::Log_Overlap(inner_b, wset.SlaterMatrices(Beta), logov_b);
+    }
+    // mag is a host array and the per-slot log-overlaps are small ([nw]), so finish |exp(.)| on host --
+    // device-safe without a bespoke magnitude kernel.
+    auto logov_h = nda::to_host(logov);
+    nda::array<ComplexType, 1> logov_b_h;
+    // has_beta(), not (wt == COLLINEAR): at ndown == 0 the beta leg above never ran, so logov_b holds
+    // UNINITIALIZED data -- reading it would corrupt the magnitude, not merely crash.
+    if (has_beta())
+      logov_b_h = nda::to_host(logov_b);
+    for (int w = 0; w < nw; ++w)
+    {
+      ComplexType lo = logov_h(w);
+      if (has_beta())
+        lo += logov_b_h(w);
+      mag(long(ip) * nw + w) = std::abs(std::exp(lo));
+    }
+  }
+}
+
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::Energy(WalkerSet<MEM> const& wset,
+                                         memory::array_view<MEM,ComplexType,2> E,
+                                         memory::array_view<MEM,ComplexType,1> Ov, int nt)
+{
+  (void)nt;
+  memory::check_memory_space<MEM>(E, Ov);
+  utils::check(E.shape() == std::array<long, 2>{wset.size(), 3}, "Size mismatch");
+  utils::check(Ov.size() == wset.size(), "Size mismatch");
+  if (at_delegate_limit())
+  {
+    nomsd_.Energy(wset, E, Ov, nt);
+    return;
+  }
+  const int nwalk         = wset.size();
+  const ComplexType zero(0.0);
+  const bool full         = (inner_nsteps_ > 0);
+  const bool compact      = not full;
+  const int Gsize         = dm_size(full);
+
+  memory::buffered_array<MEM, ComplexType, 2> eloc2(nwalk, 3);
+  memory::buffered_array<MEM, ComplexType, 1> D(nwalk, zero);
+  E()  = zero;
+  Ov() = zero;
+
+  reduce_inner_cross_dm(
+      wset, compact, Gsize, D, Ov,
+      [&](auto& Gp, auto& /*ov_*/, auto& Sp, int /*ip*/, int /*r0*/, int /*rN*/) {
+        eloc2() = zero;
+        if (full)
+          nomsd_.energy_from_fullG(eloc2, Gp);
+        else
+          nomsd_.energy_from_G(eloc2, Gp, 0);
+        // E[w,:] += Sp[w] * eloc2[w,:]  (per-outer-walker scaled accumulate over the P inner samples).
+        if constexpr (MEM == HOST_MEMORY)
+          for (int w = 0; w < nwalk; ++w)
+            E(w, nda::range::all) += Sp(w) * eloc2(w, nda::range::all);
+        else
+        {
+#if defined(ENABLE_DEVICE)
+          kernels::device::row_accumulate(Sp, eloc2, E);
+#endif
+        }
+      });
+
+  // NO all_reduce over E here. energy_from_G / energy_from_fullG returns the COMPLETE per-walker energy
+  // on every rank (as NOMSD::Energy relies on) and reduce_inner_cross_dm replicates its loop on every
+  // rank, so E and D are already complete; an all_reduce would double-count E by comm.size().
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      E(w, nda::range::all) /= D(w);
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(D, E);
+#endif
+  }
+
+  // reduce_inner_cross_dm fills Ov with the LINEAR effective overlap; OVLP is the LOG overlap (7.3).
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Ov(w) = std::log(Ov(w));
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::elementwise_log(Ov);
+#endif
+  }
+}
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::measure_energy(WalkerSet<MEM>& wset,
+                                                 memory::array_view<MEM,ComplexType,2> E,
+                                                 memory::array_view<MEM,ComplexType,1> Ov, int nt)
+{
+  // E = (1/nm) sum_j Energy_j over nm pool advances at fixed walkers. The pool advances before EVERY
+  // replica including the first, and the advance is KEPT (both match hafqmc). Falls through to plain
+  // Energy only when there is no live chain to advance.
+  if (not measure_advances_pool())
+  {
+    Energy(wset, E, Ov, nt);
+    return;
+  }
+
+  const int nwalk = int(wset.size());
+  const int nm    = inner_n_measure_samples_;
+
+  memory::buffered_array<MEM, ComplexType, 2> E_j(nwalk, 3);
+  memory::buffered_array<MEM, ComplexType, 1> Ov_j(nwalk);
+  // Device path reuses the existing reduction kernels: row_accumulate(ones, ...) is the unweighted
+  // E += E_j and row_divide(nm_vec, E) the 1/nm scale.
+  memory::buffered_array<MEM, ComplexType, 1> ones(nwalk, ComplexType(1.0));
+  memory::buffered_array<MEM, ComplexType, 1> nm_vec(nwalk, ComplexType(double(nm)));
+  E()  = ComplexType(0.0);
+  Ov() = ComplexType(0.0);
+
+  for (int j = 0; j < nm; ++j)
+  {
+    // Advance the pool before every replica, including the first.
+    advance_measure_pool(wset);
+    E_j()  = ComplexType(0.0);
+    Ov_j() = ComplexType(0.0);
+    Energy(wset, E_j, Ov_j, nt);
+    if constexpr (MEM == HOST_MEMORY)
+    {
+      for (int w = 0; w < nwalk; ++w)
+        E(w, nda::range::all) += E_j(w, nda::range::all);
+    }
+    else
+    {
+#if defined(ENABLE_DEVICE)
+      kernels::device::row_accumulate(ones, E_j, E);
+#endif
+    }
+    // Ov_j is DISCARDED on purpose -- see the OVLP note after the loop.
+  }
+
+  if constexpr (MEM == HOST_MEMORY)
+  {
+    const ComplexType inv_nm(1.0 / double(nm));
+    for (int w = 0; w < nwalk; ++w)
+      E(w, nda::range::all) *= inv_nm;
+  }
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(nm_vec, E);
+#endif
+  }
+
+  // Return the walker's stored OVLP so EnergyEstimator's exp(ovlp - OVLP) factor stays 1.
+  // Replica overlaps are intentionally discarded; see StochasticWfn.hpp.
+  if constexpr (MEM == HOST_MEMORY)
+    wset.getProperty(OVLP, Ov);
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    wset.getProperty(OVLP, Ov);
+#endif
+  }
+}
+// Stochastic mixed density matrix for observable evaluation: the same inner-ensemble reduction as
+// MixedDensityMatrix_for_vbias (estimator 3), in the caller's observable layout and with the LOG overlap
+// NOMSD's observable DM reports.
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset,
+                                                     memory::array_view<MEM,ComplexType,2> G,
+                                                     memory::array_view<MEM,ComplexType,1> Ov,
+                                                     bool compact)
+{
+  if (at_delegate_limit())
+  {
+    nomsd_.MixedDensityMatrix(wset, G, Ov, compact);
+    return;
+  }
+  memory::check_memory_space<MEM>(G, Ov);
+  const int nwalk = wset.size();
+  const ComplexType zero(0.0);
+
+  // Off the anchor the per-pair COMPACT DM lands in psi_p's OWN occupied basis, which cannot be averaged
+  // across the ensemble; only the full layout is basis-independent there. Mirrors
+  // MixedDensityMatrix_for_vbias forcing the full layout once inner_nsteps > 0.
+  utils::check(not(compact and inner_nsteps_ > 0),
+               "StochasticWfn::MixedDensityMatrix: a compact observable density matrix is only "
+               "supported for the static inner ensemble (inner_nsteps == 0); request the full "
+               "(compact == false) layout for a dynamic ensemble.");
+
+  const int Gsize = dm_size(not compact);
+  utils::check(G.shape() == std::array<long, 2>{nwalk, Gsize}, "Size mismatch");
+  utils::check(Ov.size() == nwalk, "Size mismatch");
+
+  memory::buffered_array<MEM, ComplexType, 2> Gnum(nwalk, Gsize);
+  Gnum() = zero;
+  memory::buffered_array<MEM, ComplexType, 1> D(nwalk, zero);
+  Ov() = zero;
+
+  reduce_inner_cross_dm(
+      wset, compact, Gsize, D, Ov,
+      [&](auto& Gp, auto& /*ov_*/, auto& Sp, int /*ip*/, int /*r0*/, int /*rN*/) {
+        if constexpr (MEM == HOST_MEMORY)
+          for (int w = 0; w < nwalk; ++w)
+            Gnum(w, nda::range::all) += Sp(w) * Gp(w, nda::range::all);
+        else
+        {
+#if defined(ENABLE_DEVICE)
+          kernels::device::row_accumulate(Sp, Gp, Gnum);
+#endif
+        }
+      });
+
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Gnum(w, nda::range::all) /= D(w);
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::row_divide(D, Gnum);
+#endif
+  }
+  G() = Gnum();
+
+  // Linear effective overlap -> LOG overlap, as the Energy / Log_Overlap overrides do (7.3).
+  if constexpr (MEM == HOST_MEMORY)
+    for (int w = 0; w < nwalk; ++w)
+      Ov(w) = std::log(Ov(w));
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    kernels::device::elementwise_log(Ov);
+#endif
+  }
+}
+template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::Log_Overlap(WalkerSet<MEM> const& wset,
+                                              memory::array_view<MEM,ComplexType,1> Ov, int nt)
+{
+  (void)nt;
+  memory::check_memory_space<MEM>(Ov);
+  if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
+    APP_ABORT("Error in StochasticWfn::Log_Overlap: inner walkers not initialized.");
+  if (at_delegate_limit())
+  {
+    nomsd_.Log_Overlap(wset, Ov, nt);
+    return;
+  }
+  if constexpr (MEM == HOST_MEMORY)
+  {
+  conditioned_resample(wset);
+
+  WalkerSet<MEM>& inner  = *inner_ensemble_.wset;
+  const int nw           = wset.size();
+  // Conditioned: inner is slot-major nw*P, and pair tk maps to outer walker iw = tk % nw and inner walker
+  // q = tk (its own conditioned sample). Unconditioned: P shared walkers paired against all outer
+  // walkers. The leapfrog reweight is part of WalkerOverlap, not a separate mode.
+  const bool conditioned = is_conditioned();
+  const bool leapfrog    = conditioned;
+  const int P            = (conditioned ? inner_n_samples_ : int(inner.size()));
+  utils::check(Ov.size() >= nw, "Size mismatch");
+  utils::check(P >= 1, "inner ensemble must be non-empty");
+  if (conditioned)
+    utils::check(inner.size() == long(nw) * P, "conditioned inner ensemble size mismatch (expect nw*P)");
+  if (leapfrog)
+    utils::check(inner_cond_mag_.size() == long(nw) * P,
+                 "leapfrog inner_cond_mag_ not sized -- conditioned resample must run first");
+  const ComplexType inv_P(1.0 / static_cast<double>(P), 0.0);
+  const WALKER_TYPES wt = nomsd_.getWalkerType();
+  auto all              = nda::range::all;
+
+  Ov() = ComplexType(0.0);
+
+  // Per-rank-local and per-rank-COMPLETE, exactly like NOMSD::Log_Overlap: every rank loops all nw*P
+  // pairs of its OWN walkers, with no cross-rank distribution and NO all_reduce. Do not reintroduce
+  // either: the outer walkers are DISTRIBUTED in the real driver, so all-reducing per-walker Ov(iw) sums
+  // different physical walkers across ranks (correct only for the replicated wset of a unit test).
+  const int tk0 = 0, tkN = nw * P;
+
+  memory::buffered_array<MEM, ComplexType, 1> log_ov(1, ComplexType(0.0));
+  memory::buffered_array<MEM, ComplexType, 3> inner_one(1, NMO, nup);
+  memory::buffered_array<MEM, ComplexType, 3> outer_one(1, NMO, nup);
+
+  for (int tk = tk0; tk < tkN; ++tk)
+  {
+    const int iw = (conditioned ? tk % nw : tk / P);
+    const int ip = (conditioned ? tk / nw : tk % P);
+    const int inner_idx = conditioned ? tk : ip;
+    inner_one(0, all, all) = inner.SlaterMatrices(Alpha)(inner_idx, all, all);
+    outer_one(0, all, all) = wset.SlaterMatrices(Alpha)(iw, all, all);
+    log_ov(0)              = ComplexType(0.0);
+    det_ops::Log_Overlap(inner_one, outer_one, log_ov);
+    if (wt == CLOSED)
+      nda::tensor::scale(ComplexType(2.0), log_ov);
+    ComplexType ov = std::exp(log_ov(0));
+    if (wt == COLLINEAR and ndown > 0)
+    {
+      // ndown == 0 (fully polarized carried as COLLINEAR, e.g. the Li rohf_nomsd_polarized fixture)
+      // leaves an EMPTY beta block. It contributes nothing -- an empty determinant has det 1, so
+      // log-overlap 0 -- but det_ops/nda trip `Precondition !a.empty()` on a zero-column operand.
+      memory::buffered_array<MEM, ComplexType, 3> inner_beta(1, NMO, ndown);
+      memory::buffered_array<MEM, ComplexType, 3> outer_beta(1, NMO, ndown);
+      inner_beta(0, all, all) = inner.SlaterMatrices(Beta)(inner_idx, all, all);
+      outer_beta(0, all, all) = wset.SlaterMatrices(Beta)(iw, all, all);
+      log_ov(0)               = ComplexType(0.0);
+      det_ops::Log_Overlap(inner_beta, outer_beta, log_ov);
+      ov *= std::exp(log_ov(0));
+    }
+    if (leapfrog)
+    {
+      // Keyed on inner_chains_primed_ (a state fact), not on a mode flag: the reweight must match WHICH
+      // SAMPLER produced the ensemble in hand. Bootstrap-resample samples carry exp(logsw) = p_T/q; chain
+      // samples are already distributed as p_T(Y)|<psi|phi>| and divide by inner_cond_mag_.
+      if ((not inner_chains_primed_) && inner_logsw_.size() == inner_cond_mag_.size())
+      {
+        Ov(iw) += std::exp(inner_logsw_(tk)) * ov;
+      }
+      else
+      {
+        double mag = double(inner_cond_mag_(tk));
+        if (mag > 0.0)
+        {
+          Ov(iw) += ov / ComplexType(mag, 0.0);
+        }
+      }
+    }
+    else
+    {
+      Ov(iw) += inv_P * ov;
+    }
+  }
+
+    // The pair loop accumulates the LINEAR effective overlap; OVLP stores the log overlap.
+    for (int iw = 0; iw < nw; ++iw)
+      Ov(iw) = std::log(Ov(iw));
+
+  }
+  else
+  {
+#if defined(ENABLE_DEVICE)
+    // Device: reduce_inner_cross_dm accumulates exactly the linear effective overlap
+    // Ov = (1/P) sum_p <psi_p|phi_w>; a no-op accumulate discards the mixed DM it also builds. The log
+    // is the OVLP convention, as in the host pair loop above.
+    memory::buffered_array<MEM, ComplexType, 1> Ddummy(wset.size(), ComplexType(0.0));
+    reduce_inner_cross_dm(wset, /*compact=*/true, dm_size(false), Ddummy, Ov,
+                          [](auto&, auto&, auto&, int, int, int) {});
+    kernels::device::elementwise_log(Ov);
+#endif
+  }
+}
+
 template class StochasticWfn<HOST_MEMORY, PsiT_Matrix<HOST_MEMORY>>;
 template class StochasticWfn<HOST_MEMORY, memory::const_shared_array<HOST_MEMORY, ComplexType, 2>>;
 

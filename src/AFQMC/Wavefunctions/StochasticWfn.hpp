@@ -325,8 +325,7 @@ public:
    *
    * @param wset the outer walker set, taken non-const because the chain state lives in its buffer
    */
-  template<class WlkSet>
-  void begin_inner_step(WlkSet& wset);
+  void begin_inner_step(WalkerSet<MEM>& wset);
 
   /**
    * @brief Realign the conditioned inner ensemble with the outer walkers after population control.
@@ -339,8 +338,7 @@ public:
    *
    * @param wset the post-population-control outer walker set
    */
-  template<class WlkSet>
-  void permute_inner_blocks_after_pop(const WlkSet& wset);
+  void permute_inner_blocks_after_pop(WalkerSet<MEM> const& wset);
 
   /// @brief True when the trial IS the anchor determinant (P == 1 and no free projection), so every override
   /// delegates and the class is exactly a single-determinant NOMSD.
@@ -357,8 +355,7 @@ public:
    *
    * @param wset the outer walker set
    */
-  template<class WlkSet>
-  void runtime_optimization(WlkSet& wset) { nomsd_.runtime_optimization(wset); }
+  void runtime_optimization(WalkerSet<MEM>& wset) { nomsd_.runtime_optimization(wset); }
 
   WALKER_TYPES getWalkerType() const { return nomsd_.getWalkerType(); }
   constexpr auto get_memory_space() const { return MEM; }
@@ -419,8 +416,8 @@ public:
    * @param Ov output LOG overlap per walker, matching the OVLP property convention
    * @param nt time slice index, unused for a ground-state trial
    */
-  template<class WlkSet, class Mat, class TVec>
-  void Energy(const WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0);
+  void Energy(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E,
+              memory::array_view<MEM,ComplexType,1> Ov, int nt = 0);
 
   /**
    * @brief Measurement entry: Energy() averaged over inner_n_measure_samples_ pool advances at fixed
@@ -435,16 +432,14 @@ public:
    *        EnergyEstimator's exp(ovlp - OVLP) stays 1
    * @param nt time slice index, unused for a ground-state trial
    */
-  template<class WlkSet, class Mat, class TVec>
-  void measure_energy(WlkSet& wset, Mat&& E, TVec&& Ov, int nt = 0);
+  void measure_energy(WalkerSet<MEM>& wset, memory::array_view<MEM,ComplexType,2> E,
+                      memory::array_view<MEM,ComplexType,1> Ov, int nt = 0);
 
   /// @brief Energy of every walker, written back into the walker set's OVLP / E1_ / EXX_ / EJ_ properties.
-  template<class WlkSet>
-  void Energy(WlkSet& wset);
+  void Energy(WalkerSet<MEM>& wset);
 
   /// @brief Overload ignoring the time slice index, for interface parity with the finite-temperature trials.
-  template<class WlkSet>
-  void Energy(WlkSet& wset, int nt)
+  void Energy(WalkerSet<MEM>& wset, int nt)
   {
     (void)nt;
     Energy(wset);
@@ -478,8 +473,8 @@ public:
    * @param Ov output LOG overlap per walker
    * @param compact request the half-rotated layout; rejected once inner_nsteps > 0
    */
-  template<class WlkSet, class MatG, class TVec>
-  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true);
+  void MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> G,
+                          memory::array_view<MEM,ComplexType,1> Ov, bool compact = true);
 
   /**
    * @brief Density matrix against an EXTERNALLY supplied reference orbital set.
@@ -529,12 +524,10 @@ public:
    * @param Ov output LOG overlap per walker
    * @param nt time slice index, unused for a ground-state trial
    */
-  template<class WlkSet, class TVec>
-  void Log_Overlap(const WlkSet& wset, TVec&& Ov, int nt = 0);
+  void Log_Overlap(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,1> Ov, int nt = 0);
 
   /// @brief Log overlap of every walker, written back into the walker set's OVLP property.
-  template<class WlkSet>
-  void Log_Overlap(WlkSet& wset);
+  void Log_Overlap(WalkerSet<MEM>& wset);
 
   /**
    * @brief Accumulate observables from the inner-ensemble-reduced Green's function (estimator 3).
@@ -825,19 +818,17 @@ private:
 
   // Resample dispatch: walker-conditioned when is_conditioned(), else the walker-independent
   // free-projection path. Honors the per-step latch armed by begin_inner_step().
-  template<class WlkSet>
-  void conditioned_resample(const WlkSet& wset);
+  void conditioned_resample(WalkerSet<MEM> const& wset);
 
   // Fill inner_cond_mag_ after a conditioned resample. The leapfrog overlap divides by it.
-  template<class WlkSet>
-  void compute_inner_cond_mag(const WlkSet& wset);
+  void compute_inner_cond_mag(WalkerSet<MEM> const& wset);
 
   // Fill mag(q) = |<inner_q|phi_w>| for the slot-major inner ensemble against the outer walker set (same
   // det(A^dag B) / CLOSED-doubling / COLLINEAR-product convention as the Log_Overlap reduction). Shared
   // by compute_inner_cond_mag and the Metropolis accept/reject. Rank-local. `mag` must be sized nw*P and
   // `inner` must be in the slot-major nw*P conditioned form.
-  template<class WlkSet>
-  void cross_overlap_magnitudes(const WlkSet& wset, WalkerSet<MEM>& inner, nda::array<RealType, 1>& mag);
+  void cross_overlap_magnitudes(WalkerSet<MEM> const& wset, WalkerSet<MEM>& inner,
+                                nda::array<RealType, 1>& mag);
 
   template<class WlkSet, class TVecD, class TVecOv, class Accumulate>
   void reduce_inner_cross_dm(const WlkSet& wset,
