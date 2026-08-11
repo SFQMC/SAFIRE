@@ -74,7 +74,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 ######################################################################
 # set options
 ######################################################################
-option(ENABLE_ROCM " Build device code with ROCM backend" OFF)
 option(HAVE_MKL "Assume MKL BLAS/LAPACK library." OFF)
 option(BUILD_UNIT_TESTS "Build unit tests" ON)
 option(BUILD_STATIC "Link to static libraries" OFF)
@@ -127,35 +126,6 @@ if(ENABLE_CUDA)
   string(APPEND CMAKE_CUDA_FLAGS " -std=c++20 --expt-relaxed-constexpr --extended-lambda -Xcudafe \"--diag_suppress=implicit_return_from_non_void_function\" -Wdeprecated-declarations -w") 
   message( STATUS " CMAKE_CUDA_FLAGS: " ${CMAKE_CUDA_FLAGS})
 endif()
-
-######################################################################
-# ROCM 
-######################################################################
-if(ENABLE_ROCM)
-  message(STATUS "ROCM_ROOT: ${ROCM_ROOT}")
-  add_library(ROCM::libraries INTERFACE IMPORTED)
-  # temporarily put rocsolver rocrand here for convenience, should be moved to Platforms.
-  set_target_properties(ROCM::libraries PROPERTIES INTERFACE_INCLUDE_DIRECTORIES  "${ROCM_ROOT}/include"
-                                                   INTERFACE_LINK_LIBRARIES "-L${ROCM_ROOT}/lib;-lrocsolver;-lrocrand")
-endif(ENABLE_ROCM)
-
-######################################################################
-#  HIP 
-######################################################################
-if(ENABLE_HIP)
-  if(NOT ENABLE_ROCM)
-    message(FATAL_ERROR "ROCM is required to use HIP. Please set ENABLE_ROCM=ON.")
-  endif()
-  set(CMAKE_MODULE_PATH "${ROCM_ROOT}/hip/cmake" ${CMAKE_MODULE_PATH})
-  find_package(HIP REQUIRED)
-
-  add_library(HIP::HIP INTERFACE IMPORTED)
-  # temporarily put hipsparse hipblas here for convenience, should be moved to Platforms.
-  set_target_properties(HIP::HIP PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${ROCM_ROOT}/include"
-                                            INTERFACE_COMPILE_DEFINITIONS "ENABLE_HIP"
-                                            INTERFACE_LINK_LIBRARIES "-L${ROCM_ROOT}/lib;-lhipsparse;-lhipblas;-lamdhip64")
-endif(ENABLE_HIP)
-
 
 ######################################################################
 # MPI
