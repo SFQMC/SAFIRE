@@ -116,12 +116,6 @@ public:
    */
   memory::const_shared_array<HOST_MEMORY,ComplexType,3> G_MF();
 
-  template<class... Args>
-  void generalizedFockMatrix(Args&&... args)
-  {
-    HamOp.generalizedFockMatrix(std::forward<Args>(args)...); 
-  }
-
   HamiltonianTypes getHamType() const { return HamOp.getHamType(); }
 
   auto getFieldTypes()

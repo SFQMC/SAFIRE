@@ -181,12 +181,6 @@ public:
     }
   }
 
-  template<class... Args>
-  void generalizedFockMatrix([[maybe_unused]] Args&&... args)
-  {
-    utils::check(false," Error: generalizedFockMatrix not implemented for this hamiltonian.");
-  }
-
 private:
 
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;

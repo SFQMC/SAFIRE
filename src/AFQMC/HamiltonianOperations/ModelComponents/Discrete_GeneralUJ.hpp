@@ -158,12 +158,6 @@ public:
                              ComplexType(1.0), nda::transpose(v));
   }
 
-  template<class... Args>
-  void generalizedFockMatrix([[maybe_unused]] Args&&... args)
-  {
-    utils::check(false," Error: generalizedFockMatrix not implemented for this hamiltonian.");
-  }
-
   int number_of_ke_vectors() const { return nCV; }
   int number_of_cholesky_vectors() const { return nCV; }
 

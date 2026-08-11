@@ -25,11 +25,6 @@
 #include "AFQMC/Estimators/Observables/full1rdm.hpp"
 #include "AFQMC/Estimators/Observables/full2rdm.hpp"
 #include "AFQMC/Estimators/Observables/diagonal2rdm.hpp"
-//#include "AFQMC/Estimators/Observables/n2r.hpp"
-//#include "AFQMC/Estimators/Observables/realspace_correlators.hpp"
-//#include "AFQMC/Estimators/Observables/atomcentered_correlators.hpp"
-//#include "AFQMC/Estimators/Observables/generalizedFockMatrix.hpp"
-//#include "AFQMC/Estimators/Observables/sk.hpp"
 #include "AFQMC/Estimators/Observables/pair_correlators.hpp"
 #include "AFQMC/Estimators/Observables/spinspin.hpp"
 
@@ -84,22 +79,7 @@ public:
 
 private:
 
-  std::variant<full1rdm, diagonal2rdm<MEM>, full2rdm<MEM>, pair_correlator, spinspinobs
-    > var;
-/*
-                                         realspace_correlators,
-                                         atomcentered_correlators,
-                                         generalizedFockMatrix,
-                                         n2r<shared_allocator<ComplexType>>
-#if defined(ENABLE_CUDA) || defined(ENABLE_HIP)
-                                         ,
-                                         n2r<device_allocator<ComplexType>>
-#endif
-                                         ,sk<true>
-                                         ,sk<false>,
-                                         >
-*/
-
+  std::variant<full1rdm, diagonal2rdm<MEM>, full2rdm<MEM>, pair_correlator, spinspinobs> var;
 };
 
 

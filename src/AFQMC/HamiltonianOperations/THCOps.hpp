@@ -616,11 +616,6 @@ public:
     }
   }
 
-  template<class... Args> void generalizedFockMatrix([[maybe_unused]] Args&&... args)
-  {
-    APP_ABORT(" Error: generalizedFockMatrix not implemented for this hamiltonian.");
-  }
-  
   /// Returns the number of spins and polarizations in the VHS potential.
   std::tuple<int,int> vHS_dims() const {
     return std::make_tuple(_Xsiu_().shape()[0],_Xsiu_().shape()[1]/NMO);

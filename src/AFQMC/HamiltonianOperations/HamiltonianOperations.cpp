@@ -55,14 +55,6 @@ namespace afqmc
   }
 
   template<MEMORY_SPACE M>
-  void HamiltonianOperations<M>::generalizedFockMatrix(memory::array_view<M,const ComplexType,2> G,
-                                                       memory::array_view<M,ComplexType,2> Fp,
-                                                       memory::array_view<M,ComplexType,2> Fm)
-  {
-    std::visit([&](auto&& a) { a.generalizedFockMatrix(G,Fp,Fm); }, var);
-  }
-
-  template<MEMORY_SPACE M>
   memory::buffered_array<M,ComplexType,4> HamiltonianOperations<M>::vHS(
                        memory::array_view<M,ComplexType,2> X, double dt)
   {

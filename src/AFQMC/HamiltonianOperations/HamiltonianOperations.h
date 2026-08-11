@@ -58,10 +58,6 @@ public:
               memory::array_view<MEM,ComplexType,2> EJn,
               bool addH1  = true, bool addEJ  = true, bool addEXX = true);
 
-  void generalizedFockMatrix(memory::array_view<MEM,const ComplexType,2> G,
-                             memory::array_view<MEM,ComplexType,2> Fp,
-                             memory::array_view<MEM,ComplexType,2> Fm);
-
   memory::buffered_array<MEM,ComplexType,4> vHS(memory::array_view<MEM,ComplexType,2> X, double dt);
 
   nda::array_view<math::sparse::csr_matrix<ComplexType,MEM,int,int>,1>

@@ -388,11 +388,6 @@ public:
     }
   }
 
-  template<class... Args> void generalizedFockMatrix([[maybe_unused]] Args&&... args)
-  {
-    APP_ABORT(" Error: generalizedFockMatrix not implemented for this hamiltonian.");
-  }
-
   std::tuple<int,int> vHS_dims() const {
     int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
     int nspin = walker_type == COLLINEAR ? 2 : 1;

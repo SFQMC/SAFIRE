@@ -44,12 +44,6 @@ public:
   }
 
   template<class... Args>
-  void generalizedFockMatrix(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.generalizedFockMatrix(std::forward<Args>(args)...); }, var);
-  }
-
-  template<class... Args>
   void vHS(Args&&... args)
   {
     std::visit([&](auto&& s) { s.vHS(std::forward<Args>(args)...); }, var);
