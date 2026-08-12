@@ -35,6 +35,8 @@
 #include "configuration.hpp"
 #include "utilities/check.hpp"
 #include "utilities/type_traits.hpp"
+#include "numerics/nda_functions.hpp"
+#include "numerics/operations/tensor.hpp"
 #include "utilities/mpi_context.h"
 #include "AFQMC/config.h"
 #include "IO/app_loggers.h"

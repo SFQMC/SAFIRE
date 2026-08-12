@@ -12,6 +12,7 @@
 #include "utilities/type_traits.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
+#include "numerics/device_kernels/cuda/accumulate.cuh"
 #include "nda/nda.hpp"
 #include <cuda/std/mdspan>
 #include "cub/device/device_for.cuh"
@@ -198,26 +199,39 @@ void scale_impl(nda::get_value_t<A> alpha, A & a)
   }
 }
 
-template<typename A, typename B>
-void copy_impl(A const& a, B & b)
-{ 
-  using T = nda::get_value_t<A>;
-  sfqmc::utils::check(a.shape() == b.shape(), "Shape mismatch");
-  auto a_d = to_cuda_std_mdspan(a);
-  auto b_d = to_cuda_std_mdspan(b);
+template<typename MdIn, typename MdOut>
+struct copy_functor
+{
+  MdIn  a;
+  MdOut b;
+  // ForEachInExtents passes the linear iteration index ahead of the coordinates
+  template<typename Idx, typename... I>
+  __device__ void operator()(Idx, I... idx) { b(idx...) = a(idx...); }
+};
 
-  // Determine temporary device storage requirements
-  void*  d_temp_storage     = nullptr;
-  size_t temp_storage_bytes = 0;
-  auto status = cub::DeviceCopy::Copy(d_temp_storage, temp_storage_bytes, a_d, b_d);
+template<typename T, int R>
+void copy_strided(T const* src, std::array<long,R> const& src_str,
+                  T* dst, std::array<long,R> const& dst_str,
+                  std::array<long,R> const& ext)
+{
+  using dext = cuda::std::dextents<long,R>;
+  using cuda::std::layout_stride;
+
+  cuda::std::array<long,R> e, ss, ds;
+  std::copy_n(ext.begin(),R,e.begin());
+  std::copy_n(src_str.begin(),R,ss.begin());
+  std::copy_n(dst_str.begin(),R,ds.begin());
+
+  auto sp = cuda_std_ptr_cast(src);
+  auto dp = cuda_std_ptr_cast(dst);
+  using src_t = typename std::pointer_traits<decltype(sp)>::element_type;
+  using dst_t = typename std::pointer_traits<decltype(dp)>::element_type;
+  auto a_d = cuda::std::mdspan<src_t,dext,layout_stride>(sp,layout_stride::mapping<dext>(e,ss));
+  auto b_d = cuda::std::mdspan<dst_t,dext,layout_stride>(dp,layout_stride::mapping<dext>(e,ds));
+
+  auto status = cub::DeviceFor::ForEachInExtents(a_d.extents(),
+                    copy_functor<decltype(a_d),decltype(b_d)>{a_d,b_d});
   // cuda_check(status)
-
-  memory::buffered_array<DEVICE_MEMORY,T,1> temp_storage(temp_storage_bytes); 
-  d_temp_storage = (void*)(temp_storage.data()); 
-
-  // Run copy algorithm
-  status = cub::DeviceCopy::Copy(d_temp_storage, temp_storage_bytes, a_d, b_d);
-  //cuda_heck(status);
 }
 
 using memory::device_array_view;
@@ -239,15 +253,23 @@ template void accumulate_impl(T,V<const T,3,basic_layout_t<3>> const&, V<T,3,per
 template void scale_impl(T,V<T,1,basic_layout_t<1>> &);  \
 template void scale_impl(T,V<T,2,basic_layout_t<2>> &);  \
 template void scale_impl(T,V<T,3,basic_layout_t<3>> &);  \
-template void scale_impl(T,V<T,4,basic_layout_t<4>> &);  \
-template void copy_impl(V<const T,1,basic_layout_t<1>> const&, V<T,1,basic_layout_t<1>>&);  \
-template void copy_impl(V<const T,2,basic_layout_t<2>> const&, V<T,2,basic_layout_t<2>>&);  \
-template void copy_impl(V<const T,3,basic_layout_t<3>> const&, V<T,3,basic_layout_t<3>>&);  \
-template void copy_impl(V<const T,4,basic_layout_t<4>> const&, V<T,4,basic_layout_t<4>>&);  \
-template void copy_impl(V<const T,5,basic_layout_t<5>> const&, V<T,5,basic_layout_t<5>>&);  
+template void scale_impl(T,V<T,4,basic_layout_t<4>> &);
 
 _inst_(double,device_array_view)
 _inst_(std::complex<double>,device_array_view)
+
+// copy_strided takes extents and strides as arguments, so layout is not part of its type
+static_assert(max_copy_rank == 6, "_inst_copy_ranks_ must cover every rank up to max_copy_rank");
+
+#define _inst_copy_(T,R) \
+template void copy_strided<T,R>(T const*, std::array<long,R> const&, \
+                                T*, std::array<long,R> const&, std::array<long,R> const&);
+
+#define _inst_copy_ranks_(T) \
+_inst_copy_(T,1) _inst_copy_(T,2) _inst_copy_(T,3) _inst_copy_(T,4) _inst_copy_(T,5) _inst_copy_(T,6)
+
+_inst_copy_ranks_(double)
+_inst_copy_ranks_(std::complex<double>)
 
 
 } // namespace kernels::device::detail

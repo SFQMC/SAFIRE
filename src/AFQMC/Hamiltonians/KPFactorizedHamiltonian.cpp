@@ -27,6 +27,7 @@
 #include "utilities/check_shape.hpp"
 #include "utilities/h5_utils.hpp"
 #include "numerics/nda_functions.hpp"
+#include "numerics/operations/tensor.hpp"
 #include "AFQMC/config.h"
 
 #include "nda/h5.hpp"
@@ -362,8 +363,12 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     memory::array<MEM,ComplexType,3> hfull(nspin_in_H1, npol_in_H1*nkpts*nbnd, npol_in_H1*nkpts*nbnd);
     hfull() = 0;
     auto hfull7 = nda::reshape(hfull, nspin_in_H1, npol_in_H1, nkpts, nbnd, npol_in_H1, nkpts, nbnd);
+    // nkpts is nested inside npol in hfull but outside it in H1, so fixing ik leaves the
+    // destination with two strided levels: not a block layout, hence the copy kernel
+    auto H1_mem = memory::to_memory_space<MEM>(H1());
+    auto H1_6d = nda::reshape(H1_mem, nspin_in_H1, nkpts, npol_in_H1, nbnd, npol_in_H1, nbnd);
     for(int ik = 0; ik < nkpts; ik++) {
-      hfull7(all, all, ik, all, all, ik, all) = nda::reshape(H1(), nspin_in_H1, nkpts, npol_in_H1, nbnd, npol_in_H1, nbnd)(all, ik, all, all, all, all);
+      math::copy(H1_6d(all, ik, all, all, all, all), hfull7(all, all, ik, all, all, ik, all));
     }
 
     return hfull;

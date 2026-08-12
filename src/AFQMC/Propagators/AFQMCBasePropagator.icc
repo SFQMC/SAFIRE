@@ -232,10 +232,10 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
       {
         // 3. copy reference to SlaterMatrix
         if(nup > 0) {
-          wset.SlaterMatrices(Alpha) = Refs(all,nr,all,range(nup));
+          math::copy(Refs(all,nr,all,range(nup)), wset.SlaterMatrices(Alpha));
         }
         if(walker_type==COLLINEAR && ndown > 0) {
-          wset.SlaterMatrices(Beta) = Refs(all,nr,all,range(nup,nup+ndown));        
+          math::copy(Refs(all,nr,all,range(nup,nup+ndown)), wset.SlaterMatrices(Beta));
         }
 
         // 4. Propagate walkers 
@@ -250,10 +250,10 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
 
         // 5. copy reference to back
         if(nup > 0) {
-          Refs(all,nr,all,range(nup)) = wset.SlaterMatrices(Alpha);
+          math::copy(wset.SlaterMatrices(Alpha), Refs(all,nr,all,range(nup)));
         }
         if(walker_type==COLLINEAR && ndown > 0)
-          Refs(all,nr,all,range(nup,nup+ndown)) = wset.SlaterMatrices(Beta);
+          math::copy(wset.SlaterMatrices(Beta), Refs(all,nr,all,range(nup,nup+ndown)));
       }
 
     } else {
@@ -268,9 +268,9 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
       for (int nr = 0; nr < nrefs; ++nr)
       { 
         // 3. copy reference to SlaterMatrix
-        wset.SlaterMatrices(Alpha) = Refs(all,nr,all,range(nup));
+        math::copy(Refs(all,nr,all,range(nup)),wset.SlaterMatrices(Alpha));
         if(walker_type==COLLINEAR)
-          wset.SlaterMatrices(Beta) = Refs(all,nr,all,range(nup,nup+ndown));
+          math::copy(Refs(all,nr,all,range(nup,nup+ndown)),wset.SlaterMatrices(Beta));
         
         // 4. Propagate walkers
         apply_propagators<'H'>(wset,vHS); 
@@ -283,9 +283,9 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
         }
         
         // 5. copy reference to back
-        Refs(all,nr,all,range(nup)) = wset.SlaterMatrices(Alpha);
+        math::copy(wset.SlaterMatrices(Alpha), Refs(all,nr,all,range(nup)));
         if(walker_type==COLLINEAR)
-          Refs(all,nr,all,range(nup,nup+ndown)) = wset.SlaterMatrices(Beta);
+          math::copy(wset.SlaterMatrices(Beta), Refs(all,nr,all,range(nup,nup+ndown)));
       }
 
     }

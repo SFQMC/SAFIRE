@@ -37,7 +37,7 @@ void copy(A_t const& A, B_t && B) {
   sfqmc::utils::check(A.shape() == B.shape(), "Shape mismatch");
   if constexpr (std::is_same_v<nda::get_value_t<A_t>,nda::get_value_t<B_t>>) {
 #if defined(ENABLE_DEVICE)
-    if constexpr (nda::mem::have_device_compatible_addr_space<A_t,B_t> and nda::get_rank<A_t> < 5) {
+    if constexpr (nda::mem::have_device_compatible_addr_space<A_t,B_t>) {
       kernels::device::copy(A,B);
     } else
 #endif

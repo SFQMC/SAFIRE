@@ -270,18 +270,17 @@ void orthogonalize_wQR(U_t && U, D_t && D, V_t && V, B_t && scl)
       nda::blas::scal(std::exp(-scl_new),Dh(b,nda::range::all));
       sclh(b) += scl_new; 
 
-      //nda::blas::gemm(ComplexType(1.0),VT(nda::range::all,nda::range::all),Vh(b,nda::ellipsis{}),
-      //                ComplexType(0.0),Vh(b,nda::ellipsis{}));
+      // gemm into UT, since Vh(b,...) is both input and output
       nda::blas::gemm(ComplexType(1.0),VT(nda::range::all,nda::range::all),Vh(b,nda::ellipsis{}),
                       ComplexType(0.0),UT);
-              
-      V(b,nda::ellipsis{}) = nda::to_device(UT);
+
+      Vh(b,nda::ellipsis{}) = UT;
 
     }
 
     U = nda::to_device(Uh);
     D = nda::to_device(Dh);
-    //V = nda::to_device(Vh);
+    V = nda::to_device(Vh);
     scl = nda::to_device(sclh);
 
   }
