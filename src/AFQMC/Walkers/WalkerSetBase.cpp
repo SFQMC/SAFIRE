@@ -166,6 +166,7 @@ void WalkerSetBase<_M_>::setup(std::array<int, 3> dims)
   data_displ[WEIGHT_FAC]     = -1;
   data_displ[WEIGHT_HISTORY] = -1;
   data_displ[TRIAL_FIELDS]   = -1;
+  data_displ[TRIAL_COND_MAG] = -1;
   trial_fields_size_         = 0;
   bp_walker_size             = 0;
   bp_walker_memory_usage     = bp_walker_size * sizeof(ComplexType);
@@ -643,6 +644,37 @@ void WalkerSetBase<_M_>::resize_trial_fields(int n)
   auto sz(walker_size);
   data_displ[TRIAL_FIELDS] = walker_size;
   trial_fields_size_       = n;
+  walker_size += n;
+  walker_memory_usage = walker_size * sizeof(ComplexType);
+  memory::array<MEM, ComplexType, 2> wb(walker_buffer.extent(0), walker_size);
+  wb(nda::range::all, nda::range(0, sz)) = walker_buffer();
+  wb(nda::range::all, nda::range(sz, walker_size)) = ComplexType(0.0);
+  walker_buffer = std::move(wb);
+}
+
+/*
+* Appends a per-walker block of `n` ComplexType entries for a stochastic trial's conditioned inner
+* magnitudes (data_displ[TRIAL_COND_MAG]). Same runtime-growth mechanism as resize_trial_fields, and
+* the same reason for living inside walker_buffer: branch()'s whole-row copies clone it with the
+* walker and the load-balance payload (sized by walker_size) ships it across ranks. It sits after
+* TRIAL_FIELDS, outside the walkerSizeIO() checkpoint window. Idempotent for the same n; a different
+* n on an already-sized block is a programming error.
+*/
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::resize_trial_cond_mag(int n)
+{
+  utils::check(n > 0, "Error in WalkerSetBase::resize_trial_cond_mag: n <= 0.");
+  utils::check(walker_buffer.extent(1) == walker_size, "Size mismatch.");
+  if (data_displ[TRIAL_COND_MAG] >= 0)
+  {
+    utils::check(trial_cond_mag_size_ == n,
+                 "Error in WalkerSetBase::resize_trial_cond_mag: block already sized to {} != {}.",
+                 trial_cond_mag_size_, n);
+    return;
+  }
+  auto sz(walker_size);
+  data_displ[TRIAL_COND_MAG] = walker_size;
+  trial_cond_mag_size_       = n;
   walker_size += n;
   walker_memory_usage = walker_size * sizeof(ComplexType);
   memory::array<MEM, ComplexType, 2> wb(walker_buffer.extent(0), walker_size);

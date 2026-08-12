@@ -266,6 +266,12 @@ public:
    */
   void resize_trial_fields(int n);
 
+  /*
+   * Appends a per-walker block of `n` conditioned inner-overlap magnitudes (TRIAL_COND_MAG in
+   * WalkerConfig.hpp). Must be called (uniformly across ranks) before any use of TrialCondMag().
+   */
+  void resize_trial_cond_mag(int n);
+
   // perform and report tests/timings
   void benchmark(std::string& blist, int maxnW, int delnW, int repeat);
 
@@ -451,6 +457,30 @@ public:
     utils::check(data_displ[TRIAL_FIELDS] >= 0, "access to unallocated trial-fields block.");
     long i0 = data_displ[TRIAL_FIELDS];
     std::array<long,2> shape   = {long(tot_num_walkers), long(trial_fields_size_)};
+    std::array<long,2> strides = {walker_buffer.strides()[0], 1};
+    nda::idx_map<2, 0, nda::C_stride_order<2>, nda::layout_prop_e::none> idxm(shape,strides);
+    return memory::array_view<MEM,const ComplexType,2>(idxm, walker_buffer.data() + i0);
+  }
+
+  bool has_trial_cond_mag() const { return data_displ[TRIAL_COND_MAG] >= 0; }
+  int trial_cond_mag_size() const { return trial_cond_mag_size_; }
+
+  // [tot_num_walkers, trial_cond_mag_size] view of the per-walker conditioned-magnitude block
+  auto TrialCondMag()
+  {
+    utils::check(data_displ[TRIAL_COND_MAG] >= 0, "access to unallocated trial-cond-mag block.");
+    long i0 = data_displ[TRIAL_COND_MAG];
+    std::array<long,2> shape   = {long(tot_num_walkers), long(trial_cond_mag_size_)};
+    std::array<long,2> strides = {walker_buffer.strides()[0], 1};
+    nda::idx_map<2, 0, nda::C_stride_order<2>, nda::layout_prop_e::none> idxm(shape,strides);
+    return memory::array_view<MEM,ComplexType,2>(idxm, walker_buffer.data() + i0);
+  }
+
+  auto TrialCondMag() const
+  {
+    utils::check(data_displ[TRIAL_COND_MAG] >= 0, "access to unallocated trial-cond-mag block.");
+    long i0 = data_displ[TRIAL_COND_MAG];
+    std::array<long,2> shape   = {long(tot_num_walkers), long(trial_cond_mag_size_)};
     std::array<long,2> strides = {walker_buffer.strides()[0], 1};
     nda::idx_map<2, 0, nda::C_stride_order<2>, nda::layout_prop_e::none> idxm(shape,strides);
     return memory::array_view<MEM,const ComplexType,2>(idxm, walker_buffer.data() + i0);
@@ -664,6 +694,8 @@ protected:
   int walker_size, walker_memory_usage;
   // width of the optional per-walker TRIAL_FIELDS block (0 = unallocated); included in walker_size
   int trial_fields_size_{0};
+  // width of the optional per-walker TRIAL_COND_MAG block (0 = unallocated); included in walker_size
+  int trial_cond_mag_size_{0};
   int bp_walker_size, bp_walker_memory_usage;
   int bp_pos;
   int tau_step;
