@@ -102,7 +102,7 @@ inline PsiT_Matrix<HOST_MEMORY> widen_csr(PsiT_Matrix<HOST_MEMORY> const& up, in
 inline std::string polarized_tmp_path(std::string const& tag, WALKER_TYPES target)
 {
   auto p = std::filesystem::temp_directory_path() /
-           std::format("polarized_{}_{}.h5", tag, walkerTypeToString(target));
+           std::format("polarized_{}_{}_{}.h5", tag, walkerTypeToString(target), getpid());
   return p.string();
 }
 
@@ -314,6 +314,7 @@ void polarized_consistency(std::shared_ptr<utils::mpi_context_t<boost::mpi3::com
     mpi->comm.barrier();
     auto cand = run_polarized<MEM>(mpi, hamil_file, cand_file, nsteps, nStab);
     compare_to_reference(walkerTypeToString(cand_type), cand, ref);
+    std::filesystem::remove(cand_file);
   }
 }
 
