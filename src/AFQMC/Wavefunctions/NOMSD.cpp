@@ -175,7 +175,7 @@ void NOMSD<MEM,devPsiT>::Energy(WalkerSet<MEM> const& wset,
     nda::array<ComplexType,1> Ov_h(nw,ComplexType(0.0)); 
     nda::array<ComplexType,1> sum(3,0.0);
     for(int i=0; i<nw; i++) {
-      ComplexType log_m = *std::max_element(ovlp_h(all,i).begin(),ovlp_h(all,i).end());
+      ComplexType log_m = *std::ranges::max_element(ovlp_h(all,i).begin(),ovlp_h(all,i).end(), {}, [](auto a) { return std::real(a); });
       sum() = ComplexType(0.0);
       ComplexType deno(0.0);
       for(int d=0; d<ndet; ++d) {
@@ -297,7 +297,7 @@ void NOMSD<MEM,devPsiT>::Log_Overlap(WalkerSet<MEM> const& wset,
     for(int i=0; i<nw; ++i) {
       auto ai = log_h(nda::range::all,i);
       // find largest determinant for each walker to use as reference
-      ComplexType log_m = *std::max_element(ai.begin(),ai.end());
+      ComplexType log_m = *std::ranges::max_element(ai.begin(),ai.end(), {}, [](auto a) { return std::real(a); });
       ComplexType sum = 0.0;
       for(int p=0; p<ndet; ++p)
         sum += std::exp( ai(p) - log_m );
