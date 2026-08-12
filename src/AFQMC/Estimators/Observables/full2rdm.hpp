@@ -59,20 +59,21 @@ public:
     {
       apply_rotation = true;
 
+      nda::array<ComplexType,2> R;
       if (mpi->node_comm.root())
       {
         h5::file file(rot_file, 'r');
         h5::group grp = h5::group(file).create_group(h5_path);
-        memory::array<MEM, ComplexType,2> R;
-        h5::read(grp, "RotationMatrix", XRot);
+        h5::read(grp, "RotationMatrix", R);
 
-        utils::check(XRot.shape(1) != NMO, "Rotation has wrong number of rows {} (expected {})", XRot.shape(1), NMO);
+        utils::check(R.shape(1) != NMO, "Rotation has wrong number of rows {} (expected {})", R.shape(1), NMO);
       }
 
-      std::array<long int,2> dim = XRot.shape();
+      std::array<long int,2> dim = R.shape();
       mpi->node_comm.broadcast_n(dim.data(), dim.size(), 0);
-      XRot.resize(dim);
-      mpi->node_comm.broadcast_n(XRot.data(), XRot.size(), 0);
+      R.resize(dim);
+      mpi->node_comm.broadcast_n(R.data(), R.size(), 0);
+      XRot = memory::to_memory_space<MEM>(std::move(R));
 
       dm_size = XRot.shape(0);
     }
