@@ -406,7 +406,7 @@ void LUsolve(A_t && A, B_t && B, O_t && ovlp)
 
   auto [nbatch, NMO, NMO2] = A.shape();
 
-  utils::check(B.shape() == std::array<long,3>{nbatch,NMO,NMO}, "Size mismatch"); 
+  utils::check_shape(B, "B", nbatch, NMO, NMO); 
 
   memory::buffered_array<MEM,Type,3,nda::F_layout> T0(NMO,NMO,nbatch);
   memory::buffered_array<MEM,int,2> ipiv(nbatch,NMO);
