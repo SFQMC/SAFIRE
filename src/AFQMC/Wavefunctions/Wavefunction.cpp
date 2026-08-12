@@ -180,6 +180,11 @@ void Wavefunction<MEM>::permute_inner_blocks_after_pop(WalkerSet<MEM> const& wse
 }
 
 template<MEMORY_SPACE MEM>
+void Wavefunction<MEM>::store_inner_blocks_before_pop(WalkerSet<MEM>& wset) {
+  visit_stochastic([&](auto&& a) { a.store_inner_blocks_before_pop(wset); });
+}
+
+template<MEMORY_SPACE MEM>
 bool Wavefunction<MEM>::has_fullG_vbias() const {
   return std::visit([&](auto&& a) { return a.has_fullG_vbias(); }, var);
 }

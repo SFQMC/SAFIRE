@@ -270,6 +270,20 @@ public:
    */
   void permute_inner_blocks_after_pop(WalkerSet<MEM> const& wset);
 
+  /**
+   * @brief Snapshot the conditioned inner-ensemble magnitudes into the walkers before branching.
+   *
+   * @details THE DRIVER MUST CALL THIS IMMEDIATELY BEFORE wset.popControl(), paired with
+   * permute_inner_blocks_after_pop. The magnitudes belong to phi_cond -- the walker the chains were
+   * equilibrated against -- so they must travel with the walker that owns them; parked in the walker
+   * buffer, branch() clones them and load balancing ships them, and the post-pop hook reads them back
+   * exactly rather than re-deriving them. Non-const wset for that reason. No-op unless the trial is
+   * stochastic and walker-conditioned.
+   *
+   * @param wset the pre-population-control outer walker set
+   */
+  void store_inner_blocks_before_pop(WalkerSet<MEM>& wset);
+
   template<MEMORY_SPACE MEM2, class MType2>
   friend struct wavefunction_detail::StochasticInnerStackImpl;
 

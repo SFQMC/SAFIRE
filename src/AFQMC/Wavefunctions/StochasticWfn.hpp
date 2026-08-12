@@ -340,6 +340,19 @@ public:
    */
   void permute_inner_blocks_after_pop(WalkerSet<MEM> const& wset);
 
+  /**
+   * @brief Snapshot inner_cond_mag_ into the walkers' TRIAL_COND_MAG block before population control.
+   *
+   * @details The driver calls this immediately before wset.popControl(). Each magnitude belongs to the
+   * phi_cond its chain was equilibrated against, so it must move with that walker: in the walker buffer
+   * branch() clones it and load balancing ships it, which lets the post-pop hook read every slot back
+   * exactly -- including a walker that arrived from another rank, whose value used to be unavailable
+   * here and was approximated by a recompute against the post-pop walker. No-op unless is_conditioned().
+   *
+   * @param wset the pre-population-control outer walker set
+   */
+  void store_inner_blocks_before_pop(WalkerSet<MEM>& wset);
+
   /// @brief True when the trial IS the anchor determinant (P == 1 and no free projection), so every override
   /// delegates and the class is exactly a single-determinant NOMSD.
   bool at_delegate_limit() const { return inner_n_samples_ == 1 && inner_nsteps_ == 0; }

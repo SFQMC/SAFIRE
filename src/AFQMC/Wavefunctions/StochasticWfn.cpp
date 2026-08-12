@@ -500,14 +500,41 @@ void StochasticWfn<MEM, devPsiT>::begin_inner_step(WalkerSet<MEM>& wset)
     Log_Overlap(wset);
 }
 template<MEMORY_SPACE MEM, class devPsiT>
+void StochasticWfn<MEM, devPsiT>::store_inner_blocks_before_pop(WalkerSet<MEM>& wset)
+{
+  // Park inner_cond_mag_ on the walkers, so population control moves each magnitude with the walker
+  // whose phi_cond it refers to. Slot-major (ip*nw + w) member -> walker-major (w, ip) block; the
+  // transpose costs nw*P and runs once per pop event.
+  if (not is_conditioned())
+    return;
+  if (not inner_chains_primed_)
+    return;
+  const int nw = int(wset.size());
+  const int P  = inner_n_samples_;
+  if (inner_cond_mag_.size() != long(nw) * P)
+    return; // not yet sized (no conditioned resample has run); nothing to preserve
+  if (not wset.has_trial_cond_mag())
+    wset.resize_trial_cond_mag(P);
+  else
+    utils::check(wset.trial_cond_mag_size() == P,
+                 "store_inner_blocks_before_pop: TrialCondMag block size mismatch.");
+  nda::array<ComplexType, 2> Mh(nw, P);
+  for (int w = 0; w < nw; ++w)
+    for (int ip = 0; ip < P; ++ip)
+      Mh(w, ip) = ComplexType(inner_cond_mag_(long(ip) * nw + w), 0.0);
+  auto Mw = wset.TrialCondMag();
+  Mw()    = Mh(); // host -> device copy into the strided view (no-op-ish on HOST_MEMORY)
+}
+template<MEMORY_SPACE MEM, class devPsiT>
 void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(WalkerSet<MEM> const& wset)
 {
   // Only WalkerOverlap trials carry a slot-conditioned inner ensemble; the other modes have nothing to
-  // realign. THE CONTRACT: the chain FIELDS ride along inside walker_buffer, so the determinants are
-  // simply rebuilt from them; inner_cond_mag_ does NOT ride along and must be PERMUTED, never recomputed
-  // against the post-pop wset -- that wset is the walker AFTER this step's propagation and pop control,
-  // not the phi_cond the stored value means, and recomputing desyncs it from the leapfrog "old" overlap
-  // stored earlier this step. Permuting is what keeps EnergyEstimator's deno_real == 1.
+  // realign. THE CONTRACT: both halves of a walker's conditioned state ride inside walker_buffer -- the
+  // chain FIELDS, from which the determinants are rebuilt, and the TRIAL_COND_MAG magnitudes, snapshot
+  // by store_inner_blocks_before_pop. branch() clones both with the walker and load balancing ships
+  // both, so every slot is recovered EXACTLY and no slot needs a recompute against the post-pop wset --
+  // which is the walker after this step's propagation and pop control, not the phi_cond the value means.
+  // That exactness is what keeps the leapfrog "old" overlap in sync.
   if (not is_conditioned())
     return;
   if (not inner_ensemble_.initialized || inner_ensemble_.wset == nullptr)
@@ -522,38 +549,23 @@ void StochasticWfn<MEM, devPsiT>::permute_inner_blocks_after_pop(WalkerSet<MEM> 
   inner_dets_stale_ = false;
   if (inner_cond_mag_.size() == long(nw) * P)
   {
-    // Per-slot realignment. A locally-sourced slot (parent in [0,nw)) permutes its old magnitude --
-    // exact. A cross-rank arrival (SLOT_LINEAGE sentinel -1) has no exact value, since its phi_cond
-    // lived on the sending rank and is not shipped, so those slots ONLY are approximated by a recompute
-    // against the current wset. The recompute is done once into scratch; only foreign columns use it.
-    nda::array<int, 1> parent(nw);
-    bool any_foreign = false;
-    {
-      nda::array<ComplexType, 1> lin(nw);
-      wset.getProperty(SLOT_LINEAGE, lin);
-      for (int w = 0; w < nw; ++w)
-      {
-        const int s = int(std::lround(real(lin(w)))); // sentinel -1 rounds to -1, not 0
-        parent(w)   = s;
-        if (s < 0 || s >= nw)
-          any_foreign = true;
-      }
-    }
-    nda::array<RealType, 1> old_mag(inner_cond_mag_);
-    nda::array<RealType, 1> recomputed;
-    if (any_foreign)
-    {
-      recomputed = nda::array<RealType, 1>(long(nw) * P);
-      cross_overlap_magnitudes(wset, *inner_ensemble_.wset, recomputed);
-    }
+    // FAIL CLOSED ON AN UNPAIRED CALL. store_inner_blocks_before_pop and this function are a PAIR: the
+    // store is the only thing that puts the magnitudes where branching can carry them, so reaching here
+    // without it means they were left indexed by a slot layout that popControl has already invalidated.
+    // Silently skipping the realignment would then divide the leapfrog overlap by another walker's
+    // magnitude -- wrong physics, no error, and the caller cannot see it. Caught by
+    // stochastic_persistent_permute_after_pop_control, whose clone case produced overlaps ~1e7 when this
+    // was a silent no-op.
+    utils::check(wset.has_trial_cond_mag(),
+                 "permute_inner_blocks_after_pop: the TrialCondMag block is absent, so "
+                 "store_inner_blocks_before_pop was not called before popControl. The two are a pair; "
+                 "calling this one alone leaves the conditioned magnitudes misaligned with the walkers.");
+    utils::check(wset.trial_cond_mag_size() == P,
+                 "permute_inner_blocks_after_pop: TrialCondMag block size mismatch.");
+    auto Mh = nda::to_host(wset.TrialCondMag());
     for (int w = 0; w < nw; ++w)
-    {
-      const int s      = parent(w);
-      const bool local = (s >= 0 && s < nw);
       for (int ip = 0; ip < P; ++ip)
-        inner_cond_mag_(long(ip) * nw + w) =
-            local ? old_mag(long(ip) * nw + s) : recomputed(long(ip) * nw + w);
-    }
+        inner_cond_mag_(long(ip) * nw + w) = RealType(real(Mh(w, ip)));
   }
 }
 template<MEMORY_SPACE MEM, class devPsiT>
@@ -564,8 +576,7 @@ void StochasticWfn<MEM, devPsiT>::Energy(WalkerSet<MEM>& wset)
     nomsd_.Energy(wset);
     return;
   }
-  // Off-anchor: delegates to the device-safe Energy(wset, eloc, ovlp) reduction (static-anchor ported;
-  // dynamic inner_nsteps>0 is forbidden at construction on device).
+  // Off-anchor: delegates to the device-safe Energy(wset, eloc, ovlp) reduction.
   int nw = wset.size();
   memory::buffered_array<MEM, ComplexType, 1> ovlp(nw, ComplexType(0.0));
   memory::buffered_array<MEM, ComplexType, 2> eloc(nw, 3);

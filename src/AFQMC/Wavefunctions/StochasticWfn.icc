@@ -253,8 +253,7 @@ void StochasticWfn<MEM, devPsiT>::vbias(WlkSet& wset, MatA&& v, double dt, int n
     nomsd_.vbias(wset, std::forward<MatA>(v), dt, nt);
     return;
   }
-  // Off-anchor: device-safe via the ported MixedDensityMatrix_for_vbias + device vbias_from_G
-  // (static-anchor; dynamic inner_nsteps>0 is forbidden at construction on device).
+  // Off-anchor: device-safe via the ported MixedDensityMatrix_for_vbias + device vbias_from_G.
   const int nwalk = wset.size();
   const bool full = (inner_nsteps_ > 0);
   // Same capability gate as vMF, for the same reason: once the inner ensemble has moved off the anchor
