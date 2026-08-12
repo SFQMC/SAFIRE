@@ -329,8 +329,8 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
           if constexpr (MEM==HOST_MEMORY)
             Tuv() = Zu() * Tuv();
           else
-            nda::tensor::elementwise(ComplexType(1.0), Zu, "uv",
-                                     ComplexType(1.0), Tuv, "uv", nda::tensor::op::MUL);
+            nda::tensor::elementwise(1.0, Zu, "uv",
+                                     1.0, Tuv, "uv", nda::tensor::binary_op::PROD);
           nda::tensor::add(ComplexType(1.0),Tuv,"uv",ComplexType(1.0),Wuv,"uv");
         }
         auto Xiu = Xsiu()(is,ik,range(ip*nbnd,(ip+1)*nbnd),all);

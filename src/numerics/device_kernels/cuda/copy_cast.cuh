@@ -2,7 +2,6 @@
 #pragma once
 
 #include <complex>
-#include "nda/nda.hpp"
 #include "numerics/device_kernels/cuda/nda_aux.hpp"
 
 namespace kernels::device

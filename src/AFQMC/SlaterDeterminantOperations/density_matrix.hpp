@@ -257,13 +257,13 @@ void log_overlap_impl(UL_t const& UL, DL_t const& DL, VL_t const& VL,
         //nda::tensor::contract(VL,"ij",DLmin,"j",M0,"ij");
         // FIX: copy because elementwise is in-place (is there an alternative?) 
         M0 = VL;
-        nda::tensor::elementwise(ComplexType(1.0),DLmin,"j",ComplexType(1.0),M0,"ij",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,DLmin,"j",1.0,M0,"ij",nda::tensor::binary_op::PROD);
 
         // M1 <-- DRmin * VR
         //nda::tensor::contract(VR,"nij",DRmin,"ni",M1,"nij");
         // FIX: copy because elementwise is in-place (is there an alternative?)  
         M1 = VR;
-        nda::tensor::elementwise(ComplexType(1.0),DRmin,"ni",ComplexType(1.0),M1,"nij",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,DRmin,"ni",1.0,M1,"nij",nda::tensor::binary_op::PROD);
 
         // G <-- DRmin*VR*VL*DLmin
         nda::tensor::contract(ComplexType(1.0),M1,"nij",M0,"jk",ComplexType(0.0),TNN,"nik");
@@ -277,7 +277,7 @@ void log_overlap_impl(UL_t const& UL, DL_t const& DL, VL_t const& VL,
           // and det(UL) has a phase (i.e. det(UL) =/= +-1)
           detail::inverse_logdet(UL,ovlp,M0,nbatch,false);
           // M0() = nda::dagger(UL);
-          nda::tensor::add(nda::conj(UL),"ji",M0,"ij");
+          nda::tensor::add(1.0,nda::conj(UL),"ji",0.0,M0,"ij");
         }
         // M1 <-- UR^-1
         if(!unitaryR){
@@ -287,16 +287,16 @@ void log_overlap_impl(UL_t const& UL, DL_t const& DL, VL_t const& VL,
           // still need to compute log(det(UR)) if it is not stored, in the event UR is complex
           // and det(UR) has a phase (i.e. det(UR) =/= +-1)
           detail::inverse_logdet(UR,ovlp,M1,false); 
-          nda::tensor::add(nda::conj(UR),"nij",M1,"nji");
+          nda::tensor::add(1.0,nda::conj(UR),"nij",0.0,M1,"nji");
         }
 
         // M0 <-- UL^-1*DLmax^-1
         //nda::tensor::contract(ComplexType(1.0),M0,"ij",DLmax_inv,"j",ComplexType(0.0),M0,"ij");  
-        nda::tensor::elementwise(ComplexType(1.0),DLmax_inv,"j",ComplexType(1.0),M0,"ij",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,DLmax_inv,"j",1.0,M0,"ij",nda::tensor::binary_op::PROD);
 
         // M1 <-- DRmax^-1*UR^-1
         //nda::tensor::contract(M1,"nij",DRmax_inv,"ni",M1,"nij"); 
-        nda::tensor::elementwise(ComplexType(1.0),DRmax_inv,"ni",ComplexType(1.0),M1,"nij",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,DRmax_inv,"ni",1.0,M1,"nij",nda::tensor::binary_op::PROD);
 
       } // end of scope for DRmin, DRmax_inv, DLmin, DLmax_inv 
 
@@ -352,7 +352,7 @@ void log_overlap_impl(UL_t const& UL, DL_t const& DL, VL_t const& VL,
           detail::inverse_logdet(UL,ovlp,M0,nbatch,false);
           // U -> U^+ = U^-1 (for U unitary) 
           //M0() = nda::dagger(UL);
-          nda::tensor::add(nda::conj(UL),"ji",M0,"ij");
+          nda::tensor::add(1.0,nda::conj(UL),"ji",0.0,M0,"ij");
         }
         // M1 <-- UR^-1
         if(!unitaryR){
@@ -363,7 +363,7 @@ void log_overlap_impl(UL_t const& UL, DL_t const& DL, VL_t const& VL,
           // and det(UR) has a phase (i.e. det(UR) =/= +-1)
           detail::inverse_logdet(UR,ovlp,M1,false);
           // U -> U^+ = U^-1 (for U unitary) 
-          nda::tensor::add(nda::conj(UR),"nij",M1,"nji");
+          nda::tensor::add(1.0,nda::conj(UR),"nij",0.0,M1,"nji");
         }
 
         // M0 <-- UL^-1*DLmax^-1 
@@ -415,9 +415,8 @@ void LUsolve(A_t && A, B_t && B, O_t && ovlp)
  
   ipiv() = 0;
 
-  //nda::tensor::add(B,"nij",T0,"ijn");
-  //permute indices
-  T0 = nda::permuted_indices_view<nda::encode(nda::permutations::cycle<3>(1))>(std::forward<B_t>(B));
+  // permute indices: T0(i,j,n) <-- B(n,i,j)
+  nda::tensor::assign(B,"nij",T0,"ijn");
 
   // LU 
   nda::lapack::getrf(A,ipiv,work);
@@ -428,9 +427,8 @@ void LUsolve(A_t && A, B_t && B, O_t && ovlp)
   // solve Ax = b
   nda::lapack::getrs(A,T0,ipiv);
 
-  //nda::tensor::add(T0,"ijn",B,"nij");
-  //permute indices
-  B = nda::permuted_indices_view<nda::encode(nda::permutations::cycle<3>(2))>(T0);
+  // permute indices: B(n,i,j) <-- T0(i,j,n)
+  nda::tensor::assign(T0,"ijn",B,"nij");
 }
 
 }
@@ -891,13 +889,13 @@ void MixedDensityMatrix(A_t const& UL, B_t const& DL, C_t const& VL,
         //nda::tensor::contract(VL,"ij",DLmin,"j",M0,"ij");
         // FIX: copy because elementwise is in-place (is there an alternative?)  
         M0 = VL;
-        nda::tensor::elementwise(ComplexType(1.0),DLmin,"j",ComplexType(1.0),M0,"ij",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,DLmin,"j",1.0,M0,"ij",nda::tensor::binary_op::PROD);
 
         // M1 <-- DRmin * VR (M1 used as temporary storage)
         //nda::tensor::contract(VR,"nij",DRmin,"ni",M1,"nij");
         // FIX: copy because elementwise is in-place (is there an alternative?)  
         M1 = VR;
-        nda::tensor::elementwise(ComplexType(1.0),DRmin,"ni",ComplexType(1.0),M1,"nij",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,DRmin,"ni",1.0,M1,"nij",nda::tensor::binary_op::PROD);
 
         // G <-- DRmin*VR*VL*DLmin
         nda::tensor::contract(ComplexType(1.0),M1,"nij",M0,"jk",ComplexType(0.0),G,"nik");
@@ -911,7 +909,7 @@ void MixedDensityMatrix(A_t const& UL, B_t const& DL, C_t const& VL,
           // and det(UL) has a phase (i.e. det(UL) =/= +-1)
           detail::inverse_logdet(UL,ovlp,M0,nbatch,false);
           //M0() = nda::dagger(UL);
-          nda::tensor::add(nda::conj(UL),"ji",M0,"ij");
+          nda::tensor::add(1.0,nda::conj(UL),"ji",0.0,M0,"ij");
         }
         // M1 <-- UR^-1
         if(!unitaryR){
@@ -921,16 +919,16 @@ void MixedDensityMatrix(A_t const& UL, B_t const& DL, C_t const& VL,
           // still need to compute log(det(UR)) if it is not stored, in the event UR is complex
           // and det(UR) has a phase (i.e. det(UR) =/= +-1)
           detail::inverse_logdet(UR,ovlp,M1,false); 
-          nda::tensor::add(nda::conj(UR),"nij",M1,"nji");
+          nda::tensor::add(1.0,nda::conj(UR),"nij",0.0,M1,"nji");
         }
 
         // M0 <-- UL^-1*DLmax^-1
         //nda::tensor::contract(ComplexType(1.0),M0,"ij",DLmax_inv,"j",ComplexType(0.0),M0,"ij");
-        nda::tensor::elementwise(ComplexType(1.0),DLmax_inv,"j",ComplexType(1.0),M0,"ij",nda::tensor::op::MUL);  
+        nda::tensor::elementwise(1.0,DLmax_inv,"j",1.0,M0,"ij",nda::tensor::binary_op::PROD);
 
         // M1 <-- DRmax^-1*UR^-1
         //nda::tensor::contract(M1,"nij",DRmax_inv,"ni",M1,"nij"); 
-        nda::tensor::elementwise(ComplexType(1.0),DRmax_inv,"ni",ComplexType(1.0),M1,"nij",nda::tensor::op::MUL); 
+        nda::tensor::elementwise(1.0,DRmax_inv,"ni",1.0,M1,"nij",nda::tensor::binary_op::PROD);
 
       } // end of scope for DRmin, DRmax_inv, DLmin, DLmax_inv 
 
@@ -990,7 +988,7 @@ void MixedDensityMatrix(A_t const& UL, B_t const& DL, C_t const& VL,
           detail::inverse_logdet(UL,ovlp,M0,nbatch,false);
           // U -> U^+ = U^-1 (for U unitary) 
           //M0() = nda::dagger(UL);
-          nda::tensor::add(nda::conj(UL),"ji",M0,"ij");
+          nda::tensor::add(1.0,nda::conj(UL),"ji",0.0,M0,"ij");
         }
         // M1 <-- UR^-1
         if(!unitaryR){
@@ -1001,7 +999,7 @@ void MixedDensityMatrix(A_t const& UL, B_t const& DL, C_t const& VL,
           // and det(UR) has a phase (i.e. det(UR) =/= +-1)
           detail::inverse_logdet(UR,ovlp,M1,false);
           // U -> U^+ = U^-1 (for U unitary) 
-          nda::tensor::add(nda::conj(UR),"nij",M1,"nji");
+          nda::tensor::add(1.0,nda::conj(UR),"nij",0.0,M1,"nji");
         }
 
         // M0 <-- UL^-1*DLmax^-1 
@@ -1151,7 +1149,7 @@ void MixedDensityMatrix_v2(A_t const& UL, B_t const& DL, C_t const& VL,
           // and det(UL) has a phase (i.e. det(UL) =/= +-1)
           detail::inverse_logdet(VL,ovlp,M0,nbatch,false);
           //M0() = nda::dagger(VL);
-          nda::tensor::add(nda::conj(VL),"ji",M0,"ij");
+          nda::tensor::add(1.0,nda::conj(VL),"ji",0.0,M0,"ij");
         }
         // M1 <-- VR^-1
         if(!unitaryR){
@@ -1161,14 +1159,14 @@ void MixedDensityMatrix_v2(A_t const& UL, B_t const& DL, C_t const& VL,
           // still need to compute log(det(UR)) if it is not stored, in the event UR is complex
           // and det(UR) has a phase (i.e. det(UR) =/= +-1)
           detail::inverse_logdet(VR,ovlp,M1,false); 
-          nda::tensor::add(nda::conj(VR),"nij",M1,"nji");
+          nda::tensor::add(1.0,nda::conj(VR),"nij",0.0,M1,"nji");
         }
 
         // M0 <-- DLmax^-1*VL^-1
-        nda::tensor::elementwise(ComplexType(1.0),DLmax_inv,"i",ComplexType(1.0),M0,"ij",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,DLmax_inv,"i",1.0,M0,"ij",nda::tensor::binary_op::PROD);
 
         // M1 <-- VR^-1*DRmax^-1   (M1 used as temporary storage)
-        nda::tensor::elementwise(ComplexType(1.0),DRmax_inv,"nj",ComplexType(1.0),M1,"nij",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,DRmax_inv,"nj",1.0,M1,"nij",nda::tensor::binary_op::PROD);
 
         // G <-- (DLmax^-1*VL^-1*VR^-1*DRmax^-1)^T
         nda::tensor::contract(ComplexType(1.0),M1,"nkj",M0,"ik",ComplexType(0.0),G,"nji");
@@ -1176,14 +1174,14 @@ void MixedDensityMatrix_v2(A_t const& UL, B_t const& DL, C_t const& VL,
         // M0 <-- UL^T*DLmin
         //nda::tensor::contract(ComplexType(1.0),UL,"ij",DLmin,"i",ComplexType(0.0),M0,"ji");  
         // FIX: copy because elementwise is in-place (is there an alternative?) 
-        M0 = nda::transpose(UL);
-        nda::tensor::elementwise(ComplexType(1.0),DLmin,"j",ComplexType(1.0),M0,"ij",nda::tensor::op::MUL);
+        nda::tensor::assign(UL,"ij",M0,"ji");
+        nda::tensor::elementwise(1.0,DLmin,"j",1.0,M0,"ij",nda::tensor::binary_op::PROD);
 
         // M1 <-- DRmin*UR^T
         //nda::tensor::contract(ComplexType(1.0),UR,"nij",DRmin,"nj",ComplexType(0.0),M1,"nji");
         // FIX: copy because elementwise is in-place (is there an alternative?) 
-        nda::tensor::add(UR,"nij",M1,"nji");
-        nda::tensor::elementwise(ComplexType(1.0),DRmin,"ni",ComplexType(1.0),M1,"nij",nda::tensor::op::MUL);
+        nda::tensor::assign(UR,"nij",M1,"nji");
+        nda::tensor::elementwise(1.0,DRmin,"ni",1.0,M1,"nij",nda::tensor::binary_op::PROD);
 
       } // end of scope for DRmin, DRmax_inv, DLmin, DLmax_inv 
 
@@ -1225,7 +1223,7 @@ void MixedDensityMatrix_v2(A_t const& UL, B_t const& DL, C_t const& VL,
           // and det(UL) has a phase (i.e. det(UL) =/= +-1)
           detail::inverse_logdet(VL,ovlp,M0,nbatch,false);
           // M0() = nda::dagger(VL);
-          nda::tensor::add(nda::conj(VL),"ji",M0,"ij");
+          nda::tensor::add(1.0,nda::conj(VL),"ji",0.0,M0,"ij");
         }
         // M1 <-- VR^-1
         if(!unitaryR){
@@ -1237,7 +1235,7 @@ void MixedDensityMatrix_v2(A_t const& UL, B_t const& DL, C_t const& VL,
           detail::inverse_logdet(VR,ovlp,M1,false); 
 //          for(int b = 0; b < nbatch; ++b)
 //            M1(b,nda::range::all,nda::range::all) = nda::dagger(VR(b,nda::ellipsis{}));
-          nda::tensor::add(nda::conj(VR),"bji",M1,"bij");
+          nda::tensor::add(1.0,nda::conj(VR),"bji",0.0,M1,"bij");
         }
 
         // M0 <-- DLmax^-1*VL^-1

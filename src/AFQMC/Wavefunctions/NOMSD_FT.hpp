@@ -476,7 +476,7 @@ void NOMSD_FT<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Me
 
         //2.accumulate Ov[m] += ci[n] * exp(LogOv[n]-log_m[n]) 
         nda::tensor::add(ComplexType(-1.0),log_m,"w",ComplexType(1.0),Ot,"w");
-        nda::tensor::scale(std::conj(ci(d)),Ot,nda::tensor::op::EXP);
+        nda::tensor::scale(std::conj(ci(d)),Ot,nda::tensor::unary_op::EXP);
         nda::tensor::add(ComplexType(1.0),Ot,"w",ComplexType(1.0),Ov,"w");
       }
 
@@ -484,8 +484,8 @@ void NOMSD_FT<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Me
       if constexpr (MEM==HOST_MEMORY) {
         scl_wgt() /= Ov();
       } else {
-        nda::tensor::scale(ComplexType(1.0),Ov,nda::tensor::op::RCP);
-        nda::tensor::elementwise(ComplexType(1.0),Ov,"w",ComplexType(1.0),scl_wgt,"w",nda::tensor::op::MUL);
+        nda::tensor::scale(1.0,Ov,nda::tensor::unary_op::RCP);
+        nda::tensor::elementwise(1.0,Ov,"w",1.0,scl_wgt,"w",nda::tensor::binary_op::PROD);
       }
     }
 
@@ -519,7 +519,7 @@ void NOMSD_FT<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Me
       
       // Ot = conj(ci) * exp(Ot-log_m) 
       nda::tensor::add(ComplexType(-1.0),log_m,"w",ComplexType(1.0),Ot,"w");
-      nda::tensor::scale(std::conj(ci(d)),Ot,nda::tensor::op::EXP);
+      nda::tensor::scale(std::conj(ci(d)),Ot,nda::tensor::unary_op::EXP);
       // Ov += Ot 
       nda::tensor::add(ComplexType(1.0),Ot,"w",ComplexType(1.0),Ov,"w");
       if(properties_1body.size() > 0) {
@@ -535,7 +535,7 @@ void NOMSD_FT<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Me
       
       if(properties.size() > 0) {
         // Ot(w) *= scl_wgt(w);
-        nda::tensor::elementwise(ComplexType(1.0),scl_wgt,"w",ComplexType(1.0),Ot,"w",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,scl_wgt,"w",1.0,Ot,"w",nda::tensor::binary_op::PROD);
         auto Gt_h = nda::to_host(Gt());
         auto wgt_h  = nda::to_host(Ot());
         for (auto& v : properties)
@@ -549,9 +549,9 @@ void NOMSD_FT<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Me
         Gfull(w,nda::ellipsis{}) /= Ov(w); 
     } else {
       Ot() = Ov();
-      nda::tensor::scale(ComplexType(1.0),Ot,nda::tensor::op::RCP);
+      nda::tensor::scale(1.0,Ot,nda::tensor::unary_op::RCP);
       // is this doing the righ thing???
-      nda::tensor::elementwise(ComplexType(1.0),Ot,"w",ComplexType(1.0),Gfull,"wiab",nda::tensor::op::MUL);
+      nda::tensor::elementwise(1.0,Ot,"w",1.0,Gfull,"wiab",nda::tensor::binary_op::PROD);
     }
 
     auto Gh = nda::to_host(Gfull());

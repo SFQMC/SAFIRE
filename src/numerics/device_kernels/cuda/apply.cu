@@ -17,16 +17,16 @@ namespace kernels::device::detail
 {
 
 template<typename V> 
-void apply_impl(nda::get_value_t<V> alpha, V& A, nda::tensor::op::TENSOR_OP oper)
+void apply_impl(nda::get_value_t<V> alpha, V& A, nda::tensor::unary_op oper)
 {
   constexpr int rank = nda::get_rank<V>;
   if(A.size()==0) return;
   // these seem fine in cutensor_permute
-  if(oper==nda::tensor::op::ID or oper==nda::tensor::op::CONJ) // or oper==nda::tensor::op::RCP) 
+  if(oper==nda::tensor::unary_op::IDENTITY or oper==nda::tensor::unary_op::CONJ) // or oper==nda::tensor::unary_op::RCP)
   {
     nda::tensor::scale(alpha,A,oper);
     return;
-  } else if(oper==nda::tensor::op::NEG) {
+  } else if(oper==nda::tensor::unary_op::NEG) {
     nda::tensor::scale(-alpha,A);
     return;
   }
@@ -37,7 +37,7 @@ void apply_impl(nda::get_value_t<V> alpha, V& A, nda::tensor::op::TENSOR_OP oper
 
   // some operations appear to not be allowed in cutensor permute
   switch (oper) {
-    case nda::tensor::op::SQRT:
+    case nda::tensor::unary_op::SQRT:
     {
       //a = alpha * sqrt(a); break;
       if constexpr (rank==1) {
@@ -59,7 +59,7 @@ void apply_impl(nda::get_value_t<V> alpha, V& A, nda::tensor::op::TENSOR_OP oper
         sfqmc::utils::check(false,"Invalid rank in kernel::apply.");
       }
     }
-    case nda::tensor::op::ABS:
+    case nda::tensor::unary_op::ABS:
     {
       //a = alpha * abs(a); break;
       if constexpr (rank==1) {
@@ -81,7 +81,7 @@ void apply_impl(nda::get_value_t<V> alpha, V& A, nda::tensor::op::TENSOR_OP oper
         sfqmc::utils::check(false,"Invalid rank in kernel::apply.");
       }
     }
-    case nda::tensor::op::RCP: 
+    case nda::tensor::unary_op::RCP:
     {
       //a = alpha * (1/a); break;
       if constexpr (rank==1) {
@@ -103,7 +103,7 @@ void apply_impl(nda::get_value_t<V> alpha, V& A, nda::tensor::op::TENSOR_OP oper
         sfqmc::utils::check(false,"Invalid rank in kernel::apply.");
       }
     }
-    case nda::tensor::op::EXP: 
+    case nda::tensor::unary_op::EXP:
     {
       //a = alpha * nda::exp(a); break;
       if constexpr (rank==1) {
@@ -125,7 +125,7 @@ void apply_impl(nda::get_value_t<V> alpha, V& A, nda::tensor::op::TENSOR_OP oper
         sfqmc::utils::check(false,"Invalid rank in kernel::apply.");
       }
     }
-    case nda::tensor::op::LOG: 
+    case nda::tensor::unary_op::LOG:
     {
       // a = alpha * nda::log(a); break;
       if constexpr (rank==1) {
@@ -160,9 +160,9 @@ template<int Rank>
 using basic_layout_t = typename nda::basic_layout<0, nda::C_stride_order<Rank>, nda::layout_prop_e::none>;
 
 #define _inst_(T,V) \
-template void apply_impl(T,V<T,1,basic_layout_t<1>>&,nda::tensor::op::TENSOR_OP);  \
-template void apply_impl(T,V<T,2,basic_layout_t<2>>&,nda::tensor::op::TENSOR_OP);  \
-template void apply_impl(T,V<T,3,basic_layout_t<3>>&,nda::tensor::op::TENSOR_OP);  
+template void apply_impl(T,V<T,1,basic_layout_t<1>>&,nda::tensor::unary_op);  \
+template void apply_impl(T,V<T,2,basic_layout_t<2>>&,nda::tensor::unary_op);  \
+template void apply_impl(T,V<T,3,basic_layout_t<3>>&,nda::tensor::unary_op);
 
 _inst_(double,device_array_view)
 _inst_(std::complex<double>,device_array_view)

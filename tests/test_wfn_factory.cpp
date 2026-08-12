@@ -157,7 +157,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
         memory::array<MEM, ComplexType, 3> p(reshape(p_h, nwalk, npol * NMO, nels[spin]));
         auto SM = wset.SlaterMatrices(static_cast<SpinTypes>(spin));
         if(SM.size() > 0) {
-          nda::tensor::add(p, "ijk", SM, "ijk");
+          SM() = p();
         }
       }
     }

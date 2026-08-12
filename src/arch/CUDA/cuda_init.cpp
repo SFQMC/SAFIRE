@@ -99,7 +99,7 @@ void init()
 	    world.rank(),node.rank(),devn);
 
   // explicit synchronization after every call is not useful
-  nda::tensor::cutensor::set_synchronization(false);
+  nda::tensor::device::set_synchronization(false);
 
   check_probe_kernel();
   

@@ -243,11 +243,11 @@ public:
             } else {
 	      if constexpr(REAL) {
                 auto Guv4d = memory::to_real_view(Guv);
-                nda::tensor::elementwise(RealType(1.0),Zuv,"uv",
-                                         RealType(1.0),Guv4d,"wuvc",nda::tensor::op::MUL);
+                nda::tensor::elementwise(1.0,Zuv,"uv",
+                                         1.0,Guv4d,"wuvc",nda::tensor::binary_op::PROD);
               } else {
-                nda::tensor::elementwise(ComplexType(1.0),Zuv,"uv",
-                                         ComplexType(1.0),Guv,"wuv",nda::tensor::op::MUL);
+                nda::tensor::elementwise(1.0,Zuv,"uv",
+                                         1.0,Guv,"wuv",nda::tensor::binary_op::PROD);
               }
             }
 
@@ -382,11 +382,11 @@ public:
           } else {
             if constexpr(REAL) {
               auto Guv4d = memory::to_real_view(Guv);
-              nda::tensor::elementwise(RealType(1.0),Zuv,"uv",
-                                       RealType(1.0),Guv4d,"wuvc",nda::tensor::op::MUL);
+              nda::tensor::elementwise(1.0,Zuv,"uv",
+                                       1.0,Guv4d,"wuvc",nda::tensor::binary_op::PROD);
             } else {
-              nda::tensor::elementwise(ComplexType(1.0),Zuv,"uv",
-                                       ComplexType(1.0),Guv,"wuv",nda::tensor::op::MUL);
+              nda::tensor::elementwise(1.0,Zuv,"uv",
+                                       1.0,Guv,"wuv",nda::tensor::binary_op::PROD);
             }
           }
 
@@ -532,7 +532,7 @@ public:
                   Quwi(all,w,i) = Tuw(all,iw+w) * Xiu(i,all);
             } else {
               auto Quwi_r = memory::to_real_view(Quwi);
-              nda::tensor::elementwise_trinary(1.0,Tuw_r(all,range(iw,iw+nw),all),"uwc",1.0,Xiu,"iu",0.0,Quwi_r,"uwic",nda::tensor::op::MUL,nda::tensor::op::SUM);
+              nda::tensor::elementwise_trinary(1.0,Tuw_r(all,range(iw,iw+nw),all),"uwc",1.0,Xiu,"iu",0.0,Quwi_r,"uwic",nda::tensor::binary_op::PROD,nda::tensor::binary_op::SUM);
             }
             
             auto Q2d = nda::reshape(Quwi, std::array<long,2>{nu,nw*NMO});
@@ -554,7 +554,7 @@ public:
                 for(int i=0; i<NMO; ++i)
                   Qwiu(w,i,all) = Tuw(all,iw+w) * nda::conj(Xiu(i,all));
             } else {
-              nda::tensor::elementwise_trinary(ComplexType(1.0),Tuw(all,range(iw,iw+nw)),"uw",ComplexType(1.0),nda::conj(Xiu),"iu",ComplexType(0.0),Qwiu,"wiu",nda::tensor::op::MUL,nda::tensor::op::SUM); 
+              nda::tensor::elementwise_trinary(1.0,Tuw(all,range(iw,iw+nw)),"uw",1.0,nda::conj(Xiu),"iu",0.0,Qwiu,"wiu",nda::tensor::binary_op::PROD,nda::tensor::binary_op::SUM);
             }
 
             auto Q2d = nda::reshape(Qwiu, std::array<long,2>{nw*NMO,nu});

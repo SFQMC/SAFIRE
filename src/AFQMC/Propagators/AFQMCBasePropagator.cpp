@@ -145,7 +145,7 @@ void AFQMCBasePropagator<MEM>::generateP1(double dt, WALKER_TYPES walker_type, b
     math::hermitize(H1);
 
     nda::tensor::add(1, H1, -1, H1tmp);
-    if(nda::norm(nda::flatten(H1tmp())) > 1e-5) {
+    if(nda::linalg::norm(nda::flatten(H1tmp())) > 1e-5) {
       app_warning("H1 is not hermitian!");
     }
 

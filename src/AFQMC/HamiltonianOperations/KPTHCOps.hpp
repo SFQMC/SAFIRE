@@ -283,8 +283,8 @@ public:
                     for(int i=0; i<nw; ++i)
                       Wuv(i,all,all) *= Zuv(iq,all,all);
                   } else {
-                    nda::tensor::elementwise(ComplexType(1.0),Zuv(iq,all,all),"uv",
-                                             ComplexType(1.0),Wuv,"wuv",nda::tensor::op::MUL);
+                    nda::tensor::elementwise(1.0,Zuv(iq,all,all),"uv",
+                                             1.0,Wuv,"wuv",nda::tensor::binary_op::PROD);
                   }
 
                   // R[w,u][b] = sum_v Guv[w,u][v] * Yau[b][v]
@@ -507,10 +507,10 @@ public:
 
             // Qwiu[w][i][u] = T[w][u] * conj(Piu[i][u])
             auto Xkiu = Xsiu(is,all,range(ip*nbnd,(ip+1)*nbnd),all); 
-            nda::tensor::elementwise_trinary(ComplexType(1.0),Twqu(all,iq,all),"wu",
-              ComplexType(1.0),nda::conj(Xkiu),"kiu",
-              ComplexType(0.0),Qwiu,"kwiu",
-              nda::tensor::op::MUL,nda::tensor::op::SUM);
+            nda::tensor::elementwise_trinary(1.0,Twqu(all,iq,all),"wu",
+              1.0,nda::conj(Xkiu),"kiu",
+              0.0,Qwiu,"kwiu",
+              nda::tensor::binary_op::PROD,nda::tensor::binary_op::SUM);
 
             // v(nstot,nwalk,nptot,nkpts,nbnd,nkpts,nbnd)
             Av.clear(); 
@@ -547,10 +547,10 @@ public:
 
             auto Xkiu = Xsiu(is,all,range(ip*nbnd,(ip+1)*nbnd),all);
             // Qwiu[w][i][u] = T[w][u] * Piu[i][u]
-            nda::tensor::elementwise_trinary(ComplexType(1.0),Twu,"wu",
-                      ComplexType(1.0),Xkiu,"kiu",
-                      ComplexType(0.0),Qwiu,"kwiu",
-                      nda::tensor::op::MUL,nda::tensor::op::SUM);
+            nda::tensor::elementwise_trinary(1.0,Twu,"wu",
+                      1.0,Xkiu,"kiu",
+                      0.0,Qwiu,"kwiu",
+                      nda::tensor::binary_op::PROD,nda::tensor::binary_op::SUM);
 
             // v(nstot,nwalk,nptot,nkpts,nbnd,nkpts,nbnd)
             Av.clear();

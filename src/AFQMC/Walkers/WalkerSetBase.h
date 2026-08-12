@@ -457,7 +457,7 @@ public:
 
   void scaleWeightsByOverlap()
   {
-    using nda::tensor::op::MUL;
+    using nda::tensor::binary_op::PROD;
     utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
     nda::range r(tot_num_walkers);
     nda::array<ComplexType,1> ov(tot_num_walkers);  // on host
@@ -468,20 +468,20 @@ public:
       buff(i) = ComplexType(1.0 / std::abs(ov[i]), 0.0);
     buff_d() = buff(); // to device
     // A(i) = A(i) * x(i)
-    nda::tensor::elementwise(ComplexType(1.0),buff_d,"i",
-                             ComplexType(1.0),walker_buffer(r,data_displ[WEIGHT]),"i",MUL);
+    nda::tensor::elementwise(1.0,buff_d,"i",
+                             1.0,walker_buffer(r,data_displ[WEIGHT]),"i",PROD);
     for (int i = 0; i < tot_num_walkers; i++)
       buff[i] = std::exp(ComplexType(0.0, -std::arg(ov[i])));
     buff_d() = buff();  // to device
     // A(i) = A(i) * x(i)
-    nda::tensor::elementwise(ComplexType(1.0),buff_d,"i",
-                             ComplexType(1.0),walker_buffer(r,data_displ[PHASE]),"i",MUL);
-    nda::tensor::elementwise(ComplexType(1.0),buff_d,"i",
-                             ComplexType(1.0),walker_buffer(r,data_displ[PHASE1]),"i",MUL);
-    nda::tensor::elementwise(ComplexType(1.0),buff_d,"i",
-                             ComplexType(1.0),walker_buffer(r,data_displ[PHASE2]),"i",MUL);
-    nda::tensor::elementwise(ComplexType(1.0),buff_d,"i",
-                             ComplexType(1.0),walker_buffer(r,data_displ[PHASE3]),"i",MUL);
+    nda::tensor::elementwise(1.0,buff_d,"i",
+                             1.0,walker_buffer(r,data_displ[PHASE]),"i",PROD);
+    nda::tensor::elementwise(1.0,buff_d,"i",
+                             1.0,walker_buffer(r,data_displ[PHASE1]),"i",PROD);
+    nda::tensor::elementwise(1.0,buff_d,"i",
+                             1.0,walker_buffer(r,data_displ[PHASE2]),"i",PROD);
+    nda::tensor::elementwise(1.0,buff_d,"i",
+                             1.0,walker_buffer(r,data_displ[PHASE3]),"i",PROD);
   }
 
   auto get_mpi() const { return mpi; }

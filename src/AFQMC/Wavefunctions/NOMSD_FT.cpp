@@ -198,7 +198,7 @@ void NOMSD_FT<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memor
       // doing in host for now!!!
       
       nda::tensor::add(ComplexType(-1.0),log_m,"w",ComplexType(1.0),Ot,"w");
-      nda::tensor::scale(std::conj(ci(d)),Ot,nda::tensor::op::EXP);
+      nda::tensor::scale(std::conj(ci(d)),Ot,nda::tensor::unary_op::EXP);
       nda::tensor::add(ComplexType(1.0),Ot,"w",ComplexType(1.0),Ov,"w");
       if constexpr (MEM==HOST_MEMORY) {
         for(int w=0; w<nw; ++w) 
@@ -215,9 +215,9 @@ void NOMSD_FT<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memor
         G(w,all) /= Ov(w); 
     } else {
       Ot() = Ov();
-      nda::tensor::scale(ComplexType(1.0),Ot,nda::tensor::op::RCP);
+      nda::tensor::scale(1.0,Ot,nda::tensor::unary_op::RCP);
       // is this doing the righ thing???
-      nda::tensor::elementwise(ComplexType(1.0),Ot,"w",ComplexType(1.0),G,"wi",nda::tensor::op::MUL);
+      nda::tensor::elementwise(1.0,Ot,"w",1.0,G,"wi",nda::tensor::binary_op::PROD);
     }
     */
   }

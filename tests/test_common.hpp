@@ -314,8 +314,8 @@ struct ApproxArrayMatcher : Catch::Matchers::MatcherGenericBase {
     // make_regular required for flatten in case array is not contiguous
     auto other_host = nda::flatten(nda::make_regular(nda::to_host(other)));
     auto array_host = nda::flatten(nda::make_regular(nda::to_host(array)));
-    auto diffnorm = nda::norm(other_host - array_host, INFINITY);
-    auto valnorm = std::max(nda::norm(array_host, INFINITY), nda::norm(other_host, INFINITY));
+    auto diffnorm = nda::linalg::norm(other_host - array_host, INFINITY);
+    auto valnorm = std::max(nda::linalg::norm(array_host, INFINITY), nda::linalg::norm(other_host, INFINITY));
 
     return diffnorm < std::max(abstol, reltol * valnorm);
   }

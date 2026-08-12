@@ -119,10 +119,10 @@ void NOMSD<MEM,devPsiT>::getReferences(memory::buffered_array<MEM,ComplexType,3>
   } else {
     for(int i=0; i<number_of_references; ++i) {
       if(nup != 0) {
-        nda::tensor::add(nda::conj(OrbMats(i,0)()),"ji",Refs(i,all,range(nup)),"ij");
+        nda::tensor::add(1.0,nda::conj(OrbMats(i,0)()),"ji",0.0,Refs(i,all,range(nup)),"ij");
       }
       if(walker_type == COLLINEAR && ndown != 0) {
-        nda::tensor::add(nda::conj(OrbMats(i,1)()),"ji",Refs(i,all,range(nup,nel)),"ij");
+        nda::tensor::add(1.0,nda::conj(OrbMats(i,1)()),"ji",0.0,Refs(i,all,range(nup,nel)),"ij");
       }
     }
   }
@@ -227,7 +227,7 @@ void NOMSD<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset,
       // doing in host for now!!!
       
       nda::tensor::add(ComplexType(-1.0),log_m,"w",ComplexType(1.0),Ot,"w");
-      nda::apply(std::conj(ci(d)),Ot,nda::tensor::op::EXP);
+      nda::apply(std::conj(ci(d)),Ot,nda::tensor::unary_op::EXP);
       nda::tensor::add(ComplexType(1.0),Ot,"w",ComplexType(1.0),Ov,"w");
       if constexpr (MEM==HOST_MEMORY) {
         for(int w=0; w<nw; ++w) 
@@ -243,9 +243,9 @@ void NOMSD<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset,
         G(w,all) /= Ov(w); 
     } else {
       Ot() = Ov();
-      nda::apply(ComplexType(1.0),Ot,nda::tensor::op::RCP);
+      nda::apply(1.0,Ot,nda::tensor::unary_op::RCP);
       // is this doing the righ thing???
-      nda::tensor::elementwise(ComplexType(1.0),Ot,"w",ComplexType(1.0),G,"wi",nda::tensor::op::MUL);
+      nda::tensor::elementwise(1.0,Ot,"w",1.0,G,"wi",nda::tensor::binary_op::PROD);
     }
     // Ov(iw) += log_ov(iw)
     nda::tensor::add(ComplexType(1.0),log_m,"w",ComplexType(1.0),Ov,"w");

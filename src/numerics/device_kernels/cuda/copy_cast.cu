@@ -12,9 +12,8 @@
 #include "utilities/type_traits.hpp"
 #include "numerics/device_kernels/cuda/cuda_settings.h"
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "nda/nda.hpp"
 #include <cuda/std/mdspan>
-#include "cub/device/device_for.cuh"
+#include <cub/device/device_for.cuh>
 
 namespace kernels::device::detail
 {

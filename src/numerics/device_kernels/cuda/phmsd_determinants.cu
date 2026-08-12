@@ -6,9 +6,9 @@
 #include "numerics/device_kernels/cuda/cuda_aux.hpp"
 #include "arch/atomics.hpp"
 #include <nda/nda.hpp>
-#include "numerics/nda_functions.hpp"
 #include <cuda/std/mdspan>
 #include "cub/device/device_for.cuh"
+#include "numerics/nda_functions.hpp"
 #include "numerics/operations/determinants.hpp"
 
 namespace kernels::device::detail

@@ -328,7 +328,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   memory::array<MEM,ComplexType,2> eloc_ph0(nwalk,3);
   memory::array<MEM,ComplexType,1> ov_ph0(nwalk);
   wfn.Energy(wset,eloc_ph0,ov_ph0);
-  nda::apply(ComplexType(1.0),ov_ph0,nda::tensor::op::EXP);
+  nda::apply(1.0,ov_ph0,nda::tensor::unary_op::EXP);
 
   {
     auto eloc_h = nda::to_host(eloc_ph0);
@@ -352,7 +352,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     memory::array<MEM,ComplexType,2> eloc(nwalk,3);
     memory::array<MEM,ComplexType,1> ov(nwalk);
     nomsd.Energy(wset,eloc,ov);
-    nda::apply(ComplexType(1.0),ov,nda::tensor::op::EXP);
+    nda::apply(1.0,ov,nda::tensor::unary_op::EXP);
     CHECK_THAT(ov_ph0, utils::Approx(ov));
     CHECK_THAT(eloc_ph0, utils::Approx(eloc));
   }
@@ -368,7 +368,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     memory::array<MEM,ComplexType,2> eloc(nwalk,3);
     memory::array<MEM,ComplexType,1> ov(nwalk);
     wfn1.Energy(wset,eloc,ov);
-    nda::apply(ComplexType(1.0),ov,nda::tensor::op::EXP);
+    nda::apply(1.0,ov,nda::tensor::unary_op::EXP);
 
     CHECK_THAT(ov_ph0, utils::Approx(ov));
     CHECK_THAT(eloc_ph0, utils::Approx(eloc));

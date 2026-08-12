@@ -157,11 +157,11 @@ void orthogonalize(A_t && A, B_t && log_detR)
   nda::lapack::gqr(nda::transpose(Q),tau,work);
 
   // copy back
-  nda::tensor::add(Q,"nab",A,"nba");  
+  nda::tensor::assign(Q,"nab",A,"nba");
 
   // scale A by scl, to make sign of determinant consistent
   if constexpr (nda::mem::have_device_compatible_addr_space<A_t>) {
-    nda::tensor::elementwise(ComplexType(1.0), scl, "wn", ComplexType(1.0), A, "win", nda::tensor::op::MUL);
+    nda::tensor::elementwise(1.0, scl, "wn", 1.0, A, "win", nda::tensor::binary_op::PROD);
   } else {
     for (int i = 0; i < M; ++i)
       A(nda::range::all,i,nda::range::all) *= scl();
@@ -430,10 +430,10 @@ void orthogonalize_wSVD(U_t && U, D_t && D, V_t && V, B_t && scl)
    math::copy(S(nda::range::all,b),D(b,nda::range::all));
   }
 
-  nda::tensor::add(UT,"ijn",U,"nij");
+  nda::tensor::assign(UT,"ijn",U,"nij");
 
   // FIX : need V^+ (not just V^T)
-  nda::tensor::add(VT,"ijn",M1,"nij");
+  nda::tensor::assign(VT,"ijn",M1,"nij");
 
   // V <-- V'*V
   nda::tensor::contract(V,"nij",nda::conj(M1),"nki",V,"nkj");

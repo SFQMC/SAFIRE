@@ -246,7 +246,7 @@ void PHMSD<MEM>::energy_alg0(WalkerSet<MEM> const& wset, memory::array_view<MEM,
           // log_ov(n) - log_ov(0)
           nda::tensor::add(ComplexType(-1.0),log_ov(spin,all),"w",ComplexType(1.0),Ovmsd(spin,nd,all),"w");
           // Ovmsd = exp(log_ov(n) - log_ov(0)) -> Ov(n)/Ov(0)
-          nda::apply(ComplexType(1.0),Ovmsd(spin,nd,all),nda::tensor::op::EXP);
+          nda::apply(1.0,Ovmsd(spin,nd,all),nda::tensor::unary_op::EXP);
         }
         // kernel for gpu???
         for(int a=0; a<nel[spin]; ++a)
@@ -262,8 +262,8 @@ void PHMSD<MEM>::energy_alg0(WalkerSet<MEM> const& wset, memory::array_view<MEM,
           nda::tensor::contract(ComplexType(1.0),KEright(nd,all,all),"wn",KEleft,"wn",
                                 ComplexType(0.0),eloc,"w"); 
           // tmp[iw] *= Ovmsd[spin][nd][iw]
-          nda::tensor::elementwise(ComplexType(1.0),Ovmsd(spin,nd,all),"w",
-                                   ComplexType(1.0),eloc,"w",nda::tensor::op::MUL);
+          nda::tensor::elementwise(1.0,Ovmsd(spin,nd,all),"w",
+                                   1.0,eloc,"w",nda::tensor::binary_op::PROD);
           // opSpinEJ[iw] += tmp[iw]
           nda::tensor::add(ComplexType(1.0),eloc,"w",ComplexType(1.0),opSpinEJ,"w");  
         }
@@ -275,8 +275,8 @@ void PHMSD<MEM>::energy_alg0(WalkerSet<MEM> const& wset, memory::array_view<MEM,
             for(int w=0; w<nwalk; ++w)
               KEright(d,w,all) *= Ovmsd(0,d,w);
         else
-          nda::tensor::elementwise(ComplexType(1.0),Ovmsd(0,range(nexcit[0]),all),"dw",
-                                   ComplexType(1.0),KEright(range(nexcit[0]),all,all),"dwn",nda::tensor::op::MUL);
+          nda::tensor::elementwise(1.0,Ovmsd(0,range(nexcit[0]),all),"dw",
+                                   1.0,KEright(range(nexcit[0]),all,all),"dwn",nda::tensor::binary_op::PROD);
         // Tdn[idet_down][iw][n] = DetCouplings[idet_down][idet_up] * KEright[idet_up][iw][n] 
         memory::buffered_array<MEM,ComplexType,2> Tdn(nexcit[0],nwalk*nkev); 
         Tdn() = KEr2d(range(nexcit[0]),all);
@@ -301,30 +301,30 @@ void PHMSD<MEM>::energy_alg0(WalkerSet<MEM> const& wset, memory::array_view<MEM,
              wgt(range(nexcit[0]),all),"uw",ComplexType(0.0),Ov,"w");
 
     // W[u][iw] *= Ovmsd[0][u][iw]   
-    nda::tensor::elementwise(ComplexType(1.0),Ovmsd(0,range(nexcit[0]),all),"uw",
-                         ComplexType(1.0),wgt(range(nexcit[0]),all),"uw",nda::tensor::op::MUL);
+    nda::tensor::elementwise(1.0,Ovmsd(0,range(nexcit[0]),all),"uw",
+                         1.0,wgt(range(nexcit[0]),all),"uw",nda::tensor::binary_op::PROD);
     if constexpr (MEM==HOST_MEMORY) {
       for(int u=0; u<nexcit[0]; ++u) 
         for(int w=0; w<nwalk; ++w) 
           Emsd(0,u,w,all) *= wgt(u,w);
     } else { 
-      nda::tensor::elementwise(ComplexType(1.0),wgt(range(nexcit[0]),all),"uw",
-              ComplexType(1.0),Emsd(0,range(nexcit[0]),all,all),"uwc",nda::tensor::op::MUL);
+      nda::tensor::elementwise(1.0,wgt(range(nexcit[0]),all),"uw",
+              1.0,Emsd(0,range(nexcit[0]),all,all),"uwc",nda::tensor::binary_op::PROD);
     }
 
     // spin down
     // W[d][iw] = sum_u OpSpinDetCouplings[d][u] Ov[u][iw]   
     math::sparse::csrmm<'N'>(OpSpinDetCouplings(1),Ovmsd(0,range(nexcit[0]),all),wgt(range(nexcit[1]),all));
     // W[u][iw] *= Ovmsd[0][u][iw]   
-    nda::tensor::elementwise(ComplexType(1.0),Ovmsd(1,range(nexcit[1]),all),"uw",
-                         ComplexType(1.0),wgt(range(nexcit[1]),all),"uw",nda::tensor::op::MUL);
+    nda::tensor::elementwise(1.0,Ovmsd(1,range(nexcit[1]),all),"uw",
+                         1.0,wgt(range(nexcit[1]),all),"uw",nda::tensor::binary_op::PROD);
     if constexpr (MEM==HOST_MEMORY) {
       for(int u=0; u<nexcit[1]; ++u)
         for(int w=0; w<nwalk; ++w) 
           Emsd(1,u,w,all) *= wgt(u,w);
     } else {
-      nda::tensor::elementwise(ComplexType(1.0),wgt(range(nexcit[1]),all),"uw",
-              ComplexType(1.0),Emsd(1,range(nexcit[1]),all,all),"uwc",nda::tensor::op::MUL);
+      nda::tensor::elementwise(1.0,wgt(range(nexcit[1]),all),"uw",
+              1.0,Emsd(1,range(nexcit[1]),all,all),"uwc",nda::tensor::binary_op::PROD);
     }
   } else {
 /*
@@ -351,16 +351,16 @@ void PHMSD<MEM>::energy_alg0(WalkerSet<MEM> const& wset, memory::array_view<MEM,
       E(iw,all) /= Ov(iw);
   } else {
     // implemented in nda_functions.hpp
-    nda::tensor::reduce(ComplexType(1.0),Emsd,"snwc",ComplexType(0.0),E,"wc",nda::tensor::op::SUM);
+    nda::tensor::reduce(1.0,Emsd,"snwc",0.0,E,"wc",nda::tensor::binary_op::SUM);
     if(walker_type == COLLINEAR) 
       nda::tensor::add(ComplexType(1.0),opSpinEJ,"w",ComplexType(1.0),E(all,2),"w");
     memory::buffered_array<MEM,ComplexType,1> Ot(Ov);
-    nda::apply(ComplexType(1.0),Ot,nda::tensor::op::RCP);
-    nda::tensor::elementwise(ComplexType(1.0),Ot,"w",
-                             ComplexType(1.0),E,"wc",nda::tensor::op::MUL);
+    nda::apply(1.0,Ot,nda::tensor::unary_op::RCP);
+    nda::tensor::elementwise(1.0,Ot,"w",
+                             1.0,E,"wc",nda::tensor::binary_op::PROD);
   }
   // Ov -> log( Ov(n)/Ov(0) ) 
-  nda::apply(ComplexType(1.0),Ov,nda::tensor::op::LOG);
+  nda::apply(1.0,Ov,nda::tensor::unary_op::LOG);
   // Ov += log_ov(0) -> log(Ov)
   if(walker_type == COLLINEAR) 
     nda::tensor::add(ComplexType(1.0),log_ov(1,all),"w",ComplexType(1.0),log_ov(0,all),"w");
@@ -443,7 +443,7 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
         // Ov[iw] = sum_u W(u,iw) * ovlp_ratio(u,iw)  
         nda::tensor::contract(one,ovlp_ratios_up,"uw",wgt,"uw",zero,Ov(w_rng),"w");
         // W(u,iw) *= ovlp_ratio(u,iw)   
-        nda::tensor::elementwise(one,ovlp_ratios_up,"uw",one,wgt,"uw",nda::tensor::op::MUL);
+        nda::tensor::elementwise(one,ovlp_ratios_up,"uw",one,wgt,"uw",nda::tensor::binary_op::PROD);
 
         // 3a. Reference energy and temporary matrices
         HamOp.ph_reference_energy(Alpha, eloc, GA2d, KEright(0,all,all));
@@ -455,7 +455,7 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
           for(int i=0; i<nw; ++i)
             eloc(i,all) *= Ov(iw+i);
         } else {
-          nda::tensor::elementwise(one,Ov(w_rng),"w",one,eloc,"wi",nda::tensor::op::MUL);
+          nda::tensor::elementwise(one,Ov(w_rng),"w",one,eloc,"wi",nda::tensor::binary_op::PROD);
         }
         nda::tensor::add(one, eloc, "wi", one, E(w_rng,all), "wi");
 
@@ -473,7 +473,7 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
               KEright(i,w,all) *= ovlp_ratios_up(i,w);
         } else {
           nda::tensor::elementwise(one,ovlp_ratios_up,"nw",
-                   one,KEright(range(nexcit[0]),all,all),"nwk",nda::tensor::op::MUL);
+                   one,KEright(range(nexcit[0]),all,all),"nwk",nda::tensor::binary_op::PROD);
         }
 
         // Tdn[idet_down][iw][n] = DetCouplings[idet_down][idet_up] * KEright[idet_up][iw][n] 
@@ -487,7 +487,7 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
               KEright(i,w,all) *= ovlp_ratios_dn(i,w);
         } else {
           nda::tensor::elementwise(one,ovlp_ratios_dn,"nw",
-                   one,KEright(range(nexcit[1]),all,all),"nwk",nda::tensor::op::MUL);
+                   one,KEright(range(nexcit[1]),all,all),"nwk",nda::tensor::binary_op::PROD);
         }
       }
 
@@ -497,7 +497,7 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
         // W[u][iw] = sum_d OpSpinDetCouplings[u][d] Ov[d][iw]   
         math::sparse::csrmm<'N'>(OpSpinDetCouplings(1),ovlp_ratios_up,wgt);
         // W[u][iw] *= Ovlps[0][u][iw]   
-        nda::tensor::elementwise(one,ovlp_ratios_dn,"uw",one,wgt,"uw",nda::tensor::op::MUL);
+        nda::tensor::elementwise(one,ovlp_ratios_dn,"uw",one,wgt,"uw",nda::tensor::binary_op::PROD);
 
         // 3b. Reference energy and temporary matrices
         memory::buffered_array<MEM,ComplexType,2> KEleft(nw, nkev);
@@ -508,7 +508,7 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
           for(int i=0; i<nw; ++i)
             eloc(i,all) *= Ov(iw+i);
         } else {
-          nda::tensor::elementwise(one,Ov(w_rng),"w",one,eloc,"wi",nda::tensor::op::MUL);
+          nda::tensor::elementwise(one,Ov(w_rng),"w",one,eloc,"wi",nda::tensor::binary_op::PROD);
         }
         nda::tensor::add(one, eloc, "wi", one, E(w_rng,all), "wi");
 
@@ -531,12 +531,12 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
       E(iw,all) /= Ov(iw);
   } else {
     memory::buffered_array<MEM,ComplexType,1> Ot(Ov);
-    nda::apply(ComplexType(1.0),Ot,nda::tensor::op::RCP);
-    nda::tensor::elementwise(ComplexType(1.0),Ot,"w",
-                             ComplexType(1.0),E,"wc",nda::tensor::op::MUL);
+    nda::apply(1.0,Ot,nda::tensor::unary_op::RCP);
+    nda::tensor::elementwise(1.0,Ot,"w",
+                             1.0,E,"wc",nda::tensor::binary_op::PROD);
   }
   // Ov -> log( Ov(n)/Ov(0) ) 
-  nda::apply(ComplexType(1.0),Ov,nda::tensor::op::LOG);
+  nda::apply(1.0,Ov,nda::tensor::unary_op::LOG);
   // Ov += log_ov(0) -> log(Ov)
   nda::tensor::add(ComplexType(1.0),log_ov,"w",ComplexType(1.0),Ov,"w");
 }
@@ -718,8 +718,8 @@ void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_vi
         nda::tensor::contract(ComplexType(1.0),ovlp_ratios_up,"nw",wgt,"nw",ComplexType(0.0),Ov(range(iw,iw+nw)),"w");
 
         // wgt() = wgt() * ovlp_ratios_up()  
-        nda::tensor::elementwise(ComplexType(1.0),ovlp_ratios_up,"nw",
-                                 ComplexType(1.0),wgt,"nw",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,ovlp_ratios_up,"nw",
+                                 1.0,wgt,"nw",nda::tensor::binary_op::PROD);
 
         // calculate R
         memory::buffered_array<MEM,ComplexType,3> Ra(nw,nup,nactA);
@@ -753,8 +753,8 @@ void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_vi
         // W[u][iw] = sum_d OpSpinDetCouplings[u][d] Ov[d][iw]   
         math::sparse::csrmm<'N'>(OpSpinDetCouplings(1),ovlp_ratios_up,wgt);
         // wgt() = wgt() * ovlp_ratios_up()  
-        nda::tensor::elementwise(ComplexType(1.0),ovlp_ratios_dn,"nw",
-                                 ComplexType(1.0),wgt,"nw",nda::tensor::op::MUL);
+        nda::tensor::elementwise(1.0,ovlp_ratios_dn,"nw",
+                                 1.0,wgt,"nw",nda::tensor::binary_op::PROD);
 
         // calculate R
         memory::buffered_array<MEM,ComplexType,3> Rb(nw,ndown,nactB);
@@ -784,11 +784,11 @@ void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_vi
       } else {
         memory::buffered_array<MEM,ComplexType,1> Ot(nw);
         Ot() = Ov(range(iw,iw+nw)); 
-        nda::apply(ComplexType(1.0),Ot,nda::tensor::op::RCP);
-        nda::tensor::elementwise(ComplexType(1.0),Ot,"w",ComplexType(1.0),G(range(iw,iw+nw),all),"wi",nda::tensor::op::MUL);
+        nda::apply(1.0,Ot,nda::tensor::unary_op::RCP);
+        nda::tensor::elementwise(1.0,Ot,"w",1.0,G(range(iw,iw+nw),all),"wi",nda::tensor::binary_op::PROD);
       }
       // Ov -> log( Ov ) + log_ov(n=0) 
-      nda::apply(ComplexType(1.0),Ov(range(iw,iw+nw)),nda::tensor::op::LOG);
+      nda::apply(1.0,Ov(range(iw,iw+nw)),nda::tensor::unary_op::LOG);
       // 3. Ov(iw) += log_ov(iw)
       nda::tensor::add(ComplexType(1.0),log_ov,"w",ComplexType(1.0),Ov(range(iw,iw+nw)),"w");
     }
@@ -890,7 +890,7 @@ void PHMSD<MEM>::Log_Overlap(WalkerSet<MEM> const& wset, memory::array_view<MEM,
       // 1. Ov(iw) = sum_n wgt(n,iw) * ov_up(n,iw) 
       nda::tensor::contract(ComplexType(1.0),ovlp_ratios_up,"nw",wgt,"nw",ComplexType(0.0),Ov(range(iw,iw+nw)),"w");
       // 2. Ov(iw) = log( Ov(iw) ) = log (sum_n wgt(n,iw) * ov_up(n,iw)) 
-      nda::apply(ComplexType(1.0),Ov(range(iw,iw+nw)),nda::tensor::op::LOG);
+      nda::apply(1.0,Ov(range(iw,iw+nw)),nda::tensor::unary_op::LOG);
       // 3. Ov(iw) += log_ov(iw)
       nda::tensor::add(ComplexType(1.0),log_ov,"w",ComplexType(1.0),Ov(range(iw,iw+nw)),"w");
     }

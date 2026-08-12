@@ -196,10 +196,10 @@ public:
     // 3. Calculate observables if needed
     // 3.a add walker weights at current time
     // accumulate expects Yc = conj(Y)
-    nda::tensor::scale(ComplexType(1.0),Y,nda::tensor::op::CONJ); 
+    nda::tensor::scale(1.0,Y,nda::tensor::unary_op::CONJ);
     observ0.accumulate(iav, wset, wgt, X, Y, M, importanceSampling);
     // conjugate Y back!
-    nda::tensor::scale(ComplexType(1.0),Y,nda::tensor::op::CONJ); 
+    nda::tensor::scale(1.0,Y,nda::tensor::unary_op::CONJ);
     average_has_run[iav] = true;
 
     if (bp_step == max_nback_prop) {
