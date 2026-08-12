@@ -405,21 +405,6 @@ auto getri_or_zero(MemoryArray auto &&A, MemoryArray auto&& ipiv, MemoryArray au
 namespace tensor
 {
 
-namespace cutensor
-{
-
-#if defined(ENABLE_DEVICE)
-template<nda::MemoryArray Arr>
-requires( nda::mem::have_device_compatible_addr_space<Arr> )
-auto to_cutensor(Arr&& A) {
-  using T = nda::get_value_t<Arr>;
-  constexpr int R = nda::get_rank<Arr>;
-  return nda::tensor::cutensor::cutensor_desc<T,R>(A);
-}
-#endif
-
-} // namespace cutensor
-
 /**
  * Computes B(...) = op(A(...)), where op = {std::plus<>{},std::max<>{},std::min<>{},...}. 
  * Reduction is assumed, the rank of B should be smaller than the rank of A.

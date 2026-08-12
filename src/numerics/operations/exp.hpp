@@ -36,18 +36,11 @@ auto exp_hermitian(A_t const& A, bool printeV = false)
   long N = A.extent(0);
 
   // do in host for now
-  nda::array<Type,2> X(A);
-
-  for(int i=0; i<N; ++i)
-    for(int j=i+1; j<N; ++j) {
-      sfqmc::utils::check(std::abs(X(i,j)-std::conj(X(j,i))) < 1e-8, "Error in exp_hermitian: Matrix not hermitian, {} {} diff:{}",X(i,j),X(j,i),std::abs(X(i,j)-std::conj(X(j,i))));
-      X(i,j) = 0.5*(X(i,j)+std::conj(X(j,i)));
-      X(j,i) = std::conj(X(i,j));
-    }
+  nda::matrix<Type> X(A);
 
   // A = M*V*dagger(M)
   // careful, M is in Fortran layout
-  auto [V,M] = nda::linalg::eigenelements(X); 
+  auto [V,M] = nda::linalg::eigh(X);
 
   // exp(A) = M*exp(V)*dagger(M)
   if (printeV)
@@ -61,9 +54,12 @@ auto exp_hermitian(A_t const& A, bool printeV = false)
   } 
   for (int j = 0; j < N; j++)
     M(nda::range::all,j) *= std::sqrt(std::exp(V(j)));
-  nda::blas::gemm(M,nda::dagger(M),X);
+  // M is in Fortran layout, so dagger(M) wraps a C-layout view. BLAS can only fold a lazy
+  // conjugate into a 'C' operation when the result has the layout opposite to that view.
+  nda::matrix<Type,nda::F_layout> R(N,N);
+  nda::blas::gemm(M,nda::dagger(M),R);
 
-  return Array_t(X);
+  return Array_t(R);
 }
 
 } // namespace math

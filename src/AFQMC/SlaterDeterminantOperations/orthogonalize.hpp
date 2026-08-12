@@ -147,14 +147,14 @@ void orthogonalize(A_t && A, B_t && log_detR)
   memory::buffered_array<MEM,Type,2> scl(Nw,Nel);
   memory::buffered_array<MEM,Type,1> work;
 
-  nda::tensor::add(A,"nab",Q,"nba");  
-  nda::lapack::geqrf(nda::transpose(Q),tau,work);
+  nda::tensor::assign(A,"nab",Q,"nba");
+  nda::lapack::geqrf(nda::transpose(Q),nda::transpose(tau),work);
 
   // log(Det)
   math::log_determinant_from_geqrf(Q,scl,log_detR(nda::range(Nw)));
   
   // Q
-  nda::lapack::gqr(nda::transpose(Q),tau,work);
+  nda::lapack::gqr(nda::transpose(Q),nda::transpose(tau),work);
 
   // copy back
   nda::tensor::assign(Q,"nab",A,"nba");
@@ -233,7 +233,7 @@ void orthogonalize_wQR(U_t && U, D_t && D, V_t && V, B_t && scl)
         UT(nda::range::all,col) = Dh(b,col) * Uh(b,nda::range::all,col);
 
       // pivoted QR : U*D = Q*R*P^T
-      // NOTE : non-batched version of geqp3 returns jpvt indexed starting from 0
+      // NOTE : geqp3 returns jpvt in LAPACK's 1-based indexing
       nda::lapack::geqp3(UT,jpvt,tau,work);
 
       // get Q, R
@@ -245,9 +245,9 @@ void orthogonalize_wQR(U_t && U, D_t && D, V_t && V, B_t && scl)
         memory::buffered_array<HOST_MEMORY,int,1> P1(M);
       
         for(int i = 0; i < M; ++i){ 
-          P1(jpvt(i)) = i;
+          P1(jpvt(i)-1) = i;
           // D(i) = norm(R(i,:))
-          Dh(b,i) = nda::norm(VT(i,nda::range(i,M)));
+          Dh(b,i) = nda::linalg::norm(VT(i,nda::range(i,M)));
         }
 
         for(int i = 0; i < M; ++i)
@@ -293,7 +293,7 @@ void orthogonalize_wQR(U_t && U, D_t && D, V_t && V, B_t && scl)
         UT(nda::range::all,col) = D(b,col) * U(b,nda::range::all,col);
 
       // pivoted QR : U*D = Q*R*P^T
-      // NOTE : non-batched version of geqp3 return jpvt indexed starting from 0
+      // NOTE : geqp3 returns jpvt in LAPACK's 1-based indexing
       nda::lapack::geqp3(UT,jpvt,tau,work);
 
       // get Q, R
@@ -305,9 +305,9 @@ void orthogonalize_wQR(U_t && U, D_t && D, V_t && V, B_t && scl)
         memory::buffered_array<MEM,int,1> P1(M);
       
         for(int i = 0; i < M; ++i){ 
-          P1(jpvt(i)) = i;
+          P1(jpvt(i)-1) = i;
           // D(i) = norm(R(i,:))
-          D(b,i) = nda::norm(VT(i,nda::range(i,M)));
+          D(b,i) = nda::linalg::norm(VT(i,nda::range(i,M)));
         }
 
         for(int i = 0; i < M; ++i)
@@ -330,9 +330,7 @@ void orthogonalize_wQR(U_t && U, D_t && D, V_t && V, B_t && scl)
       nda::blas::scal(std::exp(-scl_new),D(b,nda::range::all));
       scl(b) += scl_new; 
 
-      //nda::blas::gemm(ComplexType(1.0),VT(nda::range::all,nda::range::all),V(b,nda::ellipsis{}),
-      //                ComplexType(0.0),V(b,nda::ellipsis{}));
-
+      // gemm into UT, since V(b,...) is both input and output
       nda::blas::gemm(ComplexType(1.0),VT(nda::range::all,nda::range::all),V(b,nda::ellipsis{}),
                       ComplexType(0.0),UT);
       
