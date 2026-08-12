@@ -158,6 +158,10 @@ void estimator_handler_measure_schedule(std::shared_ptr<utils::mpi_context_t<boo
         {
           AFQMCTimer.start(popcont_timer);
           wset.processWalkerData(dummyData);
+          // Mirror the production driver's PAIR: store -> popControl -> permute. The post-pop hook
+          // fails closed without the store, because the magnitudes would otherwise stay indexed by
+          // a slot layout popControl has already invalidated.
+          wfn.store_inner_blocks_before_pop(wset);
           wset.popControl(); // make this a call to actual pop control
           wfn.permute_inner_blocks_after_pop(wset); // mirror the production driver (no-op here)
           AFQMCTimer.stop(popcont_timer);
@@ -314,6 +318,8 @@ void stochastic_back_propagation_estimator_smoke(
       if (iStep == 0 || (iStep + 1) % population_control_interval == 0)
       {
         wset.processWalkerData(curData);
+        // Mirror the production driver's PAIR: store -> popControl -> permute.
+        wfn.store_inner_blocks_before_pop(wset);
         wset.popControl();
         wfn.permute_inner_blocks_after_pop(wset); // mirror the production driver: realign inner blocks
         estim.accumulate_step(total_time, wset, curData);

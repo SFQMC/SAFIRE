@@ -2005,6 +2005,13 @@ void stochastic_persistent_permute_after_pop_control(
     // fields (TrialFields row) alongside its Slater matrix -- and, for COLLINEAR, BOTH spin blocks (see
     // the same note in stochastic_inner_permute_after_pop_control); the lineage scalar is set for
     // completeness (the persistent path rebuilds from the fields and does not consume it).
+    // Mirror the driver: store_inner_blocks_before_pop -> popControl -> permute_inner_blocks_after_pop.
+    // The store must precede the simulated branch, because it captures the magnitudes for the walker
+    // layout that exists BEFORE anything moves. Skipping it is not a harmless omission -- the post-pop
+    // hook now fails closed on the unpaired call, since silently leaving the magnitudes indexed by a
+    // stale slot layout divides the leapfrog overlap by another walker's magnitude (this case produced
+    // overlaps ~1e7 while that skip was silent).
+    wfn_s.store_inner_blocks_before_pop(wset);
     {
       auto all = nda::range::all;
       auto SM  = wset.SlaterMatrices(Alpha);
@@ -2016,6 +2023,10 @@ void stochastic_persistent_permute_after_pop_control(
       }
       auto TF = wset.TrialFields();
       TF(clone_dst, all) = TF(clone_src, all);
+      // branch() copies WHOLE walker rows, so a real clone carries the conditioned magnitudes with the
+      // fields. This hand-built clone must copy that row too or it is not modelling branch().
+      auto CM = wset.TrialCondMag();
+      CM(clone_dst, all) = CM(clone_src, all);
     }
     {
       nda::array<ComplexType, 1> lin(nwalk);
@@ -2043,14 +2054,25 @@ void stochastic_persistent_permute_after_pop_control(
       if (w != clone_dst)
         CHECK_THAT(lin_after(w), utils::Approx(lin_before(w)));
 
-    // CROSS-RANK ARRIVAL (the any_foreign branch). A walker imported from another rank carries the
-    // SLOT_LINEAGE sentinel -1, because this rank holds no pre-pop inner block for the slot it came from.
+    // CROSS-RANK ARRIVAL. A walker imported from another rank carries the SLOT_LINEAGE sentinel -1,
+    // because this rank holds no pre-pop inner block for the slot it came from.
     //
     // The persistent contract is the OPPOSITE of the deleted reset-then-redraw one, and that inversion is
-    // the whole point of this block: the chain FIELDS ride inside the outer walker buffer, so they arrive
-    // with the walker and the pool determinants are rebuilt from them exactly. NOTHING IS RESAMPLED, so
-    // every overlap is preserved. Only inner_cond_mag_ -- a StochasticWfn-owned array that does not ride
-    // along -- is recomputed for the foreign column.
+    // the whole point of this block: BOTH halves of a walker's conditioned state ride inside the outer
+    // walker buffer, so they arrive with the walker -- the chain FIELDS, from which the pool determinants
+    // are rebuilt exactly, and the TRIAL_COND_MAG magnitudes, snapshot by store_inner_blocks_before_pop.
+    // NOTHING IS RESAMPLED and NOTHING IS RECOMPUTED, so every overlap is preserved and the foreign
+    // column is as exact as a local one.
+    //
+    // ⚠️ This block previously asserted the opposite for the magnitudes -- that inner_cond_mag_ "does not
+    // ride along" and "is recomputed for the foreign column". That recompute was the defect: it evaluated
+    // the magnitude against the POST-pop walker rather than the phi_cond the value means, which is the
+    // very thing stochastic_persistent_cond_mag_invariant_under_permute pins as wrong. It was reachable
+    // only at np>1, which is why single-rank runs never saw it.
+    //
+    // The store call below is not decoration: it mirrors the driver's order
+    // (store_inner_blocks_before_pop -> popControl -> permute_inner_blocks_after_pop). Without it the
+    // block is unallocated, the read-back is skipped, and this section silently tests nothing.
     {
       nda::array<ComplexType, 1> lin(nwalk);
       for (int w = 0; w < nwalk; ++w)
@@ -2058,6 +2080,7 @@ void stochastic_persistent_permute_after_pop_control(
       lin(1) = ComplexType(-1.0, 0.0); // slot 1 arrived from another rank
       wset.setProperty(SLOT_LINEAGE, lin);
 
+      wfn_s.store_inner_blocks_before_pop(wset);
       wfn_s.permute_inner_blocks_after_pop(wset);
       REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_n_samples);
 
@@ -2170,6 +2193,8 @@ void stochastic_persistent_pool_survives_pop_control(
     // pool from the same fields, and the next begin_inner_step (0 equil sweeps) leaves it alone -- the
     // tethered samples carry across the pop event UNCHANGED.
     identity_lineage();
+    // Paired with the post-pop hook, in the driver's order; the hook fails closed without it.
+    wfn_s.store_inner_blocks_before_pop(wset);
     wfn_s.permute_inner_blocks_after_pop(wset);
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_n_samples);
@@ -2193,6 +2218,8 @@ void stochastic_persistent_pool_survives_pop_control(
       TF(sentinel_slot, nda::range::all) = row; // host -> device (no-op-ish on HOST_MEMORY)
     }
     sentinel_lineage();
+    // Paired with the post-pop hook, in the driver's order; the hook fails closed without it.
+    wfn_s.store_inner_blocks_before_pop(wset);
     wfn_s.permute_inner_blocks_after_pop(wset);
     wfn_s.begin_inner_step(wset);
     REQUIRE(wfn_s.stochastic_inner_ensemble_size() == long(nwalk) * inner_n_samples);
@@ -2292,6 +2319,9 @@ void stochastic_persistent_cond_mag_invariant_under_permute(
         lin(w) = ComplexType(double(w), 0.0);
       wset.setProperty(SLOT_LINEAGE, lin);
     }
+    // Paired with the post-pop hook, in the driver's order. The store captures the magnitudes while
+    // they still refer to phi_cond, which is exactly the value this test asserts survives.
+    wfn_s.store_inner_blocks_before_pop(wset);
     wfn_s.permute_inner_blocks_after_pop(wset);
 
     // The magnitudes still reference phi_cond, so an identity re-indexing leaves their sum EXACTLY

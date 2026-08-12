@@ -81,6 +81,9 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
     {
       AFQMCTimer.start(popcont_timer);
       wset.processWalkerData(curData);
+      // Park the conditioned inner-ensemble magnitudes on the walkers that own them, so branching and
+      // load balancing carry them along instead of leaving them behind in a rank-local array.
+      wfn0.store_inner_blocks_before_pop(wset);
       wset.popControl(); // make this a call to actual pop control
       // Realign the conditioned stochastic-trial inner ensemble with the post-branch outer walkers
       // before any reduction runs on them (no-op unless a conditioned dynamic stochastic trial).
