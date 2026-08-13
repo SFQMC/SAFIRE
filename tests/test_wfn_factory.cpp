@@ -215,8 +215,8 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
     ComplexType trG = 0;
     for(int spin = 0; spin < nspin; spin++) {
       auto gMF_spin = gMF()(spin,all,all);
-      trG += nda::sum(nda::diagonal(gMF_spin)); 
-      CHECK_THAT(gMF_spin, utils::Approx(nda::transpose(gMF_spin)));
+      trG += nda::sum(nda::diagonal(gMF_spin));
+      CHECK_THAT(gMF_spin, utils::Approx(nda::make_regular(nda::dagger(gMF_spin))));
     }
     if(!finiteT) {
       CHECK_THAT(trG.real(), utils::Approx(nel));

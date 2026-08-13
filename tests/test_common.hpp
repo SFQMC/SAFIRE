@@ -301,6 +301,34 @@ inline std::shared_ptr<mpi_context_t<mpi3::communicator>>& make_unit_test_mpi_co
   return detail::__unit_test_mpi_context__;
 }
 
+/*
+ * Flat host copy of a, with the elements in C order of the logical indices.
+ *
+ * nda::flatten reinterprets the storage in memory order, so flattening two arrays of equal
+ * shape only lines their elements up if both have the same stride order. Going through a
+ * C-layout copy makes the flat order independent of how either operand happens to be stored,
+ * so e.g. a view and its transpose flatten to different sequences, as they should.
+ */
+template<nda::Array A>
+auto make_flat_regular(A const& a)
+{
+  using value_type    = std::remove_const_t<nda::get_value_t<A>>;
+  constexpr int rank  = nda::get_rank<A>;
+  static_assert(nda::MemoryArray<A> || !nda::mem::have_device_compatible_addr_space<A>,
+                "Pass nda::make_regular(expr) for expressions over device arrays");
+
+  if constexpr(nda::MemoryArray<A> && nda::mem::have_device_compatible_addr_space<A>) {
+    // a device array cannot be read elementwise from the host, and a strided device to host
+    // assignment is not supported either, so contract to a contiguous device copy first
+    constexpr MEMORY_SPACE MEM = memory::get_memory_space<A>();
+    memory::array<MEM, value_type, rank> a_contiguous(a.shape());
+    math::copy(a(), a_contiguous());
+    return nda::flatten(nda::to_host(std::move(a_contiguous)));
+  } else {
+    return nda::flatten(memory::host_array<value_type, rank>(a));
+  }
+}
+
 template<nda::Array Array>
 struct ApproxArrayMatcher : Catch::Matchers::MatcherGenericBase {
   ApproxArrayMatcher(Array const& array, RealType abstol, RealType reltol)
@@ -313,9 +341,8 @@ struct ApproxArrayMatcher : Catch::Matchers::MatcherGenericBase {
     if(other.shape() != array.shape()) {
       return false;
     }
-    // make_regular required for flatten in case array is not contiguous
-    auto other_host = nda::flatten(nda::make_regular(nda::to_host(other)));
-    auto array_host = nda::flatten(nda::make_regular(nda::to_host(array)));
+    auto other_host = make_flat_regular(other);
+    auto array_host = make_flat_regular(array);
     auto diffnorm = nda::linalg::norm(other_host - array_host, INFINITY);
     auto valnorm = std::max(nda::linalg::norm(array_host, INFINITY), nda::linalg::norm(other_host, INFINITY));
 
@@ -323,7 +350,7 @@ struct ApproxArrayMatcher : Catch::Matchers::MatcherGenericBase {
   }
 
   std::string describe() const override {
-      return std::format("Approx(atol={}, rtol={}): {}", abstol, reltol, array);
+    return std::format("Approx(atol={}, rtol={}): {}", abstol, reltol, array);
   }
 
 private:
