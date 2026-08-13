@@ -35,10 +35,18 @@
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
 #include "itertools/itertools.hpp"
-#include "numerics/device_kernels/kernels.h"
+
+#if defined(ENABLE_DEVICE)
+#include "numerics/device_kernels/device_api.hpp"
+#include "numerics/device_kernels/to_view.hpp"
+#endif
 
 namespace nda
 {
+
+#if defined(ENABLE_DEVICE)
+using kernels::device::to_view;
+#endif
 
 /*
  * Returns a tuple with the position (e.g. std::array with n-dimensional indexes) and value
@@ -153,12 +161,14 @@ void copy_select(bool expand, V1 const& m, T alpha, V3 const& A, T scl, V4&& B)
   static_assert(nda::mem::have_compatible_addr_space<V1,V3,V4>, "Address space mismatch.");
   if constexpr(nda::mem::have_device_compatible_addr_space<V1,V3,V4>) {
 #if defined(ENABLE_DEVICE)
-    kernels::device::copy_select(expand,m,alpha,A,scl,B);
+    using TV = std::remove_const_t<get_value_t<V3>>;
+    using I  = std::remove_const_t<get_value_t<V1>>;
+    kernels::device::copy_select<TV,I>(expand,to_view(m),alpha,to_view(A),scl,to_view(B));
 #else
     sfqmc::utils::check(false,"Error: Missing device function copy_select.");
 #endif
   } else {
-    if(expand)  
+    if(expand)
       for( auto [i,n] : itertools::enumerate(m) )
         B(n) = scl*B(n) + alpha*A(i);
     else
@@ -181,7 +191,9 @@ void copy_select(bool expand, V1 const& m, V2 const& s, T alpha, V3 const& A, T 
   static_assert(nda::mem::have_compatible_addr_space<V1,V2,V3,V4>, "Address space mismatch.");
   if constexpr(nda::mem::have_device_compatible_addr_space<V1,V2,V3,V4>) {  
 #if defined(ENABLE_DEVICE)
-    kernels::device::copy_select(expand,m,s,alpha,A,scl,B);
+    using TV = std::remove_const_t<get_value_t<V3>>;
+    using I  = std::remove_const_t<get_value_t<V1>>;
+    kernels::device::copy_select<TV,I>(expand,to_view(m),to_view(s),alpha,to_view(A),scl,to_view(B));
 #else
     sfqmc::utils::check(false,"Error: Missing device function copy_select.");
 #endif
@@ -212,7 +224,9 @@ void copy_select(bool expand, int indx, V1 const& m, T alpha, V3 const& A, T scl
   static_assert(nda::mem::have_compatible_addr_space<V1,V3,V4>, "Address space mismatch.");
   if constexpr(nda::mem::have_device_compatible_addr_space<V1,V3,V4>) {
 #if defined(ENABLE_DEVICE)
-    kernels::device::copy_select(expand,indx,m,alpha,A,scl,B);   
+    using TV = std::remove_const_t<get_value_t<V3>>;
+    using I  = std::remove_const_t<get_value_t<V1>>;
+    kernels::device::copy_select<TV,I>(expand,indx,to_view(m),alpha,to_view(A),scl,to_view(B));
 #else
     sfqmc::utils::check(false,"Error: Missing device function copy_select.");
 #endif
@@ -258,7 +272,9 @@ void copy_select(bool expand, int indx, V1 const& m, V2 const& s, T alpha, V3 co
   static_assert(nda::mem::have_compatible_addr_space<V1,V2,V3,V4>, "Address space mismatch.");
   if constexpr(nda::mem::have_device_compatible_addr_space<V1,V2,V3,V4>) {
 #if defined(ENABLE_DEVICE)
-    kernels::device::copy_select(expand,indx,m,s,alpha,A,scl,B);
+    using TV = std::remove_const_t<get_value_t<V3>>;
+    using I  = std::remove_const_t<get_value_t<V1>>;
+    kernels::device::copy_select<TV,I>(expand,indx,to_view(m),to_view(s),alpha,to_view(A),scl,to_view(B));
 #else
     sfqmc::utils::check(false,"Error: Missing device function copy_select.");
 #endif
@@ -290,15 +306,36 @@ void copy_select(bool expand, int indx, V1 const& m, V2 const& s, T alpha, V3 co
 template<typename V, nda::MemoryArray A>
 requires(std::decay_t<A>::is_stride_order_C())
 void apply(V alpha, A&& a, nda::tensor::unary_op oper) {
-  if constexpr(nda::mem::have_device_compatible_addr_space<A>) {
 #if defined(ENABLE_DEVICE)
-    kernels::device::apply(alpha,a,oper);
-#else
-    sfqmc::utils::check(false,"Error: Missing device function apply.");
-#endif
-  } else {
-    nda::tensor::scale(alpha,a,oper);
+  if constexpr(nda::mem::have_device_compatible_addr_space<A>) {
+    using T = std::remove_const_t<get_value_t<A>>;
+    constexpr int R = get_rank<A>;
+    if(a.size() == 0) {
+      return;
+    }
+    // cutensor_permute handles these, the rest of the operations it rejects and they get a kernel
+    switch(oper) {
+      case tensor::unary_op::IDENTITY:
+      case tensor::unary_op::CONJ: tensor::scale(alpha,a,oper); return;
+      case tensor::unary_op::NEG: tensor::scale(-alpha,a); return;
+      default: break;
+    }
+    auto op = [oper]() {
+      switch(oper) {
+        case tensor::unary_op::SQRT: return kernels::device::unary_op::SQRT;
+        case tensor::unary_op::ABS: return kernels::device::unary_op::ABS;
+        case tensor::unary_op::RCP: return kernels::device::unary_op::RCP;
+        case tensor::unary_op::EXP: return kernels::device::unary_op::EXP;
+        case tensor::unary_op::LOG: return kernels::device::unary_op::LOG;
+        default: sfqmc::utils::check(false, "Invalid operation in nda::apply.");
+      }
+      return kernels::device::unary_op::SQRT;
+    }();
+    kernels::device::apply<T,R>(T(alpha),to_view(a),op);
+    return;
   }
+#endif
+  tensor::scale(alpha,a,oper);
 }
 
 namespace blas

@@ -46,7 +46,6 @@
 #include "numerics/sparse/sparse.hpp"
 
 // erase
-#include "numerics/device_kernels/kernels.h"
 #include "utilities/Timer.hpp"
 
 extern std::string UTEST_HAMIL, UTEST_WFN;

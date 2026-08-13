@@ -22,7 +22,6 @@
 #include "utilities/check.hpp"
 
 #include "nda/nda.hpp"
-#include "numerics/device_kernels/kernels.h"
 
 namespace math
 {

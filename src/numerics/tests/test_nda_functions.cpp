@@ -32,7 +32,6 @@
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
 #include "test_common.hpp"
-#include "numerics/device_kernels/kernels.h"
 #include "numerics/nda_functions.hpp"
 #include "utilities/Timer.hpp"
 

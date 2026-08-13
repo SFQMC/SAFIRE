@@ -1,39 +1,40 @@
-#include <thrust/transform.h>
-#include <thrust/functional.h>
-#include <thrust/device_vector.h>
-#include <thrust/execution_policy.h>
-#include <thrust/complex.h>
-#include "numerics/device_kernels/cuda/cuda_aux.hpp"
+#include "numerics/device_kernels/cuda/launch.cuh"
+#include "numerics/device_kernels/device_api.hpp"
 
-#include "configuration.hpp"
-//#include "numerics/device_kernels/cuda/add_scalar.cuh"
-
-namespace kernels::device::detail
+namespace kernels::device
 {
 
-template<typename V>
-struct add_scalar_func
+template<typename T, int R>
+struct add_scalar_fn
 {
+  scalar_arg<T> alpha;
+  native_t<T>   beta;
+  view<T, R>    a;
 
-  V alpha;
-
-  __host__ __device__ explicit add_scalar_func(V _alpha) : alpha(_alpha){}
-
-  __host__ __device__ V operator()(const V& x) const {return x + alpha;}
+  __device__ void operator()(auto... idx) const
+  {
+    native_t<T> s = alpha.address ? *alpha.address : alpha.value;
+    // beta == 0 is a fill and must not read a: the caller may be initializing it
+    a(idx...) = (beta == native_t<T>{}) ? s : s + beta * a(idx...);
+  }
 };
 
-template<typename V1, typename V2>
-void add_scalar_impl(V1& alpha, V2& a, int n){
-  auto alpha_p = thrust::device_pointer_cast(kernels::device::complex_ptr_cast(alpha.data()));
-  auto begin = thrust::device_pointer_cast(kernels::device::complex_ptr_cast(a.data()));
-  auto end   = begin + n;
-  thrust::transform(thrust::cuda::par,begin,end,begin,add_scalar_func<thrust::complex<double>>(*alpha_p));
+template<typename T, int R>
+void add_scalar(scalar_arg<T> alpha, T beta, view<T, R> a)
+{
+  for_each(a, add_scalar_fn<T, R>{alpha, to_native(beta), a});
 }
 
-using memory::device_array_view;
-template<int Rank>
-using basic_layout_t = typename nda::basic_layout<0, nda::C_stride_order<Rank>, nda::layout_prop_e::none>;
+// The view is layout-erased, so one instantiation per (type, rank) covers every stride order and
+// both device and unified memory.
+#define _inst_(T, R) template void add_scalar<T, R>(scalar_arg<T>, T, view<T, R>);
 
-template void add_scalar_impl(device_array_view<std::complex<double>,1,basic_layout_t<1>> &, device_array_view<std::complex<double>,1,basic_layout_t<1>> &, int);
+static_assert(max_add_scalar_rank == 4,
+              "_inst_ranks_ must cover every rank up to max_add_scalar_rank");
 
-}
+#define _inst_ranks_(T) _inst_(T, 1) _inst_(T, 2) _inst_(T, 3) _inst_(T, 4)
+
+_inst_ranks_(double)
+_inst_ranks_(std::complex<double>)
+
+} // namespace kernels::device

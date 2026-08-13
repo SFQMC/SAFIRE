@@ -9,7 +9,7 @@
  * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,101 +18,103 @@
  * ==========================================================================
  */
 
+#include <limits>
 
-//////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
+#include <cub/device/device_reduce.cuh>
+#include <cub/iterator/arg_index_input_iterator.cuh>
 
-#include <stdexcept>
-#include <complex>
-#include <thrust/complex.h>
-#include <thrust/extrema.h>
-#include <thrust/execution_policy.h>
-#include <thrust/device_ptr.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
-#include <thrust/tuple.h>
-
-#include "utilities/type_traits.hpp"
-#include "numerics/device_kernels/cuda/cuda_aux.hpp"
+#include "arch/CUDA/cuda_init.h"
+#include "numerics/device_kernels/device_api.hpp"
 
 namespace kernels::device
 {
 
-template<typename R>
-struct op_less_real
+namespace
 {
-  template<typename T>
-  __host__ __device__
-  bool operator()(T const& a, T const& b) const
+
+__host__ __device__ inline double real_part(double x)
+{
+  return x;
+}
+
+__host__ __device__ inline double real_part(::cuda::std::complex<double> const& z)
+{
+  return z.real();
+}
+
+/**
+ * @brief Extremum by real part, ties resolved to the smaller index.
+ *
+ * Symmetric and associative, so the result does not depend on the order cub folds in. That is what
+ * makes it reproducible and keeps it agreeing with the thrust::max_element it replaces, which
+ * returned the first extremum.
+ */
+template<typename V, bool Max>
+struct pick_extremum
+{
+  using KV = cub::KeyValuePair<long, V>;
+
+  __device__ KV operator()(KV const& a, KV const& b) const
   {
-    thrust::complex<R> a_r = static_cast<thrust::complex<R>>(thrust::get<0>(a));
-    thrust::complex<R> b_r = static_cast<thrust::complex<R>>(thrust::get<0>(b));
-    //return thrust::get<0>(a).real() < thrust::get<0>(b).real();
-    return a_r.real() < b_r.real();
+    double ra = real_part(a.value);
+    double rb = real_part(b.value);
+    if(ra != rb) {
+      return (Max ? (rb > ra) : (rb < ra)) ? b : a;
+    }
+    return (b.key < a.key) ? b : a;
   }
 };
 
-template<typename T>
-std::tuple<long,T> argmax(T const* x, long N)
+template<typename T, bool Max>
+std::tuple<long, T> arg_extremum(T const* x, long N)
 {
-  auto d = thrust::device_pointer_cast(complex_ptr_cast(x)); 
-  auto cntIt = thrust::make_counting_iterator(long(0));
+  using V  = native_t<T>;
+  using KV = cub::KeyValuePair<long, V>;
 
-  typedef thrust::tuple<decltype(d),decltype(cntIt)> IteratorTuple;
-  typedef thrust::zip_iterator<IteratorTuple> ZipIterator;
-  ZipIterator it(thrust::make_tuple(d,cntIt));
+  cub::ArgIndexInputIterator<V const*, long> in(reinterpret_cast<V const*>(x));
+  pick_extremum<V, Max>                      op{};
 
-  long pos;
-  T res=0;
-  if constexpr (is_complex_v<T>) {
-    using R = sfqmc::utils::remove_complex_t<T>;
-    auto res_d = thrust::max_element(thrust::device, it, it+N, op_less_real<R>());
-    pos = thrust::get<1>(*res_d);
-    thrust::complex<R> r_ = thrust::get<0>(*res_d);
-    res = T{r_.real(),r_.imag()};
-  } else {
-    auto res_d = thrust::max_element(thrust::device, it, it+N);
-    pos = thrust::get<1>(*res_d);
-    res = thrust::get<0>(*res_d);
-  }
+  // never wins on value, and loses every tie because its key is past the end
+  KV init{N, V(Max ? std::numeric_limits<double>::lowest() : std::numeric_limits<double>::max())};
 
-  return std::tuple<long,T> {pos,res};
+  KV*    d_out     = nullptr;
+  void*  d_tmp     = nullptr;
+  size_t tmp_bytes = 0;
+  sfqmc::cuda::cuda_check(cudaMalloc(&d_out, sizeof(KV)), "arg_extremum: allocate result");
+  sfqmc::cuda::cuda_check(cub::DeviceReduce::Reduce(nullptr, tmp_bytes, in, d_out, N, op, init),
+                          "arg_extremum: temp storage query");
+  sfqmc::cuda::cuda_check(cudaMalloc(&d_tmp, tmp_bytes), "arg_extremum: allocate temp storage");
+  sfqmc::cuda::cuda_check(cub::DeviceReduce::Reduce(d_tmp, tmp_bytes, in, d_out, N, op, init),
+                          "arg_extremum: reduce");
+
+  KV h{};
+  sfqmc::cuda::cuda_check(cudaMemcpy(&h, d_out, sizeof(KV), cudaMemcpyDeviceToHost),
+                          "arg_extremum: copy result back");
+  sfqmc::cuda::cuda_check(cudaFree(d_tmp), "arg_extremum: free temp storage");
+  sfqmc::cuda::cuda_check(cudaFree(d_out), "arg_extremum: free result");
+
+  return {h.key, from_native<T>(h.value)};
+}
+
+} // namespace
+
+template<typename T>
+std::tuple<long, T> argmax(T const* x, long N)
+{
+  return arg_extremum<T, true>(x, N);
 }
 
 template<typename T>
-std::tuple<long,T> argmin(T const* x, long N)
+std::tuple<long, T> argmin(T const* x, long N)
 {
-  auto d = thrust::device_pointer_cast(complex_ptr_cast(x));
-  auto cntIt = thrust::make_counting_iterator(long(0));
-
-  typedef thrust::tuple<decltype(d),decltype(cntIt)> IteratorTuple;
-  typedef thrust::zip_iterator<IteratorTuple> ZipIterator;
-  ZipIterator it(thrust::make_tuple(d,cntIt));
-
-  long pos;
-  T res=0;
-  if constexpr (is_complex_v<T>) {
-    using R = sfqmc::utils::remove_complex_t<T>;
-    auto res_d = thrust::min_element(thrust::device, it, it+N, op_less_real<R>());
-    pos = thrust::get<1>(*res_d);
-    thrust::complex<R> r_ = thrust::get<0>(*res_d);
-    res = T{r_.real(),r_.imag()};
-  } else {
-    auto res_d = thrust::min_element(thrust::device, it, it+N);
-    pos = thrust::get<1>(*res_d);
-    res = thrust::get<0>(*res_d);
-  }
-
-  return std::tuple<long,T> {pos,res};
+  return arg_extremum<T, false>(x, N);
 }
 
-#define _argmax_(X) template std::tuple<long,X> argmax(X const*,long);
-#define _argmin_(X) template std::tuple<long,X> argmin(X const*,long);
+#define _inst_(T)                                                                                  \
+  template std::tuple<long, T> argmax(T const*, long);                                             \
+  template std::tuple<long, T> argmin(T const*, long);
 
-_argmax_(double)
-_argmax_(std::complex<double>)
-
-_argmin_(double)
-_argmin_(std::complex<double>)
+_inst_(double)
+_inst_(std::complex<double>)
 
 } // namespace kernels::device

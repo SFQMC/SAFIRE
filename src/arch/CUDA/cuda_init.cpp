@@ -38,7 +38,7 @@
 #include "mpi3/communicator.hpp"
 #include "mpi3/shared_communicator.hpp"
 #include "utilities/check.hpp"
-#include "numerics/device_kernels/cuda/probe.cuh"
+#include "numerics/device_kernels/cuda/probe.hpp"
 
 
 namespace sfqmc {

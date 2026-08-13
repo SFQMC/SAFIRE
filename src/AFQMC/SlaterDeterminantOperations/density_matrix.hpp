@@ -17,11 +17,11 @@
 #pragma once
 
 #include "AFQMC/config.h"
-#include "numerics/device_kernels/cuda/add_scalar.cuh"
 #include "utilities/check_strides.hpp"
 #include "utilities/check_shape.hpp"
 #include "numerics/operations/determinants.hpp"
 #include "numerics/operations/product.hpp"
+#include "numerics/operations/tensor.hpp"
 #include "numerics/operations/split_singular_vals.hpp"
 #include "numerics/operations/add_diagonal.hpp"
 #include "numerics/nda_functions.hpp"
@@ -71,13 +71,7 @@ void inverse_logdet(A_t const& A, O_t && ovlp, T_t && TNN, int nbatch = 0, bool 
   math::log_determinant_from_getrf(TNN,ipiv,res(0));
 
   // FIX : is there a better solution for the GPU here?
-  if constexpr (nda::mem::have_device_compatible_addr_space<A_t>){
-    kernels::device::add_scalar(res,ovlp,nbatch);
-  }
-  else{
-    for(int i = 0; i < nbatch; ++i)
-      ovlp(i) += res(0);
-  }
+  math::add_scalar(res,1.0,ovlp(nda::range(0,nbatch)));
 
   // Invert
   if(invert)
@@ -250,7 +244,7 @@ void log_overlap_impl(UL_t const& UL, DL_t const& DL, VL_t const& VL,
         memory::buffered_array<MEM,Type,1> DLmax_inv(NMO);
 
         math::splitDmatrix(DL, DLmin, DLmax_inv, ovlp_loc, sclL);
-        kernels::device::add_scalar(ovlp_loc,ovlp,nbatch);
+        math::add_scalar(ovlp_loc,1.0,ovlp(nda::range(0,nbatch)));
         math::splitDmatrix(DR, DRmin, DRmax_inv, ovlp, sclR);
 
         // M0 <-- VL * DLmin
@@ -882,7 +876,7 @@ void MixedDensityMatrix(A_t const& UL, B_t const& DL, C_t const& VL,
         memory::buffered_array<MEM,Type,1> DLmax_inv(NMO);
 
         math::splitDmatrix(DL, DLmin, DLmax_inv, ovlp_loc, sclL);
-        kernels::device::add_scalar(ovlp_loc,ovlp,nbatch);
+        math::add_scalar(ovlp_loc,1.0,ovlp(nda::range(0,nbatch)));
         math::splitDmatrix(DR, DRmin, DRmax_inv, ovlp, sclR);
       
         // M0 <-- VL * DLmin
@@ -1137,7 +1131,7 @@ void MixedDensityMatrix_v2(A_t const& UL, B_t const& DL, C_t const& VL,
         memory::buffered_array<MEM,Type,1> DLmax_inv(NMO);
 
         math::splitDmatrix(DL, DLmin, DLmax_inv, ovlp_loc, sclL);
-        kernels::device::add_scalar(ovlp_loc,ovlp,nbatch);
+        math::add_scalar(ovlp_loc,1.0,ovlp(nda::range(0,nbatch)));
         math::splitDmatrix(DR, DRmin, DRmax_inv, ovlp, sclR);
 
         // M0 <-- VL^-1

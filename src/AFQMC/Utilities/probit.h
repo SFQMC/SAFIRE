@@ -40,7 +40,7 @@
 
 #pragma once
 #include <math.h>
-#include "arch/arch.h"
+#include "arch/host_device.h"
 
 /* 
    Implementation of the approximation to the probit function  

@@ -22,7 +22,7 @@
 #include <complex>
 #include <limits>
 #endif
-#include "arch/arch.h"
+#include "arch/host_device.h"
 
 namespace math
 {

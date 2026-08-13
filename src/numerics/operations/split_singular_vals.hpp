@@ -20,11 +20,16 @@
 #include "split_singular_vals_impl.hpp"
 
 #if defined(ENABLE_DEVICE)
-#include "numerics/device_kernels/kernels.h"
+#include "numerics/device_kernels/device_api.hpp"
+#include "numerics/device_kernels/to_view.hpp"
 #endif
 
 namespace math
 {
+
+#if defined(ENABLE_DEVICE)
+using kernels::device::to_view;
+#endif
 
 template<nda::MemoryArrayOfRank<2> A_t, nda::MemoryArrayOfRank<2> B_t,
                      nda::MemoryArrayOfRank<2> C_t, nda::MemoryArrayOfRank<1> O_t,
@@ -42,7 +47,7 @@ void splitDmatrix(A_t const& A, B_t&& B, C_t&& C, O_t&& logdet, T_t const& scl0)
   sfqmc::utils::check(A.extent(0) == scl0.extent(0), "Size mismatch");
 #if defined(ENABLE_DEVICE)
     if constexpr (nda::mem::have_device_compatible_addr_space<A_t,B_t,C_t,O_t,T_t>){
-        kernels::device::splitDmatrix(A,B,C,logdet,scl0);
+        kernels::device::splitDmatrix(to_view(A),to_view(B),to_view(C),to_view(logdet),to_view(scl0));
     } 
     else
 #endif
@@ -71,7 +76,7 @@ void splitDmatrix(A_t const& A, B_t&& B, C_t&& C, O_t&& logdet, T_t const& scl0)
   auto C2D = nda::reshape(C,std::array<long,2>{1,C.extent(0)});
 #if defined(ENABLE_DEVICE)
     if constexpr (nda::mem::have_device_compatible_addr_space<A_t,B_t,C_t,O_t,T_t>){
-        kernels::device::splitDmatrix(A2D,B2D,C2D,logdet,scl0);
+        kernels::device::splitDmatrix(to_view(A2D),to_view(B2D),to_view(C2D),to_view(logdet),to_view(scl0));
     } 
     else
 #endif

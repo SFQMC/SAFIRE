@@ -16,17 +16,97 @@
 
 #pragma once
 
+#include <array>
+
 #include "numerics/operations/determinants.hpp"
 #include "AFQMC/config.h"
 #include "AFQMC/Wavefunctions/detail/phmsd_impl.hpp"
 #include "AFQMC/Wavefunctions/Excitations.hpp"
+#include "numerics/nda_functions.hpp"
 #include "numerics/operations/small_mat_ops.hpp"
 #include "nda/nda.hpp"
+#include "nda/tensor.hpp"
 #include "utilities/check.hpp"
-#include "numerics/device_kernels/kernels.h"
+
+#if defined(ENABLE_DEVICE)
+#include "numerics/device_kernels/device_api.hpp"
+#include "numerics/device_kernels/to_view.hpp"
+#endif
 
 namespace sfqmc::afqmc
 {
+
+#if defined(ENABLE_DEVICE)
+
+namespace detail
+{
+
+using kernels::device::to_view;
+
+/*
+ *   ov(ndet,nwalk) <- determinant of each nex x nex excitation block of T(nwalk,nact,nel).
+ *
+ *   Small nex has a closed form and is one kernel. Above that this allocates the blocks and goes
+ *   through a batched getrf, which is host-side work and so lives here rather than in the .cu.
+ */
+template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryArrayOfRank<2> Ov_t>
+void phmsd_det(int nex, int const* iex, T_t const& T, Ov_t&& ov)
+{
+  long ndet  = ov.extent(0);
+  long nwalk = ov.extent(1);
+  if(ndet * nwalk == 0) {
+    return;
+  }
+  if(nex <= kernels::device::phmsd_det_max_closed_form) {
+    kernels::device::phmsd_det_small(nex, iex, to_view(T), to_view(ov));
+    return;
+  }
+  // M[idet][iwalk][ip][iq]
+  memory::buffered_array<DEVICE_MEMORY, ComplexType, 4> M(ndet, nwalk, nex, nex);
+  kernels::device::phmsd_det_extract(nex, iex, to_view(T), to_view(M));
+
+  memory::buffered_array<DEVICE_MEMORY, int, 2>         ipiv(ndet * nwalk, nex);
+  memory::buffered_array<DEVICE_MEMORY, ComplexType, 1> work;
+  auto M3d = nda::reshape(M, std::array<long, 3>{ndet * nwalk, nex, nex});
+  nda::lapack::getrf(M3d, ipiv, work);
+  math::log_determinant_from_getrf(M3d, ipiv, nda::flatten(ov));
+}
+
+/*
+ *   R(nwalk,ndet,nex,nact) from the inverse of each excitation block.
+ *
+ *   Same split: closed-form inverses for small nex, otherwise getrf + getri_or_zero here.
+ */
+template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryArrayOfRank<4> R_t>
+void phmsd_compact_R(int nex, int const* refc, int const* iex, T_t const& T, R_t&& R)
+{
+  long nwalk = R.extent(0);
+  long ndet  = R.extent(1);
+  if(nwalk * ndet == 0) {
+    return;
+  }
+  memory::buffered_array<DEVICE_MEMORY, ComplexType, 2> ov(nwalk, ndet);
+  ov() = 0.0;
+  memory::buffered_array<DEVICE_MEMORY, ComplexType, 4> M(nwalk, ndet, nex, nex);
+
+  if(nex <= kernels::device::phmsd_inverse_max_closed_form) {
+    kernels::device::phmsd_compact_R_inverse_small(nex, iex, to_view(T), to_view(ov), to_view(M));
+  } else {
+    kernels::device::phmsd_compact_R_extract(nex, iex, to_view(T), to_view(M));
+    memory::buffered_array<DEVICE_MEMORY, int, 2>         ipiv(ndet * nwalk, nex);
+    memory::buffered_array<DEVICE_MEMORY, ComplexType, 1> work;
+    auto M3d = nda::reshape(M, std::array<long, 3>{ndet * nwalk, nex, nex});
+    nda::lapack::getrf(M3d, ipiv, work);
+    math::log_determinant_from_getrf(M3d, ipiv, nda::flatten(ov));
+    nda::lapack::getri_or_zero(M3d, ipiv, work);
+  }
+  kernels::device::phmsd_compact_R_assemble(nex, refc, iex, to_view(T), to_view(ov), to_view(M),
+                                            to_view(R));
+}
+
+} // namespace detail
+
+#endif
 
 template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryMatrix Mat>
 void calculate_overlaps(int spin, ph_excitations<int, ComplexType, memory::get_memory_space<Mat>()>& abij,  T_t const& T, Mat&& ov)
@@ -100,7 +180,14 @@ void calculate_overlaps(int spin, ph_excitations<int, ComplexType, memory::get_m
     } // nex
   } else { // MEM
 #if defined(ENABLE_DEVICE)
-    kernels::device::calculate_overlaps(spin,abij,T,ov);
+    for (int nex = 1, idet = 1; nex < abij.maximum_excitation_number()[spin]; nex++) {
+      int ndet = abij.number_of_unique_excitations(nex)[spin];
+      if(ndet > 0) {
+        auto iexcit = abij.get_excitation_list_device(spin, nex);
+        detail::phmsd_det(nex, iexcit.data(), T, ov(range(idet,idet+ndet),all));
+        idet += ndet;
+      }
+    }
 #else
     utils::check(false, "Error in calculate_overlaps: DEVICE_MEMORY without device support.");
 #endif
@@ -190,7 +277,31 @@ void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_s
     } // nex
   } else {
 #if defined(ENABLE_DEVICE)
-    kernels::device::calculate_R(spin,abij,T,weights,R);
+    using kernels::device::to_view;
+    int nact = T.extent(1);
+    utils::check(weights.extent(1) == nw, "Size mismatch");
+    utils::check_shape(R, "R", nw, NEL, nact);
+    auto refc   = abij.get_reference_configuration_device(spin);
+    auto refc_h = nda::to_host(refc);
+
+    // contribution from the reference determinant: R[w][i][refc[i]] += weights[w]
+    for(int i = 0; i < NEL; ++i)
+      nda::tensor::add(1.0,weights(0,all),"w",1.0,R(all,i,refc_h(i)),"w");
+
+    // contributions from the ph expansion
+    for (int nex = 1, idet = 1; nex < abij.maximum_excitation_number()[spin]; nex++) {
+      int ndet = abij.number_of_unique_excitations(nex)[spin];
+      if(ndet > 0) {
+        auto iexcit = abij.get_excitation_list_device(spin, nex);
+        // compact per-determinant R for this shell, reduced into R below
+        memory::buffered_array<MEM,ComplexType,4> Rbuff(nw,ndet,nex,nact);
+        detail::phmsd_compact_R(nex,refc.data(),iexcit.data(),T,Rbuff);
+        kernels::device::phmsd_reduce_R(nex,refc.data(),iexcit.data(),
+                                        to_view(weights(range(idet,idet+ndet),all)),
+                                        to_view(Rbuff),to_view(R));
+        idet += ndet;
+      }
+    }
 #else
     utils::check(false, "Error in calculate_overlaps: DEVICE_MEMORY without device support.");
 #endif
@@ -278,7 +389,9 @@ void get_compact_ph_R_matrices(nda::MemoryVector auto const& iexcit,
     } // iw
   } else {
 #if defined(ENABLE_DEVICE)
-    kernels::device::calculate_compact_ph_R(refc.data(),iexcit.data(),Tw,Rw);
+    if(ndet > 0) {
+      detail::phmsd_compact_R(nex,refc.data(),iexcit.data(),Tw,Rw);
+    }
 #else
     utils::check(false, "Error in calculate_overlaps: DEVICE_MEMORY without device support.");
 #endif

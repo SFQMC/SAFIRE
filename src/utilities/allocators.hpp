@@ -5,7 +5,7 @@
 #include <nda/nda.hpp>
 
 namespace memory {
-  
+
 template<typename Primary>
 class static_fallback
 {

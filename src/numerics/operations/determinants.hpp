@@ -20,11 +20,16 @@
 #include "determinants_impl.hpp"
 
 #if defined(ENABLE_DEVICE)
-#include "numerics/device_kernels/kernels.h"
+#include "numerics/device_kernels/device_api.hpp"
+#include "numerics/device_kernels/to_view.hpp"
 #endif
 
 namespace math
 {
+
+#if defined(ENABLE_DEVICE)
+using kernels::device::to_view;
+#endif
 
 template<nda::MemoryArrayOfRank<3> A, nda::MemoryMatrix IPIV, nda::MemoryVector V>
 requires(std::decay_t<A>::is_stride_order_C() and std::decay_t<IPIV>::is_stride_order_C() and
@@ -38,7 +43,7 @@ void log_determinant_from_getrf(A const& a, IPIV const& ipiv, V && log_det) {
   sfqmc::utils::check(a.extent(1) == a.extent(2), "Size mismatch");
 #if defined(ENABLE_DEVICE)
   if constexpr (nda::mem::have_device_compatible_addr_space<A,IPIV,V>) {
-    kernels::device::log_determinant_from_getrf(a,ipiv,log_det);
+    kernels::device::log_determinant_from_getrf(to_view(a),to_view(ipiv),to_view(log_det));
   } else 
 #endif
   {
@@ -62,7 +67,7 @@ void log_determinant_from_getrf(A const& aM, IPIV const& ipiv_v, nda::get_value_
   memory::array_view<MEM,T,1> log_det(std::array<long,1>{1},&val);
 #if defined(ENABLE_DEVICE)
   if constexpr (nda::mem::have_device_compatible_addr_space<A,IPIV>) {
-    kernels::device::log_determinant_from_getrf(a,ipiv,log_det);
+    kernels::device::log_determinant_from_getrf(to_view(a),to_view(ipiv),to_view(log_det));
   } else 
 #endif
   {
@@ -82,7 +87,7 @@ void log_determinant_from_geqrf(A const& a, S && scl, V && log_det) {
   sfqmc::utils::check(scl.extent(1) >= std::min(a.extent(1),a.extent(2)), "Size mismatch");
 #if defined(ENABLE_DEVICE)
   if constexpr (nda::mem::have_device_compatible_addr_space<A,S,V>) {
-    kernels::device::log_determinant_from_geqrf(a,scl,log_det);
+    kernels::device::log_determinant_from_geqrf(to_view(a),to_view(scl),to_view(log_det));
   } else 
 #endif
   {

@@ -28,6 +28,7 @@
 
 #include "configuration.hpp"
 #include "config.0.h"
+#include "AFQMC/propagator_types.hpp"
 #include "IO/AppAbort.hpp"
 #include "utilities/check.hpp"
 
@@ -179,17 +180,6 @@ enum HamiltonianTypes
   RealDenseFactorized,
   ModelHamiltonian,  
   UNKNOWN
-};
-
-/* Remember to propagate any changes to this enum to the device Kernel
-   routines for construct_X_Model */
-enum PropagatorTypes
-{
-  ContinuousChargePropagator,
-  ContinuousSpinPropagator,
-  DiscreteChargePropagator,
-  DiscreteSpinPropagator,
-  UndefinedPropagator
 };
 
 } // namespace afqmc

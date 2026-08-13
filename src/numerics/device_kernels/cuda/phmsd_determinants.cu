@@ -1,17 +1,11 @@
-#include <complex>
-
-#include "configuration.hpp"
-#include "utilities/check.hpp"
-#include "numerics/device_kernels/cuda/cuda_settings.h"
-#include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/atomics.hpp"
-#include <nda/nda.hpp>
+#include <cuda/std/complex>
 #include <cuda/std/mdspan>
-#include "cub/device/device_for.cuh"
-#include "numerics/nda_functions.hpp"
-#include "numerics/operations/determinants.hpp"
 
-namespace kernels::device::detail
+#include "arch/atomics.hpp"
+#include "numerics/device_kernels/cuda/launch.cuh"
+#include "numerics/device_kernels/device_api.hpp"
+
+namespace kernels::device
 {
 template<typename T>
 __device__ T _D3x3_( T const a11, T const a12, T const a13, 
@@ -178,68 +172,63 @@ __device__  T D5x5( T const a11, T const a12, T const a13, T const a14, T const 
 }
 //#endif
 
-template<typename T_t, typename Ov_t>
-void phmsd_det_impl(int nex, int const* iex, T_t const& T, Ov_t& ov)
+// ov(ndet,nwalk), T(nwalk,nact,nel). Closed forms up to nex == phmsd_det_max_closed_form; beyond
+// that the host wrapper drives getrf, so only the extract kernel below is needed.
+void phmsd_det_small(int nex, int const* iex, view<std::complex<double> const, 3> T,
+                     view<std::complex<double>, 2> ov)
 {
-  auto T_d = to_cuda_std_mdspan(T);
-  auto ov_d = to_cuda_std_mdspan(ov);
+  auto T_d  = T;
+  auto ov_d = ov;
   long ndet = ov.extent(0);
   long nwalk = ov.extent(1);
-  switch(nex) 
+  if(ndet * nwalk == 0) {
+    return;
+  }
+  switch(nex)
   {
     case 1:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet; 
-        long idet = n - iw*ndet; 
+      auto f = [=] __device__(long iw, long idet) {
         ov_d(idet,iw) = T_d(iw,iex[2*idet+1],iex[2*idet]);
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
-      break;   
+      for_each_extents<2>({nwalk,ndet},f);
+      break;
     }
     case 2:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet;
-        long idet = n - iw*ndet;
-        int const* x = iex + 4*idet; 
+      auto f = [=] __device__(long iw, long idet) {
+        int const* x = iex + 4*idet;
         ov_d(idet,iw) = T_d(iw,x[2],x[0])*T_d(iw,x[3],x[1]) - T_d(iw,x[2],x[1])*T_d(iw,x[3],x[0]);
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
+      for_each_extents<2>({nwalk,ndet},f);
       break;
     }
     case 3:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet;
-        long idet = n - iw*ndet;
-        int const* x = iex + 6*idet; 
+      auto f = [=] __device__(long iw, long idet) {
+        int const* x = iex + 6*idet;
         ov_d(idet,iw) = _D3x3_(T_d(iw,x[3],x[0]),T_d(iw,x[3],x[1]),T_d(iw,x[3],x[2]),
                              T_d(iw,x[4],x[0]),T_d(iw,x[4],x[1]),T_d(iw,x[4],x[2]),
                              T_d(iw,x[5],x[0]),T_d(iw,x[5],x[1]),T_d(iw,x[5],x[2]));
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
+      for_each_extents<2>({nwalk,ndet},f);
       break;
     }
     case 4:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet;
-        long idet = n - iw*ndet;
-        int const* x = iex + 8*idet; 
+      auto f = [=] __device__(long iw, long idet) {
+        int const* x = iex + 8*idet;
         ov_d(idet,iw) = D4x4(T_d(iw,x[4],x[0]),T_d(iw,x[4],x[1]),T_d(iw,x[4],x[2]),T_d(iw,x[4],x[3]),
                              T_d(iw,x[5],x[0]),T_d(iw,x[5],x[1]),T_d(iw,x[5],x[2]),T_d(iw,x[5],x[3]),
-                             T_d(iw,x[6],x[0]),T_d(iw,x[6],x[1]),T_d(iw,x[6],x[2]),T_d(iw,x[6],x[3]),         
-                             T_d(iw,x[7],x[0]),T_d(iw,x[7],x[1]),T_d(iw,x[7],x[2]),T_d(iw,x[7],x[3])); 
+                             T_d(iw,x[6],x[0]),T_d(iw,x[6],x[1]),T_d(iw,x[6],x[2]),T_d(iw,x[6],x[3]),
+                             T_d(iw,x[7],x[0]),T_d(iw,x[7],x[1]),T_d(iw,x[7],x[2]),T_d(iw,x[7],x[3]));
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
+      for_each_extents<2>({nwalk,ndet},f);
       break;
     }
     case 5:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet;
-        long idet = n - iw*ndet;
+      auto f = [=] __device__(long iw, long idet) {
         int const* x = iex + 10*idet;
         ov_d(idet,iw) = D5x5(T_d(iw,x[5],x[0]),T_d(iw,x[5],x[1]),T_d(iw,x[5],x[2]),T_d(iw,x[5],x[3]),T_d(iw,x[5],x[4]),
                              T_d(iw,x[6],x[0]),T_d(iw,x[6],x[1]),T_d(iw,x[6],x[2]),T_d(iw,x[6],x[3]),T_d(iw,x[6],x[4]),
@@ -247,74 +236,57 @@ void phmsd_det_impl(int nex, int const* iex, T_t const& T, Ov_t& ov)
                              T_d(iw,x[8],x[0]),T_d(iw,x[8],x[1]),T_d(iw,x[8],x[2]),T_d(iw,x[8],x[3]),T_d(iw,x[8],x[4]),
                              T_d(iw,x[9],x[0]),T_d(iw,x[9],x[1]),T_d(iw,x[9],x[2]),T_d(iw,x[9],x[3]),T_d(iw,x[9],x[4]));
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
+      for_each_extents<2>({nwalk,ndet},f);
       break;
     }
     default:
-    {
-      // M[iwalk][idet][ip][iq]
-      memory::buffered_array<DEVICE_MEMORY,nda::get_value_t<T_t>,4> M(ndet,nwalk,nex,nex);
-      auto M_d = to_cuda_std_mdspan(M);
-      long n1 = nwalk*nex*nex;
-      long n2 = nex*nex;
-      auto extract = [=] __device__(long n) {
-        long idet = n/n1;
-        n -= idet*n1;
-        long iw   = n/n2;
-        n -= iw*n2;
-        long i   = n/nex;
-        long j   = n - i*nex; 
-        M_d(idet,iw,i,j) = T_d(iw,iex[2*nex*idet + nex + i],iex[2*nex*idet + j]);    
-      };
-      cub::DeviceFor::Bulk(ndet*nwalk*nex*nex,extract);
-      memory::buffered_array<DEVICE_MEMORY,int,2> ipiv(ndet*nwalk,nex);
-      memory::buffered_array<DEVICE_MEMORY,nda::get_value_t<T_t>,1> work;
-      auto M3d = nda::reshape(M,std::array<long,3>{ndet*nwalk,nex,nex});
-      nda::lapack::getrf(M3d,ipiv,work);
-      math::log_determinant_from_getrf(M3d,ipiv,nda::flatten(ov));
-    }
+      break;
   };
 }
 
-template<typename T_t, typename R_t> 
-void phmsd_compact_R_impl(int nex, int const* refc, int const* iex, T_t const& T, R_t &R) 
+// M(ndet,nwalk,nex,nex) <- the nex x nex excitation block, ready for a batched getrf.
+void phmsd_det_extract(int nex, int const* iex, view<std::complex<double> const, 3> T,
+                       view<std::complex<double>, 4> M)
 {
-  using nda::range;
-  auto all = range::all;
-  // T(nw,nact,nel)
-  auto T_d = to_cuda_std_mdspan(T);
-  // R(nwalk,ndet,nex,nact) 
-  auto R_d = to_cuda_std_mdspan(R);
-  using value_t = std::decay_t<decltype(T_d(0,0,0))>;
-  long nwalk = R.extent(0);
-  long ndet = R.extent(1);
-  long nel = T.extent(2);
-  long nact = R.extent(3);
-  memory::buffered_array<DEVICE_MEMORY,ComplexType,2> ov(nwalk,ndet);
-  ov() = ComplexType(0);
-  auto ov_d = to_cuda_std_mdspan(ov);
-  memory::buffered_array<DEVICE_MEMORY,ComplexType,4> M(nwalk,ndet,nex,nex);
-  auto M_d = to_cuda_std_mdspan(M);
-  // Compute inverses 
+  auto T_d  = T;
+  auto M_d  = M;
+  auto extract = [=] __device__(long idet, long iw, long i, long j) {
+    M_d(idet,iw,i,j) = T_d(iw,iex[2*nex*idet + nex + i],iex[2*nex*idet + j]);
+  };
+  for_each(M,extract);
+}
+
+// ov(nwalk,ndet) and its inverse M(nwalk,ndet,nex,nex), closed forms up to
+// nex == phmsd_inverse_max_closed_form. Wherever the overlap is zero M is left untouched, and
+// phmsd_compact_R_assemble skips those entries, so M needs no initialization.
+void phmsd_compact_R_inverse_small(int nex, int const* iex, view<std::complex<double> const, 3> T,
+                                   view<std::complex<double>, 2> ov,
+                                   view<std::complex<double>, 4> M)
+{
+  auto T_d  = T;
+  auto ov_d = ov;
+  auto M_d  = M;
+  using value_t = native_t<std::complex<double>>;
+  long nwalk = ov.extent(0);
+  long ndet  = ov.extent(1);
+  if(nwalk * ndet == 0) {
+    return;
+  }
   switch(nex)
   {
     case 1:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet;
-        long idet = n - iw*ndet;
+      auto f = [=] __device__(long iw, long idet) {
         ov_d(iw,idet) = T_d(iw,iex[2*idet+1],iex[2*idet]);
-        if(abs(ov_d(iw,idet)) != 0) 
+        if(abs(ov_d(iw,idet)) != 0)
           M_d(iw,idet,0,0) = value_t(1.0)/ov_d(iw,idet);
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
+      for_each(ov,f);
       break;
     }
     case 2:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet;
-        long idet = n - iw*ndet;
+      auto f = [=] __device__(long iw, long idet) {
         int const* x = iex + 4*idet;
         ov_d(iw,idet) = T_d(iw,x[2],x[0])*T_d(iw,x[3],x[1]) - T_d(iw,x[2],x[1])*T_d(iw,x[3],x[0]);
         if(abs(ov_d(iw,idet)) != 0) { 
@@ -322,17 +294,15 @@ void phmsd_compact_R_impl(int nex, int const* refc, int const* iex, T_t const& T
           M_d(iw,idet,0,0) = T_d(iw,x[3],x[1]) * scl; 
           M_d(iw,idet,0,1) = -T_d(iw,x[2],x[1]) * scl; 
           M_d(iw,idet,1,0) = -T_d(iw,x[3],x[0]) * scl; 
-          M_d(iw,idet,1,1) = T_d(iw,x[2],x[0]) * scl; 
+          M_d(iw,idet,1,1) = T_d(iw,x[2],x[0]) * scl;
         }
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
+      for_each(ov,f);
       break;
     }
     case 3:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet;
-        long idet = n - iw*ndet;
+      auto f = [=] __device__(long iw, long idet) {
         int const* x = iex + 6*idet;
         ov_d(iw,idet) = _D3x3_(T_d(iw,x[3],x[0]),T_d(iw,x[3],x[1]),T_d(iw,x[3],x[2]),
                              T_d(iw,x[4],x[0]),T_d(iw,x[4],x[1]),T_d(iw,x[4],x[2]),
@@ -344,14 +314,12 @@ void phmsd_compact_R_impl(int nex, int const* refc, int const* iex, T_t const& T
                T_d(iw,x[5],x[0]),T_d(iw,x[5],x[1]),T_d(iw,x[5],x[2]),scl,&M_d(iw,idet,0,0));
         }
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
+      for_each(ov,f);
       break;
     }
     case 4:
     {
-      auto f = [=] __device__(long n) {
-        long iw   = n/ndet;
-        long idet = n - iw*ndet;
+      auto f = [=] __device__(long iw, long idet) {
         int const* x = iex + 8*idet;
         ov_d(iw,idet) = D4x4(T_d(iw,x[4],x[0]),T_d(iw,x[4],x[1]),T_d(iw,x[4],x[2]),T_d(iw,x[4],x[3]),
                              T_d(iw,x[5],x[0]),T_d(iw,x[5],x[1]),T_d(iw,x[5],x[2]),T_d(iw,x[5],x[3]),
@@ -365,89 +333,79 @@ void phmsd_compact_R_impl(int nex, int const* refc, int const* iex, T_t const& T
                T_d(iw,x[7],x[0]),T_d(iw,x[7],x[1]),T_d(iw,x[7],x[2]),T_d(iw,x[7],x[3]),scl,&M_d(iw,idet,0,0));
         }
       };
-      cub::DeviceFor::Bulk(nwalk*ndet,f);
+      for_each(ov,f);
       break;
     }
     default:
-    {
-      // M[iwalk][idet][ip][iq]
-      long n1 = ndet*nex*nex;
-      long n2 = nex*nex;
-      auto extract = [=] __device__(long n) {
-        long iw   = n/n1;
-        n -= iw*n1;
-        long idet = n/n2;
-        n -= idet*n2;
-        long i   = n/nex;
-        long j   = n - i*nex;
-        M_d(iw,idet,i,j) = T_d(iw,iex[2*nex*idet + nex + i],iex[2*nex*idet + j]);
-      };
-      cub::DeviceFor::Bulk(nwalk*n1,extract);
-      auto M3d = nda::reshape(M,std::array<long,3>{ndet*nwalk,nex,nex});
-      memory::buffered_array<DEVICE_MEMORY,int,2> ipiv(ndet*nwalk,nex);
-      memory::buffered_array<DEVICE_MEMORY,nda::get_value_t<T_t>,1> work;
-      nda::lapack::getrf(M3d,ipiv,work);
-      math::log_determinant_from_getrf(M3d,ipiv,nda::flatten(ov));
-      nda::lapack::getri_or_zero(M3d,ipiv,work);
-    }
-  }
-  // construct compact R
-  {
-    long n1 = ndet*nex*nel;
-    long n2 = nex*nel;
-    auto f = [=] __device__(long n) {
-      long iw = n/n1;
-      n -= iw*n1;
-      long idet = n/n2;
-      n -= idet*n2;
-      if(abs(ov_d(iw,idet)) != 0) {
-        long p = n/nel;
-        long i = n-p*nel; 
-        int a = refc[i];   
-        auto iex_ = iex + idet*2*nex;
-        for (int q = 0; q < nex; ++q) {
-          if(i == iex_[q]) 
-            a = iex_[q+nex];
-        }
-        for (int q = 0; q < nex; ++q) {
-          R_d(iw,idet,p,a) -= M_d(iw,idet,p,q) * T_d(iw,iex_[q+nex],i);
-          if(i == iex_[q]) 
-            R_d(iw,idet,p,a) += M_d(iw,idet,p,q); 
-        }
-      }
-    };
-    cub::DeviceFor::Bulk(nwalk*ndet*nex*nel,f);
+      break;
   }
 }
 
-template<typename W_t, typename Rb_t, typename R_t>
-void phmsd_reduce_R_impl(int nex, int const* refc, int const* iex, W_t const& wgt, Rb_t const& Rbuff, R_t &R)
+// M(nwalk,ndet,nex,nex) <- the nex x nex excitation block. The index order differs from
+// phmsd_det_extract: this one is walker-major.
+void phmsd_compact_R_extract(int nex, int const* iex, view<std::complex<double> const, 3> T,
+                             view<std::complex<double>, 4> M)
 {
-  using nda::range;
-  auto all = range::all;
-  // Rbuff(nwalk,ndet,nex,nact) 
-  auto Rb_d = to_cuda_std_mdspan(Rbuff);
-  // R(nwalk,nel,nact) 
-  auto R_d = to_cuda_std_mdspan(R);
-  auto w_d = to_cuda_std_mdspan(wgt);
+  auto T_d = T;
+  auto M_d = M;
+  auto extract = [=] __device__(long iw, long idet, long i, long j) {
+    M_d(iw,idet,i,j) = T_d(iw,iex[2*nex*idet + nex + i],iex[2*nex*idet + j]);
+  };
+  for_each(M,extract);
+}
+
+// R(nwalk,ndet,nex,nact) from the inverse M and the overlaps ov
+void phmsd_compact_R_assemble(int nex, int const* refc, int const* iex,
+                              view<std::complex<double> const, 3> T,
+                              view<std::complex<double> const, 2> ov,
+                              view<std::complex<double> const, 4> M,
+                              view<std::complex<double>, 4> R)
+{
+  auto T_d  = T;
+  auto ov_d = ov;
+  auto M_d  = M;
+  auto R_d  = R;
+  long nwalk = R.extent(0);
+  long ndet  = R.extent(1);
+  long nel   = T.extent(2);
+  auto f = [=] __device__(long iw, long idet, long p, long i) {
+    if(abs(ov_d(iw,idet)) != 0) {
+      int a = refc[i];
+      auto iex_ = iex + idet*2*nex;
+      for (int q = 0; q < nex; ++q) {
+        if(i == iex_[q])
+          a = iex_[q+nex];
+      }
+      for (int q = 0; q < nex; ++q) {
+        R_d(iw,idet,p,a) -= M_d(iw,idet,p,q) * T_d(iw,iex_[q+nex],i);
+        if(i == iex_[q])
+          R_d(iw,idet,p,a) += M_d(iw,idet,p,q);
+      }
+    }
+  };
+  for_each_extents<4>({nwalk,ndet,nex,nel},f);
+}
+
+// Rbuff(nwalk,ndet,nex,nact), R(nwalk,nel,nact), wgt(ndet,nwalk)
+void phmsd_reduce_R(int nex, int const* refc, int const* iex, view<std::complex<double> const, 2> wgt,
+                    view<std::complex<double> const, 4> Rbuff, view<std::complex<double>, 3> R)
+{
+  auto Rb_d = Rbuff;
+  auto R_d  = R;
+  auto w_d  = wgt;
   long ndet = Rbuff.extent(1);
   long ndet_per_thread = 16;
   long nblk = (ndet + ndet_per_thread - 1)/ndet_per_thread;
   long nwalk = R.extent(0);
   long nel = R.extent(1);
   long nact = R.extent(2);
-  using value_t = std::decay_t<decltype(R_d(0,0,0))>;
+  if(nwalk * nel * nact == 0) {
+    return;
+  }
+  using value_t = native_t<std::complex<double>>;
 
-  long n1 = nblk*nel*nact;
-  long n2 = nel*nact;
-  auto f = [=] __device__(long n) {
-    long iw = n/n1;
-    n -= iw*n1; 
-    long iblk = n/n2;
-    n -= iblk*n2;
-    long i = n/nact;
-    long a = n-i*nact;
-    int orb_i = refc[i];   
+  auto f = [=] __device__(long iw, long iblk, long i, long a) {
+    int orb_i = refc[i];
     value_t y(0);
     long max_ndet = min(ndet,(iblk+1)*ndet_per_thread);
     for(long idet=iblk*ndet_per_thread; idet<max_ndet; ++idet)
@@ -463,21 +421,7 @@ void phmsd_reduce_R_impl(int nex, int const* refc, int const* iex, W_t const& wg
     }
     sfqmc::arch::atomic_add(&R_d(iw, i, a), y);
   };
-  cub::DeviceFor::Bulk(nwalk*nblk*nel*nact,f);
+  for_each_extents<4>({nwalk,nblk,nel,nact},f);
 }
 
-using memory::device_array_view;
-using std::complex;
-
-template<int Rank>
-using basic_layout_t = typename nda::basic_layout<0, nda::C_stride_order<Rank>, nda::layout_prop_e::none>;
-
-#define _inst_(T,V) \
-template void phmsd_det_impl(int,int const*,V<const T,3,basic_layout_t<3>> const&,V<T,2,basic_layout_t<2>>&); \
-template void phmsd_compact_R_impl(int,int const*,int const*,V<const T,3,basic_layout_t<3>> const&,V<T,4,basic_layout_t<4>>&); \
-template void phmsd_reduce_R_impl(int,int const*,int const*,V<const T,2,basic_layout_t<2>>const&,V<const T,4,basic_layout_t<4>> const&,V<T,3,basic_layout_t<3>>&); \
-template void phmsd_reduce_R_impl(int,int const*,int const*,V<const T,2,basic_layout_t<2>>const&,V<T,4,basic_layout_t<4>> const&,V<T,3,basic_layout_t<3>>&); 
-
-_inst_(std::complex<double>,device_array_view)
-
-} // kernels
+} // namespace kernels::device

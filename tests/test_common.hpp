@@ -399,11 +399,12 @@ void fillRandomArray(Arr&& A, double a = 0.0, double b = 1.0)
   using T = typename std::decay_t<Arr>::value_type;
   std::mt19937 generator(0);
   if constexpr (nda::is_complex_v<T>) {
-    // for float, extract base type from T is complex
+    // the bounds are double, so a float-precision T needs the conversion spelled out
+    using R = typename T::value_type;
     std::uniform_real_distribution<double> distribution(a,b);
-    for( auto& v: A )  { v  = T{distribution(generator),distribution(generator)}; }
+    for( auto& v: A )  { v  = T{R(distribution(generator)),R(distribution(generator))}; }
   } else {
-    std::uniform_real_distribution<T> distribution(T{a},T{b});
+    std::uniform_real_distribution<T> distribution(static_cast<T>(a),static_cast<T>(b));
     for( auto& v: A )  { v  = distribution(generator); }
   }
 }

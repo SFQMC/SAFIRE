@@ -17,8 +17,9 @@
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
 
-#if defined(ENABLE_CUDA)
-#include "numerics/device_kernels/cuda/phmsd_routines.cuh"
+#if defined(ENABLE_DEVICE)
+#include "numerics/device_kernels/device_api.hpp"
+#include "numerics/device_kernels/to_view.hpp"
 #endif
 
 
@@ -136,7 +137,16 @@ void ph_excited_2body_energy_dense_cholesky(nda::MemoryVector auto const& iexcit
     }
   } else {
 #if defined(ENABLE_DEVICE)
-    kernels::device::ph_excited_2body_energy_dense_cholesky_Tpna(refc.data(),iexcit.data(),Twina,R,wgt,EX,EJ,KE);
+    using kernels::device::to_view;
+    // the per-walker slicing is nda's job, so it stays on this side of the boundary
+    auto EX_v = to_view(EX);
+    auto EJ_v = to_view(EJ);
+    for(long iw = 0; iw < nwalk; ++iw) {
+      kernels::device::ph_excited_2body_energy_dense_cholesky_Tpna_walker(
+          refc.data(), iexcit.data(), to_view(Twina(iw,nda::ellipsis{})),
+          to_view(R(iw,nda::ellipsis{})), to_view(wgt(all,iw)), EX_v, EJ_v, iw,
+          to_view(KE(all,iw,all)));
+    }
 #else
     sfqmc::utils::check(false,"Error: Missing device function.");
 #endif
@@ -173,7 +183,9 @@ void ph_excited_1body_energy(nda::MemoryVector auto const& iexcit, nda::MemoryVe
     }
   } else {
 #if defined(ENABLE_DEVICE)
-    kernels::device::ph_excited_1body_energy(refc.data(),iexcit.data(),S,R,wgt,E);
+    using kernels::device::to_view;
+    kernels::device::ph_excited_1body_energy(refc.data(),iexcit.data(),to_view(S),to_view(R),
+                                             to_view(wgt),to_view(E));
 #else
     sfqmc::utils::check(false,"Error: Missing device function.");
 #endif

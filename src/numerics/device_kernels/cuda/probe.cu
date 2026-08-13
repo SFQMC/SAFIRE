@@ -1,6 +1,6 @@
-#include "configuration.hpp"
-#include "utilities/check.hpp"
 #include <format>
+
+#include "utilities/check.hpp"
 
 __global__ void probe_kernel() {}
 

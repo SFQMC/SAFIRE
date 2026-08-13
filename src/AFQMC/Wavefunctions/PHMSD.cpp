@@ -24,7 +24,8 @@
 #include "numerics/operations/product.hpp"
 #include "numerics/operations/determinants.hpp"
 #if defined(ENABLE_DEVICE)
-#include "numerics/device_kernels/cuda/phmsd_routines.cuh"
+#include "numerics/device_kernels/device_api.hpp"
+#include "numerics/device_kernels/to_view.hpp"
 #endif
 
 namespace sfqmc
@@ -1477,10 +1478,11 @@ void PHMSD<MEM>::vMF(memory::array_view<MEM,ComplexType,1> v, double dt)
         memory::array<DEVICE_MEMORY,int,1> rend_d = rend_h;
         memory::array<DEVICE_MEMORY,ComplexType,2> Gs_d(nact[spin], npol*NMO);
         Gs_d() = ComplexType(0.0);
+        using kernels::device::to_view;
         kernels::device::vmf_offdiag(total_pairs, int(nrows), mpi->comm.rank(), mpi->comm.size(),
                                      nel_spin, pair_off_d.data(), rbeg_d.data(), rend_d.data(),
                                      csr.columns().data(), csr.values().data(),
-                                     configs_d.data(), Orbs_d, Gs_d);
+                                     configs_d.data(), to_view(Orbs_d), to_view(Gs_d));
         nda::array<ComplexType,2> Gs_h = Gs_d;
         Gs += Gs_h;
       }

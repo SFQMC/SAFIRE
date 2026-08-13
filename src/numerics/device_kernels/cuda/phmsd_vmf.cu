@@ -1,15 +1,10 @@
-#include <complex>
-
-#include "configuration.hpp"
-#include "utilities/check.hpp"
-#include "numerics/device_kernels/cuda/cuda_settings.h"
-#include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/atomics.hpp"
-#include "nda/nda.hpp"
-#include <cuda/std/mdspan>
 #include <cuda/std/complex>
 
-namespace kernels::device::detail
+#include "arch/CUDA/cuda_init.h"
+#include "arch/atomics.hpp"
+#include "numerics/device_kernels/device_api.hpp"
+
+namespace kernels::device
 {
 
 // GPU evaluation of the off-diagonal contribution to the PHMSD mean-field Green's
@@ -100,37 +95,22 @@ __global__ void kernel_vmf_offdiag(long total_pairs, int nrows, int rank, int si
   }
 }
 
-template<typename O_t, typename G_t>
-void vmf_offdiag_impl(long total_pairs, int nrows, int rank, int size, int nelec,
-                      long const* pair_off,
-                      int const* coup_rbegin, int const* coup_rend, int const* coup_jdet,
-                      std::complex<double> const* coup_val,
-                      int const* configs, O_t const& O, G_t& G)
+void vmf_offdiag(long total_pairs, int nrows, int rank, int size, int nelec, long const* pair_off,
+                 int const* coup_rbegin, int const* coup_rend, int const* coup_jdet,
+                 std::complex<double> const* coup_val, int const* configs,
+                 view<std::complex<double> const, 2> O, view<std::complex<double>, 2> G)
 {
   if (total_pairs <= 0)
     return;
-  auto O_d = to_cuda_std_mdspan(O);
-  auto G_d = to_cuda_std_mdspan(G);
   int  nthreads = 256;
   long nblk = (total_pairs + nthreads - 1) / nthreads;
   if (nblk > 200000) nblk = 200000; // cap; grid-strides over the remainder
   dim3 grid((unsigned)nblk, 1, 1);
   kernel_vmf_offdiag<<<grid, nthreads>>>(total_pairs, nrows, rank, size, nelec,
                                          pair_off, coup_rbegin, coup_rend, coup_jdet,
-                                         cuda_std_ptr_cast(coup_val),
-                                         configs, O_d, G_d);
+                                         to_native_ptr(coup_val),
+                                         configs, O, G);
+  sfqmc::cuda::cuda_check(cudaGetLastError(), "vmf_offdiag");
 }
 
-using memory::device_array_view;
-using std::complex;
-
-template<int Rank>
-using basic_layout_t = typename nda::basic_layout<0, nda::C_stride_order<Rank>, nda::layout_prop_e::none>;
-
-#define _inst_(T, V) \
-template void vmf_offdiag_impl(long, int, int, int, int, long const*, int const*, int const*, int const*, T const*, int const*, \
-    V<const T, 2, basic_layout_t<2>> const&, V<T, 2, basic_layout_t<2>>&);
-
-_inst_(std::complex<double>, device_array_view)
-
-} // namespace kernels::device::detail
+} // namespace kernels::device

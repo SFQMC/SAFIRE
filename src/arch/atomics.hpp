@@ -1,7 +1,7 @@
 #pragma once
 #include<atomic>
 #include <complex>
-#include "arch.h"
+#include "host_device.h"
 
 // wrappers for atomic that support complex numbers and are device agnostic
 namespace sfqmc::arch {

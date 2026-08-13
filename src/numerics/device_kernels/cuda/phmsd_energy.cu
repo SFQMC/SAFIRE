@@ -1,21 +1,17 @@
-#include <complex>
-
-#include "configuration.hpp"
-#include "utilities/check.hpp"
-#include "numerics/device_kernels/cuda/cuda_settings.h"
-#include "numerics/device_kernels/cuda/cuda_aux.hpp"
-#include "arch/atomics.hpp"
-#include "nda/nda.hpp"
+#include <cuda/std/complex>
 #include <cuda/std/mdspan>
-#include "cub/device/device_for.cuh"
+
 #include "cub/block/block_reduce.cuh"
-#include "numerics/operations/determinants.hpp"
+
+#include "arch/CUDA/cuda_init.h"
+#include "arch/atomics.hpp"
+#include "numerics/device_kernels/device_api.hpp"
 
 #define __NTHR__ 512 
 #define __NCHOL__ 128
 #define __BZ__ 32 
 
-namespace kernels::device::detail
+namespace kernels::device
 {
 
 template<typename S_t, typename R_t, typename W_t, typename E_t> 
@@ -266,70 +262,51 @@ __global__ void kernel_ph_excited_energy_real_dense_chol_Tpna_second(int const* 
   }
 } 
 
-template<typename S_t, typename R_t, typename W_t, typename E_t>
-void ph_excited_1body_energy_impl(int const* refc, int const* iexcit, S_t const& S, R_t const& R, W_t const& w, E_t &E)
+// S(nwalk,nel,nact), R(nwalk,ndet,nex,nact), w(ndet,nwalk), E(nwalk)
+void ph_excited_1body_energy(int const* refc, int const* iexcit, view<std::complex<double> const, 3> S,
+                             view<std::complex<double> const, 4> R,
+                             view<std::complex<double> const, 2> w, view<std::complex<double>, 1> E)
 {
-  using nda::range;
-  auto all = range::all;
-  // S(nwalk,nel,nact) 
-  auto S_d = to_cuda_std_mdspan(S);
-  // R(nwalk,ndet,nex,nact) 
-  auto R_d = to_cuda_std_mdspan(R);
-  // w(ndet,nwalk)
-  auto w_d = to_cuda_std_mdspan(w);
-  // E(nwalk)
-  auto E_d = to_cuda_std_mdspan(E);
-  auto [nwalk,ndet,nex,nact] = R.shape();
-  
-  dim3 grid_dim(ndet*nwalk,nex,1);
-  kernel_ph_excited_1body_energy<<<grid_dim, __BZ__>>>(iexcit,refc,S_d,R_d,w_d,E_d);
-}
-
-template<typename T_t, typename R_t, typename W_t, typename EX_t, typename EJ_t, typename KE_t>
-void ph_excited_2body_energy_dense_cholesky_Tpna_impl(int const* refc, int const* iexcit, T_t const& T, R_t const& R, W_t const& w, EX_t &EX, EJ_t& EJ, KE_t &KE)
-{
-  // EX(nwalk)
-  auto EX_d = to_cuda_std_mdspan(EX);
-  // EJ(nwalk)
-  auto EJ_d = to_cuda_std_mdspan(EJ);
-  auto [nwalk,nelec,nchol,nact] = T.shape();
-  int ndet = R.extent(1);
-
-  int bsize = __NTHR__;
-  int nc = __NCHOL__;
-  int gdim = (nchol + bsize - 1) / bsize;
-  int gdim2 = (nchol + nc - 1) / nc;
-  dim3 grid_dim(gdim, ndet, 1);
-  dim3 grid_dim2(gdim2, ndet, 1);
-  int sm_size(nelec*sizeof(int));
-
-  for( int iw=0; iw<nwalk; iw++)
-  {  
-    // T(nwalk,nel,nchol,nact) 
-    auto T_d = to_cuda_std_mdspan(T(iw,nda::ellipsis{}));
-    // R(nwalk,ndet,nex,nact) 
-    auto R_d = to_cuda_std_mdspan(R(iw,nda::ellipsis{}));
-    // w(ndet,nwalk)
-    auto w_d = to_cuda_std_mdspan(w(nda::range::all,iw));
-    // KE(ndet,nwalk,nchol)
-    auto KE_d = to_cuda_std_mdspan(KE(nda::range::all,iw,nda::range::all));
-
-    kernel_ph_excited_energy_real_dense_chol_Tpna_first<<<grid_dim,__NTHR__,sm_size>>>(iexcit,refc,T_d,R_d,w_d,&EX_d(iw),&EJ_d(iw),KE_d);
-    kernel_ph_excited_energy_real_dense_chol_Tpna_second<<<grid_dim2,__BZ__,sm_size>>>(iexcit,refc,T_d,R_d,w_d,&EX_d(iw));
-
+  long nwalk = R.extent(0);
+  long ndet  = R.extent(1);
+  long nex   = R.extent(2);
+  if(nwalk * ndet * nex == 0) {
+    return;
   }
+
+  dim3 grid_dim((unsigned)(ndet * nwalk), (unsigned)nex, 1);
+  kernel_ph_excited_1body_energy<<<grid_dim, __BZ__>>>(iexcit, refc, S, R, w, E);
+  sfqmc::cuda::cuda_check(cudaGetLastError(), "ph_excited_1body_energy");
 }
 
-using memory::device_array_view;
-using std::complex;
+// One walker's contribution. The caller loops over walkers and slices T(iw,...), R(iw,...),
+// w(:,iw) and KE(:,iw,:) with nda, which is why the slicing does not appear here.
+//   T(nel,nchol,nact), R(ndet,nex,nact), w(ndet), KE(ndet,nchol)
+void ph_excited_2body_energy_dense_cholesky_Tpna_walker(
+    int const* refc, int const* iexcit, view<std::complex<double> const, 3> T,
+    view<std::complex<double> const, 3> R, view<std::complex<double> const, 1> w,
+    view<std::complex<double>, 1> EX, view<std::complex<double>, 1> EJ, long iw,
+    view<std::complex<double>, 2> KE)
+{
+  long nelec = T.extent(0);
+  long nchol = T.extent(1);
+  long ndet  = R.extent(0);
+  if(nelec * nchol * ndet == 0) {
+    return;
+  }
 
-template<int Rank>
-using basic_layout_t = typename nda::basic_layout<0, nda::C_stride_order<Rank>, nda::layout_prop_e::none>;
+  long bsize = __NTHR__;
+  long nc    = __NCHOL__;
+  dim3 grid_dim((unsigned)((nchol + bsize - 1) / bsize), (unsigned)ndet, 1);
+  dim3 grid_dim2((unsigned)((nchol + nc - 1) / nc), (unsigned)ndet, 1);
+  int  sm_size(nelec * sizeof(int));
 
-#define _inst_(T,V) \
-template void ph_excited_1body_energy_impl(int const*,int const*,V<const T,3,basic_layout_t<3>>const&,V<const T,4,basic_layout_t<4>> const&,V<const T,2,basic_layout_t<2>>const&,V<T,1,basic_layout_t<1>>&); \
-template void ph_excited_2body_energy_dense_cholesky_Tpna_impl(int const*,int const*,V<const T,4,basic_layout_t<4>>const&,V<const T,4,basic_layout_t<4>> const&,V<const T,2,basic_layout_t<2>>const&,V<T,1,basic_layout_t<1>>&,V<T,1,basic_layout_t<1>>&,V<T,3,basic_layout_t<3>>&); 
+  kernel_ph_excited_energy_real_dense_chol_Tpna_first<<<grid_dim, __NTHR__, sm_size>>>(
+      iexcit, refc, T, R, w, &EX(iw), &EJ(iw), KE);
+  kernel_ph_excited_energy_real_dense_chol_Tpna_second<<<grid_dim2, __BZ__, sm_size>>>(iexcit, refc,
+                                                                                       T, R, w,
+                                                                                       &EX(iw));
+  sfqmc::cuda::cuda_check(cudaGetLastError(), "ph_excited_2body_energy_dense_cholesky_Tpna");
+}
 
-_inst_(std::complex<double>,device_array_view)
-
-} // kernels
+} // namespace kernels::device

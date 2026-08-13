@@ -29,10 +29,6 @@
 #include "AFQMC/Propagators/construct_X.hpp"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
 
-#if defined(ENABLE_DEVICE)
-#include "numerics/device_kernels/kernels.h"
-#endif
-
 #include "AFQMC/SlaterDeterminantOperations/orthogonalize.hpp"
 
 namespace sfqmc
@@ -629,12 +625,14 @@ void AFQMCBasePropagator<MEM>::assemble_X(RealType sqrtdt,
 
   if constexpr (MEM==DEVICE_MEMORY) {
 #if defined(ENABLE_DEVICE)
-    kernels::device::construct_X(use_cp_constraint or use_real_vbias,free_projection,sqrtdt, vbias_bound, FieldTypes_dev, vMF, MF, HWs, RNGbuff, X);
+    construct_X(use_cp_constraint or use_real_vbias,free_projection,sqrtdt, vbias_bound, FieldTypes_dev, vMF, MF, HWs, RNGbuff, X);
 #endif
   } else {
-    detail::construct_X_impl construct_X{use_cp_constraint || use_real_vbias, free_projection, sqrtdt, vbias_bound, FieldTypes, vMF(), MF(), HWs(), RNGbuff(), X()};
-    for(int i=0; i < X.size(); i++) {
-      construct_X(i);
+    detail::construct_X_impl f{use_cp_constraint || use_real_vbias, free_projection, sqrtdt, vbias_bound, FieldTypes, vMF(), MF(), HWs(), RNGbuff(), X()};
+    for(long iw = 0; iw < nwalk; ++iw) {
+      for(long m = 0; m < nCV; ++m) {
+        f(iw, m);
+      }
     }
   }
 }
