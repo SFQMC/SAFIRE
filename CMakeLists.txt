@@ -155,6 +155,7 @@ block()
   set(CudaSupport ${ENABLE_CUDA})
   set(TblisSupport ON)
   set(Build_Tests ${COMPILE_NDA_TESTS})
+  set(ENABLE_SHARED OFF) # tblis: build only static library
   set(PythonSupport OFF)
   FetchContent_Declare(
           nda
@@ -163,6 +164,7 @@ block()
           SYSTEM
   )
   FetchContent_MakeAvailable(nda)
+  add_library(TBLIS::tblis ALIAS tblis-static) # satisfy nda’s link request
 endblock()
 
 ######################################################################
