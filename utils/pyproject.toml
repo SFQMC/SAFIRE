@@ -33,6 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 PYSCF = ["pyscf >= 2.4.0"]
 AUTOHF = ["jax","optax","jaxlib", "jaxopt"]
+VAFQMC = ["hafqmc"]  # for afqmctools.inputs.from_vafqmc
 LATTICE_HF = ["jax","optax","jaxlib", "jaxopt"] # for backwards compatibility!
 TESTING = ["pytest-html","coverage"]
 TUTORIALS = ["jupyterlab"]
@@ -70,6 +71,7 @@ afqmc_to_fcidump = "cli.afqmc_to_fcidump:main"
 dice_to_hdf5 = "cli.dice_to_hdf5:main"
 fcidump_to_afqmc = "cli.fcidump_to_afqmc:main"
 pyscf_to_afqmc = "cli.pyscf_to_afqmc:main"
+vafqmc_to_afqmc = "cli.vafqmc_to_afqmc:main"
 test_afqmc_input = "cli.test_afqmc_input:main"
 wfn_to_hdf5 = "cli.wfn_to_hdf5:main"
 write_afqmc_json = "cli.write_afqmc_json:main"
