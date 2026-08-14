@@ -2702,16 +2702,138 @@ TEST_CASE("stochastic_wfn: input surface closed", "[stochastic_wfn]")
   // inner_nsteps >= 0, and resolve_sampling_target's target/inner_nsteps agreement -- since the
   // unknown-key sweep now lives in the JSON schema (from_json), not here. Everything else lives in the
   // CONSTRUCTOR and is therefore unreachable from this test case, which calls the static function
-  // directly and never builds a wavefunction. Not covered anywhere in the suite today:
-  //   inner_sample_update_steps >= 0 · inner_burn_in >= 0 · inner_n_measure_samples >= 1
-  //   inner_n_measure_samples > 1 requires inner_sample_update_steps >= 1  (the other half of the
-  //     section title above, which used to claim it and could not reach it)
-  //   inner_n_measure_samples > 1 requires is_conditioned()
-  //   inner_sampler = 'metropolis' is rejected · inner_sampler in {pcn, gaussian}
-  //   pcn requires 0 < inner_sampler_step <= 1 · gaussian requires inner_sampler_step > 0
-  //   a dynamic trial requires an inner_propagator timestep · dynamic requires CLOSED/COLLINEAR
-  // Reaching those needs a fixture that constructs the trial and expects AppAbortException; the
-  // metropolis rejection is the one with production history behind it.
+  // directly and never builds a wavefunction. Inner-setting constructor guards are covered by
+  // `stochastic_wfn: constructor rejects invalid inner settings` below, which builds through the
+  // factory and expects AppAbortException. The walker-type gate (dynamic requires CLOSED/COLLINEAR)
+  // still needs a GHF fixture and is not covered here.
+}
+
+// Every APP_ABORT the StochasticWfn CONSTRUCTOR owns for its inner-sampling settings, reached the only
+// way they can be: by building a trial through the factory. The input-surface case above cannot get here
+// -- it calls validate_stochastic_inputs directly, and these guards all live past that call.
+//
+// ⚠️ HOW ATTRIBUTION WORKS HERE, because it is not the obvious way. AppAbortException carries a FIXED
+// string ("APP_ABORT triggered (see error log for details)") -- the real message goes to the error log,
+// not the exception -- so REQUIRE_THROWS_WITH cannot tell one abort from another, and "something threw"
+// is nearly worthless on a fixture family where unsupported input aborts for its own reasons (see
+// TestFiles::DYNAMIC_INNER). Attribution therefore comes from the CONTROL: one deck that builds, then one
+// field of it broken per leg. Base builds + one-field mutation throws => that field's guard fired. Keep
+// the control REQUIRE_NOTHROW first; without it every leg below could be passing vacuously.
+template<MEMORY_SPACE MEM>
+void stochastic_constructor_rejects_bad_inputs(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                               std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  if (not utils::dynamic_inner_supports(type))
+    return;
+
+  HamiltonianFactory HamFac;
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
+  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  const int nwalk = 3;
+
+  // The deck every leg starts from: conditioned, dynamic, all sampler settings left at their defaults.
+  auto good_opts = [] {
+    StochasticWfnOptions opt;
+    opt.inner_n_samples       = 4;
+    opt.inner_nsteps          = 1;
+    opt.inner_sampling_target = StochasticSamplingTarget::WalkerOverlap;
+    return opt;
+  };
+
+  // A FRESH factory per leg: a build that throws part-way must not leave a half-registered entry behind
+  // for the next one to trip over.
+  auto build = [&](std::string const& name, WavefunctionParameters pt) {
+    WavefunctionFactory<MEM> WfnFac{};
+    utils::apply_wfn_defaults(pt, ham);
+    WfnFac.push(name, pt);
+    WfnFac.getWavefunction(mpi, name, type, false, &ham, nwalk);
+  };
+
+  auto deck = [&](std::string const& name) { return make_stochastic_wfn_params(name, wfn_file, good_opts()); };
+
+  // CONTROL. Everything below is only meaningful relative to this.
+  REQUIRE_NOTHROW(build("ctor_control", deck("ctor_control")));
+
+  struct Leg
+  {
+    std::string what;
+    std::function<void(WavefunctionParameters&)> break_it;
+  };
+
+  const std::vector<Leg> legs = {
+      // The retired determinant-space sampler. The one guard here with production history: inputs
+      // naming it predate the field-space kernels and must not be silently reinterpreted as pcn.
+      {"inner_sampler = metropolis", [](auto& p) { p.inner_sampler = "metropolis"; }},
+      {"inner_sampler = an unimplemented kernel", [](auto& p) { p.inner_sampler = "hmc"; }},
+      {"pcn with inner_sampler_step = 0", [](auto& p) { p.inner_sampler_step = 0.0; }},
+      {"pcn with inner_sampler_step > 1", [](auto& p) { p.inner_sampler_step = 1.5; }},
+      {"gaussian with inner_sampler_step = 0",
+       [](auto& p) {
+         p.inner_sampler      = "gaussian";
+         p.inner_sampler_step = 0.0;
+       }},
+      {"negative inner_sample_update_steps", [](auto& p) { p.inner_sample_update_steps = -1; }},
+      {"negative inner_burn_in", [](auto& p) { p.inner_burn_in = -1; }},
+      {"inner_n_measure_samples < 1", [](auto& p) { p.inner_n_measure_samples = 0; }},
+      // nm > 1 on a frozen pool is one measurement repeated, not an average of replicas.
+      {"nm > 1 with zero sweeps per advance",
+       [](auto& p) {
+         p.inner_n_measure_samples   = 2;
+         p.inner_sample_update_steps = 0;
+       }},
+      // nm > 1 needs a chain to advance; free projection has none. Sweeps stay at the default so this
+      // leg cannot be satisfied by the guard above.
+      {"nm > 1 on a free-projection trial",
+       [](auto& p) {
+         p.inner_n_measure_samples = 2;
+         p.inner_sampling_target   = StochasticSamplingTarget::Gaussian;
+       }},
+      // A dynamic trial's timestep has NO default (0.01 must never be assumed); both the missing-block
+      // and present-but-empty spellings are errors.
+      {"dynamic trial with an inner_propagator carrying no timestep",
+       [](auto& p) { p.inner_propagator = PropagatorParameters{}; }},
+      {"dynamic trial with no inner_propagator block at all", [](auto& p) { p.inner_propagator.reset(); }},
+  };
+
+  for (std::size_t i = 0; i < legs.size(); ++i)
+  {
+    auto const& leg          = legs[i];
+    std::string name         = "ctor_bad_" + std::to_string(i);
+    WavefunctionParameters pt = deck(name);
+    leg.break_it(pt);
+    INFO("leg: " << leg.what);
+    REQUIRE_THROWS_AS(build(name, pt), AppAbortException);
+  }
+
+  // Legal edges of the very same knobs, so the guards above are not over-reading: these are the values a
+  // diagnostic deck actually uses -- freeze the chains after priming, skip the priming, redraw
+  // independently. Deliberately NOT a SECTION: this function runs once per fixture inside
+  // run_test_with_files' loop, and a SECTION inside a loop is entered on one iteration only.
+  WavefunctionParameters frozen    = deck("ctor_frozen");
+  frozen.inner_sample_update_steps = 0; // prime, then hold
+  REQUIRE_NOTHROW(build("ctor_frozen", frozen));
+
+  WavefunctionParameters no_burn = deck("ctor_no_burn");
+  no_burn.inner_burn_in          = 0; // prime and go straight into the walk
+  REQUIRE_NOTHROW(build("ctor_no_burn", no_burn));
+
+  WavefunctionParameters indep = deck("ctor_indep");
+  indep.inner_sampler_step     = 1.0; // the pcn independence redraw, the top of the allowed range
+  REQUIRE_NOTHROW(build("ctor_indep", indep));
+}
+
+TEST_CASE("stochastic_wfn: constructor rejects invalid inner settings", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn constructor guards: sampler kernel, step range, sweep counts, nm, timestep.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_constructor_rejects_bad_inputs<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
 }
 
 } // namespace sfqmc
