@@ -1,6 +1,11 @@
 #pragma once
 
+#include <algorithm>
+#include <functional>
+#include <limits>
+#include <numeric>
 #include <utility>
+#include <vector>
 
 #include <nda/nda.hpp>
 
@@ -9,24 +14,17 @@ namespace memory {
 template<typename Primary>
 class static_fallback
 {
-  inline static Primary alloc = {};
   using Secondary = nda::mem::mallocator<Primary::address_space>;
 
+  inline static Primary primary;
 public:
   static constexpr auto address_space = Primary::address_space;
 
-  static_fallback()                                  = default;
-  static_fallback(static_fallback const&)            = delete;
-  static_fallback(static_fallback&&)                 = default;
-  static_fallback& operator=(static_fallback const&) = delete;
-  static_fallback& operator=(static_fallback&&)      = default;
-
-  auto get_primary()       { return std::addressof(alloc); }
-  auto get_primary() const { return std::addressof(alloc); }
+  Primary& get_primary() { return primary; }
 
   nda::mem::blk_t allocate(std::size_t s) noexcept
   {
-    nda::mem::blk_t b = alloc.allocate(s);
+    nda::mem::blk_t b = primary.allocate(s);
     if (b.ptr) return b;
     return Secondary::allocate(s);
   }
@@ -40,233 +38,174 @@ public:
 
   void deallocate(nda::mem::blk_t b) noexcept
   {
-    if (alloc.owns(b)) {
-      alloc.deallocate(b);
-    } else {
-      // account the release in the primary's counters, then free via the secondary
-      alloc.deallocate(b);
-      Secondary::deallocate(b);
-    }
+    // the primary accounts for every release, but reclaims the block only if it owns it
+    primary.deallocate(b);
+    if (!primary.owns(b)) Secondary::deallocate(b);
   }
 };
 
-namespace detail {
-  // returns the next address aligned to "align"
-  inline char *align_up(char *ptr, std::size_t align = alignof(std::max_align_t)) {
-    std::uintptr_t align_(align);
-    uintptr_t ptr_i = reinterpret_cast<uintptr_t>(ptr);
-    return reinterpret_cast<char *>(align_ * ((ptr_i + (align_ - 1)) / align_));
-  };
-} // namespace detail
-
+/*
+ * Arena allocator over a single, resizable pool obtained from mallocator<AdrSp>.
+ *
+ * A request that does not fit in the pool returns a null block, leaving it to the caller (see
+ * static_fallback) to serve it elsewhere. Such a request still counts towards maximum_memory(),
+ * which reports the peak amount of memory that was outstanding at any one time. That is the
+ * number used to grow the pool until the fallback is no longer needed, see
+ * sfqmc::utils::resize_nda_static_allocator.
+ */
 template <nda::mem::AddressSpace AdrSp = nda::mem::Host, size_t Alignment = alignof(std::max_align_t)>
 class dynamic_bucket {
 private:
   // auxiliary allocator
   using Auxiliary = nda::mem::mallocator<AdrSp>;
 
-  /// alignment
+  /// alignment of the segments handed out
   constexpr static size_t align_ = std::max(size_t(1), Alignment);
+  static_assert((align_ & (align_ - 1)) == 0, "dynamic_bucket: Alignment must be a power of two.");
+  // the pool itself needs no adjustment: mallocator hands back memory aligned for any type with
+  // a fundamental alignment requirement, so the pool starts out align_-aligned already
+  static_assert(align_ <= alignof(std::max_align_t), "dynamic_bucket: Alignment is too large.");
 
-  // size of the pool
-  size_t size_ = 0;
+  /// pool of memory. pool_.s is the size of the pool
+  nda::mem::blk_t pool_{};
 
-  /// maximum amount of memory needed
+  /// available memory segments, sorted by address and fully merged
+  std::vector<nda::mem::blk_t> avail_ = {};
+
+  /// amount of memory currently handed out, rounded up to align_
+  size_t in_use_ = 0;
+
+  /// high water mark of in_use_
   size_t maximum_needed_ = 0;
 
-  /// total amount of memory requested
-  size_t total_requested_ = 0;
+  /// largest request that can be rounded up without overflowing
+  constexpr static size_t max_request_ = std::numeric_limits<size_t>::max() - (align_ - 1);
 
-  /// total amount of memory released
-  size_t total_released_ = 0;
-
-  // pool of memory
-  nda::mem::blk_t pool_;
-
-  // aligned start of pool_
-  char *p0 = nullptr;
-
-  // list of available memory segments
-  std::vector<nda::mem::blk_t> avail_;
-
-  // list of allocated memory segments
-  std::vector<nda::mem::blk_t> segments_;
+  /// smallest multiple of align_ that is >= s, for s <= max_request_
+  static constexpr size_t round_up(size_t s) { return (s + (align_ - 1)) & ~(align_ - 1); }
 
   public:
-  /// Default constructor.
-  dynamic_bucket(size_t s = 8000) : size_(s + align_), pool_{Auxiliary::allocate(size_)} {
-    // first alligned memory location
-    p0 = detail::align_up(pool_.ptr, align_);
-    avail_.reserve(10);
-    segments_.reserve(10);
-    // initialize avail_
-    avail_.emplace_back(nda::mem::blk_t{p0, size_t(std::distance(p0, pool_.ptr + pool_.s))});
-  }
-
-  /// Destructor
-  ~dynamic_bucket() {
-    if (pool_.s > 0 and pool_.ptr != nullptr) Auxiliary::deallocate(pool_);
-  }
-
-  dynamic_bucket(dynamic_bucket const &) = delete;
-  dynamic_bucket &operator=(dynamic_bucket const &) = delete;
-
-  dynamic_bucket(dynamic_bucket &&other) noexcept
-     : size_(std::exchange(other.size_, 0)),
-       maximum_needed_(std::exchange(other.maximum_needed_, 0)),
-       total_requested_(std::exchange(other.total_requested_, 0)),
-       total_released_(std::exchange(other.total_released_, 0)),
-       pool_(std::exchange(other.pool_, nda::mem::blk_t{})),
-       p0(std::exchange(other.p0, nullptr)),
-       avail_(std::move(other.avail_)),
-       segments_(std::move(other.segments_)) {
-    // a moved-from vector is valid but unspecified; make the empty state explicit
-    other.avail_.clear();
-    other.segments_.clear();
-  }
-
-  dynamic_bucket &operator=(dynamic_bucket &&other) noexcept {
-    if(this != &other) {
-      if(pool_.s > 0 && pool_.ptr != nullptr) Auxiliary::deallocate(pool_);
-      size_            = std::exchange(other.size_, 0);
-      maximum_needed_  = std::exchange(other.maximum_needed_, 0);
-      total_requested_ = std::exchange(other.total_requested_, 0);
-      total_released_  = std::exchange(other.total_released_, 0);
-      pool_            = std::exchange(other.pool_, nda::mem::blk_t{});
-      p0               = std::exchange(other.p0, nullptr);
-      avail_           = std::move(other.avail_);
-      segments_        = std::move(other.segments_);
-      other.avail_.clear();
-      other.segments_.clear();
-    }
-    return *this;
-  }
-
   /// nda::mem::AddressSpace in which the memory is allocated.
   static constexpr auto address_space = AdrSp;
 
-  void resize(size_t s) {
-    if (segments_.size() > 0) throw std::bad_alloc{};
-    size_ = s + align_;
-    Auxiliary::deallocate(pool_);
-    pool_ = Auxiliary::allocate(size_);
-    p0    = detail::align_up(pool_.ptr, align_);
+  dynamic_bucket() = default;
+
+  /// Destructor
+  ~dynamic_bucket() {
+    if(pool_.ptr != nullptr) { Auxiliary::deallocate(pool_); }
+  }
+
+  dynamic_bucket(dynamic_bucket const &)            = delete;
+  dynamic_bucket &operator=(dynamic_bucket const &) = delete;
+  dynamic_bucket(dynamic_bucket &&)                 = delete;
+  dynamic_bucket &operator=(dynamic_bucket &&)      = delete;
+
+  /// true if no segment is currently carved out of the pool, so that it may be replaced
+  bool idle() const {
+    auto add_size = [](size_t a, auto const &b) { return a + b.s; };
+    return std::accumulate(avail_.begin(), avail_.end(), size_t(0), add_size) == pool_.s;
+  }
+
+  /*
+   * Releases the pool. Requires that no segment is in use, see idle(). Subsequent requests are
+   * declined until the next resize(), which leaves the caller to serve them.
+   */
+  void release_pool() {
+    if(!idle()) { throw std::bad_alloc{}; }
+    if(pool_.ptr != nullptr) { Auxiliary::deallocate(pool_); }
+    pool_ = {};
     avail_.clear();
-    avail_.emplace_back(nda::mem::blk_t{p0, size_t(std::distance(p0, pool_.ptr + pool_.s))});
   }
 
-  auto size() const {
-    return std::distance(p0, pool_.ptr + pool_.s);
+  /// Replaces the pool with one of at least s bytes, or releases it for s == 0. Requires that no
+  /// segment is in use.
+  void resize(size_t s) {
+    release_pool();
+    if(s == 0) { return; }
+    // round up, so that a request for the whole pool can be served
+    pool_ = Auxiliary::allocate(round_up(s));
+    // mallocator reports the requested size even when the underlying allocation failed
+    if(pool_.ptr == nullptr) {
+      pool_ = {};
+      throw std::bad_alloc{};
+    }
+    avail_.reserve(64);
+    avail_.emplace_back(pool_);
   }
 
-  auto maximum_memory() const { return maximum_needed_; }
+  /// size of the pool
+  size_t size() const { return pool_.s; }
+
+  size_t maximum_memory() const { return maximum_needed_; }
 
   nda::mem::blk_t allocate(size_t s) noexcept {
-    // round up to closest multiple of align
-    size_t aligned_s = ((s + (align_ - 1)) / align_) * align_;
-    total_requested_ += aligned_s;
-    maximum_needed_ = std::max(maximum_needed_, total_requested_ - total_released_);
-    // find available block with enough space
-    auto b = std::find_if(avail_.begin(), avail_.end(), [&](auto const &a) { return a.s >= aligned_s; });
-    if (b != avail_.end()) {
-      auto p_s = b->ptr;
-      // add segment to list, keeping list unsorted
-      segments_.push_back({p_s, aligned_s});
-      // remove segment from avail_
-      if (aligned_s == b->s)
-        avail_.erase(b);
-      else {
-        b->ptr += aligned_s;
-        b->s -= aligned_s;
-      }
-      return {p_s, s};
+    // a size that cannot be rounded up is a caller error, no pool could ever hold it. Decline
+    // it without accounting for it, so that it cannot distort the peak
+    if(s == 0 || s > max_request_) { return {nullptr, 0}; }
+    size_t const aligned_s = round_up(s);
+    // account for the request before knowing whether the pool can serve it: what is needed
+    // here is the peak demand, including whatever had to be served by the fallback
+    in_use_ += aligned_s;
+    maximum_needed_ = std::max(maximum_needed_, in_use_);
+    // first available segment with enough space
+    auto b = std::find_if(avail_.begin(), avail_.end(), [=](auto const &a) { return a.s >= aligned_s; });
+    if(b == avail_.end()) { return {nullptr, 0}; }
+    char *p = b->ptr;
+    if(aligned_s == b->s) {
+      avail_.erase(b);
+    } else {
+      b->ptr += aligned_s;
+      b->s -= aligned_s;
     }
-    return {nullptr, 0};
+    return {p, s};
   }
 
   nda::mem::blk_t allocate_zero(size_t s) noexcept {
     nda::mem::blk_t b = allocate(s);
-    if (b.ptr and b.s > 0) memset<address_space>(b.ptr, 0, b.s);
+    if(b.ptr && b.s > 0) { nda::mem::memset<address_space>(b.ptr, 0, b.s); }
     return b;
   }
 
   void deallocate(nda::mem::blk_t b) noexcept {
-    if (segments_.size() == 0 or size_ == 0) {
-      total_released_ += b.s;
-      return;
-    }
-    // 1. find blk in segments_
-    auto it = std::find_if(segments_.begin(), segments_.end(), [&](auto const &a) { return std::distance(a.ptr, b.ptr) == 0; });
-    if (it != segments_.end()) {
-      total_released_ += it->s;
-      move_blk_to_avail(*it);
-      segments_.erase(it);
-      return;
-    }
-    // 2. Deallocates owned memory.
-    EXPECTS_WITH_MESSAGE(
-       (std::distance(b.ptr, p0) > 0) or (std::distance(pool_.ptr + pool_.s, b.ptr) > 0),
-       "Error in nda::mem::dynamic_bucket::deallocate: Deallocating memory within the pool of the allocator, yet not registered as a segment.")
-    // signal that memory is not owned by this allocator
-    total_released_ += b.s;
+    if(b.ptr == nullptr || b.s == 0) { return; }
+    // allocate() returns the requested size, so rounding it up again recovers the size of the
+    // segment that was carved out of the pool
+    size_t const aligned_s = round_up(b.s);
+    EXPECTS(in_use_ >= aligned_s);
+    in_use_ -= std::min(in_use_, aligned_s);
+    // a block outside the pool was served by the fallback: only the accounting applies to it
+    if(owns(b)) { release({b.ptr, aligned_s}); }
   }
 
   bool owns(nda::mem::blk_t b) const noexcept {
-    if (segments_.size() == 0 or size_ == 0) return false;
-    return (std::distance(p0, b.ptr) >= 0) and (std::distance(b.ptr, pool_.ptr + pool_.s) > 0);
+    return (pool_.ptr != nullptr) && (b.ptr >= pool_.ptr) && (b.ptr < pool_.ptr + pool_.s);
   }
 
   private:
-  void move_blk_to_avail(nda::mem::blk_t b) {
-    if (avail_.size() == 0) {
-      avail_.emplace_back(b);
-      return;
-    }
-    // 0. find location of b.ptr in list
-    auto it = std::lower_bound(avail_.begin(), avail_.end(), b, [&](auto &&i, auto &&j) { return std::distance(i.ptr, j.ptr) > 0; });
-    // add in front
-    if (it == avail_.begin()) {
-      auto it_beg = avail_.begin();
-      if (std::distance(b.ptr + b.s, it_beg->ptr) == 0) {
-        //merge
-        it_beg->ptr = b.ptr;
-        it_beg->s += b.s;
-      } else {
-        // add
-        avail_.insert(it_beg, b);
-      }
-      return;
-    }
-    // add in back
-    if (it == avail_.end()) {
-      auto it_last = avail_.end() - 1;
-      if (std::distance(it_last->ptr + it_last->s, b.ptr) == 0) {
-        //merge
-        it_last->s += b.s;
-      } else {
-        // add
-        avail_.emplace_back(b);
-      }
-      return;
-    }
-    // General scenario: 4 cases to consider
-    auto prev   = it - 1;
-    auto d_prev = std::distance(prev->ptr + prev->s, b.ptr);
-    auto d_next = std::distance(b.ptr + b.s, it->ptr);
-    if ((d_prev == 0) and (d_next == 0)) {
-      // a. b is contiguous with previous and next element in avail_: merge into a single segment
-      prev->s += b.s + it->s;
-      avail_.erase(it);
-    } else if (d_prev == 0) {
-      // b. b is contiguous with previous element, not with next: merge with previous
-      prev->s += b.s;
-    } else if (d_next == 0) {
-      // c. b is contiguous with next element, not with previous: merge with next
+  /// returns a segment to avail_, merging it with the adjacent available segments
+  void release(nda::mem::blk_t b) {
+    EXPECTS_WITH_MESSAGE((b.ptr >= pool_.ptr) && (b.ptr + b.s <= pool_.ptr + pool_.s),
+       "Error in memory::dynamic_bucket::release: Segment is not contained in the pool.")
+    auto it = std::ranges::lower_bound(avail_, b.ptr, std::less<>{}, &nda::mem::blk_t::ptr);
+    EXPECTS_WITH_MESSAGE((it == avail_.end()) || (b.ptr + b.s <= it->ptr),
+       "Error in memory::dynamic_bucket::release: Segment overlaps an available segment (double free?).")
+    EXPECTS_WITH_MESSAGE((it == avail_.begin()) || ((it - 1)->ptr + (it - 1)->s <= b.ptr),
+       "Error in memory::dynamic_bucket::release: Segment overlaps an available segment (double free?).")
+    if((it != avail_.end()) && (b.ptr + b.s == it->ptr)) {
+      // merge with the following segment
       it->ptr = b.ptr;
       it->s += b.s;
     } else {
-      // d. b is completely isolated: add new segment
-      avail_.insert(it, b);
+      it = avail_.insert(it, b);
+    }
+    if(it != avail_.begin()) {
+      auto prev = it - 1;
+      if(prev->ptr + prev->s == it->ptr) {
+        // merge with the preceding segment. Together with the merge above this also covers the
+        // case where b joins both of its neighbours into a single segment
+        prev->s += it->s;
+        avail_.erase(it);
+      }
     }
   }
 };

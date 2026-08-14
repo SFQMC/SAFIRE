@@ -26,6 +26,7 @@
 #include "utilities/check.hpp"
 #include "arch/arch.h"
 #include "utilities/mpi_context.h"
+#include "utilities/memory_utils.hpp"
 #include "utilities/app_version.h"
 
 #include "AFQMC/AFQMCFactory.h"
@@ -182,6 +183,8 @@ int main_impl(int argc, char** argv)
   if(!mpi->shared_windows.isempty()) {
     app_warning("MPI shared windows were still in use when the simulation is already over. This is probably a bug.");
   }
+  // the allocators never release their pools on their own, see release_nda_static_allocator
+  utils::release_nda_static_allocator();
   return 0;
 }
 

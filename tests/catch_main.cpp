@@ -24,6 +24,7 @@
 #include "config.h"
 #include "arch/arch.h"
 #include "utilities/mpi_context.h"
+#include "utilities/memory_utils.hpp"
 #include "IO/app_loggers.h"
 
 #include <iostream>
@@ -78,6 +79,9 @@ public:
 
     void testRunEnded(Catch::TestRunStats const& stats) override {
       sfqmc::utils::detail::__unit_test_mpi_context__.reset();
+      // the allocators never release their pools on their own, see release_nda_static_allocator.
+      // This runs while the loggers and the device context are still up, unlike a static destructor
+      sfqmc::utils::release_nda_static_allocator();
     }
 };
 

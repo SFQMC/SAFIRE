@@ -141,7 +141,6 @@ namespace detail
 
   template<MEMORY_SPACE MEM>
   using buffered_handle_t = nda::heap_basic<static_allocator_t<MEM>>;
-  //using buffered_handle_t = nda::heap_basic<nda::mem::static_fallback<nda::mem::dynamic_bucket<to_nda_address_space(MEM)>>>;
 
 }
 

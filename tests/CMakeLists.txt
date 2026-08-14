@@ -10,6 +10,7 @@ endif()
 
 # Consolidated AFQMC test binary
 add_executable(test_afqmc
+  test_allocators.cpp
   test_driver_factory.cpp
   test_estimator_handler.cpp
   test_estimators.cpp
