@@ -2698,10 +2698,9 @@ TEST_CASE("stochastic_wfn: input surface closed", "[stochastic_wfn]")
   // inner_nsteps >= 0, and resolve_sampling_target's target/inner_nsteps agreement -- since the
   // unknown-key sweep now lives in the JSON schema (from_json), not here. Everything else lives in the
   // CONSTRUCTOR and is therefore unreachable from this test case, which calls the static function
-  // directly and never builds a wavefunction. Inner-setting constructor guards are covered by
-  // `stochastic_wfn: constructor rejects invalid inner settings` below, which builds through the
-  // factory and expects AppAbortException. The walker-type gate (dynamic requires CLOSED/COLLINEAR)
-  // still needs a GHF fixture and is not covered here.
+  // directly and never builds a wavefunction. Those constructor guards are covered by
+  // `stochastic_wfn: constructor rejects invalid inner settings` and `... rejects a dynamic
+  // NONCOLLINEAR trial` below, which build through the factory and expect AppAbortException.
 }
 
 // Every APP_ABORT the StochasticWfn CONSTRUCTOR owns for its inner-sampling settings, reached the only
@@ -2830,6 +2829,55 @@ TEST_CASE("stochastic_wfn: constructor rejects invalid inner settings", "[stocha
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
     stochastic_constructor_rejects_bad_inputs<MEM>(mpi, hamil_file, wfn_file);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
+}
+
+// The walker-type gate, which needs its own fixture family (GHF) and its own attribution argument: there
+// is no "good" NONCOLLINEAR dynamic deck to use as a control, since being NONCOLLINEAR is the defect. The
+// matched pair is inner_nsteps instead -- STATIC on this same fixture must build (the static replicated
+// ensemble delegates to NOMSD and is walker-type agnostic), DYNAMIC on it must not. That pins the throw
+// to the dynamic gate rather than to anything else NONCOLLINEAR in the fixture.
+template<MEMORY_SPACE MEM>
+void stochastic_rejects_dynamic_noncollinear(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                             std::string hamil_file, std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  if (type != NONCOLLINEAR)
+    return; // the gate under test; CLOSED/COLLINEAR are the supported path and covered everywhere above
+
+  HamiltonianFactory HamFac;
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
+  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  const int nwalk = 3;
+
+  auto build = [&](std::string const& name, StochasticWfnOptions const& opt) {
+    WavefunctionFactory<MEM> WfnFac{};
+    WavefunctionParameters pt = make_stochastic_wfn_params(name, wfn_file, opt);
+    utils::apply_wfn_defaults(pt, ham);
+    WfnFac.push(name, pt);
+    WfnFac.getWavefunction(mpi, name, type, false, &ham, nwalk);
+  };
+
+  StochasticWfnOptions static_opt;
+  static_opt.inner_n_samples = 4; // inner_nsteps = 0 => static replicated anchor ensemble
+  REQUIRE_NOTHROW(build("ghf_static", static_opt));
+
+  StochasticWfnOptions dynamic_opt = static_opt;
+  dynamic_opt.inner_nsteps          = 1;
+  dynamic_opt.inner_sampling_target = StochasticSamplingTarget::WalkerOverlap;
+  REQUIRE_THROWS_AS(build("ghf_dynamic", dynamic_opt), AppAbortException);
+}
+
+TEST_CASE("stochastic_wfn: constructor rejects a dynamic NONCOLLINEAR trial", "[stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "StochasticWfn walker-type gate: static NONCOLLINEAR builds, dynamic NONCOLLINEAR aborts.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_rejects_dynamic_noncollinear<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::GHF | TestFiles::NOMSD | TestFiles::MOLECULES);
 }
 
 } // namespace sfqmc

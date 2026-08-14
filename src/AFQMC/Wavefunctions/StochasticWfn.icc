@@ -129,9 +129,13 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
               "timestep (supplied automatically from inner_hamiltonian's 'inner_timestep' attribute).");
   if (inner_nsteps_ > 0)
   {
+    // A spin-mixed trial does not need a NONCOLLINEAR kernel: the polarized layout runs here as-is.
     if (wlk != CLOSED && wlk != COLLINEAR)
-      APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) currently supports "
-                "CLOSED (RHF) and COLLINEAR (UHF) trials only -- NONCOLLINEAR full-G is a follow-up.");
+      APP_ABORT("Error in StochasticWfn: inner_nsteps > 0 (dynamic stochastic trial) supports CLOSED "
+                "and COLLINEAR walkers only -- full_g_estimators has no NONCOLLINEAR energy kernel. "
+                "For a spin-mixed (GHF) trial, write the Hamiltonian, anchor and inner Hamiltonian on "
+                "the 2*NMO spin-orbital space as COLLINEAR with ndown == 0 "
+                "(vafqmc/tools/export_safire.py --spin-layout polarized).");
     // No device gate: the port covers every inner-sampling mode, with the persistent chains on a
     // host-RNG hybrid MCMC (same mt19937 stream as a CPU build).
   }
