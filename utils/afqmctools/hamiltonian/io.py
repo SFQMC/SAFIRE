@@ -52,11 +52,6 @@ def write_dense(
         else:
             write_to_hdf5(fh5,'Hamiltonian/DenseFactorized/L', data=to_complex(chol.astype(numpy.complex128)))
         
-        # Test the dtype, not the values. `numpy.iscomplex` is elementwise and returns
-        # False wherever the imaginary part is exactly zero, so `numpy.all(...)` only
-        # holds when EVERY entry has a non-zero imaginary part. A physical hcore is
-        # hermitian, so its diagonal is real, and the old predicate sent it down the
-        # `numpy.real` branch -- silently discarding every off-diagonal imaginary part.
         if numpy.iscomplexobj(hcore):
             write_to_hdf5(fh5,'Hamiltonian/hcore',data=to_complex(hcore.astype(numpy.complex128)))
         else:
