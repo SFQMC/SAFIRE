@@ -740,8 +740,12 @@ private:
   // (is_conditioned()). inner_burn_in_: one-time sweeps at the prime. inner_sample_update_steps_: sweeps
   // per pool advance thereafter. inner_sampler_ / inner_sampler_step_: proposal kernel ("pcn" or
   // "gaussian") and its step size s (pcn: 0 < s <= 1, s = 1 an independence redraw; gaussian: s > 0).
+  //
+  // These initializers are NOT the input defaults and must not be read as documenting them -- the
+  // constructor assigns every one of them from WavefunctionParameters unconditionally, so the live
+  // defaults are the ones in parameters.hpp and nothing here has to track them.
   int inner_burn_in_{0};
-  int inner_sample_update_steps_{1};
+  int inner_sample_update_steps_{0};
   std::string inner_sampler_{"pcn"};
   double inner_sampler_step_{0.5};
   // Measurement-replica count. There is no restore flag: the measurement advance FEEDS FORWARD into

@@ -171,6 +171,11 @@ StochasticWfn<MEM, devPsiT>::StochasticWfn(std::string system,
   if (inner_n_measure_samples_ > 1 && inner_sample_update_steps_ < 1)
     APP_ABORT("Error in StochasticWfn: inner_n_measure_samples > 1 requires inner_sample_update_steps >= 1; with zero "
               "sweeps every replica measures the same frozen pool, which is one measurement repeated.");
+  // Warn, not abort: superseded production inputs stored 1 and must still replay.
+  if (is_conditioned() && inner_sample_update_steps_ > 0 && inner_sample_update_steps_ < 8)
+    app_warning("inner_sample_update_steps = {} on a conditioned trial: the field chain lags the "
+                "moving target and biases the energy (N2-ae P=8: 9.1 mHa). Converged by 32.",
+                inner_sample_update_steps_);
   if (inner_n_measure_samples_ > 1 && not is_conditioned())
     APP_ABORT("Error in StochasticWfn: inner_n_measure_samples > 1 (measurement-replica averaging) requires "
               "a conditioned dynamic trial (inner_sampling_target = walker_overlap, inner_nsteps > 0); a replica IS one "
@@ -190,9 +195,9 @@ void StochasticWfn<MEM, devPsiT>::validate_stochastic_inputs(WavefunctionParamet
   // Shared with WavefunctionFactory -- see resolve_sampling_target for why.
   params.inner_sampling_target = resolve_sampling_target(params);
 
-  // Kernel-dependent proposal step size s. pcn's s = 1 (independence) is the validated conditioned-path
-  // default: the conditioning target moves each step, so an independence proposal re-equilibrates while
-  // smaller steps lag it at inner_sample_update_steps = 1.
+  // Kernel-dependent proposal step size s. pcn's s = 1 is an independence proposal: it draws from the
+  // prior, so it still needs several inner_sample_update_steps to relax onto the moving conditioning
+  // target. High acceptance does not imply equilibrated -- acceptance is flat in that knob.
   if (not params.inner_sampler_step)
     params.inner_sampler_step = (params.inner_sampler == "gaussian" ? 0.05 : 1.0);
 }

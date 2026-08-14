@@ -159,7 +159,9 @@ struct WavefunctionParameters {
   int inner_nsteps{0};
   // Required when inner_nsteps > 0; defaults to Static when inner_nsteps == 0.
   std::optional<StochasticSamplingTarget> inner_sampling_target{};
-  int inner_sample_update_steps{1};
+  // Inner field-chain sweeps per outer step (conditioned trials). 32, not 1: at 1 the chain lags a
+  // conditioning target that moves every step (N2-ae equilibrium P=8: -9.26 mHa at 1, -0.15 at 32).
+  int inner_sample_update_steps{32};
   int inner_burn_in{100};
   int inner_n_measure_samples{1};
   std::string inner_sampler{"pcn"};

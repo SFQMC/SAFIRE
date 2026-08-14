@@ -68,7 +68,9 @@ struct StochasticWfnOptions
   // Persistent field chains are not an option: they ARE the conditioned sampler, so a trial with
   // inner_sampling_target = conditioned is persistent by construction. inner_sample_update_steps is the only pool-mixing knob:
   // one sweep count for BOTH the propagation-side and measurement-side pool advances, and no separate
-  // one-time burn-in count.
+  // one-time burn-in count. 1, deliberately BELOW the production default of 32: these decks assert pool
+  // MOTION and layout, which a short chain shows just as well and much faster. Always forwarded below,
+  // so this stays 1 no matter what WavefunctionParameters defaults to.
   int inner_sample_update_steps         = 1;
   std::string inner_sampler   = ""; // empty = input default ("pcn")
   double inner_sampler_step   = 0.0; // <= 0 = kernel default
@@ -87,8 +89,10 @@ WavefunctionParameters make_stochastic_wfn_params(std::string const& name, std::
     pt.inner_sampling_target = opt.inner_sampling_target;
   else if (opt.inner_nsteps > 0)
     pt.inner_sampling_target = StochasticSamplingTarget::Gaussian; // dynamic trials must name a mode; these decks want the bare draw
-  if (opt.inner_sample_update_steps != 1)
-    pt.inner_sample_update_steps = opt.inner_sample_update_steps;
+  // Assigned unconditionally, NOT elided against a literal: this used to skip the assignment at 1
+  // because 1 was also WavefunctionParameters' default, so when that default moved to 32 every deck
+  // asking for 1 silently got 32 -- a behaviour change no assertion could see.
+  pt.inner_sample_update_steps = opt.inner_sample_update_steps;
   if (not opt.inner_sampler.empty())
     pt.inner_sampler = opt.inner_sampler;
   if (opt.inner_sampler_step > 0.0)
@@ -2670,22 +2674,14 @@ TEST_CASE("stochastic_wfn: input surface closed", "[stochastic_wfn]")
     }
   }
 
-  SECTION("inner_burn_in defaults to hafqmc's value and is emitted")
-  {
-    // hafqmc: burn_in, --trial-burn-in default 100. One-time equilibration at the prime, distinct from
-    // inner_sample_update_steps which every later pool advance pays.
-    WavefunctionParameters p = base();
-    p.inner_sampling_target  = StochasticSamplingTarget::WalkerOverlap;
-    REQUIRE_NOTHROW(Wfn::validate_stochastic_inputs(p));
-    CHECK(p.inner_burn_in == 100);
-    CHECK(p.inner_sample_update_steps == 1);
-
-    WavefunctionParameters p2 = base();
-    p2.inner_sampling_target  = StochasticSamplingTarget::WalkerOverlap;
-    p2.inner_burn_in          = 0; // legal: prime and go straight into the walk
-    REQUIRE_NOTHROW(Wfn::validate_stochastic_inputs(p2));
-    CHECK(p2.inner_burn_in == 0);
-  }
+  // DELIBERATELY NOT TESTED: the numeric values of inner_burn_in (100) and inner_sample_update_steps
+  // (32). A CHECK comparing a literal here to a literal in parameters.hpp covers no logic -- both are
+  // plain member initializers, validate_stochastic_inputs does not compute either -- so it can only fail
+  // when someone deliberately changes a default, reporting a decision back to the person who made it.
+  // The default move 1 -> 32 is exactly that: the assertion went red for a correct change while the real
+  // regression beside it (make_stochastic_wfn_params eliding the assignment at 1, silently handing six
+  // decks 32) was caught by nothing. Defaults are documented at their definition; their CONSEQUENCES are
+  // tested in `constructor rejects` below, which pins the abort boundaries around them.
 
   SECTION("inner_sample_update_steps = 0 is legal at nm = 1")
   {
