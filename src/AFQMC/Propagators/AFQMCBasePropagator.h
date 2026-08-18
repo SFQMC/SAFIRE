@@ -205,8 +205,39 @@ public:
   template<class WlkSet>
   void Propagate(WlkSet& wset, RealType E1, RealType dt, int nt = 0);
 
+  // StochasticWfn: drive ONE walker-conditioned field-sampling step on the inner ensemble.
+  // Seeds the auxiliary fields with an externally supplied per-walker bias Xbias(nwalk,nCV) (the
+  // walker-conditioned force bias x_bar(phi_w)), then runs assemble_X -> vHS -> apply_propagators.
+  // Deliberately omits the local-energy/overlap and walker-weight update: the resulting determinants
+  // are field samples whose weights are not consumed by the StochasticWfn reductions. Requires the
+  // propagator to be built with free_projection = false so assemble_X applies the supplied bias.
+  // Optional hw_out: host copy of the per-walker Girsanov weight HW = log(p_T/q) from assemble_X for
+  // this step. StochasticWfn accumulates HW over inner_nsteps_ into inner_logsw_ for leapfrog reweighting.
   template<class WlkSet>
-  void BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset, 
+  void Propagate_conditioned(WlkSet& wset, nda::MemoryArrayOfRank<2> auto const& Xbias, RealType dt, int nt = 0,
+                             nda::array<ComplexType, 1>* hw_out = nullptr);
+
+  // Free-projection field-sampling step, INDEPENDENT of the propagator's build mode. Draws bare
+  // auxiliary fields Y ~ p_T(Y) (no force bias, no vMF shift -- toggles free_projection around
+  // assemble_X) and applies B_T(Y) = exp(vHS) to the walkers, then stops. Like Propagate_conditioned it
+  // skips the energy/overlap and walker-weight update: the results are field samples, not weighted
+  // walkers. Used by StochasticWfn to draw walker-INDEPENDENT free-projection trial samples
+  // {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references, regardless of whether the forward inner
+  // propagator was built for walker-independent free projection or walker-conditioned importance sampling.
+  template<class WlkSet>
+  void Propagate_free(WlkSet& wset, RealType dt, int nt = 0);
+
+  // Applies B_T(X) for CALLER-SUPPLIED auxiliary fields X(nwalk,nCV): vHS -> apply_propagators, with
+  // no field generation, no RNG consumption, and no weight update. The deterministic companion of
+  // Propagate_free: feeding back the fields Propagate_free would have drawn reproduces its walkers
+  // exactly. Used by wavefunctions that keep per-walker field configurations (e.g. a Metropolis
+  // sampler over trial auxiliary fields) and need to (re)build the corresponding determinants.
+  // X is taken non-const because some HamiltonianOperations::vHS implementations stage through it.
+  template<class WlkSet>
+  void Propagate_given_fields(WlkSet& wset, nda::MemoryArrayOfRank<2> auto& X, RealType dt);
+
+  template<class WlkSet>
+  void BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset,
         nda::MemoryArrayOfRank<4> auto&& Refs, nda::MemoryArrayOfRank<2> auto&& logdetR);           
   template<class WlkSet> 
   void PropagateOperators(int steps, WlkSet& wset,  

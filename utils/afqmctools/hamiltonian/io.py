@@ -52,7 +52,7 @@ def write_dense(
         else:
             write_to_hdf5(fh5,'Hamiltonian/DenseFactorized/L', data=to_complex(chol.astype(numpy.complex128)))
         
-        if numpy.all(numpy.iscomplex(hcore)):
+        if numpy.iscomplexobj(hcore):
             write_to_hdf5(fh5,'Hamiltonian/hcore',data=to_complex(hcore.astype(numpy.complex128)))
         else:
             write_to_hdf5(fh5,'Hamiltonian/hcore', data = numpy.real(hcore))

@@ -156,6 +156,40 @@ HamiltonianTypes Wavefunction<MEM>::getHamType() const {
 }
 
 template<MEMORY_SPACE MEM>
+void Wavefunction<MEM>::begin_inner_step(WalkerSet<MEM>& wset) {
+  visit_stochastic([&](auto&& a) { a.begin_inner_step(wset); });
+}
+
+template<MEMORY_SPACE MEM>
+void Wavefunction<MEM>::measure_energy(WalkerSet<MEM>& wset, memory::array_view<MEM,ComplexType,2> E,
+                                       memory::array_view<MEM,ComplexType,1> Ov, int nt) {
+  std::visit(
+      [&](auto&& a) {
+        using Wfn = std::decay_t<decltype(a)>;
+        if constexpr (wavefunction_detail::is_stochastic_wfn<Wfn>::value)
+          a.measure_energy(wset, E, Ov, nt);
+        else
+          a.Energy(wset, E, Ov, nt);
+      },
+      var);
+}
+
+template<MEMORY_SPACE MEM>
+void Wavefunction<MEM>::permute_inner_blocks_after_pop(WalkerSet<MEM> const& wset) {
+  visit_stochastic([&](auto&& a) { a.permute_inner_blocks_after_pop(wset); });
+}
+
+template<MEMORY_SPACE MEM>
+void Wavefunction<MEM>::store_inner_blocks_before_pop(WalkerSet<MEM>& wset) {
+  visit_stochastic([&](auto&& a) { a.store_inner_blocks_before_pop(wset); });
+}
+
+template<MEMORY_SPACE MEM>
+bool Wavefunction<MEM>::has_fullG_vbias() const {
+  return std::visit([&](auto&& a) { return a.has_fullG_vbias(); }, var);
+}
+
+template<MEMORY_SPACE MEM>
 nda::array<int,1> Wavefunction<MEM>::getFieldTypes() {
   return std::visit([&](auto&& a) { return a.getFieldTypes(); }, var);
 }

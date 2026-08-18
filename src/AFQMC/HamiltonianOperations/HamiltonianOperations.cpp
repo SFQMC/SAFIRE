@@ -144,6 +144,20 @@ namespace afqmc
     return std::visit([&](auto&& a) { return a.getFieldTypes(); }, var);
   }
 
+  template<MEMORY_SPACE M>
+  void HamiltonianOperations<M>::energy_fullG(memory::array_view<M,ComplexType,2,nda::C_layout> E,
+                                              memory::array_view<M,const ComplexType,2,nda::C_layout> G,
+                                              bool addH1, bool addEJ, bool addEXX)
+  {
+    std::visit([&](auto&& a) { a.energy_fullG(E,G,addH1,addEJ,addEXX); }, var);
+  }
+
+  template<MEMORY_SPACE M>
+  bool HamiltonianOperations<M>::has_fullG_vbias() const
+  {
+    return std::visit([&](auto&& a) { return a.has_fullG_vbias(); }, var);
+  }
+
   template class HamiltonianOperations<HOST_MEMORY>;
 #if defined(ENABLE_DEVICE)
   template class HamiltonianOperations<DEVICE_MEMORY>;

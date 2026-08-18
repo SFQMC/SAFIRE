@@ -67,7 +67,39 @@ namespace TestFiles {
   constexpr Flags LATTICES = 1<<7;
   constexpr Flags SOLIDS = 1<<8;
   constexpr Flags ALL_SYSTEMS = MOLECULES | LATTICES | SOLIDS;
+
+  // Fixture set for tests that build a DYNAMIC StochasticWfn inner ensemble (inner_nsteps > 0).
+  //
+  // MOLECULES, not ALL_SYSTEMS, and this is a CAPABILITY LIMIT rather than a convenience: the dynamic
+  // inner path routes its reductions through the un-rotated full-G energy / force-bias kernels, which
+  // exist only for Real3IndexFactorization. On the other fixture families the engine aborts, correctly,
+  // on input it does not implement:
+  //   - THCOps, KP3IndexFactorization (solids) -> StochasticWfn::vbias's has_fullG_vbias() gate, and
+  //     behind it "energy_fullG not implemented". NOTE the STATIC path is a separate question and is
+  //     NOT excluded: `stochastic_wfn: vMF and G_MF match nomsd` runs ALL_SYSTEMS and asserts the refusal.
+  //   - Discrete_GeneralUJ (lattice/Hubbard)   -> "Using uninitialized Discrete_GeneralUJ object".
+  //     This is the propagator-initialization order, NOT the full-G vbias gap: ModelHamOps DOES
+  //     implement the full-G contraction (has_fullG_vbias() == true).
+  //   - NONCOLLINEAR walkers                   -> rejected by StochasticWfn's own constructor
+  // Requesting those fixtures for a dynamic test therefore asserts nothing about the code under test; it
+  // just converts unsupported-input aborts into red, which is how 80-odd failures sat in this suite
+  // masking the ones that mattered. RHF|UHF covers CLOSED and COLLINEAR, the two supported walker types.
+  constexpr Flags DYNAMIC_INNER = RHF | UHF | NOMSD | MOLECULES;
 };
+
+// Does the DYNAMIC (inner_nsteps > 0) StochasticWfn path support this walker type?
+// CLOSED and COLLINEAR only (mirrors StochasticWfn). Prefer this predicate over open-coding types.
+//
+// COLLINEAR coverage note: widening the gate alone does not deliver two-spin parity. Under
+// DYNAMIC_INNER the BH UHF fixtures are skipped by the Psi0==PsiT premise (anchor_reference_mismatch,
+// test_stochastic_wfn.cpp); Li polarized passes it but is nup=3,ndn=0 -- Psi0_beta is (14,0,2) and PsiT_1
+// is empty, so beta and the alpha-beta EJ cross term contract against nothing. energy_collinear's
+// two-spin path still needs a COLLINEAR NOMSD fixture with Psi0==PsiT. Reference-free COLLINEAR checks
+// (SAFIRE vs itself) are unaffected.
+inline bool dynamic_inner_supports(afqmc::WALKER_TYPES t)
+{
+  return t == afqmc::CLOSED || t == afqmc::COLLINEAR;
+}
 
 
 // struct to store test file info with finiteT flag

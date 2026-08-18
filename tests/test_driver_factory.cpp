@@ -22,6 +22,7 @@
 #include "utilities/Random.hpp"
 #include "utilities/Timer.hpp"
 #include "test_common.hpp"
+#include "test_stochastic_common.hpp"
 #include "utilities/check.hpp"
 
 #include <algorithm>
@@ -34,6 +35,10 @@
 #include <vector>
 #include <complex>
 #include <iomanip>
+#include <fstream>
+#include <format>
+
+#include "AFQMC/config.h"
 
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
@@ -400,5 +405,106 @@ TEST_CASE("parameter_defaults: resolution", "[parameter_defaults]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::NOMSD | TestFiles::ALL_SYSTEMS);
 }
 
+
+// Integration smoke: minimal DriverFactory run with type: stochasticwfn (static delegate limit,
+// inner_nsteps = 0) and a back_propagation estimator block.
+template<MEMORY_SPACE MEM>
+void stochastic_back_propagation_driver_smoke(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, std::string hamil_file,
+    std::string wfn_file)
+{
+  if (getWavefunctionType(wfn_file) != NOMSD_WFN)
+    return;
+  if constexpr (MEM != HOST_MEMORY)
+    return;
+  else
+  {
+    WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+    // CLOSED only. Narrower than the engine allows, and narrower than DYNAMIC_INNER supplies: these are
+    // whole-run integration smokes, and the BH CLOSED fixture is the one whose forward walk is known
+    // stable over a full population-control schedule. (dynamic_inner_supports() would admit COLLINEAR and
+    // the next line would discard it, which is what this used to do.)
+    if (type != CLOSED)
+      return;
+
+    const int population_control_interval = DEFAULT_POPULATION_CONTROL_INTERVAL;
+    const int bp_measure_multiplier       = 2;
+    const int nStep                       = bp_measure_multiplier * population_control_interval * 2;
+    const std::string title               = "stoch_bp_drv_smoke";
+
+    HamiltonianFactory HamFac;
+    WalkerSetFactory<MEM> WSetFac;
+    WavefunctionFactory<MEM> WfnFac{};
+    PropagatorFactory<MEM> PropFac;
+    DriverFactory<MEM> DriverFac(mpi, WSetFac, PropFac, WfnFac, HamFac);
+
+    WavefunctionParameters wfn_min{.filename = wfn_file, .inner_n_samples = 4, .inner_nsteps = 0};
+    utils::mark_stochastic_wfn_input(wfn_min);
+
+    const HamiltonianParameters ham_min{.filename = hamil_file};
+
+    const WalkerSetParameters wlk_min{.walker_type = CLOSED, .max_weight = 4.0};
+
+    const PropagatorParameters prop_min{.hybrid = true};
+
+    const EstimatorParameters est_bp{.name                     = EstimatorType::back_propagation,
+                                     .equil_multiplier          = 0,
+                                     .bp_walker_ortho_interval  = 1,
+                                     .path_restoration          = false,
+                                     .onerdm                    = OneRDMParameters{.name = "one_rdm"}};
+
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{.walker_set                  = wlk_min,
+                                        .wavefunction                = wfn_min,
+                                        .hamiltonian                 = ham_min,
+                                        .propagator                  = prop_min,
+                                        .estimator                   = {est_bp},
+                                        .steps                       = nStep,
+                                        .population_control_interval = population_control_interval,
+                                        .measure_interval_multiplier = bp_measure_multiplier,
+                                        .timestep                    = 0.01,
+                                        .n_walkers_per_mpi_task      = 11,
+                                        .seed                        = 463}};
+    resolve_defaults(params, *mpi);
+
+    push_blocks(HamFac, params.hamiltonian);
+    push_blocks(WfnFac, params.wavefunction);
+    push_blocks(WSetFac, params.walker_set);
+    push_blocks(PropFac, params.propagator);
+
+    if (mpi->comm.root())
+    {
+      std::remove((title + ".stat.h5").c_str());
+      std::remove((title + ".scalar.dat").c_str());
+    }
+    mpi->comm.barrier();
+
+    CHECK(DriverFac.executeDriver(DriverType::afqmc, title, 0, params.execute[0]));
+
+    mpi->comm.barrier();
+    if (mpi->comm.root())
+    {
+      std::string scalar_file = title + ".scalar.dat";
+      std::ifstream in(scalar_file.c_str());
+      CHECK(in.good());
+      in.close();
+      h5::file h5file(title + ".stat.h5", 'r');
+      utils::require_finite_bp_one_rdm(h5file, "Observables/BackPropagated/FullOneRDM/Average_0", 1);
+      std::remove(scalar_file.c_str());
+      std::remove((title + ".stat.h5").c_str());
+    }
+    mpi->comm.barrier();
+  }
+}
+
+TEST_CASE("driver_factory: stochastic bp driver", "[driver_factory][stochastic_wfn]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+  app_log(0, "DriverFactory AFQMC run with stochastic trial + back_propagation estimator.");
+  using namespace utils;
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool finiteT) {
+    stochastic_back_propagation_driver_smoke<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::DYNAMIC_INNER);
+}
 
 } // namespace sfqmc

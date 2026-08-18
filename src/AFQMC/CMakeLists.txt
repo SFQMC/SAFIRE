@@ -16,6 +16,7 @@ target_sources(safire_lib
     Wavefunctions/NOMSD.cpp
     Wavefunctions/PHMSD.cpp
     Wavefunctions/NOMSD_FT.cpp
+    Wavefunctions/StochasticWfn.cpp
     HamiltonianOperations/HamiltonianOperations.cpp
     Estimators/EstimatorHandler.cpp
     Hamiltonians/KPFactorizedHamiltonian.cpp
@@ -25,5 +26,3 @@ target_sources(safire_lib
     Hamiltonians/THCHamiltonian.cpp
     Hamiltonians/KPTHCHamiltonian.cpp
 )
-
-

@@ -32,7 +32,7 @@ namespace afqmc
 {
 /* 
  */
-class realspace_correlators : public AFQMCInfo
+class realspace_correlators
 {
   // allocators
   using Allocator = localTG_allocator<ComplexType>;
@@ -66,12 +66,12 @@ class realspace_correlators : public AFQMCInfo
 
 public:
   realspace_correlators(afqmc::TaskGroup_& tg_,
-                        AFQMCInfo& info,
+                        int NMO_,
                         ptree pt,
                         WALKER_TYPES wlk,
                         int nave_ = 1,
                         int bsize = 1)
-      : AFQMCInfo(info),
+      : NMO{NMO_},
         alloc(make_localTG_allocator<ComplexType>(tg_)),
         block_size(bsize),
         nave(nave_),
@@ -387,6 +387,8 @@ private:
   TaskGroup_& TG;
 
   WALKER_TYPES walker_type;
+
+  int NMO = -1;
 
   int dm_size;
 

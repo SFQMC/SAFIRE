@@ -49,6 +49,14 @@ public:
       return true;
   }
 
+  // returns true if an xml block has been registered for ID (whether or not the Hamiltonian object
+  // has been built yet). Unlike is_constructed, does not assert the block exists -- safe to call as a
+  // "should I push this block?" guard.
+  bool has_input(const std::string& ID) const
+  {
+    return hamBlocks.find(ID) != hamBlocks.end();
+  }
+
   // returns a pointer to the base Hamiltonian class associated with a given ID
   Hamiltonian& getHamiltonian(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
                               const std::string& ID)

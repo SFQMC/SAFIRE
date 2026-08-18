@@ -87,6 +87,22 @@ public:
   void vbias(memory::array_view<MEM,const ComplexType,2> G,
              memory::array_view<MEM,ComplexType,2> v, double dt);
 
+  // Full (un-rotated) G energy path used by StochasticWfn: the same contraction as energy() above, but
+  // against a G in the full [nspin*npol*NMO*npol*NMO] layout. Only the factorizations that implement it
+  // accept it; the rest APP_ABORT. See has_fullG_vbias() for the vbias-side counterpart.
+  // NOTE the explicit nda::C_layout: the full-G estimators reshape G and feed it to
+  // nda::tensor::contract, so they require CONTIGUOUS operands. memory::array_view defaults to
+  // C_stride_layout, and a strided descriptor is rejected at runtime by cuTENSOR
+  // (CUTENSOR_STATUS_NOT_SUPPORTED) while tblis on the host silently accepts it -- i.e. the CPU
+  // build cannot catch a regression here.
+  void energy_fullG(memory::array_view<MEM,ComplexType,2,nda::C_layout> E,
+                    memory::array_view<MEM,const ComplexType,2,nda::C_layout> G,
+                    bool addH1 = true, bool addEJ = true, bool addEXX = true);
+
+  // True iff vbias() accepts a FULL [nwalk, nspin*npol*NMO*npol*NMO] G as well as the half-rotated
+  // compact one. See the per-operator definitions for what "full" costs each factorization.
+  bool has_fullG_vbias() const;
+
   int number_of_cholesky_vectors() const;
 
   int number_of_ke_vectors() const;
@@ -107,4 +123,3 @@ public:
 } // namespace afqmc
 
 } // namespace sfqmc
-

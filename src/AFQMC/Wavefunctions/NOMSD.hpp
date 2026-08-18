@@ -39,6 +39,10 @@ namespace sfqmc
 {
 namespace afqmc
 {
+
+template<MEMORY_SPACE MEM, class devPsiT>
+class StochasticWfn;
+
 /*
  * Class that implements a multi-Slater determinant trial wave-function.
  * Single determinant wfns are also allowed. 
@@ -109,6 +113,10 @@ public:
   }
 
   HamiltonianTypes getHamType() const { return HamOp.getHamType(); }
+
+  // True iff this wavefunction's Hamiltonian operator can contract a FULL (un-rotated) mean-field G.
+  // StochasticWfn::vMF requires it at inner_n_samples > 1; see HamiltonianOperations::has_fullG_vbias.
+  bool has_fullG_vbias() const { return HamOp.has_fullG_vbias(); }
 
   auto getFieldTypes()
   {
@@ -260,6 +268,31 @@ public:
 
 
 protected:
+  template<MEMORY_SPACE MEM2, class devPsiT2>
+  friend class StochasticWfn;
+
+  // Direct access to the Hamiltonian contractions for a StochasticWfn's inner ensemble, which drives
+  // them from its own reduced G instead of from a walker set. Parameter types mirror HamOp's exactly.
+  void energy_from_G(memory::array_view<MEM,ComplexType,2> E,
+                     memory::array_view<MEM,const ComplexType,2> G, int nd, bool addH1 = true);
+
+  // Contiguous by contract -- see HamiltonianOperations::energy_fullG.
+  void energy_from_fullG(memory::array_view<MEM,ComplexType,2,nda::C_layout> E,
+                         memory::array_view<MEM,const ComplexType,2,nda::C_layout> G, bool addH1 = true);
+
+  void vbias_from_G(memory::array_view<MEM,const ComplexType,2> G,
+                    memory::array_view<MEM,ComplexType,2> v, double dt);
+
+  int dm_size(bool full) const
+  {
+    int npol  = (walker_type == NONCOLLINEAR ? 2 : 1);
+    int nspin = (walker_type == COLLINEAR ? 2 : 1);
+    int nel   = (walker_type == COLLINEAR ? nup + ndown : nup);
+    if (full)
+      return nspin * npol * NMO * npol * NMO;
+    return nel * npol * NMO;
+  }
+
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
   // type of walker/wfn
@@ -383,6 +416,11 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Memor
       // Gfull = M + ma::T(X) * ma::T(OrbMats[spin]) * Gc * conj(Y),
       //   where Yc = conj(Y), Yc already comes with the conjugate!
       for(int is=0, is0=0; is<nspin; ++is, is0+=nup) {
+        // A fully polarized system carried as COLLINEAR (upstream 24a9385 reclassified the Li
+        // rohf_nomsd_polarized fixture that way) has nel[Beta] == 0. Its block is empty: it
+        // contributes nothing, but a zero-extent operand makes cuTENSOR fail
+        // CUTENSOR_STATUS_NOT_SUPPORTED. Host tblis accepts it, so CPU builds never see this.
+        if(nel[is] == 0) continue;
         memory::buffered_array<MEM,ComplexType,3> GYc(nw,nel[is],npol*NMO); 
         memory::buffered_array<MEM,ComplexType,3> XOrbM(nw,nel[is],npol*NMO); 
 
@@ -398,8 +436,11 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Memor
     } else {
       Gfull() = ComplexType(0.0);
       // Gfull = ma::T(OrbMats[spin]) * Gc,
+      // Skip an empty spin block: a fully polarized system carried as COLLINEAR has nel[Beta] == 0,
+      // and a zero-extent operand fails CUTENSOR_STATUS_NOT_SUPPORTED (host tblis accepts it).
       for(int is=0, is0=0; is<nspin; ++is, is0+=nup)
-        math::product<'T'>(OrbMats(0,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gfull(all,is,all,all));
+        if(nel[is] > 0)
+          math::product<'T'>(OrbMats(0,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gfull(all,is,all,all));
     }
 
     auto Gfull_h = nda::to_host(Gfull());
@@ -458,6 +499,11 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Memor
         //   where Yc = conj(Y), Yc already comes with the conjugate!
         Gt() = (*M)();
         for(int is=0, is0=0; is<nspin; ++is, is0+=nup) {
+          // A fully polarized system carried as COLLINEAR (upstream 24a9385 reclassified the Li
+          // rohf_nomsd_polarized fixture that way) has nel[Beta] == 0. Its block is empty: it
+          // contributes nothing, but a zero-extent operand makes cuTENSOR fail
+          // CUTENSOR_STATUS_NOT_SUPPORTED. Host tblis accepts it, so CPU builds never see this.
+          if(nel[is] == 0) continue;
           memory::buffered_array<MEM,ComplexType,3> GYc(nw,nel[is],npol*NMO); 
           memory::buffered_array<MEM,ComplexType,3> XOrbM(nw,nel[is],npol*NMO);
         
@@ -472,8 +518,11 @@ void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::Memor
         }
       } else {
         // Gt = ma::T(OrbMats[spin]) * Gc,
+        // Skip an empty spin block: a fully polarized system carried as COLLINEAR has nel[Beta] == 0,
+        // and a zero-extent operand fails CUTENSOR_STATUS_NOT_SUPPORTED (host tblis accepts it).
         for(int is=0, is0=0; is<nspin; ++is, is0+=nup)
-          math::product<'T'>(OrbMats(d,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gt(all,is,all,all));
+          if(nel[is] > 0)
+            math::product<'T'>(OrbMats(d,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gt(all,is,all,all));
       }
       
       // Ot = conj(ci) * exp(Ot-log_m) 

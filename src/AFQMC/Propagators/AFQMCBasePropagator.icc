@@ -47,6 +47,7 @@ template<MEMORY_SPACE MEM>
 template<class WlkSet>
 void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType dt, int nt)
 {
+  wfn->begin_inner_step(wset);
   AFQMCTimer.start(setup_timer);
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
@@ -160,6 +161,163 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
     wset.advanceHistoryPos();
   }
   AFQMCTimer.stop(extra_timer);
+}
+
+/*
+ * StochasticWfn: one walker-conditioned field-sampling step on the inner ensemble.
+ * Seeds the fields with the externally supplied per-walker conditioning bias Xbias(nwalk,nCV), then
+ * runs assemble_X -> vHS -> apply_propagators. Skips the energy/overlap and walker-weight update: the
+ * propagated determinants are field samples; the StochasticWfn reductions weight them by 1/P and the
+ * phase S_p from the cross overlap, not by inner walker weights. The conditioned inner propagator is
+ * built with free_projection = false, so assemble_X applies the supplied bias (importance sampling).
+ */
+template<MEMORY_SPACE MEM>
+template<class WlkSet>
+void AFQMCBasePropagator<MEM>::Propagate_conditioned(WlkSet& wset,
+     nda::MemoryArrayOfRank<2> auto const& Xbias, RealType dt, int nt,
+     nda::array<ComplexType, 1>* hw_out)
+{
+  (void)nt;
+  auto walker_type = wset.getWalkerType();
+  int nwalk        = wset.size();
+  auto [nspins, npol] = walkerTypeToDims(walker_type);
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
+  SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
+  int nCV     = wfn->number_of_cholesky_vectors();
+
+  utils::check(not free_projection,
+               "Error in Propagate_conditioned: conditioned inner sampling requires the inner "
+               "propagator to be built with free_projection = false (importance sampling).");
+  utils::check(Xbias.shape() == std::array<long,2>{nwalk,nCV},
+               "Error in Propagate_conditioned: Xbias shape mismatch.");
+
+  memory::buffered_array<MEM,ComplexType,1> MFfactor(nwalk,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,1> hybrid_weight(nwalk,ComplexType(0.0));
+
+  // if timestep changed, recalculate one body propagator and vMF (vMF centers the conditioning bias)
+  if (std::abs(dt - old_dt) > 1e-6)
+    generateP1(dt, walker_type);
+
+  // 1. Seed X with the externally supplied conditioning force bias (instead of wfn->vbias, which would
+  //    self-condition on the inner trial rather than the outer walker).
+  memory::buffered_array<MEM,ComplexType,2> X(nwalk, nCV);
+  X() = Xbias();
+
+  // 2. Assemble X: importance-sampling shift im*(vbias - vMF) + Gaussian noise.
+  assemble_X(sqrtdt, X, MFfactor, hybrid_weight);
+
+  // Optional: copy the per-walker Girsanov weight HW = log(p_T/q) to the caller before it is discarded.
+  if (hw_out)
+    *hw_out = nda::to_host(hybrid_weight);
+
+  // 3-4. vHS and propagate the inner walkers.
+  if(denseP2) {
+    auto vHS = wfn->vHS(X, dt);
+    utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
+                 "Size mismatch");
+    apply_propagators<'N'>(wset,vHS);
+  } else {
+    auto vHS = wfn->vHS_sparse(X, dt);
+    apply_propagators<'N'>(wset,vHS);
+  }
+  (void)npol;
+  (void)nspins;
+}
+
+/*
+ * Free-projection field-sampling step, decoupled from the propagator's build mode. Draws bare auxiliary
+ * fields Y ~ p_T(Y) (no force bias, no vMF shift) and applies B_T(Y) = exp(vHS) to the walkers, then
+ * stops. Used by StochasticWfn to draw walker-INDEPENDENT free-projection trial samples
+ * {psi_p = B_T(Y^[p])|phi_T>} for back-propagation references, regardless of whether the (forward) inner
+ * propagator was built for walker-independent free projection or walker-conditioned importance sampling. Forces
+ * bare field assembly by toggling free_projection around assemble_X (which reads that member), then
+ * restores it: construct_X then ignores the zero vbias and vMF and produces X = sqrtdt * Gaussian noise.
+ * Like Propagate_conditioned, skips the energy/overlap and walker-weight update -- the propagated
+ * determinants are field samples, not weighted walkers.
+ */
+template<MEMORY_SPACE MEM>
+template<class WlkSet>
+void AFQMCBasePropagator<MEM>::Propagate_free(WlkSet& wset, RealType dt, int nt)
+{
+  (void)nt;
+  auto walker_type = wset.getWalkerType();
+  int nwalk        = wset.size();
+  auto [nspins, npol] = walkerTypeToDims(walker_type);
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
+  SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
+  int nCV     = wfn->number_of_cholesky_vectors();
+
+  // if timestep changed, recalculate one body propagator and vMF
+  if (std::abs(dt - old_dt) > 1e-6)
+    generateP1(dt, walker_type);
+
+  memory::buffered_array<MEM,ComplexType,1> MFfactor(nwalk,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,1> hybrid_weight(nwalk,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,2> X(nwalk, nCV);
+  X() = ComplexType(0.0);
+
+  // Force bare (free-projection) field assembly regardless of build mode. The free_projection member is
+  // toggled only for the assemble_X call and restored on scope exit by the RAII guard (robust to an early
+  // return / abort inside assemble_X). NOTE: this assumes a single-threaded call on this propagator
+  // instance -- true today (one Propagator variant alternative, no intra-propagator threading); if a
+  // future propagator type mutates shared state across threads this toggle would need revisiting.
+  {
+    struct FreeProjGuard
+    {
+      bool& flag;
+      bool  saved;
+      explicit FreeProjGuard(bool& f) : flag(f), saved(f) { flag = true; }
+      ~FreeProjGuard() { flag = saved; }
+    } fp_guard(free_projection);
+    assemble_X(sqrtdt, X, MFfactor, hybrid_weight);
+  }
+
+  if(denseP2) {
+    auto vHS = wfn->vHS(X, dt);
+    utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
+                 "Size mismatch");
+    apply_propagators<'N'>(wset,vHS);
+  } else {
+    auto vHS = wfn->vHS_sparse(X, dt);
+    apply_propagators<'N'>(wset,vHS);
+  }
+  (void)npol;
+  (void)nspins;
+}
+
+/*
+ * Applies B_T(X) for caller-supplied auxiliary fields X(nwalk,nCV): vHS -> apply_propagators, nothing
+ * else. No field generation, no RNG consumption, no MFfactor/hybrid-weight bookkeeping, no weight
+ * update -- the deterministic companion of Propagate_free, so re-feeding the fields Propagate_free
+ * drew reproduces its walkers exactly. Callers own the meaning of X (for the bare free-projection
+ * convention, X holds standard-normal draws; see construct_X).
+ */
+template<MEMORY_SPACE MEM>
+template<class WlkSet>
+void AFQMCBasePropagator<MEM>::Propagate_given_fields(WlkSet& wset,
+     nda::MemoryArrayOfRank<2> auto& X, RealType dt)
+{
+  auto walker_type = wset.getWalkerType();
+  int nwalk = wset.size();
+  int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+  const int NMO = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
+  int nCV   = wfn->number_of_cholesky_vectors();
+  utils::check(X.shape() == std::array<long,2>{nwalk,nCV},
+               "Error in Propagate_given_fields: X shape mismatch.");
+
+  // if timestep changed, recalculate one body propagator and vMF
+  if (std::abs(dt - old_dt) > 1e-6)
+    generateP1(dt, wset.getWalkerType());
+
+  if(denseP2) {
+    auto vHS = wfn->vHS(X, dt);
+    utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
+                 "Size mismatch");
+    apply_propagators<'N'>(wset,vHS);
+  } else {
+    auto vHS = wfn->vHS_sparse(X, dt);
+    apply_propagators<'N'>(wset,vHS);
+  }
 }
 
 /*

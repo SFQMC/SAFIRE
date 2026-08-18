@@ -25,6 +25,8 @@
 #include "IO/banner.hpp"
 #include "AFQMC/parameters.hpp"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
+#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
+#include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
 
@@ -32,6 +34,14 @@ namespace sfqmc
 {
 namespace afqmc
 {
+
+/// True when the input explicitly requests a stochastic trial (type: stochasticwfn), independent of
+/// what the trial HDF5 itself marks. Shared by WavefunctionFactory::fromHDF5 (build_stochastic) and
+/// its header-only callers, which do not otherwise see the HDF5-detected wfn_type.
+inline bool is_stochastic_wavefunction_input(WavefunctionParameters const& params)
+{
+  return params.type == WavefunctionInputType::stochasticwfn;
+}
 
 template<MEMORY_SPACE MEM>
 class WavefunctionFactory
@@ -41,6 +51,10 @@ public:
   {
     // initialize in fromHDF5
   }
+
+  // Registers the HamiltonianFactory a stochastic wavefunction's `inner_hamiltonian` block is built
+  // through on demand (see fromHDF5). Required whenever any wavefunction block may be stochastic.
+  explicit WavefunctionFactory(HamiltonianFactory& hamfac) : HamFac_(&hamfac) {}
 
   bool is_constructed(const std::string& ID)
   {
@@ -150,6 +164,28 @@ public:
     wfnBlocks.insert(std::make_pair(ID, std::move(params)));
   }
 
+  // Allocates a stochastic trial's inner (variational) walker ensemble; no-op for every other
+  // wavefunction. Must be called once, after the wfn is built and before the outer walker set /
+  // propagator consume it. Idempotent: safe to call more than once per ID.
+  void maybe_initialize_stochastic_inner_walkers(Wavefunction<MEM>& wfn,
+                                                 const std::string& ID,
+                                                 WALKER_TYPES /*walker_type*/,
+                                                 WalkerSetParameters const& walker_params)
+  {
+    auto block = wfnBlocks.find(ID);
+    if (block == wfnBlocks.end())
+      APP_ABORT(" Error in WavefunctionFactory::maybe_initialize_stochastic_inner_walkers: Missing wfn block. ");
+    if (not wfn.is_stochastic_wavefunction())
+      return;
+    if (wfn.stochastic_inner_walkers_initialized())
+      return;
+    int ndown = std::get<2>(read_info_from_wfn(block->second.filename, "any"));
+    auto ig = initial_guess.find(ID);
+    if (ig == initial_guess.end())
+      APP_ABORT(" Error: Missing initial guess in WavefunctionFactory. ");
+    wfn.initialize_stochastic_inner_walkers(walker_params, ig->second, ndown);
+  }
+
 protected:
   // generates a new Wavefunction and returns the pointer to the base class
   Wavefunction<MEM> buildWavefunction(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
@@ -194,6 +230,11 @@ protected:
   void build_PsiT_MO_phmsd(WALKER_TYPES walker_type, int npol, int NMO, int nup, 
 	int ndown, int ndets, nda::array<ComplexType,1>& coeffs, 
         nda::array<int,2>& occs, nda::array<PsiT_Matrix<HOST_MEMORY>,1>& PsiT_MO);
+
+  // Non-owning; set only by the HamiltonianFactory-aware constructor. Used to build a stochastic
+  // wavefunction's `inner_hamiltonian` block on demand (see fromHDF5). Null is fine for any input
+  // that never names inner_hamiltonian.
+  HamiltonianFactory* HamFac_ = nullptr;
 
   std::map<std::string, WavefunctionParameters> wfnBlocks;
 

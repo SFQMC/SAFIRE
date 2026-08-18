@@ -35,7 +35,7 @@ namespace afqmc
 /* 
  */
 template<bool SP>
-class sk : public AFQMCInfo
+class sk
 {
   using VType = typename to_working_precision<SP,ComplexType>::type;
   using SPRealType = typename to_working_precision<SP,RealType>::type;
@@ -73,12 +73,12 @@ class sk : public AFQMCInfo
 
 public:
   sk(afqmc::TaskGroup_& tg_,
-                        AFQMCInfo& info,
+                        int NMO_,
                         ptree pt,
                         WALKER_TYPES wlk,
                         int nave_ = 1,
                         int bsize = 1)
-      : AFQMCInfo(info),
+      : NMO{NMO_},
         alloc(make_localTG_allocator<VType>(tg_)),
         block_size(bsize),
         nave(nave_),
@@ -285,6 +285,8 @@ private:
   TaskGroup_& TG;
 
   WALKER_TYPES walker_type = UNDEFINED_WALKER_TYPE; 
+
+  int NMO = -1;
 
   bool writer = false;
 

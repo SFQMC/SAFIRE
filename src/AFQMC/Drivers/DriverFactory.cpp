@@ -182,6 +182,7 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
 
   bool finiteT = false;
   auto& wfn0 = get_wavefunction(wfn_name, ham_name, walker_type, finiteT, nWalkers);
+  WfnFac.maybe_initialize_stochastic_inner_walkers(wfn0, wfn_name, walker_type, WSetFac.get_input(wset_name));
 
   // propagator
   auto& prop0 = PropFac.getPropagator(mpi, prop_name, wfn0, rng);
@@ -493,13 +494,11 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
       Eshift[i-ns0] = E0[i];
   }
 
-  std::vector<std::reference_wrapper<AFQMCInfo>> AFinfo_ref;
   std::vector<std::reference_wrapper<WalkerSet>> wset_ref;
   std::vector<std::reference_wrapper<Wavefunction>> wfn_ref;
   std::vector<std::reference_wrapper<Propagator>> prop_ref;
   std::vector<EstimatorHandler> estimators;
   
-  AFinfo_ref.reserve(nsys);
   wset_ref.reserve(nsys);
   wfn_ref.reserve(nsys);
   prop_ref.reserve(nsys);
@@ -509,8 +508,7 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
     app_log(1," Initializing cs_system_{}. ",sys);
 
     auto sys_pt = pt.get_child("cs_system_"+std::to_string(sys));
-    auto [system,ham_name,wfn_name,wset_name,prop_name] = 
-						get_component_ids(sys_pt);
+    auto [ham_name,wfn_name,wset_name,prop_name] = get_component_ids(sys_pt);
 
     // !!!! HACK get parameter from verbose input later
     //int nnodes_propg = 1;
@@ -528,21 +526,8 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
     auto& TGprop = TGHandler.getTG(nnodes_propg);
     auto& TGwfn  = TGHandler.getTG(nnodes_wfn);
 
-    if (InfoMap.find(system) == InfoMap.end())
-    {
-      app_error("ERROR: Undefined system in execute block. ");
-      return false;
-    }
-    auto& AFinfo = InfoMap[system];
-    int NMO      = AFinfo.NMO;
-    int ndown     = AFinfo.ndown;
-    AFinfo_ref.emplace_back(std::ref(AFinfo));
-
-    // walker set and type
-    auto& wset          = WSetFac.getWalkerSet(mpi, wset_name, rng_wlk);
-    WALKER_TYPES walker_type = wset.getWalkerType();
+    WALKER_TYPES walker_type = WSetFac.get_walker_type(wset_name);
     bool finiteT = false; // if this driver is re-implemented, it is ground-state only
-    wset_ref.emplace_back(std::ref(wset));
 
     if (not WfnFac.is_constructed(wfn_name) && wfn_restart == "")
     {
@@ -555,6 +540,7 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
 
     // wfn builder should not use Hamiltonian pointer now
     Wavefunction& wfn0 = WfnFac.getWavefunction(mpi, wfn_name, walker_type, finiteT, nullptr, nWalkers);
+    WfnFac.maybe_initialize_stochastic_inner_walkers(wfn0, wfn_name, walker_type, WSetFac.get_input(wset_name));
     wfn_ref.emplace_back(std::ref(wfn0));
 
     // propagator
@@ -562,17 +548,15 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
     prop_ref.emplace_back(std::ref(prop0));
     bool hybrid       = prop0.hybrid_propagation();
 
-    // resize walker set
+    auto& wset = WSetFac.getWalkerSet(mpi, wset_name, rng_wlk, walker_type,
+                                      WfnFac.getInitialGuess(wfn_name), nWalkers);
     if (restarted)
+      app_warning("CSAFQMCDriver: walker HDF5 restart is not yet ported to the overhaul WalkerSetFactory API.");
+    wset_ref.emplace_back(std::ref(wset));
+
+    wfn0.Energy(wset);
+    if (not restarted)
     {
-      restartFromHDF5(wset, nWalkers, hdf_read_restart, read, set_nWalker_target);
-      wfn0.Energy(wset);
-    }
-    else
-    {
-      auto initial_guess = WfnFac.getInitialGuess(wfn_name);
-      wset.resize(nWalkers, initial_guess);
-      wfn0.Energy(wset);
       print_initial_energy(wset);
       if (hybrid)
         Eshift[sys] = 0.0;
@@ -592,10 +576,9 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
     char buf[256];
     snprintf(buf, sizeof(buf), "%s.g%03d", title.c_str(), sys);
     std::string tag(buf);
-    estimators.emplace_back(EstimatorHandler(TGHandler, AFinfo.nup, AFinfo.ndown,
-		tag, pt_in, wset,
-		WfnFac, wfn0, prop0, HamFac, ham_name, dt,
-                addEnergyEstim, !free_proj));
+    estimators.emplace_back(EstimatorHandler<MEM>(mpi, tag, pt_in, wset, WfnFac, wfn0,
+                                                  prop0, HamFac, ham_name, dt,
+                                                  addEnergyEstim, !free_proj));
   }
 
   // now that all propagators and hamops are constructed, set rng block size
@@ -608,7 +591,7 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
   gTG.Global().barrier();
 / *
   CSAFQMCDriver driver(gTG.Global(), title, m_series, block0, step0, 
-		       std::move(Eshift), pt_in, std::move(AFinfo_ref), 
+		       std::move(Eshift), pt_in,
                        std::move(wfn_ref), std::move(prop_ref), 
                        std::move(estimators));
 
@@ -623,7 +606,6 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
     app_error(" Problems with CSAFQMCDriver::clear().");
     return false;
   }
-* /
 */
   return true;
 }

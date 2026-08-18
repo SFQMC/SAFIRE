@@ -157,16 +157,45 @@ void WalkerSetBase<_M_>::setup(std::array<int, 3> dims)
   cnt += 1; // flag to track if UR is unitary
   data_displ[THETA] = cnt;
   cnt += 1; // theta
+  data_displ[SLOT_LINEAGE] = cnt;
+  cnt += 1; // pre-branch local slot index (stochastic conditioned inner-block realignment)
   walker_size                = cnt;
   walker_memory_usage        = walker_size * sizeof(ComplexType);
   data_displ[SMN]            = -1;
   data_displ[FIELDS]         = -1;
   data_displ[WEIGHT_FAC]     = -1;
   data_displ[WEIGHT_HISTORY] = -1;
+  data_displ[TRIAL_FIELDS]   = -1;
+  data_displ[TRIAL_COND_MAG] = -1;
+  trial_fields_size_         = 0;
   bp_walker_size             = 0;
   bp_walker_memory_usage     = bp_walker_size * sizeof(ComplexType);
 
   tot_num_walkers = 0;
+}
+
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::set_slot_lineage_identity()
+{
+  if (tot_num_walkers <= 0)
+    return;
+  // Stage the identity index list on host, then copy to the walker memory space and write the
+  // SLOT_LINEAGE column (mirrors the host->MEM staging used elsewhere, e.g. scaleWeightsByOverlap).
+  nda::array<ComplexType, 1> lin_h(tot_num_walkers);
+  for (int i = 0; i < tot_num_walkers; ++i)
+    lin_h(i) = ComplexType(double(i), 0.0);
+  memory::array<_M_, ComplexType, 1> lin(tot_num_walkers);
+  lin() = lin_h();
+  setProperty(SLOT_LINEAGE, lin);
+}
+
+template<MEMORY_SPACE _M_>
+bool WalkerSetBase<_M_>::clean()
+{
+  walker_buffer.resize(0, walker_size);
+  bp_buffer.resize(0, bp_walker_size);
+  tot_num_walkers = targetN = targetN_per_rank = 0;
+  return true;
 }
 
 /*
@@ -230,11 +259,59 @@ void WalkerSetBase<_M_>::resize(int n)
     }
   }
   tot_num_walkers  = n;
+  set_slot_lineage_identity(); // well-defined lineage before the first population-control event
   targetN_per_rank = tot_num_walkers;
   targetN          = GlobalPopulation();
   utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
            " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
            targetN,targetN_per_rank,mpi->comm.size());
+}
+
+/*
+ * Adds/removes the number of walkers in the set to match the requested value.
+ * Walkers are removed from the end of the set 
+ *      and buffer capacity remains unchanged in this case.
+ * New walkers are initialized from the supplied array A. 
+ * Capacity is increased if necessary.
+ * Target Populations are set to n.
+*/
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::resize(int n, memory::array_view<HOST_MEMORY, const ComplexType, 3> A)
+{
+  auto all = nda::range::all;
+  int nspin = (walkerType == COLLINEAR ? 2 : 1);
+  utils::check_shape(A, "A", nspin, wlk_desc[0], wlk_desc[1]);
+  reserve(n);
+  if (n > tot_num_walkers)
+  {
+    auto pos = tot_num_walkers;
+    while (pos < n)
+    {
+      walker_buffer(pos, all) = ComplexType(0.0);
+      reference w0(walker_buffer(pos, all), data_displ, wlk_desc);
+      w0.SlaterMatrix(Alpha) = A(0, nda::ellipsis{});
+      // wlk_desc[2] == 0 (fully polarized carried as COLLINEAR) makes this a zero-extent copy, which
+      // traps in nda's host->device path -- see the naeb == 0 note in StochasticWfn::reset_inner_to_anchor.
+      if (walkerType == COLLINEAR and wlk_desc[2] > 0)
+        w0.SlaterMatrix(Beta) = A(1, all, nda::range(wlk_desc[2]));
+      pos++;
+    }
+    auto r = nda::range(tot_num_walkers, n);
+    walker_buffer(r, data_displ[WEIGHT]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[OVLP])  = ComplexType(1.0);
+    walker_buffer(r, data_displ[PHASE]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[PHASE1]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[PHASE2]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[PHASE3]) = ComplexType(1.0);
+    walker_buffer(r, data_displ[THETA])  = ComplexType(0.0);
+  }
+  tot_num_walkers  = n;
+  set_slot_lineage_identity();
+  targetN_per_rank = tot_num_walkers;
+  targetN          = GlobalPopulation();
+  utils::check(targetN == targetN_per_rank * mpi->comm.size(),
+               " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
+               targetN, targetN_per_rank, mpi->comm.size());
 }
 
 /**
@@ -378,6 +455,7 @@ void WalkerSetBase<_M_>::allocate_walkers(int n)
   {
     walker_buffer(r, data_displ[OVLP]) = ComplexType(1.0);
   }
+  set_slot_lineage_identity(); // well-defined lineage before the first population-control event
   targetN_per_rank = tot_num_walkers;
   targetN          = GlobalPopulation();
   utils::check(targetN == targetN_per_rank * mpi->comm.size(),
@@ -486,15 +564,6 @@ void WalkerSetBase<_M_>::reset(int n)
            targetN,targetN_per_rank,mpi->comm.size());
 }
 
-template<MEMORY_SPACE _M_>
-bool WalkerSetBase<_M_>::clean()
-{
-  walker_buffer.resize(0, walker_size);
-  bp_buffer.resize(0, bp_walker_size);
-  tot_num_walkers = targetN = targetN_per_rank = 0;
-  return true;
-}
-
 /*
 * Resizes back propagation buffers
 * Must be called before any call to bp-related routines.
@@ -551,6 +620,69 @@ void WalkerSetBase<_M_>::resize_bp(int nbp, int nCV, int nref)
   }
 }  
 
+/*
+* Appends a per-walker auxiliary-field block of `n` ComplexType entries to the walker layout
+* (data_displ[TRIAL_FIELDS]), growing walker_size and preserving buffer contents -- the same
+* runtime-growth mechanism resize_bp uses for the SMN block. Because the block lives inside
+* walker_buffer, branch()'s whole-row copies clone it with the walker and the load-balance payload
+* (sized by walker_size) ships it across ranks; it sits after SLOT_LINEAGE, outside the
+* walkerSizeIO() checkpoint window. Idempotent for the same n; a different n on an already-sized
+* block is a programming error.
+*/
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::resize_trial_fields(int n)
+{
+  utils::check(n > 0, "Error in WalkerSetBase::resize_trial_fields: n <= 0.");
+  utils::check(walker_buffer.extent(1) == walker_size, "Size mismatch.");
+  if (data_displ[TRIAL_FIELDS] >= 0)
+  {
+    utils::check(trial_fields_size_ == n,
+                 "Error in WalkerSetBase::resize_trial_fields: block already sized to {} != {}.",
+                 trial_fields_size_, n);
+    return;
+  }
+  auto sz(walker_size);
+  data_displ[TRIAL_FIELDS] = walker_size;
+  trial_fields_size_       = n;
+  walker_size += n;
+  walker_memory_usage = walker_size * sizeof(ComplexType);
+  memory::array<MEM, ComplexType, 2> wb(walker_buffer.extent(0), walker_size);
+  wb(nda::range::all, nda::range(0, sz)) = walker_buffer();
+  wb(nda::range::all, nda::range(sz, walker_size)) = ComplexType(0.0);
+  walker_buffer = std::move(wb);
+}
+
+/*
+* Appends a per-walker block of `n` ComplexType entries for a stochastic trial's conditioned inner
+* magnitudes (data_displ[TRIAL_COND_MAG]). Same runtime-growth mechanism as resize_trial_fields, and
+* the same reason for living inside walker_buffer: branch()'s whole-row copies clone it with the
+* walker and the load-balance payload (sized by walker_size) ships it across ranks. It sits after
+* TRIAL_FIELDS, outside the walkerSizeIO() checkpoint window. Idempotent for the same n; a different
+* n on an already-sized block is a programming error.
+*/
+template<MEMORY_SPACE _M_>
+void WalkerSetBase<_M_>::resize_trial_cond_mag(int n)
+{
+  utils::check(n > 0, "Error in WalkerSetBase::resize_trial_cond_mag: n <= 0.");
+  utils::check(walker_buffer.extent(1) == walker_size, "Size mismatch.");
+  if (data_displ[TRIAL_COND_MAG] >= 0)
+  {
+    utils::check(trial_cond_mag_size_ == n,
+                 "Error in WalkerSetBase::resize_trial_cond_mag: block already sized to {} != {}.",
+                 trial_cond_mag_size_, n);
+    return;
+  }
+  auto sz(walker_size);
+  data_displ[TRIAL_COND_MAG] = walker_size;
+  trial_cond_mag_size_       = n;
+  walker_size += n;
+  walker_memory_usage = walker_size * sizeof(ComplexType);
+  memory::array<MEM, ComplexType, 2> wb(walker_buffer.extent(0), walker_size);
+  wb(nda::range::all, nda::range(0, sz)) = walker_buffer();
+  wb(nda::range::all, nda::range(sz, walker_size)) = ComplexType(0.0);
+  walker_buffer = std::move(wb);
+}
+
 template<MEMORY_SPACE _M_>
 void WalkerSetBase<_M_>::push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M)
 {
@@ -564,6 +696,13 @@ void WalkerSetBase<_M_>::push_walkers(memory::array_view<HOST_MEMORY, const Comp
     walker_buffer(tot_num_walkers, all) = M(i, nda::range(walker_size));
     if (wlk_desc[3] > 0)
       bp_buffer(tot_num_walkers,all) = M(i, nda::range(walker_size,walker_size+bp_walker_size));
+    // A pushed walker arrived from another rank during load balancing; its copied SLOT_LINEAGE refers to
+    // a slot on the SENDING rank, for which this rank holds no conditioned inner block. Overwrite it with
+    // the sentinel -1 so a stochastic conditioned trial's inner-ensemble realignment detects the
+    // cross-rank arrival and rebuilds with a fresh resample instead of permuting. Harmless for every
+    // other walker type (only that path reads SLOT_LINEAGE).
+    nda::tensor::set(ComplexType(-1.0, 0.0),
+                     walker_buffer(tot_num_walkers, nda::range(data_displ[SLOT_LINEAGE], data_displ[SLOT_LINEAGE] + 1)));
     tot_num_walkers++;
   }
 }
@@ -610,6 +749,13 @@ void WalkerSetBase<_M_>::branch(std::span<std::pair<double, int>> counts,
     tot_num_walkers = 0;
     return;
   }
+
+  // Record each live walker's pre-branch local slot index in SLOT_LINEAGE BEFORE any reordering, so the
+  // whole-row copies below carry it through compaction (a walker pulled from the tail into a dead slot
+  // keeps its ORIGINAL index) and replication (a clone inherits its source's index). After branch(),
+  // SLOT_LINEAGE(w) is the pre-branch slot whose conditioned inner block belongs at new slot w. Only a
+  // stochastic conditioned trial reads it; the scalar itself is always maintained.
+  set_slot_lineage_identity();
 
   //1. push/swap all dead walkers to the end and adjust tot_num_walkers
   {

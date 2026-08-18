@@ -33,6 +33,7 @@
 #include "detail/one_body.hpp"
 
 #include "AFQMC/Wavefunctions/detail/phmsd_impl.hpp"
+#include "AFQMC/HamiltonianOperations/full_g_estimators.hpp"
 
 namespace sfqmc
 {
@@ -45,6 +46,13 @@ class Real3IndexFactorization
 public:
   static const HamiltonianTypes HamOpType = RealDenseFactorized;
   HamiltonianTypes getHamType() const { return HamOpType; }
+
+  // Does vbias() accept a FULL [nwalk, nspin*npol*NMO*npol*NMO] density matrix, in addition to the
+  // half-rotated compact one? NOMSD needs it for ndet>1 trials, and StochasticWfn::vMF needs it for
+  // ANY trial once inner_n_samples > 1, because the stochastic mean field is a reduction of the inner
+  // ensemble against itself and has no half-rotated form. Callers that can hand over a full G must
+  // gate on this: the operators that lack it must reject such a G, never reinterpret it.
+  constexpr bool has_fullG_vbias() const { return true; }
 
   Real3IndexFactorization(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> ctxt,
         WALKER_TYPES type,
@@ -346,10 +354,16 @@ public:
     utils::check_strides(G,v);
     // limiting G to contiguous arrays for simplicity now, reconsider if necessary
     utils::check(v.shape() == std::array<long,2>{nwalk,nCV}, "Real3IndexFactorization::vbias: Size mismatch.");
-    if(haj.extent(0) == 1) // ndet==1, G half rotated
-      utils::check(G.extent(1) == nel*npol*NMO, "Real3IndexFactorization::vbias: Size mismatch.");
-    else // ndet>1, full G 
-      utils::check(G.extent(1) == nspin*npol*NMO*npol*NMO, "Real3IndexFactorization::vbias: Size mismatch.");
+    // Dispatch on the G layout, not the trial determinant count. The half-rotated path takes a
+    // compact G [nwalk, nel*npol*NMO]; the full path takes a full G [nwalk, nspin*npol*NMO*npol*NMO]
+    // and contracts the un-rotated Likn. NOMSD passes a compact G for ndet==1 and a full G for
+    // ndet>1, so existing behavior is unchanged; the stochastic trial reaches the full path with a
+    // single-determinant trial (this is what the former vbias_fullG provided).
+    long const half_size = long(nel)*npol*NMO;
+    long const full_size = long(nspin)*npol*NMO*npol*NMO;
+    utils::check(G.extent(1) == half_size || G.extent(1) == full_size,
+                 "Real3IndexFactorization::vbias: Size mismatch.");
+    bool const half_rotated = (G.extent(1) == half_size);
     utils::check(G.is_contiguous(), "Layout mismatch");
 
     // scale a by sqrt(dt)
@@ -357,7 +371,7 @@ public:
     
     v() = ComplexType(0.0);
 
-    if (Lnak(0).extent(0) == 1)
+    if (half_rotated)
     {
       memory::array_view<MEM,const ComplexType,3> G3d(std::array<long,3>{nwalk,nel,npol*NMO},G.data());
       //Lnak(idet,ispin,ipol,n,a,k) * G(w,a,k)
@@ -739,6 +753,65 @@ public:
   nda::array<ComplexType, 2> getHSPotentials()
   { return nda::array<ComplexType, 2>{}; }
 
+  void energy_fullG(nda::MemoryArrayOfRank<2> auto && E,
+                    nda::MemoryArrayOfRank<2> auto const& Gfull,
+                    bool addH1 = true,
+                    bool addEJ = true,
+                    bool addEXX = true)
+  {
+    if (walker_type == NONCOLLINEAR)
+      APP_ABORT("Real3IndexFactorization::energy_fullG: NONCOLLINEAR full-G is not implemented.");
+    // The un-rotated full-G energy kernels contract the bare Cholesky built by ensure_full_cholesky()
+    // from Likn(0). For COLLINEAR both spins reuse that single block, so the Cholesky must be
+    // spin-independent (Likn.extent(0)==1 -- the case for a standard molecular UHF Hamiltonian, and the
+    // only case that reaches this stochastic single-determinant full-G path in practice). vbias's full-G
+    // branch DOES handle a spin-dependent Cholesky (Likn(is%nstot) per spin) because it is shared with
+    // the multi-determinant NOMSD trial; the stochastic energy kernel does not yet, so a spin-dependent
+    // COLLINEAR Hamiltonian (Likn.extent(0)==2, e.g. spin-resolved integrals) is rejected here rather
+    // than silently scoring both spins with the alpha block. Fail-fast: this fires on the first energy
+    // evaluation, before any measurement, so no incorrect physics is reported. Lifting it needs per-spin
+    // Cholesky densification in energy_collinear (mirroring energy_impl / vbias) -- deferred as it is
+    // untestable without a spin-dependent DenseFactorized fixture (none exists) and unneeded for
+    // molecular UHF.
+    if (walker_type == COLLINEAR)
+    {
+      utils::check(Likn.extent(0) == 1,
+                   "Real3IndexFactorization::energy_fullG: COLLINEAR full-G currently requires a "
+                   "spin-independent Cholesky (Likn.extent(0)==1); spin-dependent (per-spin) Cholesky "
+                   "in the stochastic energy kernel is a follow-up.");
+      // The SAME restriction applies to the ONE-BODY and was missing: ensure_full_cholesky() flattens
+      // hij(0, i, k) -- spin index 0, unconditionally -- and energy_collinear then contracts that single
+      // h against BOTH spin blocks of G. With a genuinely spin-dependent H1 that silently scores the beta
+      // spin with h_alpha, and nothing downstream would flag it. Fail fast for the same reason the
+      // Cholesky check does: it fires on the first energy evaluation, before any measurement.
+      //
+      // Test the VALUES, not the storage shape. `hij.extent(0) == 1` would be the wrong condition:
+      // Hamiltonians legitimately store two IDENTICAL spin blocks (the BH test fixture ships hcore as
+      // (2*NMO, NMO) with max|h_alpha - h_beta| == 0 exactly), and flattening block 0 there is exact.
+      // Rejecting those would refuse correct input -- and would mask any real defect behind an abort.
+      auto h = hij();
+      if (h.extent(0) > 1)
+      {
+        double dmax = 0.0;
+        for (long i = 0; i < h.extent(1); ++i)
+          for (long k = 0; k < h.extent(2); ++k)
+            dmax = std::max(dmax, std::abs(h(0, i, k) - h(1, i, k)));
+        utils::check(dmax <= 1e-12,
+                     "Real3IndexFactorization::energy_fullG: COLLINEAR full-G requires a spin-independent "
+                     "one-body, but max|h_alpha - h_beta| exceeds 1e-12. ensure_full_cholesky() flattens "
+                     "spin 0 only, so the beta spin would be scored with h_alpha. Per-spin H1 in the "
+                     "stochastic full-G energy kernel is a follow-up.");
+      }
+    }
+    ensure_full_cholesky();
+    if (walker_type == COLLINEAR)
+      full_g::energy_collinear<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_,
+                                    hij_full_flat_, int(nCV), E0, addH1, addEJ, addEXX);
+    else
+      full_g::energy_closed<MEM>(mpi, std::forward<decltype(E)>(E), Gfull, Lank_full_flat_,
+                                 hij_full_flat_, int(nCV), E0, addH1, addEJ, addEXX);
+  }
+
 private:
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
@@ -768,7 +841,46 @@ private:
   // Twian = sum_k G_ref[w][i][k] L[a][n][k]
   memory::array<MEM,ComplexType,1> Twina_ph;
   // Swia = sum_k G_ref[w][i][k] h[a][k]
-  memory::array<MEM,ComplexType,1> Swia_ph; 
+  memory::array<MEM,ComplexType,1> Swia_ph;
+
+  bool full_cholesky_ready_{false};
+  memory::array<MEM,ComplexType,2> Lank_full_flat_;
+  memory::array<MEM,ComplexType,1> hij_full_flat_;
+
+  void ensure_full_cholesky()
+  {
+    if (full_cholesky_ready_)
+      return;
+    // Build both flat arrays on HOST (element assembly), then move to the MEM space in one shot. Writing
+    // element-by-element into a device array from host is a segfault, so never assemble into the MEM member
+    // directly (this path is first exercised on device by the PR-3 dynamic full-G port).
+    auto Lank_host = memory::array<HOST_MEMORY, ComplexType, 2>(NMO * nCV, NMO);
+    auto Lhost = nda::to_host(Likn()(0, nda::range::all, nda::range::all, nda::range::all));
+    for (int i = 0; i < NMO; ++i)
+      for (int k = 0; k < NMO; ++k)
+        for (int nc = 0; nc < nCV; ++nc)
+          Lank_host(i * nCV + nc, k) = ComplexType(Lhost(i, k, nc));
+    auto hij_host = memory::array<HOST_MEMORY, ComplexType, 1>(NMO * NMO);
+    auto hij_h = hij();
+    for (int i = 0; i < NMO; ++i)
+      for (int k = 0; k < NMO; ++k)
+        hij_host(i * NMO + k) = hij_h(0, i, k);
+    if constexpr (MEM != HOST_MEMORY)
+    {
+#if defined(ENABLE_DEVICE)
+      Lank_full_flat_ = nda::to_device(Lank_host);
+      hij_full_flat_  = nda::to_device(hij_host);
+#else
+      static_assert(MEM == HOST_MEMORY, "Device memory requires ENABLE_DEVICE");
+#endif
+    }
+    else
+    {
+      Lank_full_flat_ = Lank_host;
+      hij_full_flat_  = hij_host;
+    }
+    full_cholesky_ready_ = true;
+  } 
 
   // zero of energy 
   ComplexType E0;

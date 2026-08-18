@@ -52,6 +52,12 @@ public:
   static constexpr HamiltonianTypes HamOpType = KPTHC;
   constexpr HamiltonianTypes getHamType() const { return KPTHC; }
 
+  // See has_fullG_vbias() in Real3IndexFactorization. Not implemented here: vbias()'s ndet>1 branch is
+  // a stub, and there is no Guu_from_full to build the intermediate from an un-rotated G. A full G
+  // handed to vbias() is rejected by its size check rather than reinterpreted, so this is a loud
+  // capability gap, not a silent wrong answer -- but callers should gate on it and say so plainly.
+  constexpr bool has_fullG_vbias() const { return false; }
+
   /*
    * nup/ndown stands for number of alpha/beta electrons
    * Completely broken for half_rotated integrals, FIX FIX FIX
@@ -766,6 +772,12 @@ public:
 
   nda::array<ComplexType, 2> getHSPotentials() 
   { return nda::array<ComplexType, 2>{}; }
+
+  void energy_fullG(nda::MemoryArrayOfRank<2> auto&&, nda::MemoryArrayOfRank<2> auto const&, bool = true,
+                    bool = true, bool = true)
+  {
+    APP_ABORT("KPTHCOps::energy_fullG not implemented.");
+  }
 
 protected:
   // G(k1,k2,w,u) = sum_a,j Y(d,s,k1,a,u) * G(w,k1,a,k2,j) * X(s,k2,p,j,u)

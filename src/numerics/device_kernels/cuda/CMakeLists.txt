@@ -14,6 +14,7 @@ target_sources(safire_lib
     phmsd_energy.cu
     phmsd_vmf.cu
     apply.cu
+    stochastic_reductions.cu
     probe.cu
 )
 

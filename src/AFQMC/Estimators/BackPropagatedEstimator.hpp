@@ -166,7 +166,12 @@ public:
     memory::buffered_array<MEM,ComplexType,4> Refs(nwalk, Ref0.extent(0), Ref0.extent(1), Ref0.extent(2));
     memory::buffered_array<MEM,ComplexType,2> logdetR(nwalk, number_of_references);
 
-    // 2. setup back propagated references
+    // 2. setup back propagated references.
+    // NOTE: getReferences may have side effects -- for a stochastic trial it performs a fresh
+    // free-projection draw of the reference ensemble (mutating internal scratch + RNG state). It is meant
+    // to be called once per BP block here (result copied into Refs for all walkers, frozen for the window).
+    // A repeated call within the SAME window is guarded to reuse the same draw (idempotent);
+    // a forward step (begin_inner_step) opens the next window, which draws fresh.
     for (int iw = 0; iw < nwalk; ++iw)
       Refs(iw,nda::ellipsis{}) = Ref0();
     mpi->node_comm.barrier();

@@ -44,6 +44,12 @@ public:
   static constexpr HamiltonianTypes HamOpType = THC;
   constexpr HamiltonianTypes getHamType() const { return THC; }
 
+  // See has_fullG_vbias() in Real3IndexFactorization. Not implemented here: vbias()'s ndet>1 branch is
+  // a stub, and there is no Guu_from_full to build the intermediate from an un-rotated G. A full G
+  // handed to vbias() is rejected by its size check rather than reinterpreted, so this is a loud
+  // capability gap, not a silent wrong answer -- but callers should gate on it and say so plainly.
+  constexpr bool has_fullG_vbias() const { return false; }
+
   THCOps() = delete;
 
   /*
@@ -635,6 +641,12 @@ public:
   // add nspin_in_basis to allow for a spin independent basis too
   nda::array<ComplexType, 2> getHSPotentials() 
   { return nda::array<ComplexType, 2>{}; }
+
+  void energy_fullG(nda::MemoryArrayOfRank<2> auto&&, nda::MemoryArrayOfRank<2> auto const&, bool = true,
+                    bool = true, bool = true)
+  {
+    APP_ABORT("THCOps::energy_fullG not implemented.");
+  }
 
 protected:
   // Guu[nu][nwalk]

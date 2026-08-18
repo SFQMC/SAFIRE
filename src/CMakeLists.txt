@@ -27,6 +27,15 @@ target_include_directories(safire_lib PUBLIC
 
 target_link_libraries(safire_lib PUBLIC nda::nda_c mpi3 Boost::headers cxxopts::cxxopts safire_warnings hdf5::hdf5 hdf5::hdf5_hl nlohmann_json::nlohmann_json)
 
+# Boost::headers is INTERFACE-only; ensure its include path is visible when compiling
+# safire_lib (otherwise GCC may pick up the stale system Boost under /usr/include).
+if(TARGET Boost::headers)
+  get_target_property(_safire_boost_include_dirs Boost::headers INTERFACE_INCLUDE_DIRECTORIES)
+  if(_safire_boost_include_dirs)
+    target_include_directories(safire_lib SYSTEM PUBLIC ${_safire_boost_include_dirs})
+  endif()
+endif()
+
 if(ENABLE_CUDA)
   target_link_libraries(safire_lib PRIVATE CUDA::curand CUDA::cudart CCCL::CCCL)
 endif()

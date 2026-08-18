@@ -21,6 +21,9 @@
 #include "AFQMC/Utilities/readWfn.h"
 #include "WavefunctionFactory.h"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
+#include "AFQMC/Wavefunctions/StochasticWfn.hpp"
+#include "AFQMC/Propagators/PropagatorFactory.h"
+#include "AFQMC/parameter_defaults.hpp"
 //#include "AFQMC/Wavefunctions/Excitations.hpp"
 
 namespace sfqmc
@@ -52,6 +55,226 @@ auto broadcast_number_of_electrons(const std::array<int, N> &nel, WALKER_TYPES f
 }
 
 }
+
+namespace wavefunction_detail
+{
+
+/**
+ * @brief Concrete inner stack owned by a StochasticWfn: the variational NOMSD wrapped in a
+ *        Wavefunction, plus the propagator carrying the trained B_T.
+ *
+ * @details Lives here rather than in the header because it must name the concrete inner wavefunction
+ * and propagator types, which only the factory knows; StochasticWfn sees it only through the abstract
+ * StochasticInnerStack interface.
+ *
+ * @param MEM memory space of the inner stack
+ * @param MType storage type of the trial orbital matrices
+ */
+template<MEMORY_SPACE MEM, class MType>
+struct StochasticInnerStackImpl final : StochasticInnerStack<MEM, MType>
+{
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_;
+  std::unique_ptr<Wavefunction<MEM>> wfn_;
+  std::unique_ptr<Propagator<MEM>> prop_;
+
+  NOMSD<MEM, MType>& nomsd() override { return std::get<NOMSD<MEM, MType>>(wfn_->var); }
+  NOMSD<MEM, MType> const& nomsd() const override { return std::get<NOMSD<MEM, MType>>(wfn_->var); }
+
+  Wavefunction<MEM>& wavefunction() override { return *wfn_; }
+  Wavefunction<MEM> const& wavefunction() const override { return *wfn_; }
+
+  bool has_propagator() const override { return prop_ != nullptr; }
+  Propagator<MEM>& propagator() override
+  {
+    if (prop_ == nullptr)
+      APP_ABORT("Error in StochasticInnerStackImpl::propagator: not built.");
+    return *prop_;
+  }
+  Propagator<MEM> const& propagator() const override
+  {
+    if (prop_ == nullptr)
+      APP_ABORT("Error in StochasticInnerStackImpl::propagator: not built.");
+    return *prop_;
+  }
+};
+
+/// @brief Exposes PropagatorFactory's protected buildPropagator so the inner propagator can be built
+/// directly, without registering the inner stack as a named propagator in the input.
+struct InnerPropagatorBuilder : PropagatorFactory<HOST_MEMORY>
+{
+  using PropagatorFactory<HOST_MEMORY>::PropagatorFactory;
+  using PropagatorFactory<HOST_MEMORY>::buildPropagator;
+};
+
+#if defined(ENABLE_DEVICE)
+/// @brief Device counterpart of InnerPropagatorBuilder.
+struct InnerPropagatorBuilderDevice : PropagatorFactory<DEVICE_MEMORY>
+{
+  using PropagatorFactory<DEVICE_MEMORY>::PropagatorFactory;
+  using PropagatorFactory<DEVICE_MEMORY>::buildPropagator;
+};
+#endif
+
+/**
+ * @brief Build the inner (variational) stack a StochasticWfn samples its trial from.
+ *
+ * @details Inner NOMSD against the variational HamOps; for a dynamic trial, the B_T propagator as
+ * selected by resolve_sampling_target() (resolved once, before the sampler is chosen).
+ *
+ * @param NMO number of molecular orbitals
+ * @param nup number of spin-up electrons
+ * @param ndown number of spin-down electrons
+ * @param params the wavefunction input block, carrying the inner_* keys and the resolved sampling target
+ * @param inner_ham_type Hamiltonian type of the VARIATIONAL Hamiltonian, needed to resolve the inner
+ *        propagator's defaults (vbias_bound, cutoff scales, ...)
+ * @param mpi MPI context
+ * @param inner_hop HamiltonianOperations of the VARIATIONAL Hamiltonian
+ * @param inner_ci CI coefficients of the anchor expansion
+ * @param inner_orbs orbital matrices of the anchor expansion
+ * @param walker_type walker type the inner ensemble must match
+ * @param targetNW target walker count
+ */
+template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
+std::unique_ptr<StochasticInnerStack<MEM, MType>> buildStochasticInnerStack(
+    int NMO,
+    int nup,
+    int ndown,
+    WavefunctionParameters const& params,
+    HamiltonianTypes inner_ham_type,
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+    HamiltonianOperations<MEM>&& inner_hop,
+    nda::array<ComplexType, 1>&& inner_ci,
+    OrbsContainer&& inner_orbs,
+    WALKER_TYPES walker_type,
+    int targetNW)
+{
+  auto stack = std::make_unique<StochasticInnerStackImpl<MEM, MType>>();
+
+  stack->wfn_ = std::make_unique<Wavefunction<MEM>>(
+      NOMSD<MEM, MType>(params, NMO, nup, ndown, walker_type, mpi, std::move(inner_hop), std::move(inner_ci),
+                        std::forward<OrbsContainer>(inner_orbs), targetNW));
+
+  PropagatorParameters prop_params = params.inner_propagator.value_or(PropagatorParameters{});
+  if (prop_params.name.empty())
+    prop_params.name = params.name + "_inner_propagator";
+
+  if (params.inner_nsteps > 0)
+  {
+    // This is the SECOND consumer of the sampler selection, and the one that decides how the inner
+    // propagator is BUILT. If it and StochasticWfn ever disagree, the wavefunction runs a conditioned
+    // sampler against a free-projection propagator and Propagate_conditioned aborts at the first step.
+    // fromHDF5 has already validated `params`, so this and StochasticWfn's ctor resolve the SAME target.
+    if (resolve_sampling_target(params) == StochasticSamplingTarget::WalkerOverlap)
+    {
+      // Walker-conditioned sampling: build the inner propagator in importance-sampling mode
+      // mode (free_projection = false) so assemble_X applies the per-walker conditioning force bias.
+      // The bias is supplied externally and the walker-weight update is skipped via
+      // StochasticWfn -> Propagator::Propagate_conditioned, so hybrid/apply_constrain are inert here.
+      prop_params.free_projection     = false;
+      prop_params.hybrid              = true;
+      prop_params.importance_sampling = true;
+      prop_params.apply_constrain     = false;
+    }
+    else
+    {
+      // Walker-independent free projection (bare Gaussian fields).
+      prop_params.free_projection     = true;
+      prop_params.hybrid              = true;
+      prop_params.importance_sampling = false;
+      prop_params.apply_constrain     = false;
+    }
+    // The inner propagator is never registered under a top-level `propagator` input block, so it
+    // never goes through resolve_defaults -- fill in the Hamiltonian-dependent defaults ourselves.
+    apply_defaults(prop_params, inner_ham_type);
+  }
+
+  int inner_seed = params.inner_seed;
+  auto iseed     = (inner_seed == 0) ? utils::make_seed(mpi->comm) : utils::split_seed(inner_seed, mpi->comm);
+  // Construct in place from the seed: utils::make_rng<MEM> was removed with the curandGenerator_t
+  // ownership fix (aed0a52), which deletes CurandRandomGenerator's copy ctor -- so a by-value
+  // factory can no longer be handed to make_shared. Matches StochasticWfn.icc's inner-RNG pattern.
+  stack->rng_ = std::make_shared<utils::RandomGenerator_t<MEM>>(iseed);
+
+  // Inner propagator is only needed when the ensemble is dynamic (inner_nsteps > 0).
+  // At the delegate limit (inner_nsteps == 0) it stays dormant; lazy build on first access
+  // covers stochastic_inner_propagator_construction when that test is ported.
+  if (params.inner_nsteps > 0)
+  {
+    app_log(2, " Building StochasticWfn inner propagator (inner_seed = {}).", inner_seed);
+    if constexpr (MEM == HOST_MEMORY)
+    {
+      InnerPropagatorBuilder prop_builder;
+      stack->prop_ = std::make_unique<Propagator<MEM>>(
+          prop_builder.buildPropagator(mpi, prop_params, stack->wavefunction(), stack->rng_));
+    }
+#if defined(ENABLE_DEVICE)
+    else
+    {
+      InnerPropagatorBuilderDevice prop_builder;
+      stack->prop_ = std::make_unique<Propagator<MEM>>(
+          prop_builder.buildPropagator(mpi, prop_params, stack->wavefunction(), stack->rng_));
+    }
+#endif
+  }
+
+  return stack;
+}
+
+/**
+ * @brief Build a StochasticWfn: outer NOMSD against the TRUE Hamiltonian, inner stack against the
+ *        VARIATIONAL one.
+ *
+ * @details The caller passes h_var == h to clone the True Hamiltonian when the input names no
+ * inner_hamiltonian; a distinct h_var routes the inner stack to a separate Variational Hamiltonian.
+ * Both sets of HamiltonianOperations are half-rotated with the SAME trial orbitals -- only the
+ * integrals differ.
+ *
+ * @param params the wavefunction input block, already validated via validate_stochastic_inputs
+ * @param mpi MPI context
+ * @param h the TRUE Hamiltonian, which every reduction is scored against
+ * @param h_var the VARIATIONAL Hamiltonian generating the trial samples; may alias h
+ * @param walker_type walker type the trial must match
+ * @param NMO number of molecular orbitals
+ * @param nup number of spin-up electrons
+ * @param ndown number of spin-down electrons
+ * @param ci CI coefficients of the anchor expansion
+ * @param orbs orbital matrices of the anchor expansion
+ * @param targetNW target walker count
+ * @param PsiT_for_ham trial orbitals both Hamiltonians are half-rotated against
+ */
+template<MEMORY_SPACE MEM, class MType, class OrbsContainer>
+Wavefunction<MEM> buildStochasticNomsdWavefunction(
+    WavefunctionParameters params,
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+    Hamiltonian& h,
+    Hamiltonian& h_var,
+    WALKER_TYPES walker_type,
+    int NMO,
+    int nup,
+    int ndown,
+    nda::array<ComplexType, 1> ci,
+    OrbsContainer orbs,
+    int targetNW,
+    nda::array<PsiT_Matrix<MEM>, 2>& PsiT_for_ham)
+{
+  StochasticWfn<MEM, MType>::validate_stochastic_inputs(params);
+
+  auto outer_HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
+  auto inner_HOps = h_var.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT_for_ham);
+  auto inner_ci   = ci;
+  auto inner_orbs = orbs;
+  auto inner_stack =
+      buildStochasticInnerStack<MEM, MType>(NMO, nup, ndown, params, h_var.getHamType(), mpi, std::move(inner_HOps),
+                                            std::move(inner_ci), std::move(inner_orbs), walker_type, targetNW);
+  std::string system = params.name;
+  return Wavefunction<MEM>(StochasticWfn<MEM, MType>(std::move(system), NMO, nup, ndown, params, mpi,
+                                                     std::move(outer_HOps), std::move(ci), std::move(orbs),
+                                                     std::move(inner_stack), walker_type, targetNW));
+}
+
+} // namespace wavefunction_detail
+
+using wavefunction_detail::buildStochasticNomsdWavefunction;
 
 template<MEMORY_SPACE MEM>
 Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
@@ -86,15 +309,23 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     wfn_type = WAVEFUNCTION_TYPES(itype);
   }
 
+  bool build_stochastic = (wfn_type == STOCHASTIC_WFN) || is_stochastic_wavefunction_input(params);
+  // Mutable copy: stochastic validation resolves inner_sampling_target / inner_sampler_step in place,
+  // and the inner_hamiltonian branch below stamps the trained inner_propagator.timestep into it.
+  WavefunctionParameters wfn_params = params;
+
+  utils::check(not (build_stochastic && wfn_type == PHMSD_WFN),
+               "Error in WavefunctionFactory::fromHDF5: stochastic trials require NOMSD trial HDF5 data.");
+
   // everyone reading for now, change it problematic
   h5::file file(filename,'r');
   h5::group grp(file);
   h5::group wgrp = grp.open_group("Wavefunction");
 
   
-  if (wfn_type == NOMSD_WFN)
+  if (wfn_type == NOMSD_WFN || wfn_type == STOCHASTIC_WFN)
   {
-    app_log(1,"Wavefunction type: NOMSD");
+    app_log(1, "Wavefunction type: {}", build_stochastic ? "StochasticWfn" : "NOMSD");
     nda::array<ComplexType,1> ci;
     h5::group ngrp = wgrp.open_group("NOMSD");
     // Read common trial wavefunction input options.
@@ -117,6 +348,103 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
       getInitialGuess(ngrp, name, NMO, nup, ndown, walker_type);
 
       dense_trial = resolved(params.dense_trial, "dense_trial");
+
+      if (build_stochastic)
+      {
+        utils::check(not finiteT,
+                     "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
+                     "finite-temperature walkers.");
+        // Resolve the inner (Variational) Hamiltonian. If the wfn block names one via `inner_hamiltonian`,
+        // build it on demand through HamFac_ and use it for the inner stack; otherwise clone the True Ham
+        // h. Registered under a namespaced ID that cannot collide with a user-declared Hamiltonian.
+        Hamiltonian* inner_ham_ptr = &h;
+        if (wfn_params.inner_hamiltonian)
+        {
+          utils::check(HamFac_ != nullptr,
+                       "Error in WavefunctionFactory::fromHDF5: inner_hamiltonian requires the "
+                       "WavefunctionFactory to be constructed with a HamiltonianFactory (two-argument "
+                       "constructor).");
+          HamiltonianParameters var_params = *wfn_params.inner_hamiltonian;
+          utils::check(not var_params.filename.empty(),
+                       "Error in WavefunctionFactory::fromHDF5: inner_hamiltonian requires a filename.");
+          std::string var_id = name + "__inner_hamiltonian__";
+          if (var_params.name.empty())
+            var_params.name = var_id;
+          if (not HamFac_->has_input(var_id))
+            HamFac_->push(var_id, var_params);
+          inner_ham_ptr = &HamFac_->getHamiltonian(mpi, var_id);
+
+          // THE TRAINED INNER TIMESTEP COMES FROM THE VARIATIONAL HAMILTONIAN, NOT FROM THE INPUT.
+          //
+          // dt = ts_v**2 parameterizes B_T = exp(-dt * ...) built from THIS operator, so the two must
+          // travel together. It used to be carried by an inner_timestep.json sidecar that a human copied
+          // into wavefunction.inner_propagator.timestep; a wrong copy drove the trained parameters with
+          // a propagator nobody trained, silently, because the input key defaulted to 0.01. Both the key
+          // and the default are gone: we read the stamp export_safire writes, and fail closed without it.
+          {
+            // A hand-set timestep alongside inner_hamiltonian is exactly the silent-override this change
+            // exists to kill: we would overwrite it below and the deck would read as if it took effect.
+            if (wfn_params.inner_propagator && wfn_params.inner_propagator->timestep)
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_propagator.timestep may not be set "
+                        "when inner_hamiltonian is given -- the trained timestep is read from that "
+                        "Hamiltonian's 'inner_timestep' attribute. Remove the input key.");
+            const std::string& var_file = var_params.filename;
+            double inner_dt = 0.0;
+            bool have_dt     = false;
+            {
+              h5::file fh5(var_file, 'r');
+              h5::group vgrp(fh5);
+              if (vgrp.has_key("Hamiltonian"))
+              {
+                h5::group hgrp = vgrp.open_group("Hamiltonian");
+                if (H5Aexists(h5::hid_t(hgrp), "inner_timestep"))
+                {
+                  h5::h5_read_attribute(hgrp, "inner_timestep", inner_dt);
+                  have_dt = true;
+                }
+              }
+            }
+            if (not have_dt)
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_hamiltonian '" + var_file +
+                        "' carries no 'inner_timestep' attribute. The trained B_T timestep must travel "
+                        "with the variational Hamiltonian it parameterizes; SAFIRE no longer accepts it "
+                        "from the input and has no default. Re-export this trial with a current "
+                        "export_safire (which stamps Hamiltonian/inner_timestep), or drop "
+                        "inner_hamiltonian if this trial has no trained propagator.");
+            if (inner_dt <= 0.0)
+              APP_ABORT("Error in WavefunctionFactory::fromHDF5: inner_hamiltonian '" + var_file +
+                        "' has a non-positive inner_timestep.");
+            // Write into `wfn_params`, the block moved into the wavefunction below: interpret/validate
+            // has not consumed this factory-supplied key, so it is never re-validated against the input.
+            if (not wfn_params.inner_propagator)
+              wfn_params.inner_propagator = PropagatorParameters{};
+            wfn_params.inner_propagator->timestep = inner_dt;
+            app_log(2, " Inner propagator timestep read from {}: dt = {}", var_file, inner_dt);
+          }
+        }
+        Hamiltonian& inner_ham = *inner_ham_ptr;
+        if (dense_trial)
+        {
+          using MType = memory::const_shared_array<MEM,ComplexType,2>;
+          nda::array<MType,2> PsiT_dense(ndets_to_read,nspin);
+          for(int id=0; id<ndets_to_read; ++id) {
+            for(int is=0; is<nspin; ++is) {
+              PsiT_dense(id,is) = memory::share_from_root(*mpi, [&] {
+                return memory::to_memory_space<MEM>(math::sparse::to_array<'N'>(PsiT(id,is)));
+              });
+            }
+          }
+          return buildStochasticNomsdWavefunction<MEM, MType>(wfn_params, mpi, h, inner_ham, walker_type,
+                                                              NMO, nup, ndown, ci, PsiT_dense, targetNW, PsiT);
+        }
+        return buildStochasticNomsdWavefunction<MEM, PsiT_Matrix<MEM>>(wfn_params, mpi, h, inner_ham,
+                                                                       walker_type, NMO, nup, ndown, ci, PsiT,
+                                                                       targetNW, PsiT);
+      }
+
+      utils::check(wfn_type == NOMSD_WFN,
+                   "Error in WavefunctionFactory::fromHDF5: Wavefunction/StochasticWfn HDF5 requires "
+                   "type: stochasticwfn.");
 
       auto HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT);
 
@@ -142,6 +470,9 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
     }
     else
     {
+      utils::check(wfn_type != STOCHASTIC_WFN && not build_stochastic,
+                   "Error in WavefunctionFactory::fromHDF5: StochasticWfn is not implemented for "
+                   "finite-temperature walkers.");
       // validation blocks
       utils::check(input_wtype != NONCOLLINEAR or walker_type == NONCOLLINEAR,
           "Error: Trial wavefunction is NONCOLLINEAR and requires NONCOLLINEAR walkers. walker_type: {}", walkerTypeToString(walker_type));

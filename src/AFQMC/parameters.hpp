@@ -70,23 +70,6 @@ SAFIRE_DEFINE_PARAMETERS(WalkerSetParameters, name, walker_type, load_balance_ty
                          max_weight);
 
 
-struct WavefunctionParameters {
-  std::string name{};
-  std::string filename{}; // required
-
-  bool rediag{}; // ??
-  int ndets_to_read{-1};
-  // the two optionals below depend on the hamiltonian type, so resolve_defaults fills them in
-  std::optional<PHMSDEnergyAlgorithm> algorithm{};
-  std::optional<bool> dense_trial{};
-  int nwalk_block_size{8};
-  int ndet_block_size{4096};
-
-  // system
-};
-SAFIRE_DEFINE_PARAMETERS(WavefunctionParameters, name, filename, rediag, ndets_to_read, algorithm, dense_trial,
-                         nwalk_block_size, ndet_block_size);
-
 struct HamiltonianParameters {
   std::string name{};
   std::string filename{}; // resolve_defaults falls back to the filename of the wavefunction
@@ -121,11 +104,77 @@ struct PropagatorParameters {
   bool use_real_vbias{false};
   std::string external_field{""};
   std::string excited{""};
+  // Outer propagators take their timestep from ExecuteParameters. Nested stochastic
+  // inner_propagator blocks may carry one here (or inherit it from a stamped variational Ham).
+  std::optional<double> timestep{};
 };
 SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, external_field_scale, upper_cutoff_scale,
                          lower_cutoff_scale, apply_constrain, importance_sampling, substractMF, hybrid,
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
-                         symmetric_split, use_cp_constraint, use_real_vbias, external_field, excited);
+                         symmetric_split, use_cp_constraint, use_real_vbias, external_field, excited, timestep);
+
+/// Optional explicit wavefunction kind. When unset, the kind is inferred from the trial HDF5.
+/// Stochastic decks set this to stochasticwfn (a NOMSD file alone is otherwise treated as NOMSD).
+enum class WavefunctionInputType {
+  nomsd,
+  phmsd,
+  stochasticwfn,
+};
+SAFIRE_DEFINE_ENUM(WavefunctionInputType, {
+  {WavefunctionInputType::nomsd, "nomsd"},
+  {WavefunctionInputType::phmsd, "phmsd"},
+  {WavefunctionInputType::stochasticwfn, "stochasticwfn"},
+  {WavefunctionInputType::stochasticwfn, "stochastic_wfn"},
+});
+
+/// Inner-ensemble sampling target for a StochasticWfn. Independent of inner_sampler (the proposal).
+enum class StochasticSamplingTarget {
+  Static,
+  Gaussian,
+  WalkerOverlap,
+};
+SAFIRE_DEFINE_ENUM(StochasticSamplingTarget, {
+  {StochasticSamplingTarget::Static, "static"},
+  {StochasticSamplingTarget::Gaussian, "gaussian"},
+  {StochasticSamplingTarget::WalkerOverlap, "walker_overlap"},
+});
+
+struct WavefunctionParameters {
+  std::string name{};
+  std::string filename{}; // required
+
+  bool rediag{}; // ??
+  int ndets_to_read{-1};
+  // the two optionals below depend on the hamiltonian type, so resolve_defaults fills them in
+  std::optional<PHMSDEnergyAlgorithm> algorithm{};
+  std::optional<bool> dense_trial{};
+  int nwalk_block_size{8};
+  int ndet_block_size{4096};
+
+  std::optional<WavefunctionInputType> type{};
+
+  // Stochastic trial knobs. Meaningful when type is stochasticwfn (or the HDF5 marks StochasticWfn).
+  // Unknown keys are rejected by the schema, so the old closed inner_* surface is automatic.
+  int inner_n_samples{1};
+  int inner_nsteps{0};
+  // Required when inner_nsteps > 0; defaults to Static when inner_nsteps == 0.
+  std::optional<StochasticSamplingTarget> inner_sampling_target{};
+  // Inner field-chain sweeps per outer step (conditioned trials). 32, not 1: at 1 the chain lags a
+  // conditioning target that moves every step (N2-ae equilibrium P=8: -9.26 mHa at 1, -0.15 at 32).
+  int inner_sample_update_steps{32};
+  int inner_burn_in{100};
+  int inner_n_measure_samples{1};
+  std::string inner_sampler{"pcn"};
+  // Default depends on inner_sampler (1.0 for pcn, 0.05 for gaussian); filled at validation.
+  std::optional<double> inner_sampler_step{};
+  int inner_seed{777};
+  std::optional<PropagatorParameters> inner_propagator{};
+  std::optional<HamiltonianParameters> inner_hamiltonian{};
+};
+SAFIRE_DEFINE_PARAMETERS(WavefunctionParameters, name, filename, rediag, ndets_to_read, algorithm, dense_trial,
+                         nwalk_block_size, ndet_block_size, type, inner_n_samples, inner_nsteps,
+                         inner_sampling_target, inner_sample_update_steps, inner_burn_in, inner_n_measure_samples,
+                         inner_sampler, inner_sampler_step, inner_seed, inner_propagator, inner_hamiltonian);
 
 // the name of an observable is a label that the code does not use for anything
 struct OneRDMParameters {
