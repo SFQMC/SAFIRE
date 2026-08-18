@@ -74,7 +74,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 ######################################################################
 # set options
 ######################################################################
-option(HAVE_MKL "Assume MKL BLAS/LAPACK library." OFF)
 option(BUILD_UNIT_TESTS "Build unit tests" ON)
 option(BUILD_STATIC "Link to static libraries" OFF)
 OPTION(BUILD_DOCUMENTATION "Enable compiling C++ Docs" OFF)

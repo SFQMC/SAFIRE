@@ -21,15 +21,9 @@
 /* building from Git repository or not */
 #cmakedefine IS_GIT_PROJECT
 
-/* Assume MKL library is available. */ 
-#cmakedefine HAVE_MKL
-
 /* Enable device code and use CUDA backend */
 #cmakedefine ENABLE_CUDA
 
-/* Enable device code and use HIP backend */
-#cmakedefine ENABLE_HIP
- 
 /* Enable device code, with some backend. */
 #cmakedefine ENABLE_DEVICE
 

@@ -23,7 +23,7 @@
 
 void print_version() {
   constexpr const char* mkl_feature =
-  #ifdef HAVE_MKL
+  #ifdef NDA_USE_MKL
       " MKL";
   #else
       "";
