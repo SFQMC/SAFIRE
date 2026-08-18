@@ -32,6 +32,8 @@
 #include <utility>
 #include <tuple>
 
+#include "utilities/check.hpp"
+
 namespace math
 {
 namespace sparse
@@ -52,17 +54,20 @@ public:
 
 protected:
   using this_t = array_of_sequences<ValType, MEM, IntType>;
-  long size1_;
-  long capacity_;
   larray<value_type> data_;
   ::nda::array<int_type, 1> row_begin_;
   ::nda::array<int_type, 1> row_end_;
 
+  // Checking here also lets the compiler see that the array extents in the constructors
+  // below are non-negative; it warns about a negative allocation otherwise.
+  static long checked_size(long sz) {
+    sfqmc::utils::check(sz >= 0, "array_of_sequences: negative size: {}", sz);
+    return sz;
+  }
+
   // set object to null state
   void reset()
   {
-    size1_          = 0;
-    capacity_       = 0;
     data_.resize(0); 
     row_begin_.resize(1);
     row_end_.resize(0);
@@ -73,83 +78,83 @@ public:
   array_of_sequences() {};
   
   template<typename integer_type = long>
-  array_of_sequences(long sz, integer_type nnzpr_unique) : size1_(sz), capacity_(sz*nnzpr_unique),
-    data_(capacity_), row_begin_(size1_+1,0), row_end_(size1_,0)
+  array_of_sequences(long sz, integer_type nnzpr_unique) :
+    data_(checked_size(sz)*nnzpr_unique), row_begin_(sz+1,0), row_end_(sz,0)
   {
     if(nnzpr_unique == 0) return;
-    for(long i=0; i<size1_; ++i) {
+    for(long i=0; i<sz; ++i) {
       row_begin_(i) = int_type(i*nnzpr_unique);
       row_end_(i) = int_type(i*nnzpr_unique);
     }
-    row_begin_(size1_) = capacity_; 
+    row_begin_(sz) = capacity(); 
   }
 
   template<typename integer_type = long>
-  array_of_sequences(long sz, std::vector<integer_type> const& nnzpr) : size1_(sz), 
-    capacity_(std::accumulate(nnzpr.begin(),nnzpr.begin()+sz,long(0))), 
-    data_(capacity_), row_begin_(size1_+1,0), row_end_(size1_,0)
+  array_of_sequences(long sz, std::vector<integer_type> const& nnzpr) :
+    data_(std::accumulate(nnzpr.begin(),nnzpr.begin()+checked_size(sz),long(0))),
+    row_begin_(sz+1,0), row_end_(sz,0)
   {
     // at this point might be too late!!!
     sfqmc::utils::check(nnzpr.size() >= sz, "Size mismatch");
-    if(capacity_ == 0) return;
+    if(capacity() == 0) return;
     long i0=0;
-    for(long i=0; i<size1_; ++i) {
+    for(long i=0; i<sz; ++i) {
       row_begin_(i) = i0;
       row_end_(i)   = i0;
       i0 += long(nnzpr[i]); 
     }
-    row_begin_(size1_) = i0; 
-    sfqmc::utils::check(i0 == capacity_, "Problems assembling array_of_sequences: i0:{}, capacity:{}",i0,capacity_);
+    row_begin_(sz) = i0; 
+    sfqmc::utils::check(i0 == capacity(), "Problems assembling array_of_sequences: i0:{}, capacity:{}",i0,capacity());
   }
 
   void reserve(long nnzpr_unique)
   {
-    if(size1_ == 0) return;
+    long sz = size();
+    if(sz == 0) return;
     int_type minN = int_type(row_begin_(1) - row_begin_(0));
-    for (long i = 0; i < size1_; ++i)
+    for (long i = 0; i < sz; ++i)
       minN = std::min(minN, int_type(row_begin_(i+1) - row_begin_(i)));
     if (int_type(nnzpr_unique) <= minN)
       return;
-    larray<value_type> new_(size1_*nnzpr_unique);
-    for(long i = 0, i0=0; i < size1_; ++i, i0+=nnzpr_unique) {
+    larray<value_type> new_(sz*nnzpr_unique);
+    for(long i = 0, i0=0; i < sz; ++i, i0+=nnzpr_unique) {
       long n = this->num_elements(i);
       new_(nda::range(i0,i0+n)) = this->sequence(i);
     }
-    capacity_ = size1_*nnzpr_unique;
-    for(long i = 0; i < size1_; ++i) {
+    for(long i = 0; i < sz; ++i) {
       row_begin_(i) = int_type(i*nnzpr_unique);
       row_end_(i) = int_type(i*nnzpr_unique);
     }
-    row_begin_(size1_) = capacity_; 
     data_ = std::move(new_);
+    row_begin_(sz) = capacity(); 
   }
 
   template<class Vec>
   void reserve(Vec const& nnzpr) {
-    sfqmc::utils::check(nnzpr.size() >= size1_, "Size mismatch");
-    if(size1_ == 0) return;
+    long sz = size();
+    sfqmc::utils::check(nnzpr.size() >= sz, "Size mismatch");
+    if(sz == 0) return;
     bool skip = true;
-    for (long i = 0; i < size1_; ++i) {
+    for (long i = 0; i < sz; ++i) {
       skip = long(nnzpr(i)) <= long(row_begin_(i+1) - row_begin_(i)); 
       if(not skip) break;
     }
     if (skip) return;
 
-    long cap_ = std::accumulate(nnzpr.begin(),nnzpr.begin()+size1_,long(0));
+    long cap_ = std::accumulate(nnzpr.begin(),nnzpr.begin()+sz,long(0));
     larray<value_type> new_(cap_);
-    for(long i = 0, i0=0; i < size1_; ++i) {
+    for(long i = 0, i0=0; i < sz; ++i) {
       long n = this->num_elements(i);
       new_(nda::range(i0,i0+n)) = this->sequence(i);
       i0 += long(nnzpr[i]);
     }
-    capacity_ = cap_; 
-    for(long i = 0, i0=0; i < size1_; ++i) {
+    for(long i = 0, i0=0; i < sz; ++i) {
       row_begin_(i) = int_type(i0);
       row_end_(i) = int_type(i0);
       i0 += long(nnzpr[i]);
     }
-    row_begin_(size1_) = capacity_;
     data_ = std::move(new_);
+    row_begin_(sz) = capacity();
   }
 
   template<typename val_t, MEMORY_SPACE mem_t, typename int_t,
@@ -157,8 +162,6 @@ public:
                                            mem_type == mem_t and
                                        std::is_same_v<int_type,int_t>) >>
   array_of_sequences(array_of_sequences<val_t,mem_t,int_t> const& other) :
-        size1_(other.size()),
-        capacity_(other.capacity()),
         data_(other.values()),
         row_begin_(other.sequences_begin()),
         row_end_(other.sequences_end())
@@ -167,7 +170,7 @@ public:
   template<typename integer_type = long, typename Val_t> 
   void emplace_back(integer_type index, Val_t val )
   {
-    sfqmc::utils::check(index >= 0 and index < size1_, "Out of bounds");
+    sfqmc::utils::check(index >= 0 and index < size(), "Out of bounds");
     sfqmc::utils::check(row_end_[index] < row_begin_[index + 1], "row size exceeded the maximum");
     long p = long(row_end_[index]);
     // gpu safe
@@ -179,40 +182,35 @@ public:
   auto sequences_end() const { return row_end_(); }
   auto sequence_begin(long i = 0) const { return row_begin_(i); }
   auto sequence_end(long i = 0) const { return row_end_(i); }
-  auto size() const { return size1_; }
+  auto size() const { return row_end_.extent(0); }
   auto capacity(long i) const
   {
-    if (size1_==0) return long(0);
+    if (size()==0) return long(0);
     return static_cast<long>(row_begin_(i + 1) - row_begin_(i));
   }
-  auto capacity() const
-  {
-    if (size1_==0) return long(0);
-    return capacity_;
-  }
+  auto capacity() const { return data_.extent(0); }
   auto num_elements() const
   {
-    if (size1_==0) return long(0);
     long ret = 0;
-    for (long i = 0; i != size1_; ++i)
+    for (long i = 0; i != size(); ++i)
       ret += static_cast<long>(row_end_(i) - row_begin_(i));
     return ret;
   }
   auto num_elements(long i) const
   {
-    sfqmc::utils::check(i >= 0 && i < size1_, "Invalid index i:{}",i);
+    sfqmc::utils::check(i >= 0 && i < size(), "Invalid index i:{}",i);
     return static_cast<long>(row_end_(i) - row_begin_(i));
   }
   auto values() const { return data_(); }
   auto values() { return data_(); }
   auto sequence(long i) const { 
-    sfqmc::utils::check(size1_ > 0, "Empty structure.");
-    sfqmc::utils::check(i >= 0 and i < size1_, "Out of bounds");
+    sfqmc::utils::check(size() > 0, "Empty structure.");
+    sfqmc::utils::check(i >= 0 and i < size(), "Out of bounds");
     return data_(nda::range(row_begin_(i),row_end_(i))); 
   }
   auto sequence(long i) { 
-    sfqmc::utils::check(size1_ > 0, "Empty structure.");
-    sfqmc::utils::check(i >= 0 and i < size1_, "Out of bounds");
+    sfqmc::utils::check(size() > 0, "Empty structure.");
+    sfqmc::utils::check(i >= 0 and i < size(), "Out of bounds");
     return data_(nda::range(row_begin_(i),row_end_(i))); 
   }
 };
