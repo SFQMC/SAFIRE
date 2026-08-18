@@ -85,7 +85,7 @@ check_one_rdm = "cli.check_one_rdm:main"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-m 'not functional and not dev and not debug' --verbose --html=./.htmlpytest/pytest.html --strict-markers"
+addopts = "-m 'not dev and not debug' --verbose --html=./.htmlpytest/pytest.html --strict-markers"
 testpaths = [
     "tests",
 ]
@@ -98,8 +98,7 @@ markers = [
     "dev: for tests used as used for test-driven development (TDD)",
     "debug: use only when debugging",
     "weekly: for weekly testing",
-    "push: tests to run every push",
-    "functional: tests against functional requirements"
+    "push: tests to run every push"
 ]
 
 [tool.coverage.run]

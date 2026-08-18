@@ -234,15 +234,15 @@ def write_csr(f,csr_array:sps.csr_array,prefix):
     )
     f.create_dataset(
         name=prefix+'/jdata_',
-        data=csr_array.indices
+        data=csr_array.indices.astype(np.int32,copy=False)
     )
     f.create_dataset(
         name=prefix+'/pointers_begin_',
-        data=csr_array.indptr[:-1]
+        data=csr_array.indptr[:-1].astype(np.int32,copy=False)
     )
     f.create_dataset(
         name=prefix+'/pointers_end_',
-        data=csr_array.indptr[1:]
+        data=csr_array.indptr[1:].astype(np.int32,copy=False)
     )
 
 
@@ -324,7 +324,7 @@ def write_model_hamiltonian(
 
         f.create_dataset(
             'Hamiltonian/dims',
-            data = np.array([0, 0, 0, hamiltonian.nsites*hamiltonian.nbands , nup, ndn, 0, 0])
+            data = np.array([0, 0, 0, hamiltonian.nsites*hamiltonian.nbands , nup, ndn, 0, 0], dtype=np.int64)
         )
         # write Energies!
         f.create_dataset(

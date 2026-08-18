@@ -27,358 +27,222 @@
 #include <functional>
 
 #include "config.h"
-#include "Utilities/AppAbort.hpp"
-#include "Utilities/type_traits/container_traits_multi.h"
-#include "hdf/hdf_multi.h"
-#include "hdf/hdf_archive.h"
-
 #include "AFQMC/config.h"
-#include "AFQMC/Utilities/Utils.hpp"
-#include "AFQMC/Utilities/kp_utilities.hpp"
-#include "AFQMC/Utilities/hdf5_consistency_helper.hpp"
+#include "utilities/check.hpp"
+#include "utilities/check_shape.hpp"
+#include "utilities/h5_utils.hpp"
+#include "numerics/nda_functions.hpp"
+
+#include "nda/h5.hpp"
+#include "nda/tensor.hpp"
+#include <hdf5.h>
+#include <hdf5_hl.h>
+
+#include "numerics/sparse/sparse.hpp"
+#include "numerics/shared_array/const_shared_array.hpp"
+#include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
+#include "AFQMC/HamiltonianOperations/detail/one_body.hpp"
 #include "RealDenseHamiltonian.h"
-#include "AFQMC/SlaterDeterminantOperations/rotate.hpp"
-#include "upgradeOneBodyIntegrals.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
 
-template<bool MP, bool REAL_ONEBODY> HamiltonianOperations<MP> 
-RealDenseHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
-                                                    std::vector<PsiT_Matrix>& PsiT,
-                                                    TaskGroup_& TGprop,   
-                                                    TaskGroup_& TGwfn,    
-                                                    [[maybe_unused]] hdf_archive& hdf_restart)
+template<MEMORY_SPACE MEM> HamiltonianOperations<MEM> 
+RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
+                 std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+                 nda::array<PsiT_Matrix<MEM>,2> const& PsiT)
 {
-  using SPComplexType = typename to_working_precision<MP,ComplexType>::type;
-  using SPRealType    = typename to_working_precision<MP,RealType   >::type;
-  using ValueType     = typename std::conditional<REAL_ONEBODY, RealType, ComplexType>::type;
+  using nda::range;
+  std::string base_error(" Error in RealDenseHamiltonian::getHamiltonianOperations():\n   ");
+  auto all  = range::all;
+  int nspin = ((type != COLLINEAR) ? 1 : 2);
+  int npol  = ((type == NONCOLLINEAR) ? 2 : 1);
+  int ndet = PsiT.extent(0);
+  int nact_up = PsiT(0,0).extent(0);
+  int NMO = PsiT(0,0).extent(1)/npol;
+  int nspin_in_PsiT = PsiT.extent(1);
+  int nspin_in_H1 = 1, npol_in_H1 = 1; // read/broadcast below
+  int nspin_in_H2 = 1, npol_in_H2 = 1; // read/broadcast below
+  utils::check(PsiT(0,0).extent(1)%npol==0, base_error + "Psi.size(1)%npol != 0");
+  utils::check(nspin_in_PsiT == nspin, base_error + "nspin mismatch in PsiT {} != {} expected", nspin_in_PsiT, nspin);
+  utils::check(nspin==1 or npol==1, base_error + "Both nspin and npol can not be >1 simultaneously."); 
 
-  using shmCMatrix    = multi::array<ComplexType, 2, shared_allocator<ComplexType>>;
-  using shmSpMatrix   = multi::array<SPComplexType, 2, shared_allocator<SPComplexType>>;
-  using shmSpRMatrix  = multi::array<SPRealType, 2, shared_allocator<SPRealType>>;
-  using shmSp3Tensor  = multi::array<SPComplexType, 3, shared_allocator<SPComplexType>>;
-  using CMatrix       = multi::array<ComplexType, 2>;
-  using SpRMatrix     = multi::array<SPRealType, 2>;
-  using SpRMatrix_ref = multi::array_ref<SPRealType, 2>;
-  using CMatrix_ref   = multi::array_ref<ComplexType, 2>;
+  int nact_dn = (type == COLLINEAR ? PsiT(0,1).extent(0) : 0l);
 
-  using shmValueMatrix = multi::array<ValueType, 2 , shared_allocator<ValueType>>;
-  using ValueMatrix   = multi::array<ValueType, 2>;
-  using ValueMatrix_ref = multi::array_ref<ValueType, 2>;
-
-  // for consistency checks
-  int H1_SHAPE = 2;
-  
-  if (type == COLLINEAR)
-    RUNTIME_CHECK(PsiT.size() % 2 == 0, "");
-  int nspins = ((type != COLLINEAR) ? 1 : 2);
-  int npol   = ((type == NONCOLLINEAR) ? 2 : 1);
-  int ndet   = PsiT.size() / nspins;
-  int nup    = PsiT[0].size(0);
-  int ndown  = 0;
-  if (nspins == 2)
-    ndown = PsiT[1].size(0);
-  int NEL = nup + ndown;
-
-  // distribute work over equivalent nodes in TGprop.TG() across TG.Global()
-  auto Qcomm=TG.Global().split(TGprop.getLocalGroupNumber(), TG.Global().rank());
-#if defined(ENABLE_DEVICE)
-  auto distNode=TG.Node().split(TGprop.getLocalGroupNumber(), TG.Node().rank());
-#else
-  auto distNode=TG.Node().split(0, TG.Node().rank());
-#endif
-  auto Qcomm_roots=Qcomm.split(distNode.rank(), Qcomm.rank());
-  auto distNode_roots=TG.Global().split(distNode.rank(), TG.Global().rank());
-
-  std::string base_error(" Error in RealDenseHamiltonian::getHamiltonianOperations(): \n    ");
-
-  hdf_archive dump(TG.Global());
-  // right now only Node.root() reads
-  if (distNode.root())
-  {
-    if (!dump.open(fileName, H5F_ACC_RDONLY))
-      APP_ABORT(base_error + "Problems opening integral file.");
-    if (dump.push("Hamiltonian", false)<0)
-      APP_ABORT(base_error + "Group Hamiltonian not found.");
-  }
-
-  std::vector<int> Idata(8);
-  if (TG.Global().root())
-  {
-    if (!dump.readEntry(Idata, "dims"))
-      APP_ABORT(base_error + "Problems reading dims.");
-  }
-  TG.Global().broadcast_n(Idata.begin(), 8, 0);
-
+  std::vector<long> Idata(8);
   ComplexType E0;
-  if (TG.Global().root())
+  h5::file file;
+  if (mpi->comm.root()) 
   {
-    std::vector<RealType> E_(2);
-    if (!dump.readEntry(E_, "Energies"))
-      APP_ABORT(base_error + "Problems reading energies.");
-    E0 = E_[0] + E_[1];
-  }
-  TG.Global().broadcast_n(&E0, 1, 0);
+    file = h5::file(fileName,'r');
+    h5::group root = h5::group(file);
+    h5::group g = root.open_group("Hamiltonian");
 
-  int global_ncvecs = Idata[7];
-  int nc0, ncN;
-  int node_number    = TGprop.getLocalGroupNumber();
-  int nnodes_per_TG  = TGprop.getNGroupsPerTG();
-  std::tie(nc0, ncN) = FairDivideBoundary(node_number, global_ncvecs, nnodes_per_TG);
-  int local_ncv      = ncN - nc0;
+    h5::h5_read(g,"dims",Idata);
 
+    E0 = read_energy_offset(root, "std", type, nact_up, nact_dn);
 
-
-  std::vector<int> hcore_shape;
-  if (TG.Node().root())
-  {
-    // This shoudl be ValueType!!
-    // now read H1, use ref to avoid issues with shared pointers!
-    if (!dump.getShape<ValueType>("hcore", hcore_shape))
-      APP_ABORT(" Error in  RealDenseHamiltonian::getHamiltonianOperations_impl(): getShape(hcore) returned error. ");
-
-    if (hcore_shape.size() != H1_SHAPE)
-      APP_ABORT(base_error + "shape of H1 is not consistent with templated ValueType. ");
-  }
-  hcore_shape.resize(H1_SHAPE);
-  TG.Node().broadcast_n(hcore_shape.begin(), H1_SHAPE, 0);
-
-  // validate the combination of walker_type and hcore_shape
-  if (type == CLOSED)
-  {
-    if (hcore_shape == std::vector<int>({2*NMO, NMO}))
-      APP_ABORT(base_error + "COLLINEAR H1 Integrals for CLOSED walker type. Please generate CLOSED H1 integrals.");
-    else if (hcore_shape == std::vector<int>({2*NMO, 2*NMO}))
-      APP_ABORT(base_error + "NONCOLLINEAR H1 Integrals for CLOSED walker type. Please generate CLOSED H1 integrals.");
-  }
-  else if (type == COLLINEAR || type == FULLYPOLARIZED)
-  {
-    if (hcore_shape == std::vector<int>({2*NMO, 2*NMO}))
-      APP_ABORT(base_error + "NONCOLLINEAR H1 Integrals for COLLINEAR / FULLYPOLARIZED walker type. "
-                              "Please generate CLOSED or COLLINEAR H1 integrals.");
-  }
-  // this can be local, it's temporary
-  ValueMatrix hcore({hcore_shape[0],hcore_shape[1]});
-
-  if (TG.Node().root())
-  {
-    if (!dump.readEntry(hcore, std::string("hcore")))
-      APP_ABORT(base_error + "Problems reading /Hamiltonian/hcore. ");
-  }
-
-  // this is passed on to the HamOps, it's shape depends on the walker type
-  shmValueMatrix H1({nspins*npol*NMO,npol*NMO}, shared_allocator<ValueType>{TG.Node()});
-  
-
-  // UPGRADE INTEGRALS CONSISTENT WITH WALKER_TYPE
-  if (TG.Node().root())
-  {
-    ValueMatrix_ref _H1(raw_pointer_cast(H1.origin()), H1.extensions());
-    std::fill_n(_H1.origin(), _H1.num_elements(), ValueType(0.0));
-    
-    upgradeOneBodyIntegrals(hcore,_H1,hcore_shape,NMO,npol,nspins,type,base_error);
-  }
-
-  shmSpRMatrix Likn({NMO * NMO, local_ncv}, shared_allocator<SPRealType>{distNode});
-  if (distNode.root())
-  {
-    // read L
-    if (dump.push("DenseFactorized", false)<0)
-      APP_ABORT(base_error + "Group DenseFactorized not found. ");
-    SpRMatrix_ref L(raw_pointer_cast(Likn.origin()), Likn.extensions());
-    hyperslab_proxy<SpRMatrix_ref, 2> hslab(L, std::array<int, 2>{NMO * NMO, global_ncvecs},
-                                            std::array<int, 2>{NMO * NMO, local_ncv}, std::array<int, 2>{0, nc0});
-    std::vector<int> shape;
-    if (dump.getShape<RealType>("L", shape))
     {
-      if (shape.size() == 3)
-      {
-        app_log(1," Error: Found complex cholesky integrals in RealDenseHamiltonian::getHamiltonianOperations().");
-        APP_ABORT(base_error + " Please generate real integrals.");
-      }
-    }
-    if (!dump.readEntry(hslab, std::string("L")))
-      APP_ABORT(base_error + " Problems reading /Hamiltonian/DenseFactorized/L");
-    if (Likn.size(0) != NMO * NMO || Likn.size(1) != local_ncv)
-    {
-      app_error(" Unexpected dimensions: ({}, {}) ", Likn.size(0), Likn.size(1));
-      APP_ABORT(base_error + "Problems reading /Hamiltonian/DenseFactorized/L.");
-    }
-    dump.pop();
-  }
-  TG.Node().barrier();
-
-  shmCMatrix vn0({NMO, NMO}, shared_allocator<ComplexType>{distNode});
-  shmCMatrix haj({ndet, NEL * npol * NMO},shared_allocator<ComplexType>{TG.Node()});
-  std::vector<shmSp3Tensor> Lank;
-  Lank.reserve(PsiT.size());
-  for (int nd = 0; nd < PsiT.size(); nd++)
-    Lank.emplace_back(shmSp3Tensor({PsiT[nd].size(0), local_ncv, npol * NMO}, shared_allocator<SPComplexType>{distNode}));
-  int nrow = NEL;
-  if (ndet > 1)
-    nrow = 0; // not used if ndet>1
-  shmSpMatrix Lakn({nrow * NMO * npol, local_ncv}, shared_allocator<SPComplexType>{distNode});
-  TG.Node().barrier();
-
-  CMatrix H1C({nspins * npol * NMO, npol * NMO});
-  copy_n_cast(raw_pointer_cast(H1.origin()), H1.size(0) * H1.size(1), H1C.origin());
-  
-
-  for (int nd = 0; nd < ndet; nd++)
-  {
-    // haj and add half-transformed right-handed rotation for Q=0
-    if (nd % TG.Node().size() != TG.Node().rank())
-      continue;
-    if (type == COLLINEAR)
-    {
-      CMatrix_ref haj_r(raw_pointer_cast(haj[nd].origin()), {nup, NMO});
-      ma::product(PsiT[2 * nd], H1C.sliced(0,NMO), haj_r);
-      CMatrix_ref hbj_r(raw_pointer_cast(haj[nd].origin()) + (nup * NMO), {ndown, NMO});
-      if (ndown > 0)
-        ma::product(PsiT[2 * nd + 1], H1C.sliced(NMO,2*NMO), hbj_r);
-    }
-    else
-    {
-      CMatrix_ref haj_r(raw_pointer_cast(haj[nd].origin()), {nup, npol*NMO});
-      ma::product(ComplexType(1.0), PsiT[nd], H1C, ComplexType(0.0), haj_r);
-    }
-  }
-  {
-    CMatrix lik({npol*NMO, npol*NMO}); // TODO: We can do better, but this is only a temp buffer
-    CMatrix lak({nup, npol*NMO});
-    for (int nd = 0; nd < ndet; nd++)
-    {
-      // all nodes across Qcomm share same segment {nc0,ncN}
-      for (int nc = 0; nc < local_ncv; nc++)
-      {
-        if (nc % Qcomm.size() != Qcomm.rank())
-          continue;
-        for (int pol =0; pol < npol; pol++)
-          for (int i = 0, ik = 0; i < NMO; i++)
-            for (int k = 0; k < NMO; k++, ik++)
-              lik[i+pol*NMO][k+pol*NMO] = ComplexType(static_cast<RealType>(Likn[ik][nc]), 0.0);
-        ma::product(PsiT[nspins * nd],lik,lak);
-        for (int a = 0; a < nup; a++)
-          copy_n_cast(lak[a].origin(), npol*NMO, raw_pointer_cast(Lank[nspins * nd][a][nc].origin()));
-        if (ndet == 1)
-          for (int a = 0, ak = 0; a < nup; a++)
-            for (int k = 0; k < npol*NMO; k++, ak++)
-              Lakn[ak][nc] = static_cast<SPComplexType>(lak[a][k]);
-        if (type == COLLINEAR)
-        {
-          ma::product(PsiT[2 * nd + 1], lik, lak.sliced(0, ndown));
-          for (int a = 0; a < ndown; a++)
-            copy_n_cast(lak[a].origin(), NMO, raw_pointer_cast(Lank[2 * nd + 1][a][nc].origin()));
-          if (ndet == 1)
-            for (int a = 0, ak = nup * NMO; a < ndown; a++)
-              for (int k = 0; k < NMO; k++, ak++)
-                Lakn[ak][nc] = static_cast<SPComplexType>(lak[a][k]);
+      // Too many choices, consider forcing standard structure (e.g. [ns_f][np_f*NMO][np_f*NMO]
+      auto l = h5::array_interface::get_dataset_info(g,"hcore");
+      if(l.rank() == 2) {
+        // [2*NMO][NMO] 
+        if( l.lengths[0]==2*NMO and l.lengths[1]==NMO ) {
+          nspin_in_H1=2;
+          npol_in_H1=1; 
+        } else {
+          nspin_in_H1=1;
+          utils::check(l.lengths[0] == l.lengths[1], base_error + "Size mismatch");
+          utils::check(l.lengths[0]==NMO or l.lengths[0]==2*NMO, base_error +  "Size mismatch");
+          npol_in_H1 = l.lengths[0]/NMO;
         }
+      } else if(l.rank() == 3) {
+        if (l.lengths[0]==2*NMO and l.lengths[1]==2*NMO)
+        {
+          nspin_in_H1=1;
+          npol_in_H1=2;
+          // checking l.lengths[0] == l.lengths[1] is unnecessary, see condition above
+          utils::check(l.lengths[2]==2, base_error + "Incorrect tailing dimension of hcore in h5 file. Expected 2, got {}",l.lengths[2]);
+        } else {
+          nspin_in_H1=l.lengths[0];
+          utils::check(l.lengths[1] == l.lengths[2], base_error + "Size mismatch");
+          utils::check(l.lengths[1]==NMO or l.lengths[1]==2*NMO, base_error + "Size mismatch");
+          npol_in_H1 = l.lengths[1]/NMO;
+        }
+      } else {
+        utils::check(false, base_error + "Invalid hcore rank:{}",l.rank());
+      }
+      utils::check(walkerDimsAreConvertible(nspin_in_H1, npol_in_H1, nspin, npol), "Hamiltonian with nspin: {}, npol: {} cannot be broadcasted to {}", nspin_in_H1, npol_in_H1, walkerTypeToString(type));
+    }
+    {
+      // cholesky tensor
+      h5::group vgrp = g.open_group("DenseFactorized");
+      auto l = h5::array_interface::get_dataset_info(vgrp,"L");
+      if(l.rank()==2) {
+        //[nspin_in_H2*npol_in_H2*NMO*NMO]][ncv]
+        if( nspin_in_H1 > 1 ) nspin_in_H2 = l.lengths[0] / (NMO*NMO); 
+        if( npol_in_H1 > 1 ) npol_in_H2 = l.lengths[0] / (NMO*NMO); 
+        utils::check( l.lengths[0] == nspin_in_H2*npol_in_H2*NMO*NMO, 
+                      base_error + "Inconsistent size of DenseFactorized/L:({}, {}). Incompatible with nspin_in_H2:{}, npol_in_H2:{}, NMO:{} found in hcore",l.lengths[0],l.lengths[1],nspin_in_H2,npol_in_H2,NMO);
+      } else if(l.rank()==3 or l.rank()==4) {
+        //rank:3 [nspin_in_H2*npol_in_H2][NMO*NMO]][ncv]
+        //rank:4 [nspin_in_H2*npol_in_H2][NMO][NMO]][ncv]
+        if( nspin_in_H1 > 1 ) nspin_in_H2 = l.lengths[0]; 
+        if( npol_in_H1 > 1 ) npol_in_H2 = l.lengths[0];  
+        utils::check( l.lengths[0] == nspin_in_H2*npol_in_H2, 
+                      base_error +  "Inconsistent size of DenseFactorized/L:({}, ...). Incompatible with nspin_in_H2:{}, npol_in_H2:{} found in hcore",l.lengths[0],nspin_in_H2,npol_in_H2);
+      } else {
+        utils::check(false, "Invalid Cholesky vector rank:{} ",l.rank());
       }
     }
   }
-  TG.Global().barrier();
-  if (distNode.root())
-  {
-    for (auto& v : Lank)
-      Qcomm_roots.all_reduce_in_place_n(raw_pointer_cast(v.origin()), v.num_elements(), std::plus<>());
-    if (ndet == 1)
-      Qcomm_roots.all_reduce_in_place_n(raw_pointer_cast(Lakn.origin()), Lakn.num_elements(), std::plus<>());
-    std::fill_n(raw_pointer_cast(vn0.origin()), vn0.num_elements(), ComplexType(0.0));
-  }
-  TG.Node().barrier();
+  mpi->comm.broadcast_n(Idata.begin(), 8, 0);
+  mpi->comm.broadcast_n(&E0, 1, 0);
+  mpi->comm.broadcast_n(&nspin_in_H1, 1, 0);
+  mpi->comm.broadcast_n(&npol_in_H1, 1, 0);
+  mpi->comm.broadcast_n(&nspin_in_H2, 1, 0);
+  mpi->comm.broadcast_n(&npol_in_H2, 1, 0);
 
-  // calculate vn0(i,l) = -0.5 sum_j sum_n L[i][j][n] L[j][l][n] = -0.5 sum_j sum_n L[i][j][n] L[l][j][n]
-  {
-    int i0, iN;
-    std::tie(i0, iN) = FairDivideBoundary(Qcomm.rank(), NMO, Qcomm.size());
-    if (iN > i0)
-    {
-      SpRMatrix v_({iN - i0, NMO});
-      SpRMatrix_ref Lijn(raw_pointer_cast(Likn.origin()), {NMO, NMO * local_ncv});
-      ma::product(SPRealType(-0.5), Lijn.sliced(i0, iN), ma::T(Lijn), SPRealType(0.0), v_);
-      copy_n_cast(v_.origin(), v_.num_elements(), raw_pointer_cast(vn0[i0].origin()));
+  // number of cholesky vectors
+  int ncv = Idata[7];
+  
+  // allocate shared arrays
+
+  auto H1 = memory::share_from_root(*mpi, [&]() {
+    h5::group g = h5::group(file).open_group("Hamiltonian"); 
+    memory::array<HOST_MEMORY, ComplexType, 3> H1(nspin_in_H1, npol_in_H1 * NMO, npol_in_H1 * NMO);
+    sfqmc::utils::h5_read(g,"hcore",nda::reshape(H1(), nspin_in_H1 * npol_in_H1 * NMO, npol_in_H1 *NMO));
+    return H1;
+  });
+
+  auto Likn = memory::share_from_root(*mpi, [&]() {
+    h5::group g = h5::group(file).open_group("Hamiltonian"); 
+    auto Likn = memory::array<MEM,RealType,4>(nspin_in_H2*npol_in_H2,NMO,NMO,ncv);
+
+    h5::group vgrp = g.open_group("DenseFactorized"); 
+    auto l = h5::array_interface::get_dataset_info(vgrp,"L");
+    if(l.rank()==2) {
+      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2*npol_in_H2*NMO*NMO, ncv);
+      auto L_ = nda::reshape(Likn(),std::array<long,2>{nspin_in_H2*npol_in_H2*NMO*NMO,ncv});
+      utils::h5_read(vgrp,"L",L_);
+    } else if(l.rank()==3) {
+      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2*npol_in_H2, NMO*NMO, ncv);
+      auto L_ = nda::reshape(Likn(),std::array<long,3>{nspin_in_H2*npol_in_H2,NMO*NMO,ncv});
+      utils::h5_read(vgrp,"L",L_);
+    } else if(l.rank()==4) {
+      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2*npol_in_H2, NMO, NMO, ncv);
+      auto L_ = nda::reshape(Likn(),std::array<long,4>{nspin_in_H2*npol_in_H2,NMO,NMO,ncv});
+      utils::h5_read(vgrp,"L",L_);
+    } else {
+      utils::check(false, "Invalid Cholesky vector rank:{} ",l.rank());
     }
-  }
-  TG.Node().barrier();
+    return Likn;
+  });
+  
+  mpi->comm.barrier();
 
-  if (distNode.root())
-  {
-    distNode_roots.all_reduce_in_place_n(raw_pointer_cast(vn0.origin()), vn0.num_elements(), std::plus<>());
-    dump.pop();
-    dump.close();
-  }
-  TG.Node().barrier();
+  auto nel = std::to_array<long>({nact_up, (type == COLLINEAR ? nact_dn : 0l)});
+  auto haj = half_rotate_hamiltonian<MEM>(*mpi, nel, nspin, npol, nspin_in_H1, npol_in_H1, NMO, PsiT(), H1());
+  
+  nda::array<memory::const_shared_array<MEM,ComplexType,5>,1> Lnak(nspin);
+  for(int is = 0; is < nspin; is++) {
+    Lnak(is) = memory::share_from_ranks<MEM,ComplexType,5,1>(*mpi,
+        {ndet,npol,ncv,nel[is],NMO},
+        [&,is](std::array<long,1> idx, auto&& block) {
+      auto [id] = idx;
+      if(nel[is] == 0) {
+        return;  // empty sector (ndown==0): no rows to half-rotate
+      }
+      auto Aai = math::sparse::to_array<'N'>(PsiT(id,is));
+      auto Aai_r = memory::to_real_view(Aai);
+      auto L_r = memory::to_real_view(block);
+      for(int p=0; p<npol; ++p) {
+        int ip_f = (is*npol + p) % (nspin_in_H2*npol_in_H2);
 
-#if !defined(ENABLE_DEVICE)
-  if (TG.TG_local().size() > 1 || (not batched))
-    return HamiltonianOperations<MP>(Real3IndexFactorization<MP,REAL_ONEBODY>(TGwfn, type, std::move(H1), std::move(haj), std::move(Likn),
-                                                         std::move(Lakn), std::move(Lank), std::move(vn0), E0, nc0,
-                                                         global_ncvecs));
-  else
-#endif
-  {
-    throw std::runtime_error("Calling disabled class Real3IndexFactorization_batched.");
-    return HamiltonianOperations<MP>{};
+        auto Aai_is = Aai_r(all,nda::range(p*NMO,(p+1)*NMO),all);
+        nda::tensor::contract(RealType(1.0),Aai_is,"aic",Likn()(ip_f,all,all,all),"ijn",
+                              RealType(0.0),L_r(p,all,all,all,all),"najc");
+      }
+    });
   }
-  //    return HamiltonianOperations(Real3IndexFactorization_batched(type,std::move(H1),std::move(haj),
-  //            std::move(Likn),std::move(Lakn),std::move(Lank),std::move(vn0),E0,device_allocator<ComplexType>{},
-  //            nc0,global_ncvecs));
+
+  // exchange potential, parallelize over (isp,i) to avoid temporary memory
+  // v0(i,l) = -0.5 sum_j sum_n L[i][j][n] L[j][l][n] = -0.5 sum_j sum_n L[i][j][n] L[l][j][n]
+  auto v0 = memory::share_from_ranks<HOST_MEMORY,RealType,3,2>(*mpi,
+      {nspin_in_H2*npol_in_H2, NMO, NMO},
+      [&](std::array<long,2> idx, auto&& block) {
+    auto [isp, i] = idx;
+    if constexpr (MEM==HOST_MEMORY) {
+      nda::tensor::contract(RealType(-0.5),Likn()(isp,i,all,all),"jn",
+                                          Likn()(isp,all,all,all),"ljn",
+                            RealType(0.0),block,"l");
+    } else {
+      memory::array<MEM,RealType,1> vt(NMO);
+      nda::tensor::contract(RealType(-0.5),Likn()(isp,i,all,all),"jn",
+                                          Likn()(isp,all,all,all),"ljn",
+                            RealType(0.0),vt,"l");
+      block = nda::to_host(vt);
+    }
+  });
+
+  return HamiltonianOperations<MEM>(Real3IndexFactorization<MEM>(mpi,type,NMO,nact_up,nact_dn,
+       std::move(H1), std::move(haj), std::move(Likn), std::move(Lnak), std::move(v0), E0,
+       max_memory_MB));
 }
 
-template<bool MP> HamiltonianOperations<MP>
-RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
-                                               std::vector<PsiT_Matrix>& PsiT,
-                                               TaskGroup_& TGprop,   
-                                               TaskGroup_& TGwfn,    
-                                               hdf_archive& hdf_restart)
-{
-  std::string base_error(" Error in RealDenseHamiltonian::getHamiltonianOperations(): \n    ");
-
-  int shape=-1;
-
-  if (TG.Global().root())
-  {
-    // Open and inspect the dimensions of hcore
-    hdf_archive dump(TG.Global(),false);
-  
-    if (!dump.open(fileName, H5F_ACC_RDONLY))
-      APP_ABORT(base_error + "Problems opening integral file.");
-
-    if (dump.push("Hamiltonian", false)<0)
-      APP_ABORT(base_error + "Group Hamiltonian not found.");
-
-    std::vector<int> shape_;
-    if (!dump.getShape<RealType>("hcore", shape_))
-      APP_ABORT(base_error + "getShape(hcore) returned error. ");
-    shape = shape_.size();
-
-    if (shape != 2 and shape != 3)
-      APP_ABORT(base_error + "Inconsistent hcore shape. ");
-    dump.close();
-  }
-
-  TG.Global().broadcast_n(&shape,1);
-
-  if (shape == 3)
-  {
-    app_log(1, "reading complex-valued 1-body Hamiltonian");
-    return getHamiltonianOperations_impl<MP,false>(type, PsiT, TGprop, TGwfn, hdf_restart);
-  } 
-  else
-  {
-    app_log(1, "reading real-valued 1-body Hamiltonian");
-    return getHamiltonianOperations_impl<MP,true>(type, PsiT, TGprop, TGwfn, hdf_restart);
-  }
-};
-
-template HamiltonianOperations<true> RealDenseHamiltonian::getHamiltonianOperations<true>(
-	WALKER_TYPES, std::vector<PsiT_Matrix>&,TaskGroup_&,TaskGroup_&,hdf_archive&);
-template HamiltonianOperations<false> RealDenseHamiltonian::getHamiltonianOperations<false>(
-	WALKER_TYPES, std::vector<PsiT_Matrix>&,TaskGroup_&,TaskGroup_&,hdf_archive&);
+// instantiate templates
+template HamiltonianOperations<HOST_MEMORY> 
+  RealDenseHamiltonian::getHamiltonianOperations<HOST_MEMORY>(WALKER_TYPES,
+     std::shared_ptr<utils::mpi_context_t<mpi3::communicator>>,
+     nda::array<PsiT_Matrix<HOST_MEMORY>,2>const&);
+#if defined(ENABLE_DEVICE)
+template HamiltonianOperations<DEVICE_MEMORY>
+  RealDenseHamiltonian::getHamiltonianOperations<DEVICE_MEMORY>(WALKER_TYPES,
+     std::shared_ptr<utils::mpi_context_t<mpi3::communicator>>,
+     nda::array<PsiT_Matrix<DEVICE_MEMORY>,2>const&);
+#endif
 
 } // namespace afqmc
 } // namespace sfqmc

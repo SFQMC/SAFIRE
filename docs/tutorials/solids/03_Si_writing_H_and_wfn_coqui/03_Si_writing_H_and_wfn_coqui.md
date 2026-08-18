@@ -415,7 +415,7 @@ directly read in SAFIRE to get the Hamiltonian.
 
 ### More Information
 
-For larger supercells, it is highly recommended that you use the [tensor hypercontraction (THC) form of the interaciton](https://users.flatironinstitute.org/~beskridge/safire/user_manual/hamiltonians.html#tensor-hyper-contraction-thc) instead.
+For larger supercells, it is highly recommended that you use the [tensor hypercontraction (THC) form of the interaction](https://users.flatironinstitute.org/~beskridge/safire/user_manual/hamiltonians.html#tensor-hyper-contraction-thc) instead.
 **CoQuí can also generate these integrals** by using an input block such as the following.
 
 ```toml

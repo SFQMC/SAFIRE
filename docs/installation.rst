@@ -31,6 +31,7 @@ The build system will fetch the following dependencies automatically if they are
 - cxxopts
 - spdlog
 - cpptrace
+- nlohmann_json
 - Catch2 (for tests)
 
 NVIDIA GPU-build
@@ -118,7 +119,6 @@ If you are on rusty or using a rusty connected desktop a suitable build script i
 
     mkdir build
     cd build
-
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DENABLE_CUDA=ON

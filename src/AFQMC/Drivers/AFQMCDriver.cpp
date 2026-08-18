@@ -16,30 +16,30 @@
 
 #include <tuple>
 #include <map>
+#include <optional>
 #include <string>
 #include <iomanip>
 
 #include "config.h"
-#include "Utilities/AppAbort.hpp"
+#include "utilities/check.hpp"
+#include "utilities/memory_utils.hpp"
 
 #include "AFQMC/config.h"
-#include "Utilities/app_loggers.h"
+#include "IO/app_loggers.h"
+#include "IO/banner.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "AFQMCDriver.h"
 #include "AFQMC/Walkers/WalkerIO.hpp"
-#include "Memory/buffer_managers.h"
 
 namespace sfqmc
 {
 namespace afqmc
 {
-bool AFQMCDriver::run(WalkerSet& wset)
+template<MEMORY_SPACE MEM>
+bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
 {
 
-  app_log(1,"****************************************************");
-  app_log(1,"              Beginning AFQMC calculation           ");
-  app_log(1,"****************************************************");
-  setup_AFQMC_timer();
+  app_log(1, banner("Beginning AFQMC calculation"));
 
   std::vector<ComplexType> curData;
 
@@ -50,100 +50,117 @@ bool AFQMCDriver::run(WalkerSet& wset)
   app_log(1, "Initial Eshift: {} ", Eshift);
 
   // problems with using step_tot to do ortho and load balance
-  double total_time = step0 * nSubstep * dt;
+  double total_time = step0 * dt;
   int step_tot      = step0, iBlock;
-  for (iBlock = block0; iBlock < nBlock; ++iBlock)
-  {
-    AFQMCTimer.start(block_timer);
-    for (int iStep = 0; iStep < nStep; ++iStep, ++step_tot)
+  // KE: the concept of a "block" is now implicitly defined by the measure_interval
+  iBlock = 0;
+
+  // one timed region per measurement interval, covering every step of the block plus its measurement
+  std::optional<utils::Timer::Handle> block_time;
+
+  // KE: need to change the hard-coded 1.0 to an equilibration phase.
+  for (int iStep = 0; iStep < nStep; ++iStep, ++step_tot) {
+    if (iStep % _measure_interval == 0)
+      block_time.emplace(timers.block);
+
+    prop0.Propagate(wset, Eshift, dt);
+    total_time += dt;
+
+    if ((step_tot + 1) % nStabilize == 0)
     {
-      // propagate nSubstep
-      prop0.Propagate(nSubstep, wset, Eshift, dt, fix_bias);
-      total_time += nSubstep * dt;
-
-      if ((step_tot + 1) % nStabilize == 0)
-      {
-        AFQMCTimer.start(ortho_timer);
-        prop0.Orthogonalize(wset);
-        AFQMCTimer.stop(ortho_timer);
-      }
-
-      if (total_time < weight_reset_period && !prop0.free_propagation())
-        wset.resetWeights();
-
-      {
-        AFQMCTimer.start(popcont_timer);
-        wset.popControl(curData);
-        AFQMCTimer.stop(popcont_timer);
-        estim0.accumulate_step(total_time, wset, curData);
-      }
-
-      if (total_time < 1.0)
-        Eshift = estim0.getEloc_step();
-      else
-        Eshift += dShift * (estim0.getEloc_step() - Eshift);
+      auto ortho_time = timers.ortho.start();
+      prop0.Orthogonalize(wset);
+      ortho_time.stop();
     }
 
+    if (total_time < weight_reset_period && !prop0.free_propagation())
+      wset.resetWeights();
+
+    if (total_time < 1.0)
+    {
+      wset.processWalkerData(curData);
+      estim0.accumulate_step(total_time, wset, curData);
+    }
+
+    if ((iStep + 1) % nPopulation == 0 || iStep == 0)
+    {
+      auto popcontrol_time = timers.popcontrol.start();
+      wset.processWalkerData(curData);
+      wset.popControl(); // make this a call to actual pop control
+      popcontrol_time.stop();
+      estim0.accumulate_step(total_time, wset, curData);
+    }
+
+    if (total_time < 1.0)
+    {
+      Eshift = estim0.getEloc_step();
+    }
+    else if ((iStep + 1) % nAccumulate == 0)
+      Eshift += dShift * (estim0.getEloc_step() - Eshift);
+
+
     // checkpoint
-    if (nCheckpoint > 0 && (iBlock + 1) % nCheckpoint == 0)
-      if (!checkpoint(wset, iBlock, step_tot))
+    if (nCheckpoint > 0 && (iStep + 1) % nCheckpoint == 0)
+      if (!checkpoint(wset, iStep, step_tot))
       {
-        app_error(" Error in AFQMCDriver::checkpoint(). ");
-	app_error_flush();
+        app_error("Error in AFQMCDriver::checkpoint(). ");
+        app_error_flush();
         return false;
       }
 
     // write samples
-    if (samplePeriod > 0 && (iBlock + 1) % samplePeriod == 0)
+    if (samplePeriod > 0 && (iStep + 1) % samplePeriod == 0)
       if (!writeSamples(wset))
       {
-        app_error(" Error in AFQMCDriver::writeSamples(). ");
-	app_error_flush();
+        app_error("Error in AFQMCDriver::writeSamples(). ");
+        app_error_flush();
         return false;
       }
 
-    // quantities that are measured once per block
-    estim0.accumulate_block(total_time, wset);
-
     // resize stack pointers to match maximum buffer use
-    update_memory_managers();
+    // UPDATE size of dynamic_bucket inside fallback allocator!!!
+    utils::resize_nda_static_allocator();
 
-    AFQMCTimer.stop(block_timer);
-    estim0.print(iBlock + 1, total_time, Eshift, wset);
+    if ((iStep + 1) % _measure_interval == 0 )
+    {
+      // quantities that are measured once per block
+      estim0.accumulate_block(total_time, wset);
+      estim0.print(iBlock + 1, total_time, Eshift, wset);
+      iBlock++;
+      block_time->stop();
+      block_time.reset();
+    }
+  }
+  // steps left over by an nStep that is not a multiple of the interval
+  if(block_time) {
+    block_time->stop();
+    block_time.reset();
   }
 
   if (nCheckpoint > 0)
     checkpoint(wset, iBlock, step_tot);
 
+  prop0.printBoundStatistics();
   // print timers
-  if(globalComm.root()) AFQMCTimer.print_all();
-  
-  app_log(1,"****************************************************");
-  app_log(1,"               Finished AFQMC calculation           ");
-  app_log(1,"****************************************************");
+  if(mpi->comm.root()) timers.print_all();
+
+  app_log(1, banner("Finished AFQMC calculation"));
 
   return true;
 }
 
 // writes checkpoint file
-bool AFQMCDriver::checkpoint(WalkerSet& wset, int block, int step)
+template<MEMORY_SPACE MEM>
+bool AFQMCDriver<MEM>::checkpoint(WalkerSet<MEM>& wset, int block, int step)
 {
-  // hack until hdf_archive works with mpi3
-  hdf_archive dump(globalComm, false);
-  if (globalComm.rank() == 0)
+return true;
+  if (mpi->comm.rank() == 0)
   {
     std::string file;
     if (hdf_write_restart != std::string(""))
       file = hdf_write_restart;
     else
       file = project_title + std::string(".chk.h5");
-
-    if (!dump.create(file))
-    {
-      app_error(" Error opening checkpoint file for write. ");
-      app_error_flush();
-      return false;
-    }
 
     std::vector<RealType> Rdata(2);
     Rdata[0] = Eshift;
@@ -154,63 +171,49 @@ bool AFQMCDriver::checkpoint(WalkerSet& wset, int block, int step)
     Idata[1] = step;
 
     // always write driver data and walkers
-    dump.push("AFQMCDriver");
-    dump.write(Idata, "DriverInts");
-    dump.write(Rdata, "DriverReals");
-    dump.pop();
-  }
+    h5::file h5f(file,'a');
+    h5::group grp(h5f);
+    h5::group dgrp = ( grp.has_key("AFQMCDriver") ?
+                       grp.open_group("AFQMCDriver") :
+                       grp.create_group("AFQMCDriver") );
+    h5::h5_write(dgrp,"DriverInts",Idata);
+    h5::h5_write(dgrp,"DriverReals",Rdata);
 
-  if (!dumpToHDF5(wset, dump))
-  {
-    app_error(" Problems writing checkpoint file in Driver/AFQMCDriver::checkpoint(). ");
-    app_error_flush();
-    return false;
+    return dumpToHDF5(wset, h5f);
+  } else {
+    h5::file h5f; 
+    return dumpToHDF5(wset, h5f);
   }
-
-  if (globalComm.rank() == 0)
-  {
-    dump.close();
-  }
-
-  return true;
 }
 
-
 // writes samples
-bool AFQMCDriver::writeSamples(WalkerSet& wset)
+template<MEMORY_SPACE MEM>
+bool AFQMCDriver<MEM>::writeSamples(WalkerSet<MEM>& wset)
 {
-  // hack until hdf_archive works with mpi3
-  hdf_archive dump(globalComm, false);
-  if (globalComm.rank() == 0)
+return true;
+  int nwtowrite = -1;
+  if (mpi->comm.rank() == 0)
   {
     std::string file;
     file = project_title + std::string(".confg.h5");
-
-    if (!dump.create(file))
-    {
-      app_error(" Error opening checkpoint file for write. ");
-      app_error_flush();
-      return false;
-    }
+    h5::file h5f(file,'a');
+    return dumpSamplesHDF5(wset, h5f, nwtowrite);
+  } else {
+    h5::file h5f; 
+    return dumpSamplesHDF5(wset, h5f, nwtowrite);
   }
-
-  int nwtowrite = -1;
-  if (!dumpSamplesHDF5(wset, dump, nwtowrite))
-  {
-    app_error(" Problems writing checkpoint file in Driver/AFQMCDriver::writeSample(). ");
-    app_error_flush();
-    return false;
-  }
-
-  if (globalComm.rank() == 0)
-  {
-    dump.close();
-  }
-
-  return true;
 }
 
-bool AFQMCDriver::clear() { return true; }
+// Instantiate
+#define __inst__(M)                                            \
+template bool AFQMCDriver<M>::run(WalkerSet<M>& wset);            \
+template bool AFQMCDriver<M>::checkpoint(WalkerSet<M>&,int,int);  \
+template bool AFQMCDriver<M>::writeSamples(WalkerSet<M>&);        
+
+__inst__(HOST_MEMORY)
+#if defined(ENABLE_DEVICE)
+__inst__(DEVICE_MEMORY)
+#endif
 
 } // namespace afqmc
 

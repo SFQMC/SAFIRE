@@ -14,8 +14,7 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_BASICESTIMATOR_H
-#define SFQMC_AFQMC_BASICESTIMATOR_H
+#pragma once
 
 #include "AFQMC/config.h"
 #include <vector>
@@ -24,6 +23,7 @@
 #include <iostream>
 #include <fstream>
 
+#include "nda/h5.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
@@ -33,40 +33,30 @@ namespace sfqmc
 {
 namespace afqmc
 {
-class BasicEstimator : public EstimatorBase
+template<MEMORY_SPACE MEM>
+class BasicEstimator : public EstimatorBase<MEM>
 {
 public:
-  BasicEstimator(afqmc::TaskGroup_& tg_, AFQMCInfo info, [[maybe_unused]] std::string title, ptree pt_in, bool impsamp_)
-      : EstimatorBase(info), TG(tg_), nwfacts(0), writer(false), importanceSampling(impsamp_), timers(false)
+  BasicEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
+                 [[maybe_unused]] std::string title, const EstimatorParameters& params,
+                 int measure_interval_, bool impsamp_)
+      : mpi(_mpi), nwfacts(params.nhist), importanceSampling(impsamp_), print_timings(params.timers)
   {
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(1,"BasicEstimator input:\n{}\n",io::to_string(pt));
-    // initialize using verbose input
-    timers = pt.get<bool>("timers");
-    nwfacts = pt.get<int>("nhist");
-    int population_control_interval = pt.get<int>("_population_control_interval");
-    measure_interval = pt.get<int>("measure_interval_multiplier") * population_control_interval;
+    measure_interval = measure_interval_;
 
-#ifndef ENABLE_TIMERS
-    timers = false;
-#endif
-
-    RUNTIME_CHECK(nwfacts >= 0, "");
+    utils::check(nwfacts >= 0, "Error: nwfacts<0");
     weight_product = ComplexType(1.0, 0.0);
     for (int i = 0; i < nwfacts; i++)
       weight_factors.push(weight_product);
 
-    app_log(1,"  BasicEstimator: Number of products in weight history: {}", nwfacts);
-
-    writer = (TG.Global().rank() == 0);
+    app_log(1,"BasicEstimator: Number of products in weight history: {}", nwfacts);
 
     data.resize(10);
     data2.resize(10);
     data3.resize(2);
 
-    if (timers)
-      AFQMCTimer.reset_all();
+    if (print_timings)
+      timers.reset_all();
 
     enume          = 0.0;
     edeno          = 0.0;
@@ -85,27 +75,7 @@ public:
     nwalk_max      = 0;
   }
 
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    bool timers = pt0.get<bool>("timers", false);
-    int nhist = pt0.get<int>("nhist", 0);
-    int measure_interval_multiplier = pt0.get<int>("measure_interval_multiplier", DEFAULT_MEASURE_INTERVAL_MULTIPLIER);
-    int population_control_interval = pt0.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL);
-    // validate inputs
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("timers", timers);
-    pt1.put("nhist", nhist);
-    pt1.put("measure_interval_multiplier", measure_interval_multiplier);
-    pt1.put("_population_control_interval", population_control_interval);
-    io::compare_known_keys("Basic Estimator",pt1, pt0);
-    return pt1;
-  }
-
-  ~BasicEstimator() {}
-
-  void accumulate_block([[maybe_unused]] double time, [[maybe_unused]] WalkerSet& wset) {}
+  void accumulate_block([[maybe_unused]] double time, [[maybe_unused]] WalkerSet<MEM>& wset) {}
 
 
   //  curData:
@@ -116,7 +86,7 @@ public:
   //  4: 1/nW * sum_i abs(<psi_T|phi_i>)
   //  5: nW                          (total number of walkers)
   //  6: "healthy" nW                (total number of "healthy" walkers)
-  void accumulate_step([[maybe_unused]] double time, WalkerSet& wset, std::vector<ComplexType>& curData)
+  void accumulate_step([[maybe_unused]] double time, WalkerSet<MEM>& wset, std::vector<ComplexType>& curData)
   {
     ncalls++;
     if (nwfacts > 0)
@@ -139,14 +109,14 @@ public:
     enume += (curData[1] / curData[2]) * weight_product;
     edeno += weight_product;
     weight += curData[3].real();
-    ovlp += wset.getLogOverlapFactor(); //curData[4].real();
+    ovlp += curData[4].real();
     nwalk += static_cast<int>(std::floor(curData[5].real()));
     nwalk_good += static_cast<int>(std::floor(curData[6].real()));
   }
 
   void tags(std::ofstream& out)
   {
-    if (writer)
+    if (mpi->comm.root())
     {
       if (nwfacts > 0)
       {
@@ -156,15 +126,15 @@ public:
       {
         out << "nWalkers weight PseudoEloc ";
       }
-      out << "LogOvlpFactor ";
+      out << "LogOvlp ";
     }
   }
 
   void tags_timers(std::ofstream& out)
   {
-    if (writer)
-      if (timers)
-        out << "PseudoEnergy_t vHS_t vbias_t G_t Propagate_t Energy_comm_t vHS_comm_t X_t popC_t ortho_t setup_t "
+    if (mpi->comm.root())
+      if (print_timings)
+        out << "PseudoEnergy_t vHS_t vbias_t G_t Propagate_t X_t popC_t ortho_t setup_t "
                "extra_t Block_t ";
   }
 
@@ -173,14 +143,14 @@ public:
     return measure_interval;
   }
 
-  void print(std::ofstream& out, [[maybe_unused]] hdf_archive& dump, [[maybe_unused]] WalkerSet& wset)
+  void print(std::ofstream& out, [[maybe_unused]] h5::file& file, [[maybe_unused]] WalkerSet<MEM>& wset)
   {
     if (ncalls ==0) 
       APP_ABORT("Estimator has no data but asked to print (ncalls=0), check settings");
     data[0] = enume.real() / ncalls;
     data[1] = edeno.real() / ncalls;
 
-    if (writer)
+    if (mpi->comm.root())
     {
       out << std::setprecision(6) << nwalk / ncalls << " " << weight / ncalls << " " << std::setprecision(16);
       if (nwfacts > 0)
@@ -210,20 +180,19 @@ public:
   void print_timers(std::ofstream& out)
   {
 
-    if (writer)
+    if (mpi->comm.root())
     {
-      if (timers)
-        out << std::setprecision(5) << AFQMCTimer.elapsed(pseudo_energy_timer) << " "
-            << AFQMCTimer.elapsed(vHS_timer) << " " << AFQMCTimer.elapsed(vbias_timer) << " "
-            << AFQMCTimer.elapsed(G_for_vbias_timer) << " " << AFQMCTimer.elapsed(propagate_timer) << " "
-            << AFQMCTimer.elapsed(E_comm_overhead_timer) << " "
-            << AFQMCTimer.elapsed(vHS_comm_overhead_timer) << " " << AFQMCTimer.elapsed(assemble_X_timer)
-            << " " << AFQMCTimer.elapsed(popcont_timer) << " " << AFQMCTimer.elapsed(ortho_timer) << " "
-            << AFQMCTimer.elapsed(setup_timer) << " " << AFQMCTimer.elapsed(extra_timer) << " "
-            << AFQMCTimer.elapsed(block_timer) << " " << std::setprecision(16);
+      if (print_timings)
+        out << std::setprecision(5) << timers.pseudo_energy.total_time << " "
+            << timers.vHS.total_time << " " << timers.vbias.total_time << " "
+            << timers.G_for_vbias.total_time << " " << timers.propagate.total_time << " "
+            << timers.assemble_X.total_time << " " << timers.popcontrol.total_time << " "
+            << timers.ortho.total_time << " " << timers.setup.total_time << " "
+            << timers.extra.total_time << " " << timers.block.total_time << " "
+            << std::setprecision(16);
     }
-    if (timers)
-      AFQMCTimer.reset_all();
+    if (print_timings)
+      timers.reset_all();
   }
 
   double getEloc() { return data[0] / data[1]; }
@@ -232,15 +201,13 @@ public:
 
 
 private:
-  afqmc::TaskGroup_& TG;
+  std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
   int nwfacts;
 
-  bool writer;
-
   [[maybe_unused]] bool importanceSampling;
 
-  std::vector<double> data, data2, data3;
+  nda::array<double,1> data, data2, data3;
 
   std::queue<ComplexType> weight_factors;
   ComplexType weight_product = ComplexType(1.0, 0.0);
@@ -251,13 +218,12 @@ private:
   RealType weight = 0.0, weight_sub = 0.0, ovlp = 0.0;
   int nwalk_good, nwalk, ncalls, ncalls_substep, nwalk_sub, nwalk_min, nwalk_max;
 
-  // this is usder for scheduling "accumulate_block" calls
+  // this is used for scheduling "accumulate_block" calls
   int measure_interval = 1;
 
   // optional
-  bool timers;
+  bool print_timings;
 };
 } // namespace afqmc
 } // namespace sfqmc
 
-#endif

@@ -14,37 +14,34 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_WALKERSETFACTORY_H
-#define SFQMC_AFQMC_WALKERSETFACTORY_H
+#pragma once
 
 #include <iostream>
 #include <vector>
 #include <map>
 #include <fstream>
-#include "io/ptree/ptree_utilities.hpp"
-#include "Utilities/Random.hpp"
-#include "Utilities/app_loggers.h"
+#include "utilities/Random.hpp"
+#include "utilities/check.hpp"
+#include "IO/app_loggers.h"
 
 #include "AFQMC/config.h"
-#include "AFQMC/Utilities/taskgroup.h"
+#include "AFQMC/parameters.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
+#include "AFQMC/Walkers/WalkerIO.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
+template<MEMORY_SPACE MEM>
 class WalkerSetFactory
 {
 public:
-  WalkerSetFactory(std::map<std::string, AFQMCInfo>& info) : InfoMap(info) {}
-
-  ~WalkerSetFactory() {}
-
   bool is_constructed(const std::string& ID)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
-      APP_ABORT(" Error in WalkerSetFactory::is_constructed(string&): Missing xml block. ");
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+      utils::check(false,"Error in WalkerSetFactory::is_constructed(string&): Missing input block.");
     auto wlk = handlers.find(ID);
     if (wlk == handlers.end())
       return false;
@@ -52,85 +49,111 @@ public:
       return true;
   }
 
-  WalkerSet& getWalkerSet(TaskGroup_& TG, const std::string& ID, utils::RandomGenerator_t* rng)
+  // Build (or return the cached) walker set, fully populated from the per-spin
+  // initial guess. Dimensions are inferred from the guess.
+  auto& getWalkerSet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                     const std::string& ID,
+                     std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> rng,
+                     WALKER_TYPES walker_type,
+                     const std::vector<nda::matrix<ComplexType>>& guess,
+                     int nWalkers)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
-      APP_ABORT("Error: Missing xml Block in WalkerSetFactory::getWalkerSet(string&). ");
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+      utils::check(false,"Error: Missing input block in WalkerSetFactory::getWalkerSet(string&). ");
     auto wlk = handlers.find(ID);
     if (wlk == handlers.end())
     {
-      auto newwlk = handlers.insert(std::make_pair(ID, buildHandler(TG, xml->second, rng)));
+      auto newwlk = handlers.insert(std::make_pair(ID,
+          WalkerSet<MEM>(mpi, block->second, rng, walker_type, guess, nWalkers)));
       if (!newwlk.second)
-        APP_ABORT(" Error: Problems inserting new hamiltonian in WalkerSetFactory::getHandler(streing&). ");
+        utils::check(false,"Error: Problems inserting new walker set.");
       return (newwlk.first)->second;
     }
     else
       return wlk->second;
   }
 
-  ptree get_input(const std::string& ID) const
+  // Build (or return the cached) finite-temperature walker set, fully populated
+  // from the rank-4 UDV initial guess {3, nspin, rows, naea}. Dimensions are
+  // inferred from the guess and finite_temperature is set true by the ctor.
+  auto& getWalkerSetFT(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                       const std::string& ID,
+                       std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> rng,
+                       WALKER_TYPES walker_type,
+                       nda::MemoryArrayOfRank<4> auto const& UDV,
+                       int nWalkers)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+      utils::check(false,"Error: Missing input block in WalkerSetFactory::getWalkerSetFT(string&). ");
+    auto wlk = handlers.find(ID);
+    if (wlk == handlers.end())
     {
-      app_log(1,"WlkFac cannot find {}",ID);
-      APP_ABORT("Error: failed to find walker_set with above name.");
-      return ptree{};	
+      auto newwlk = handlers.insert(std::make_pair(ID,
+          WalkerSet<MEM>(mpi, block->second, rng, walker_type, UDV, nWalkers)));
+      if (!newwlk.second)
+        utils::check(false,"Error: Problems inserting new walker set.");
+      return (newwlk.first)->second;
     }
     else
-      return xml->second;
+      return wlk->second;
   }
 
-  // this routine allows you to modify the input block associated with ID 
-  ptree& get_input(const std::string& ID)
+  // Build (or return the cached) walker set from an HDF5 restart file. Walker
+  // dimensions and count come from the file; fh5 must be open read-only on all
+  // ranks.
+  auto& getWalkerSetFromHDF5(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                             const std::string& ID,
+                             std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> rng,
+                             WALKER_TYPES walker_type,
+                             h5::file& fh5,
+                             int nWalkers,
+                             bool set_to_target)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml == wlkBlocks.end())
-    { 
-      app_log(1,"failed to find {}", ID);
-      APP_ABORT("Error: failed to find walker_set with above name.");
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+      utils::check(false,"Error: Missing input block in WalkerSetFactory::getWalkerSetFromHDF5(string&). ");
+    auto wlk = handlers.find(ID);
+    if (wlk != handlers.end())
+      return wlk->second;
+
+    auto newwlk = handlers.insert(std::make_pair(ID,
+        readWalkersFromHDF5<WalkerSet<MEM>>(mpi, block->second, rng, walker_type,
+                                            fh5, nWalkers, set_to_target)));
+    if (!newwlk.second)
+      utils::check(false,"Error: Problems inserting new walker set.");
+    return (newwlk.first)->second;
+  }
+
+  const WalkerSetParameters& get_input(const std::string& ID) const
+  {
+    auto block = wlkBlocks.find(ID);
+    if (block == wlkBlocks.end())
+    {
+      app_log(1,"WlkFac cannot find {}",ID);
+      utils::check(false,"Error: failed to find walker_set with above name.");
     }
-    return xml->second;
+    return block->second;
   }
 
-  // adds a xml block from which a WalkerSet can be built
-  void push(const std::string& ID, ptree pt)
+  // Resolve the walker_type of a walker-set block without constructing it.
+  WALKER_TYPES get_walker_type(const std::string& ID) const { return get_input(ID).walker_type; }
+
+  // adds an input block from which a WalkerSet can be built
+  void push(const std::string& ID, WalkerSetParameters params)
   {
-    auto xml = wlkBlocks.find(ID);
-    if (xml != wlkBlocks.end())
-      APP_ABORT("Error: Repeated WalkerSet block in WalkerSetFactory. WalkerSet names must be unique. ");
-    wlkBlocks.insert(std::make_pair(ID, pt));
+    auto block = wlkBlocks.find(ID);
+    if (block != wlkBlocks.end())
+      utils::check(false,"Error: Repeated WalkerSet block in WalkerSetFactory. WalkerSet names must be unique. ");
+    wlkBlocks.insert(std::make_pair(ID, std::move(params)));
   }
 
 protected:
-  // reference to container of AFQMCInfo objects
-  std::map<std::string, AFQMCInfo>& InfoMap;
+  std::map<std::string, WalkerSetParameters> wlkBlocks;
 
-  // generates a new WalkerSet and returns the pointer to the base class
-  WalkerSet buildHandler(TaskGroup_& TG, ptree pt, utils::RandomGenerator_t* rng)
-  {
-    std::string type, info;
-    type = pt.get<std::string>("type", "shared");
-    info = pt.get<std::string>("system", "");
-    if (InfoMap.find(info) == InfoMap.end())
-    {
-      app_error("ERROR: Undefined system: {}", info);
-      APP_ABORT("");
-    }
-
-    // keep like this until you have another choice and a variant framework in place
-    if (type != "shared")
-      APP_ABORT(" Error: Unknown WalkerSet type in WalkerSetFactory::buildHandler(). ");
-
-    return WalkerSet(TG, pt, InfoMap[info], rng);
-  }
-
-  std::map<std::string, ptree> wlkBlocks;
-
-  std::map<std::string, WalkerSet> handlers;
+  std::map<std::string, WalkerSet<MEM>> handlers;
 };
 } // namespace afqmc
 } // namespace sfqmc
 
-#endif

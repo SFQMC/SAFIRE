@@ -14,18 +14,19 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_WALKERCONTROL_HPP
-#define SFQMC_AFQMC_WALKERCONTROL_HPP
-
+#pragma once
 
 #include <tuple>
 #include <cassert>
 #include <memory>
+#include <span>
 #include <stack>
+#include <utility>
 #include <mpi.h>
 #include "AFQMC/config.h"
-#include "Utilities/FairDivide.hpp"
-#include "Utilities/app_loggers.h"
+#include "utilities/FairDivide.hpp"
+#include "utilities/Random.hpp"
+#include "IO/app_loggers.h"
 
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
@@ -42,24 +43,21 @@ namespace afqmc
  *
  * The algorithm ensures that the load per node can differ only by one walker.
  * The communication is one-dimensional.
- * Wexcess is an object with multi::array concept which contains walkers beyond the expected
- * pupolation target.
  */
-template<class WlkBucket, class Mat, class IVec = std::vector<int>>
+template<class WlkBucket, class IVec = std::vector<int>>
 inline int swapWalkersSimple(WlkBucket& wset,
-                             Mat&& Wexcess,
+                             nda::MemoryArrayOfRank<2> auto&& Wexcess,
                              IVec const& CurrNumPerNode,
                              IVec const& NewNumPerNode,
-                             communicator& comm)
+                             mpi3::communicator& comm)
 {
   int wlk_size = wset.single_walker_size() + wset.single_walker_bp_size();
   int NumContexts, MyContext;
   NumContexts = comm.size();
   MyContext   = comm.rank();
-  static_assert(std::decay<Mat>::type::dimensionality == 2, "Wrong dimensionality");
-  if (wlk_size != Wexcess.size(1))
+  if (wlk_size != Wexcess.extent(1))
     throw std::runtime_error("Array dimension error in swapWalkersSimple().");
-  if (1 != Wexcess.stride(1))
+  if (1 != Wexcess.strides()[1])
     throw std::runtime_error("Array shape error in swapWalkersSimple().");
   if (CurrNumPerNode.size() < NumContexts || NewNumPerNode.size() < NumContexts)
     throw std::runtime_error("Array dimension error in swapWalkersSimple().");
@@ -85,7 +83,7 @@ inline int swapWalkersSimple(WlkBucket& wset,
   int nsend = 0;
   if (deltaN <= 0 && wset.size() != CurrNumPerNode[MyContext])
     throw std::runtime_error("error in swapWalkersSimple().");
-  if (deltaN > 0 && (wset.size() != NewNumPerNode[MyContext] || int(Wexcess.size(0)) != deltaN))
+  if (deltaN > 0 && (wset.size() != NewNumPerNode[MyContext] || int(Wexcess.extent(0)) != deltaN))
     throw std::runtime_error("error in swapWalkersSimple().");
   std::vector<ComplexType> buff;
   if (deltaN < 0)
@@ -94,13 +92,14 @@ inline int swapWalkersSimple(WlkBucket& wset,
   {
     if (plus[ic] == MyContext)
     {
-      comm.send_n(Wexcess[nsend].origin(), Wexcess[nsend].size(), minus[ic], plus[ic] + 999);
+      comm.send_n(std::addressof(Wexcess(nsend,0)), Wexcess.extent(1), minus[ic], plus[ic] + 999);
       ++nsend;
     }
     if (minus[ic] == MyContext)
     {
       comm.receive_n(buff.data(), buff.size(), plus[ic], plus[ic] + 999);
-      wset.push_walkers(boost::multi::array_ref<ComplexType, 2>(buff.data(), {1, wlk_size}));
+      auto v = nda::array_view<ComplexType, 2>({1,wlk_size},buff.data());
+      wset.push_walkers(v);
     }
   }
   return nswap;
@@ -111,22 +110,22 @@ inline int swapWalkersSimple(WlkBucket& wset,
  * The algorithm ensures that the load per node can differ only by one walker.
  * The communication is one-dimensional.
  */
-template<class WlkBucket, class Mat, class IVec = std::vector<int>>
+template<class WlkBucket, class IVec = std::vector<int>>
 // eventually generalize MPI_Comm to a MPI wrapper
 inline int swapWalkersAsync(WlkBucket& wset,
-                            Mat&& Wexcess,
+                            nda::MemoryArrayOfRank<2> auto&& Wexcess,
                             IVec const& CurrNumPerNode,
                             IVec const& NewNumPerNode,
-                            communicator& comm)
+                            mpi3::communicator& comm)
 {
   int wlk_size = wset.single_walker_size() + wset.single_walker_bp_size();
   int NumContexts, MyContext;
   NumContexts = comm.size();
   MyContext   = comm.rank();
-  static_assert(std::decay<Mat>::type::dimensionality == 2, "Wrong dimensionality");
-  if (wlk_size != Wexcess.size(1))
+  if (wlk_size != Wexcess.extent(1))
     throw std::runtime_error("Array dimension error in swapWalkersAsync().");
-  if (1 != Wexcess.stride(1) || (Wexcess.size(0) > 0 && Wexcess.size(1) != Wexcess.stride(0)))
+  if (1 != Wexcess.strides()[1] || (Wexcess.extent(0) > 0 && 
+      Wexcess.extent(1) != Wexcess.strides()[0]))
     throw std::runtime_error("Array shape error in swapWalkersAsync().");
   if (CurrNumPerNode.size() < NumContexts || NewNumPerNode.size() < NumContexts)
     throw std::runtime_error("Array dimension error in swapWalkersAsync().");
@@ -153,7 +152,7 @@ inline int swapWalkersAsync(WlkBucket& wset,
   int countSend = 1;
   if (deltaN <= 0 && wset.size() != CurrNumPerNode[MyContext])
     throw std::runtime_error("error(1) in swapWalkersAsync().");
-  if (deltaN > 0 && (wset.size() != NewNumPerNode[MyContext] || int(Wexcess.size(0)) != deltaN))
+  if (deltaN > 0 && (wset.size() != NewNumPerNode[MyContext] || int(Wexcess.extent(0)) != deltaN))
     throw std::runtime_error("error(2) in swapWalkersAsync().");
   std::vector<ComplexType*> buffers;
   std::vector<boost::mpi3::request> requests;
@@ -168,7 +167,8 @@ inline int swapWalkersAsync(WlkBucket& wset,
       }
       else
       {
-        requests.emplace_back(comm.isend(Wexcess[nsend].origin(), Wexcess[nsend].origin() + countSend * Wexcess.size(1),
+        requests.emplace_back(comm.isend(std::addressof(Wexcess(nsend,0)), 
+                                         std::addressof(Wexcess(nsend,0)) + countSend * Wexcess.extent(1),
                                          minus[ic], plus[ic] + 1999));
         nsend += countSend;
         countSend = 1;
@@ -196,7 +196,8 @@ inline int swapWalkersAsync(WlkBucket& wset,
     for (int ip = 0; ip < requests.size(); ++ip)
     {
       requests[ip].wait();
-      wset.push_walkers(boost::multi::array_ref<ComplexType, 2>(buffers[ip], {recvCounts[ip], wlk_size}));
+      auto v = nda::array_view<ComplexType, 2>({recvCounts[ip],wlk_size},buffers[ip]);
+      wset.push_walkers(v);
       delete[] buffers[ip];
     }
   }
@@ -214,9 +215,8 @@ inline int swapWalkersAsync(WlkBucket& wset,
  * Implements Cafarrel's minimum branching algorithm.
  *   - buff: array of walker info (weight,num).
  */
-template<class Random>
-inline void min_branch([[maybe_unused]] Vector<std::pair<double, int>>& buff, 
-                       [[maybe_unused]] Random& rng,
+inline void min_branch([[maybe_unused]] std::vector<std::pair<double, int>>& buff, 
+                       [[maybe_unused]] utils::HostRandomGenerator& rng,
                        [[maybe_unused]] double max_c,
                        [[maybe_unused]] double min_c)
 {
@@ -227,10 +227,8 @@ inline void min_branch([[maybe_unused]] Vector<std::pair<double, int>>& buff,
  * Implements Cafarrel's minimum branching algorithm.
  *   - buff: array of walker info (weight,num).
  */
-template<class Random>
-inline void serial_comb(Vector<std::pair<double, int>>& buff, Random& rng)
+inline void serial_comb(std::vector<std::pair<double, int>>& buff, utils::HostRandomGenerator& rng)
 {
-//  APP_ABORT(" Error: serial_comb not implemented yet. \n\n");
   std::uniform_real_distribution<double> distribution(0.0,1.0);
   int nW = buff.size();
   double norm = 0.0; 
@@ -242,7 +240,7 @@ inline void serial_comb(Vector<std::pair<double, int>>& buff, Random& rng)
   int idx=0;
   double s0(std::get<0>(buff[idx])),s1(0.0);
   for(int i=0; i<nW; ++i) {
-    s1 = (i+distribution(rng))/double(nW);
+    s1 = (i+distribution(rng.std_rng))/double(nW);
     while( s1 > s0 ) {
       idx++;
       s0 += std::get<0>(buff[idx]);
@@ -255,13 +253,12 @@ inline void serial_comb(Vector<std::pair<double, int>>& buff, Random& rng)
 }
 
 /**
- * Implements the paired branching algorithm on a popultion of walkers,
+ * Implements the paired branching algorithm on a population of walkers,
  * given a list of walker weights. For each walker in the list, returns the weight
  * and number of times the walker should appear in the new list.
  *   - buff: array of walker info (weight,num).
  */
-template<class Random>
-inline void pair_branch(Vector<std::pair<double, int>>& buff, Random& rng, double max_c, double min_c)
+inline void pair_branch(std::vector<std::pair<double, int>>& buff, utils::HostRandomGenerator& rng, double max_c, double min_c)
 {
   std::uniform_real_distribution<double> distribution(0.0,1.0);
   typedef std::tuple<double, int, int> tp;
@@ -282,7 +279,7 @@ inline void pair_branch(Vector<std::pair<double, int>>& buff, Random& rng, doubl
     if (std::abs(std::get<0>(*it_s)) < min_c || std::abs(std::get<0>(*it_l)) > max_c)
     {
       double w12 = std::get<0>(*it_s) + std::get<0>(*it_l);
-      if (distribution(rng) < std::get<0>(*it_l) / w12)
+      if (distribution(rng.std_rng) < std::get<0>(*it_l) / w12)
       {
         std::get<0>(*it_l) = 0.5 * w12;
         std::get<0>(*it_s) = 0.0;
@@ -314,25 +311,21 @@ inline void pair_branch(Vector<std::pair<double, int>>& buff, Random& rng, doubl
   }
   if (nzero > 0)
   {
-    app_error(" Error in pair_branch: nzero>0: {} ", nzero );
-    app_error(" Found walkers with zero weight after branch.");
-    app_error(" Try reducing subSteps or reducing the time step.");
-    APP_ABORT("Error in pair_branch.");
+    utils::check(false, "Found {} walkers with zero weight after branch. Try reducing subSteps or reducing the time step.", nzero);
   }
   if (nw != nnew)
     APP_ABORT("Error: Problems with pair_branching.");
 }
 
 /**
- * Implements the paired branching algorithm on a popultion of walkers,
+ * Implements the paired branching algorithm on a population of walkers,
  * given a list of walker weights. For each walker in the list, returns the branching
  * count {0, 1, 2} and the index of the walker paired to the current walker, if branching count is 2. 
  *   - buff: array of walker weights. 
  * Note: For replicated walkers, the weight of the new walkers will be:
  *    - For a walker in position I with bdata[I][:] = {2, Is}, wnew = 0.5*(weight[I] + weight[Is])  
  */
-template<class Random>
-inline void pair_branch_for_correlated(Vector<double> const& buff, Matrix<int>& bdata, Random& rng, double max_c, double min_c)
+inline void pair_branch_for_correlated(std::vector<double> const& buff, nda::array<int,2>& bdata, utils::HostRandomGenerator& rng, double max_c, double min_c)
 { 
   std::uniform_real_distribution<double> distribution(0.0,1.0);
   typedef std::tuple<double, int> tp;
@@ -348,9 +341,9 @@ inline void pair_branch_for_correlated(Vector<double> const& buff, Matrix<int>& 
   tp_it it_s = wlks.begin();
   tp_it it_l = wlks.end() - 1;
   
-  for( auto&& v: bdata ) {
-    v[0] = 1; // by default do nothing
-    v[1] = -1; // coupled to nothing
+  for( int i=0; i<bdata.extent(0); ++i ) {
+    bdata(i,0) = 1; // by default do nothing
+    bdata(i,1) = -1; // coupled to nothing
   }
   while (it_s < it_l)
   { 
@@ -359,17 +352,17 @@ inline void pair_branch_for_correlated(Vector<double> const& buff, Matrix<int>& 
       int i_l = std::get<1>(*it_l);
       int i_s = std::get<1>(*it_s);
       double w12 = std::get<0>(*it_s) + std::get<0>(*it_l);
-      if (distribution(rng) < std::get<0>(*it_l) / w12)
+      if (distribution(rng.std_rng) < std::get<0>(*it_l) / w12)
       { 
-        bdata[i_l][0] = 2;   // replicate large
-        bdata[i_l][1] = i_s; // coupled to small
-        bdata[i_s][0] = 0;   // kill small
+        bdata(i_l,0) = 2;   // replicate large
+        bdata(i_l,1) = i_s; // coupled to small
+        bdata(i_s,0) = 0;   // kill small
       }
       else
       { 
-        bdata[i_s][0] = 2;   // replicate small
-        bdata[i_s][1] = i_l; // coupled to large
-        bdata[i_l][0] = 0;   // kill large
+        bdata(i_s,0) = 2;   // replicate small
+        bdata(i_s,1) = i_l; // coupled to large
+        bdata(i_l,0) = 0;   // kill large
       }
       it_s++;
       it_l--;
@@ -381,7 +374,7 @@ inline void pair_branch_for_correlated(Vector<double> const& buff, Matrix<int>& 
   // some checks
   int nnew  = 0;
   for (int i=0; i<nw; i++)
-    nnew += bdata[i][0];
+    nnew += bdata(i,0);
   if (nw != nnew)
     APP_ABORT("Error: Problems with pair_branching_for_correlated.");
 }
@@ -393,20 +386,19 @@ inline void pair_branch_for_correlated(Vector<double> const& buff, Matrix<int>& 
  * This implementation requires contiguous walkers and fixed population walker sets.
  */
 template<class WalkerSet,
-         class Mat,
-         class Random,
          typename = typename std::enable_if<(WalkerSet::contiguous_walker)>::type,
          typename = typename std::enable_if<(WalkerSet::fixed_population)>::type>
 inline void SerialBranching(WalkerSet& wset,
-                            BRANCHING_ALGORITHM type,
+                            BranchingAlgorithm type,
                             double min_,
                             double max_,
                             std::vector<int>& wlk_counts,
-                            Mat& Wexcess,
-                            Random& rng,
-                            communicator& comm)
+                            nda::MemoryArrayOfRank<2> auto& Wexcess,
+                            utils::HostRandomGenerator& rng,
+                            mpi3::communicator& comm)
 {
-  Vector<std::pair<double, int>> buffer(wset.get_global_target_population());
+  using nda::range;
+  std::vector<std::pair<double, int>> buffer(wset.get_global_target_population());
 
   // assemble list of weights
   getGlobalListOfWalkerWeights(wset, buffer, comm);
@@ -414,20 +406,20 @@ inline void SerialBranching(WalkerSet& wset,
   // using global weight list, use pair branching algorithm
   if (comm.root())
   {
-    if (type == PAIR)
+    if (type == BranchingAlgorithm::pair)
       pair_branch(buffer, rng, max_, min_);
-    else if (type == MIN_BRANCH)
+    else if (type == BranchingAlgorithm::min_branch)
       min_branch(buffer, rng, max_, min_);
-    else if (type == SERIAL_COMB)
+    else if (type == BranchingAlgorithm::serial_comb)
       serial_comb(buffer, rng);
     else
       APP_ABORT("Error: Unknown branching type in SerialBranching. ");
   }
 
   // bcast walker information and calculate new walker counts locally
-  comm.broadcast_n(buffer.origin(), buffer.size());
+  comm.broadcast_n(buffer.data(),buffer.size());
 
-  int target = wset.get_TG_target_population();
+  int target = wset.get_target_population();
   wlk_counts.resize(comm.size());
   for (int i = 0, p = 0; i < comm.size(); i++)
   {
@@ -445,12 +437,12 @@ inline void SerialBranching(WalkerSet& wset,
 
   // reserve space for extra walkers
   if (wlk_counts[comm.rank()] > target)
-    Wexcess = Mat({std::max(0, wlk_counts[comm.rank()] - target), 
-		   wset.single_walker_size() + wset.single_walker_bp_size()}, Wexcess.get_allocator());
+    Wexcess.resize(std::max(0, wlk_counts[comm.rank()] - target), 
+		   wset.single_walker_size() + wset.single_walker_bp_size());
 
   // perform local branching
   // walkers beyond target go in Wexcess
-  wset.branch(buffer.begin() + target * comm.rank(), buffer.begin() + target * (comm.rank() + 1), Wexcess);
+  wset.branch(std::span(buffer).subspan(target * comm.rank(), target), Wexcess);
 }
 
 /**
@@ -460,82 +452,78 @@ inline void SerialBranching(WalkerSet& wset,
  * New weights and branching counts, for each system, are calculated and updated in the buffer.
  * comm is a communicator with the roots of all Global communicators. 
  */
-template<class Random>
-inline void correlatedSerialBranching(BRANCHING_ALGORITHM branch_type,
+inline void correlatedSerialBranching(BranchingAlgorithm branch_type,
 			    std::string combine_type,		
                             double min_,
                             double max_,
-			    Matrix<std::pair<double, int>>& buffer,
-                            Random& rng,
-                            communicator& comm)
+			    nda::array<std::pair<double, int>,2>& buffer,
+                            utils::HostRandomGenerator& rng,
+                            mpi3::communicator& comm)
 {
   // generate collective weights
-  int n_sys = buffer.size(0);
-  int nW = buffer.size(1);
-  Vector<double> collW(iextensions<1u>{nW},0.0); 
+  int n_sys = buffer.extent(0);
+  int nW = buffer.extent(1);
+  std::vector<double> collW(nW,0.0); 
   for(int s=0; s<n_sys; s++) {
     if(combine_type == "max" or combine_type == "mod-max") {
       for (int i = 0; i < nW; ++i)
-        collW[i] = std::max(std::abs(buffer[s][i].first), collW[i]);
+        collW[i] = std::max(std::abs(buffer(s,i).first), collW[i]);
     } else if(combine_type == "mean" or combine_type == "mod-mean") {
       for (int i = 0; i < nW; ++i)
-        collW[i] += std::abs(buffer[s][i].first)/double(n_sys);
+        collW[i] += std::abs(buffer(s,i).first)/double(n_sys);
     } else {
       APP_ABORT("Error: Unknown combine_type in correlatedSerialBranch.");
     }
   }
   if(combine_type == "max" or combine_type == "mod-max") 
-    comm.reduce_in_place_n(collW.origin(), nW, boost::mpi3::max<>());
+    comm.reduce_in_place_n(collW.data(), nW, boost::mpi3::max<>());
   else if(combine_type == "mean" or combine_type == "mod-mean") 
-    comm.reduce_in_place_n(collW.origin(), nW, std::plus<>());
+    comm.reduce_in_place_n(collW.data(), nW, std::plus<>());
 
   // make branching decision based on collective weights
-  Matrix<int> branch_data({nW,2});
+  nda::array<int,2> branch_data(nW,2);
   if (comm.root())
   {
     if(combine_type == "mean" or combine_type == "mod-mean")
       for(int i=0; i<nW; i++)
         collW[i] = collW[i]/double(comm.size());
-    if (branch_type == PAIR) {
+    if (branch_type == BranchingAlgorithm::pair) {
       pair_branch_for_correlated(collW, branch_data, rng, max_, min_);
     } else {
       APP_ABORT("Error: Unknown branching type in correlatedSerialBranching. ");
     }
   }   
-  comm.broadcast_n(branch_data.origin(),branch_data.num_elements());
+  comm.broadcast_n(branch_data.data(),branch_data.size());
 
   // modify original buffer, with new weights and branching counts for each walker
   // depends on branch_type
-  if(branch_type == PAIR) {     
+  if(branch_type == BranchingAlgorithm::pair) {     
     for(int i=0; i<nW; i++) {
-      if(branch_data[i][0]==2) { // branch 
-	int I_coupled = branch_data[i][1];   	
+      if(branch_data(i,0)==2) { // branch 
+	int I_coupled = branch_data(i,1);   	
         for(int s=0; s<n_sys; s++) {
 	  // new weight 
           if(combine_type == "mod-mean" or combine_type == "mod-max") {
-	    double wnew = 0.5*(buffer[s][i].first + buffer[s][I_coupled].first);
-//	  if(std::abs(wnew) < 1e-6)
-//	    APP_ABORT("Error in correlatedSerialBranching: Found walker with weight=0.");
-	    buffer[s][i].first = wnew; 
-	    buffer[s][i].second = 2;
+	    double wnew = 0.5*(buffer(s,i).first + buffer(s,I_coupled).first);
+	    buffer(s,i) = std::make_pair(wnew,2); 
 	  } else if(combine_type == "mean" or combine_type == "max") {
             double wx = 0.5 * (collW[i] + collW[I_coupled]) / collW[i];
-            buffer[s][i].first *= wx; 
-            buffer[s][i].second = 2;
+            buffer(s,i).first *= wx; 
+            buffer(s,i).second = 2;
           }
 	}
-      } else if(branch_data[i][0]!=0 and branch_data[i][0]!=1) {
+      } else if(branch_data(i,0)!=0 and branch_data(i,0)!=1) {
 	APP_ABORT("Error in correlatedSerialBranching: Unknown branching count.");
       }
     }
     // now reset kill weights/counts
     for(int i=0; i<nW; i++) {
-      if(branch_data[i][0]==0) { // kill 
+      if(branch_data(i,0)==0) { // kill 
         for(int s=0; s<n_sys; s++)
-          buffer[s][i] = std::make_pair(0.0,0);
-      } else if(branch_data[i][0]==1) { // set cnt to 1, leave weight unchanged 
+          buffer(s,i) = std::make_pair(0.0,0);
+      } else if(branch_data(i,0)==1) { // set cnt to 1, leave weight unchanged 
         for(int s=0; s<n_sys; s++)
-          buffer[s][i].second = 1;
+          buffer(s,i).second = 1;
       }
     }       
   } else {
@@ -547,16 +535,14 @@ inline void correlatedSerialBranching(BRANCHING_ALGORITHM branch_type,
  * Implements the distributed comb branching algorithm.
  */
 template<class WalkerSet,
-         class Mat,
-         class Random,
          typename = typename std::enable_if<(WalkerSet::contiguous_walker)>::type,
          typename = typename std::enable_if<(WalkerSet::fixed_population)>::type>
 inline void CombBranching([[maybe_unused]] WalkerSet& wset,
-                          [[maybe_unused]] BRANCHING_ALGORITHM type,
+                          [[maybe_unused]] BranchingAlgorithm type,
                           [[maybe_unused]] std::vector<int>& wlk_counts,
-                          [[maybe_unused]] Mat& Wexcess,
-                          [[maybe_unused]] Random& rng,
-                          [[maybe_unused]] communicator& comm)
+                          [[maybe_unused]] nda::MemoryArrayOfRank<2> auto& Wexcess,
+                          [[maybe_unused]] utils::HostRandomGenerator& rng,
+                          [[maybe_unused]] mpi3::communicator& comm)
 {
   APP_ABORT("Error: comb not implemented yet. ");
 }
@@ -577,72 +563,69 @@ template<class WalkerSet,
          typename = typename std::enable_if<(WalkerSet::fixed_population)>::type
 	>
 void correlatedPopulationControl(std::vector<std::reference_wrapper<WalkerSet>>& wlks,
-				Matrix<ComplexType>& curData,
+				nda::array<ComplexType,2>& curData,
 				std::string combine_type, 
 				bool skip = false)
 {
+  app_log(0," correlatedPopulationControl probably broken! Fix Fix Fix.");
   if(wlks.size() == 0)
     APP_ABORT("Error: Empty walker vector in correlatedPopulationControl.");
-  auto& TG=wlks[0].get().getTG(); 
+  auto& mpi=wlks[0].get().get_mpi(); 
   auto rng=wlks[0].get().getRNG();
 
-  int LoadBalance_timer = AFQMCTimer.add("WalkerSetBase::loadBalance");
-  int Branching_timer = AFQMCTimer.add("WalkerSetBase::branching");
-  AFQMCTimer.start(Branching_timer);
+  auto branching_time = timers.branching.start();
 
   int n_sys = wlks.size();
-  if(curData.size(0) != n_sys or curData.size(1) != 7)
-    curData = Matrix<ComplexType>({n_sys,7});
-  using std::fill;
-  fill_n(curData.origin(), curData.num_elements(), ComplexType(0));
+  if(curData.extent(0) != n_sys or curData.extent(1) != 7)
+    curData = nda::array<ComplexType,2>(n_sys,7);
+  curData() = ComplexType(0);
 
   auto [pop_control, min_weight, max_weight] = wlks[0].get().population_control_parameters();
   int tot_num_walkers = wlks[0].get().size();
-  int target = wlks[0].get().get_TG_target_population();
+  int target = wlks[0].get().get_target_population();
   int global_target = wlks[0].get().get_global_target_population();
   if (target != tot_num_walkers)
     APP_ABORT("Error: tot_num_walkers!=target");
-  if (target*TG.TG_heads().size() != global_target) 
+  if (target*mpi.comm.size() != global_target) 
     APP_ABORT("Error: Mismatched global populations"); 
 
   // safety check
   for( int s=0; s<n_sys; s++ ) { 
     if (wlks[s].get().size() != tot_num_walkers)
       APP_ABORT("Error: Inconsistent number of walkers in cs_systems"); 
-    if (wlks[s].get().get_TG_target_population() != target) 
+    if (wlks[s].get().get_target_population() != target) 
       APP_ABORT("Error: Inconsistent target populations in cs_systems"); 
   }
 
   // gather data and walker information
-  if (TG.TG_local().root())
   {
     for(int s=0; s<n_sys; s++) 
     {
-      afqmc::BasicWalkerData(wlks[s].get(), curData[s], TG.TG_heads());
-      RealType scl = 1.0 / curData[s][0].real();
+      afqmc::BasicWalkerData(wlks[s].get(), curData(s,nda::range::all), mpi.comm);
+      RealType scl = 1.0 / curData(s,0).real();
       wlks[s].get().scaleWeight(scl, true);
     }
   }
-  if (TG.TG_local().size() > 1)
-    TG.TG_local().broadcast_n(curData.origin(), curData.num_elements());
+  if (mpi.comm.size() > 1)
+    mpi.broadcast(curData);
   for(int s=0; s<n_sys; s++) 
-    wlks[s].get().adjustLogOverlapFactor(std::log(std::abs(curData[s][4])));
+    wlks[s].get().adjustLogOverlapFactor(std::log(std::abs(curData(s,4))));
 
   if(skip) return;
 
   // gather weights 
-  Matrix<std::pair<double, int>> buffer;
-  if (TG.TG_local().root()) { 
-    buffer = Matrix<std::pair<double, int>>({n_sys,global_target}); 
-    for(int s=0; s<n_sys; s++)
-      getGlobalListOfWalkerWeights(wlks[s].get(), buffer[s], TG.TG_heads());
-  }
+  nda::array<std::pair<double, int>,2> buffer(n_sys,global_target);
+  for(int s=0; s<n_sys; s++)
+    getGlobalListOfWalkerWeights(wlks[s].get(), buffer(s,nda::range::all), mpi.comm);
 
   // make correlated branching decisions
-  if( TG.Global().root() ) { 
+// MAM: this needs to be done over the "global" communicator, which does not exist yet 
+//      in mpi_context. FIX FIX FIX
+  if( mpi.comm.root() ) { 
     // population control on master node
-    if (pop_control == PAIR || pop_control == SERIAL_COMB || pop_control == MIN_BRANCH) {
-      correlatedSerialBranching(pop_control, combine_type, min_weight, max_weight, buffer, *rng, TG.GlobalCores());
+    if (pop_control == BranchingAlgorithm::pair || pop_control == BranchingAlgorithm::serial_comb ||
+        pop_control == BranchingAlgorithm::min_branch) {
+      correlatedSerialBranching(pop_control, combine_type, min_weight, max_weight, buffer, *rng, mpi.comm);
     } else {
       APP_ABORT("Error: Unknown population control algorithm.");
     }
@@ -651,43 +634,41 @@ void correlatedPopulationControl(std::vector<std::reference_wrapper<WalkerSet>>&
   // bcast branching decisions
   int n_excess=0;     
   std::vector<int> nwalk_counts_old, nwalk_counts_new;
-  if (TG.TG_local().root()) {
-    nwalk_counts_old.resize(TG.TG_heads().size());
-    nwalk_counts_new.resize(TG.TG_heads().size());
+  {
+    nwalk_counts_old.resize(mpi.comm.size());
+    nwalk_counts_new.resize(mpi.comm.size());
     std::fill(nwalk_counts_new.begin(), nwalk_counts_new.end(), target);
-    TG.TG_heads().broadcast_n(buffer.origin(),buffer.num_elements());
+    mpi.broadcast(buffer);
     // all systems should have identical branching instructions!
-    for (int i = 0, p = 0; i < TG.TG_heads().size(); i++)
+    for (int i = 0, p = 0; i < mpi.comm.size(); i++)
     {
       int cnt = 0;
       for (int k = 0; k < target; k++, p++)
-        cnt += buffer[0][p].second;
+        cnt += buffer(0,p).second;
       nwalk_counts_old[i] = cnt;
     }   
-    n_excess = std::max(0,nwalk_counts_old[TG.TG_heads().rank()]-target);
+    n_excess = std::max(0,nwalk_counts_old[mpi.comm.rank()]-target);
   }
 
   int walker_size = wlks[0].get().single_walker_size() + wlks[0].get().single_walker_bp_size();
-  Matrix<ComplexType> Wexcess({n_excess, walker_size});
-  AFQMCTimer.stop(Branching_timer);
+  nda::array<ComplexType,2> Wexcess(n_excess, walker_size);
+  branching_time.stop();
   for(int s=0; s<n_sys; s++) {
 
-    if (wlks[s].get().single_walker_size() + wlks[s].get().single_walker_bp_size() != walker_size) 
-      APP_ABORT("Error in correlated sampling: Walkers with different size found. FIX"); 
+    if (wlks[s].get().single_walker_size() + wlks[s].get().single_walker_bp_size() != walker_size)
+      APP_ABORT("Error in correlated sampling: Walkers with different size found. FIX");
 
-    AFQMCTimer.start(Branching_timer);
     // perform local branching
     // walkers beyond target go in Wexcess
-    if(TG.TG_local().root())    
-      wlks[s].get().branch(buffer[s].begin() + target * TG.TG_heads().rank(), 
-			   buffer[s].begin() + target * (TG.TG_heads().rank() + 1), Wexcess);
-    AFQMCTimer.stop(Branching_timer);
+    auto branch_time = timers.branching.start();
+    auto buff_s = buffer(s,nda::range::all);
+    wlks[s].get().branch(std::span(buff_s.data() + target * mpi.comm.rank(), target), Wexcess);
+    branch_time.stop();
 
-    // load balance
-    AFQMCTimer.start(LoadBalance_timer);
-//     load balance after population control events
+    // load balance after population control events
+    auto load_balance_time = timers.load_balance.start();
     wlks[s].get().loadBalance(Wexcess,nwalk_counts_old,nwalk_counts_new);
-    AFQMCTimer.stop(LoadBalance_timer);  
+    load_balance_time.stop();
   }
 
 /*
@@ -698,4 +679,3 @@ void correlatedPopulationControl(std::vector<std::reference_wrapper<WalkerSet>>&
 
 } // namespace sfqmc
 
-#endif

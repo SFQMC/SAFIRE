@@ -1,0 +1,8 @@
+if(ENABLE_DEVICE)
+
+if(ENABLE_CUDA)
+  add_subdirectory(cuda)
+ENDIF(ENABLE_CUDA)
+
+ENDIF(ENABLE_DEVICE)
+

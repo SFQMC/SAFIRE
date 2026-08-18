@@ -1,30 +1,27 @@
-#if COMPILATION_INSTRUCTIONS// -*- indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*-
-mpic++ $0 -o $0x&&mpirun -n 6 $0x&&rm $0x;exit
-#endif
-// © Alfredo A. Correa 2018-2021
+// -*-indent-tabs-mode:t;c-basic-offset:4;tab-width:4;autowrap:nil;-*-
+// Copyright 2018-2022 Alfredo A. Correa
 
-#include "../../mpi3/environment.hpp"
-#include "../../mpi3/communicator.hpp"
+#include <mpi3/communicator.hpp>
+#include <mpi3/environment.hpp>
 
-#include<list>
-#include<numeric> // iota
+#include <list>
+#include <numeric>  // for std::iota
 
 namespace mpi3 = boost::mpi3;
 
-auto main() -> int try{
-
+auto main() -> int try {
 	mpi3::environment env;
 	mpi3::communicator world = env.world();
 
 	{
-		std::vector<double> v(world.size());
+		std::vector<double> v(static_cast<std::size_t>(world.size()));
 		iota(begin(v), end(v), 0);
 		std::vector<double> w(1);
 		world.scatter(begin(v), end(v), begin(w), 0);
 		assert( w[0] == world.rank() );
 	}
 	{
-		std::vector<double> v(world.root()?world.size():0);
+		std::vector<double> v(world.root()?static_cast<std::size_t>(world.size()):0);
 		iota(begin(v), end(v), 0);
 		std::vector<double> w(1);
 	//	auto e = 
@@ -33,7 +30,7 @@ auto main() -> int try{
 		assert( w[0] == world.rank() );
 	}
 	{
-		std::vector<double> v(world.root()?world.size():0);
+		std::vector<double> v(world.root()?static_cast<std::size_t>(world.size()):0);
 		iota(begin(v), end(v), 0);
 		double w = -1;
 	//	auto e = 
@@ -42,19 +39,19 @@ auto main() -> int try{
 		assert( w == world.rank() );
 	}
 	{
-		std::vector<double> v(world.root()?world.size():0);
+		std::vector<double> v(world.root()?static_cast<std::size_t>(world.size()):0);
 		iota(begin(v), end(v), 0);
 		double w = world.scatter(begin(v), end(v), 0);
 		assert( w == world.rank() );
 	}
 	{
-		std::vector<double> v(world.root()?world.size():0);
+		std::vector<double> v(world.root()?static_cast<std::size_t>(world.size()):0);
 		iota(begin(v), end(v), 0);
 		double w = v / world;
 		assert( w == world.rank() );
 	}
 	{
-		std::list<double> l(world.root()?world.size():0);
+		std::list<double> l(world.root()?static_cast<std::size_t>(world.size()):0);
 		iota(begin(l), end(l), 0);
 		double w = l / world;
 		assert( w == world.rank() );
@@ -100,5 +97,4 @@ auto main() -> int try{
 	}
 #endif
 	return 0;
-}catch(...){return 1;}
-
+} catch(...) { return 1; }

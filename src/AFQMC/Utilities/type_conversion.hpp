@@ -226,7 +226,7 @@ template<class VType, class MType,
          typename = typename std::enable_if_t<MType::dimensionality == 2>
         >
 void emplace_back_array_ref(VType& V, MType&& M, bool device=true) {
-  // noly makes sense for continguous arrays
+  // only makes sense for contiguous arrays
   RUNTIME_CHECK(M.stride(0) == M.size(1), "");
   RUNTIME_CHECK(M.stride(1) == 1, "");
   if(device) {  

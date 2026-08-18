@@ -116,7 +116,7 @@ public:
     pt1.put("timestep", timestep);
     pt1.put("dshift", dshift);
     pt1.put("combine_type",combine_type);
-    // check for unkown input keys
+    // check for unknown input keys
     std::unordered_set<std::string> pass_through_keys = {
       "walker_set",
       "wavefunction",
@@ -124,11 +124,9 @@ public:
       "estimator",
       "hamiltonian"
     };
-    io::compare_known_keys("correalted-sampling (CS) AFQMC Driver",pt1, pt0, pass_through_keys);
+    io::compare_known_keys("correlated-sampling (CS) AFQMC Driver",pt1, pt0, pass_through_keys);
     return pt1;
   }
-
-  ~CSAFQMCDriver() {}
 
   bool run(std::vector<std::reference_wrapper<WalkerSet>>&);
 

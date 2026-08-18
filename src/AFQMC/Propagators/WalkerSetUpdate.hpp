@@ -14,387 +14,348 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_WALKERSETUPDATES_HPP
-#define SFQMC_AFQMC_WALKERSETUPDATES_HPP
+#pragma once
 
 #include <algorithm>
+#include <numbers>
 
-#include "config.h"
-#include "Utilities/AppAbort.hpp"
-#include "AFQMC/config.h"
-#include "Numerics/ma_blas.hpp"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
+#include "AFQMC/config.h"
+#include "config.h"
+#include "utilities/check.hpp"
 
-namespace sfqmc
-{
-namespace afqmc
-{
-template<class Wlk, class OMat, class Mat, class WMat>
-void free_projection_walker_update(Wlk&& w,
-                                   RealType dt,
-                                   OMat&& overlap,
-                                   Mat&& MFfactor,
+namespace sfqmc {
+namespace afqmc {
+
+struct BoundStats {
+  long total = 0;
+  long upper = 0;
+  long lower = 0;
+  BoundStats &operator+=(BoundStats const &o) {
+    total += o.total;
+    upper += o.upper;
+    lower += o.lower;
+    return *this;
+  }
+};
+
+template <class Wlk>
+void free_projection_walker_update(Wlk &w, RealType dt,
+                                   nda::MemoryVector auto &&overlap,
+                                   nda::MemoryVector auto &&MFfactor,
                                    RealType Eshift,
-                                   Mat&& hybrid_weight,
-                                   WMat& work,
-                                   bool debug_verbosity)
-{
+                                   nda::MemoryVector auto &&hybrid_weight,
+                                   bool debug_verbosity) {
+  auto all = nda::range::all;
   int nwalk = w.size();
-  // constexpr if can be used to avoid the memory copy, by comparing the pointer types
-  // between WMat and Mat/OMat
-  if (work.size(0) < 7 || work.size(1) < nwalk)
-    work = WMat({7, nwalk}, work.get_allocator());
+  nda::range rng(nwalk);
+  memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(11, nwalk);
+  auto weight = work(0, all);
+  auto phase = work(1, all);
+  auto pseudo_eloc = work(2, all);
+  auto ovlp = work(3, all);
+  auto new_ovlp = work(4, all);
+  auto mf_factor = work(5, all);
+  auto hyb_weight = work(6, all);
+  w.getProperty(WEIGHT, weight);
+  w.getProperty(PHASE, phase);
+  w.getProperty(PSEUDO_ELOC_, pseudo_eloc);
+  w.getProperty(OVLP, ovlp);
+  new_ovlp = overlap(rng);
+  mf_factor = MFfactor(rng);
+  hyb_weight = hybrid_weight(rng);
 
-  w.getProperty(WEIGHT, work[0]);
-  w.getProperty(PHASE, work[1]);
-  w.getProperty(PSEUDO_ELOC_, work[2]);
-  w.getProperty(OVLP, work[3]);
-  using std::copy_n;
-  copy_n(overlap.origin(), nwalk, work[4].origin());
-  copy_n(MFfactor.origin(), nwalk, work[5].origin());
-  copy_n(hybrid_weight.origin(), nwalk, work[6].origin());
-
-  for (int i = 0; i < nwalk; i++)
-  {
-    ComplexType old_ovlp = work[3][i];
-    ComplexType old_eloc = work[2][i];
+  for (int i = 0; i < nwalk; i++) {
+    ComplexType old_ovlp = ovlp(i);
+    ComplexType old_eloc = pseudo_eloc(i);
     ComplexType eloc;
     ComplexType ratioOverlaps = ComplexType(1.0, 0.0);
-    eloc                      = work[5][i] / dt;
-    ComplexType factor        = std::exp(-dt * (0.5 * (eloc + old_eloc) - Eshift));
-  
-    if (debug_verbosity)
-    {
-      std::cout << " update: iw:       " <<i <<"\n"     
-        << "    eloc:          " << eloc << "\n"
-        << "    ov:            " << work[4][i] << "\n"
-        << "    old_ov:        " << old_ovlp << "\n"
-        << "    old_eloc:      " << old_eloc<< "\n"
-        << "    old_weight:    " << work[0][i] << "\n"
-        << "    ratio:         " << ratioOverlaps << "\n"
-        << "    MFfactor:      " << work[5][i] << "\n"
-        << "    hybrid_weight: " << work[6][i] << "\n"
-        << "    Eshift:         " << Eshift << "\n"
-        << "    factor:         " << factor << "\n"
-        << std::endl;
+    eloc = mf_factor(i) / dt;
+    ComplexType factor = std::exp(-dt * (0.5 * (eloc + old_eloc) - Eshift));
+
+    if (debug_verbosity) {
+      std::cout << " update: iw:       " << i << "\n"
+                << "    eloc:          " << eloc << "\n"
+                << "    ov:            " << new_ovlp(i) << "\n"
+                << "    old_ov:        " << old_ovlp << "\n"
+                << "    old_eloc:      " << old_eloc << "\n"
+                << "    old_weight:    " << weight(i) << "\n"
+                << "    ratio:         " << ratioOverlaps << "\n"
+                << "    MFfactor:      " << mf_factor(i) << "\n"
+                << "    hybrid_weight: " << hyb_weight(i) << "\n"
+                << "    Eshift:         " << Eshift << "\n"
+                << "    factor:         " << factor << "\n"
+                << std::endl;
     }
-    
-    work[0][i] *= std::abs(factor);
-    work[1][i] *= factor / std::abs(factor);
-    work[2][i] = eloc;
-    work[3][i] = work[4][i];
+
+    weight(i) *= std::abs(factor);
+    phase(i) *= factor / std::abs(factor);
+    pseudo_eloc(i) = eloc;
+    ovlp(i) = new_ovlp(i);
   }
 
-  w.setProperty(WEIGHT, work[0]);
-  w.setProperty(PHASE, work[1]);
-  w.setProperty(PSEUDO_ELOC_, work[2]);
-  w.setProperty(OVLP, work[3]);
-    
+  w.setProperty(WEIGHT, weight);
+  w.setProperty(PHASE, phase);
+  w.setProperty(PSEUDO_ELOC_, pseudo_eloc);
+  w.setProperty(OVLP, ovlp);
 }
 
-
-template<class Wlk, class OMat, class Mat, class WMat>
-void hybrid_walker_update(Wlk&& w,
-                          RealType dt,
-                          bool apply_constrain,
-                          bool imp_sampl,
-                          RealType Eshift,
-                          OMat&& overlap,
-                          Mat&& MFfactor,
-                          Mat&& hybrid_weight,
-                          WMat& work,
-			  double lower_cutoff_scale,
-			  double upper_cutoff_scale,
-			  bool symmetric_split)
-{
-    hybrid_walker_update(
-      w, 
-      dt, 
-      apply_constrain, 
-      imp_sampl, 
-      Eshift, 
-      overlap, 
-      MFfactor, 
-      hybrid_weight,
-      work, 
-      lower_cutoff_scale, 
-      upper_cutoff_scale, 
-      symmetric_split, 
-      false, // debug_verbosity 
-      false  // use_cp_constraint
-      );
-}
-
-template<class Wlk, class OMat, class Mat, class WMat>
-void hybrid_walker_update(Wlk&& w,
-                          RealType dt,
-                          bool apply_constrain,
-                          bool imp_sampl,
-                          RealType Eshift,
-                          OMat&& overlap,
-                          Mat&& MFfactor,
-                          Mat&& hybrid_weight,
-                          WMat& work,
-			  double lower_cutoff_scale,
-			  double upper_cutoff_scale,
-			  bool symmetric_split,
-        bool debug_verbosity) // KE: debug_verbosity may be used in any propagtor, use_cp_constraint is specific to models
-{                             //    so debug_verbosity should be bfore use_cp_constraint in the parameter list
-    hybrid_walker_update(
-      w, 
-      dt, 
-      apply_constrain, 
-      imp_sampl, 
-      Eshift, 
-      overlap, 
-      MFfactor, 
-      hybrid_weight,
-      work, 
-      lower_cutoff_scale, 
-      upper_cutoff_scale, 
-      symmetric_split, 
-      debug_verbosity,
-      false // use_cp_constraint
-      );
-}
-
-template<class Wlk, class OMat, class Mat, class WMat>
-void hybrid_walker_update(Wlk&& w,
-                          RealType dt,
-                          bool apply_constrain,
-                          bool imp_sampl,
-                          RealType Eshift,
-                          OMat&& overlap,
-                          Mat&& MFfactor,
-                          Mat&& hybrid_weight,
-                          WMat& work,
-                          double lower_cutoff_scale,
-                          double upper_cutoff_scale,
+template <class Wlk>
+void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
+                          bool imp_sampl, RealType Eshift,
+                          nda::MemoryVector auto &&overlap,
+                          nda::MemoryVector auto &&MFfactor,
+                          nda::MemoryVector auto &&hybrid_weight,
+                          double lower_cutoff_scale, double upper_cutoff_scale,
                           bool symmetric_split,
-                          bool debug_verbosity,
-                          bool use_cp_constraint)
-{
+                          bool step0, bool debug_verbosity,
+                          bool use_cp_constraint,
+                          BoundStats &eloc_stats) {
+  auto all = nda::range::all;
   int nwalk = w.size();
-  // constexpr if can be used to avoid the memory copy, by comparing the pointer types
-  // between WMat and Mat/OMat
-  if (work.size(0) < 11 || work.size(1) < nwalk)
-    work = WMat({11, nwalk}, work.get_allocator());
-
   bool BackProp = (w.getBPPos() >= 0 && w.getBPPos() < w.NumBackProp());
+  nda::range rng(nwalk);
+  memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(11, nwalk);
+  auto weight = work(0, all);
+  auto pseudo_eloc = work(1, all);
+  auto ovlp = work(2, all);
+  auto weight_factor = work(3, all);
+  auto new_ovlp = work(4, all);
+  auto mf_factor = work(5, all);
+  auto hyb_weight = work(6, all);
+  auto phase1 = work(7, all);
+  auto phase2 = work(8, all);
+  auto phase3 = work(9, all);
+  auto theta = work(10, all);
+  w.getProperty(WEIGHT, weight);
+  w.getProperty(PSEUDO_ELOC_, pseudo_eloc);
+  w.getProperty(OVLP, ovlp);
+  w.getProperty(PHASE1, phase1);
+  w.getProperty(PHASE2, phase2);
+  w.getProperty(PHASE3, phase3);
+  new_ovlp = overlap(rng);
+  mf_factor = MFfactor(rng);
+  hyb_weight = hybrid_weight(rng);
 
-  w.getProperty(WEIGHT, work[0]);
-  w.getProperty(PSEUDO_ELOC_, work[1]);
-  w.getProperty(OVLP, work[2]);
-  w.getProperty(PHASE1, work[7]);
-  w.getProperty(PHASE2, work[8]);
-  w.getProperty(PHASE3, work[9]);
-  using std::copy_n;
-  copy_n(overlap.origin(), nwalk, work[4].origin());
-  copy_n(MFfactor.origin(), nwalk, work[5].origin());
-  copy_n(hybrid_weight.origin(), nwalk, work[6].origin());
-
-  for (int i = 0; i < nwalk; i++)
-  {
-    ComplexType old_ovlp = work[2][i];
-    ComplexType old_eloc = work[1][i];
+  for (int i = 0; i < nwalk; i++) {
+    ComplexType old_ovlp = ovlp(i);
+    ComplexType old_eloc = pseudo_eloc(i);
     ComplexType eloc;
     RealType delta_theta;
-    RealType scale            = 1.0;
+    RealType scale = 1.0;
     ComplexType ratioOverlaps = ComplexType(1.0, 0.0);
 
     if (imp_sampl)
-    {
-      auto dbg_tmp1 = work[4][i];
-      ratioOverlaps = dbg_tmp1 / old_ovlp;
-    }
+      ratioOverlaps = std::exp(new_ovlp(i) - old_ovlp);
 
-    ComplexType ratioOverlaps_ = ratioOverlaps;
-    
-    if (!std::isfinite(ratioOverlaps.real()) && apply_constrain && imp_sampl)
-    {
+    if (!std::isfinite(ratioOverlaps.real()) && apply_constrain && imp_sampl) {
       scale = 0.0;
-      eloc  = old_eloc;
-    }
-    else
-    {
+      eloc = old_eloc;
+    } else {
       // save constraint theta for sanity checks
-      delta_theta = std::arg(ratioOverlaps) - work[5][i].imag();
-      work[10][i] = delta_theta;
-      if (use_cp_constraint)
-      {
-        // if real part of ratioOverlaps is positive, scale is 1.0 otherwise, scale is 0.0
+      delta_theta = std::arg(ratioOverlaps) - mf_factor(i).imag();
+      theta(i) = delta_theta;
+      if (use_cp_constraint) {
+        // if real part of ratioOverlaps is positive, scale is 1.0 otherwise,
+        // scale is 0.0
         scale = (std::cos(delta_theta) > 0.0 ? 1.0 : 0.0);
         ratioOverlaps = std::real(ratioOverlaps); // is this needed?
-      }
-      else 
-      {
+      } else {
         scale = (apply_constrain ? std::max(0.0, std::cos(delta_theta)) : 1.0);
       }
-      
-      if (imp_sampl)
-        eloc = (work[5][i] - work[6][i] - std::log(ratioOverlaps_)) / dt;
-      else
-        eloc = work[5][i] / dt;
+
+      if (imp_sampl) {
+        eloc = (mf_factor(i) - hyb_weight(i) - (new_ovlp(i) - old_ovlp)) / dt;
+      } else {
+        eloc = mf_factor(i) / dt;
+      }
     }
     ComplexType eloc_ = eloc;
 
-    if ((!std::isfinite(eloc.real())) || (std::abs(eloc.real()) < std::numeric_limits<RealType>::min()))
-    {
+    if (!std::isfinite(eloc.real())) {
       scale = 0.0;
-      eloc  = old_eloc;
-    }
-    else
-    {
-	eloc = ComplexType( std::max( std::min(eloc.real(), 
-			Eshift + upper_cutoff_scale * std::sqrt(2.0 / dt)), 
-			Eshift - lower_cutoff_scale * std::sqrt(2.0 / dt)), eloc.imag());
-    }
-    
-    if (debug_verbosity)
-    {
-    std::cout << " update: iw:       " <<i <<"\n"     
-              << "    eloc:          " << eloc << "\n"
-              << "    eloc_:         " << eloc_ << "\n"
-              << "    ov:            " << work[4][i] << "\n"
-              << "    old_ov:        " << old_ovlp << "\n"
-              << "    old_eloc:      " << old_eloc<< "\n"
-              << "    old_weight:    " << work[0][i] << "\n"
-              << "    ratio:         " << ratioOverlaps << "\n"
-              << "    MFfactor:      " << work[5][i] << "\n"
-              << "    hybrid_weight: " << work[6][i] << "\n"
-              << "    scale:         " << scale << "\n"
-              << "    Eshift:         " << Eshift << "\n"
-              << "    Theta:         " << work[10][i] << "\n"
-              << std::endl;
+      eloc = old_eloc;
+    } else {
+      RealType hi = Eshift + upper_cutoff_scale * std::sqrt(2.0 / dt);
+      RealType lo = Eshift - lower_cutoff_scale * std::sqrt(2.0 / dt);
+      ++eloc_stats.total;
+      if (eloc.real() > hi)
+        ++eloc_stats.upper;
+      else if (eloc.real() < lo)
+        ++eloc_stats.lower;
+      eloc = ComplexType(std::max(std::min(eloc.real(), hi), lo), eloc.imag());
     }
 
-    if(symmetric_split)
-      work[0][i] *= ComplexType(scale * std::exp(-dt * (0.5 * (eloc.real() + old_eloc.real()) - Eshift)), 0.0);
+    if (debug_verbosity) {
+      std::cout << " update: iw:       " << i << "\n"
+                << "    eloc:          " << eloc << "\n"
+                << "    eloc_:         " << eloc_ << "\n"
+                << "    ov:            " << new_ovlp(i) << "\n"
+                << "    old_ov:        " << old_ovlp << "\n"
+                << "    old_eloc:      " << old_eloc << "\n"
+                << "    old_weight:    " << weight(i) << "\n"
+                << "    ratio:         " << ratioOverlaps << "\n"
+                << "    MFfactor:      " << mf_factor(i) << "\n"
+                << "    hybrid_weight: " << hyb_weight(i) << "\n"
+                << "    scale:         " << scale << "\n"
+                << "    Eshift:         " << Eshift << "\n"
+                << "    Theta:         " << theta(i) << "\n"
+                << std::endl;
+    }
+
+    if (symmetric_split) {
+      if(step0)
+          weight(i) *= ComplexType(
+            scale *
+                std::exp(-dt * (eloc.real() - Eshift)),
+            0.0);
+      else
+        weight(i) *= ComplexType(
+            scale *
+                std::exp(-dt * (0.5 * (eloc.real() + old_eloc.real()) - Eshift)),
+            0.0);
+      }
     else
-      work[0][i] *= ComplexType(scale * std::exp(-dt * (eloc.real() - Eshift)), 0.0);
-    work[1][i] = eloc;
-    work[2][i] = work[4][i];
-    if (scale !=0)
-      work[3][i] = std::exp(-ComplexType(0.0, dt) * (0.5 * (eloc.imag() + old_eloc.imag()))) / scale;
+      weight(i) *=
+          ComplexType(scale * std::exp(-dt * (eloc.real() - Eshift)), 0.0);
+    pseudo_eloc(i) = eloc;
+    ovlp(i) = new_ovlp(i);
+    if (std::abs(scale) > std::numeric_limits<RealType>::min()) {
+      weight_factor(i) = std::exp(-ComplexType(0.0, dt) * eloc.imag()) / scale;
+    }
     else
-      work[3][i] = 0.0;
-    work[7][i] *= work[3][i]; 
-    work[8][i] = work[4][i]; 
-    work[9][i] = scale; // KE: this was originally the cumulative product of "scale"
-                        //    changed to just "scale" since this isn't used anywhere 
+      weight_factor(i) = 0.0;
+    phase1(i) *= weight_factor(i);
+    phase2(i) = new_ovlp(i);
+    phase3(i) =
+        scale; // KE: this was originally the cumulative product of "scale"
+               //    changed to just "scale" since this isn't used anywhere
   }
-  w.setProperty(WEIGHT, work[0]);
-  w.setProperty(PSEUDO_ELOC_, work[1]);
-  w.setProperty(OVLP, work[2]);
-  w.setProperty(PHASE1, work[7]);
-  w.setProperty(PHASE2, work[8]);
-  w.setProperty(PHASE3, work[9]);
-  w.setProperty(THETA, work[10]);
-  if (BackProp)
-  {
-    auto&& WFac((*w.getWeightFactors())[w.getHistoryPos()]);
-    using std::copy_n;
-    copy_n(work[3].origin(), nwalk, WFac.origin());
-    auto&& WHis((*w.getWeightHistory())[w.getHistoryPos()]);
-    copy_n(work[0].origin(), nwalk, WHis.origin());
+  w.setProperty(WEIGHT, weight);
+  w.setProperty(PSEUDO_ELOC_, pseudo_eloc);
+  w.setProperty(OVLP, ovlp);
+  w.setProperty(PHASE1, phase1);
+  w.setProperty(PHASE2, phase2);
+  w.setProperty(PHASE3, phase3);
+  w.setProperty(THETA, theta);
+  if (BackProp) {
+    auto pos = w.getHistoryPos();
+    auto WFac = w.getWeightFactors();
+    WFac(all, pos) = weight_factor;
+    auto WHis = w.getWeightHistory();
+    WHis(all, pos) = weight;
   }
 }
 
-template<class Wlk, class EMat, class OMat, class Mat, class WMat>
-void local_energy_walker_update(Wlk&& w,
-                                RealType dt,
-                                bool apply_constrain,
+template <class Wlk>
+void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constrain,
                                 RealType Eshift,
-                                OMat&& overlap,
-                                EMat&& energies,
-                                Mat&& MFfactor,
-                                [[maybe_unused]] Mat&& hybrid_weight,
-                                WMat& work,
-				double lower_cutoff_scale,
-				double upper_cutoff_scale)
-{
+                                nda::MemoryVector auto &&overlap,
+                                nda::MemoryMatrix auto &&energies,
+                                nda::MemoryVector auto &&MFfactor,
+                                double lower_cutoff_scale,
+                                double upper_cutoff_scale,
+                                BoundStats &eloc_stats) {
+  auto all = nda::range::all;
   int nwalk = w.size();
-  // constexpr if can be used to avoid the memory copy, by comparing the pointer types
-  // between WMat and Mat/OMat
-  if (work.size(0) < 14 || work.size(1) < nwalk)
-    work = WMat({14, nwalk}, work.get_allocator());
-
   bool BackProp = (w.getBPPos() >= 0 && w.getBPPos() < w.NumBackProp());
+  nda::range rng(nwalk);
+  memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(14, nwalk);
+  auto weight = work(0, all);
+  auto pseudo_eloc = work(1, all);
+  auto ovlp = work(2, all);
+  auto e1 = work(3, all);
+  auto exx = work(4, all);
+  auto ej = work(5, all);
+  auto weight_factor = work(6, all);
+  auto new_ovlp = work(7, all);
+  auto mf_factor = work(8, all);
+  auto new_e1 = work(9, all);
+  auto new_exx = work(10, all);
+  auto new_ej = work(11, all);
+  auto phase = work(12, all);
+  auto theta = work(13, all);
+  w.getProperty(WEIGHT, weight);
+  w.getProperty(PSEUDO_ELOC_, pseudo_eloc);
+  w.getProperty(OVLP, ovlp);
+  w.getProperty(E1_, e1);
+  w.getProperty(EXX_, exx);
+  w.getProperty(EJ_, ej);
+  w.getProperty(PHASE, phase);
+  new_ovlp = overlap(rng);
+  mf_factor = MFfactor(rng);
+  new_e1 = energies(rng, 0);
+  new_exx = energies(rng, 1);
+  new_ej = energies(rng, 2);
 
-  w.getProperty(WEIGHT, work[0]);
-  w.getProperty(PSEUDO_ELOC_, work[1]);
-  w.getProperty(OVLP, work[2]);
-  w.getProperty(E1_, work[3]);
-  w.getProperty(EXX_, work[4]);
-  w.getProperty(EJ_, work[5]);
-  w.getProperty(PHASE, work[12]);
-  using std::copy_n;
-  copy_n(overlap.origin(), nwalk, work[7].origin());
-  copy_n(MFfactor.origin(), nwalk, work[8].origin());
-  ma::copy(energies({0, nwalk}, 0), work[9]);
-  ma::copy(energies({0, nwalk}, 1), work[10]);
-  ma::copy(energies({0, nwalk}, 2), work[11]);
+  for (int i = 0; i < nwalk; i++) {
+    ComplexType old_ovlp = ovlp(i);
+    ComplexType old_eloc = pseudo_eloc(i);
+    ComplexType eloc = new_e1(i) + new_exx(i) + new_ej(i);
+    RealType scale = 1.0;
+    ComplexType ratioOverlaps = std::exp(new_ovlp(i) - old_ovlp);
 
-  for (int i = 0; i < nwalk; i++)
-  {
-    ComplexType old_ovlp      = work[2][i];
-    ComplexType old_eloc      = work[1][i];
-    ComplexType eloc          = work[9][i] + work[10][i] + work[11][i];
-    RealType scale            = 1.0;
-    ComplexType ratioOverlaps = work[7][i] / old_ovlp;
-
-    if (!std::isfinite((ratioOverlaps * work[8][i]).real()) && apply_constrain)
-    {
+    if (!std::isfinite((ratioOverlaps * mf_factor(i)).real()) &&
+        apply_constrain) {
       scale = 0.0;
-      eloc  = old_eloc;
+      eloc = old_eloc;
+    } else {
+      theta(i) = std::arg(ratioOverlaps) - mf_factor(i).imag();
+      scale =
+          (apply_constrain ? (std::max(0.0, std::cos(std::arg(ratioOverlaps) -
+                                                     mf_factor(i).imag())))
+                           : 1.0);
     }
-    else
-    { 
-      work[13][i] = std::arg(ratioOverlaps) - work[8][i].imag();
-      scale = (apply_constrain ? (std::max(0.0, std::cos(std::arg(ratioOverlaps) - work[8][i].imag()))) : 1.0);
-    }
-    if ((!std::isfinite(eloc.real())) || (std::abs(eloc.real()) < std::numeric_limits<RealType>::min()))
-    {
+    if (!std::isfinite(eloc.real())) {
       scale = 0.0;
-      eloc  = old_eloc;
-    }
-    else
-    {
-      eloc = ComplexType( std::max( std::min(eloc.real(), 
-			Eshift + upper_cutoff_scale * std::sqrt(2.0 / dt)), 
-			Eshift - lower_cutoff_scale * std::sqrt(2.0 / dt)), eloc.imag());
+      eloc = old_eloc;
+    } else {
+      RealType hi = Eshift + upper_cutoff_scale * std::sqrt(2.0 / dt);
+      RealType lo = Eshift - lower_cutoff_scale * std::sqrt(2.0 / dt);
+      ++eloc_stats.total;
+      if (eloc.real() > hi)
+        ++eloc_stats.upper;
+      else if (eloc.real() < lo)
+        ++eloc_stats.lower;
+      eloc = ComplexType(std::max(std::min(eloc.real(), hi), lo), eloc.imag());
     }
 
-    work[0][i] *= ComplexType(scale * std::exp(-dt * (0.5 * (eloc.real() + old_eloc.real()) - Eshift)), 0.0);
-    work[6][i] = std::exp(-ComplexType(0.0, dt) * (0.5 * (eloc.imag() + old_eloc.imag()))) / scale;
-    work[12][i] *= work[6][i]; 
-    work[1][i] = eloc;
-    work[2][i] = work[7][i];
-    work[3][i] = work[9][i];
-    work[4][i] = work[10][i];
-    work[5][i] = work[11][i];
+    weight(i) *= ComplexType(
+        scale *
+            std::exp(-dt * (0.5 * (eloc.real() + old_eloc.real()) - Eshift)),
+        0.0);
+    if (std::abs(scale) > std::numeric_limits<RealType>::min()) {
+      weight_factor(i) = std::exp(-ComplexType(0.0, dt) *
+                                (0.5 * (eloc.imag() + old_eloc.imag()))) /
+                       scale;
+    } else {
+      weight_factor(i) = 0.0;
+    }
+    phase(i) *= weight_factor(i);
+    pseudo_eloc(i) = eloc;
+    ovlp(i) = new_ovlp(i);
+    e1(i) = new_e1(i);
+    exx(i) = new_exx(i);
+    ej(i) = new_ej(i);
   }
 
-  w.setProperty(WEIGHT, work[0]);
-  w.setProperty(PSEUDO_ELOC_, work[1]);
-  w.setProperty(OVLP, work[2]);
-  w.setProperty(E1_, work[3]);
-  w.setProperty(EXX_, work[4]);
-  w.setProperty(EJ_, work[5]);
-  w.setProperty(PHASE, work[12]);
-  w.setProperty(THETA, work[13]);
-  if (BackProp)
-  {
-    auto&& WFac((*w.getWeightFactors())[w.getHistoryPos()]);
-    using std::copy_n;
-    copy_n(work[6].origin(), nwalk, WFac.origin());
-    auto&& WHis((*w.getWeightHistory())[w.getHistoryPos()]);
-    copy_n(work[0].origin(), nwalk, WHis.origin());
+  w.setProperty(WEIGHT, weight);
+  w.setProperty(PSEUDO_ELOC_, pseudo_eloc);
+  w.setProperty(OVLP, ovlp);
+  w.setProperty(E1_, e1);
+  w.setProperty(EXX_, exx);
+  w.setProperty(EJ_, ej);
+  w.setProperty(PHASE, phase);
+  w.setProperty(THETA, theta);
+  if (BackProp) {
+    auto pos = w.getHistoryPos();
+    auto WFac = w.getWeightFactors();
+    WFac(all, pos) = weight_factor;
+    auto WHis = w.getWeightHistory();
+    WHis(all, pos) = weight;
   }
 }
 
 } // namespace afqmc
 
 } // namespace sfqmc
-
-#endif

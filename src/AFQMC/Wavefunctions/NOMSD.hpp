@@ -14,25 +14,26 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_NOMSD_H
-#define SFQMC_AFQMC_NOMSD_H
+#pragma once
 
+#include <iostream>
 #include <vector>
-//#include <map>
 #include <string>
-//#include <iostream>
 #include <tuple>
 
-#include "io/ptree/ptree_utilities.hpp"
-//#include "AFQMC/Utilities/readWfn.h"
 #include "AFQMC/config.h"
-#include "mpi3/shm/mutex.hpp"
-#include "AFQMC/Utilities/taskgroup.h"
+#include "numerics/shared_array/const_shared_array.hpp"
+#include "utilities/check.hpp"
+#include "utilities/check_strides.hpp"
+#include "AFQMC/parameters.hpp"
+#include "numerics/sparse/csr_utils.hpp"
+#include "AFQMC/Utilities/AFQMCTimer.h"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
-//#include "Memory/buffer_managers.h"
+#include "AFQMC/Walkers/WalkerSet.hpp"
 
-#include "AFQMC/HamiltonianOperations/HamiltonianOperations.hpp"
-#include "AFQMC/SlaterDeterminantOperations/SlaterDetOperations.hpp"
+#include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
+#include "AFQMC/SlaterDeterminantOperations/density_matrix.hpp"
+#include "numerics/operations/product.hpp"
 
 namespace sfqmc
 {
@@ -45,184 +46,67 @@ namespace afqmc
  * Designed for non-orthogonal MSD expansions. 
  * For particle-hole orthogonal MSD wfns, use FastMSD.
  */
-template<bool MP, class devPsiT>
-class NOMSD : public AFQMCInfo
+template<MEMORY_SPACE MEM, class devPsiT>
+class NOMSD
 {
-  // Note:
-  // if number_of_devices > 0, nextra should always be 0,
-  // so code doesn't need to be portable in places guarded by if(nextra>0)
-
-  // allocators
-  using Allocator        = device_allocator<ComplexType>;
-  using Allocator_shared = localTG_allocator<ComplexType>;
-
-  // type defs
-  using pointer              = typename std::allocator_traits<Allocator>::pointer;
-  using const_pointer        = typename std::allocator_traits<Allocator>::const_pointer;
-  using pointer_shared       = typename std::allocator_traits<Allocator_shared>::pointer;
-  using const_pointer_shared = typename std::allocator_traits<Allocator_shared>::const_pointer;
-
-  using buffer_alloc_type     = DeviceBufferManager::template allocator_t<ComplexType>;
-  using shm_buffer_alloc_type = LocalTGBufferManager::template allocator_t<ComplexType>;
-
-  using CVector      = boost::multi::array<ComplexType, 1, Allocator>;
-  using CMatrix      = boost::multi::array<ComplexType, 2, Allocator>;
-  using CTensor      = boost::multi::array<ComplexType, 3, Allocator>;
-  using CVector_ref  = boost::multi::array_ref<ComplexType, 1, pointer>;
-  using CMatrix_ref  = boost::multi::array_ref<ComplexType, 2, pointer>;
-  using CMatrix_ptr  = boost::multi::array_ptr<ComplexType, 2, pointer>;
-  using CMatrix_cref = boost::multi::array_ref<const ComplexType, 2, const_pointer>;
-  using CTensor_ref  = boost::multi::array_ref<ComplexType, 3, pointer>;
-  using CTensor_cref = boost::multi::array_ref<const ComplexType, 3, const_pointer>;
-  using shmCVector   = boost::multi::array<ComplexType, 1, Allocator_shared>;
-  using shmCMatrix   = boost::multi::array<ComplexType, 2, Allocator_shared>;
-  using shared_mutex = boost::mpi3::shm::mutex;
-
-  using stdCVector  = boost::multi::array<ComplexType, 1>;
-  using stdCMatrix  = boost::multi::array<ComplexType, 2>;
-  using stdCTensor  = boost::multi::array<ComplexType, 3>;
-  using mpi3CVector = boost::multi::array<ComplexType, 1, shared_allocator<ComplexType>>;
-  using mpi3CMatrix = boost::multi::array<ComplexType, 2, shared_allocator<ComplexType>>;
-  using mpi3CTensor = boost::multi::array<ComplexType, 3, shared_allocator<ComplexType>>;
-
-  using stdCMatrix_ref = boost::multi::array_ref<ComplexType, 2>;
-
-  using StaticVector  = boost::multi::static_array<ComplexType, 1, buffer_alloc_type>;
-  using StaticMatrix  = boost::multi::static_array<ComplexType, 2, buffer_alloc_type>;
-  using Static3Tensor = boost::multi::static_array<ComplexType, 3, buffer_alloc_type>;
-
-  using StaticSHMVector = boost::multi::static_array<ComplexType, 1, shm_buffer_alloc_type>;
-  using StaticSHMMatrix = boost::multi::static_array<ComplexType, 2, shm_buffer_alloc_type>;
-  using StaticSHM3Tensor = boost::multi::static_array<ComplexType, 3, shm_buffer_alloc_type>;
-  using StaticSHM4Tensor = boost::multi::static_array<ComplexType, 4, shm_buffer_alloc_type>;
 
 public:
-  template<class MType>
-  NOMSD(AFQMCInfo& info,
-        ptree pt_in,
-        afqmc::TaskGroup_& tg_,
-        SlaterDetOperations&& sdet_,
-        HamiltonianOperations<MP>&& hop_,
-        std::vector<ComplexType>&& ci_,
-        std::vector<MType>&& orbs_,
+
+  NOMSD() = delete;
+
+  NOMSD(const WavefunctionParameters& params,
+        int NMO_, int nup_, int ndown_,
         WALKER_TYPES wlk,
-        ComplexType nce,
+        std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,
+        HamiltonianOperations<MEM>&& hop_,
+        nda::array<ComplexType,1>&& ci_,
+        nda::array<devPsiT,2>&& orbs_,
         [[maybe_unused]] int targetNW = 1)
-      : AFQMCInfo(info),
-        TG(tg_),
-        alloc_(), // right now device_allocator is default constructible
-        alloc_shared_(make_localTG_allocator<ComplexType>(TG)),
-        buffer_manager(),
-        shm_buffer_manager(),
-        host_buffer_manager(),
-        SDetOp(std::move(sdet_)),
+      : mpi(_mpi),
+        walker_type(wlk),
+        NMO{NMO_}, nup{nup_}, ndown{ndown_},
         HamOp(std::move(hop_)),
         ci(std::move(ci_)),
-        OrbMats(move_vector<devPsiT>(std::move(orbs_))),
-        RefOrbMats({0, 0}, shared_allocator<ComplexType>{TG.Node()}),
-        mutex(std::make_unique<shared_mutex>(TG.TG_local())),
-        walker_type(wlk),
-        nspins((walker_type == COLLINEAR) ? (2) : (1)),
-        number_of_references(-1),
-        NuclearCoulombEnergy(nce),
-        last_number_extra_tasks(-1),
-        last_task_index(-1),
-        local_group_comm(),
-        shmbuff_for_G(nullptr)
+        OrbMats(std::move(orbs_))
   {
-    compact_G_for_vbias     = (ci.size() == 1); // this should be input, since it is determined by HOps
-    transposed_G_for_vbias_ = HamOp.transposed_G_for_vbias();
-    transposed_G_for_E_     = HamOp.transposed_G_for_E();
-    transposed_vHS_         = HamOp.transposed_vHS();
-
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(2,"\nNOMSD input:\n{}\n",io::to_string(pt));
-    // initialize using verbose input
-    bool rediag;
-    nbatch = pt.get<int>("nbatch");
-    number_of_references = pt.get<int>("number_of_references");
-    rediag = pt.get<bool>("rediag");
-
-    if (rediag)
-      recompute_ci();
-
-  }
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    bool rediag; 
-    int number_of_references, nbatch; 
-    int nbatch_default    = ((number_of_devices() > 0) ? -1 : 0);
-    nbatch    = pt0.get<int>("nbatch", nbatch_default);
-    number_of_references = pt0.get<int>("number_of_references", -1);
-    rediag         = pt0.get<bool>("rediag", false);
-    // validate inputs
-    if ((omp_get_num_threads() > 1) && (nbatch == 0))
-    {
-      app_warning(" WARNING!!!: Found OMP_NUM_THREADS > 1 with nbatch=0.");
-      app_warning("             This will lead to low performance. Set nbatch. ");
+    utils::check(OrbMats.extent(0) == ci.size(), "Size mismatch");
+    if (params.rediag) {
+      utils::check(false,"finish");
+      //recompute_ci();
     }
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("nbatch", nbatch);
-    pt1.put("number_of_references", number_of_references);
-    pt1.put("rediag", rediag);
-    std::unordered_set<std::string> pass_through_keys = {
-      "system",
-      "name",
-      "ndets_to_read",
-      "restart_file",
-      "filename"
-    };
-    io::compare_known_keys("Non-orthogonal multi-Slater det. (NOMSD) Wavefunction",pt1, pt0,pass_through_keys);
-    return pt1;
   }
 
-  ~NOMSD() {}
+  int number_of_cholesky_vectors() const { return HamOp.number_of_cholesky_vectors(); }
 
-  NOMSD(NOMSD const& other) = delete;
-  NOMSD& operator=(NOMSD const& other) = delete;
-  NOMSD(NOMSD&& other)                 = default;
-  NOMSD& operator=(NOMSD&& other) = delete;
-
-  int local_number_of_cholesky_vectors() const { return HamOp.local_number_of_cholesky_vectors(); }
-  int global_number_of_cholesky_vectors() const { return HamOp.global_number_of_cholesky_vectors(); }
-  int global_origin_cholesky_vector() const { return HamOp.global_origin_cholesky_vector(); }
-  bool distribution_over_cholesky_vectors() const { return HamOp.distribution_over_cholesky_vectors(); }
-  bool spin_dependent_vHS() const { return HamOp.spin_dependent_vHS(); };
-
-  int size_of_G_for_vbias() const { return dm_size(!compact_G_for_vbias); }
-
-  bool transposed_G_for_vbias() const { return transposed_G_for_vbias_; }
-  bool transposed_G_for_E() const { return transposed_G_for_E_; }
-  bool transposed_vHS() const { return transposed_vHS_; }
   WALKER_TYPES getWalkerType() const { return walker_type; }
 
-  template<class Vec>
-  void vMF(Vec&& v, double dt);
+  bool isFiniteTemperature() const { return false; }
 
-  template<class Mat>
-  void G_MF(Mat&& G);
+  /*
+   * Returns the memory space.
+   */
+  constexpr auto get_memory_space() const { return MEM; }
 
-  SlaterDetOperations* getSlaterDetOperations() { return std::addressof(SDetOp); }
-  template<class... Args>
-  void generalizedFockMatrix(Args&&... args)
+  /*
+   *  Performs runtime optimizations.
+   */       
+  void runtime_optimization(WalkerSet<MEM>& wset);
+
+  /*
+   * Expectation value of Hubbard-Stratonovich potential with respect to trial wave-function.
+   */
+  void vMF(memory::array_view<MEM,ComplexType,1> v, double dt);
+
+  /*
+   * Green function of the trial wave-funtion. 
+   */
+  memory::const_shared_array<HOST_MEMORY,ComplexType,3> G_MF();
+
+  HamiltonianTypes getHamType() const { return HamOp.getHamType(); }
+
+  auto getFieldTypes()
   {
-    HamOp.generalizedFockMatrix(std::forward<Args>(args)...); 
-    TG.TG_local().barrier();
-  }
-
-  HamiltonianTypes getHamType()
-  {
-    return HamOp.getHamType(); 
-  }
-
-  template<class... Args>
-  void getFieldTypes(Args&&... args)
-  {
-    HamOp.getFieldTypes(std::forward<Args>(args)...);
+    return HamOp.getFieldTypes();
   }
 
   template<class... Args>
@@ -231,477 +115,550 @@ public:
     HamOp.update_potentials(std::forward<Args>(args)...);
   }
 
+  auto vHS_dims() const { return HamOp.vHS_dims(); }
+
   template<class... Args>
   auto getOneBodyPropagatorMatrix(Args&&... args)
-  //multi::array<ComplexType, 2> getOneBodyPropagatorMatrix(Args&&... args)
   {
     return HamOp.getOneBodyPropagatorMatrix(std::forward<Args>(args)...);
   }
 
   template<class... Args>
   auto vHS_sparse(Args&&... args)
-  //std::tuple<dev_csr_Matrix<ComplexType> const*, dev_csr_Matrix<ComplexType> const*> vHS_sparse(Args&&... args)
   {
     return HamOp.vHS_sparse(std::forward<Args>(args)...);
   }
 
+  /*
+   * Calculates the bias potential.
+   */
+  void vbias(WalkerSet<MEM>& wset, memory::array_view<MEM,ComplexType,2> v,
+             double dt, int nt = 0);
 
   /*
-     * local contribution to vbias for the Green functions in G 
-     * G: [size_of_G_for_vbias()][nW]
-     * v: [local # Chol. Vectors][nW]
-     */
-  template<class MatG, class MatA>
-  void vbias(const MatG& G, MatA&& v, double dt, double a = 1.0)
+   * Returns the Hubbard-Stratonovich potential. 
+   *  Input:
+   *    - X: [# chol vecs][nW]
+   *  Output:
+   *    - vHS
+   */
+  template<nda::MemoryMatrix X>
+  auto vHS(X && x, double dt )
   {
-    if (transposed_G_for_vbias_)
-    {
-      RUNTIME_CHECK(G.size(0) == v.size(1), "");
-      RUNTIME_CHECK(G.size(1) == size_of_G_for_vbias(), "");
-    }
-    else
-    {
-      RUNTIME_CHECK(G.size(0) == size_of_G_for_vbias(), "");
-      RUNTIME_CHECK(G.size(1) == v.size(1), "");
-    }
-    RUNTIME_CHECK(v.size(0) == HamOp.local_number_of_cholesky_vectors(), "");
-    // special case:
-    if( (HamOp.getHamType() != ModelHamiltonian) and
-        (walker_type == COLLINEAR)  and
-        (ci.size() > 1) ) {
-      // expects either alpha or beta in spin independent HamOps, so must be called twice
-      if (transposed_G_for_vbias_)
-      {
-        HamOp.vbias(G(G.extension(0) ,{0, NMO * NMO}), std::forward<MatA>(v), dt, a, 0.0);
-        HamOp.vbias(G(G.extension(0) ,{NMO * NMO, 2 * NMO * NMO} ), std::forward<MatA>(v), dt, a, 1.0);
-      } else {
-        HamOp.vbias(G.sliced(0, NMO * NMO), std::forward<MatA>(v), dt, a, 0.0);
-        HamOp.vbias(G.sliced(NMO * NMO, 2 * NMO * NMO), std::forward<MatA>(v), dt, a, 1.0);
-      }
-    } else {
-      HamOp.vbias(G, std::forward<MatA>(v), dt, a);
-    }
-    TG.TG_local().barrier();
+    utils::check(x.extent(1) == HamOp.number_of_cholesky_vectors(), "Shape mismatch");
+    return HamOp.vHS(std::forward<X>(x), dt);
   }
 
   /*
-     * local contribution to vHS for the Green functions in G 
-     * X: [# chol vecs][nW]
-     * v: [NMO^2][nW] / [nW]NMO^2] depending on layout
-     * For spin dependent interactions: 
-     * v: [2][NMO^2][nW] / [2][nW]NMO^2] depending on layout
-     * Dimensionality of v determines the assumed spin dependency (or lack of)
-     */
-  template<class MatX, class MatA>
-  void vHS(MatX&& X, MatA&& v, double dt, double a = 1.0 )
-  {
-    RUNTIME_CHECK(X.size(0) == HamOp.local_number_of_cholesky_vectors(), "");
-    [[maybe_unused]] int nspin = (spin_dependent_vHS()?2:1);
-    if (transposed_vHS_)
-      RUNTIME_CHECK(X.size(1)*nspin == v.size(0), "");
-    else
-      RUNTIME_CHECK(X.size(1)*nspin == v.size(1), "");
-    HamOp.vHS(std::forward<MatX>(X), std::forward<MatA>(v), dt, a);
-    TG.TG_local().barrier();
-  }
+   * Calculates the local energy and overlaps of all the walkers in the set and stores
+   * them in the wset data
+   */
+  void Energy(WalkerSet<MEM>& wset, int nt = 0);
 
   /*
-     * Calculates the local energy and overlaps of all the walkers in the set and stores
-     * them in the wset data
-     */
-  template<class WlkSet>
-  void Energy(WlkSet& wset)
-  {
-    int nw = wset.size();
-    StaticVector ovlp(iextensions<1u>{nw}, 
-                      buffer_manager.get_generator().template get_allocator<ComplexType>());
-    StaticMatrix eloc({nw, 3}, 
-                      buffer_manager.get_generator().template get_allocator<ComplexType>());
-    Energy(wset, eloc, ovlp);
-    TG.TG_local().barrier();
-    if (TG.getLocalTGRank() == 0)
-    {
-      wset.setProperty(OVLP, ovlp);
-      wset.setProperty(E1_, eloc(eloc.extension(), 0));
-      wset.setProperty(EXX_, eloc(eloc.extension(), 1));
-      wset.setProperty(EJ_, eloc(eloc.extension(), 2));
-    }
-    TG.TG_local().barrier();
-  }
+   * Calculates the local energy and overlaps of all the walkers in the set and 
+   * returns them in the appropriate data structures
+   */
+  void Energy(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E,
+              memory::array_view<MEM,ComplexType,1> Ov, int nt = 0);
 
   /*
-     * Calculates the local energy and overlaps of all the walkers in the set and 
-     * returns them in the appropriate data structures
-     */
-  template<class WlkSet, class Mat, class TVec>
-  void Energy(const WlkSet& wset, Mat&& E, TVec&& Ov)
-  {
-    if (TG.getNGroupsPerTG() > 1)
-      Energy_distributed(wset, std::forward<Mat>(E), std::forward<TVec>(Ov));
-    else
-      Energy_shared(wset, std::forward<Mat>(E), std::forward<TVec>(Ov));
-  }
+   * Calculates the mixed density matrix for all walkers in the walker set. 
+   * Options:
+   *  - compact:   If true (default), returns compact form with Dim: [NEL*NMO], 
+   *                 otherwise returns full form with Dim: [NMO*NMO]. 
+   */ 
+  void MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> G,
+                          bool compact = true);
+
+  void MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> G,
+                          memory::array_view<MEM,ComplexType,1> Ov, bool compact = true);
 
   /*
-     * Calculates the mixed density matrix for all walkers in the walker set. 
-     * Options:
-     *  - compact:   If true (default), returns compact form with Dim: [NEL*NMO], 
-     *                 otherwise returns full form with Dim: [NMO*NMO]. 
-     *  - transpose: If false (default), returns standard form with Dim: [XXX][nW]
-     *                 otherwise returns the transpose with Dim: [nW][XXX}
-     */
-  template<class WlkSet, class MatG>
-  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, bool compact = true, bool transpose = false)
-  {
-    int nw = wset.size();
-    StaticVector ovlp(iextensions<1u>{nw}, buffer_manager.get_generator().template get_allocator<ComplexType>());
-    MixedDensityMatrix(wset, std::forward<MatG>(G), ovlp, compact, transpose);
-  }
-
-  template<class WlkSet, class MatG, class TVec>
-  void MixedDensityMatrix(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true, bool transpose = false)
-  {
-    if (nbatch != 0) {
-      if( ci.size() > 1 ) {
-        MixedDensityMatrix_batched(wset, std::forward<MatG>(G), std::forward<TVec>(Ov), 
-                                   compact, transpose);
-      } else {
-        int ispin = (walker_type == COLLINEAR ? 1 : 0);
-        DensityMatrix_batched(wset, OrbMats[0], OrbMats[ispin], std::forward<MatG>(G), 
-                              std::forward<TVec>(Ov), true, compact, transpose);
-      }
-    } else {
-      MixedDensityMatrix_shared(wset, std::forward<MatG>(G), std::forward<TVec>(Ov), 
-                                compact, transpose);
-    }
-  }
+   * Calculates the density matrix with respect to a given Reference
+   * for all walkers in the walker set. 
+   */
+  template<class WlkSet, nda::MemoryVector RVec, nda::MemoryMatrix MatG, nda::MemoryVector TVec>
+  void DensityMatrix(const WlkSet& wset, RVec&& Ref, MatG&& G, TVec&& Ov, 
+                     bool compact = true, bool herm = true);
 
   /*
-     * Calculates the density matrix with respect to a given Reference
-     * for all walkers in the walker set. 
-     */
-  template<class WlkSet, class MatA, class MatB, class MatG, class TVec>
-  void DensityMatrix(const WlkSet& wset,
-                     MatA&& RefA,
-                     MatB&& RefB,
-                     MatG&& G,
-                     TVec&& Ov,
-                     bool herm,
-                     bool compact,
-                     bool transposed)
-  {
-    if (nbatch != 0)
-      DensityMatrix_batched(wset, std::forward<MatA>(RefA), std::forward<MatB>(RefB), std::forward<MatG>(G),
-                            std::forward<TVec>(Ov), herm, compact, transposed);
-    else
-      DensityMatrix_shared(wset, std::forward<MatA>(RefA), std::forward<MatB>(RefB), std::forward<MatG>(G),
-                           std::forward<TVec>(Ov), herm, compact, transposed);
-  }
+   * Calculates the overlaps of all walkers in the set. Returns values in arrays. 
+   */
+  void Log_Overlap(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,1> Ov,
+                   int nt = 0);
 
   /*
-     * Calculates the mixed density matrix for all walkers in the walker set
-     *   with a format consistent with (and expected by) the vbias routine.
-     * This is implementation dependent, so this density matrix should ONLY be used
-     * in conjunction with vbias. 
-     */
-  template<class WlkSet, class MatG>
-  void MixedDensityMatrix_for_vbias(const WlkSet& wset, MatG&& G)
-  {
-    int nw = wset.size();
-    StaticVector ovlp(iextensions<1u>{nw}, buffer_manager.get_generator().template get_allocator<ComplexType>());
-    MixedDensityMatrix(wset, std::forward<MatG>(G), ovlp, compact_G_for_vbias, transposed_G_for_vbias_);
-  }
+   * Calculates the overlaps of all walkers in the set. Updates values in wset. 
+   */
+  void Log_Overlap(WalkerSet<MEM>& wset);
 
   /*
-     * Calculates the overlaps of all walkers in the set. Returns values in arrays. 
-     */
-  template<class WlkSet, class TVec>
-  void Overlap(const WlkSet& wset, TVec&& Ov)
-  {
-    if (nbatch != 0) {
-      if(ci.size() > 1) {
-        Overlap_batched(wset, std::forward<TVec>(Ov));
-      } else {
-        Overlap_batched_single_det(wset, std::forward<TVec>(Ov));
-      }
-    } else {
-      Overlap_shared(wset, std::forward<TVec>(Ov));
-    }
-  }
+   * Calculates Green functions and calls Observables.
+   */
+  template<class WlkSet, class Observable>
+  void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
+        std::vector<Observable>& properties_1body, std::vector<Observable>& properties, 
+        nda::MemoryArrayOfRank<4> auto* X, nda::MemoryArrayOfRank<4> auto* Yc, 
+        nda::MemoryArrayOfRank<4> auto* M, bool time_evolved, bool importanceSampling=true);
 
   /*
-     * Calculates the overlaps of all walkers in the set. Updates values in wset. 
-     */
-  template<class WlkSet>
-  void Overlap(WlkSet& wset)
+   * Calculates Green functions and calls Observables.
+   */
+  template<class WlkSet, class Observable>
+  void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
+        std::vector<Observable>& properties_1body,
+        std::vector<Observable>& properties, bool importanceSampling = true)
   {
-    int nw = wset.size();
-    StaticVector ovlp(iextensions<1u>{nw}, buffer_manager.get_generator().template get_allocator<ComplexType>());
-    Overlap(wset, ovlp);
-    TG.TG_local().barrier();
-    if (TG.getLocalTGRank() == 0)
-    {
-      wset.setProperty(OVLP, ovlp);
-    }
-    TG.TG_local().barrier();
-  }
-
-  template<class... Args>
-  void accumulate_estimators(Args&&... args)
-  {
-    if(ci.size()>1)
-      accumulate_estimators_general_impl(std::forward<Args>(args)...);
-    else
-      accumulate_estimators_single_ref_impl(std::forward<Args>(args)...);    
-  }
-
-  /*
-     * Returns the number of reference Slater Matrices needed for back propagation.  
-     */
-  int number_of_references_for_back_propagation() const
-  {
-    if (number_of_references > 0)
-      return number_of_references;
-    else
-      return ((walker_type == COLLINEAR) ? OrbMats.size() / 2 : OrbMats.size());
+    memory::buffered_array<MEM,ComplexType,4> *X = nullptr;
+    accumulate_estimators(iav,wset,wgt,properties_1body,properties,X,X,X,false,importanceSampling);
   }
 
   ComplexType getReferenceWeight(int i) const { return ci[i]; }
 
+  int total_number_of_references() const { return OrbMats.extent(0); }
+
+  int getNMO() const { return NMO; }
+
   /*
-     * Returns the reference Slater Matrices needed for back propagation.  
-     */
-  template<class Mat, class Ptr = ComplexType*>
-  void getReferencesForBackPropagation(Mat&& A)
+   * Returns the reference Slater Matrices needed for back propagation.  
+   */ 
+  void getReferences(memory::buffered_array<MEM,ComplexType,3>& Refs) const;
+
+  void updateLogScale(auto scl_new, SpinTypes s)
   {
-    static_assert(std::decay<Mat>::type::dimensionality == 2, "Wrong dimensionality");
-    int ndet = number_of_references_for_back_propagation();
-    RUNTIME_CHECK(A.size(0) == ndet, "");
-    if (RefOrbMats.size(0) == 0)
-    {
-      TG.Node().barrier(); // for safety
-      int nrow(NMO * ((walker_type == NONCOLLINEAR) ? 2 : 1));
-      int ncol(NAEA + ((walker_type == CLOSED) ? 0 : NAEB)); //careful here, spins are stored contiguously
-      RefOrbMats = mpi3CMatrix({ndet, nrow * ncol}, RefOrbMats.get_allocator());
-      TG.Node().barrier(); // for safety
-      if (TG.Node().root())
-      {
-        if (walker_type != COLLINEAR)
-        {
-          for (int i = 0; i < ndet; ++i)
-          {
-            boost::multi::array_ref<ComplexType, 2> A_(raw_pointer_cast(RefOrbMats[i].origin()), {nrow, ncol});
-            ma::Matrix2MAREF('H', OrbMats[i], A_);
-          }
-        }
-        else
-        {
-          for (int i = 0; i < ndet; ++i)
-          {
-            boost::multi::array_ref<ComplexType, 2> A_(raw_pointer_cast(RefOrbMats[i].origin()), {NMO, NAEA});
-            ma::Matrix2MAREF('H', OrbMats[2 * i], A_);
-            boost::multi::array_ref<ComplexType, 2> B_(A_.origin() + A_.num_elements(), {NMO, NAEB});
-            ma::Matrix2MAREF('H', OrbMats[2 * i + 1], B_);
-          }
-        }
-      }                    // TG.Node().root()
-      TG.Node().barrier(); // for safety
-    }
-    RUNTIME_CHECK(RefOrbMats.size(0) == ndet, "");
-    RUNTIME_CHECK(RefOrbMats.size(1) == A.size(1), "");
-    auto&& RefOrbMats_=boost::multi::static_array_cast<ComplexType, ComplexType*>(RefOrbMats);
-    auto&& A_=boost::multi::static_array_cast<ComplexType, Ptr>(A);
-    using std::copy_n;
-    int n0, n1;
-    std::tie(n0, n1) = FairDivideBoundary(TG.getLocalTGRank(), int(A.size(1)), TG.getNCoresPerTG());
-    for (int i = 0; i < ndet; i++)
-      copy_n(RefOrbMats_[i].origin() + n0, n1 - n0, A_[i].origin() + n0);
-    TG.TG_local().barrier();
+    utils::check(false, "updateLogScale is not implemented for ground state calculations");
   }
+
+  void resetLogScale()
+  {
+    utils::check(false, "resetLogScale is not implemented for ground state calculations");
+  }
+
+  ComplexType getLogScale(SpinTypes s)
+  {
+    utils::check(false, "getLogScale is not implemented for ground state calculations");
+    return ComplexType(0.0);
+  }
+
+  void setLogPT0(nda::MemoryArrayOfRank<1> auto&& v)
+  {
+    utils::check(false, "setLogPT0 is not implemented for ground state calculations");
+  }
+
+  auto getLogPT0() const {
+    utils::check(false, "getLogPT0 is not implemented for ground state calculations");
+    return memory::array<MEM,ComplexType,1>{};
+  }
+
+
 
 protected:
-  TaskGroup_& TG;
+  std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
-  Allocator alloc_;
-  Allocator_shared alloc_shared_;
-
-  DeviceBufferManager buffer_manager;
-  LocalTGBufferManager shm_buffer_manager;
-  HostBufferManager host_buffer_manager;
-
-  //SlaterDetOperations_shared<ComplexType> SDetOp;
-  SlaterDetOperations SDetOp;
-
-  HamiltonianOperations<MP> HamOp;
-
-  std::vector<ComplexType> ci;
-
-  // eventually switched from CMatrix to SMHSparseMatrix(node)
-  std::vector<devPsiT> OrbMats;
-  mpi3CMatrix RefOrbMats;
-
-  std::unique_ptr<shared_mutex> mutex;
-
-  // in both cases below: closed_shell=0, UHF/ROHF=1, GHF=2
+  // type of walker/wfn
   WALKER_TYPES walker_type;
-  int nspins;
 
-  int number_of_references;
+  int NMO{};
+  int nup{};
+  int ndown{};
 
-  int nbatch;
+  HamiltonianOperations<MEM> HamOp;
 
-  bool compact_G_for_vbias;
+  nda::array<ComplexType, 1> ci;
 
-  // in the 3 cases, true means [nwalk][...], false means [...][nwalk]
-  bool transposed_G_for_vbias_;
-  bool transposed_G_for_E_;
-  bool transposed_vHS_;
+  // OrbMats[ndet][nspin](nel,NMO)
+  nda::array<devPsiT,2> OrbMats;
 
-  ComplexType NuclearCoulombEnergy;
-
-  // not elegant, but reasonable for now
-  int last_number_extra_tasks;
-  int last_task_index;
-
-  // shared_communicator for parallel work within TG_local()
-  //std::unique_ptr<shared_communicator> local_group_comm;
-  shared_communicator local_group_comm;
-  std::unique_ptr<mpi3CVector> shmbuff_for_G;
-
+/*
   void recompute_ci();
-
-  /* 
-     * Computes the density matrix with respect to a given reference. 
-     * Intended to be used in combination with the energy evaluation routine.
-     * G and Ov are expected to be in shared memory.
-     */
-  template<class WlkSet, class MatA, class MatB, class MatG, class TVec>
-  void DensityMatrix_shared(const WlkSet& wset,
-                            MatA&& RefsA,
-                            MatB&& RefsB,
-                            MatG&& G,
-                            TVec&& Ov,
-                            bool herm,
-                            bool compact,
-                            bool transposed);
-
-  template<class WlkSet, class MatA, class MatB, class MatG, class TVec>
-  void DensityMatrix_batched(const WlkSet& wset,
-                             MatA&& RefsA,
-                             MatB&& RefsB,
-                             MatG&& G,
-                             TVec&& Ov,
-                             bool herm,
-                             bool compact,
-                             bool transposed);
-
-  template<class MatSM, class MatG, class TVec>
-  void MixedDensityMatrix_for_E_from_SM(const MatSM& SM, MatG&& G, TVec&& Ov, int nd, double LogOverlapFactor);
-
-  /*
-     * Calculates the local energy and overlaps of all the walkers in the set and 
-     * returns them in the appropriate data structures
-     */
-  template<class WlkSet, class Mat, class TVec>
-  void Energy_shared(const WlkSet& wset, Mat&& E, TVec&& Ov);
-
-  template<class WlkSet, class MatG, class TVec>
-  void MixedDensityMatrix_shared(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true, bool transpose = false);
-
-  template<class WlkSet, class MatG, class TVec>
-  void MixedDensityMatrix_batched(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true, bool transpose = false);
-
-  template<class WlkSet, class MatG, class TVec>
-  void MixedDensityMatrix_batched_single_det(const WlkSet& wset, MatG&& G, TVec&& Ov, bool compact = true, bool transpose = false);
-
-  template<class WlkSet, class TVec>
-  void Overlap_shared(const WlkSet& wset, TVec&& Ov);
-
-  template<class WlkSet, class TVec>
-  void Overlap_batched(const WlkSet& wset, TVec&& Ov);
-
-  template<class WlkSet, class TVec>
-  void Overlap_batched_single_det(const WlkSet& wset, TVec&& Ov);
-
-  /*
-     * Calculates the local energy and overlaps of all the walkers in the set and 
-     * returns them in the appropriate data structures
-     */
-  template<class WlkSet, class Mat, class TVec>
-  void Energy_distributed(const WlkSet& wset, Mat&& E, TVec&& Ov)
-  {
-    if (ci.size() == 1)
-      Energy_distributed_singleDet(wset, std::forward<Mat>(E), std::forward<TVec>(Ov));
-    else
-      Energy_distributed_multiDet(wset, std::forward<Mat>(E), std::forward<TVec>(Ov));
-  }
-
-  template<class WlkSet, class Mat, class TVec>
-  void Energy_distributed_singleDet(const WlkSet& wset, Mat&& E, TVec&& Ov);
-
-  template<class WlkSet, class Mat, class TVec>
-  void Energy_distributed_multiDet(const WlkSet& wset, Mat&& E, TVec&& Ov);
-
-  template<class WlkSet, class TVec, class Mat1, class Mat2, class Mat3, class Observable>
-  void accumulate_estimators_general_impl(int iav, WlkSet& wset, TVec& wgt, 
-        std::vector<Observable>& properties_1body, std::vector<Observable>& properties,
-        Mat1 const& X, Mat2 const& Y, Mat3 const& M, bool time_evolved, bool importanceSampling);
-
-  template<class WlkSet, class TVec, class Mat1, class Mat2, class Mat3, class Observable>
-  void accumulate_estimators_single_ref_impl(int iav, WlkSet& wset, TVec& wgt, 
-        std::vector<Observable>& properties_1body, std::vector<Observable>& properties,
-        Mat1 const& X, Mat2 const& Y, Mat3 const& M, bool time_evolved, bool importanceSampling);
-
-  int dm_size(bool full) const
-  {
-    switch (walker_type)
-    {
-    case CLOSED: // closed-shell RHF
-      return (full) ? (NMO * NMO) : (NAEA * NMO);
-      break;
-    case COLLINEAR:
-      return (full) ? (2 * NMO * NMO) : ((NAEA + NAEB) * NMO);
-      break;
-    case NONCOLLINEAR:
-      return (full) ? (4 * NMO * NMO) : (NAEA * 2 * NMO);
-      break;
-    case FULLYPOLARIZED:
-      return (full) ? (NMO * NMO) : (NAEA * NMO);
-      break;
-    default:
-      APP_ABORT(" Error: Unknown walker_type in dm_size. ");
-      return -1;
-    }
-  }
-  // dimensions for each component of the DM.
-  std::pair<int, int> dm_dims(bool full, SpinTypes sp = Alpha) const
-  {
-    using arr = std::pair<int, int>;
-    switch (walker_type)
-    {
-    case CLOSED: // closed-shell RHF
-      return (full) ? (arr{NMO, NMO}) : (arr{NAEA, NMO});
-      break;
-    case COLLINEAR:
-      return (full) ? (arr{NMO, NMO}) : ((sp == Alpha) ? (arr{NAEA, NMO}) : (arr{NAEB, NMO}));
-      break;
-    case NONCOLLINEAR:
-      return (full) ? (arr{2 * NMO, 2 * NMO}) : (arr{NAEA, 2 * NMO});
-      break;
-        case FULLYPOLARIZED:
-      return (full) ? (arr{NMO, NMO}) : (arr{NAEA, NMO});
-      break;
-    default:
-      APP_ABORT(" Error: Unknown walker_type in dm_size. ");
-      return arr{-1, -1};
-    }
-  }
+*/
 };
+
+/* 
+ * Computes the density matrix for a given reference. 
+ * G and Ov are expected to be in shared memory.
+ * Simple round-robin is used. 
+ */
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet, nda::MemoryVector RVec, nda::MemoryMatrix MatG, nda::MemoryVector TVec>
+void NOMSD<MEM,devPsiT>::DensityMatrix(const WlkSet& wset, RVec&& Ref, MatG&& G, TVec&& Ov, 
+                     bool compact, bool herm)
+{
+  // RVec is a vector of const_shared_array or CSRMatrix
+  auto all = nda::range::all;
+  memory::check_memory_space<MEM>(G,Ov);
+  const int nw   = wset.size();
+  const int nel = (walker_type==COLLINEAR ? nup+ndown : nup );
+  const int nspin = (walker_type==COLLINEAR ? 2 : 1 );
+  const int npol = (walker_type==NONCOLLINEAR ? 2 : 1 );
+  utils::check(Ov.size() == nw, "Size mismatch");
+  utils::check(Ref.size() == nspin,"Size mismatch");
+  if(herm) {
+    utils::check_shape(Ref(0), "Ref(0)", nup,npol*NMO);
+    if(nspin>1) {
+      utils::check_shape(Ref(1), "Ref(1)", ndown,npol*NMO);
+    }
+  } else {
+    utils::check_shape(Ref(0), "Ref(0)", npol*NMO, nup);
+    if(nspin>1) {
+      utils::check_shape(Ref(1), "Ref(1)", npol*NMO, ndown);
+    }
+  }
+  G() = ComplexType(0.0);
+  Ov() = ComplexType(0.0);
+
+  if(compact) {
+
+    utils::check(G.shape() == std::array<long,2>{nw,nel*npol*NMO}, "Size mismatch");
+    auto G3d = nda::reshape(G,std::array<long,3>{nw,nel,npol*NMO});
+    det_ops::MixedDensityMatrix(Ref(0)(), wset.SlaterMatrices(Alpha), G3d(all,nda::range(nup),all), Ov, compact); 
+    if(walker_type == CLOSED) {
+      nda::tensor::scale(ComplexType(2.0),Ov);
+    } else if (walker_type == COLLINEAR)  {
+      det_ops::MixedDensityMatrix(Ref(1)(), wset.SlaterMatrices(Beta), G3d(all,nda::range(nup,nel),all), Ov, compact); 
+    }
+
+  } else {
+
+    utils::check(G.shape() == std::array<long,2>{nw,nspin*npol*NMO*npol*NMO}, "Size mismatch");
+    auto G3d = nda::reshape(G,std::array<long,3>{nw,nspin*npol*NMO,npol*NMO});
+    det_ops::MixedDensityMatrix(Ref(0)(), wset.SlaterMatrices(Alpha), G3d(all,nda::range(npol*NMO),all), Ov, compact);
+    if(walker_type == CLOSED) {
+      nda::tensor::scale(ComplexType(2.0),Ov);
+    } else if (walker_type == COLLINEAR)  {
+      det_ops::MixedDensityMatrix(Ref(1)(), wset.SlaterMatrices(Beta), G3d(all,nda::range(npol*NMO,nspin*npol*NMO),all), Ov, compact);
+    }
+
+  }
+}
+/*
+ * Calculates Green functions and calls Observables.
+ */
+template<MEMORY_SPACE MEM, class devPsiT>
+template<class WlkSet, class Observable>
+void NOMSD<MEM,devPsiT>::accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
+      std::vector<Observable>& properties_1body, std::vector<Observable>& properties, 
+      nda::MemoryArrayOfRank<4> auto* X, nda::MemoryArrayOfRank<4> auto* Yc, 
+      nda::MemoryArrayOfRank<4> auto* M, bool time_evolved, bool importanceSampling)
+{
+  using nda::range;
+  auto all = range::all;
+  const int ndet   = ci.size();
+  const int nw     = wset.size();
+  const int neltot = (walker_type==COLLINEAR ? nup+ndown : nup );
+  const int nel[]  = {nup,ndown};
+  const int nspin  = (walker_type==COLLINEAR ? 2 : 1 );
+  const int npol   = (walker_type==NONCOLLINEAR ? 2 : 1 );
+
+  // this is wrong without importanceSampling!!!
+  utils::check(importanceSampling, "Finish");
+
+  if(time_evolved) {
+    utils::check(X!=nullptr and Yc!=nullptr and M!=nullptr,
+      "Error in NOMSD::accumulate_estimators: Found null pointers with time_evolved.");
+    utils::check(X->shape() == std::array<long,4>{nw,nspin,npol*NMO,npol*NMO}, "Size mismatch");
+    utils::check(Yc->shape() == std::array<long,4>{nw,nspin,npol*NMO,npol*NMO}, "Size mismatch");
+    utils::check(M->shape() == std::array<long,4>{nw,nspin,npol*NMO,npol*NMO}, "Size mismatch");
+  }
+
+  memory::buffered_array<MEM,ComplexType,2> Gc(nw,neltot*npol*NMO); 
+  auto Gc3d = nda::reshape(Gc,std::array<long,3>{nw,neltot,npol*NMO});
+  
+  if(ndet == 1) {
+
+    memory::buffered_array<MEM,ComplexType,4> Gfull(nw,nspin,npol*NMO,npol*NMO); 
+    memory::buffered_array<MEM,ComplexType,1> LogOv(nw); 
+    LogOv() = ComplexType(0.0); 
+    DensityMatrix(wset, OrbMats(0,all), Gc, LogOv, true);     
+
+    if(time_evolved) {
+      Gfull() = (*M)();
+      // Gfull = M + ma::T(X) * ma::T(OrbMats[spin]) * Gc * conj(Y),
+      //   where Yc = conj(Y), Yc already comes with the conjugate!
+      for(int is=0, is0=0; is<nspin; ++is, is0+=nup) {
+        memory::buffered_array<MEM,ComplexType,3> GYc(nw,nel[is],npol*NMO); 
+        memory::buffered_array<MEM,ComplexType,3> XOrbM(nw,nel[is],npol*NMO); 
+
+        // GYc = Gc * Yc
+        math::product(Gc3d(all,range(is0,is0+nel[is]),all), (*Yc)(all,is,all,all), GYc);
+
+        // reuse Gis: Gis = S * X 
+        math::product(OrbMats(0,is)(),(*X)(all,is,all,all),XOrbM);
+
+        // Gfull += T(Gis) * GYc
+        math::product<'T'>(ComplexType(1.0),XOrbM,GYc,ComplexType(1.0),Gfull(all,is,all,all));
+      }
+    } else {
+      Gfull() = ComplexType(0.0);
+      // Gfull = ma::T(OrbMats[spin]) * Gc,
+      for(int is=0, is0=0; is<nspin; ++is, is0+=nup)
+        math::product<'T'>(OrbMats(0,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gfull(all,is,all,all));
+    }
+
+    auto Gfull_h = nda::to_host(Gfull());
+    for (auto& v : properties_1body)
+      v.accumulate(iav, Gfull, Gfull_h, wgt, importanceSampling);
+    for (auto& v : properties)
+      v.accumulate(iav, Gfull, Gfull_h, wgt, importanceSampling);
+  
+  } else {
+
+    // use the walker's current log_overlap as reference
+    memory::buffered_array<MEM,ComplexType,1> scl_wgt(wgt); 
+    memory::buffered_array<MEM,ComplexType,1> log_m(nw); 
+    wset.getProperty(OVLP, log_m);
+    memory::buffered_array<MEM,ComplexType,1> Ot(nw); 
+    memory::buffered_array<MEM,ComplexType,1> Ov(nw); 
+    memory::buffered_array<MEM,ComplexType,4> Gt(nw,nspin,npol*NMO,npol*NMO); 
+    memory::buffered_array<MEM,ComplexType,4> Gfull((properties_1body.size() > 0)?nw:0,nspin,npol*NMO,npol*NMO);
+    if(properties_1body.size() > 0) Gfull() = ComplexType(0.0);
+    
+
+    {
+      Ov() = ComplexType(0.0);
+      for (int d = 0; d < ndet; d++)
+      {
+        Ot() = ComplexType(0.0);
+
+        //1. Calculate Green functions
+        det_ops::Log_Overlap(OrbMats(d,0)(), wset.SlaterMatrices(Alpha), Ot);
+
+        if (walker_type == COLLINEAR)
+          det_ops::Log_Overlap(OrbMats(d,1)(), wset.SlaterMatrices(Beta), Ot);
+
+        //2.accumulate Ov[m] += ci[n] * exp(LogOv[n]-log_m[n]) 
+        nda::tensor::add(ComplexType(-1.0),log_m,"w",ComplexType(1.0),Ot,"w");
+        nda::apply(std::conj(ci(d)),Ot,nda::tensor::unary_op::EXP);
+        nda::tensor::add(ComplexType(1.0),Ot,"w",ComplexType(1.0),Ov,"w");
+      }
+
+      // scale walker weights
+      if constexpr (MEM==HOST_MEMORY) {
+        scl_wgt() /= Ov();
+      } else {
+        nda::apply(1.0,Ov,nda::tensor::unary_op::RCP);
+        nda::tensor::elementwise(1.0,Ov,"w",1.0,scl_wgt,"w",nda::tensor::binary_op::PROD);
+      }
+    }
+
+    Ov() = ComplexType(0.0); 
+    for(int d=0; d<ndet; ++d) {
+
+      Ot() = ComplexType(0.0); 
+      DensityMatrix(wset, OrbMats(d,all), Gc, Ot, true);     
+      if(time_evolved) {
+        // Gt = M + ma::T(X) * ma::T(OrbMats[spin]) * Gc * conj(Y),
+        //   where Yc = conj(Y), Yc already comes with the conjugate!
+        Gt() = (*M)();
+        for(int is=0, is0=0; is<nspin; ++is, is0+=nup) {
+          memory::buffered_array<MEM,ComplexType,3> GYc(nw,nel[is],npol*NMO); 
+          memory::buffered_array<MEM,ComplexType,3> XOrbM(nw,nel[is],npol*NMO);
+        
+          // GYc = Gc * Yc
+          math::product(Gc3d(all,range(is0,is0+nel[is]),all), (*Yc)(all,is,all,all), GYc);
+        
+          // reuse Gis: Gis = S * X 
+          math::product(OrbMats(0,is)(),(*X)(all,is,all,all),XOrbM);
+        
+          // Gt += T(Gis) * GYc
+          math::product<'T'>(ComplexType(1.0),XOrbM,GYc,ComplexType(1.0),Gt(all,is,all,all));
+        }
+      } else {
+        // Gt = ma::T(OrbMats[spin]) * Gc,
+        for(int is=0, is0=0; is<nspin; ++is, is0+=nup)
+          math::product<'T'>(OrbMats(d,is)(),Gc3d(all,range(is0,is0+nel[is]),all),Gt(all,is,all,all));
+      }
+      
+      // Ot = conj(ci) * exp(Ot-log_m) 
+      nda::tensor::add(ComplexType(-1.0),log_m,"w",ComplexType(1.0),Ot,"w");
+      nda::apply(std::conj(ci(d)),Ot,nda::tensor::unary_op::EXP);
+      // Ov += Ot 
+      nda::tensor::add(ComplexType(1.0),Ot,"w",ComplexType(1.0),Ov,"w");
+      if(properties_1body.size() > 0) {
+        // Gfull += Gt * Ot
+        if constexpr (MEM==HOST_MEMORY) {
+          for(int w=0; w<nw; ++w) 
+            Gfull(w,nda::ellipsis{}) += Gt(w,nda::ellipsis{}) * Ot(w);
+        } else {
+          // is this doing the righ thing???
+          nda::tensor::contract(ComplexType(1.0),Ot,"w",Gt,"wiab",ComplexType(1.0),Gfull,"wiab");
+        }
+      }
+      
+      if(properties.size() > 0) {
+        // Ot(w) *= scl_wgt(w);
+        nda::tensor::elementwise(1.0,scl_wgt,"w",1.0,Ot,"w",nda::tensor::binary_op::PROD);
+        auto Gt_h = nda::to_host(Gt());
+        auto wgt_h  = nda::to_host(Ot());
+        for (auto& v : properties)
+          v.accumulate(iav, Gt, Gt_h, wgt_h, importanceSampling);
+      }
+    }
+
+    if(properties_1body.size()==0) return;
+    if constexpr (MEM==HOST_MEMORY) {
+      for(int w=0; w<nw; ++w) 
+        Gfull(w,nda::ellipsis{}) /= Ov(w); 
+    } else {
+      Ot() = Ov();
+      nda::apply(1.0,Ot,nda::tensor::unary_op::RCP);
+      // is this doing the righ thing???
+      nda::tensor::elementwise(1.0,Ot,"w",1.0,Gfull,"wiab",nda::tensor::binary_op::PROD);
+    }
+
+    auto Gh = nda::to_host(Gfull());
+    for (auto& v : properties_1body)
+      v.accumulate(iav, Gfull, Gh, wgt, importanceSampling);
+
+  }
+
+}
+/*
+template<MEMORY_SPACE MEM, class devPsiT>
+inline void NOMSD<MEM,devPsiT>::recompute_ci()
+{
+  if (walker_type == NONCOLLINEAR)
+    APP_ABORT(" Error: NOMSD::recompute_ci not implemented with NONCOLLINEAR.");
+  double LogOverlapFactor(0.0);
+  int ndets = ci.size();
+  if (ndets == 1)
+  {
+    ci[0] = ComplexType(1.0, 0.0);
+    return;
+  }
+
+  if (TG.getNGroupsPerTG() > 1)
+  {
+    APP_ABORT(" Error: rediag not implemented with distributed wavefunction.");
+  }
+  else
+  {
+    size_t nt = (1 + dm_size(false) + NMO * nup);
+    StaticSHMVector shmbuff(iextensions<1u>{nt}, ComplexType(0.0),
+                            shm_buffer_manager.get_generator().template get_allocator<ComplexType>());
+
+    boost::multi::array<ComplexType, 2, shared_allocator<ComplexType>> H({ndets, ndets}, TG.Node());
+    boost::multi::array<ComplexType, 2, shared_allocator<ComplexType>> S({ndets, ndets}, TG.Node());
+    boost::multi::array<ComplexType, 1> energy(iextensions<1u>{2});
+    CMatrix Psia({0, 0});
+    CMatrix Psib({0, 0});
+    if (TG.TG_local().root())
+    {
+      // only TG_local().root() calculates G for now
+      Psia = CMatrix({NMO, nup});
+      if (walker_type == COLLINEAR)
+        Psib = CMatrix({NMO, ndown});
+    }
+    using std::fill_n;
+    fill_n(H.origin(), H.num_elements(), ComplexType(0.0));
+    fill_n(S.origin(), S.num_elements(), ComplexType(0.0));
+    fill_n(energy.origin(), energy.num_elements(), ComplexType(0.0));
+
+    //ComplexType zero(0.0);
+    auto Gsize = dm_size(false);
+    int nr = Gsize, nc = 1;
+    if (transposed_G_for_E_)
+      std::swap(nr, nc);
+    CVector_ref ov_(make_device_ptr(shmbuff.origin()), iextensions<1u>{1});
+    CMatrix_ref G(ov_.origin() + 1, {nr, nc});
+    StaticMatrix eloc2({1, 3},  ComplexType(0.0),
+		       buffer_manager.get_generator().template get_allocator<ComplexType>());
+
+    for (int jdet = 0, ji = 0; jdet < ndets; jdet++)
+    {
+      ComplexType cjdet = ci[jdet];
+      for (int idet = jdet; idet < ndets; idet++, ji++)
+      {
+        if (ji % TG.getNumberOfTGs() == TG.getTGNumber())
+        {
+          ComplexType cidet = ci[idet];
+          if (TG.TG_local().root())
+          {
+            CMatrix_ref Ga(G.origin(), {nup, NMO});
+            ma::Matrix2MA('H', OrbMats[nspins * jdet], Psia);
+            ov_[0] = SDetOp.MixedDensityMatrix(OrbMats[nspins * idet], Psia, Ga, LogOverlapFactor, true);
+            if (walker_type == COLLINEAR)
+            {
+              CMatrix_ref Gb(Ga.origin() + Ga.num_elements(), {ndown, NMO});
+              ma::Matrix2MA('H', OrbMats[nspins * jdet + 1], Psib);
+              ov_[0] *= SDetOp.MixedDensityMatrix(OrbMats[nspins * idet + 1], Psib, Gb, LogOverlapFactor, true);
+            }
+            else if (walker_type == CLOSED)
+            {
+              ov_[0] *= ComplexType(ov_[0]);
+            }
+          }
+          TG.TG_local().barrier();
+          HamOp.energy(eloc2, G, idet, TG.TG_local().root());
+          if (TG.TG_local().size() > 1)
+            TG.TG_local().all_reduce_in_place_n(raw_pointer_cast(eloc2.origin()), 3, std::plus<>());
+          if (TG.TG_local().root())
+          {
+            if (idet != jdet)
+            {
+              //ComplexType ovij = static_cast<ComplexType>(ov_[0]);
+              H[idet][jdet] = ComplexType(ov_[0]) * (ComplexType(eloc2[0][0]) + ComplexType(eloc2[0][1]) + ComplexType(eloc2[0][2]));
+              S[idet][jdet] = ComplexType(ov_[0]);
+              S[idet][jdet] = ComplexType(ov_[0]);
+              H[jdet][idet] = ma::conj(ComplexType(H[idet][jdet]));
+              S[jdet][idet] = ma::conj(ComplexType(S[idet][jdet]));
+              energy[0] += ma::conj(cidet) * cjdet * ComplexType(H[idet][jdet]) 
+			+ ma::conj(cjdet) * cidet * ComplexType(H[jdet][idet]);
+              energy[1] += ma::conj(cidet) * cjdet * ComplexType(S[idet][jdet]) 
+			+ ma::conj(cjdet) * cidet * ComplexType(S[jdet][idet]);
+            }
+            else
+            {
+              H[idet][idet] =
+                  ComplexType(real(ComplexType(ov_[0]) * (ComplexType(eloc2[0][0]) + ComplexType(eloc2[0][1]) + ComplexType(eloc2[0][2]))), 
+                              0.0);
+              S[idet][idet] = ComplexType(real(ComplexType(ov_[0])), 0.0);
+              energy[0] += ma::conj(cidet) * cjdet * ComplexType(H[idet][jdet]);
+              energy[1] += ma::conj(cidet) * cjdet * ComplexType(S[idet][jdet]);
+            }
+          }
+          TG.TG_local().barrier();
+        }
+      }
+    }
+    TG.Global().barrier();
+    if (TG.Node().root())
+      TG.Cores().all_reduce_in_place_n(raw_pointer_cast(H.origin()), H.num_elements(), std::plus<>());
+    if (TG.Node().root())
+      TG.Cores().all_reduce_in_place_n(raw_pointer_cast(S.origin()), S.num_elements(), std::plus<>());
+    TG.Global().all_reduce_in_place_n(energy.origin(), 2, std::plus<>());
+
+    app_log(1," - Variational energy of trial wavefunction: {}",  energy[0] / energy[1]);
+    app_log(1," - Diagonalizing CI matrix.");
+    using RVector = boost::multi::array<RealType, 1>;
+    #if defined(ENABLE_DEVICE)
+    using CMatrix = boost::multi::array<ComplexType, 2>;
+    #endif
+    // Want a "unique" solution for all cores/nodes.
+    if (TG.Global().rank() == 0)
+    {
+      boost::multi::array_ref<ComplexType, 2> H_(raw_pointer_cast(H.origin()), {ndets, ndets});
+      boost::multi::array_ref<ComplexType, 2> S_(raw_pointer_cast(S.origin()), {ndets, ndets});
+      std::pair<RVector, CMatrix> Sol = ma::genEigSelect<RVector, CMatrix>(H_, S_, 1);
+      app_log(1," - Updating CI coefficients. ");
+      app_log(1," - Recomputed coefficient of first determinant: {}", Sol.second[0][0]); 
+      for (int idet = 0; idet < ndets; idet++)
+      {
+        ComplexType ci_ = Sol.second[0][idet];
+        // Do we want this much output?
+        app_log(1, "{} old: {}, new: {} ",idet,ci[idet],ci_);
+        ci[idet] = ci_;
+      }
+      app_log(1," - Recomputed variational energy of trial wavefunction: {}",Sol.first[0]);
+    }
+    if (TG.Global().size() > 1)
+      TG.Global().broadcast_n(raw_pointer_cast(ci.data()), ci.size(), 0);
+  }
+}
+*/
 
 } // namespace afqmc
 
 } // namespace sfqmc
 
-#include "AFQMC/Wavefunctions/NOMSD.icc"
-
-#endif

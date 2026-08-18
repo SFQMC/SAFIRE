@@ -19,10 +19,11 @@
 #include <iomanip>
 
 #include "config.h"
-#include "Utilities/AppAbort.hpp"
+#include "IO/AppAbort.hpp"
 
 #include "AFQMC/config.h"
-#include "Utilities/app_loggers.h"
+#include "IO/app_loggers.h"
+#include "IO/banner.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "CSAFQMCDriver.h"
 #include "AFQMC/Walkers/WalkerIO.hpp"
@@ -39,10 +40,7 @@ bool CSAFQMCDriver::run(std::vector<std::reference_wrapper<WalkerSet>>& wset_ref
   if( wset_ref.size() != nsys )
     APP_ABORT("Error in CSAFQMCDriver::run wset_ref.size() != nsys");
 
-  app_log(1,"****************************************************");
-  app_log(1,"              Beginning AFQMC calculation           ");
-  app_log(1,"****************************************************");
-  setup_AFQMC_timer();
+  app_log(1, banner("Beginning AFQMC calculation"));
 
   std::vector<ComplexType> curData(7); 
   Matrix<ComplexType> wData({nsys,7});
@@ -180,9 +178,7 @@ bool CSAFQMCDriver::run(std::vector<std::reference_wrapper<WalkerSet>>& wset_ref
   // print timers
   if(globalComm.root()) AFQMCTimer.print_all();
   
-  app_log(1,"****************************************************");
-  app_log(1,"               Finished AFQMC calculation           ");
-  app_log(1,"****************************************************");
+  app_log(1, banner("Finished AFQMC calculation"));
 
   return true;
 }

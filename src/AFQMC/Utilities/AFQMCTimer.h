@@ -14,39 +14,55 @@
 //
 //
 
-#ifndef AFQMC_AFQMCTIMER_H
-#define AFQMC_AFQMCTIMER_H
+#pragma once
 
-#include "Utilities/Timer.hpp"
+#include <array>
 
-namespace sfqmc
-{
-namespace afqmc
-{
+#include "utilities/Timer.hpp"
 
-// pre-defined timer labels
-extern int block_timer;
-extern int pseudo_energy_timer;
-extern int energy_timer;
-extern int vHS_timer;
-extern int assemble_X_timer;
-extern int vbias_timer;
-extern int G_for_vbias_timer;
-extern int propagate_timer;
-extern int mixed_estimator_timer;
-extern int back_propagate_timer;
-extern int E_comm_overhead_timer;
-extern int vHS_comm_overhead_timer;
-extern int popcont_timer;
-extern int ortho_timer;
-extern int setup_timer;
-extern int extra_timer;
+namespace sfqmc::afqmc {
 
-extern TimerManager AFQMCTimer;
+struct AFQMCTimers {
+  utils::Timer block{"Block"};
+  utils::Timer pseudo_energy{"PseudoEnergy"};
+  utils::Timer energy{"Energy"};
+  utils::Timer vHS{"vHS"};
+  utils::Timer assemble_X{"X"};
+  utils::Timer vbias{"vbias"};
+  utils::Timer G_for_vbias{"G_for_vbias"};
+  utils::Timer propagate{"Propagate"};
+  utils::Timer mixed_estimator{"MixedEstimator"};
+  utils::Timer back_propagate{"BackPropagate"};
+  utils::Timer popcontrol{"PopulationControl"};
+  utils::Timer ortho{"WalkerOrthogonalization"};
+  utils::Timer setup{"Setup"};
+  utils::Timer extra{"Extra"};
+  utils::Timer load_balance{"WalkerSet::loadBalance"};
+  utils::Timer branching{"WalkerSet::branching"};
 
-void setup_AFQMC_timer(); 
+  static constexpr int ntimers = 16;
+
+  std::array<utils::Timer*, ntimers> all() {
+    return {&block,           &pseudo_energy,  &energy, &vHS,   &assemble_X,   &vbias,
+            &G_for_vbias,     &propagate,      &mixed_estimator, &back_propagate,
+            &popcontrol,      &ortho,          &setup,  &extra, &load_balance, &branching};
+  }
+
+  void reset_all() {
+    for(auto* t : all()) {
+      t->reset();
+    }
+  }
+
+  void print_all() { utils::print_timers(all()); }
+};
+
+// every member of AFQMCTimers has the same type, hence no padding: a timer added without extending
+// all() changes sizeof and is caught here rather than silently dropped from reset_all()/print_all()
+static_assert(sizeof(AFQMCTimers) == AFQMCTimers::ntimers * sizeof(utils::Timer),
+              "AFQMCTimers::all() is out of sync with the member list");
+
+extern AFQMCTimers timers;
 
 }
-}
 
-#endif

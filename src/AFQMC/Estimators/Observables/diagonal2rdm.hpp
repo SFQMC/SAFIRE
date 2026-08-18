@@ -14,19 +14,20 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_DIAGONAL2RDM_HPP
-#define SFQMC_AFQMC_DIAGONAL2RDM_HPP
+#pragma once
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
+#include <configuration.hpp>
 #include <vector>
+#include <memory>
 #include <string>
-#include <iostream>
 
-#include "hdf/hdf_multi.h"
-#include "hdf/hdf_archive.h"
+#include <nda/nda.hpp>
+#include <nda/h5.hpp>
 
 #include "AFQMC/Walkers/WalkerSet.hpp"
-#include "Numerics/ma_operations.hpp"
+#include "utilities/check.hpp"
 
 namespace sfqmc
 {
@@ -35,149 +36,51 @@ namespace afqmc
 /* 
  * Observable class that calculates the walker averaged diagonal of the 2 RDM 
  */
-class diagonal2rdm : public AFQMCInfo
+template<MEMORY_SPACE MEM>
+class diagonal2rdm
 {
-  // allocators
-  using Allocator = device_allocator<ComplexType>;
-
-  // type defs
-  using pointer       = typename std::allocator_traits<Allocator>::pointer;
-  using const_pointer = typename std::allocator_traits<Allocator>::const_pointer;
-
-  using CVector_ref    = boost::multi::array_ref<ComplexType, 1, pointer>;
-  using CMatrix_ref    = boost::multi::array_ref<ComplexType, 2, pointer>;
-  using CVector        = boost::multi::array<ComplexType, 1, Allocator>;
-  using CMatrix        = boost::multi::array<ComplexType, 2, Allocator>;
-  using stdCVector_ref = boost::multi::array_ref<ComplexType, 1>;
-  using stdCMatrix_ref = boost::multi::array_ref<ComplexType, 2>;
-  using mpi3CVector    = boost::multi::array<ComplexType, 1, shared_allocator<ComplexType>>;
-  using mpi3CMatrix    = boost::multi::array<ComplexType, 2, shared_allocator<ComplexType>>;
-  using mpi3CTensor    = boost::multi::array<ComplexType, 3, shared_allocator<ComplexType>>;
-  using mpi3C4Tensor   = boost::multi::array<ComplexType, 4, shared_allocator<ComplexType>>;
-
 public:
-  diagonal2rdm(afqmc::TaskGroup_& tg_, AFQMCInfo& info, ptree pt, WALKER_TYPES wlk, int nave_ = 1, int bsize = 1)
-      : AFQMCInfo(info),
-        block_size(bsize),
-        nave(nave_),
-        TG(tg_),
-        walker_type(wlk),
-        writer(false),
-        hdf_walker_output(""),
-        DMAverage({0, 0}, shared_allocator<ComplexType>{TG.TG_local()})
+  diagonal2rdm(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, [[maybe_unused]] const DiagTwoRDMParameters& params, WALKER_TYPES wlk, int NMO_, int nave_ = 1)
+      : mpi{mpi},
+        walker_type{wlk},
+        NMO{NMO_}
   {
     app_log(1,"  --  Adding Diagonal 2RDM (Diag2RDM) estimator. -- ");
-    hdf_walker_output = pt.get<std::string>("walker_output", "");
-
-    if (hdf_walker_output != std::string(""))
-    {
-      hdf_walker_output = "G" + std::to_string(TG.TG_heads().rank()) + "_" + hdf_walker_output;
-      hdf_archive dump;
-      if (not dump.create(hdf_walker_output))
-      {
-        app_error("Problems creating walker output hdf5 file: {}", hdf_walker_output);
-        APP_ABORT("Problems creating walker output hdf5 file.");
-      }
-      dump.push("DiagTwoRDM");
-      dump.push("Metadata");
-      dump.write(NMO, "NMO");
-      dump.write(NAEA, "NUP");
-      dump.write(NAEB, "NDOWN");
-      int wlk_t_copy = walker_type; // the actual data type of enum is implementation-defined. convert to int for file
-      dump.write(wlk_t_copy, "WalkerType");
-      dump.pop();
-      dump.pop();
-      dump.close();
-    }
-
-    using std::fill_n;
-    writer  = (TG.Global().rank() == 0);
-    dm_size = NMO * (2 * NMO - 1);
-    if (walker_type == CLOSED)
-      dm_size -= NMO * (NMO - 1) / 2;
-
-    DMAverage = mpi3CMatrix({nave, dm_size}, shared_allocator<ComplexType>{TG.TG_local()});
-    fill_n(DMAverage.origin(), DMAverage.num_elements(), ComplexType(0.0, 0.0));
+    
+    // spin blocks per walker type:
+    //   CLOSED       -> (aaaa), (aabb)                 : 2
+    //   COLLINEAR    -> (aaaa), (aabb), (bbbb)         : 3
+    //   NONCOLLINEAR -> (aaaa) over 2*NMO x 2*NMO       : 1
+    int nspin = walker_type == COLLINEAR ? 3 : (walker_type == CLOSED ? 2 : 1);
+    int M     = walker_type == NONCOLLINEAR ? 2 * NMO : NMO;
+    dm_average.resize(nave_, nspin, M, M);
+    nda::tensor::set(0, dm_average());
   }
 
 /*******   Interface for sum over references, e.g. NOMSD ********/
-  template<class MatG, class MatG_host, class HostCVec1>
-  void accumulate(int iav, MatG&& G, MatG_host&& G_host, HostCVec1&& Xw, [[maybe_unused]] bool impsamp)
+  auto accumulate(int iav, nda::MemoryArrayOfRank<4> auto&& G, nda::MemoryArrayOfRank<4> auto&& G_host, nda::MemoryVector auto&& Xw, [[maybe_unused]] bool impsamp)
   {
-    static_assert(std::decay<MatG>::type::dimensionality == 4, "Wrong dimensionality");
-    static_assert(std::decay<MatG_host>::type::dimensionality == 4, "Wrong dimensionality");
-    using std::copy_n;
-    using std::fill_n;
-
+    using nda::ellipsis;
+    using nda::range;
     // assumes G[nwalk][spin][M][M]
-    int nw(G.size(0));
-    RUNTIME_CHECK(G.size(0) == Xw.size(0), "");
+    ncalls++;
 
-    int i0, iN;
-    std::tie(i0, iN) = FairDivideBoundary(TG.TG_local().rank(), dm_size, TG.TG_local().size());
-
-    // no parallelization over ncores for now, fix if needed 
-    if(TG.TG_local().root())
-    {
-      for (int iw = 0; iw < nw; iw++)
-      {
-        ComplexType* ptr(DMAverage[iav].origin());
-        if (walker_type == CLOSED)
-        {
-          auto&& Gu_ = G_host[iw][0];
-          for (int i = 0; i < NMO; i++)
-          {
-            for (int j = i + 1; j < NMO; j++, ptr++)
-              *ptr += Xw[iw] * (Gu_[i][i] * Gu_[j][j] - Gu_[i][j] * Gu_[j][i]);
-            for (int j = NMO, j0 = 0; j < 2 * NMO; j++, j0++, ptr++)
-              *ptr += Xw[iw] * (Gu_[i][i] * Gu_[j0][j0]);
-          }
-        }
-        else if (walker_type == COLLINEAR)
-        {
-          auto&& Gu_ = G_host[iw][0];
-          auto&& Gd_ = G_host[iw][1];
-          for (int i = 0; i < 2 * NMO; i++)
-          {
-            if (i < NMO)
-            {
-              for (int j = i + 1; j < NMO; j++, ptr++)
-                *ptr += Xw[iw] * (Gu_[i][i] * Gu_[j][j] - Gu_[i][j] * Gu_[j][i]);
-              for (int j = NMO, j0 = 0; j < 2 * NMO; j++, j0++, ptr++)
-                *ptr += Xw[iw] * (Gu_[i][i] * Gd_[j0][j0]);
-            }
-            else
-            {
-              int i_0 = i - NMO;
-              for (int j = i + 1, j_0 = i + 1 - NMO; j < 2 * NMO; j++, j_0++, ptr++)
-                *ptr += Xw[iw] * (Gd_[i_0][i_0] * Gd_[j_0][j_0] - Gd_[i_0][j_0] * Gd_[j_0][i_0]);
-              ;
-            }
-          }
-        }
-        else
-        {
-          auto&& G_ = G_host[iw][0];
-          for (int i = 0; i < 2 * NMO; i++)
-            for (int j = i + 1; j < 2 * NMO; j++, ptr++)
-              *ptr += Xw[iw] * (G_[i][i] * G_[j][j] - G_[i][j] * G_[j][i]);
-        }
-      }
+    memory::buffered_array<MEM, ComplexType,4> XwG(G.shape());
+    nda::tensor::contract(memory::to_memory_space<MEM>(Xw), "w", G, "wsij", XwG, "wsij");
+    
+    // (aaaa), (bbbb)
+    for(int spin = 0; spin < G.shape(1); spin++) {
+      nda::tensor::contract(1, XwG(range::all, spin, ellipsis{}), "wii", G(range::all, spin, ellipsis{}), "wjj", 1, dm_average(iav, 2*spin, ellipsis{}), "ij");
+      nda::tensor::contract(-1, XwG(range::all, spin, ellipsis{}), "wij", G(range::all, spin, ellipsis{}), "wji", 1, dm_average(iav, 2*spin, ellipsis{}), "ij");
     }
-    TG.TG_local().barrier();
+    // (aabb) does not exist for noncollinear
+    if(walker_type == CLOSED) {
+      nda::tensor::contract(1, XwG(range::all, 0, ellipsis{}), "wii", G(range::all, 0, ellipsis{}), "wjj", 1, dm_average(iav, 1, ellipsis{}), "ij");
+    } else if(walker_type == COLLINEAR) {
+      nda::tensor::contract(1, XwG(range::all, 0, ellipsis{}), "wii", G(range::all, 1, ellipsis{}), "wjj", 1, dm_average(iav, 1, ellipsis{}), "ij");
+    }
+      
   }
-
-  // Second interface, including factorized G in addition to full G and G_host 
-  template<class Mat1, class Mat2, class Mat3, class Mat4,
-           class MatG, class MatG_host, class HostCVec1>
-  void accumulate(int iav, [[maybe_unused]] Mat1&& Sa, [[maybe_unused]] Mat2&& Ga,
-                  [[maybe_unused]] Mat3&& Sb, [[maybe_unused]] Mat4&& Gb,
-                  MatG&& G, MatG_host&& G_host, HostCVec1&& Xw, bool impsamp)
-  {
-    accumulate(iav,std::forward<MatG>(G),std::forward<MatG_host>(G_host),
-                   std::forward<HostCVec1>(Xw),impsamp);
-  }
-
 
 /*******   Interface for PHMSD-like wfns: Reference + excited configurations  *******/
   template<class... Args>
@@ -198,56 +101,91 @@ public:
     APP_ABORT(" Finish: accumulate_excited_configuration_second ");
   }
 
-  template<class HostCVec>
-  void print(int iblock, hdf_archive& dump, HostCVec&& Wsum)
+  auto print(int iblock, h5::group *group, const nda::Vector auto& Wsum)
   {
-    using std::fill_n;
-    const int n_zero = 9;
-
-    if (TG.TG_local().root())
+    nda::tensor::scale(1.0 / ncalls, dm_average);
+    mpi->reduce(dm_average, std::plus<>(), 0);
+    
+    if(mpi->comm.root())
     {
-      ma::scal(ComplexType(1.0 / block_size), DMAverage);
-      TG.TG_heads().reduce_in_place_n(raw_pointer_cast(DMAverage.origin()), DMAverage.num_elements(), std::plus<>(), 0);
-      if (writer)
+      assert(group);
+      auto compressed_average = nda::to_host(compress_dm_average(dm_average));
+      
+      h5::group parent = ( group->has_key("DiagTwoRDM") ? 
+                           group->open_group("DiagTwoRDM") : 
+                           group->create_group("DiagTwoRDM") );
+      for (int i = 0; i < dm_average.shape(0); ++i)
       {
-        dump.push(std::string("DiagTwoRDM"));
-        for (int i = 0; i < nave; ++i)
-        {
-          dump.push(std::string("Average_") + std::to_string(i));
-          std::string padded_iblock =
-              std::string(n_zero - std::to_string(iblock).length(), '0') + std::to_string(iblock);
-          stdCVector_ref DMAverage_(raw_pointer_cast(DMAverage[i].origin()), {dm_size});
-          dump.write(DMAverage_, "diag_two_rdm_" + padded_iblock);
-          dump.write(Wsum[i], "denominator_" + padded_iblock);
-          dump.pop();
-        }
-        dump.pop();
+        std::string avg_name = std::format("Average_{}", i);
+        h5::group obs_group = ( parent.has_key(avg_name) ? 
+                                parent.open_group(avg_name) :
+                                parent.create_group(avg_name) );
+        std::string padded_iblock = std::format("{:09}", iblock);
+        h5::write(obs_group, "diag_two_rdm_" + padded_iblock, compressed_average(i, nda::range::all));
+        h5::write(obs_group, "denominator_" + padded_iblock, Wsum[i]);
       }
     }
-    TG.TG_local().barrier();
-    fill_n(DMAverage.origin(), DMAverage.num_elements(), ComplexType(0.0, 0.0));
+    nda::tensor::set(0, dm_average);
+    ncalls = 0;
   }
 
+
 private:
-  int block_size;
+  // fold down i <-> j symmetry
+  auto compress_dm_average(const nda::MemoryArrayOfRank<4> auto& full_average) {
+    auto host_full_average = nda::to_host(full_average);
 
-  int nave;
+    int out_size = NMO * (2 * NMO - 1);
+    if (walker_type == CLOSED) out_size -= NMO * (NMO - 1) / 2;
 
-  TaskGroup_& TG;
+    memory::host_array<ComplexType, 2> result(full_average.shape(0), out_size);
+    for(int iav = 0; iav < result.shape(0); iav++) {
+      int idx{};
+      if (walker_type == CLOSED || walker_type == COLLINEAR) {
+        for (int i = 0; i < NMO; i++)
+        {
+          for (int j = i + 1; j < NMO; j++, idx++) {
+            result(iav, idx) = (host_full_average(iav, 0, i, j) + host_full_average(iav, 0, j, i)) / 2;
+          }
+          for (int j = 0; j < NMO; j++, idx++) {
+            result(iav, idx) = host_full_average(iav, 1, i, j); 
+          }
+        }      
+        if (walker_type == COLLINEAR) {
+          for (int i = 0; i < NMO; i++) { 
+            for (int j = i + 1; j < NMO; j++, idx++) {
+              result(iav, idx) = (host_full_average(iav, 2, i, j) + host_full_average(iav, 2, j, i)) / 2;
+            }
+          }
+        }
+      } else if (walker_type == NONCOLLINEAR) {
+        for (int i = 0; i < 2 * NMO; i++) {
+          for (int j = i + 1; j < 2 * NMO; j++, idx++) {
+            result(iav, idx) = (host_full_average(iav, 0, i, j) + host_full_average(iav, 0, j, i)) / 2;
+          }
+        }
+      } else {
+        utils::check(false, "walker_type {} not implemented", walkerTypeToString(walker_type));
+      }    
+      assert(idx == result.shape(1));
+    }
 
-  WALKER_TYPES walker_type;
+    return result;
+  }
+  
+  std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
-  int dm_size;
+  int ncalls = 0;
+  WALKER_TYPES walker_type{};
+  int NMO{};
 
-  bool writer;
-
-  std::string hdf_walker_output;
-
-  // DMAverage (nave, spin*spin*x*NMO*(x*NMO-1)/2 ), x=(1:CLOSED/COLLINEAR, 2:NONCOLLINEAR)
-  mpi3CMatrix DMAverage;
+  // dm_average (nave, spin, x*NMO, x*NMO)
+  // x=(1:CLOSED/COLLINEAR, 2:NONCOLLINEAR)
+  // spin = [(aaaa), (aabb), (bbbb)] for COLLINEAR
+  // spin = [(aaaa), (aabb)] for CLOSED
+  // spin = [(aaaa)] for NONCOLLINEAR
+  memory::array<MEM, ComplexType,4> dm_average;
 };
 
 } // namespace afqmc
 } // namespace sfqmc
-
-#endif

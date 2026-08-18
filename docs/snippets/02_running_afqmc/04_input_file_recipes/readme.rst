@@ -150,7 +150,6 @@ We use ellipses ( `...`)  in some of the advanced input blocks within some input
         },
         "timestep": "0.01",
         "steps": "1",
-        "accumlate_interval": "20",
         "population_control_interval": "10",
         "measure_interval_multiplier": "2",
         "walker_ortho_interval": "10",
@@ -159,7 +158,7 @@ We use ellipses ( `...`)  in some of the advanced input blocks within some input
         "hdf_read_file": "",
         "n_walkers_per_mpi_task": "10",
         "seed": "42",
-        "projector" : {
+        "propagator" : {
           /* ... */
         },
         "estimator" : {

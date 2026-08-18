@@ -14,156 +14,136 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_WALKERS_HPP
-#define SFQMC_AFQMC_WALKERS_HPP
+#pragma once
 
 #include <random>
 #include <type_traits>
 #include <memory>
 
 #include "config.h"
-#include "Utilities/AppAbort.hpp"
+#include "configuration.hpp"
+#include "IO/AppAbort.hpp"
 
 #include "AFQMC/config.h"
-#include "Numerics/ma_blas_extensions.hpp"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
-template<class Ptr>
+
+/*
+ * Basic class to access/interface walker information.
+ * It uses wlk_indices and wlk_descriptor to translate a linear, contiguous segment
+ * of memory into walker properties.
+ * The location of the memory is determined at construction of the object, it is a runtime property.
+ */ 
+template<MEMORY_SPACE MEM, typename _value_t_>
 struct walker
 {
 public:
-  using pointer = Ptr;
-  using element = typename std::pointer_traits<pointer>::element_type;
-  using SMType  = boost::multi::array_ptr<element, 2, pointer>;
+  using value_type = _value_t_;
+  using decay_value_type = typename std::decay<value_type>::type;
+  using SMType  = memory::array_view<MEM,value_type,2,nda::C_layout>;
+  using SVType  = memory::array_view<MEM,value_type,1,nda::C_layout>;
 
-  template<class ma>
-  walker(ma&& a, const wlk_indices& i_, const wlk_descriptor& d_)
-      : w_(a.origin(), iextensions<1u>{a.size()}), indx(i_), desc(d_)
+  walker(nda::MemoryArrayOfRank<1> auto&& a, const wlk_indices& i_, const wlk_descriptor& d_)
+      : _data(a.data()), _size(a.size()), 
+        indx(i_), desc(d_)
   {
-    static_assert(std::decay<ma>::type::dimensionality == 1, "Wrong dimensionality");
+    utils::check(a.strides()[0] == 1, "Stride mismatch."); 
   }
 
-  ~walker() {}
-
-  /*
-      walker(walker&& other): w_(other.w_.origin(), iextensions<1u>{other.w_.size()}), 
-                              indx(other.indx),desc(other.desc)  {} 
-      walker(walker const& other): w_(other.w_.origin(),iextensions<1u>{other.w_.size()}), 
-                              indx(other.indx),desc(other.desc)  {} 
-*/
   // no copy/move assignment
   walker(walker&& other)      = default;
   walker(walker const& other) = default;
   walker& operator=(walker&& other) = delete;
   walker& operator=(walker const& other) = delete;
 
-  pointer base() { return (*w_).origin(); }
-  int size() const { return (*w_).size(0); }
-  SMType SlaterMatrix(SpinTypes s)
+  auto base() { return _data; }
+  auto size() const { return _size; }
+  auto SlaterMatrix(SpinTypes s)
   {
-    if (desc[2] <= 0 && s != Alpha)
-      APP_ABORT("error:walker spin out of range in SlaterMatrix(SpinType).");
-    return (s == Alpha) ? (SMType(getw_(SM), {desc[0], desc[1]}))
-                        : (SMType(getw_(SM) + desc[0] * desc[1], {desc[0], desc[2]}));
+    return (s == Alpha) ? (SMType({desc[0], desc[1]}, getw_(SM)))
+                        : (SMType({desc[0], desc[2]}, getw_(SM) + desc[0] * desc[1]));
   }
-  SMType SlaterMatrixN(SpinTypes s)
+  auto UMatrix(SpinTypes s)
   {
-    if (indx[SMN] < 0)
-      APP_ABORT("error: access to uninitialized BP sector. ");
-    if (desc[2] <= 0 && s != Alpha)
-      APP_ABORT("error:walker spin out of range in SlaterMatrixN(SpinType).");
-    return (s == Alpha) ? (SMType(getw_(SMN), {desc[0], desc[1]}))
-                        : (SMType(getw_(SMN) + desc[0] * desc[1], {desc[0], desc[2]}));
+    return (s == Alpha) ? (SMType({desc[0], desc[1]}, getw_(UR)))
+                        : (SMType({desc[0], desc[2]}, getw_(UR) + desc[0] * desc[1]));
   }
-  SMType SlaterMatrixAux(SpinTypes s)
+  auto DMatrix(SpinTypes s)
   {
-    if (indx[SM_AUX] < 0)
-      APP_ABORT("error: access to uninitialized BP sector. ");
-    if (desc[2] <= 0 && s != Alpha)
-      APP_ABORT("error:walker spin out of range in SlaterMatrixAux(SpinType).");
-    return (s == Alpha) ? (SMType(getw_(SM_AUX), {desc[0], desc[1]}))
-                        : (SMType(getw_(SM_AUX) + desc[0] * desc[1], {desc[0], desc[2]}));
+    return (s == Alpha) ? (SVType({desc[0]}, getw_(DR)))
+                        : (SVType({desc[0]}, getw_(DR) + desc[0]));
   }
-  pointer weight() { return getw_(WEIGHT); }
-  pointer phase() { return getw_(PHASE); }
-  pointer phase1() { return getw_(PHASE1); }
-  pointer phase2() { return getw_(PHASE2); }
-  pointer phase3() { return getw_(PHASE3); }
-  pointer theta() { return getw_(THETA); }
-  pointer pseudo_energy() { return getw_(PSEUDO_ELOC_); }
-  pointer onebody_energy() { return getw_(E1_); }
-  pointer exchange_energy() { return getw_(EXX_); }
-  pointer coulomb_energy() { return getw_(EJ_); }
-  pointer E1() { return getw_(E1_); }
-  pointer EXX() { return getw_(EXX_); }
-  pointer EJ() { return getw_(EJ_); }
-  element energy() { return *getw_(E1_) + *getw_(EXX_) + *getw_(EJ_); }
-  pointer overlap() { return getw_(OVLP); }
+  auto VMatrix(SpinTypes s)
+  {
+    return (s == Alpha) ? (SMType({desc[0], desc[1]}, getw_(VR)))
+                        : (SMType({desc[0], desc[2]}, getw_(VR) + desc[0] * desc[1]));
+  }
+  auto SlaterMatrixN(SpinTypes s)
+  {
+    utils::check(indx[SMN] >= 0, "error: access to uninitialized BP sector. ");
+    return (s == Alpha) ? (SMType({desc[0], desc[1]}, getw_(SMN)))
+                        : (SMType({desc[0], desc[2]}, getw_(SMN) + desc[0] * desc[1]));
+  }
+  // accessor functions. Only defined from host, no device calls allowed. 
+  decay_value_type get_property(walker_data P) const { return get_value(P); }
+  template<typename V>
+  void set_property(walker_data P, V val) { set_value(P,static_cast<decay_value_type>(val)); }
+  decay_value_type energy() const { return get_value(E1_) + get_value(EXX_) + get_value(EJ_); }
   // replaces Slater Matrix at timestep M+N to timestep N for back propagation.
   void setSlaterMatrixN()
   {
-    *SlaterMatrixN(Alpha) = *SlaterMatrix(Alpha);
-    if (desc[2] > 0)
-      *SlaterMatrixN(Beta) = *SlaterMatrix(Beta);
+      SlaterMatrixN(Alpha) = SlaterMatrix(Alpha);
+      if (desc[2] > 0) SlaterMatrixN(Beta) = SlaterMatrix(Beta);
   }
 
 private:
-  boost::multi::array_ptr<element, 1, pointer> w_;
+  value_type* _data = nullptr;
+  long _size = 0;
   const wlk_indices& indx;
   const wlk_descriptor& desc;
 
-  pointer getw_(int P) const { return (*w_).origin() + indx[P]; }
-};
+  auto getw_(int P) { return _data + indx[P]; }
+  auto getw_(int P) const { return _data + indx[P]; }
 
-template<class Ptr>
-struct walker_iterator
-    : public boost::
-          iterator_facade<walker_iterator<Ptr>, void, std::random_access_iterator_tag, walker<Ptr>, std::ptrdiff_t>
-{
-public:
-  template<class WBuff>
-  walker_iterator(int k, WBuff&& w_, const wlk_indices& i_, const wlk_descriptor& d_)
-      : pos(k), W(w_.origin(), w_.extensions()), indx(&i_), desc(&d_)
-  {}
+  void check_allowed_property(walker_data P) const {
+    utils::check(P==WEIGHT or P==PHASE or P==PHASE1 or P==PHASE2 or P==THETA or 
+        P==PSEUDO_ELOC_ or P==E1_ or P==EXX_ or P==EJ_ or P==OVLP or P==LOGSCL_UP
+        or P==LOGSCL_DN or P==IS_UNITARY, "Invalid property.");
+  }
 
-  using pointer         = Ptr;
-  using element         = typename std::pointer_traits<pointer>::element_type;
-  using Wlk_Buff        = boost::multi::array_ptr<element, 2, Ptr>;
-  using difference_type = std::ptrdiff_t;
-  using reference       = walker<Ptr>;
+  decay_value_type get_value(walker_data P) const {
+    check_allowed_property(P);
+    decay_value_type res;
+#if defined(ENABLE_DEVICE)
+    if constexpr (MEM == DEVICE_MEMORY) {
+      nda::mem::memcpy<nda::mem::Host,nda::mem::Device>(std::addressof(res), getw_(P), sizeof(value_type));   
+      return res;
+    } else 
+#endif
+    {
+      res = *getw_(P);
+      return res;
+    }
+  }
 
-  /*
-    walker_iterator(walker_iterator const& it):
-        pos(it.pos),W(it.W.origin(),it.W.extensions()),indx(it.indx),desc(it.desc)
-    {}
-
-    walker_iterator(walker_iterator && it):
-        pos(it.pos),W(it.W.origin(),it.W.extensions()),indx(it.indx),desc(it.desc)
-    {}
-*/
-
-private:
-  int pos;
-  Wlk_Buff W;
-  wlk_indices const* indx;
-  wlk_descriptor const* desc;
-
-  friend class boost::iterator_core_access;
-
-  void increment() { ++pos; }
-  void decrement() { --pos; }
-  bool equal(walker_iterator const& other) const { return pos == other.pos; }
-  reference dereference() const { return reference((*W)[pos], *indx, *desc); }
-  void advance(difference_type n) { pos += n; }
-  difference_type distance_to(walker_iterator other) const { return other.pos - pos; }
+  void set_value(walker_data P, decay_value_type val) {
+    check_allowed_property(P);
+#if defined(ENABLE_DEVICE)
+    if constexpr (MEM == DEVICE_MEMORY) {
+      nda::mem::memcpy<nda::mem::Device,nda::mem::Host>(getw_(P), std::addressof(val), sizeof(decay_value_type));
+    } else
+#endif
+    {
+      *getw_(P) = val;
+    }
+  }
 };
 
 } // namespace afqmc
 
 } // namespace sfqmc
 
-#endif

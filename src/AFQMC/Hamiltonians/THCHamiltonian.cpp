@@ -9,9 +9,6 @@
 //
 //      http://www.apache.org/licenses/LICENSE-2.0
 //
-// This file includes portions derived from work licensed under the
-// University of Illinois/NCSA Open Source License. See the NOTICE file
-// and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cstdlib>
@@ -25,528 +22,321 @@
 #include <numeric>
 
 #include "config.h"
-#include "Utilities/AppAbort.hpp"
-#include "Utilities/type_traits/container_traits_multi.h"
-#include "hdf/hdf_multi.h"
-#include "hdf/hdf_archive.h"
-
+#include "utilities/check.hpp"
+#include "utilities/check_shape.hpp"
+#include "utilities/h5_utils.hpp"
+#include "numerics/nda_functions.hpp"
+#include "numerics/operations/tensor.hpp"
 #include "AFQMC/config.h"
-#include "AFQMC/Utilities/Utils.hpp"
+
+#include "nda/h5.hpp"
+#include "nda/tensor.hpp"
+#include <hdf5.h>
+#include <hdf5_hl.h>
+
 #include "THCHamiltonian.h"
-#include "AFQMC/Hamiltonians/rotateHamiltonian.hpp"
-#include "AFQMC/HamiltonianOperations/THCOpsIO.hpp"
+#include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
+#include "AFQMC/HamiltonianOperations/detail/one_body.hpp"
+
+#include "numerics/sparse/sparse.hpp"
+#include "numerics/shared_array/const_shared_array.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
-// Right now, cutvn, cutvn2, TGprop and TGwfn are completely ignored.
-// Note: addCoulomb only has meaning on the sparse hamiltonians, not in THC
-template<bool MP, bool REAL> HamiltonianOperations<MP> 
+// Coqui h5 structure
+// H1: /System/H0:   [nspin,nkpts_ibz,nbnd,nbnd]
+// X: /Interaction/collocation_matrix:  [nspins,nkpts,nbnd,Nu]
+// L: /Interaction/factorized_coulomb_matrix:  [Nq][Nu][Nv]  
+// Z: /Interaction/coulomb_matrix:  [Nq][Nu][Nv]  
+// with half rotation:
+// Xrot: /Interaction/collocation_matrix_half_rotated:  [nspins,nkpts,nbnd,Nu]
+// Zrot: /Interaction/half_rotated_coulomb_matrix:      [Nq][Nu][Nv]
+
+// PsiT[idet][ispin][ik] -> csr_mat( nup/ndn, NMO )
+template<MEMORY_SPACE MEM, bool REAL> HamiltonianOperations<MEM> 
 THCHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
-                                              std::vector<PsiT_Matrix>& PsiT,
-                                              TaskGroup_& TGprop,   
-                                              TaskGroup_& TGwfn,    
-                                              hdf_archive& hdf_restart)
+               std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+               nda::array<PsiT_Matrix<MEM>,2> const& PsiT)
 {
-  using SPComplexType = typename to_working_precision<MP,ComplexType>::type;
-
+  using nda::range;
   using ValueType     = typename std::conditional_t<REAL, RealType, ComplexType>;
-  using SPValueType   = typename to_working_precision<MP,ValueType  >::type;
-
-  using shmCMatrix    = Matrix_<shared_allocator<ComplexType>>;
-  using shmSPVMatrix  = Matrix_<shared_allocator<SPValueType>>;
-  using shmSPCMatrix  = Matrix_<shared_allocator<SPComplexType>>;
 
   std::string base_error(" Error in THCHamiltonian::getHamiltonianOperations():\n   ");
 
-  size_t nspin = (type == COLLINEAR?2:1);
-  size_t npol = (type == NONCOLLINEAR?2:1);
-  size_t nspin_in_file = 0;
-
-  // hack until parallel hdf is in place
-  bool write_hdf = false;
-  if (TGwfn.Global().root())
-    write_hdf = !hdf_restart.closed();
-  //  if(TGwfn.Global().root()) write_hdf = (hdf_restart.file_id != hdf_archive::is_closed);
-  TGwfn.Global().broadcast_value(write_hdf);
-
-  if (type == COLLINEAR)
-    RUNTIME_CHECK(PsiT.size() % 2 == 0, "");
-  int ndet = ((type != COLLINEAR) ? (PsiT.size()) : (PsiT.size() / 2));
-
-  if (ndet > 1)
-    APP_ABORT("Error: ndet > 1 not yet implemented in THCHamiltonian::getHamiltonianOperations.");
-
-  // this communicator needs to be used for data structures that are distributed
-  // over multiple nodes in a TG. When built with accelerator support, multiple
-  // members of the TG will reside in the same node, so the Node() communicator will lead
-  // to wrong results. For host only builds, this will just be a copy of Node.
-  auto distNode=TG.Node().split(TGwfn.getLocalGroupNumber(), TG.Node().rank());
-  if (TGwfn.getLocalGroupNumber() != TGprop.getLocalGroupNumber())
-    APP_ABORT(" Error: nnodes in wavefunction must match value in Propagator. ");
-
-  size_t gnmu, gnnv, grotnmu, nmu, rotnmu, nmu0, nmuN, rotnmu0, rotnmuN;
-  hdf_archive dump(TGwfn.Global());
-  // right now only Node.root() reads
-  if (distNode.root())
-  {
-    if (!dump.open(fileName, H5F_ACC_RDONLY))
-      APP_ABORT(base_error + "Error opening integral file");
-  }
-
-  // read H1, always in Complex
-  shmCMatrix H1({nspin*npol*NMO, npol*NMO}, shared_allocator<ComplexType>{TG.Node()});
-  if (TG.Node().root())
-  {
-    if (dump.push("System", false)<0)
-      APP_ABORT(base_error + "Group /System not found");
-    std::vector<int> shape;
-    if (!dump.getShape<RealType>("H0", shape))
-      APP_ABORT(" Error in  THCHamiltonian::getHamiltonianOperations(): getShape(H0) returned error. ");
-    nspin_in_file = shape[0];
-    // Convert to current run if possible
-    // H1_skij
-    if((shape[0]!=1 and shape[0]!=2) or shape[1] != 1 or shape[2] != npol*NMO or shape[3] != npol*NMO) 
-      APP_ABORT(" Error: Dimension mismatch in /System/H0."); 
-    if(nspin == 1 and shape[0]==2) 
-      APP_ABORT(" Error: nspin==2 in /System/H0 requires a COLLINEAR calculation."); 
-    if(shape.size() == 5) {
-      if(shape[4]!=2)
-        APP_ABORT(" Error: Inconsistent format of /System/H0 (wrong format for complex numbers).");
-      Array_ref_<4,ComplexType*> h1_(raw_pointer_cast(H1.origin()), {shape[0],1,npol*NMO,npol*NMO});
-      if (!dump.readEntry(h1_, std::string("H0")))
-        APP_ABORT(base_error + "Problems reading /System/H0. ");
-      if(nspin==2 and shape[0] == 1) 
-        std::copy_n(H1.origin(), npol*npol*NMO*NMO, raw_pointer_cast(H1[npol*NMO].origin()));
-    } else if(shape.size() == 4) {
-      Array<RealType,4> h1_({shape[0],1,npol*NMO,npol*NMO},RealType(0.0));
-      if (!dump.readEntry(h1_, std::string("H0")))
-        APP_ABORT(base_error + "Problems reading /System/H0. ");
-      std::copy_n(h1_.origin(), npol*npol*NMO*NMO, raw_pointer_cast(H1.origin()));
-      if(nspin==2 and shape[0] == 1)
-        std::copy_n(h1_.origin(), npol*npol*NMO*NMO, raw_pointer_cast(H1[npol*NMO].origin()));
-    } else {
-      APP_ABORT(" Error: Inconsistent shape of hcore in /Hamiltonian/hcore. ");
+  auto all = range::all;
+  std::string format;  // only meaningful at root
+  long nspin = (type == COLLINEAR?2:1);
+  long npol = (type == NONCOLLINEAR?2:1);
+  long ndet = PsiT.extent(0); 
+  long nup = PsiT(0,0).extent(0);
+  long NMO = PsiT(0,0).extent(1)/npol;
+  utils::check(PsiT(0,0).extent(1)%npol==0, base_error + "Psi.size(1)%npol != 0");
+  utils::check(PsiT.extent(1) == nspin, "Size mismatch");
+  utils::check(ndet==1, "Error: ndet > 1 not yet implemented in THCHamiltonian::getHamiltonianOperations.");
+  long ndn = (type == COLLINEAR ? PsiT(0,1).extent(0) : 0l);
+  for(int i=0; i<ndet; ++i) 
+    for(int ip=0; ip<npol; ++ip) {
+      utils::check_shape(PsiT(i,0), "PsiT", nup, npol*NMO);
+      if(type == COLLINEAR)
+        utils::check_shape(PsiT(i,1), "PsiT", ndn, NMO);
     }
-    dump.pop();
-  }
-  TG.Global().broadcast_value(nspin_in_file);
+  utils::check(nup >= ndn, base_error + "nup:{} < ndn:{} not allowed.",nup,ndn);
 
-  if (distNode.root())
-  { 
-    if (dump.push("Interaction", false)<0)
-      APP_ABORT(base_error + " Group THC not found. ");
-  }
-  // MAM: Add possibility to have a rectangular Luv
-  if (TG.Global().root())
+  // THC variables
+  long nspin_in_H1 = nspin;
+  long npol_in_H1 = 1;
+  long nu = 0; // number of interpolating points/vectors
+  long nv = 0; // number of columns of Vuv matrix
+  long nu_rot = 0; // number of interpolating points/vectors
+  long nv_rot = 0; // number of columns of Vuv matrix
+  bool have_rot_coul = false;  
+    
+  // only root reads
+  ComplexType E0(0);
+  h5::file file;
+  std::optional<h5::group> grp, hgrp;
+  if (mpi->comm.root())
   {
-    std::vector<int> shape;
-
-    if (!dump.getShape<RealType>("factorized_coulomb_matrix", shape))
-      APP_ABORT(base_error + "Problems reading /Interaction/factorized_coulomb_matrix. ");
-    if(shape[0]!=1) 
-      APP_ABORT(" Error: Found /Interaction/factorized_coulomb_matrix with nq>1."); 
-    gnmu    = size_t(shape[1]);
-    gnnv    = size_t(shape[2]);
-
-    if(dump.getShape<RealType>("coulomb_matrix", shape)) {
-      if(shape[0]!=1 or shape[1]!=gnmu or shape[2]!=gnmu)
-        APP_ABORT(base_error + " Shape mismatch in /Interaction/coulomb_matrix");
-      grotnmu = gnmu;
-    } else if(dump.getShape<RealType>("half_rotated_coulomb_matrix", shape)) {
-      if(shape[0]!=1 or shape[2]!=shape[1])
-        APP_ABORT(base_error + " Shape mismatch in /Interaction/half_rotated_coulomb_matrix");
-      grotnmu = shape[1];
-    } else {
-      APP_ABORT(base_error + "THC h5 requires either coulomb_matrix or half_rotated_coulomb_matrix");
-    } 
-  }
-  TG.Global().broadcast_value(gnmu);
-  TG.Global().broadcast_value(gnnv);
-  TG.Global().broadcast_value(grotnmu);
-
-  // setup partition, in general matrices are partitioned asize_t 'u'
-  {
-    int node_number            = TGwfn.getLocalGroupNumber();
-    int nnodes_prt_TG          = TGwfn.getNGroupsPerTG();
-    std::tie(rotnmu0, rotnmuN) = FairDivideBoundary(size_t(node_number), grotnmu, size_t(nnodes_prt_TG));
-    rotnmu                     = rotnmuN - rotnmu0;
-
-    node_number          = TGprop.getLocalGroupNumber();
-    nnodes_prt_TG        = TGprop.getNGroupsPerTG();
-    std::tie(nmu0, nmuN) = FairDivideBoundary(size_t(node_number), gnmu, size_t(nnodes_prt_TG));
-    nmu                  = nmuN - nmu0;
-    RUNTIME_CHECK(nmu > 0, "too many Nodes for number of columns in collocation matrix, {}. Use no more than one node per column.", gnmu);
-  }
-
-  // Until I figure something else, rotPiu and rotcXau are not distributed because a full copy is needed
-  // distribution:  size,  global,  offset
-  //   - rotMuv:    {rotnmu,grotnmu},{grotnmu,grotnmu},{rotnmu0,0}
-  //   - rotPiu:    {nspin*npol*NMO,grotnmu},{nspin*npol*NMO,grotnmu},{0,0}
-  //   - rotcXau    {nel,grotnmu},{nel,grotnmu},{0,0}
-  //   - Piu:       {nspin*npol*NMO,nmu},{nspin*npol*NMO,gnmu},{0,nmu0}
-  //   - Luv:       {nmu,gnmu},{gnmu,gnmu},{nmu0,0}
-  //   - cXau       {nel,nmu},{nel,gnmu},{nmu0,0}
-  //
-  size_t nel = PsiT[0].size(0) + ((type == COLLINEAR) ? PsiT[1].size(0) : 0);
-  shmSPVMatrix rotMuv({rotnmu, grotnmu}, shared_allocator<SPValueType>{distNode});
-  shmSPVMatrix rotPiu({size_t(nspin * npol * NMO), grotnmu}, shared_allocator<SPValueType>{distNode});
-  std::vector<shmSPCMatrix> rotcXau;
-  rotcXau.reserve(ndet);
-  for (int i = 0; i < ndet; i++)
-    rotcXau.emplace_back(shmSPCMatrix({nel,grotnmu}, shared_allocator<SPComplexType>{distNode}));
-  shmSPVMatrix Piu({nspin * npol * NMO, nmu}, shared_allocator<SPValueType>{distNode});
-  shmSPVMatrix Luv({nmu, gnmu}, shared_allocator<SPValueType>{distNode});
-  if (distNode.root())
-  {
-    /***************************************/
-    // X_skiu
-    Array_ref_<4,SPValueType*> Piu_(raw_pointer_cast(Piu.origin()), {nspin_in_file,1,npol*NMO,nmu});
-    hyperslab_proxy<decltype(Piu_), 4> hslab(Piu_, 
-                std::array<size_t, 4>{size_t(nspin_in_file), 1ul, size_t(npol*NMO), gnmu},
-                std::array<size_t, 4>{size_t(nspin_in_file), 1ul, size_t(npol*NMO), nmu}, 
-                std::array<size_t, 4>{0, 0, 0, nmu0});
-    if (!dump.readEntry(hslab, "collocation_matrix"))
-      APP_ABORT(base_error+" Problems reading collocation_matrix. ");
-    if(nspin == 2 and nspin_in_file == 1)
-      std::copy_n(raw_pointer_cast(Piu.origin()),npol*NMO*nmu,raw_pointer_cast(Piu[npol*NMO].origin())); 
-    /***************************************/
-    // Vqun
-    Array_ref_<3,SPValueType*> Luv_(raw_pointer_cast(Luv.origin()), {1,nmu,gnmu});
-    hyperslab_proxy<decltype(Luv_), 3> hslab2(Luv_, 
-                std::array<size_t, 3>{1,gnmu,gnmu}, 
-                std::array<size_t, 3>{1,nmu,gnmu},
-                std::array<size_t, 3>{0,nmu0,0});
-    if (!dump.readEntry(hslab2, "factorized_coulomb_matrix"))
-      APP_ABORT(base_error+" Problems reading factorized_coulomb_matrix ");
-    /***************************************/
-  }
-  TG.Global().barrier();
-
-  if (distNode.root())
-  { 
-    using ma::conj;
-    std::vector<int> shape;
-    std::string coul_name, coll_name; 
-    if(dump.getShape<RealType>("coulomb_matrix", shape)) {
-      coul_name = "coulomb_matrix";
-      coll_name = "collocation_matrix"; 
-    } else {
-      coul_name = "half_rotated_coulomb_matrix";
-      coll_name = "collocation_matrix_half_rotated"; 
-    }
-    /***************************************/
-    // Mquv
-    /***************************************/
-    Array_ref_<3,SPValueType*> rotMuv_(raw_pointer_cast(rotMuv.origin()), {1,rotnmu,grotnmu});
-    hyperslab_proxy<decltype(rotMuv_), 3> hslab2(rotMuv_, 
-                std::array<size_t, 3>{1,grotnmu,grotnmu},  
-                std::array<size_t, 3>{1,rotnmu,grotnmu},
-                std::array<size_t, 3>{0,rotnmu0,0});
-    if (!dump.readEntry(hslab2, coul_name))
-      APP_ABORT(base_error+" Problems reading " + coul_name);
-    // X_skiu
-    Array_ref_<4,SPValueType*> rotPiu_(raw_pointer_cast(rotPiu.origin()), {nspin_in_file,1,npol*NMO,grotnmu});
-    if (!dump.readEntry(rotPiu_, coll_name))
-      APP_ABORT(base_error+" Problems reading " + coll_name);
-    if(nspin == 2 and nspin_in_file == 1)
-      std::copy_n(raw_pointer_cast(rotPiu.origin()),npol*NMO*grotnmu,raw_pointer_cast(rotPiu[npol*NMO].origin())); 
-    /***************************************/
-  }
-  TG.Global().barrier();
-
-  shmCMatrix v0({nspin * NMO, NMO}, shared_allocator<ComplexType>{TG.Node()});
-  if (TGprop.getNGroupsPerTG() > 1)
-  {
-    // MAM: doing this in single precision to be consistent with non-distributed case
-    // very inefficient, find better work distribution for calculation of v0
-    // that doesn't so much temporary space!!!
-    boost::multi::array<SPValueType, 2> v0_({nspin * NMO, NMO});
-    // TOO MUCH MEMORY, FIX FIX FIX!!!
-    shmSPVMatrix Piu__({size_t(nspin * npol * NMO), gnmu}, shared_allocator<SPValueType>{TG.Node()});
-    shmSPVMatrix Luv__({gnmu, gnmu}, shared_allocator<SPValueType>{TG.Node()});
-    if (TG.Node().root())
+    file = h5::file(fileName,'r');
+    grp = std::make_optional(h5::group(file));
+    format = get_hamiltonian_format(*grp);
+    E0 = read_energy_offset(*grp, format, type, nup, ndn);
+    // open subgroup
+    utils::check(format == "coqui", base_error + " Only coqui format is allowed. Format found:{}",format); 
+    hgrp = std::make_optional(grp->open_group("System"));
     {
-      /***************************************/
-      // X_skiu
-      Array_ref_<4,SPValueType*> Piu_(raw_pointer_cast(Piu__.origin()), {nspin_in_file,1,npol*NMO,gnmu});
-      if (!dump.readEntry(Piu_, "collocation_matrix"))
-        APP_ABORT(base_error+" Problems reading collocation_matrix. ");
-      if(nspin == 2 and nspin_in_file == 1)
-        std::copy_n(raw_pointer_cast(Piu__.origin()),npol*NMO*gnmu,raw_pointer_cast(Piu__[npol*NMO].origin())); 
-      /***************************************/
-      // Vqun
-      Array_ref_<3,SPValueType*> Luv_(raw_pointer_cast(Luv__.origin()), {1,gnmu,gnmu});
-      if (!dump.readEntry(Luv_, "factorized_coulomb_matrix"))
-        APP_ABORT(base_error+" Problems reading factorized_coulomb_matrix ");
-      /***************************************/
+      int n;
+      h5::h5_read_attribute(*hgrp,"number_of_bands",n);  // per kpoint
+      // check NMO
+      utils::check(NMO==n, base_error + "NMO:{} differs from file n:{}",NMO,n);
+      h5::group bz = hgrp->open_group("BZ");
+      // check nkpts
+      h5::h5_read_attribute(bz,"number_of_kpoints",n);
+      utils::check(n==1, base_error + "nkpts:1 differs from number_of_kpoints:{} in file",n);
+      // read nspin_in_H1
+      nspin_in_H1 = h5::h5_read_attribute<int>(*hgrp,"number_of_spins");
+      // read npol_in_H1
+      // h5::h5_read_attribute(bz,"number_of_polarizations",n);
+      // npol_in_H1=long(n);
+      utils::check(walkerDimsAreConvertible(nspin_in_H1, npol_in_H1, nspin, npol), "Hamiltonian with nspin: {}, npol: {} cannot be broadcasted to {}", nspin_in_H1, npol_in_H1, walkerTypeToString(type));
     }
-    TG.Node().barrier();
-
-    using ma::conj;
-    using ma::H;
-    using ma::T;
-    size_t c0, cN, nc;
-    std::tie(c0, cN) = FairDivideBoundary(size_t(TG.Global().rank()), gnmu, size_t(TG.Global().size()));
-    nc               = cN - c0;
-    RUNTIME_CHECK(nc > 0, "too many MPI tasks for number of columns in collocation matrix, {}. MPI rank {} has <{}> working columns. Use no more than one task per column. ", gnmu, TG.Global().rank(), nc);
-    boost::multi::array<SPValueType, 2> Tuv({gnmu, nc});
-    boost::multi::array<SPValueType, 2> Muv({gnmu, nc});
-
-    // Muv = Luv * H(Luv)
-    // This can benefit from 2D split of work
-    ma::product(Luv__, H(Luv__.sliced(c0, cN)), Muv);
-
-    // since generating v0 takes some effort and temporary space,
-    // v0(s,i,l) = -0.5*sum_j <i,j|j,l>
-    //         = -0.5 sum_j,u,v ma::conj(Piu(s,i,u)) ma::conj(Piu(s,j,v)) Muv Piu(s,j,u) Piu(s,l,v)
-    //         = -0.5 sum_u,v ma::conj(Piu(s,i,u)) W(s,u,v) Piu(s,l,v), where
-    // W(s,u,v) = Muv(u,v) * sum_j Piu(s,j,u) ma::conj(Piu(s,j,v))
-    boost::multi::array<SPValueType, 2> T_({nc, NMO});
-    if(type == COLLINEAR) {
-      for(size_t is=0, is0=0; is<nspin; is++, is0 += NMO) {
-        auto&& P_iu = Piu({is0, is0 + NMO}, {0, gnmu});
-        auto&& P_iv = Piu({is0, is0 + NMO}, {c0, cN});
-        ma::product(H(P_iu), P_iv, Tuv);
-        auto itM = Muv.origin();
-        auto itT = Tuv.origin();
-        for (size_t i = 0; i < Muv.num_elements(); ++i, ++itT, ++itM)
-          *(itT) = ma::conj(*itT) * (*itM);
-        ma::product(T(Tuv), H(P_iu), T_);
-        ma::product(SPValueType(-0.5), T(T_), T(P_iv),
-                    SPValueType(0.0), v0_( {is0, is0 + NMO}, {0, NMO} ));
-      }
-    } else if(type == NONCOLLINEAR) {
-      for(size_t ip=0, ip0=0; ip<npol; ip++, ip0 += NMO) {
-        auto&& P_iu = Piu({ip0, ip0 + NMO}, {0, gnmu});
-        auto&& P_iv = Piu({ip0, ip0 + NMO}, {c0, cN});
-        ma::product(H(P_iu), P_iv, Tuv);
-        auto itM = Muv.origin();
-        auto itT = Tuv.origin();
-        for (size_t i = 0; i < Muv.num_elements(); ++i, ++itT, ++itM)
-          *(itT) = ma::conj(*itT) * (*itM);
-        ma::product(T(Tuv), H(P_iu), T_);
-        ma::product(SPValueType(-0.5), T(T_), T(P_iv),
-                    SPValueType(0.0), v0_( {ip0, ip0 + NMO}, {0, NMO} ));
-      }
-    } else {
-      auto&& P_iu = Piu({0, NMO}, {0, gnmu});
-      auto&& P_iv = Piu({0, NMO}, {c0, cN});
-      ma::product(H(P_iu), P_iv, Tuv);
-      auto itM = Muv.origin();
-      auto itT = Tuv.origin();
-      for (size_t i = 0; i < Muv.num_elements(); ++i, ++itT, ++itM)
-        *(itT) = ma::conj(*itT) * (*itM);
-      ma::product(T(Tuv), H(P_iu), T_);
-      ma::product(SPValueType(-0.5), T(T_), T(P_iv),
-                  SPValueType(0.0), v0_);
-    }
-
-    // reduce over Global
-    TG.Global().all_reduce_in_place_n(v0_.origin(), v0_.num_elements(), std::plus<>());
-    if (TG.Node().root())
+    // read from /Interaction 
     {
-      copy_n_cast(v0_.origin(), nspin * NMO * NMO, raw_pointer_cast(v0.origin()));
-      // MAM: Since Muv gets large, might have problems with the check for hermicity below
-      // fixing here 
-      for (size_t is = 0, is0 = 0; is < nspin; is++, is0 += NMO)
-        for (size_t i = 0; i < NMO; i++)
-          for (size_t j = i + 1; j < NMO; j++)
-          { 
-            v0[is0+i][j] = 0.5 * (v0[is0+i][j] + ma::conj(v0[is0+j][i]));
-            v0[is0+j][i] = ma::conj(v0[is0+i][j]);
+      h5::group igrp = grp->open_group("Interaction");
+      // check consistency
+// MAM: fix this, integer types in h5 file are not consistent!!!
+      long n;
+      long nspin_in_H2= h5::read_attribute<long>(igrp,"number_of_spins");
+      utils::check(nspin_in_H2 == nspin_in_H1, "Incompatible number_of_spins in Interaction {} and onebody Hamiltonian {}", nspin_in_H2, nspin_in_H1);
+      
+//      h5::h5_read_attribute(igrp,"number_of_polarizations",n);
+//      utils::check(npol_in_H1==n,
+//                   base_error + " Incompatible npol:{} in h5::/Interaction.",n);
+      // NMO
+      h5::h5_read_attribute(igrp,"number_of_bands",n);
+      utils::check(NMO==n,base_error + " Incompatible NMO:{} in h5::/Interaction.",n);
+      // nkpts
+      h5::h5_read_attribute(igrp,"number_of_kpoints",n);
+      utils::check(1==n,base_error + " Incompatible nkpts:{} in h5::/Interaction.",n);
+      // nqpts
+      h5::h5_read_attribute(igrp,"number_of_qpoints",n);
+      utils::check(1==n,base_error + " Incompatible nqpts:{} in h5::/Interaction.",n);
+      // now read dimensions
+// MAM: right now only correct for Real==false, dimensions are assumed different for real case
+      auto lX = h5::array_interface::get_dataset_info(igrp,"collocation_matrix");
+      nu = lX.lengths[3];
+      utils::check_shape(lX, "collocation_matrix", nspin_in_H1, 1, NMO, nu);
+      auto lL = h5::array_interface::get_dataset_info(igrp,"factorized_coulomb_matrix");
+      nv = lL.lengths[2];
+      utils::check_shape(lL, "factorized_coulomb_matrix", 1, nu, nv);
+      if(igrp.has_key("collocation_matrix_half_rotated")) {
+        have_rot_coul = true;
+        auto lXr = h5::array_interface::get_dataset_info(igrp,"collocation_matrix_half_rotated");
+        nu_rot = lXr.lengths[3];
+        utils::check_shape(lXr, "collocation_matrix_half_rotated", nspin_in_H1, 1, NMO, nu_rot);
+        auto lZr = h5::array_interface::get_dataset_info(igrp,"half_rotated_coulomb_matrix");
+        nv_rot = lZr.lengths[2];
+        utils::check_shape(lZr, "half_rotated_coulomb_matrix", 1, nu_rot, nv_rot);
+      } else {
+        have_rot_coul = false;
+        nu_rot = nu;
+        nv_rot = nv;
+        auto lZ = h5::array_interface::get_dataset_info(igrp,"coulomb_matrix");
+        utils::check_shape(lZ, "coulomb_matrix", 1, nu, nu);
+        
+      }
+    }
+  }
+  mpi->comm.broadcast_value(nspin_in_H1);
+  mpi->comm.broadcast_value(npol_in_H1);
+  mpi->comm.broadcast_value(nu);
+  mpi->comm.broadcast_value(nv);
+  mpi->comm.broadcast_value(nu_rot);
+  mpi->comm.broadcast_value(nv_rot);
+  mpi->comm.broadcast_value(have_rot_coul);
+  mpi->comm.broadcast_value(E0);
+
+  auto read_helper = [&](int reshape_type, h5::group& g, std::string name, auto && A)
+  {
+    utils::check(g.has_dataset(name), base_error + "Missing " + name + " dataset");
+    auto l = h5::array_interface::get_dataset_info(g,name);
+    if constexpr (REAL)
+      utils::check(not l.has_complex_attribute,base_error+"Found complex " + name + " with REAL factory.");
+    if (reshape_type==0) {
+      utils::h5_read(g,name,A());
+    } else if (reshape_type==1) {
+      if constexpr (nda::get_rank<decltype(A())> == 3) {
+        auto s = A().shape();
+        auto h4d = nda::reshape(A(),std::array<long,4>{s[0],1l,s[1],s[2]});
+        utils::h5_read(g,name,h4d);
+      } else {
+        utils::check(false,"Invalid use of read_helper");
+      }
+    } else if (reshape_type==2) {
+      if constexpr (nda::get_rank<decltype(A())> == 2) {
+        auto s = A().shape();
+        auto h3d = nda::reshape(A(),std::array<long,3>{1l,s[0],s[1]});
+        utils::h5_read(g,name,h3d);
+      } else {
+        utils::check(false,"Invalid use of read_helper");
+      }
+    }
+  };
+
+  // reads a ValueType dataset from /Interaction on the root only and shares the
+  // result, in MEM space
+  auto share_read = [&]<std::size_t N>(int reshape_type, std::string name, std::array<long,N> shape) {
+    return memory::share_from_root(*mpi, [&]() {
+      nda::array<ValueType,N> A(shape);
+      h5::group igrp = grp->open_group("Interaction");
+      read_helper(reshape_type,igrp,name,A);
+      return memory::to_memory_space<MEM>(std::move(A));
+    });
+  };
+
+  // read H1.
+  // H0: /System/H0:   [nspin][npol*nbnd][npol*nbnd]   Only needed in host memory
+  auto H1 = memory::share_from_root(*mpi, [&]() {
+    nda::array<ComplexType,3> A(nspin_in_H1,npol_in_H1*NMO,npol_in_H1*NMO);
+    read_helper(1,*hgrp,"H0",A);
+    return A;
+  });
+  // X: /Interaction/collocation_matrix:  [nspins,npol*nbnd,Nu]
+  // L: /Interaction/factorized_coulomb_matrix:  [Nu][Nv]
+  // Z: /Interaction/coulomb_matrix:  [Nq][Nu][Nv]
+  // with half rotation:
+  // Xrot: /Interaction/collocation_matrix_half_rotated:  [nspins,nbnd,Nu]
+  // Zrot: /Interaction/half_rotated_coulomb_matrix:      [Nq][Nu][Nv]
+// MAM: right now only correct for Real==false, dimensions are assumed different for real case
+  auto Xsiu = share_read(1,"collocation_matrix",
+                         std::array<long,3>{nspin_in_H1,npol_in_H1*NMO,nu});
+  auto Luv = share_read(2,"factorized_coulomb_matrix",std::array<long,2>{nu,nv});
+  std::optional<decltype(Luv)> Zuv = std::nullopt;
+  // half-rotated
+  std::optional<decltype(Xsiu)> Xsiu_rot = std::nullopt;
+  std::optional<decltype(Luv)> Zuv_rot = std::nullopt;
+  if(have_rot_coul) {
+    Zuv_rot = share_read(2,"half_rotated_coulomb_matrix",std::array<long,2>{nu_rot,nu_rot});
+    Xsiu_rot = share_read(1,"collocation_matrix_half_rotated",
+                          std::array<long,3>{nspin_in_H1,npol_in_H1*NMO,nu_rot});
+  } else {
+    Zuv = share_read(2,"coulomb_matrix",std::array<long,2>{nu,nu});
+  }
+
+  // Y = PsiT*conj(X): (since PsiT is already conjugated/transposed)
+  auto Ydsau = memory::share_from_ranks<MEM,ComplexType,5,2>(*mpi,
+      {ndet,nspin,npol,nup,nu},
+      [&](std::array<long,2> idx, auto&& block) {
+        using matrix_t = memory::buffered_array<MEM,ComplexType,2>;
+        auto [id, is] = idx;
+        long nel = (is==0 ? nup : ndn);
+        if(nel == 0) {
+          return;  // empty sector (ndown==0): no rows to half-rotate
+        }
+        auto Aai = math::sparse::to_array<'N'>(PsiT(id,is));
+        // need to loop over npol since npol_in_H1 might be != than npol
+        if constexpr (REAL) {
+          auto Yau = matrix_t(nel,nu);
+          auto Xiu = matrix_t(NMO,nu);
+          for(long ip=0; ip<npol; ++ip) {
+            auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
+            math::copy(Xsiu()(is_,range(ip_*NMO,(ip_+1)*NMO),all),Xiu);
+            // for simplicity, make calculations with copies at full precision
+            nda::tensor::contract(Aai(all,range(ip*NMO,(ip+1)*NMO)),"ai",
+                            nda::conj(Xiu),"iu",Yau,"au");
+            // now copy result
+            math::copy(Yau,block(ip,range(nel),all));
           }
-    }
-    TG.Node().barrier();
-  }
-  else
-  {
-    // very inefficient, find better work distribution for calculation of v0
-    // that doesn't so much temporary space!!!
-    boost::multi::array<SPValueType, 2> v0_({nspin * NMO, NMO});
-    // very simple partitioning until something more sophisticated is in place!!!
-    using ma::conj;
-    using ma::H;
-    using ma::T;
-    size_t c0, cN, nc;
-    std::tie(c0, cN) = FairDivideBoundary(size_t(TG.Global().rank()), gnmu, size_t(TG.Global().size()));
-    nc               = cN - c0;
-    RUNTIME_CHECK(nc > 0, "too many MPI tasks for number of columns in collocation matrix, {}. MPI rank {} has <{}> working columns. Use no more than one task per column. ", gnmu, TG.Global().rank(), nc);
-    boost::multi::array<SPValueType, 2> Tuv({gnmu, nc});
-    boost::multi::array<SPValueType, 2> Muv({gnmu, nc});
-
-    // Muv = Luv * H(Luv)
-    // This can benefit from 2D split of work
-    ma::product(Luv, H(Luv.sliced(c0, cN)), Muv);
-
-    // since generating v0 takes some effort and temporary space,
-    // v0(s,i,l) = -0.5*sum_j <i,j|j,l>
-    //         = -0.5 sum_j,u,v ma::conj(Piu(s,i,u)) ma::conj(Piu(s,j,v)) Muv Piu(s,j,u) Piu(s,l,v)
-    //         = -0.5 sum_u,v ma::conj(Piu(s,i,u)) W(s,u,v) Piu(s,l,v), where
-    // W(s,u,v) = Muv(u,v) * sum_j Piu(s,j,u) ma::conj(Piu(s,j,v))
-    boost::multi::array<SPValueType, 2> T_({nc, NMO});
-    if(type == COLLINEAR) {
-      for(size_t is=0, is0=0; is<nspin; is++, is0 += NMO) {
-        auto&& P_iu = Piu({is0, is0 + NMO}, {0, gnmu});
-        auto&& P_iv = Piu({is0, is0 + NMO}, {c0, cN});
-        ma::product(H(P_iu), P_iv, Tuv);
-        auto itM = Muv.origin();
-        auto itT = Tuv.origin();
-        for (size_t i = 0; i < Muv.num_elements(); ++i, ++itT, ++itM)
-          *(itT) = ma::conj(*itT) * (*itM);
-        ma::product(T(Tuv), H(P_iu), T_);
-        ma::product(SPValueType(-0.5), T(T_), T(P_iv), 
-                    SPValueType(0.0), v0_( {is0, is0 + NMO}, {0, NMO} ));
-      }
-    } else if(type == NONCOLLINEAR) {
-      for(size_t ip=0, ip0=0; ip<npol; ip++, ip0 += NMO) {
-        auto&& P_iu = Piu({ip0, ip0 + NMO}, {0, gnmu});
-        auto&& P_iv = Piu({ip0, ip0 + NMO}, {c0, cN});
-        ma::product(H(P_iu), P_iv, Tuv);
-        auto itM = Muv.origin();
-        auto itT = Tuv.origin();
-        for (size_t i = 0; i < Muv.num_elements(); ++i, ++itT, ++itM)
-          *(itT) = ma::conj(*itT) * (*itM);
-        ma::product(T(Tuv), H(P_iu), T_);
-        ma::product(SPValueType(-0.5), T(T_), T(P_iv), 
-                    SPValueType(0.0), v0_( {ip0, ip0 + NMO}, {0, NMO} ));
-      }
-    } else {
-      auto&& P_iu = Piu({0, NMO}, {0, gnmu});
-      auto&& P_iv = Piu({0, NMO}, {c0, cN});
-      ma::product(H(P_iu), P_iv, Tuv);
-      auto itM = Muv.origin();
-      auto itT = Tuv.origin();
-      for (size_t i = 0; i < Muv.num_elements(); ++i, ++itT, ++itM)
-        *(itT) = ma::conj(*itT) * (*itM);
-      ma::product(T(Tuv), H(P_iu), T_);
-      ma::product(SPValueType(-0.5), T(T_), T(P_iv),
-                  SPValueType(0.0), v0_);
-    }
-
-    // reduce over Global
-    TG.Global().all_reduce_in_place_n(v0_.origin(), v0_.num_elements(), std::plus<>());
-    if (TG.Node().root())
-    {
-      copy_n_cast(v0_.origin(), nspin * NMO * NMO, raw_pointer_cast(v0.origin()));
-      // MAM: Since Muv gets large, might have problems with the check for hermicity below
-      // fixing here
-      for (size_t is = 0, is0 = 0; is < nspin; is++, is0 += NMO)
-        for (size_t i = 0; i < NMO; i++)
-          for (size_t j = i + 1; j < NMO; j++)
-          {
-            v0[is0+i][j] = 0.5 * (v0[is0+i][j] + ma::conj(v0[is0+j][i]));
-            v0[is0+j][i] = ma::conj(v0[is0+i][j]);
+        } else {
+          for(long ip=0; ip<npol; ++ip) {
+            auto Yau = block(ip,range(nel),all);
+            auto [is_,ip_] = interaction_block(is,ip,npol,nspin_in_H1,npol_in_H1);
+            auto Xiu = Xsiu()(is_,range(ip_*NMO,(ip_+1)*NMO),all);
+            nda::tensor::contract(Aai(all,range(ip*NMO,(ip+1)*NMO)),"ai",
+                            nda::conj(Xiu),"iu",Yau,"au");
           }
-    }
-    TG.Node().barrier();
+        }
+      });
+  std::optional<decltype(Ydsau)> Ydsau_rot = std::nullopt;
+  // what to do with Ydsau_rot???
+
+  // now calculate v0
+  // Partition work over u. Replicate v for simplicity 
+  // v0(s,i,l) = -0.5*sum_j <i,j|j,l>
+  //         = -0.5 sum_j,u,v ma::conj(Piu(s,i,u)) ma::conj(Piu(s,j,v)) Muv Piu(s,j,u) Piu(s,l,v)
+  //         = -0.5 sum_u,v ma::conj(Piu(s,i,u)) W(s,u,v) Piu(s,l,v), where
+  // W(s,u,v) = Muv(u,v) * sum_j Piu(s,j,u) ma::conj(Piu(s,j,v))
+  // Note: If this uses too much memory, distribute "u" axis over nodes, then construct
+  // W(s,u,v) on shared memory and distribute calculation of v0 over node on a single array.
+  if(have_rot_coul) {
+    utils::check(false, "Finish");
   }
-  TG.Global().barrier();
+  auto v0 = memory::share_reduced<HOST_MEMORY,ComplexType,3>(*mpi,
+      std::array<long,3>{nspin_in_H1*npol_in_H1, NMO, NMO},
+      [&](auto&& partial) {
+        auto [u0, u1] = itertools::chunk_range(0, nu, mpi->comm.size(), mpi->comm.rank());
+        memory::buffered_array<MEM,ValueType,3> vt(partial.shape());
+        vt() = ValueType(0.0);
+        {
+          memory::buffered_array<MEM,ValueType,2> Wuv((u1-u0),nu);
+          memory::buffered_array<MEM,ValueType,2> Tiv(NMO,nu);
+          Wuv() = ValueType(0.0);
+          Tiv() = ValueType(0.0);
+          for(long is=0, isp=0; is<nspin_in_H1; is++) {
+            for(long ip=0; ip<npol_in_H1; ip++, isp++) {
+              if(u0==u1) { continue; }
+              auto Xiu = Xsiu()(is,range(ip*NMO,(ip+1)*NMO),range(u0,u1));
+              auto Xiv = Xsiu()(is,range(ip*NMO,(ip+1)*NMO),all);
+              auto Zu = (*Zuv)()(range(u0,u1),all);
+              nda::tensor::contract(Xiu, "iu", nda::conj(Xiv), "iv", Wuv, "uv");
+              nda::tensor::elementwise(1.0, Zu, "uv", 1.0, Wuv, "uv",
+                                       nda::tensor::binary_op::PROD);
+              nda::tensor::contract(nda::conj(Xiu), "iu", Wuv, "uv", Tiv, "iv");
+              nda::tensor::contract(ValueType(-0.5),Tiv, "iv", Xiv, "jv",
+                                    ValueType(0.0),vt(isp,all,all), "ij");
+            }
+          }
+        }
+        partial = nda::to_host(vt);
+      });
 
-  size_t nup = PsiT[0].size(0);
-  size_t ndown = ((type == COLLINEAR) ? PsiT.back().size(0) : 0);
+  auto nel = std::to_array<long>({nup, (type == COLLINEAR ? ndn : 0l) });
+  auto haj = half_rotate_hamiltonian<MEM>(*mpi, nel, nspin, npol, nspin_in_H1, npol_in_H1, NMO, PsiT(), H1());
 
-  // half-rotated Pia
-  std::vector<shmSPCMatrix> cXau;
-  cXau.reserve(ndet);
-  for (int i = 0; i < ndet; i++)
-    cXau.emplace_back(shmSPCMatrix({nel, nmu}, shared_allocator<SPComplexType>{distNode}));
-  if (distNode.root())
-  {
-    // simple
-    using ma::H;
-    // cXau = ma::conj(Aai * Piu) = T( H(Piu), H(Aai) ), 
-    //                 where PsiT = conj(Aai), so conj(Aia) = T(PsiT)  
-    if (type == COLLINEAR)
-    {
-      boost::multi::array<SPComplexType, 2> A({NMO, nup});
-      boost::multi::array<SPComplexType, 2> T1({std::max(nmu,grotnmu), nup});
-      auto&& Piu_up = Piu({0,NMO}, {0, nmu});
-      auto&& Piu_dn = Piu({NMO,2*NMO}, {0, nmu});
-      auto&& rotPiu_up = rotPiu({0,NMO}, {0, grotnmu});
-      auto&& rotPiu_dn = rotPiu({NMO,2*NMO}, {0, grotnmu});
-      for (int i = 0; i < ndet; i++)
-      {
-        // alpha
-        ma::Matrix2MA('T', PsiT[2 * i], A);
-
-        ma::product(H(Piu_up), A, T1({0,nmu},{0,nup}));
-        ma::transpose(T1({0,nmu},{0,nup}),cXau[i].sliced(0, nup));
-
-        ma::product(H(rotPiu_up), A, T1({0,grotnmu},{0,nup})); 
-        ma::transpose(T1({0,grotnmu},{0,nup}),rotcXau[i].sliced(0, nup));
-
-        // beta
-        ma::Matrix2MAREF('T', PsiT[2 * i + 1], A({0,NMO},{0,ndown}));
-
-        ma::product(H(Piu_dn), A({0,NMO},{0,ndown}), T1({0,nmu},{0,ndown})); 
-        ma::transpose(T1({0,nmu},{0,ndown}),cXau[i].sliced(nup, nel));
-
-        ma::product(H(rotPiu_dn), A({0,NMO},{0,ndown}), T1({0,grotnmu},{0,ndown})); 
-        ma::transpose(T1({0,grotnmu},{0,ndown}),rotcXau[i].sliced(nup, nel));
-      }
-    }
-    else if (type == NONCOLLINEAR)
-    {
-      APP_ABORT("Finish THC noncollinear.");
-    }
-    else
-    {
-      boost::multi::array<SPComplexType, 2> A({PsiT[0].size(1), PsiT[0].size(0)});
-      boost::multi::array<SPComplexType, 2> T1({std::max(nmu,grotnmu), nup});
-      for (int i = 0; i < ndet; i++)
-      {
-        ma::Matrix2MA('T', PsiT[i], A);
-        ma::product(H(Piu), A, T1.sliced(0,nmu)); 
-        ma::transpose(T1.sliced(0,nmu),cXau[i]);
-        ma::product(H(rotPiu), A, T1.sliced(0,grotnmu)); 
-        ma::transpose(T1.sliced(0,grotnmu),rotcXau[i]);
-      }
-    }
-  }
-  TG.Node().barrier();
-
-  ComplexType E0 = NuclearCoulombEnergy + FrozenCoreEnergy;
-
-  shmCMatrix hij({ndet, (nup+ndown) * npol * NMO}, shared_allocator<ComplexType>{TG.Node()});
-  if (TG.Node().root())
-  {
-    // dense one body hamiltonian
-    int skp = ((type == COLLINEAR) ? 1 : 0);
-    for (int n = 0, nd = 0; n < ndet; ++n, nd += (skp + 1))
-    {
-      check_wavefunction_consistency(type, &PsiT[nd], &PsiT[nd + skp], NMO, nup, ndown);
-      auto hij_=rotateHij(type, &PsiT[nd], &PsiT[nd + skp], H1);
-      std::copy_n(hij_.origin(), hij_.num_elements(), raw_pointer_cast(hij[n].origin()));
-    }
-  }
-  TG.Node().barrier();
-
-//  if (write_hdf)
-//    writeTHCOps(hdf_restart, type, NMO, nup, ndown, nmu0, rotnmu0, ndet, TGprop, TGwfn, H1, rotPiu, rotMuv, Piu, Luv,
-//                v0, E0);
-
-  if (distNode.root())
-  {
-    dump.pop();
-    dump.close();
-  }
-
-  return HamiltonianOperations<MP>(THCOps<MP, REAL>(TGwfn.TG_local(), NMO, nup, ndown, type, nmu0, rotnmu0, std::move(H1),
-                                      std::move(hij), std::move(rotMuv), std::move(rotPiu), std::move(rotcXau),
-                                      std::move(Luv), std::move(Piu), std::move(cXau), std::move(v0), E0));
+  return HamiltonianOperations<MEM>(THCOps<MEM, REAL>(mpi,type,NMO,nup,ndn,
+     std::move(H1),std::move(haj),std::move(Xsiu),std::move(Ydsau),std::move(Luv),std::move(Zuv),
+     std::move(Xsiu_rot),std::move(Ydsau_rot),std::move(Zuv_rot),std::move(v0),E0)); 
 }
 
-template<bool MP> HamiltonianOperations<MP> 
+template<MEMORY_SPACE MEM> HamiltonianOperations<MEM> 
 THCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
-                                         std::vector<PsiT_Matrix>& PsiT,
-                                         TaskGroup_& TGprop,   
-                                         TaskGroup_& TGwfn,    
-                                         hdf_archive& hdf_restart)
+               std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+               nda::array<PsiT_Matrix<MEM>,2> const& PsiT)
 {
-  bool Real; 
- 
+  bool Real = true; 
+
   // factorized_coulomb_matrix(q,u,n): required
   // collocation_matrix(s,k,i,u): required
   // Option 1: Provide L * dagger(L) where L=factorized_coulomb_matrix. Reuse collocation_matrix.
@@ -554,72 +344,45 @@ THCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   // Option 2: Independently generated THC factorization for half-rotated orbitals 
   // half_rotated_coulomb_matrix(q,u',v') 
   // collocation_matrix_half_rotated(s,k,i,u)
-  if(TG.Global().root()) { 
+  if(mpi->comm.root()) { 
 
-    hdf_archive dump{};
-    if (!dump.open(fileName, H5F_ACC_RDONLY))
-      APP_ABORT(" Error opening integral file in THCHamiltonian. ");
-    if (dump.push("Interaction", false)<0)
-      APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): Group Interaction not found. ");
-    std::vector<int> shape;
-    if (!dump.getShape<RealType>("factorized_coulomb_matrix", shape))
-      APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): getShape(factorized_coulomb_matrix) returned error. ");
-    if( shape.size() == 4 ) Real = false;
-    else if( shape.size() == 3 ) Real = true;
-    else APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): Inconsistent shape of HalfTransformedFullOrbitals. "); 
-
-    // check others
-    shape.clear();
-    if (!dump.getShape<RealType>("collocation_matrix", shape))
-      APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): getShape(collocation_matrix) returned error. ");
-    if( (shape.size() != 4 and shape.size() != 5) or 
-        (shape.size() == 5 and Real ) or
-	(shape.size() == 4 and not Real) )
-      APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): Inconsistent shape between factorized_coulomb_matrix and collocation_matrix. ");
-
-    shape.clear();
-    if (dump.getShape<RealType>("coulomb_matrix", shape))  {
-
-      // provide Muv, reuse collocation_matrix
-      if( (shape.size() != 3 and shape.size() != 4) or 
-          (shape.size() == 4 and Real ) or
-          (shape.size() == 3 and not Real) )
-        APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): Inconsistent shape between coulomb_matrix and factorized_coulomb_matrix. ");
-
-    } else if(dump.getShape<RealType>("half_rotated_coulomb_matrix", shape)) {
-
-      // provide half rotated Muv and X 
-      if( (shape.size() != 3 and shape.size() != 4) or 
-          (shape.size() == 4 and Real ) or
-          (shape.size() == 3 and not Real) )
-        APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): Inconsistent shape between factorized_coulomb_matrix and half_rotated_coulomb_matrix. ");
-
-      if (!dump.getShape<RealType>("collocation_matrix_half_rotated", shape))
-        APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): getShape(collocation_matrix_half_rotated) returned error. ");
-      if( (shape.size() != 4 and shape.size() != 5) or
-          (shape.size() == 5 and Real ) or
-          (shape.size() == 4 and not Real) )
-        APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): Inconsistent shape between factorized_coulomb_matrix and collocation_matrix_half_rotated"); 
-
-    } else {
-      APP_ABORT(" Error in THCHamiltonian::getHamiltonianOperations(): Missing datasets in THC h5 file. File must contain either coulomb_matrix or {half_rotated_coulomb_matrix + collocation_matrix_half_rotated}"); 
+    h5::file file(fileName,'r');
+    h5::group grp(file);
+    h5::group igrp = grp.open_group("Interaction"); 
+    { // check factorized_coulomb_matrix
+      utils::check(igrp.has_dataset("factorized_coulomb_matrix"),"Missing dataset factorized_coulomb_matrix."); 
+      auto l = h5::array_interface::get_dataset_info(igrp,"factorized_coulomb_matrix");
+      if(l.has_complex_attribute) Real = false;
+      utils::check((l.rank() == 2) or (l.rank() == 4), "Rank mismatch");
+      if(l.has_complex_attribute or (l.rank() == 2)) Real = false;
     }
-
-    dump.pop();
-    dump.close(); 
+    { // check collocation_matrix 
+      utils::check(igrp.has_dataset("collocation_matrix"),"Missing dataset collocation_matrix."); 
+      auto l = h5::array_interface::get_dataset_info(igrp,"collocation_matrix");
+      utils::check((l.rank() == 3) or (l.rank() == 5), "Rank mismatch");
+      utils::check((Real and not (l.has_complex_attribute or (l.rank() == 5))) or 
+                   (not Real and (l.has_complex_attribute or (l.rank() == 5))), "Incompatible datatypes in Interaction.");
+    }
+    // should I check the other ones???
   }
-  TG.Global().broadcast_n(&Real, 1, 0);
+  mpi->comm.broadcast_n(&Real, 1, 0);
 
   if(Real) 
-    return getHamiltonianOperations_impl<MP,true>(type, PsiT, TGprop, TGwfn, hdf_restart);
+    return getHamiltonianOperations_impl<MEM,true>(type, mpi, PsiT); 
   else
-    return getHamiltonianOperations_impl<MP,false>(type, PsiT, TGprop, TGwfn, hdf_restart);
+    return getHamiltonianOperations_impl<MEM,false>(type, mpi, PsiT);
 }
 
-template HamiltonianOperations<true> THCHamiltonian::getHamiltonianOperations<true>(
-		WALKER_TYPES, std::vector<PsiT_Matrix>&,TaskGroup_&,TaskGroup_&,hdf_archive&);
-template HamiltonianOperations<false> THCHamiltonian::getHamiltonianOperations<false>(
-		WALKER_TYPES, std::vector<PsiT_Matrix>&,TaskGroup_&,TaskGroup_&,hdf_archive&);
+template HamiltonianOperations<HOST_MEMORY> 
+  THCHamiltonian::getHamiltonianOperations<HOST_MEMORY>(WALKER_TYPES, 
+     std::shared_ptr<utils::mpi_context_t<mpi3::communicator>>, 
+     nda::array<PsiT_Matrix<HOST_MEMORY>,2>const&);
+#if defined(ENABLE_DEVICE)
+template HamiltonianOperations<DEVICE_MEMORY> 
+  THCHamiltonian::getHamiltonianOperations<DEVICE_MEMORY>(WALKER_TYPES, 
+     std::shared_ptr<utils::mpi_context_t<mpi3::communicator>>, 
+     nda::array<PsiT_Matrix<DEVICE_MEMORY>,2>const&);
+#endif
 
 } // namespace afqmc
 } // namespace sfqmc

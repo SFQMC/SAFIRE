@@ -14,125 +14,47 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-
-#ifndef SFQMC_AFQMC_REALDENSEHAMILTONIAN_H
-#define SFQMC_AFQMC_REALDENSEHAMILTONIAN_H
+#pragma once
 
 #include <iostream>
 #include <vector>
 #include <map>
 #include <fstream>
 
-#include "hdf/hdf_archive.h"
-#include "io/ptree/ptree_utilities.hpp"
-#include "Utilities/app_loggers.h"
+#include "IO/app_loggers.h"
+#include "utilities/mpi_context.h"
 
 #include "AFQMC/config.h"
-#include "Memory/utilities.hpp"
-#include "AFQMC/Utilities/taskgroup.h"
-#include "Numerics/ma_operations.hpp"
+#include "AFQMC/parameters.hpp"
+#include "nda/h5.hpp"
 
-#include "AFQMC/HamiltonianOperations/HamiltonianOperations.hpp"
+#include "AFQMC/HamiltonianOperations/HamiltonianOperations.h"
 
 namespace sfqmc
 {
 namespace afqmc
 {
-class RealDenseHamiltonian : public AFQMCInfo 
+class RealDenseHamiltonian
 {
 public:
-  RealDenseHamiltonian(AFQMCInfo const& info,
-                       ptree pt_in,
-                       TaskGroup_& tg_,
-                       ComplexType nucE = 0,
-                       ComplexType fzcE = 0)
-      : AFQMCInfo(info), 
-	TG(tg_), 
-        NuclearCoulombEnergy(nucE),
-        FrozenCoreEnergy(fzcE),
-	fileName(""),
-	batched(false)
-  {
-    // convert user input to verbose input
-    ptree pt = interpret_inputs(pt_in);
-    app_log(2,"\nRealDense CPU input:");
-    app_log(2, "{}", io::to_string(pt));
-    // initialize using verbose input
-    fileName  = pt.get<std::string>("filename");
-    name      = pt.get<std::string>("name");
-    batched   = pt.get<bool>("batched");
-  }
+  RealDenseHamiltonian(const HamiltonianParameters& params)
+      : fileName(params.filename),
+        max_memory_MB(params.max_memory)
+  {}
 
-  ~RealDenseHamiltonian() {}
+  HamiltonianTypes getHamType() const {return RealDenseFactorized; }
 
-  RealDenseHamiltonian(RealDenseHamiltonian const& other) = delete;
-  RealDenseHamiltonian(RealDenseHamiltonian&& other)      = default;
-  RealDenseHamiltonian& operator=(RealDenseHamiltonian const& other) = delete;
-  RealDenseHamiltonian& operator=(RealDenseHamiltonian&& other) = delete;
-
-  ComplexType getNuclearCoulombEnergy() const { return NuclearCoulombEnergy; }
-
-  template<bool MP>
-  HamiltonianOperations<MP> getHamiltonianOperations(WALKER_TYPES type,
-                                                     std::vector<PsiT_Matrix>& PsiT,
-                                                     TaskGroup_& TGprop,
-                                                     TaskGroup_& TGwfn,
-                                                     hdf_archive& hdf_restart);
-
-  HamiltonianTypes getHamType()
-  {
-    return RealDenseFactorized;
-  }
-
-  static ptree interpret_inputs(const ptree pt0)
-  {
-    // read inputs with default options
-    std::string name, filename;
-    bool batched;
-    bool batched_default = false;
-    if (number_of_devices() > 0) batched_default = true;
-    name      = pt0.get<std::string>("name", "ham0");
-    filename  = pt0.get<std::string>("filename");
-    batched   = pt0.get<bool>("batched", batched_default);
-    // validate inputs
-    if ((omp_get_num_threads() > 1) && (not batched))
-    {
-      app_warning(" Found OMP_NUM_THREADS > 1 with batched=false.");
-      app_warning(" This will lead to low performance. Set batched=true. ");
-    }
-    // create verbose internal inputs
-    ptree pt1;
-    pt1.put("name", name);
-    pt1.put("filename", filename);
-    pt1.put("batched", batched);
-    std::unordered_set<std::string> pass_through_keys = {
-      "system"
-    };
-    io::compare_known_keys("Dense Generic Factorized (Cholesky) Hamiltonian",pt1, pt0,pass_through_keys);
-    return pt1;
-  }
+  template<MEMORY_SPACE MEM>
+  HamiltonianOperations<MEM> getHamiltonianOperations(WALKER_TYPES type,
+                 std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+                 nda::array<PsiT_Matrix<MEM>,2> const& PsiT);
 
 protected:
-  // for hamiltonian distribution
-  TaskGroup_& TG;
-
-  ComplexType NuclearCoulombEnergy;
-  ComplexType FrozenCoreEnergy;
-
   std::string fileName;
 
-  bool batched;
-
-  template<bool MP, bool REAL_ONEBODY>
-  HamiltonianOperations<MP> getHamiltonianOperations_impl(WALKER_TYPES type,
-                                                         std::vector<PsiT_Matrix>& PsiT,
-                                                         TaskGroup_& TGprop,   
-                                                         TaskGroup_& TGwfn,    
-                                                         hdf_archive& hdf_restart);
-
+  int max_memory_MB;
 };
 
 } // namespace afqmc
 } // namespace sfqmc
 
-#endif

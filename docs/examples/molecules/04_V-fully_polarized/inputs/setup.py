@@ -41,7 +41,6 @@ def main():
         chol_tol, 
         real_chol=True, 
         verbose=True,
-        walker_type='fullypolarized',
         cas=cas_afqmc  # provide the CAS info here
     )
     

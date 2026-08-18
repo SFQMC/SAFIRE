@@ -14,427 +14,137 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_WAVEFUNCTION_HPP
-#define SFQMC_AFQMC_WAVEFUNCTION_HPP
+#pragma once
 
-
+#include <tuple>
+#include <variant>
 #include "AFQMC/config.h"
+#include "AFQMC/Walkers/WalkerSet.hpp"
 
-#include "AFQMC/SlaterDeterminantOperations/SlaterDetOperations.hpp"
+#include "numerics/shared_array/const_shared_array.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
+#include "AFQMC/Wavefunctions/NOMSD_FT.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
-namespace dummy
-{
-/*
- * Empty class to avoid need for default constructed Wavefunctions.
- * Throws is any visitor is called. 
- */
-class dummy_wavefunction
-{
-private:
-  std::vector<ComplexType> ci;
-  std::vector<PsiT_Matrix> orbs;
 
-public:
-  dummy_wavefunction(){};
-
-  int size_of_G_for_vbias() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return 0;
-  }
-  int local_number_of_cholesky_vectors() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return 0;
-  }
-  int global_number_of_cholesky_vectors() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return 0;
-  }
-  int global_origin_cholesky_vector() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return 0;
-  }
-  int number_of_references_for_back_propagation() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return 0;
-  }
-  bool distribution_over_cholesky_vectors() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return false;
-  }
-
-  WALKER_TYPES getWalkerType() const { return UNDEFINED_WALKER_TYPE; }
-
-  bool transposed_G_for_vbias() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return false;
-  }
-
-  bool transposed_G_for_E() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return false;
-  }
-
-  bool transposed_vHS() const
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return false;
-  }
-
-  template<class Vec>
-  void vMF([[maybe_unused]] Vec&& v, [[maybe_unused]] double dt)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class MatG, class MatA>
-  void vbias([[maybe_unused]] const MatG& G, [[maybe_unused]] MatA&& v, [[maybe_unused]] double dt, [[maybe_unused]] double a = 1.0)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class MatX, class MatA>
-  void vHS([[maybe_unused]] MatX&& X, [[maybe_unused]] MatA&& v, [[maybe_unused]] double dt, [[maybe_unused]] double a = 1.0)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class... Args>
-  void G_MF([[maybe_unused]] Args&&... args)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class WSet>
-  void Energy([[maybe_unused]] WSet& wset)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class WlkSet, class Mat, class TVec>
-  void Energy([[maybe_unused]] const WlkSet& wset, [[maybe_unused]] Mat&& E, [[maybe_unused]] TVec&& Ov)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class WlkSet, class MatG>
-  void MixedDensityMatrix([[maybe_unused]] const WlkSet& wset, [[maybe_unused]] MatG&& G, [[maybe_unused]] bool compact = true, [[maybe_unused]] bool transpose = false)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class WlkSet, class MatG, class TVec>
-  void MixedDensityMatrix([[maybe_unused]] const WlkSet& wset, [[maybe_unused]] MatG&& G, [[maybe_unused]] TVec&& Ov, [[maybe_unused]] bool compact = true, [[maybe_unused]] bool transpose = false)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class WlkSet, class MatG>
-  void MixedDensityMatrix_for_vbias([[maybe_unused]] const WlkSet& wset, [[maybe_unused]] MatG&& G)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class... Args>
-  void DensityMatrix ([[maybe_unused]] Args&&... args)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class WlkSet, class TVec>
-  void Overlap([[maybe_unused]] const WlkSet& wset, [[maybe_unused]] TVec&& Ov)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class WlkSet>
-  void Overlap([[maybe_unused]] WlkSet& wset)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class... Args>
-  void accumulate_estimators([[maybe_unused]] Args&&... args)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  ComplexType getReferenceWeight([[maybe_unused]] int i)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return ComplexType(0.0, 0.0);
-  }
-
-  template<class Mat>
-  void getReferencesForBackPropagation([[maybe_unused]] Mat&& A)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class... Args>
-  void generalizedFockMatrix([[maybe_unused]] Args&&... args)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  HamiltonianTypes getHamType()
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return UNKNOWN; 
-  }
-
-  template<class... Args>
-  void getFieldTypes([[maybe_unused]] Args&&... args)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class... Args>
-  void update_potentials([[maybe_unused]] Args&&... args)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-  }
-
-  template<class... Args>
-  multi::array<ComplexType, 2> getOneBodyPropagatorMatrix([[maybe_unused]] Args&&... args)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return multi::array<ComplexType, 2>{};
-  }
-
-  template<class... Args>
-  std::tuple<dev_csr_Matrix<ComplexType> const*, dev_csr_Matrix<ComplexType> const*> vHS_sparse([[maybe_unused]] Args&&... args)
-  {
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    dev_csr_Matrix<ComplexType> const* t(nullptr);
-    return std::make_tuple(t,t);
-  }
-
-  SlaterDetOperations SDet;
-  SlaterDetOperations* getSlaterDetOperations() { return std::addressof(SDet); }
-
-  bool spin_dependent_vHS() const { 
-    throw std::runtime_error("calling visitor on dummy_wavefunction object");
-    return false;
-  } 
-
-};
-} // namespace dummy
-
-class Wavefunction : public boost::variant<dummy::dummy_wavefunction,
-                                           NOMSD<true,local_csr_Matrix<ComplexType>>,
-                                           NOMSD<false,local_csr_Matrix<ComplexType>>,
-                                           NOMSD<true,ComplexMatrix<node_allocator<ComplexType>>>,
-                                           NOMSD<false,ComplexMatrix<node_allocator<ComplexType>>>,
-                                           PHMSD<true>,
-                                           PHMSD<false>>
+template<MEMORY_SPACE MEM>
+class Wavefunction 
 {
 public:
-  Wavefunction() { APP_ABORT(" Error: Reached default constructor of Wavefunction. "); }
-  explicit Wavefunction(NOMSD<true,local_csr_Matrix<ComplexType>>&& other) : variant(std::move(other)) {}
-  explicit Wavefunction(NOMSD<true,local_csr_Matrix<ComplexType>> const& other) = delete;
+  template<typename Wfn>
+  Wavefunction(Wfn&& other) : var(std::forward<Wfn>(other)) {}
 
-  explicit Wavefunction(NOMSD<false,local_csr_Matrix<ComplexType>>&& other) : variant(std::move(other)) {}
-  explicit Wavefunction(NOMSD<false,local_csr_Matrix<ComplexType>> const& other) = delete;
-
-  explicit Wavefunction(NOMSD<true,ComplexMatrix<node_allocator<ComplexType>>>&& other) : 
-			variant(std::move(other)) {}
-  explicit Wavefunction(NOMSD<true,ComplexMatrix<node_allocator<ComplexType>>> const& other) = delete;
-
-  explicit Wavefunction(NOMSD<false,ComplexMatrix<node_allocator<ComplexType>>>&& other) : 
-			variant(std::move(other)) {}
-  explicit Wavefunction(NOMSD<false,ComplexMatrix<node_allocator<ComplexType>>> const& other) = delete;
-
-  explicit Wavefunction(PHMSD<true>&& other) : variant(std::move(other)) {}
-  explicit Wavefunction(PHMSD<true> const& other) = delete;
-
-  explicit Wavefunction(PHMSD<false>&& other) : variant(std::move(other)) {}
-  explicit Wavefunction(PHMSD<false> const& other) = delete;
-
-  Wavefunction(Wavefunction const& other) = delete;
-  Wavefunction(Wavefunction&& other)      = default;
-
-  Wavefunction& operator=(Wavefunction const& other) = delete;
-  Wavefunction& operator=(Wavefunction&& other) = default;
-
-  int size_of_G_for_vbias() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.size_of_G_for_vbias(); }, *this);
+  template<typename Wfn>
+  Wavefunction& operator=(Wfn&& other) {
+    var = std::forward<Wfn>(other);
+    return *this;
   }
 
-  int local_number_of_cholesky_vectors() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.local_number_of_cholesky_vectors(); }, *this);
-  }
+  /*
+   * Returns the memory space.
+   */
+  MEMORY_SPACE get_memory_space() const;
 
-  int global_number_of_cholesky_vectors() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.global_number_of_cholesky_vectors(); }, *this);
-  }
+  int number_of_cholesky_vectors() const;
 
-  int global_origin_cholesky_vector() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.global_origin_cholesky_vector(); }, *this);
-  }
+  void runtime_optimization(WalkerSet<MEM>& wset);
 
-  int number_of_references_for_back_propagation() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.number_of_references_for_back_propagation(); }, *this);
-  }
+  WALKER_TYPES getWalkerType() const;
 
-  bool distribution_over_cholesky_vectors() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.distribution_over_cholesky_vectors(); }, *this);
-  }
+  bool isFiniteTemperature() const;
 
-  bool transposed_G_for_vbias() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.transposed_G_for_vbias(); }, *this);
-  }
+  void vMF(memory::array_view<MEM,ComplexType,1> v, double dt);
 
-  bool transposed_G_for_E() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.transposed_G_for_E(); }, *this);
-  }
+  memory::const_shared_array<HOST_MEMORY,ComplexType,3> G_MF();
 
-  bool transposed_vHS() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.transposed_vHS(); }, *this);
-  }
+  // vbias/Energy/Log_Overlap come in two arities: the alternatives disagree on the
+  // default for nt (0 for the zero-T wavefunctions, -1 for NOMSD_FT), so the facade
+  // forwards without supplying one rather than picking a default here.
+  void vbias(WalkerSet<MEM>& wset, memory::array_view<MEM,ComplexType,2> v, double dt);
+  void vbias(WalkerSet<MEM>& wset, memory::array_view<MEM,ComplexType,2> v, double dt, int nt);
 
-  WALKER_TYPES getWalkerType() const
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.getWalkerType(); }, *this);
-  }
+  memory::buffered_array<MEM,ComplexType,4> vHS(memory::array_view<MEM,ComplexType,2> X, double dt);
 
-  template<class... Args>
-  void vMF(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.vMF(std::forward<Args>(args)...); }, *this);
-  }
+  nda::array_view<math::sparse::csr_matrix<ComplexType,MEM,int,int>,1>
+      vHS_sparse(memory::array_view<MEM,const ComplexType,2> X, double dt);
 
-  template<class... Args>
-  void G_MF(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.G_MF(std::forward<Args>(args)...); }, *this);
-  }
+  std::tuple<int,int> vHS_dims() const;
 
-  template<class... Args>
-  void vbias(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.vbias(std::forward<Args>(args)...); }, *this);
-  }
+  void Energy(WalkerSet<MEM>& wset);
+  void Energy(WalkerSet<MEM>& wset, int nt);
+  void Energy(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E,
+              memory::array_view<MEM,ComplexType,1> Ov);
+  void Energy(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,2> E,
+              memory::array_view<MEM,ComplexType,1> Ov, int nt);
 
-  template<class... Args>
-  void vHS(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.vHS(std::forward<Args>(args)...); }, *this);
-  }
+  void MixedDensityMatrix(WalkerSet<MEM> const& wset,
+                          memory::array_view<MEM,ComplexType,2> G, bool compact);
 
-  template<class... Args>
-  void Energy(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.Energy(std::forward<Args>(args)...); }, *this);
-  }
+  void Log_Overlap(WalkerSet<MEM>& wset);
+  void Log_Overlap(WalkerSet<MEM> const& wset, memory::array_view<MEM,ComplexType,1> Ov);
 
+  // DensityMatrix, updateLogScale and accumulate_estimators keep the forwarding form.
+  // The first two are not reachable through this facade, and the alternatives declare
+  // them with incompatible parameter lists; accumulate_estimators takes pointers whose
+  // type is fixed by the observable handlers, so pinning it here would only move the
+  // instantiation up one level.
   template<class... Args>
   void DensityMatrix(Args&&... args)
   {
-    boost::apply_visitor([&](auto&& a) { a.DensityMatrix(std::forward<Args>(args)...); }, *this);
+    std::visit([&](auto&& a) { a.DensityMatrix(std::forward<Args>(args)...); }, var);
   }
 
   template<class... Args>
-  void MixedDensityMatrix(Args&&... args)
+  void updateLogScale(Args&&... args)
   {
-    boost::apply_visitor([&](auto&& a) { a.MixedDensityMatrix(std::forward<Args>(args)...); }, *this);
-  }
-
-  template<class... Args>
-  void MixedDensityMatrix_for_vbias(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.MixedDensityMatrix_for_vbias(std::forward<Args>(args)...); }, *this);
-  }
-
-  template<class... Args>
-  void Overlap(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.Overlap(std::forward<Args>(args)...); }, *this);
-  }
-
-  template<class... Args>
-  ComplexType getReferenceWeight(Args&&... args)
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.getReferenceWeight(std::forward<Args>(args)...); }, *this);
-  }
-
-  template<class... Args>
-  void getReferencesForBackPropagation(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.getReferencesForBackPropagation(std::forward<Args>(args)...); }, *this);
+    std::visit([&](auto&& a) { a.updateLogScale(std::forward<Args>(args)...); }, var);
   }
 
   template<class... Args>
   void accumulate_estimators(Args&&... args)
   {
-    boost::apply_visitor([&](auto&& a) { a.accumulate_estimators(std::forward<Args>(args)...); }, *this);
+    std::visit([&](auto&& a) { a.accumulate_estimators(std::forward<Args>(args)...); }, var);
   }
 
-  SlaterDetOperations* getSlaterDetOperations()
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.getSlaterDetOperations(); }, *this);
-  }
+  int total_number_of_references() const;
 
-  template<class... Args>
-  void generalizedFockMatrix(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.generalizedFockMatrix(std::forward<Args>(args)...); }, *this);
-  } 
+  int getNMO() const;
 
-  HamiltonianTypes getHamType() 
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.getHamType(); }, *this);
-  }
+  ComplexType getReferenceWeight(int i);
 
-  template<class... Args>
-  void getFieldTypes(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.getFieldTypes(std::forward<Args>(args)...); }, *this);
-  }
+  void getReferences(memory::buffered_array<MEM,ComplexType,3>& Refs);
 
-  template<class... Args>
-  void update_potentials(Args&&... args)
-  {
-    boost::apply_visitor([&](auto&& a) { a.update_potentials(std::forward<Args>(args)...); }, *this);
-  }
+  HamiltonianTypes getHamType() const;
 
-  template<class... Args>
-  multi::array<ComplexType, 2> getOneBodyPropagatorMatrix(Args&&... args)
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.getOneBodyPropagatorMatrix(std::forward<Args>(args)...); }, *this);
-  }
+  nda::array<int,1> getFieldTypes();
 
-  template<class... Args>
-  std::tuple<dev_csr_Matrix<ComplexType> const*, dev_csr_Matrix<ComplexType> const*> vHS_sparse(Args&&... args)
-  {
-    return boost::apply_visitor([&](auto&& a) { return a.vHS_sparse(std::forward<Args>(args)...); }, *this);
-  }
+  void update_potentials(double dt, memory::array_view<HOST_MEMORY,const ComplexType,1> nMF,
+                         memory::array_view<MEM,ComplexType,1> vMF, bool natural_shift);
 
-  bool spin_dependent_vHS() const { 
-    return boost::apply_visitor([&](auto&& a) { return a.spin_dependent_vHS(); }, *this);
-  }
+  nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,
+                         memory::array_view<HOST_MEMORY,const ComplexType,1> vMF);
+
+  ComplexType getLogScale(SpinTypes s);
+
+  void resetLogScale();
+
+  void setLogPT0(memory::array_view<MEM,ComplexType,1> v);
+
+  memory::array<MEM,ComplexType,1> getLogPT0();
+
+  private:
+
+
+  std::variant<NOMSD<MEM,PsiT_Matrix<MEM>>,
+               NOMSD<MEM,memory::const_shared_array<MEM,ComplexType,2>>,
+               NOMSD_FT<MEM,PsiT_Matrix<MEM>>,
+               NOMSD_FT<MEM,memory::const_shared_array<MEM,ComplexType,2>>,
+               PHMSD<MEM>
+              > var;
 
 };
 
@@ -442,4 +152,3 @@ public:
 
 } // namespace sfqmc
 
-#endif

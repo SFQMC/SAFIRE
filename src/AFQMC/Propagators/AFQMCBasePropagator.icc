@@ -22,473 +22,356 @@
 #include <tuple>
 
 #include "AFQMC/config.h"
-#include "Utilities/Random.hpp"
+#include "utilities/Random.hpp"
+#include "AFQMC/Utilities/probit.h"
 #include "AFQMC/Utilities/AFQMCTimer.h"
-#include "Utilities/FairDivide.hpp"
 #include "AFQMC/Propagators/WalkerSetUpdate.hpp"
+#include "AFQMC/Propagators/construct_X.hpp"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
-#if defined(ENABLE_CUDA)
-#include "Numerics/detail/CUDA/Kernels/construct_X.cuh"
-#endif
+
+#include "AFQMC/SlaterDeterminantOperations/orthogonalize.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
+
 /*
- * Propagates the walker population nsteps forward with a fixed vbias (from the initial 
- * configuration).   
+ * Propagates the walker population nsteps forward. 
  */
-template<bool SP>
+template<MEMORY_SPACE MEM>
 template<class WlkSet>
-void AFQMCBasePropagator<SP>::step(int nsteps_, WlkSet& wset, RealType Eshift, RealType dt)
+void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType dt, int nt)
 {
-  AFQMCTimer.start(setup_timer);
+  auto setup_timer = timers.setup.start();
   auto walker_type = wset.getWalkerType();
-  int nsteps       = nsteps_;
   int nwalk        = wset.size();
+  int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
+  int nspin = walker_type == COLLINEAR ? 2 : 1;
+  // Orbital count inferred from the walker Slater matrices (nwalk, npol*NMO, naea).
+  const int NMO = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
-  long Gsize       = wfn.size_of_G_for_vbias();
-  int localnCV     = wfn.local_number_of_cholesky_vectors();
-  // if transposed_XXX_=true  --> XXX[nwalk][...],
-  // if transposed_XXX_=false --> XXX[...][nwalk]
-  auto vhs_ext   = iextensions<2u>{nspins_in_vHS * NMO * NMO, nwalk * nsteps};
-  auto vhs4d_ext = iextensions<4u>{nspins_in_vHS, NMO, NMO, nwalk * nsteps};
-  auto G_ext     = iextensions<2u>{Gsize, nwalk};
-  if (transposed_vHS_)
-  {
-    vhs_ext   = iextensions<2u>{nspins_in_vHS * nwalk * nsteps, NMO * NMO};
-    vhs4d_ext = iextensions<4u>{nspins_in_vHS, nwalk * nsteps, NMO, NMO};
-  }
-  if (transposed_G_)
-    G_ext = iextensions<2u>{nwalk, Gsize};
+  int nCV     = wfn->number_of_cholesky_vectors();
+  bool step0 = false;
+  bool ft = wset.isFiniteTemperature();
 
-  if (MFfactor.size(0) != nsteps || MFfactor.size(1) != nwalk)
-    MFfactor = CMatrix({long(nsteps), long(nwalk)});
-  if (hybrid_weight.size(0) != nsteps || hybrid_weight.size(1) != nwalk)
-    hybrid_weight = CMatrix({long(nsteps), long(nwalk)});
-  if (new_overlaps.size(0) != nwalk)
-    new_overlaps = CVector(iextensions<1u>{nwalk});
-  if (new_energies.size(0) != nwalk || new_energies.size(1) != 3)
-    new_energies = CMatrix({long(nwalk), 3});
-
-
-  //  shared buffer used for:
-  //  G_for_vbias:     [ Gsize * nwalk ]
-  //  vbias:           [ localnCV * nwalk ]
-  //  X:               [ localnCV * nwalk * nstep ]
-  //  vHS:             [ nspins_in_vHS*NMO*NMO * nwalk * nstep ]
-  // memory_needs: nwalk * ( 2*nsteps + Gsize + localnCV*(nstep+1) + nspins_in_vHS*NMO*NMO*nstep )
-
-  int cv0, cvN;
-  std::tie(cv0, cvN) = FairDivideBoundary(TG.getLocalTGRank(), localnCV, TG.getNCoresPerTG());
+  memory::buffered_array<MEM,ComplexType,1> MFfactor(nwalk,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,1> hybrid_weight(nwalk,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,1> new_overlaps(nwalk,ComplexType(0.0));
+  memory::buffered_array<MEM,ComplexType,2> new_energies(nwalk,3);
+  new_energies() = ComplexType(0.0);
 
   // if timestep changed, recalculate one body propagator and vMF
   if (std::abs(dt - old_dt) > 1e-6)
     generateP1(dt, walker_type);
-  AFQMCTimer.stop(setup_timer);
+  setup_timer.stop();
 
-  StaticMatrix vHS(vhs_ext, ComplexType(0.0),
-		   buffer_manager.get_generator().template get_allocator<ComplexType>());
+  // store current time-slice for finite-T walkers
+  if (ft)
+    wset.setTauStep(nt);
 
-  { // using scope to control lifetime of StaticArrays, avoiding unnecesary buffer space
-
-    StaticSPMatrix G(G_ext, SPComplexType(0.0),
-		     buffer_manager.get_generator().template get_allocator<SPComplexType>());
-
-    // 1. Calculate Green function for all walkers
-    AFQMCTimer.start(G_for_vbias_timer);
-    if constexpr (SP) { 
-      int Gak0, GakN;
-      std::tie(Gak0, GakN) = FairDivideBoundary(TG.getLocalTGRank(), int(G.num_elements()), TG.getNCoresPerTG());
-      StaticMatrix Gc(G_ext, SPComplexType(0.0),
-		      buffer_manager.get_generator().template get_allocator<ComplexType>());
-      wfn.MixedDensityMatrix_for_vbias(wset, Gc);
-      copy_n_cast(make_device_ptr(Gc.origin()) + Gak0, GakN - Gak0, make_device_ptr(G.origin()) + Gak0);
-      TG.TG_local().barrier();
-    } else {
-      wfn.MixedDensityMatrix_for_vbias(wset, G);
-    }
-    AFQMCTimer.stop(G_for_vbias_timer);
-    //std::cout<<" G: " <<ma::sum(G) <<std::endl;
-
-    StaticSPMatrix vbias({long(localnCV), long(nwalk)}, SPComplexType(0.0),
-                         buffer_manager.get_generator().template get_allocator<SPComplexType>());
-    // 2. Calculate vbias for initial configuration
-    AFQMCTimer.start(vbias_timer);
-    if (free_projection)
-    {
-      ma::fill(vbias, SPComplexType(0.0, 0.0));
-    }
-    else
-    {
-      wfn.vbias(G, vbias, dt);
-    }
-    AFQMCTimer.stop(vbias_timer);
-    //std::cout<<" vbias: " <<ma::sum(vbias) <<std::endl;
-
-    StaticSPMatrix X({long(localnCV), long(nsteps * nwalk)}, SPComplexType(0.0),
-                     buffer_manager.get_generator().template get_allocator<SPComplexType>());
-    // 3. Assemble X(nCV,nsteps,nwalk)
-    AFQMCTimer.start(assemble_X_timer);
-    assemble_X(nsteps, nwalk, sqrtdt, X, vbias, MFfactor, hybrid_weight);
-    if (TG.TG_local().size() > 1)
-    {
-      TG.TG_local().all_reduce_in_place_n(raw_pointer_cast(MFfactor.origin()), MFfactor.num_elements(), std::plus<>());
-      TG.TG_local().all_reduce_in_place_n(raw_pointer_cast(hybrid_weight.origin()), hybrid_weight.num_elements(),
-                                          std::plus<>());
-    }
-    AFQMCTimer.stop(assemble_X_timer);
-    // Store sqrtdt*X in wset if back propagating
-    int bp_step = wset.getBPPos(), bp_max = wset.NumBackProp();
-    if (bp_step >= 0 && bp_step < bp_max)
-    {
-      for (int ni = 0; ni < nsteps; ni++)
-      {
-        if (bp_step < bp_max)
-        {
-          auto&& V = *wset.getFields(bp_step);
-	  if(nsteps==1) {
-	    copy_n_cast(ma::pointer_dispatch(X[cv0].origin()), nwalk*(cvN-cv0), V[cv0].origin());
-	  } else {
-            APP_ABORT(" Error: fix ");		
-          //  V.sliced(cv0, cvN) = X({cv0, cvN}, {ni * nwalk, (ni + 1) * nwalk});
-	  }
-          ma::scal(typename WlkSet::bp_element(typename WlkSet::bp_element_value_type(sqrtdt)), V.sliced(cv0, cvN));
-          bp_step++;
-        }
-      }
-      TG.TG_local().barrier();
-    }
-    //std::cout<<" X: " <<ma::sum(X) <<std::endl;
-
-    // 4. Calculate vHS(M*M,nsteps,nwalk)/vHS(nsteps,nwalk,M*M)
-    AFQMCTimer.start(vHS_timer);
-    if constexpr (SP) {
-      // is this clever or dirsty? seems to work well and saves memory!
-      SPCMatrix_ref vsp(reinterpret_pointer_cast<SPComplexType>(make_device_ptr(vHS.origin())), vhs_ext);
-      wfn.vHS(X, vsp, dt);
-      TG.TG_local().barrier();
-      if (TG.TG_local().root())
-        inplace_cast<SPComplexType, ComplexType>(vsp.origin(), vsp.num_elements());
-      TG.TG_local().barrier();
-    } else {
-      wfn.vHS(X, vHS, dt);
-    }
-    AFQMCTimer.stop(vHS_timer);
-    //std::cout<<" Pg vHS: " <<TG.Global().rank() <<" " <<ma::sum(vHS) <<"" <<std::endl;
-  }
-
-  C4Tensor_ref vHS4D(make_device_ptr(vHS.origin()), vhs4d_ext);
-
-  int nx = 1;
-  if (walker_type == COLLINEAR)
-    nx = 2;
-
-  // from now on, individual work on each walker/step
-  const int ntasks_per_core     = int(nx * nwalk) / TG.getNCoresPerTG();
-  const int ntasks_total_serial = ntasks_per_core * TG.getNCoresPerTG();
-  const int nextra              = int(nx * nwalk) - ntasks_total_serial;
-
-  // each processor does ntasks_percore_serial overlaps serially
-  const int tk0 = TG.getLocalTGRank() * ntasks_per_core;
-  const int tkN = (TG.getLocalTGRank() + 1) * ntasks_per_core;
-
-  // make new communicator if nextra changed from last setting
-  reset_nextra(nextra);
-
-  for (int ni = 0; ni < nsteps_; ni++)
+  memory::buffered_array<MEM,ComplexType,2> X(nwalk, nCV);
+  // 1. Calculate vbias for initial configuration
+  if (free_projection)
   {
-    // 5. Propagate walkers
-    AFQMCTimer.start(propagate_timer);
-    //std::cout<<" before propg wfn " <<std::endl; //: "
-    //std::cout<<ma::sum(*wset[0].SlaterMatrix(Alpha)) <<" " <<ma::sum(*wset[0].SlaterMatrix(Beta)) <<std::endl;
-    if (nbatched_propagation != 0)
-    {
-      apply_propagators_batched('N', wset.getWalkerType(), ni, wset.SlaterMatrices(Alpha), 
-            wset.SlaterMatrices((wset.getWalkerType()==COLLINEAR?Beta:Alpha)), vHS4D);
-    }
-    else
-    {
-      apply_propagators('N', wset, ni, tk0, tkN, ntasks_total_serial, vHS4D);
-    }
-    AFQMCTimer.stop(propagate_timer);
-    //std::cout<<" propg wfn " <<std::endl; //: "
-    //std::cout<<ma::sum(*wset[0].SlaterMatrix(Alpha)) <<" " <<ma::sum(*wset[0].SlaterMatrix(Beta)) <<std::endl;
-
-    // 6. Calculate local energy/overlap
-    AFQMCTimer.start(pseudo_energy_timer);
-    if (hybrid)
-    {
-      wfn.Overlap(wset, new_overlaps);
-    }
-    else
-    {
-      wfn.Energy(wset, new_energies, new_overlaps);
-    }
-    TG.TG_local().barrier();
-    AFQMCTimer.stop(pseudo_energy_timer);
-    //std::cout<<" pseudo energy " <<ma::sum(new_overlaps) <<std::endl;
-
-    // 7. update weights/energy/etc, apply constrains/bounds/etc
-    AFQMCTimer.start(extra_timer);
-    if (TG.TG_local().root())
-    {
-      if (free_projection)
-      {
-        free_projection_walker_update(wset, dt, new_overlaps, MFfactor[ni], Eshift, hybrid_weight[ni], work,debug_verbosity);
-      }
-      else if (hybrid)
-      {
-        hybrid_walker_update(wset, dt, apply_constrain, importance_sampling, Eshift, new_overlaps, MFfactor[ni],
-                             hybrid_weight[ni], work, lower_cutoff_scale, upper_cutoff_scale, true, debug_verbosity);
-      }
-      else
-      {
-        local_energy_walker_update(wset, dt, apply_constrain, Eshift, new_overlaps, new_energies, MFfactor[ni],
-                                   hybrid_weight[ni], work, lower_cutoff_scale, upper_cutoff_scale);
-      }
-      if (wset.getBPPos() >= 0 && wset.getBPPos() < wset.NumBackProp())
-        wset.advanceBPPos();
-      // MAM: BP will not work if the nsteps*nsubsteps per block is not consistent with
-      //      steps in BP
-      if (wset.getBPPos() >= 0)
-        wset.advanceHistoryPos();
-    }
-    TG.TG_local().barrier();
-    AFQMCTimer.stop(extra_timer);
-    //std::cout<<" update: " <<ma::sum(hybrid_weight)  <<" " <<ma::sum(MFfactor) <<std::endl <<std::endl;
+    X() = ComplexType(0.0);
   }
-}
+  else
+  {
+    if(!ft)
+      wfn->vbias(wset, X, dt);
+    else
+      wfn->vbias(wset, X, dt, nt-1);
+  }
 
+  // 2. Assemble X(nwalk, nCV)
+  auto assemble_X_time = timers.assemble_X.start();
+  assemble_X(sqrtdt, X, MFfactor, hybrid_weight);
+  assemble_X_time.stop();
+
+  //std::cout<<" X: " <<nda::sum(nda::to_host(X)) <<std::endl;
+
+  // Store sqrtdt*X in wset if back propagating
+  int bp_step = wset.getBPPos(), bp_max = wset.NumBackProp();
+  if (bp_step >= 0 && bp_step < bp_max)
+    wset.storeFields(bp_step,X);
+
+  if(denseP2) {
+    // 3. Calculate vHS
+    auto vHS_time = timers.vHS.start();
+    auto vHS = wfn->vHS(X, dt);
+    utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
+                 "Size mismatch");
+    vHS_time.stop();
+
+    // 4. Propagate walkers
+    auto propagate_time = timers.propagate.start();
+    apply_propagators<'N'>(wset,vHS);
+    propagate_time.stop();
+  } else {
+    // 3. Calculate vHS
+    auto vHS_time = timers.vHS.start();
+    auto vHS = wfn->vHS_sparse(X, dt);
+    utils::check(vHS.extent(0) == nspin, "Size mismatch");
+    utils::check((vHS(0).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}) and
+                 (vHS(nspin-1).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}),
+                 "Size mismatch");
+    vHS_time.stop();
+
+    // 4. Propagate walkers
+    auto propagate_time = timers.propagate.start();
+    apply_propagators<'N'>(wset,vHS);
+    propagate_time.stop();
+  }
+
+  // 5. Calculate local energy/overlap
+  auto pseudo_energy_time = timers.pseudo_energy.start();
+  if (hybrid)
+    wfn->Log_Overlap(wset, new_overlaps);
+  else
+    wfn->Energy(wset, new_energies, new_overlaps);
+  pseudo_energy_time.stop();
+
+
+  // 6. update weights/energy/etc, apply constrains/bounds/etc
+  auto extra_time = timers.extra.start();
+  if (free_projection)
+  {
+    free_projection_walker_update(wset, dt, new_overlaps, MFfactor, Eshift, hybrid_weight,debug_verbosity);
+  }
+  else if (hybrid)
+  {
+    if(nt==1) step0 = true;
+    hybrid_walker_update(wset, dt, apply_constrain, importance_sampling, Eshift, new_overlaps, MFfactor,
+                         hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, symmetric_split, step0,
+                         debug_verbosity, use_cp_constraint, eloc_bound_stats);
+  }
+  else
+  {
+    local_energy_walker_update(wset, dt, apply_constrain, Eshift, new_overlaps, new_energies, MFfactor,
+                               lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
+  }
+  if (wset.getBPPos() >= 0) {
+    if(wset.getBPPos() < wset.NumBackProp()) wset.advanceBPPos();
+    wset.advanceHistoryPos();
+  }
+  extra_time.stop();
+}
 
 /*
  * This routine assumes that the 1 body propagator does not need updating
+ * Input:
+ *  - nbsteps: # of back propagation steps to perform.
+ *  - nStabalize: # of steps between ortogonalization
+ *  - wset: walker set, contains field history
+ *  - Refs(nwalk, number_of_references, npol*NMO, nel)
+ *  - logdetR(nwalk, number_of_references)
  */
-template<bool SP>
-template<class WlkSet, class CTens, class CMat>
-void AFQMCBasePropagator<SP>::BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset, CTens&& Refs, CMat&& logdetR)
+template<MEMORY_SPACE MEM>
+template<class WlkSet>
+void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset, 
+        nda::MemoryArrayOfRank<4> auto&& Refs, nda::MemoryArrayOfRank<2> auto&& logdetR) 
 {
-  using std::copy_n;
+  using nda::range;
+  auto all = range::all;
   auto walker_type = wset.getWalkerType();
   int npol         = (walker_type == NONCOLLINEAR) ? 2 : 1;
   int nspin        = (walker_type == COLLINEAR) ? 2 : 1;
   int nwalk        = wset.size();
-  int globalnCV    = wfn.global_number_of_cholesky_vectors();
+  int nCV          = wfn->number_of_cholesky_vectors();
+  int nrefs        = Refs.extent(1);
+  // Dimensions inferred from the walker Slater matrices (nwalk, npol*NMO, naea/naeb).
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
+  const int nup    = int(wset.SlaterMatrices(Alpha).extent(2));
+  const int ndown  = (walker_type == COLLINEAR) ? int(wset.SlaterMatrices(Beta).extent(2)) : 0;
+  int nel          = ( walker_type==COLLINEAR ? nup+ndown : nup );
 
-  auto vhs_ext   = iextensions<2u>{nspins_in_vHS * NMO * NMO, nwalk};
-  auto vhs4d_ext = iextensions<4u>{nspins_in_vHS, NMO, NMO, nwalk};
-  if (transposed_vHS_)
-  {
-    vhs_ext   = iextensions<2u>{nspins_in_vHS * nwalk, NMO * NMO};
-    vhs4d_ext = iextensions<4u>{nspins_in_vHS, nwalk, NMO, NMO};
+  utils::check(Refs.shape() == std::array<long,4>{nwalk,nrefs,npol*NMO,nel}, 
+               "Size mismatch");
+  utils::check(logdetR.shape() == std::array<long,2>{nwalk,nrefs}, "Size mismatch");
+
+  // Fields(nwalk, steps, nCV)
+  auto Fields = wset.getFields();
+  utils::check(Fields.extent(1) >= nbpsteps, "Size mismatch");
+  utils::check(Fields.extent(0) == nwalk and Fields.extent(2) == nCV, "Size mismatch");
+
+  memory::buffered_array<MEM,ComplexType,3> SMA(nwalk, npol*NMO, nup);
+  memory::buffered_array<MEM,ComplexType,3> SMB(nwalk, npol*NMO, 
+                                                (walker_type==COLLINEAR ? ndown : 0));
+  memory::buffered_array<MEM,ComplexType,2> X(nwalk, nCV);
+  memory::buffered_array<MEM,ComplexType,1> ldet(nwalk);
+  logdetR() = ComplexType(0.0);
+
+  // 0. copy SlaterMatrix to SMA/SMB
+  if(nup > 0) {
+    SMA() = wset.SlaterMatrices(Alpha);
   }
-
-  StaticMatrix vHS(vhs_ext, ComplexType(0.0),
-		   buffer_manager.get_generator().template get_allocator<ComplexType>());
-  StaticSPMatrix X({long(globalnCV), long(nwalk)}, SPComplexType(0.0),
-                   buffer_manager.get_generator().template get_allocator<SPComplexType>());
-  C4Tensor_ref vHS4D(make_device_ptr(vHS.origin()), vhs4d_ext);
-
-  auto&& Fields = *wset.getFields();
-  RUNTIME_CHECK(Fields.size(0) >= nbpsteps, "");
-  RUNTIME_CHECK(Fields.size(1) == globalnCV, "");
-  RUNTIME_CHECK(Fields.size(2) == nwalk, "");
-
-  int nrow(NMO * npol);
-  int ncol(NAEA + ((walker_type == CLOSED) ? 0 : NAEB));
-  RUNTIME_CHECK(Refs.size(0) == nwalk, "");
-  int nrefs = Refs.size(1);
-  RUNTIME_CHECK(Refs.size(2) == nrow * ncol, "");
-
-  int cv0, cvN;
-  std::tie(cv0, cvN) = FairDivideBoundary(TG.getLocalTGRank(), globalnCV, TG.getNCoresPerTG());
-  int r0, rN;
-  std::tie(r0, rN) = FairDivideBoundary(TG.getLocalTGRank(), nrow * ncol, TG.getNCoresPerTG());
-
-  int nx = 1;
-  if (walker_type == COLLINEAR)
-    nx = 2;
-
-  RUNTIME_CHECK(logdetR.size(0) == nwalk, "");
-  RUNTIME_CHECK(logdetR.size(1) == nrefs * nx, "");
-  ma::fill(logdetR, ComplexType(0.0, 0.0));
-
-  // from now on, individual work on each walker/step
-  const int ntasks_per_core     = int(nx * nwalk) / TG.getNCoresPerTG();
-  const int ntasks_total_serial = ntasks_per_core * TG.getNCoresPerTG();
-  const int nextra              = int(nx * nwalk) - ntasks_total_serial;
-
-  // each processor does ntasks_percore_serial overlaps serially
-  const int tk0 = TG.getLocalTGRank() * ntasks_per_core;
-  const int tkN = (TG.getLocalTGRank() + 1) * ntasks_per_core;
-
-  // make new communicator if nextra changed from last setting
-  reset_nextra(nextra);
-
-  // to avoid having to modify the existing routines,
-  // I'm storing the walkers SlaterMatrix on SlaterMatrixAux
-  // and copying the back propagated references into SlaterMatrix
-  // 0. copy SlaterMatrix to SlaterMatrixAux
-  for (int i = 0; i < nwalk; i++)
-  {
-    copy_n((*wset[i].SlaterMatrix(Alpha)).origin() + r0, rN - r0, (*wset[i].SlaterMatrixAux(Alpha)).origin() + r0);
-    // optimize for the single reference case
-    if (nrefs == 1)
-      copy_n(Refs[i][0].origin() + r0, rN - r0, make_device_ptr((*wset[i].SlaterMatrix(Alpha)).origin()) + r0);
+  if(walker_type==COLLINEAR && ndown > 0) {
+    SMB() = wset.SlaterMatrices(Beta);
   }
-  TG.TG_local().barrier();
-
+  
   for (int ni = nbpsteps - 1; ni >= 0; --ni)
   {
-    // 1. Get X(nCV,nwalk) from wset
-    copy_n_cast(Fields[ni][cv0].origin(), nwalk * (cvN - cv0), make_device_ptr(X[cv0].origin()));
-    TG.TG_local().barrier();
+    // 1. Get X(nwalk,nCV) from wset
+    X() = Fields(all,ni,all); 
 
-    // 2. Calculate vHS(M*M,nwalk)/vHS(nwalk,M*M)
-    //  X has been scaled by sqrtdt to avoid needing it here
-    // MAM: This works (set dt=1.0) because only continuous HST are 
-    // allowed with this propagator
-    // X has been scaled by sqrtdt to avoid needing it here
-    if constexpr (SP) {
-      // is this clever or dirsty? seems to work well and saves memory!
-      SPCMatrix_ref vsp(reinterpret_pointer_cast<SPComplexType>(make_device_ptr(vHS.origin())), vhs_ext);
-      wfn.vHS(X, vsp, 1.0);
-      TG.TG_local().barrier();
-      if (TG.TG_local().root())
-        inplace_cast<SPComplexType, ComplexType>(vsp.origin(), vsp.num_elements());
-      TG.TG_local().barrier();
+    if(denseP2) {
+
+      // 2. Calculate vHS
+      auto vHS = wfn->vHS(X, old_dt);
+      utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
+                 "Size mismatch");
+
+      // MAM: can do all references together in principle, 
+      //      would consume more memory but be very efficient in GPU! 
+      for (int nr = 0; nr < nrefs; ++nr)
+      {
+        // 3. copy reference to SlaterMatrix
+        if(nup > 0) {
+          math::copy(Refs(all,nr,all,range(nup)), wset.SlaterMatrices(Alpha));
+        }
+        if(walker_type==COLLINEAR && ndown > 0) {
+          math::copy(Refs(all,nr,all,range(nup,nup+ndown)), wset.SlaterMatrices(Beta));
+        }
+
+        // 4. Propagate walkers 
+        apply_propagators<'H'>(wset,vHS); 
+
+        // always end (n==0) with an orthogonalization
+        if (ni == 0 || ni % nStabalize == 0) {
+          ldet() = ComplexType(0.0);
+          det_ops::orthogonalize(wset, ldet);
+          nda::tensor::add(ComplexType(1.0),ldet,"w",ComplexType(1.0),logdetR(all,nr),"w");
+        }
+
+        // 5. copy reference to back
+        if(nup > 0) {
+          math::copy(wset.SlaterMatrices(Alpha), Refs(all,nr,all,range(nup)));
+        }
+        if(walker_type==COLLINEAR && ndown > 0)
+          math::copy(wset.SlaterMatrices(Beta), Refs(all,nr,all,range(nup,nup+ndown)));
+      }
+
     } else {
-      wfn.vHS(X, vHS, 1.0);
-    }
-    //std::cout<<" BP vHS: " <<TG.Global().rank() <<" " <<ma::sum(vHS) <<"" <<std::endl;
 
-    for (int nr = 0; nr < nrefs; ++nr)
-    {
-      // 3. copy reference to SlaterMatrix
-      if (nrefs > 1)
-        for (int i = 0; i < nwalk; i++)
-          copy_n(Refs[i][nr].origin() + r0, rN - r0, make_device_ptr((*wset[i].SlaterMatrix(Alpha)).origin()) + r0);
-      TG.TG_local().barrier();
+      // 2. Calculate vHS
+      auto vHS = wfn->vHS_sparse(X, old_dt);
+      utils::check(vHS.extent(0) == nspin, "Size mismatch");
+      utils::check((vHS(0).shape()==std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}) and
+               (vHS(nspin-1).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}),
+               "Size mismatch");
 
-      // 4. Propagate walkers
-      if (nbatched_propagation != 0)
-        apply_propagators_batched('H', wset.getWalkerType(), 0, wset.SlaterMatrices(Alpha), 
-            wset.SlaterMatrices((wset.getWalkerType()==COLLINEAR?Beta:Alpha)), vHS4D);
-      else
-        apply_propagators('H', wset, 0, tk0, tkN, ntasks_total_serial, vHS4D);
-      TG.TG_local().barrier();
+      for (int nr = 0; nr < nrefs; ++nr)
+      { 
+        // 3. copy reference to SlaterMatrix
+        math::copy(Refs(all,nr,all,range(nup)),wset.SlaterMatrices(Alpha));
+        if(walker_type==COLLINEAR)
+          math::copy(Refs(all,nr,all,range(nup,nup+ndown)),wset.SlaterMatrices(Beta));
+        
+        // 4. Propagate walkers
+        apply_propagators<'H'>(wset,vHS); 
+        
+        // always end (n==0) with an orthogonalization
+        if (ni == 0 || ni % nStabalize == 0) {
+          ldet() = ComplexType(0.0);
+          det_ops::orthogonalize(wset, ldet);
+          nda::tensor::add(ComplexType(1.0),ldet,"w",ComplexType(1.0),logdetR(all,nr),"w");
+        }
+        
+        // 5. copy reference to back
+        math::copy(wset.SlaterMatrices(Alpha), Refs(all,nr,all,range(nup)));
+        if(walker_type==COLLINEAR)
+          math::copy(wset.SlaterMatrices(Beta), Refs(all,nr,all,range(nup,nup+ndown)));
+      }
 
-      // always end (n==0) with an orthogonalization
-      if (ni == 0 || ni % nStabalize == 0)
-        Orthogonalize_impl(wset, logdetR(logdetR.extension(0), {nspin * nr, nspin * nr + nspin}));
-      TG.TG_local().barrier();
-
-      // 5. copy reference to back
-      if (nrefs > 1)
-        for (int i = 0; i < nwalk; i++)
-          copy_n(make_device_ptr((*wset[i].SlaterMatrix(Alpha)).origin()) + r0, rN - r0, Refs[i][nr].origin() + r0);
-      TG.TG_local().barrier();
     }
   }
 
   // 6. restore the Slater Matrix
-  for (int i = 0; i < nwalk; i++)
-  {
-    if (nrefs == 1)
-      copy_n((*wset[i].SlaterMatrix(Alpha)).origin() + r0, rN - r0, Refs[i][0].origin() + r0);
-    copy_n((*wset[i].SlaterMatrixAux(Alpha)).origin() + r0, rN - r0, (*wset[i].SlaterMatrix(Alpha)).origin() + r0);
-  }
-  TG.TG_local().barrier();
+  wset.SlaterMatrices(Alpha) = SMA();
+  if(walker_type==COLLINEAR)
+    wset.SlaterMatrices(Beta) = SMB();
+
+  mpi->comm.barrier();
 }
 
 /*
  * Propagate "operator states" forward in time using stored fields.
  */
-template<bool SP>
-template<class WlkSet, class Mat1, class Mat2, class Mat3>
-void AFQMCBasePropagator<SP>::PropagateOperators(int nsteps, WlkSet& wset, Mat1&& X, Mat2&& Y, Mat3&& M)
+template<MEMORY_SPACE MEM>
+template<class WlkSet>
+void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset, 
+        nda::MemoryArrayOfRank<4> auto&& X, nda::MemoryArrayOfRank<4> auto&& Y, 
+        nda::MemoryArrayOfRank<4> auto&& M)
 { 
-  static_assert(std::decay_t<Mat1>::dimensionality == 4, " dimensionality == 4");
-  static_assert(std::decay_t<Mat2>::dimensionality == 4, " dimensionality == 4");
-  static_assert(std::decay_t<Mat3>::dimensionality == 4, " dimensionality == 4");
-  if(TG.TG_local().size() > 1)
-    APP_ABORT("Error: ncore>1 not yet available. ");
-  using std::copy_n;
+  using nda::range;
+  auto all = range::all;
   auto walker_type = wset.getWalkerType();
   int npol         = (walker_type == NONCOLLINEAR) ? 2 : 1;
   int nspin        = (walker_type == COLLINEAR) ? 2 : 1;
   int nwalk        = wset.size();
-  int globalnCV    = wfn.global_number_of_cholesky_vectors();
+  int nCV          = wfn->number_of_cholesky_vectors();
+  int bp_step      = wset.getBPPos();
+  ComplexType one(1.0,0.0);
+  // Dimensions inferred from the walker Slater matrices (nwalk, npol*NMO, naea/naeb).
+  const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
+  const int nup    = int(wset.SlaterMatrices(Alpha).extent(2));
+  const int ndown  = (walker_type == COLLINEAR) ? int(wset.SlaterMatrices(Beta).extent(2)) : 0;
 
-  auto vhs_ext   = iextensions<2u>{nspins_in_vHS * NMO * NMO, nwalk};
-  auto vhs4d_ext = iextensions<4u>{nspins_in_vHS, NMO, NMO, nwalk};
-  if (transposed_vHS_)
-  {
-    vhs_ext   = iextensions<2u>{nspins_in_vHS * nwalk, NMO * NMO};
-    vhs4d_ext = iextensions<4u>{nspins_in_vHS, nwalk, NMO, NMO};
-  }
-
-  auto&& Fields = *wset.getFields();
-  RUNTIME_CHECK(Fields.size(0) >= nsteps, "");
-  RUNTIME_CHECK(Fields.size(1) == globalnCV, "");
-  RUNTIME_CHECK(Fields.size(2) == nwalk, "");
-
-  int cv0, cvN;
-  std::tie(cv0, cvN) = FairDivideBoundary(TG.getLocalTGRank(), globalnCV, TG.getNCoresPerTG());
-  int w0, wN;
-  std::tie(w0, wN) = FairDivideBoundary(TG.getLocalTGRank(), nwalk, TG.getNCoresPerTG());
-
-  auto Xup = X.rotated()[0].unrotated();
-  auto Xdn = X.rotated()[nspin-1].unrotated();
-  auto Yup = Y.rotated()[0].unrotated();
-  auto Ydn = Y.rotated()[nspin-1].unrotated();
+  // Fields(nwalk, steps, nCV)
+  auto Fields = wset.getFields();
+  utils::check(Fields.extent(1) >= nsteps, "Size mismatch");
+  utils::check(Fields.extent(0) == nwalk and Fields.extent(2) == nCV, "Size mismatch");
+  utils::check(bp_step > 0 and bp_step >= nsteps, "Error in PropagateOperators: bp_step:{}, nstep:{}",bp_step,nsteps);
 
   // generate P1x_inv if not yet constructed
   // NOTE: if time step changes after this point, 
   // it will be updated with the regular propagator, so only need to create it once here
-  if(P1s_inv[0].capacity()==0)
+  if(P1s_inv.size() != nspin)
     generateP1(old_dt, walker_type, true);
   
-
-  { // controlling scope to keep buffer usage down
-
-    StaticMatrix vHS(vhs_ext, ComplexType(0.0),
-		     buffer_manager.get_generator().template get_allocator<ComplexType>());
-    StaticSPMatrix Xfield({long(globalnCV), long(nwalk)}, SPComplexType(0.0),
-                   buffer_manager.get_generator().template get_allocator<SPComplexType>());
-    C4Tensor_ref vHS4D(make_device_ptr(vHS.origin()), vhs4d_ext);
-
-
-    for (int ni = 0; ni <nsteps; ++ni)
+  { 
+    memory::buffered_array<MEM,ComplexType,2> Xfield(nwalk, nCV);
+    // MAM: Regularization is done after all nsteps are applied.
+    //      If this leads to instabilities (e.g. for large nsteps),
+    //      apply regularization inside this loop with some frequency
+    for (int i = 0, ni=bp_step-nsteps; i <nsteps; ++i, ++ni)
     {
-      // 1. Get X(nCV,nwalk) from wset
-      copy_n_cast(Fields[ni][cv0].origin(), nwalk * (cvN - cv0), make_device_ptr(Xfield[cv0].origin()));
-      TG.TG_local().barrier();
 
-      // 2. Calculate vHS(M*M,nwalk)/vHS(nwalk,M*M)
-      //  X has been scaled by sqrtdt to avoid needing it here
-      // MAM: This works (set dt=1.0) because only continuous HST are 
-      // allowed with this propagator
-      if constexpr (SP) {
-        // is this clever or dirsty? seems to work well and saves memory!
-        SPCMatrix_ref vsp(reinterpret_pointer_cast<SPComplexType>(make_device_ptr(vHS.origin())), vhs_ext);
-        wfn.vHS(Xfield, vsp, 1.0);
-        TG.TG_local().barrier();
-        if (TG.TG_local().root())
-          inplace_cast<SPComplexType, ComplexType>(vsp.origin(), vsp.num_elements());
-        TG.TG_local().barrier();
+      // 1. Get Xfield(nwalk,nCV) from wset
+      Xfield() = Fields(all,ni,all);
+
+      if(denseP2) {
+
+        // 2. Calculate vHS
+        auto vHS = wfn->vHS(Xfield, old_dt);
+        utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
+                   "Size mismatch");
+
+        // 4. Propagate walkers 
+        apply_propagators<'N'>(walker_type,npol,X(all,0,all,all),X(all,nspin-1,all,all),vHS);
+        // scale vHS by -1, since we need ma::H( B^(-1) )
+        nda::tensor::scale(ComplexType(-1.0),vHS);
+        apply_propagators<'H'>(walker_type,npol,Y(all,0,all,all),Y(all,nspin-1,all,all),vHS,true);
       } else {
-        wfn.vHS(Xfield, vHS, 1.0);
-      }
-      //std::cout<<" BP vHS: " <<TG.Global().rank() <<" " <<ma::sum(vHS) <<"" <<std::endl;
 
-      // 3. Propagate Matrices 
-      apply_propagators_batched('N', wset.getWalkerType(), 0, Xup, Xdn, vHS4D );
-      // scale vHS by -1, since we need ma::H( B^(-1) )
-      ma::scal(ComplexType(-1.0), vHS4D.flatted().flatted()); 
-      apply_propagators_batched('H', wset.getWalkerType(), 0, Yup, Ydn, vHS4D, true );
-      TG.TG_local().barrier();
+        // 2. Calculate vHS
+        auto vHS = wfn->vHS_sparse(Xfield, old_dt);
+        utils::check(vHS.extent(0) == nspin, "Size mismatch");
+        utils::check((vHS(0).shape()==std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}) and
+                 (vHS(nspin-1).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}),
+                 "Size mismatch");
+
+        // 4. Propagate walkers 
+        apply_propagators<'N'>(walker_type,npol,X(all,0,all,all),X(all,nspin-1,all,all),vHS);
+        // scale vHS by -1, since we need ma::H( B^(-1) )
+        nda::tensor::scale(ComplexType(-1.0),vHS(0).values());
+        if(nspin==2)
+          nda::tensor::scale(ComplexType(-1.0),vHS(1).values());
+        apply_propagators<'H'>(walker_type,npol,Y(all,0,all,all),Y(all,nspin-1,all,all),vHS,true);
+
+      }
+
     }
 
   }
@@ -498,394 +381,79 @@ void AFQMCBasePropagator<SP>::PropagateOperators(int nsteps, WlkSet& wset, Mat1&
   // M += H(Ynew) * X
   // Xnew = X - S * H(S) * X  
   // where S is the walker's Slater Matrix. 
-  Static3Tensor SY({nwalk, NAEA, npol*NMO}, ComplexType(0.0),
-                buffer_manager.get_generator().template get_allocator<ComplexType>());
   SpinTypes stype[2] = {Alpha, Beta};
-  int nel[2] = {NAEA, NAEB};
-  for(int ispin=0; ispin<nspin; ispin++) {
-    
-    // SY = H(S) * Y
-    ma::productStridedBatched( ma::H(wset.SlaterMatrices(stype[ispin])),  
-                               Y.rotated()[ispin].unrotated(), 
-                               SY.rotated().sliced(0, nel[ispin]).unrotated() ); 
+  int nel[2] = {nup, ndown};
 
-    // Ynew = S * SY
-    ma::productStridedBatched( wset.SlaterMatrices(stype[ispin]),   
-                               SY.rotated().sliced(0, nel[ispin]).unrotated(), 
-                               Y.rotated()[ispin].unrotated());
+  if constexpr (MEM==HOST_MEMORY) {
 
-    // M += H(Ynew) * X
-    ma::productStridedBatched( ComplexType(1.0), 
-                               ma::H(Y.rotated()[ispin].unrotated()), 
-                               X.rotated()[ispin].unrotated(),
-                               ComplexType(1.0),
-                               M.rotated()[ispin].unrotated()); 
+    for(int ispin=0; ispin<nspin; ispin++) {
 
-    // SY = H(S) * X
-    ma::productStridedBatched( ma::H(wset.SlaterMatrices(stype[ispin])),   
-                               X.rotated()[ispin].unrotated(),
-                               SY.rotated().sliced(0, nel[ispin]).unrotated() ); 
+      auto SM = wset.SlaterMatrices(stype[ispin]); 
+      memory::buffered_array<MEM,ComplexType,2> SY(nel[ispin], npol*NMO);
 
-    // Xnew = X - S * SY
-    ma::productStridedBatched( ComplexType(-1.0),
-                               wset.SlaterMatrices(stype[ispin]),
-                               SY.rotated().sliced(0, nel[ispin]).unrotated(),  
-                               ComplexType(1.0), 
-                               X.rotated()[ispin].unrotated());
+      for(int iw=0; iw<nwalk; ++iw) {
 
-  }
-  TG.TG_local().barrier();
-}
+        auto SM_iw  = SM(iw,all,all); 
+        auto X_iw  = X(iw,ispin,all,all);
+        auto Y_iw  = Y(iw,ispin,all,all);
+        auto M_iw  = M(iw,ispin,all,all);
 
-template<bool SP>
-template<class WSet>
-void AFQMCBasePropagator<SP>::apply_propagators(char TA,
-                                            WSet& wset,
-                                            int ni,
-                                            int tk0,
-                                            int tkN,
-                                            int ntasks_total_serial,
-                                            C4Tensor_ref& vHS4D)
-{
-  int nwalk        = wset.size();
-  auto walker_type = wset.getWalkerType();
-  bool noncol      = (walker_type == NONCOLLINEAR);
-  int is0 = ( nspins_in_vHS>1 ? 1 : 0 );  // index of beta spin
+        // SY = H(S) * Y
+        nda::blas::gemm(nda::dagger(SM_iw),Y_iw,SY);
 
-  if (transposed_vHS_)
-  {
-    // vHS4D[s][nstep*nwalk][M][M]
-    if( (walker_type == CLOSED) or 
-        (walker_type == FULLYPOLARIZED) or
-        ((walker_type == NONCOLLINEAR) and (nspins_in_vHS==1)) ) 
-    {   
-      // in this case, tk corresponds to walker number
-      for (int tk = tk0; tk < tkN; ++tk)
-      {
-        int nt = ni * nwalk + tk;
-        SDetOp->Propagate(*wset[tk].SlaterMatrix(Alpha), P1s[0], vHS4D[0][nt], order, TA, noncol);
-      }
-      if (last_nextra > 0)
-      {
-        int iw = ntasks_total_serial + last_task_index;
-        int nt = ni * nwalk + iw;
-        SDetOp->Propagate(*wset[iw].SlaterMatrix(Alpha), P1s[0], vHS4D[0][nt], local_group_comm, order, TA, noncol);
-      }
-    } 
-    else if (walker_type == COLLINEAR)   
-    {
-      // in this case, tk corresponds to 2x the walker number
-      for (int tk = tk0; tk < tkN; ++tk)
-      {
-        int nt = ni * nwalk + tk / 2;
-        if (tk % 2 == 0)
-          SDetOp->Propagate(*wset[tk / 2].SlaterMatrix(Alpha), P1s[0], vHS4D[0][nt], order, TA);
-        else
-          SDetOp->Propagate(*wset[tk / 2].SlaterMatrix(Beta), P1s[1], vHS4D[is0][nt], order, TA);
-      }
-      if (last_nextra > 0)
-      {
-        int tk = (ntasks_total_serial + last_task_index);
-        int nt = ni * nwalk + tk / 2;
-        if (tk % 2 == 0)
-          SDetOp->Propagate(*wset[tk / 2].SlaterMatrix(Alpha), P1s[0], vHS4D[is0][nt], local_group_comm, order, TA);
-        else
-          SDetOp->Propagate(*wset[tk / 2].SlaterMatrix(Beta), P1s[1], vHS4D[is0][nt], local_group_comm, order, TA);
-      }
-    } 
-    else 
-    { // NONCOLLINEAR with nspins_in_vHS>1
-      // in this case, tk corresponds to walker number
-      for (int tk = tk0; tk < tkN; ++tk)
-      {
-        int nt = ni * nwalk + tk;
-        SDetOp->Propagate(*wset[tk].SlaterMatrix(Alpha), P1s[0], vHS4D[0][nt], vHS4D[1][nt], order, TA);
-      }
-      if (last_nextra > 0)
-      {
-        int iw = ntasks_total_serial + last_task_index;
-        int nt = ni * nwalk + iw;
-        SDetOp->Propagate(*wset[iw].SlaterMatrix(Alpha), P1s[0], vHS4D[0][nt], vHS4D[1][nt], local_group_comm, order, TA);
-      }
-    }
-  }
-  else
-  {
-    if (local_vHS.size(0) != NMO || local_vHS.size(1) != NMO)
-      local_vHS = CMatrix({NMO, NMO});
-    // vHS4D[s][M][M][nstep*nwalk]: need temporary buffer in this case
-    if( (walker_type == CLOSED) or
-        (walker_type == FULLYPOLARIZED) or
-        ((walker_type == NONCOLLINEAR) and (nspins_in_vHS==1)) )
-    {
-      // in this case, tk corresponds to walker number
-      for (int tk = tk0; tk < tkN; ++tk)
-      {
-        int nt    = ni * nwalk + tk;
-        local_vHS = vHS4D(0, local_vHS.extension(0), local_vHS.extension(1), nt);
-        //std::cout<<" pp: " <<tk <<" " <<ma::sum(local_vHS) <<"" <<std::endl;
-        SDetOp->Propagate(*wset[tk].SlaterMatrix(Alpha), P1s[0], local_vHS, order, TA, noncol);
-      }
-      if (last_nextra > 0)
-      {
-        int iw    = ntasks_total_serial + last_task_index;
-        int nt    = ni * nwalk + iw;
-        local_vHS = vHS4D(0, local_vHS.extension(0), local_vHS.extension(1), nt);
-        SDetOp->Propagate(*wset[iw].SlaterMatrix(Alpha), P1s[0], local_vHS, local_group_comm, order, TA, noncol);
-      }
-    }
-    else if (walker_type == COLLINEAR)
-    {
-      // in this case, tk corresponds to 2x the walker number
-      for (int tk = tk0; tk < tkN; ++tk)
-      {
-        int nt = ni * nwalk + tk / 2;
-        if (tk % 2 == 0) {
-          local_vHS = vHS4D(0, local_vHS.extension(0), local_vHS.extension(1), nt);
-          SDetOp->Propagate(*wset[tk / 2].SlaterMatrix(Alpha), P1s[0], local_vHS, order, TA);
-        } else {
-          local_vHS = vHS4D(is0, local_vHS.extension(0), local_vHS.extension(1), nt);
-          SDetOp->Propagate(*wset[tk / 2].SlaterMatrix(Beta), P1s[1], local_vHS, order, TA);
-        }
-      }
-      if (last_nextra > 0)
-      {
-        int tk    = (ntasks_total_serial + last_task_index);
-        int nt    = ni * nwalk + tk / 2;
-        if (tk % 2 == 0) {
-          local_vHS = vHS4D(0, local_vHS.extension(0), local_vHS.extension(1), nt);
-          SDetOp->Propagate(*wset[tk / 2].SlaterMatrix(Alpha), P1s[0], local_vHS, local_group_comm, order, TA);
-        } else {
-          local_vHS = vHS4D(is0, local_vHS.extension(0), local_vHS.extension(1), nt);
-          SDetOp->Propagate(*wset[tk / 2].SlaterMatrix(Beta), P1s[1], local_vHS, local_group_comm, order, TA);
-        }
-      }
-    }
-    else
-    {
-      if (local_vHS2.size(0) != NMO || local_vHS2.size(1) != NMO)
-        local_vHS2 = CMatrix({NMO, NMO});
-      // NONCOLLINEAR wirh nspin_in_vHS = 2
-      // in this case, tk corresponds to walker number
-      for (int tk = tk0; tk < tkN; ++tk)
-      {
-        int nt    = ni * nwalk + tk;
-        local_vHS = vHS4D(0, local_vHS.extension(0), local_vHS.extension(1), nt);
-        local_vHS2 = vHS4D(1, local_vHS2.extension(0), local_vHS2.extension(1), nt);
-        //std::cout<<" pp: " <<tk <<" " <<ma::sum(local_vHS) <<"" <<std::endl;
-        SDetOp->Propagate(*wset[tk].SlaterMatrix(Alpha), P1s[0], local_vHS, local_vHS2, order, TA);
-      }
-      if (last_nextra > 0)
-      {
-        int iw    = ntasks_total_serial + last_task_index;
-        int nt    = ni * nwalk + iw;
-        local_vHS = vHS4D(0, local_vHS.extension(0), local_vHS.extension(1), nt);
-        local_vHS2 = vHS4D(1, local_vHS2.extension(0), local_vHS2.extension(1), nt);
-        SDetOp->Propagate(*wset[iw].SlaterMatrix(Alpha), P1s[0], local_vHS, local_vHS2, local_group_comm, order, TA);
-      }
-    }
-  }
-  TG.TG_local().barrier();
-}
+        // Ynew = S * SY
+        nda::blas::gemm(SM_iw,SY,Y_iw);
+        
+        // M += H(Ynew) * X
+        nda::blas::gemm(one,nda::dagger(Y_iw),X_iw,one,M_iw);
+     
+        // SY = H(S) * X
+        nda::blas::gemm(nda::dagger(SM_iw),X_iw,SY);
+        
+        // Xnew = X - S * SY
+        nda::blas::gemm(-one,SM_iw,SY,one,X_iw);
 
-template<bool SP>
-template<class Mat1, class Mat2>
-void AFQMCBasePropagator<SP>::apply_propagators_batched_impl(char TA, WALKER_TYPES walker_type, int ni, 
-            Mat1&& P1up, Mat1&& P1dn, Mat2&& SMup, Mat2&& SMdn, C4Tensor_ref& vHS4D)
-{
-  static_assert(std::decay_t<Mat2>::dimensionality == 3, " dimensionality == 3");
-  int nwalk        = SMup.size(0);  
-  int nbatch       = std::min(nwalk, (nbatched_propagation < 0 ? nwalk : nbatched_propagation));
-  int nt = ni * nwalk;
-  int is0 = ( nspins_in_vHS>1 ? 1 : 0 );  // index of beta spin
+      } // iw
 
-  if (transposed_vHS_)
-  {
-    // vHS4D[0][nstep*nwalk][M][M]
-    if(walker_type == CLOSED) {
-      for (int iw = 0; iw < nwalk; iw += nbatch, nt += nbatch)
-      { 
-        int nb = std::min(nbatch, nwalk - iw);
-        SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up, 
-         vHS4D[0].sliced(nt, nt + nb), order, TA);
-      }
-    } else if(walker_type == COLLINEAR) {
-      RUNTIME_CHECK(SMup.size(0) == SMdn.size(0), "");
-      for (int iw = 0; iw < nwalk; iw += nbatch, nt += nbatch)
-      {
-        int nb = std::min(nbatch, nwalk - iw);
-        SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up,
-            vHS4D[0].sliced(nt, nt + nb), order, TA);
-        SDetOp->BatchedPropagate(SMdn.sliced(iw,iw+nb), P1dn, 
-            vHS4D[is0].sliced(nt, nt + nb), order, TA);
-      }
-    } else if(walker_type == NONCOLLINEAR) {
-      for (int iw = 0; iw < nwalk; iw += nbatch, nt += nbatch)
-      {
-        int nb = std::min(nbatch, nwalk - iw);
-        SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up,
-           vHS4D[0].sliced(nt, nt + nb), vHS4D[is0].sliced(nt, nt + nb), order, TA);
-      }
-    } else if(walker_type == FULLYPOLARIZED) {
-      for (int iw = 0; iw < nwalk; iw += nbatch, nt += nbatch)
-      { 
-        int nb = std::min(nbatch, nwalk - iw);
-        SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up, 
-         vHS4D[0].sliced(nt, nt + nb), order, TA);
-      }
-    }
-  }
-  else
-  {
-    if(nspins_in_vHS > 1) { 
-      // vHS4D[s][M][M][nstep*nwalk]: need temporary buffer in this case
-      RUNTIME_CHECK((walker_type == COLLINEAR) or (walker_type == NONCOLLINEAR), ""); 
-      int N2 = vHS4D.size(1) * vHS4D.size(2);
-      CMatrix_ref vHS2D_up(vHS4D[0].origin(), {N2, vHS4D.size(3)});
-      CMatrix_ref vHS2D_dn(vHS4D[1].origin(), {N2, vHS4D.size(3)});
-      Static3Tensor vbuff({2, nbatch, N2}, ComplexType(0.0),
-          buffer_manager.get_generator().template get_allocator<ComplexType>());
-      auto vup = vbuff[0].rotated().partitioned(NMO).unrotated();
-      auto vdn = vbuff[1].rotated().partitioned(NMO).unrotated();
-  
-      for (int iw = 0; iw < nwalk; iw += nbatch, nt += nbatch)
-      {
-        int nb = std::min(nbatch, nwalk - iw);
-        ma::transpose(vHS2D_up(vHS2D_up.extension(0), {nt, nt + nb}), vbuff[0].sliced(0,nb));
-        ma::transpose(vHS2D_dn(vHS2D_dn.extension(0), {nt, nt + nb}), vbuff[1].sliced(0,nb));
-        if(walker_type == COLLINEAR) {
-          RUNTIME_CHECK(SMup.size(0) == SMdn.size(0), "");
-          SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up,
-                vup.sliced(0,nb), order, TA);
-          SDetOp->BatchedPropagate(SMdn.sliced(iw,iw+nb), P1dn,
-                vdn.sliced(0,nb), order, TA);
-        } else if(walker_type == NONCOLLINEAR) {
-          SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up,
-                vup.sliced(0,nb), vdn.sliced(0,nb), order, TA);
-        }
-      }
-    } else {
-      // vHS4D[s][M][M][nstep*nwalk]: need temporary buffer in this case
-      auto vHS2D = vHS4D[0].flatted(); 
-      StaticMatrix vbuff({nbatch, vHS2D.size(0)}, ComplexType(0.0),
-          buffer_manager.get_generator().template get_allocator<ComplexType>());
-      auto v = vbuff.rotated().partitioned(NMO).unrotated();
+    } // ispin
+      
+  } else {
 
-      for (int iw = 0; iw < nwalk; iw += nbatch, nt += nbatch)
-      {
-        int nb = std::min(nbatch, nwalk - iw);
-        ma::transpose(vHS2D(vHS2D.extension(0), {nt, nt + nb}), vbuff.sliced(0,nb));
-        if(walker_type == CLOSED) {
-          SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up,
-                v.sliced(0,nb), order, TA);
-        } else if(walker_type == COLLINEAR) {
-          RUNTIME_CHECK(SMup.size(0) == SMdn.size(0), "");
-          SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up,
-                v.sliced(0,nb), order, TA);
-          SDetOp->BatchedPropagate(SMdn.sliced(iw,iw+nb), P1dn,
-                v.sliced(0,nb), order, TA);
-        } else if(walker_type == NONCOLLINEAR) {
-          SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up,
-                v.sliced(0,nb), v.sliced(0,nb), order, TA);
-        } else if(walker_type == FULLYPOLARIZED) {
-          SDetOp->BatchedPropagate(SMup.sliced(iw,iw+nb), P1up,
-                v.sliced(0,nb), order, TA);
-        }
-      }
-    }
-  }
+    for(int ispin=0; ispin<nspin; ispin++) {
+
+      memory::buffered_array<MEM,ComplexType,3> SY(nwalk, nel[ispin], npol*NMO);
+
+      // SY = H(S) * Y
+      nda::tensor::contract(nda::conj(wset.SlaterMatrices(stype[ispin])), "nki",
+                       Y(all,ispin,all,all), "nkj", SY, "nij");
+
+      // Ynew = S * SY
+      nda::tensor::contract(wset.SlaterMatrices(stype[ispin]), "nik",
+                       SY, "nkj", Y(all,ispin,all,all), "nij");
+
+      // M += H(Ynew) * X
+      nda::tensor::contract(one, nda::conj(wset.SlaterMatrices(stype[ispin])), "nki",
+                                 X(all,ispin,all,all), "nkj",
+                            one, M(all,ispin, all, all), "nij"); 
+
+      // SY = H(S) * X
+      nda::tensor::contract(nda::conj(wset.SlaterMatrices(stype[ispin])), "nki",
+                       X(all,ispin,all,all), "nkj", SY, "nij");
+
+      // Xnew = X - S * SY
+      nda::tensor::contract(-one, wset.SlaterMatrices(stype[ispin]), "nik", SY, "nkj",
+                            one, X(all,ispin,all, all), "nij"); 
+
+    } // ispin
+
+  } // MEM
+  mpi->comm.barrier();
 }
 
 /*
-   * Orthogonalizes the Slater matrices of all walkers in the set.  
-   *  - logdetR: Array where the logarithm of det(R) will be accumulated.
-   */
-template<bool SP>
-template<class WlkSet, class CMat>
-void AFQMCBasePropagator<SP>::Orthogonalize_impl(WlkSet& wset, CMat&& logdetR) 
-{
-  auto walker_type = wset.getWalkerType();
-  const int nspin = ( (walker_type == COLLINEAR) ? 2 : 1 );
-  int nw_tot = wset.size();
-  RUNTIME_CHECK(logdetR.size(0) == nw_tot, "");
-  double LogOverlapFactor(wset.getLogOverlapFactor());
-  int w0, w1;
-  std::tie(w0, w1) = FairDivideBoundary(TG.getLocalTGRank(), nw_tot, TG.getNCoresPerTG());
-  int nbatch__ = std::min(w1-w0, (nbatched_qr <= 0 ? w1-w0 : nbatched_qr));
-  StaticArray<ComplexType, 2, dev_stack_alloc_type> logdetR_({nspin, nbatch__}, ComplexType(0.0),
-                device_buffer_manager.get_generator().template get_allocator<ComplexType>());
-  if (walker_type != COLLINEAR)
-  {
-    RUNTIME_CHECK(logdetR.size(1) == 1, "");
-    auto SM = wset.SlaterMatrices(Alpha);
-    for (int iw = w0; iw < w1; iw += nbatch__)
-    {
-      int nb = std::min(nbatch__, w1 - iw);
-      SDetOp->BatchedOrthogonalize(SM.sliced(iw,iw+nb), LogOverlapFactor, logdetR_.origin());
-      ma::add(ComplexType(1.0), ma::T(logdetR_.rotated().sliced(0,nb).unrotated()), 
-              ComplexType(1.0), logdetR.sliced(iw,iw+nb), logdetR.sliced(iw,iw+nb));  
-    }
-  }
-  else
-  {
-    RUNTIME_CHECK(logdetR.size(1) == 2, "");
-    auto SMup = wset.SlaterMatrices(Alpha);
-    auto SMdn = wset.SlaterMatrices(Beta);
-    for (int iw = w0; iw < w1; iw += nbatch__)
-    {
-      int nb = std::min(nbatch__, w1 - iw);
-      // Alpha
-      SDetOp->BatchedOrthogonalize(SMup.sliced(iw,iw+nb), LogOverlapFactor, logdetR_[0].origin()); 
-      // Beta
-      SDetOp->BatchedOrthogonalize(SMdn.sliced(iw,iw+nb), LogOverlapFactor, logdetR_[1].origin()); 
-      ma::add(ComplexType(1.0), ma::T(logdetR_.rotated().sliced(0,nb).unrotated()), 
-              ComplexType(1.0), logdetR.sliced(iw,iw+nb), logdetR.sliced(iw,iw+nb));  
-    }
-  }
-  TG.TG_local().barrier();
-}
-
-/*
- * Walker orthogonalization for cases where det(R) is not needed. 
- */
-template<bool SP>
+template<MEMORY_SPACE MEM>
 template<class WlkSet>
-void AFQMCBasePropagator<SP>::Orthogonalize_impl(WlkSet& wset)
-{ 
-  auto walker_type = wset.getWalkerType();
-  int nw_tot = wset.size(); 
-  double LogOverlapFactor(wset.getLogOverlapFactor());
-  int w0, w1;
-  std::tie(w0, w1) = FairDivideBoundary(TG.getLocalTGRank(), nw_tot, TG.getNCoresPerTG());
-  int nbatch__ = std::min(w1-w0, (nbatched_qr <= 0 ? w1-w0 : nbatched_qr));
-  if (walker_type != COLLINEAR)
-  { 
-    auto SM = wset.SlaterMatrices(Alpha);
-    for (int iw = w0; iw < w1; iw += nbatch__)
-    { 
-      int nb = std::min(nbatch__, w1 - iw);
-      SDetOp->BatchedOrthogonalize(SM.sliced(iw,iw+nb), LogOverlapFactor);
-    }
-  }
-  else
-  { 
-    auto SMup = wset.SlaterMatrices(Alpha);
-    auto SMdn = wset.SlaterMatrices(Beta);
-    for (int iw = w0; iw < w1; iw += nbatch__)
-    { 
-      int nb = std::min(nbatch__, w1 - iw);
-      // Alpha
-      SDetOp->BatchedOrthogonalize(SMup.sliced(iw,iw+nb), LogOverlapFactor);
-      // Beta
-      SDetOp->BatchedOrthogonalize(SMdn.sliced(iw,iw+nb), LogOverlapFactor);
-    }
-  }
-  TG.TG_local().barrier();
-}
-
-template<bool SP>
-template<class WlkSet>
-void AFQMCBasePropagator<SP>::Orthogonalize_excited_impl(WlkSet& wset)
+void AFQMCBasePropagator<MEM>::Orthogonalize_excited_impl(WlkSet& wset)
 {
   using devStaticTensor = StaticArray<ComplexType, 3, dev_stack_alloc_type>;
   auto walker_type = wset.getWalkerType();
@@ -896,7 +464,7 @@ void AFQMCBasePropagator<SP>::Orthogonalize_excited_impl(WlkSet& wset)
   int nbatch__ = std::min(w1-w0, (nbatched_qr <= 0 ? w1-w0 : nbatched_qr));
   if (walker_type != COLLINEAR)
   {
-    RUNTIME_CHECK(numExcitations.first > 0, ""); 
+    utils::check(numExcitations.first > 0, ""); 
     int nexmax(maxOccupExtendedMat.first);
     auto SM = wset.SlaterMatrices(Alpha);
     for (int iw = w0; iw < w1; iw += nbatch__)
@@ -1007,152 +575,84 @@ void AFQMCBasePropagator<SP>::Orthogonalize_excited_impl(WlkSet& wset)
     }
   }
   TG.TG_local().barrier();
+  mpi->barrier();
 }
+*/
 
-template<bool SP>
-template<class MatA, class MatB, class MatC, class MatD>
-void AFQMCBasePropagator<SP>::assemble_X(size_t nsteps,
-                                     size_t nwalk,
-                                     RealType sqrtdt,
-                                     MatA&& X,
-                                     MatB&& vbias,
-                                     MatC&& MF,
-                                     MatD&& HWs,
-                                     bool addRAND)
+template<MEMORY_SPACE MEM>
+void AFQMCBasePropagator<MEM>::assemble_X(RealType sqrtdt, 
+     nda::MemoryArrayOfRank<2> auto&& X, nda::MemoryArrayOfRank<1> auto&& MF, 
+     nda::MemoryArrayOfRank<1> auto&& HWs, int nt, bool addRAND)
 {
-  using std::copy_n;
-  using XType = typename std::decay<MatA>::type::element;
+  using nda::range;
+  // On entry, X(iw,m) = vbias(iw,m);
   // remember to call vbi = apply_bound_vbias(*vb);
-  // X[m,ni,iw] = rand[m,ni,iw] + im * ( vbias[m,iw] - vMF[m]  )
-  // HW[ni,iw] = sum_m [ im * ( vMF[m] - vbias[m,iw] ) *
-  //                     ( rand[m,ni,iw] + halfim * ( vbias[m,iw] - vMF[m] ) ) ]
-  //           = sum_m [ im * ( vMF[m] - vbias[m,iw] ) *
-  //                     ( X[m,ni,iw] - halfim * ( vbias[m,iw] - vMF[m] ) ) ]
-  // MF[ni,iw] = sum_m ( im * X[m,ni,iw] * vMF[m] )
 
-  TG.TG_local().barrier();
-  ComplexType im(0.0, 1.0);
-  int nCV = int(X.size(0));
+  auto [nwalk,nCV] = X.shape();
+
+  // Count force-bias (vbias) clamp hits for the end-of-run report. On entry X(iw,m) still holds
+  // the raw vbias, so re-evaluate the exact magnitude condition construct_X uses to clamp it.
+  // Host-only (X is on device for DEVICE_MEMORY); device counting is not supported.
+  if constexpr (MEM == HOST_MEMORY) {
+    RealType bnd = vbias_bound * sqrtdt;
+    auto Xv = X();
+    for (long iw = 0; iw < nwalk; ++iw)
+      for (long m = 0; m < nCV; ++m) {
+        ++vbias_bound_stats.total;
+        if (std::abs(Xv(iw, m)) > bnd) ++vbias_bound_stats.upper;
+      }
+  }
   // generate random numbers
+  utils::check( rng_block_size >= nCV, "Error in assemble_X: rng_block_size < nCV.");
+  memory::buffered_array<MEM,RealType,2> RNGbuff(nwalk,rng_block_size);
+  RNGbuff() = RealType(0.0);
   if (addRAND)
   {
-    int i0, iN;
-    if(nCV == rng_block_size) {
-      std::tie(i0, iN) = FairDivideBoundary(TG.TG_local().rank(), int(X.num_elements()), TG.TG_local().size());
-      utils::sampleGaussianFields_n(make_device_ptr(X.origin()) + i0, iN - i0, *rng);
-    } else {
-      std::tie(i0, iN) = FairDivideBoundary(TG.TG_local().rank(), rng_block_size, TG.TG_local().size());
-      if(iN <= nCV) {
-        utils::sampleGaussianFields_n(make_device_ptr(X[i0].origin()), (iN - i0)*X.size(1), *rng);
-      } else if(i0 < nCV) {
-	// throw some away 
-        StaticSPVector R(iextensions<1u>{ (iN-i0)*X.size(1) }, 
-                     buffer_manager.get_generator().template get_allocator<SPComplexType>());
-        utils::sampleGaussianFields_n(make_device_ptr(R.origin()), R.size(0), *rng);
-        copy_n(R.origin(), (nCV-i0)*X.size(1), X[i0].origin());
-      } else {
-	// throw all away 
-        StaticSPVector R(iextensions<1u>{ (iN-i0)*X.size(1) }, 
-                     buffer_manager.get_generator().template get_allocator<SPComplexType>());
-        utils::sampleGaussianFields_n(make_device_ptr(R.origin()), R.size(0), *rng);
-      }
+    // always generate rng_block_size per walker, to keep generators synchronized in 
+    // correlated sampling calculations
+    rng->sampleUniformFields(nda::flatten(RNGbuff));
+  }
+
+  if(free_projection) {
+    for(auto fp : FieldTypes) {
+      utils::check(fp != DiscreteChargePropagator && fp != DiscreteSpinPropagator, "Finish FP DiscretePropagator");
     }
-// allocate temporary buffer and all sampleUniform with throw away ones
   }
 
   // construct X
-  ma::fill(HWs, ComplexType(0));
-  ma::fill(MF, ComplexType(0));
+  HWs() = ComplexType(0);
+  MF() = ComplexType(0);
 
-// leaving compiler switch until I decide how to do this better
-// basically hide this decision somewhere based on the value of pointer!!!
-// TODO: Move this
-#if defined(ENABLE_CUDA) || defined(ENABLE_HIP)
-  kernels::construct_X(nCV, nsteps, nwalk, free_projection, sqrtdt, vbias_bound, raw_pointer_cast(vMF.origin()),
-                       raw_pointer_cast(vbias.origin()), raw_pointer_cast(HWs.origin()), raw_pointer_cast(MF.origin()),
-                       raw_pointer_cast(X.origin()));
-#else
-  boost::multi::array_ref<XType, 3> X3D(raw_pointer_cast(X.origin()), {long(X.size(0)), long(nsteps), long(nwalk)});
-  int m0, mN;
-  std::tie(m0, mN) = FairDivideBoundary(TG.TG_local().rank(), nCV, TG.TG_local().size());
-  TG.TG_local().barrier();
-  for (int m = m0; m < mN; ++m)
-  {
-    auto vb_ = raw_pointer_cast(vbias[m].origin());
-    auto vmf_t = apply_bound_vbias(vMF[m], sqrtdt);
-    auto vmf_ = vMF[m];
-    // apply bounds to vbias
-    for (int iw = 0; iw < nwalk; iw++)
-      vb_[iw] = apply_bound_vbias(vb_[iw], sqrtdt);
-    for (int ni = 0; ni < nsteps; ni++)
-    {
-      auto X_ = X3D[m][ni].origin();
-      auto hws_ = raw_pointer_cast(HWs[ni].origin());
-      auto mf_ = raw_pointer_cast(MF[ni].origin());
-      for (int iw = 0; iw < nwalk; iw++)
-      {
-        // No force bias term when doing free projection.
-        ComplexType vdiff =
-            free_projection ? ComplexType(0.0, 0.0) : (im * (static_cast<ComplexType>(vb_[iw]) - vmf_t));
-        X_[iw] += static_cast<XType>(vdiff);
-        hws_[iw] -= vdiff * (static_cast<ComplexType>(X_[iw]) - 0.5 * vdiff);
-        mf_[iw] += im * static_cast<ComplexType>(X_[iw]) * vmf_;
+  if constexpr (MEM==DEVICE_MEMORY) {
+#if defined(ENABLE_DEVICE)
+    construct_X(use_cp_constraint or use_real_vbias,free_projection,sqrtdt, vbias_bound, FieldTypes_dev, vMF, MF, HWs, RNGbuff, X);
+#endif
+  } else {
+    detail::construct_X_impl f{use_cp_constraint || use_real_vbias, free_projection, sqrtdt, vbias_bound, FieldTypes, vMF(), MF(), HWs(), RNGbuff(), X()};
+    for(long iw = 0; iw < nwalk; ++iw) {
+      for(long m = 0; m < nCV; ++m) {
+        f(iw, m);
       }
     }
   }
-  TG.TG_local().barrier();
-#endif
 }
 
-template<bool SP>
+template<MEMORY_SPACE MEM>
 template<class WlkSet>
-void AFQMCBasePropagator<SP>::Orthogonalize(WlkSet& wset)
+void AFQMCBasePropagator<MEM>::Orthogonalize(WlkSet& wset)
 {
   if(excitedState)
   {
-    if(not importance_sampling)
-      APP_ABORT("Error: Excited state propagator only implemented with importance sampling. ");
-    Orthogonalize_excited_impl(wset);
+    utils::check(false, "finish"); 
+    utils::check(importance_sampling,"Error: Excited state propagator only implemented with importance sampling. ");
+//    Orthogonalize_excited_impl(wset);
   }
-  else if(importance_sampling)
+  else 
   {
-    Orthogonalize_impl(wset);
+    memory::buffered_array<MEM,ComplexType,1> ldet(wset.size(),ComplexType(0.));
+    det_ops::orthogonalize(wset,ldet,importance_sampling);
   }
-  else
-  {
-    auto walker_type = wset.getWalkerType();
-    int nwalk = wset.size();
-    int nspin = ( (walker_type == COLLINEAR) ? 2 : 1 );
-    StaticMatrix logdetR({nwalk, nspin}, ComplexType(0.0),
-                 buffer_manager.get_generator().template get_allocator<ComplexType>());
-    Vector<ComplexType> hostv(iextensions<1u>{nspin*nwalk});
-    Vector<ComplexType> hostv2(iextensions<1u>{nwalk});
-    // get old weights
-    wset.getProperty(WEIGHT, logdetR.flatted().sliced(0,nwalk));
-    copy_n(logdetR.origin(), nwalk, hostv2.data());
-    // Orthogonalize and keep logdetR
-    ma::fill(logdetR, ComplexType(0.0, 0.0));
-    Orthogonalize_impl(wset, logdetR);
-    // processing this on the host for now, make kernel if needed!
-    copy_n(logdetR.origin(), nwalk*nspin, hostv.data());
-    TG.TG_local().barrier();
-    if (walker_type == CLOSED)
-      for (int iw = 0; iw < nwalk; iw++)
-        hostv2[iw] *= std::exp(hostv[iw]+hostv[iw]);
-    else if (walker_type == COLLINEAR)
-      for (int iw = 0; iw < nwalk; iw++)
-        hostv2[iw] *= std::exp(hostv[iw] + hostv[iw + nwalk]);
-    else if (walker_type == NONCOLLINEAR)
-      for (int iw = 0; iw < nwalk; iw++)
-        hostv2[iw] *= std::exp(hostv[iw]);
-    else if (walker_type == FULLYPOLARIZED)
-      for (int iw = 0; iw < nwalk; iw++)
-        hostv2[iw] *= std::exp(hostv[iw]);
-    copy_n(hostv.data(), nwalk, logdetR.origin());
-    wset.setProperty(WEIGHT, logdetR.flatted().sliced(0,nwalk));
-  }
-  TG.TG_local().barrier();
-  wfn.Overlap(wset);
+  wfn->Log_Overlap(wset);
 }
 
 } // namespace afqmc

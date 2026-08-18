@@ -14,8 +14,7 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef AFQMC_CONFIG_H
-#define AFQMC_CONFIG_H
+#pragma once
 
 #include <string>
 #include <algorithm>
@@ -27,27 +26,13 @@
 #include <tuple>
 #include <fstream>
 
-#include "config.h"
-#include "Utilities/AppAbort.hpp"
-#include "Utilities/check.hpp"
+#include "configuration.hpp"
 #include "config.0.h"
+#include "AFQMC/propagator_types.hpp"
+#include "IO/AppAbort.hpp"
+#include "utilities/check.hpp"
 
-#include "io/ptree/ptree_utilities.hpp"
-
-// platform-specific definition of pointer types, memory resources, etc...
-#include "Memory/config.h"
-#include "Memory/custom_pointers.hpp"
-
-#include "SparseMatrix/csr_matrix.hpp"
-#include "SparseMatrix/coo_matrix.hpp"
-
-//#include "mpi3/shared_window.hpp"
-#include "Memory/SharedMemory/shm_ptr_with_raw_ptr_dispatch.hpp"
-#include "multi/array.hpp"
-#include "multi/array_ref.hpp"
-#include "multi/memory/fallback.hpp"
-
-namespace mpi3 = boost::mpi3;
+#include "numerics/sparse/sparse.hpp"
 
 namespace sfqmc
 {
@@ -60,18 +45,12 @@ const int DEFAULT_POPULATION_CONTROL_INTERVAL = 10; // in units of steps
 const int DEFAULT_WALKER_ORTHO_INTERVAL = 10; // in units of steps
 const float DEFAULT_TIME_STEP = 0.01f; // in units of inverse energy (depending on Hamiltonian units)
 
-namespace multi = boost::multi;
-
-// ultil we switch to c++17, to reduce extra lines
-using tp_ul_ul = std::tuple<std::size_t, std::size_t>;
-
 enum WALKER_TYPES
 {
   UNDEFINED_WALKER_TYPE,
   CLOSED,
   COLLINEAR,
-  NONCOLLINEAR,
-  FULLYPOLARIZED
+  NONCOLLINEAR
 };
 
 inline WALKER_TYPES initWALKER_TYPES(int i)
@@ -85,25 +64,73 @@ inline WALKER_TYPES initWALKER_TYPES(int i)
   else if (i == 3)
     return NONCOLLINEAR;
   else if (i == 4)
-    return FULLYPOLARIZED;
+    utils::check(false, "This wavefunction was generated with the removed FULLYPOLARIZED "
+                        "walker type (dims[3]==4). Regenerate it as COLLINEAR (dims[3]==2) "
+                        "with ndown=0.");
   return UNDEFINED_WALKER_TYPE;
 }
 
-inline const char* WALKER_TYPES_name(WALKER_TYPES wt)
-{
-  switch (wt)
-  {
-  case CLOSED:
-    return "CLOSED";
-  case COLLINEAR:
-    return "COLLINEAR";
-  case NONCOLLINEAR:
-    return "NONCOLLINEAR";
-  case FULLYPOLARIZED:
-    return "FULLYPOLARIZED";
-  default:
-    return "UNDEFINED_WALKER_TYPE";
+inline auto walkerTypeToDims(WALKER_TYPES type) {
+  int nspin = type == COLLINEAR ? 2 : 1;
+  int npol = type == NONCOLLINEAR ? 2 : 1;
+  return std::make_tuple(nspin, npol);
+}
+
+inline WALKER_TYPES walkerTypeFromDims(int nspin, int npol) {
+  if(nspin == 1 && npol == 1) {
+    return CLOSED;
   }
+  if(nspin > 1 && npol == 1) {
+    return COLLINEAR;
+  }
+  if(nspin == 1 && npol > 1) {
+    return NONCOLLINEAR;
+  }
+  utils::check(false, "There is no walker type that has nspin = {}, npol = {}", nspin, npol); 
+  return UNDEFINED_WALKER_TYPE;
+}
+
+inline bool walkerTypeIsConvertible(WALKER_TYPES from, WALKER_TYPES to) {
+  if(from == to) {
+    return true;
+  }
+  if(from < CLOSED || from > NONCOLLINEAR || to < CLOSED || to > NONCOLLINEAR) {
+    return false;
+  }
+  return from <= to;
+}
+
+// Like walkerTypeIsConvertible but also makes sure the values of nspin and npol are compatible
+// Note that although it is called “walker” it refers to the spin dimensions of any tensor in the code.
+inline bool walkerDimsAreConvertible(int nspin_from, int npol_from, int nspin_to, int npol_to) {
+  utils::check(std::min({nspin_from, npol_from, nspin_to, npol_to}) > 0 &&
+                   // TODO: remove once we do not assume 2 flavors anymore
+                   std::max({nspin_from, npol_from, nspin_to, npol_to}) <= 2,
+               "for now we assume that 0 < nspin, npol <= 2");
+
+  // CLOSED -> X
+  if(nspin_from == 1 && npol_from == 1) {
+    return true;
+  }
+
+  // X -> X
+  if(nspin_from == nspin_to && npol_from == npol_to) {
+    return true;
+  }
+
+  // COLLINEAR -> NONCOLLINEAR
+  return npol_from == 1 && nspin_from == npol_to && nspin_to == 1;
+}
+
+
+inline std::string walkerTypeToString(WALKER_TYPES type)
+{
+  if (type == UNDEFINED_WALKER_TYPE) return "undefined";
+  else if (type == CLOSED) return "closed";
+  else if (type == COLLINEAR) return "collinear";
+  else if (type == NONCOLLINEAR) return "noncollinear";
+  utils::check(false, "unknown walker type: {}", type);
+  return "unknown";
 }
 
 enum INTEGRAL_TYPES
@@ -112,6 +139,12 @@ enum INTEGRAL_TYPES
   CLOSED_INTEGRAL,
   COLLINEAR_INTEGRAL,
   NONCOLLINEAR_INTEGRAL,
+};
+
+enum WAVEFUNCTION_TYPES
+{
+  NOMSD_WFN,
+  PHMSD_WFN
 };
 
 inline INTEGRAL_TYPES initINTEGRAL_TYPES(int i)
@@ -127,55 +160,20 @@ inline INTEGRAL_TYPES initINTEGRAL_TYPES(int i)
   return UNDEFINED_INTEGRAL_TYPE;
 }
 
-template<typename T>
-using s1D = std::tuple<IndexType, T>;
-template<typename T>
-using s2D = std::tuple<IndexType, IndexType, T>;
-template<typename T>
-using s3D = std::tuple<IndexType, IndexType, IndexType, T>;
-template<typename T>
-using s4D = std::tuple<IndexType, IndexType, IndexType, IndexType, T>;
-
 enum SpinTypes
 {
   Alpha,
   Beta
 };
 
-// new types
-template<typename T>
-using mpi3_csr_matrix =
-    ma::sparse::csr_matrix<T, int, std::size_t, shared_allocator<T>, ma::sparse::is_root>;
-
-template<typename T>
-using dev_csr_Matrix = ma::sparse::csr_matrix<T, int, int, device_allocator<T>>;
-
-//#ifdef PsiT_IN_SHM
-template<typename T>
-using PsiT_Matrix_t = ma::sparse::csr_matrix<T, int, int, shared_allocator<T>, ma::sparse::is_root>;
-using PsiT_Matrix   = PsiT_Matrix_t<ComplexType>;
-#if defined(ENABLE_DEVICE)
-template<typename T, typename IntT = int>
-using local_csr_Matrix = ma::sparse::csr_matrix<T, int, IntT, device_allocator<T>>;
-#else
-template<typename T, typename IntT = int>
-using local_csr_Matrix = ma::sparse::csr_matrix<T, int, IntT, shared_allocator<T>, ma::sparse::is_root>;
-#endif
-//#else
-//  using PsiT_Matrix = ma::sparse::csr_matrix<ComplexType,int,int>;
-//  using devPsiT_Matrix = ma::sparse::csr_matrix<ComplexType,int,int>;
-//#endif
-
-
-#if defined(ENABLE_DEVICE)
-using P1Type = ma::sparse::csr_matrix<ComplexType, int, int, localTG_allocator<ComplexType>>;
-#else
-using P1Type        = ma::sparse::csr_matrix<ComplexType, int, int, localTG_allocator<ComplexType>, ma::sparse::is_root>;
-#endif
+// Trial wave function types
+template<typename T, MEMORY_SPACE MEM>
+using PsiT_Matrix_t = math::sparse::csr_matrix<T, MEM, int, int>;
+template<MEMORY_SPACE MEM>
+using PsiT_Matrix   = PsiT_Matrix_t<ComplexType,MEM>;
 
 enum HamiltonianTypes
 {
-  FactorizedSparse,
   THC,
   KPTHC,
   KPFactorized,
@@ -184,175 +182,6 @@ enum HamiltonianTypes
   UNKNOWN
 };
 
-/* Remember to propagate any changes to this enum to the device Kernel
-   routines for construct_X_Model */
-enum PropagatorTypes
-{
-  ContinuousChargePropagator,
-  ContinuousSpinPropagator,
-  DiscreteChargePropagator,
-  DiscreteSpinPropagator,
-  UndefinedPropagator
-};
-
-template<std::ptrdiff_t D>
-using iextensions = typename boost::multi::iextensions<D>;
-
-// general matrix definitions
-template<class Alloc = std::allocator<int>>
-using IntegerVector = boost::multi::array<int, 1, Alloc>;
-template<class Alloc = std::allocator<ComplexType>>
-using ComplexVector = boost::multi::array<ComplexType, 1, Alloc>;
-template<class Ptr = ComplexType*>
-using ComplexVector_ref = boost::multi::array_ref<ComplexType, 1, Ptr>;
-
-template<class Alloc = std::allocator<int>>
-using IntegerMatrix = boost::multi::array<int, 2, Alloc>;
-template<class Alloc = std::allocator<ComplexType>>
-using ComplexMatrix = boost::multi::array<ComplexType, 2, Alloc>;
-template<class Ptr = ComplexType*>
-using ComplexMatrix_ref = boost::multi::array_ref<ComplexType, 2, Ptr>;
-
-template<class Alloc = std::allocator<ComplexType>>
-using Complex3Tensor = boost::multi::array<ComplexType, 3, Alloc>;
-template<class Ptr = ComplexType*>
-using Complex3Tensor_ref = boost::multi::array_ref<ComplexType, 3, Ptr>;
-
-template<std::ptrdiff_t D, class Alloc = std::allocator<ComplexType>>
-using ComplexArray = boost::multi::array<ComplexType, D, Alloc>;
-template<std::ptrdiff_t D, class Ptr = ComplexType*>
-using ComplexArray_ref = boost::multi::array_ref<ComplexType, D, Ptr>;
-
-/* move to these types */
-template<class T, class Alloc = std::allocator<T>> 
-using Vector = boost::multi::array<T, 1, Alloc>;
-template<class T, class Alloc = std::allocator<T>> 
-using StaticVector = boost::multi::static_array<T, 1, Alloc>;
-template<class T, class Ptr = T*> 
-using Vector_ref = boost::multi::array_ref<T, 1, Ptr>;
-
-template<class T, class Alloc = std::allocator<T>>
-using Matrix = boost::multi::array<T, 2, Alloc>;
-template<class T, class Alloc = std::allocator<T>>
-using StaticMatrix = boost::multi::static_array<T, 2, Alloc>;
-template<class T, class Ptr = T*>              
-using Matrix_ref = boost::multi::array_ref<T, 2, Ptr>;
-
-template<class T, std::ptrdiff_t D, class Alloc = std::allocator<T>> 
-using Array = boost::multi::array<T, D, Alloc>;
-template<class T, std::ptrdiff_t D, class Alloc = std::allocator<T>> 
-using StaticArray = boost::multi::static_array<T, D, Alloc>;
-template<class T, std::ptrdiff_t D, class Ptr = T*> 
-using Array_ref = boost::multi::array_ref<T, D, Ptr>;
-
-template<class Alloc> 
-using Vector_ = boost::multi::array<typename std::allocator_traits<Alloc>::value_type, 1, Alloc>;
-template<class Alloc> 
-using StaticVector_ = boost::multi::static_array<typename std::allocator_traits<Alloc>::value_type, 1, Alloc>;
-template<class ptr> 
-using Vector_ref_ = boost::multi::array_ref<typename std::pointer_traits<ptr>::element_type, 1, ptr>; 
-
-template<class Alloc> 
-using Matrix_ = boost::multi::array<typename std::allocator_traits<Alloc>::value_type, 2, Alloc>;
-template<class Alloc> 
-using StaticMatrix_ = boost::multi::static_array<typename std::allocator_traits<Alloc>::value_type, 2, Alloc>;
-template<class ptr> 
-using Matrix_ref_ = boost::multi::array_ref<typename std::pointer_traits<ptr>::element_type, 2, ptr>; 
-
-template<std::ptrdiff_t D, class Alloc>
-using Array_ = boost::multi::array<typename std::allocator_traits<Alloc>::value_type, D, Alloc>;
-template<std::ptrdiff_t D, class Alloc>
-using StaticArray_ = boost::multi::static_array<typename std::allocator_traits<Alloc>::value_type, D, Alloc>;
-template<std::ptrdiff_t D, class ptr>
-using Array_ref_ = boost::multi::array_ref<typename std::pointer_traits<ptr>::element_type, D, ptr>; 
-
-struct AFQMCInfo
-{
-public:
-  // default constructor
-  AFQMCInfo()
-      : name(""),
-        NMO(-1),
-        NAEA(-1),
-        NAEB(-1),
-        MS2(-99),
-        ISYM(-1)
-  {}
-
-  AFQMCInfo(std::string nm, int nmo_, int naea_, int naeb_)
-      : name(nm),
-        NMO(nmo_),
-        NAEA(naea_),
-        NAEB(naeb_),
-        MS2(-99),
-        ISYM(-1)
-  {}
-
-  AFQMCInfo(const AFQMCInfo& other) = default;
-  AFQMCInfo& operator=(const AFQMCInfo& other) = default;
-
-  // destructor
-  ~AFQMCInfo() {}
-
-  // identifier
-  std::string name;
-
-  // number of active orbitals
-  int NMO;
-
-  // number of active electrons alpha/beta
-  int NAEA, NAEB;
-
-  // ms2
-  int MS2 = -1;
-
-  // isym
-  int ISYM = -1;
-
-  // copies values from object
-  void copyInfo(const AFQMCInfo& a)
-  {
-    name           = a.name;
-    NMO            = a.NMO;
-    NAEA           = a.NAEA;
-    NAEB           = a.NAEB;
-    MS2            = a.MS2;
-    ISYM           = a.ISYM;
-  }
-
-  // no fully spin polarized yet, not sure what it will break
-  bool checkAFQMCInfoState()
-  {
-    if ( NAEA < 1 || NAEB < 0 ) 
-      return false;
-    return true;
-  }
-
-  void printAFQMCInfoState(std::ostream& out)
-  {
-    out << "AFQMC info: "
-        << "name: " << name << ""
-        << "NMO: "      << NMO << ""
-        << "NAEA: " << NAEA << ""
-        << "NAEB: " << NAEB << std::endl; 
-// FIX        << "MS2: " << MS2 << std::endl; 
-  }
-
-  bool parse(ptree pt)
-  {
-    name = pt.get<std::string>("name");
-    NMO      = pt.get<int>("NMO", -1);
-    NAEA     = pt.get<int>("NAEA", -1);
-    NAEB     = pt.get<int>("NAEB", -1);
-    MS2      = pt.get<int>("MS2", -99);
-    ISYM      = pt.get<int>("ISYM", -1);
-    // fix! either specify MS2 or NAEA/NAEB, but not both
-    // right now MS2 is not a useful option
-    return true;
-  }
-};
-
 } // namespace afqmc
 } // namespace sfqmc
 
-#endif

@@ -11,16 +11,18 @@
  *
  */
 
-#ifndef SFQMC_AFQMC_MIXED_ESTIMATOR_HPP
-#define SFQMC_AFQMC_MIXED_ESTIMATOR_HPP
+#pragma once
 
 #include "AFQMC/config.h"
 #include <vector>
 #include <string>
 #include <iostream>
 
-#include "hdf/hdf_multi.h"
-#include "hdf/hdf_archive.h"
+#include "AFQMC/parameters.hpp"
+#include "utilities/check.hpp"
+#include "utilities/mpi_context.h"
+#include "nda/nda.hpp"
+#include "nda/h5.hpp"
 
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "AFQMC/Estimators/MixedObsHandler.hpp"
@@ -35,42 +37,36 @@ namespace afqmc
  * Top class for mixed estimators. 
  * An instance of this class will manage a set of observables evaluated at the mixed distribution.
  */
-class MixedEstimator : public EstimatorBase
+template<MEMORY_SPACE MEM>
+class MixedEstimator : public EstimatorBase<MEM>
 {
 
 public:
-  MixedEstimator(afqmc::TaskGroup_& tg_,
-                          AFQMCInfo& info,
+  /// The measurement and equilibration intervals of the input are multiples of
+  /// population_control_interval, which is given in steps.
+  MixedEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                           std::string name,
-                          ptree pt,
+                          const EstimatorParameters& params,
+                          int population_control_interval,
                           WALKER_TYPES wlk,
-                          [[maybe_unused]] WalkerSet& wset,
-                          Wavefunction& wfn)
-      : EstimatorBase(info),
-        TG(tg_),
-        walker_type(wlk),
-        observ0(TG, info, name, pt, wlk, wfn),
-        wfn0(wfn)
+                          Wavefunction<MEM>& wfn)
+      : observ0(mpi, name, params, wlk, wfn.getNMO(), wfn)
   {
-    int _pop_control_interval, equil_multiplier;
-    _pop_control_interval = pt.get<int>("_population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL);
-    block_size = pt.get<int>("block_size", 1);
-    equil_multiplier = pt.get<int>("equil_multiplier", 0); // units of population control interval
-    measure_interval_multiplier = pt.get<int>("measure_interval_multiplier", DEFAULT_MEASURE_INTERVAL_MULTIPLIER); // units of population control interval
-    measure_interval = measure_interval_multiplier * _pop_control_interval;
-    if (equil_multiplier % measure_interval_multiplier != 0)
-      APP_ABORT("Error in MixedEstimator user input: 'equil_multiplier' must be evenly divisible by 'measure_interval_multiplier'");
-    nblocks_skip = equil_multiplier / measure_interval_multiplier;
-    writer = (TG.Global().rank() == 0);
+    const std::vector<int> multipliers = measure_interval_multipliers(params);
+    utils::check(multipliers.size() == 1,
+                 "Error in MixedEstimator user input: 'measure_interval_multiplier' has to be a single value");
+    measure_interval = multipliers[0] * population_control_interval;
+    const int equil_steps = params.equil_multiplier * population_control_interval;
+    utils::check(equil_steps % measure_interval==0,"Error in MixedEstimator user input: 'equil_multiplier' must be evenly divisible by 'measure_interval_multiplier'");
+    nblocks_skip = equil_steps / measure_interval;
+    writer = (mpi->comm.rank() == 0);
   }
 
-  ~MixedEstimator() {}
-
   void accumulate_step([[maybe_unused]] double time, 
-                       [[maybe_unused]] WalkerSet& wset,
+                       [[maybe_unused]] WalkerSet<MEM>& wset,
                        [[maybe_unused]] std::vector<ComplexType>& curData) {}
 
-  void accumulate_block([[maybe_unused]] double time, WalkerSet& wset)
+  void accumulate_block([[maybe_unused]] double time, WalkerSet<MEM>& wset)
   {
     accumulated_in_last_block = false;
 
@@ -81,11 +77,11 @@ public:
       return;
     }
 
-    AFQMCTimer.start(mixed_estimator_timer);
+    auto mixed_estimator_time = timers.mixed_estimator.start();
     observ0.accumulate(wset);
     iblock++;
     accumulated_in_last_block = true;
-    AFQMCTimer.stop(mixed_estimator_timer);
+    mixed_estimator_time.stop();
   }
 
   void tags([[maybe_unused]] std::ofstream& out)
@@ -96,46 +92,39 @@ public:
     return measure_interval;
   }
 
-  void print([[maybe_unused]] std::ofstream& out, hdf_archive& dump, [[maybe_unused]] WalkerSet& wset)
+  void print([[maybe_unused]] std::ofstream& out, h5::file& file, [[maybe_unused]] WalkerSet<MEM>& wset)
   {
-    // I doubt we will ever collect a billion blocks of data.
+    // print resets the counters for block average.
     if (accumulated_in_last_block)
     {
       if (writer)
       {
-        dump.push("Observables");
-        dump.push("Mixed");
+        h5::group grp(file);
+        h5::group g1 = ( grp.has_key("Observables") ? grp.open_group("Observables") : 
+                                                      grp.create_group("Observables") );
+        h5::group g2 = ( g1.has_key("Mixed") ? g1.open_group("Mixed") : 
+                                                g1.create_group("Mixed") );
+        observ0.print(iblock, std::addressof(g2));
+      } else { 
+        h5::group *grp = nullptr;
+        observ0.print(iblock, grp);
       }
-      observ0.print(iblock, dump);
-      if (writer)
-      {
-        dump.pop();
-        dump.pop();
-      }
+      accumulated_in_last_block = false;
     }
   }
 
 private:
-  TaskGroup_& TG;
-
-  [[maybe_unused]] WALKER_TYPES walker_type = UNDEFINED_WALKER_TYPE;
-
   bool writer = false;
   bool accumulated_in_last_block = false;
 
-  MixedObsHandler observ0;
-
-  [[maybe_unused]] Wavefunction& wfn0;
+  MixedObsHandler<MEM> observ0;
 
   // Blocking info 
-  int block_size   = 1;
   int iblock       = 0;
   int nblocks_skip = 0;
 
   int measure_interval = 1;
-  int measure_interval_multiplier = 1;
 };
 } // namespace afqmc
 } // namespace sfqmc
 
-#endif

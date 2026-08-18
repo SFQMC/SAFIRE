@@ -1,59 +1,44 @@
-#ifndef SFQMC_CONFIGURATION_H
-#define SFQMC_CONFIGURATION_H
+#pragma once
+
+/* define location of source directory */
+#define PROJECT_SOURCE_DIR_STR "@PROJECT_SOURCE_DIR@"
 
 /* define the major version */
-#define AF_APP_VERSION_MAJOR  @AF_APP_VERSION_MAJOR@
+#define AF_APP_VERSION_MAJOR  @PROJECT_VERSION_MAJOR@
 
 /* define the minor version */
-#define AF_APP_VERSION_MINOR  @AF_APP_VERSION_MINOR@
+#define AF_APP_VERSION_MINOR  @PROJECT_VERSION_MINOR@
 
 /* define the patch version */
-#define AF_APP_VERSION_PATCH  @AF_APP_VERSION_PATCH@
+#define AF_APP_VERSION_PATCH  @PROJECT_VERSION_PATCH@
 
 /* define the version */
-#define AF_APP_VERSION "@AF_APP_VERSION@"
+#define AF_APP_VERSION "@PROJECT_VERSION@"
 
 /* define the release version */
-#cmakedefine AFAPP_RELEASE  @AFAPP_RELEASE@
+#define AF_APP_BUILD_TYPE "@CMAKE_BUILD_TYPE@"
 
 /* building from Git repository or not */
-#cmakedefine IS_GIT_PROJECT  @IS_GIT_PROJECT@
+#cmakedefine IS_GIT_PROJECT
 
 /* Assume MKL library is available. */ 
-#cmakedefine HAVE_MKL @HAVE_MKL@
-
-/* Assume ESSL library is available. */ 
-#cmakedefine HAVE_ESSL @HAVE_ESSL@
-
-/* Assume ACML library is available. */ 
-#cmakedefine HAVE_ACML @HAVE_ACML@
+#cmakedefine HAVE_MKL
 
 /* Enable device code and use CUDA backend */
-#cmakedefine ENABLE_CUDA @ENABLE_CUDA@
+#cmakedefine ENABLE_CUDA
 
 /* Enable device code and use HIP backend */
-#cmakedefine ENABLE_HIP @ENABLE_HIP@
+#cmakedefine ENABLE_HIP
  
-/* Enable OpenMP backend. */
-#cmakedefine ENABLE_OPENMP @ENABLE_OPENMP@
-
 /* Enable device code, with some backend. */
-#cmakedefine ENABLE_DEVICE @ENABLE_DEVICE@
+#cmakedefine ENABLE_DEVICE
 
-/* Using boost::stacktrace */ 
-#cmakedefine ENABLE_STACKTRACE @ENABLE_STACKTRACE@
+/* Reproduce the result of the host code exactly by using an inefficient copy-from-host random number generator */
+#cmakedefine DEVICE_RNG_FROM_HOST
 
-/* Use NCCL library, only with ENABLE_CUDA=ON  */
-#cmakedefine USE_NCCL @USE_NCCL@
+/* Enable spdlog */
+#cmakedefine ENABLE_SPDLOG
 
-/* Disable trace manager and associated features */
-#cmakedefine DISABLE_TRACEMANAGER @DISABLE_TRACEMANAGER@
-
-/* Fully remove trace manager and associated features */
-#cmakedefine REMOVE_TRACEMANAGER @REMOVE_TRACEMANAGER@
-
-/* Internal timers */
-#cmakedefine ENABLE_TIMERS @ENABLE_TIMERS@
-
-#endif // CONFIGURATION_H
+/* Enable cpptrace */
+#cmakedefine ENABLE_CPPTRACE
 

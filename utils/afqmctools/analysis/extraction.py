@@ -30,46 +30,6 @@ MAP = {
             'group': 'DiagTwoRDM',
             'numer': 'diag_two_rdm'
         },
-        'on_top_pdm': {
-            'group': 'N2R',
-            'numer': 'n2r'
-        },
-        'cc_realspace_correlation': {
-            'group': 'OD2RDM/CC',
-            'numer': 'od2rdm_CC'
-        },
-        'ss_realspace_correlation': {
-            'group': 'OD2RDM/SS',
-            'numer': 'od2rdm_SS'
-        },
-        'cc_atom_correlation': {
-            'group': 'ATOM_CORRELATORS/CC',
-            'numer': 'correlator2D_CC'
-        },
-        'ss_atom_correlation': {
-            'group': 'ATOM_CORRELATORS/SS',
-            'numer': 'correlator2D_SS'
-        },
-        'c_atom_correlation': {
-            'group': 'ATOM_CORRELATORS/C',
-            'numer': 'correlator1D_C'
-        },
-        's_atom_correlation': {
-            'group': 'ATOM_CORRELATORS/S',
-            'numer': 'correlator1D_S'
-        },
-        'm_atom_correlation': {
-            'group': 'ATOM_CORRELATORS/M',
-            'numer': 'correlator1D_M'
-        },
-        'gen_fock_plus': {
-            'group': 'GenFockPlus',
-            'numer': 'gfockp'
-        },
-        'gen_fock_minus': {
-            'group': 'GenFockMinus',
-            'numer': 'gfockm'
-        },
         'spinspin': {
             'group': 'SpinSpin',
             'numer': 'spinspin'

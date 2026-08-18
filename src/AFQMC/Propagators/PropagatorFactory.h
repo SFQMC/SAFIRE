@@ -14,17 +14,17 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef SFQMC_AFQMC_PROPAGATORFACTORY_H
-#define SFQMC_AFQMC_PROPAGATORFACTORY_H
+#pragma once
 
 #include <iostream>
 #include <vector>
 #include <map>
 #include <fstream>
-#include "Utilities/Random.hpp"
+#include "utilities/Random.hpp"
+#include "IO/banner.hpp"
 
 #include "AFQMC/config.h"
-#include "AFQMC/Utilities/taskgroup.h"
+#include "AFQMC/parameters.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Propagators/Propagator.hpp"
 
@@ -32,20 +32,16 @@ namespace sfqmc
 {
 namespace afqmc
 {
+
+template<MEMORY_SPACE MEM>
 class PropagatorFactory
 {
 public:
-  PropagatorFactory(std::map<std::string, AFQMCInfo>& info, bool prec) : 
-	InfoMap(info), mixed_precision(prec) 
-  {}
-
-  ~PropagatorFactory() {}
-
   bool is_constructed(const std::string& ID)
   {
-    auto xml = propBlocks.find(ID);
-    if (xml == propBlocks.end())
-      APP_ABORT(" Error in WavefunctionFactory::is_constructed(string&): Missing xml block. ");
+    auto block = propBlocks.find(ID);
+    if (block == propBlocks.end())
+      utils::check(false," Error in PropagatorFactory::is_constructed(string&): Missing input block. ");
     auto p0 = propagators.find(ID);
     if (p0 == propagators.end())
       return false;
@@ -54,77 +50,57 @@ public:
   }
 
   // returns a pointer to the base Propagator class associated with a given ID
-  Propagator& getPropagator(TaskGroup_& TG, const std::string& ID, Wavefunction& wfn, utils::DeviceRandomGenerator_t* rng)
+  auto& getPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, const std::string& ID, Wavefunction<MEM>& wfn, std::shared_ptr<utils::RandomGenerator_t<MEM>> rng)
   {
-    auto xml = propBlocks.find(ID);
-    if (xml == propBlocks.end())
-      APP_ABORT(" Error in PropagatorFactory::getPropagator(string&): Missing xml block. ");
+    auto block = propBlocks.find(ID);
+    if (block == propBlocks.end())
+      utils::check(false," Error in PropagatorFactory::getPropagator(string&): Missing input block. ");
     auto p0 = propagators.find(ID);
     if (p0 == propagators.end())
     {
-      auto newp = propagators.insert(std::make_pair(ID, buildPropagator(TG, xml->second, wfn, rng)));
+      auto newp = propagators.insert(std::make_pair(ID, buildPropagator(mpi, block->second, wfn, rng)));
       if (not newp.second)
-        APP_ABORT(" Error: Problems building new propagator in PropagatorFactory::getPropagator(string&). ");
+        utils::check(false," Error: Problems building new propagator in PropagatorFactory::getPropagator(string&). ");
       return (newp.first)->second;
     }
     else
       return p0->second;
   }
 
-  ptree get_input(const std::string& ID) const
+  const PropagatorParameters& get_input(const std::string& ID) const
   {
-    auto xml = propBlocks.find(ID);
-    if (xml == propBlocks.end())
+    auto block = propBlocks.find(ID);
+    if (block == propBlocks.end())
     {
-      app_log(1,"HamFac cannot find {}", ID);
-      APP_ABORT("Error: failed to find Hamiltonian with above name.");
-    }
-    return xml->second;
-  }
-
-  // this routine allows you to modify the input block associated with ID 
-  ptree& get_input(const std::string& ID)
-  {
-    auto xml = propBlocks.find(ID);
-    if (xml == propBlocks.end())
-    { 
       app_log(1,"failed to find {}", ID);
-      APP_ABORT("Error: failed to find propagator with above name.");
+      utils::check(false,"Error: failed to find propagator with above name.");
     }
-    return xml->second;
+    return block->second;
   }
 
-  // adds a xml block from which a Propagator can be built
-  void push(const std::string& ID, ptree pt)
+  // adds an input block from which a Propagator can be built
+  void push(const std::string& ID, PropagatorParameters params)
   {
-    auto xml = propBlocks.find(ID);
-    if (xml != propBlocks.end())
-      APP_ABORT("Error: Repeated Propagator block in PropagatorFactory. Propagator names must be unique. ");
-    propBlocks.insert(std::make_pair(ID, pt));
+    auto block = propBlocks.find(ID);
+    if (block != propBlocks.end())
+      utils::check(false,"Error: Repeated Propagator block in PropagatorFactory. Propagator names must be unique. ");
+    propBlocks.insert(std::make_pair(ID, std::move(params)));
   }
 
 protected:
-  // reference to container of AFQMCInfo objects
-  std::map<std::string, AFQMCInfo>& InfoMap;
-
-  // defines working precision
-  bool mixed_precision;
-
   // generates a new Propagator and returns the pointer to the base class
-  Propagator buildPropagator(TaskGroup_& TG, ptree pt, Wavefunction& wfn, utils::DeviceRandomGenerator_t* rng)
+  Propagator<MEM> buildPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, const PropagatorParameters& params, Wavefunction<MEM>& wfn, std::shared_ptr<utils::RandomGenerator_t<MEM>> rng)
   {
-    app_log(1,"\n****************************************************");
-    app_log(1,"               Initializing Propagator ");
-    app_log(1,"\n****************************************************");
-    return buildAFQMCPropagator(TG, pt, wfn, rng);
-    return Propagator{};
+    app_log(1, section(std::format("Initializing Propagator \"{}\"", params.name)));
+
+    return buildAFQMCPropagator(mpi, params, wfn, rng);
   }
 
-  Propagator buildAFQMCPropagator(TaskGroup_& TG, ptree pt, Wavefunction& wfn, utils::DeviceRandomGenerator_t* r);
+  Propagator<MEM> buildAFQMCPropagator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi, const PropagatorParameters& params, Wavefunction<MEM>& wfn, std::shared_ptr<utils::RandomGenerator_t<MEM>> r);
 
-  std::map<std::string, ptree> propBlocks;
+  std::map<std::string, PropagatorParameters> propBlocks;
 
-  std::map<std::string, Propagator> propagators;
+  std::map<std::string, Propagator<MEM>> propagators;
 };
 
 
@@ -132,4 +108,3 @@ protected:
 
 } // namespace sfqmc
 
-#endif

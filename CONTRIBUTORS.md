@@ -10,7 +10,7 @@ We consider "Core Developers" and "Contributors" to be mutually-exclusive catego
 ### Current
 
 - **(Brandon) Kyle Eskridge**
-- **Miguel Morales** 
+- **Miguel Morales**
 - **Peter Rosenberg**
 - **Lukas Weber**
 

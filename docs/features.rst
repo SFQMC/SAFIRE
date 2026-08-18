@@ -58,7 +58,6 @@ SAFIRE supports the following Hamiltonian formats.
    Can directly read Hamiltonian files from CoQuí in this format.
 **Lattice Model Hamiltonian**
    For lattice models (Hubbard, t-J, extended Hubbard, etc.).
-   Currently **CPU only**
 **Tensor Hypercontraction (THC) Hamiltonian**
    For systems using THC factorization of the electron repulsion integrals.
    Provides memory-efficient representation for large systems.
@@ -94,8 +93,6 @@ Supported Walker Types
    For systems with noncollinear spin arrangements.
    Uses a single Slater matrix represented in an explicit spin-orbital basis.
    Essential for systems with spin-orbit coupling or frustrated magnetism.
-**FULLYPOLARIZED**
-   For fully spin-polarized systems - i.e. for :math:`N^\downarrow = 0`.
 
 See :ref:`Random Walker Classes <Walker-classes>` for details.
 
@@ -148,7 +145,6 @@ We indicate in parentheses whether the combination supports CPU, GPU, or is in t
         * CLOSED walkers (CPU, GPU)
         * COLLINEAR walkers (CPU, GPU)  
         * NONCOLLINEAR walkers (CPU, GPU)
-        * FULLYPOLARIZED walkers (CPU, GPU)
     **PHMSD Wavefunction**
         * COLLINEAR walkers - with fast Woodbury algorithm (CPU, GPU)
 
@@ -157,23 +153,16 @@ We indicate in parentheses whether the combination supports CPU, GPU, or is in t
         * CLOSED walkers (CPU, GPU)
         * COLLINEAR walkers (CPU, GPU)
         * NONCOLLINEAR walkers (CPU, GPU)
-    **PHMSD Wavefunction**
-        * COLLINEAR walkers (GPU only) 🪳 BUG: Error constructing propagator for more than 1 SD 🪳
 
-**Lattice Model Hamiltonian** with Continuous Hubbard-Stratonovich Transformation
+**Lattice Model Hamiltonian**
     **NOMSD Wavefunction**
-        * COLLINEAR walkers (CPU, GPU) ‼️ DEV TODO: add test ‼️
-        * NONCOLLINEAR walkers (CPU, GPU) ‼️ DEV TODO: add test ‼️
-
-**Lattice Model Hamiltonian** with Discrete Hubbard-Stratonovich Transformation
-    **NOMSD Wavefunction**
-        * COLLINEAR walkers (CPU)
-        * NONCOLLINEAR walkers (CPU)
+        * COLLINEAR walkers (CPU, GPU for Continuous Hubbard-Stratonovich Transformations)
+        * NONCOLLINEAR walkers (CPU, GPU for Continuous Hubbard-Stratonovich Transformations)
 
 **THC Hamiltonian**
     **NOMSD Wavefunction**
-        * CLOSED walkers (CPU, GPU) ‼️ DEV TODO : turn on test for GPU ‼️
-        * COLLINEAR walkers (CPU, GPU) ‼️ DEV TODO : turn on test GPU ‼️
+        * CLOSED walkers (CPU, GPU)
+        * COLLINEAR walkers (CPU, GPU)
 
 Not Currently Supported
 ^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,27 +1,12 @@
-######################################################################
-# Set version and policies 
-######################################################################
-cmake_minimum_required(VERSION 3.18.0)
+cmake_minimum_required(VERSION 3.25.0)
 
-######################################################################
-# Set project and version 
-######################################################################
-
-set(AF_APP_VERSION_MAJOR 1)
-set(AF_APP_VERSION_MINOR 0)
-set(AF_APP_VERSION_PATCH 0)
-set(AF_APP_VERSION "${AF_APP_VERSION_MAJOR}.${AF_APP_VERSION_MINOR}.${AF_APP_VERSION_PATCH}")
-
-project(safire) 
-enable_language(CXX)
+project(safire VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 set(PROJECT_CMAKE ${CMAKE_SOURCE_DIR}/cmake)
 
 set (LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib CACHE PATH "Library directory.")
 set (EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin CACHE PATH "Binary directory.")
-
-include_directories( ${PROJECT_SOURCE_DIR}/src ${PROJECT_BINARY_DIR}/src )
 
 ######################################################################
 # CUDA/HIP build options. Read first, to be able to set policies! 
@@ -61,7 +46,7 @@ include(FetchContent)
 ######################################################################
 SET(PROJECT_UNIT_TEST_DIR ${PROJECT_BINARY_DIR}/tests/bin)
 enable_testing()
-include( CTest )
+include(CTest)
 
 ######################################################################
 # Code Coverage
@@ -78,235 +63,251 @@ endif()
 if ( NOT CMAKE_BUILD_TYPE ) 
   set( CMAKE_BUILD_TYPE Release )
 endif()
-string( TOUPPER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE )
-message( STATUS "CMAKE_BUILD_TYPE is ${CMAKE_BUILD_TYPE}")
-if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-  set(AFAPP_RELEASE 1)
-endif()
 
 ######################################################################
-# Check C++ standard and stdlib. Currently requires 17. 
+# Check C++ standard and stdlib. Currently requires 20. 
 ######################################################################
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 ######################################################################
 # set options
 ######################################################################
-option(ENABLE_ROCM " Build device code with ROCM backend" OFF)
-option(ENABLE_OPENMP " Build device code with OPENMP backend" OFF)
-option(USE_NCCL "Use NCCL library with CUDA backend." OFF)
 option(HAVE_MKL "Assume MKL BLAS/LAPACK library." OFF)
 option(BUILD_UNIT_TESTS "Build unit tests" ON)
 option(BUILD_STATIC "Link to static libraries" OFF)
-option(ENABLE_TIMERS "Enable internal timers" ON)
-option(ENABLE_STACKTRACE "Enable use of boost::stacktrace" OFF)
 OPTION(BUILD_DOCUMENTATION "Enable compiling C++ Docs" OFF)
 option(ENABLE_COVERAGE "Enable code coverage reporting" OFF)
+option(ENABLE_SPDLOG "Build with spdlog" ON)
+option(ENABLE_CPPTRACE "Build with cpptrace support" ON)
+option(ENABLE_ASAN "Compile with AddressSanitizer for host C/C++ code" OFF)
+option(ENABLE_UBSAN "Compile with UndefinedBehaviorSanitizer for host C/C++ code" OFF)
+# Samples random fields on the host and copies them to the device, so device runs reproduce
+# host results bit-for-bit. Slow; for testing only. Has no effect in host-only builds.
+option(DEVICE_RNG_FROM_HOST "Use a host-sampled, copy-to-device RNG for host/device reproducibility" OFF)
 
-if( ENABLE_CUDA OR ENABLE_HIP OR ENABLE_OPENMP)
+# Keep dependency-local sanitizer toggles disabled. SAFIRE controls sanitizer
+# flags globally through ENABLE_ASAN/ENABLE_UBSAN to avoid toolchain conflicts.
+if(ENABLE_ASAN OR ENABLE_UBSAN)
+  set(ASAN OFF CACHE BOOL "Disable dependency-local ASAN option" FORCE)
+  set(UBSAN OFF CACHE BOOL "Disable dependency-local UBSAN option" FORCE)
+endif()
+
+#option(ENABLE_FFTW "Build using FFTW3 library." ON)
+option(COMPILE_NDA_TESTS "Build with nda tests" OFF)
+option(NDA_PYTHON_SUPPORT "Build nda with python support" OFF)
+option(FETCH_CCCL "Fetch CCCL and enable support. Only used with ENABLE_CUDA" ON)
+
+if( ENABLE_CUDA OR ENABLE_HIP ) #OR ENABLE_OPENMP)
   set(ENABLE_DEVICE ON)
 else()
   set(ENABLE_DEVICE OFF)
 endif() 
+set(ENABLE_TBLIS ON) 
 
 ######################################################################
 # CUDA
 ######################################################################
 if(ENABLE_CUDA)
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "13.0")
-      message(FATAL_ERROR "CUDA builds require GCC version < 13 due to incompatibilities with NVCC. "
-                          "Current GCC version is ${CMAKE_CXX_COMPILER_VERSION}. "
-                          "Please use GCC 11 or 12 for CUDA builds.")
-    endif()
-  endif()
-  
   enable_language(CUDA)
-  find_package(CUDAToolkit 12.0.0 REQUIRED)
-  set(CMAKE_CUDA_STANDARD 17)
-  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-  set(CUDA_LINK_LIBRARIES_KEYWORD PRIVATE)
-  set(CMAKE_CUDA_ARCHITECTURES 75)
-  string(APPEND CMAKE_CUDA_FLAGS " -Drestrict=__restrict__ -std=c++17 --expt-relaxed-constexpr --extended-lambda -Xcudafe \"--diag_suppress=implicit_return_from_non_void_function\" -Wdeprecated-declarations -w") 
-
-  include_directories(${CUDA_INCLUDE_DIRS})
-  message( STATUS " CMAKE_CUDA_FLAGS: " ${CMAKE_CUDA_FLAGS})
-
-  # Trying to link these as PUBLIC in the afqmc library target
-  #link_libraries( CUDA::cublas CUDA::cusparse CUDA::curand CUDA::cusolver )
-  
-  # allow synthetic reference memory access from the host in multi withot warnings
-  ADD_DEFINITIONS(-D_DISABLE_CUDA_SLOW)
-
-endif()
-
-######################################################################
-# ROCM 
-######################################################################
-if(ENABLE_ROCM)
-  message(STATUS "ROCM_ROOT: ${ROCM_ROOT}")
-  add_library(ROCM::libraries INTERFACE IMPORTED)
-  # temporarily put rocsolver rocrand here for convenience, should be moved to Platforms.
-  set_target_properties(ROCM::libraries PROPERTIES INTERFACE_INCLUDE_DIRECTORIES  "${ROCM_ROOT}/include"
-                                                   INTERFACE_LINK_LIBRARIES "-L${ROCM_ROOT}/lib;-lrocsolver;-lrocrand")
-endif(ENABLE_ROCM)
-
-######################################################################
-#  HIP 
-######################################################################
-if(ENABLE_HIP)
-  if(NOT ENABLE_ROCM)
-    message(FATAL_ERROR "ROCM is required to use HIP. Please set ENABLE_ROCM=ON.")
+  if(DEFINED CUDA_ARCH)
+    set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH})
+  else()
+    set(CMAKE_CUDA_ARCHITECTURES 80)
   endif()
-  set(CMAKE_MODULE_PATH "${ROCM_ROOT}/hip/cmake" ${CMAKE_MODULE_PATH})
-  find_package(HIP REQUIRED)
-
-  add_library(HIP::HIP INTERFACE IMPORTED)
-  # temporarily put hipsparse hipblas here for convenience, should be moved to Platforms.
-  set_target_properties(HIP::HIP PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${ROCM_ROOT}/include"
-                                            INTERFACE_COMPILE_DEFINITIONS "ENABLE_HIP"
-                                            INTERFACE_LINK_LIBRARIES "-L${ROCM_ROOT}/lib;-lhipsparse;-lhipblas;-lamdhip64")
-endif(ENABLE_HIP)
+  find_package(CUDAToolkit 12.0.0 REQUIRED)
+  if(NOT FETCH_CCCL)
+    find_package(CCCL REQUIRED)
+  endif()
+  set(CMAKE_CUDA_STANDARD 20)
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+#  set(CUDA_LINK_LIBRARIES_KEYWORD PRIVATE)
+  string(APPEND CMAKE_CUDA_FLAGS " -std=c++20 --expt-relaxed-constexpr --extended-lambda -Xcudafe \"--diag_suppress=implicit_return_from_non_void_function\" -Wdeprecated-declarations -w") 
+  message( STATUS " CMAKE_CUDA_FLAGS: " ${CMAKE_CUDA_FLAGS})
+endif()
 
 ######################################################################
 # MPI
 ######################################################################
 find_package(MPI REQUIRED)
-include_directories(SYSTEM ${MPI_CXX_INCLUDE_PATH})
-# Mark MPI includes as SYSTEM to suppress warnings
-set_target_properties(MPI::MPI_CXX PROPERTIES
-    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:MPI::MPI_CXX,INTERFACE_INCLUDE_DIRECTORIES>
-)
-link_libraries(MPI::MPI_CXX) 
 message(STATUS "MPI Executable for running programs:" ${MPIEXEC_EXECUTABLE})
 message(STATUS "MPI number of processors detected on the host system: " ${MPIEXEC_MAX_NUMPROCS})
 include(CMakePrintHelpers)
 cmake_print_properties(TARGETS MPI::MPI_CXX PROPERTIES INTERFACE_LINK_LIBRARIES INTERFACE_INCLUDE_DIRECTORIES)
 
-
-######################################################################
-# BLAS/LAPACK 
-######################################################################
-
-if(HAVE_MKL)
-  message(STATUS "HAVE_MKL is set: requiring MKL BLAS")
-  set(BLA_VENDOR "Intel10_64ilp")
-endif()
-
-find_package(BLAS REQUIRED)
-find_package(LAPACK REQUIRED)
-cmake_print_properties(TARGETS BLAS::BLAS PROPERTIES INTERFACE_LINK_LIBRARIES) 
-cmake_print_properties(TARGETS LAPACK::LAPACK PROPERTIES INTERFACE_LINK_LIBRARIES)
-
-if(NOT HAVE_MKL)
-  get_target_property(_mkl_libs BLAS::BLAS INTERFACE_LINK_LIBRARIES)
-  if("${_mkl_libs}" MATCHES "[/\\]mkl")
-      message(STATUS "Found Intel MKL: setting HAVE_MKL=ON")
-      set(HAVE_MKL ON)
-  endif()
-endif()
-
 ######################################################################
 # HDF5
+# we still use some of the raw HDF5 API. Remove once we no longer do.
 ######################################################################
-find_package(ZLIB)
-set(HDF5_PREFER_PARALLEL TRUE CACHE BOOL "Request parallel/serial HDF5 library")
-find_package(HDF5 REQUIRED COMPONENTS C)
-message(STATUS "HDF5 version: ${HDF5_VERSION}")
-if(HDF5_IS_PARALLEL)
-  message(STATUS "Parallel HDF5 library found")
-  set(ENABLE_PHDF5 TRUE CACHE BOOL "Enable code paths using parallel HDF5")
-else(HDF5_IS_PARALLEL)
-  message(STATUS "Serial HDF5 library found")
-  set(ENABLE_PHDF5 FALSE CACHE BOOL "Enable code paths using parallel HDF5")
-endif(HDF5_IS_PARALLEL)
-add_library(IO::HDF5 INTERFACE IMPORTED)
-set_target_properties(IO::HDF5 PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${HDF5_INCLUDE_DIR}"
-                                          INTERFACE_COMPILE_DEFINITIONS "H5_USE_16_API"
-                                          INTERFACE_LINK_LIBRARIES "${HDF5_LIBRARIES}")
-if(ENABLE_PHDF5)
-  set_property(TARGET IO::HDF5 APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS "ENABLE_PHDF5")
-endif(ENABLE_PHDF5)
+find_package(HDF5 REQUIRED C HL)
+
+######################################################################
+# nda: a C++ library providing multi-dimensional array classes
+######################################################################
+if(DEFINED NDA)
+  set(FETCHCONTENT_SOURCE_DIR_NDA ${NDA})
+endif()
+# set nda options before FetchContent_Declare
+block()
+  set(CutensorSupport ${ENABLE_CUDA})
+  set(Cutensor_USE_STATIC ON)
+  set(CudaSupport ${ENABLE_CUDA})
+  set(TblisSupport ON)
+  set(Build_Tests ${COMPILE_NDA_TESTS})
+  set(ENABLE_SHARED OFF) # tblis: build only static library
+  set(PythonSupport OFF)
+  FetchContent_Declare(
+          nda
+          GIT_REPOSITORY "https://github.com/lukas-weber/nda.git"
+          GIT_TAG        safire-adjustments
+          SYSTEM
+  )
+  FetchContent_MakeAvailable(nda)
+  add_library(TBLIS::tblis ALIAS tblis-static) # satisfy nda’s link request
+endblock()
+
+######################################################################
+# CCCL from github (useful if CudaToolkit is old)
+######################################################################
+if(ENABLE_CUDA AND FETCH_CCCL)
+  # set nevanlinna options before FetchContent_Declare
+  FetchContent_Declare(
+        cccl
+        GIT_REPOSITORY "https://github.com/NVIDIA/cccl.git"
+        GIT_TAG        v3.3.3
+        # do not add SYSTEM here because then the CUDA-included headers may have precedence
+  )
+  FetchContent_MakeAvailable(cccl)
+endif()
+
 
 ######################################################################
 # Boost: Header-only
 ######################################################################
-set(Boost_NO_BOOST_CMAKE on)
-find_package(Boost 1.61.0 REQUIRED)
-# Add Boost include directories as SYSTEM to suppress warnings
-if(Boost_INCLUDE_DIRS)
-  include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
-endif()
-add_definitions(-DBOOST_LOCALE_HIDE_AUTO_PTR)
+find_package(Boost 1.70.0 REQUIRED CONFIG)
 
 ######################################################################
 # spdlog - disable warnings for external library
 ######################################################################
 # Save current warning flags
+if(ENABLE_SPDLOG)
+  # not SPDLOG_VERSION: spdlog's own CMakeLists.txt uses that name
+  set(SPDLOG_FETCH_VERSION 1.8.3)
 
-if(DEFINED SPDLOG) 
-  set(FETCHCONTENT_SOURCE_DIR_SPDLOG ${SPDLOG})
+  if(DEFINED SPDLOG)
+    set(FETCHCONTENT_SOURCE_DIR_SPDLOG ${SPDLOG})
+  else()
+    # EXACT because spdlog's package version file is SameMajorVersion-compatible, so any
+    # 1.x would match: the Debian/Ubuntu packages (1.12) are built against an external fmt
+    # and drop the bundled one that src/IO/fmt_extensions.hpp includes.
+    find_package(spdlog ${SPDLOG_FETCH_VERSION} EXACT QUIET)
+  endif()
+
+  if(NOT spdlog_FOUND)
+    set(SPDLOG_BUILD_SHARED OFF)
+
+    FetchContent_Declare(
+            spdlog
+            GIT_REPOSITORY https://github.com/gabime/spdlog.git
+            GIT_TAG        v${SPDLOG_FETCH_VERSION}
+            SYSTEM
+    )
+    FetchContent_MakeAvailable(spdlog)
+  endif()
 endif()
 
-# Configure spdlog as header-only
-set(SPDLOG_FMT_EXTERNAL OFF)
-set(SPDLOG_BUILD_SHARED OFF)
+######################################################################
+# cpptrace 
+######################################################################
+if(ENABLE_CPPTRACE)
+  FetchContent_Declare(
+    cpptrace
+    GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
+    GIT_TAG        v1.0.4
+    SYSTEM
+  )
+  FetchContent_MakeAvailable(cpptrace)
+endif(ENABLE_CPPTRACE)
 
-if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.25.0")
+######################################################################
+# cxxopts 
+######################################################################
+find_package(cxxopts 3.3.1 QUIET)
+if(NOT cxxopts_FOUND)
   FetchContent_Declare(
-        spdlog
-        GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG        v1.8.5
-        SYSTEM
+    cxxopts
+    GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
+    GIT_TAG v3.3.1
+    SYSTEM
   )
-else()
-  FetchContent_Declare(
-        spdlog
-        GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG        v1.8.5
-  )
+  FetchContent_MakeAvailable(cxxopts)
 endif()
-FetchContent_MakeAvailable(spdlog)
-set_property(TARGET spdlog PROPERTY SYSTEM TRUE)
-target_compile_options(spdlog PRIVATE -w)
 
-include_directories(SYSTEM ${spdlog_SOURCE_DIR}/include)
+######################################################################
+# nlohmann_json
+# ######################################################################
+find_package(nlohmann_json 3.11.3 QUIET)
+if(NOT nlohmann_json_FOUND)
+  FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+  FetchContent_MakeAvailable(json)
+endif()
 
 
 ######################################################################
-# catch
+# FFTW: not using MKL's FFTW yet, figure out how if requested 
 ######################################################################
-add_library(catch_amalgamated STATIC extern/catch/catch_amalgamated.cpp)
-add_definitions(-DCATCH_AMALGAMATED_CUSTOM_MAIN)
+#if(ENABLE_FFTW)
+#  find_package(FFTW REQUIRED DOUBLE_OPENMP_LIB) 
+#  add_compile_definitions(ENABLE_FFTW)
+#endif()
+
 
 ######################################################################
-add_definitions( -Drestrict=__restrict__ -DADD_ )
-add_compile_options(-Wno-narrowing)
+# catch2
+######################################################################
+find_package(Catch2 3.14.0 QUIET)
+if(NOT Catch2_FOUND)
+  FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG        v3.14.0
+  )
+  FetchContent_MakeAvailable(Catch2)
+endif()
 
-configure_file(${PROJECT_SOURCE_DIR}/src/safire.settings ${PROJECT_BINARY_DIR}/bin/safire.settings)
-install(FILES ${PROJECT_BINARY_DIR}/bin/safire.settings DESTINATION bin)
+# Catch.cmake lives in extras/ (not the v2 contrib/), which both paths already put on
+# CMAKE_MODULE_PATH: the fetched tree from its own CMakeLists.txt, the installed one from
+# Catch2Config.cmake.
+include(Catch)
+
+######################################################################
+# mpi3
+######################################################################
+
+# We only need the headers, it seems.
+add_library(mpi3 INTERFACE)
+target_link_libraries(mpi3 INTERFACE MPI::MPI_CXX)
+target_include_directories(mpi3 INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/extern/mpi_wrapper)
+
+
+######################################################################
 
 #Create an Interface target for compiler warnings
 add_library(${PROJECT_NAME}_warnings INTERFACE)
 target_compile_options(${PROJECT_NAME}_warnings
   INTERFACE
-    -Wall
-    -Wextra
-    -Wfloat-conversion
-    -Wpedantic
-    -Wno-sign-compare
-    $<$<CXX_COMPILER_ID:GNU>:-Wno-comma-subscript>
-    $<$<CXX_COMPILER_ID:GNU>:-Wno-psabi> # Disable notes about ABI changes
-    $<$<CXX_COMPILER_ID:GNU>:-Wshadow=local>
+   -Wall
+   -Wextra
+   -Wfloat-conversion
+   -Wpedantic
+   -Wno-sign-compare
+   -Wno-unused-parameter
     $<$<CXX_COMPILER_ID:GNU>:-Wno-attributes>
     $<$<CXX_COMPILER_ID:GNU>:-Wno-deprecated-declarations>
     $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-Wno-deprecated-comma-subscript>
     $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-Wno-deprecated-declarations>
     $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-Wno-unknown-warning-option>
-    $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-Wshadow>
-    $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-Wimplicit-float-conversion>
     $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-Wno-gcc-compat>
     $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-Wno-c++20-extensions>
     $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-Wno-c++20-compat>
@@ -317,21 +318,45 @@ target_compile_options(${PROJECT_NAME}_warnings
     $<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20208> # esa_on_defaulted_function_ignored
     $<$<COMPILE_LANGUAGE:CUDA>:--diag-error=128> # unreachable_code
 )
-subdirs(src)
-
-######################################################################
-# Setup code coverage targets
-######################################################################
-if(ENABLE_COVERAGE)
-  setup_coverage_targets()
-endif()
-
 
 #######################################################################
-# C++ Docs
+# Sanitizers
 ########################################################################
-if(NOT IS_SUBPROJECT AND BUILD_DOCUMENTATION)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/docs_cpp)
+if(ENABLE_ASAN OR ENABLE_UBSAN)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang|IntelLLVM")
+    message(FATAL_ERROR "Sanitizers require a GCC/Clang-compatible host compiler")
+  endif()
+
+  if(ENABLE_CUDA OR ENABLE_HIP)
+    message(FATAL_ERROR "ENABLE_ASAN/ENABLE_UBSAN currently support host-only builds. Disable CUDA/HIP when using sanitizers.")
+  endif()
+
+  if(CMAKE_BUILD_TYPE STREQUAL "RELEASE")
+    message(WARNING "Sanitizers are best used with Debug/RelWithDebInfo builds")
+  endif()
+
+  # Apply sanitizer flags only to host C/C++ sources.
+  add_compile_options(
+    $<$<OR:$<COMPILE_LANGUAGE:C>,$<COMPILE_LANGUAGE:CXX>>:-fno-omit-frame-pointer>
+    $<$<OR:$<COMPILE_LANGUAGE:C>,$<COMPILE_LANGUAGE:CXX>>:-g>
+  )
+  add_link_options(-fno-omit-frame-pointer)
+
+  if(ENABLE_ASAN)
+    add_compile_options($<$<OR:$<COMPILE_LANGUAGE:C>,$<COMPILE_LANGUAGE:CXX>>:-fsanitize=address>)
+    add_link_options(-fsanitize=address)
+    message(STATUS "AddressSanitizer enabled")
+  endif()
+
+  if(ENABLE_UBSAN)
+    add_compile_options(
+      $<$<OR:$<COMPILE_LANGUAGE:C>,$<COMPILE_LANGUAGE:CXX>>:-fsanitize=undefined>
+      $<$<OR:$<COMPILE_LANGUAGE:C>,$<COMPILE_LANGUAGE:CXX>>:-fsanitize=float-divide-by-zero>
+      $<$<OR:$<COMPILE_LANGUAGE:C>,$<COMPILE_LANGUAGE:CXX>>:-fsanitize=float-cast-overflow>
+    )
+    add_link_options(-fsanitize=undefined -fsanitize=float-divide-by-zero -fsanitize=float-cast-overflow)
+    message(STATUS "UndefinedBehaviorSanitizer enabled")
+  endif()
 endif()
 
 #######################################################################
@@ -342,3 +367,20 @@ find_package(Git)
 if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
   set(IS_GIT_PROJECT 1)
 endif()
+
+add_subdirectory(src)
+
+######################################################################
+# Setup code coverage targets
+######################################################################
+if(ENABLE_COVERAGE)
+  setup_coverage_targets()
+endif()
+
+#######################################################################
+# C++ Docs
+########################################################################
+if(NOT IS_SUBPROJECT AND BUILD_DOCUMENTATION)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/docs_cpp)
+endif()
+

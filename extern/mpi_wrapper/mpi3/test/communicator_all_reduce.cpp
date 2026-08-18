@@ -1,13 +1,12 @@
-#if COMPILATION_INSTRUCTIONS
-mpic++ $0 -o $0x&&mpirun --oversubscribe -n 8 $0x&&rm $0x;exit
-#endif
+// -*-indent-tabs-mode:t;c-basic-offset:4;tab-width:4;autowrap:nil;-*-
+// Copyright 2018-2022 Alfredo A. Correa
 
 #include "../../mpi3/main.hpp"
 #include "../../mpi3/communicator.hpp"
 
 namespace mpi3 = boost::mpi3;
 
-auto mpi3::main(int/*argc*/, char**/*argv*/, mpi3::communicator world) -> int try{
+auto mpi3::main(int/*argc*/, char**/*argv*/, mpi3::communicator world) -> int try {
 
 	assert( world.size() > 1);
 
@@ -19,9 +18,16 @@ auto mpi3::main(int/*argc*/, char**/*argv*/, mpi3::communicator world) -> int tr
 	auto last = world.all_reduce_n(local.begin(), local.size(), global.begin());
 	assert(last == global.end());
 
-	for(std::size_t i = 0; i != global.size(); ++i){
-		assert(global[i] == local[i]*world.size());
-	}
+	assert(
+		std::inner_product(
+			global.begin(), global.end(), local.begin(),
+			true, std::logical_and<bool>{},
+			[sz = static_cast<std::size_t>(world.size())](auto& e1, auto& e2) { return e1 == e2 * sz; }
+		)
+	);
+	//	for(std::size_t i = 0; i != sz; ++i) {
+	//		assert(global[i] == local[i] * world.size());
+	//	}
 
 	auto const sum_of_ranks = (world += world.rank());
 	assert( sum_of_ranks == world.size()*(world.size()-1)/2 );
@@ -81,7 +87,6 @@ auto mpi3::main(int/*argc*/, char**/*argv*/, mpi3::communicator world) -> int tr
 	}
 
 	return 0;
-}catch(...){
+} catch(...) {
 	return 1;
 }
-

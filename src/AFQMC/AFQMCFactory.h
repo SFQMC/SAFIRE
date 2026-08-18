@@ -20,32 +20,43 @@
  * @brief Top level class for AFQMC. Parses input and performs setup of classes.
  */
 
-#ifndef SFQMC_AFQMCFACTORY_H
-#define SFQMC_AFQMCFACTORY_H
+#pragma once
 
 #include <string>
 #include <vector>
 #include <map>
 #include <queue>
 #include <algorithm>
+#include <cstdlib>
 
 #include "config.h"
-#include "mpi3/communicator.hpp"
-#include "io/ptree/ptree_utilities.hpp"
+#include "AFQMC/parameters.hpp"
+#include "utilities/threading.h"
+#include "utilities/mpi_context.h"
 
-#include "AFQMC/Utilities/taskgroup.h"
 #include "AFQMC/Walkers/WalkerSetFactory.hpp"
 #include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Wavefunctions/WavefunctionFactory.h"
 #include "AFQMC/Propagators/PropagatorFactory.h"
 #include "AFQMC/Drivers/DriverFactory.h"
-#include "Memory/buffer_managers.h"
 
 
 namespace sfqmc
 {
 namespace afqmc
 {
+
+/// Registers the input blocks of one component with its factory. resolve_defaults has hoisted
+/// every block declared inside an execute block into these lists, so this registers all of them
+/// and the execute blocks only ever refer to them by name.
+template<class Factory, class Params>
+void push_blocks(Factory& fac, const std::vector<Params>& blocks)
+{
+  for(const auto& params : blocks) {
+    fac.push(params.name, params);
+  }
+}
+
 /**
  * @brief Factory class for AFQMC. Parses input, performs setup of classes, and executes the driver.
  *
@@ -57,75 +68,69 @@ namespace afqmc
   * - PropagatorFactory PropFac
   * - DriverFactory DriverFac
 
-  * It also instances of the following classes which handle MPI communication and task group management:
-  * - GlobalTaskGroup gTG
-  * - TaskGroupHandler TGHandler
  *
- * @param type std::string describing the type of Driver to be used. Valid choices are "afqmc", "legacy_afqmc", and "csafqmc".
-  * @param comm_ boost::mpi3::communicator The MPI communicator.
-  * @param pt boost::property_tree::ptree The property tree containing input file parameters
-  * @param n_groups int The number of groups to be used in the task group.
+ * @param params AFQMCParameters The deserialized contents of the simulation block of the input file
  */
+template<MEMORY_SPACE MEM>
 class AFQMCFactory
 {
 public:
   ///constructor
-  AFQMCFactory(std::string type, boost::mpi3::communicator& comm_, 
-	       const ptree pt, int n_groups=1);
+  AFQMCFactory(const AFQMCParameters& params,
+               std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi)
+     : m_series(params.project.series),
+       project_title(params.project.id),
+       mpi(_mpi),
+       HamFac(),
+       WSetFac(),
+       WfnFac{},
+       PropFac(),
+       DriverFac(mpi, WSetFac, PropFac, WfnFac, HamFac)
+  {
+    utils::check(params.project.n_groups==1, "finish!!!");
 
-  ///destructor
-  ~AFQMCFactory(); 
+    // parse input
+    utils::check(parse(params), "Error in AFQMCFactory: Problems parsing the input file.");
+
+    // execute
+    utils::check(execute(params), "Error in AFQMCFactory: Problems executing the input file.");
+  }
 
 private:
-
-  // mixed or double precision 
-  bool mixed_precision;
-
-  // number of cores for TG parallelization
-  int ncores;
 
   int m_series;
   std::string project_title;
 
-  // global TG from which all TGs are constructed
-  GlobalTaskGroup gTG;
-
-  // object that manages the TGs. Must be placed here,
-  // since it must be destroyed last
-  TaskGroupHandler TGHandler;
-
-  // container of AFQMCInfo objects
-  std::map<std::string, AFQMCInfo> InfoMap;
+  std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
   // Hamiltonian factory
   HamiltonianFactory HamFac;
 
   // WalkerHandler factory
-  WalkerSetFactory WSetFac;
+  WalkerSetFactory<MEM> WSetFac;
 
-  // Wavefunction factoru
-  WavefunctionFactory WfnFac;
+  // Wavefunction factory
+  WavefunctionFactory<MEM> WfnFac;
 
   // Propagator factory
-  PropagatorFactory PropFac;
+  PropagatorFactory<MEM> PropFac;
 
   // driver factory
-  DriverFactory DriverFac;
+  DriverFactory<MEM> DriverFac;
 
   //
   //  Traverse input tree and creates all non-executable objects.
   //  Created objects (pointers actually) are stored in maps based on name in xml block.
-  //  Executable sections (drivers) are created with objects already exiting
+  //  Executable sections (drivers) are created with objects already existing
   //  in the maps.
   //
-  bool parse(const ptree pt);
+  bool parse(const AFQMCParameters& params);
 
   //
   //  Traverse input tree and creates executable sections, using objects created during parsing.
   //
-  bool execute(std::string type, const ptree pt);
+  bool execute(const AFQMCParameters& params);
 };
 } // namespace afqmc
 } // namespace sfqmc
 
-#endif
