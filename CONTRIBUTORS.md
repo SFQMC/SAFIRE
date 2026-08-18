@@ -1,9 +1,6 @@
 # Contributors
 
 We thank everyone who has contributed to this project.
-Contributors are listed by contribution category.
-Core developers are listed below.
-We consider "Core Developers" and "Contributors" to be mutually-exclusive categories.
 
 ## Core Developers
 
@@ -11,14 +8,13 @@ We consider "Core Developers" and "Contributors" to be mutually-exclusive catego
 
 - **(Brandon) Kyle Eskridge**
 - **Miguel Morales**
-- **Peter Rosenberg**
 - **Lukas Weber**
 
 ### Alumni
 
 - **Ryan Levy**
+- **Peter Rosenberg**
 - **Paul Yang**
-
 
 ### Additional Contributors to the Initial Version
 
@@ -28,8 +24,8 @@ We consider "Core Developers" and "Contributors" to be mutually-exclusive catego
 ## Contributors
 
 - **Thomas Hahn**
-- **Zhou-Quan Wan**
 - **Chunhan Feng**
+- **Zhou-Quan Wan**
 - **Yiqi Yang**
 
 ## Special Thanks
