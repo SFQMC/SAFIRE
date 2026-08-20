@@ -12,8 +12,9 @@
 Registry of recipes that regenerate ``tests/functional/afqmc_inputs``.
 
 Each :class:`Recipe` owns one system directory and declares the files it writes
-there. ``make_inputs.py`` imports :func:`build_recipes` and does the scheduling,
-clearing and checking; the recipe itself only has to produce the files.
+there. ``make_inputs.py`` imports :func:`build_recipes` and does the scheduling
+and checking; the recipe itself only has to produce the files, into an empty
+directory it is handed.
 
 The inputs tree is shared: ``run_functional.py`` reads it through
 ``functional_cases.py``, and the C++ unit tests read the same directory through
@@ -30,7 +31,7 @@ that the inputs tree only ever gains the declared outputs.
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Sequence, Tuple
 
@@ -41,7 +42,7 @@ from typing import Callable, Dict, List, Sequence, Tuple
 # handful of sites; set JAX_PLATFORMS yourself if you want otherwise.
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
-from ._common import ExternalTools, MissingExternalTool  # noqa: E402
+from ._common import MissingExternalTool  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 INPUTS_ROOT = ROOT / "afqmc_inputs"
@@ -51,9 +52,9 @@ INPUTS_ROOT = ROOT / "afqmc_inputs"
 class BuildContext:
     """Everything a recipe is handed when it runs."""
 
-    out_dir: Path          # the system directory the recipe writes into
+    out_dir: Path          # the system directory the recipe writes into, empty
     scratch: Path          # private scratch space, created before the call
-    tools: ExternalTools   # resolved external executables
+    tools: dict            # resolved external executables, see solids.py
     verbose: bool = False
 
 
@@ -66,18 +67,14 @@ class Recipe:
     data_dir
         Directory under ``afqmc_inputs/`` that the recipe fills.
     produces
-        Filenames written into ``data_dir``. The runner clears these before
-        calling ``build`` - the afqmctools writers open HDF5 files in append
-        mode, so a stale file would otherwise be merged into rather than
-        replaced.
+        Filenames written into ``data_dir``. The runner checks after the fact
+        that every one of them appeared.
     build
         ``build(ctx: BuildContext) -> None``.
     external
-        Names of :class:`ExternalTools` fields the recipe needs. A recipe with
-        unresolved tools is skipped rather than failed.
-    preserve
-        ``{filename: [hdf5 group, ...]}`` carried across regeneration. Used for
-        data that has no generator in this repository.
+        Names of the external executables the recipe needs, as keyed by
+        ``solids.resolve_external_tools``. A recipe with unresolved tools is
+        skipped rather than failed.
     """
 
     key: str
@@ -86,7 +83,6 @@ class Recipe:
     build: Callable[[BuildContext], None]
     description: str = ""
     external: Tuple[str, ...] = ()
-    preserve: Dict[str, List[str]] = field(default_factory=dict)
     notes: str = ""
 
     def out_dir(self, inputs_root: Path) -> Path:
@@ -127,7 +123,6 @@ def unclaimed_files(recipes: Sequence[Recipe], inputs_root: Path) -> List[str]:
 
 __all__ = [
     "BuildContext",
-    "ExternalTools",
     "INPUTS_ROOT",
     "MissingExternalTool",
     "Recipe",

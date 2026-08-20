@@ -13,7 +13,7 @@ The unit tests live elsewhere: the C++ unit tests in `tests/` (built by CMake an
 - `functional_cases.py` : declarative definition of the systems, hamiltonians,
   wavefunctions and walker types that get combined into test cases.
 - `afqmc_inputs/<system>/` : the hamiltonian and wavefunction HDF5 files each case reads.
-- `make_inputs.py` : regenerates `afqmc_inputs/` (see `--help`).
+- `make_inputs.py` : rebuilds `afqmc_inputs/` elsewhere and diffs (see `--help`).
 - `input_recipes/` : one recipe per system directory, saying how its inputs are built.
 - `statistical_references/<system>/...` : reference `results.h5` for the default,
   statistical comparison.
@@ -75,13 +75,20 @@ Quantum ESPRESSO plus CoQui for diamond. `input_recipes/` holds one recipe per s
 directory, each declaring the files it writes.
 
 ```bash
-python tests/functional/make_inputs.py --list        # recipes, and what is runnable here
-python tests/functional/make_inputs.py all           # rebuild in place
-python tests/functional/make_inputs.py BH --check    # rebuild elsewhere and diff, no writes
+python tests/functional/make_inputs.py --list          # recipes, and what is runnable here
+python tests/functional/make_inputs.py BH              # rebuild BH in a temp dir and diff
+python tests/functional/make_inputs.py all --into DIR  # rebuild everything in DIR and diff
 ```
 
-`--check` is the one to reach for first. It builds into a temporary tree and reports how
-the result differs from what is committed, without touching anything.
+**It never writes into `afqmc_inputs/`.** Every run builds somewhere else and reports how
+the result differs from what is committed. That is deliberate: a rebuild is not
+byte-identical (see below), and accepting one obliges regenerating the reference results
+too, so installing it is a deliberate step you take after reading the diff. With `--into`
+the script prints the `cp -r` for each system, and leaves the intermediate files - pyscf
+checkpoints, QE and CoQui runs and their logs - under `DIR/_scratch`.
+
+Exit status is 0 when everything reproduced, 2 when something differed, 1 when a recipe
+failed outright.
 
 Everything except diamond needs only pyscf, afqmctools and AutoHF, and the whole set
 takes about a minute. The two diamond recipes drive external codes and are skipped
@@ -102,7 +109,7 @@ shell. Have each script start from `module purge`.
 ### Do not expect the files back byte for byte
 
 A rebuilt input describes the same physics as the committed one but is not the same
-file, and `--check` will say so. The reasons are worth knowing before you act on a
+file, and the script will say so. The reasons are worth knowing before you act on a
 diff:
 
 - **Orbital gauge.** Every one of these systems has degenerate orbitals - the pi shells
@@ -128,7 +135,7 @@ Anything outside those four - a changed nuclear energy, electron count, matrix s
 or Cholesky rank where none is expected - means the recipe and the committed file
 describe different systems, and one of them is wrong.
 
-### What cannot be regenerated
+### What is copied rather than computed
 
 Two things in `afqmc_inputs/` have no generator anywhere in this repository:
 
@@ -137,11 +144,13 @@ Two things in `afqmc_inputs/` have no generator anywhere in this repository:
 - the `TEST_RESULTS` group inside that directory's `ham_collinear.h5`, holding the
   E1/EJ/EXX/VHS/vbias arrays the finite-temperature C++ unit test asserts against.
 
-`make_inputs.py` carries `TEST_RESULTS` across a rebuild rather than recomputing it, and
-refuses to start if there is no existing file to carry it from. That is only sound while
-the rebuilt hamiltonian matches the one those numbers came from, so run `--check` on
-`hubbard_2x2_finite_t` before trusting a rebuild of it. `--list` reports any file in the
-tree that no recipe claims.
+Both are checked in under `input_recipes/assets/finiteT/`, and the
+`hubbard_2x2_finite_t` recipe copies them onto the hamiltonian it computes. So the whole
+tree can be rebuilt, but those two pieces are the same bytes every time - grafting
+`TEST_RESULTS` onto a fresh hamiltonian is only sound while that hamiltonian still
+matches the one the numbers came from, so read that recipe's diff before trusting a
+rebuild of it. `--list` reports any file in the tree that no recipe claims; it should
+report none.
 
 ## Sample Functional Test Slurm script
 
