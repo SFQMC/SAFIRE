@@ -12,17 +12,15 @@
 Helpers shared by the input recipes.
 
 Nothing in here knows about any particular system; it is the plumbing that
-:mod:`input_recipes` and ``make_inputs.py`` build on - external-executable
-resolution, subprocess launching, and HDF5 comparison for ``--check``.
+:mod:`input_recipes` and ``make_inputs.py`` build on - subprocess launching and
+HDF5 comparison. Which external executables exist, and how they are found, is
+the business of the family module that needs them (:mod:`solids`).
 """
 
-import os
 import shlex
-import shutil
 import subprocess as sp
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 import h5py as h5
 import numpy as np
@@ -31,87 +29,26 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 
 
 # ============================================================================
-# External executables (Quantum ESPRESSO, CoQui)
+# External executables
 # ============================================================================
 
 class MissingExternalTool(RuntimeError):
     """Raised when a recipe needs an external code that is not configured."""
 
 
-@dataclass
-class ExternalTools:
-    """Resolved paths to the non-Python codes some recipes drive.
-
-    Everything is taken from the environment so that the recipes stay free of
-    site-specific paths:
-
-    ``MPIEXEC``
-        launcher prefix, e.g. ``"mpirun -n 8"`` or ``"srun -n 8"``. Empty means
-        run the executable directly. ``QE_MPIEXEC`` and ``COQUI_MPIEXEC``
-        override it for the respective code; the two codes do not want the same
-        rank count.
-    ``QE_BIN_DIR``
-        directory holding ``pw.x`` and ``pw2coqui.x``. Individual overrides
-        ``PW_X`` and ``PW2COQUI_X`` win over it.
-    ``COQUI_EXEC``
-        the CoQui (formerly ``aimbes``) executable, or ``COQUI_BIN_DIR``.
-    ``QE_ENV_SCRIPT`` / ``COQUI_ENV_SCRIPT``
-        optional shell scripts sourced immediately before the corresponding
-        executable runs. Quantum ESPRESSO and CoQui are routinely built against
-        different toolchains - at Flatiron they sit in different module trees,
-        which cannot both be loaded in one shell - so each gets its own
-        environment rather than inheriting this process's.
-    """
-
-    mpiexec: List[str] = field(default_factory=list)
-    qe_mpiexec: List[str] = field(default_factory=list)
-    coqui_mpiexec: List[str] = field(default_factory=list)
-    pw_x: Optional[Path] = None
-    pw2coqui_x: Optional[Path] = None
-    coqui: Optional[Path] = None
-    qe_env: Optional[Path] = None
-    coqui_env: Optional[Path] = None
-
-    @classmethod
-    def from_env(cls, env=None) -> "ExternalTools":
-        env = os.environ if env is None else env
-
-        def _find(explicit: str, name: str, bindir: str) -> Optional[Path]:
-            if env.get(explicit):
-                return Path(env[explicit])
-            if env.get(bindir):
-                candidate = Path(env[bindir]) / name
-                if candidate.exists():
-                    return candidate
-            found = shutil.which(name)
-            return Path(found) if found else None
-
-        def _script(name: str) -> Optional[Path]:
-            return Path(env[name]) if env.get(name) else None
-
-        default_launcher = env.get("MPIEXEC", "")
-        return cls(
-            mpiexec=shlex.split(default_launcher),
-            qe_mpiexec=shlex.split(env.get("QE_MPIEXEC", default_launcher)),
-            coqui_mpiexec=shlex.split(env.get("COQUI_MPIEXEC", default_launcher)),
-            pw_x=_find("PW_X", "pw.x", "QE_BIN_DIR"),
-            pw2coqui_x=_find("PW2COQUI_X", "pw2coqui.x", "QE_BIN_DIR"),
-            coqui=_find("COQUI_EXEC", "coqui", "COQUI_BIN_DIR"),
-            qe_env=_script("QE_ENV_SCRIPT"),
-            coqui_env=_script("COQUI_ENV_SCRIPT"),
+def require_tools(tools: dict, *names: str) -> None:
+    """Raise :class:`MissingExternalTool` unless every name resolved."""
+    missing = missing_tools(tools, names)
+    if missing:
+        raise MissingExternalTool(
+            "could not resolve: " + ", ".join(missing)
+            + ". Set QE_BIN_DIR / COQUI_EXEC (see the README) or put them on PATH."
         )
 
-    def missing(self, required: Sequence[str]) -> List[str]:
-        """Names of the required tools that could not be resolved."""
-        return [name for name in required if getattr(self, name, None) is None]
 
-    def require(self, *names: str) -> None:
-        missing = self.missing(names)
-        if missing:
-            raise MissingExternalTool(
-                "could not resolve: " + ", ".join(missing)
-                + ". Set QE_BIN_DIR / COQUI_EXEC (see --help) or put them on PATH."
-            )
+def missing_tools(tools: dict, required: Sequence[str]) -> List[str]:
+    """Names of the required tools that could not be resolved."""
+    return [name for name in required if tools.get(name) is None]
 
 
 def run_external(exe: Path, args: Sequence[str], cwd: Path, log: Path,
@@ -164,9 +101,10 @@ def dataset_paths(fh5: h5.File) -> List[str]:
 def copy_groups(src: Path, dest: Path, groups: Sequence[str]) -> List[str]:
     """Copy ``groups`` from ``src`` into ``dest``; returns the ones copied.
 
-    Used to carry hand-made data (the C++ unit tests' ``TEST_RESULTS``) across a
-    regeneration of the file that holds it. Missing groups are skipped quietly -
-    the caller decides whether that matters.
+    Used to graft data that has no generator - the C++ unit tests'
+    ``TEST_RESULTS``, checked in under ``assets/`` - into a freshly written
+    file. Missing groups are skipped quietly; the caller decides whether that
+    matters.
     """
     copied: List[str] = []
     with h5.File(src, "r") as fin, h5.File(dest, "a") as fout:
@@ -213,9 +151,3 @@ def compare_h5(reference: Path, candidate: Path,
                 worst = np.max(np.abs(a - b)) if a.size else float("nan")
                 diffs.append(f"{key}: max abs difference {worst:.3e}")
     return diffs
-
-
-def describe_tree(root: Path) -> Dict[str, int]:
-    """``{relative path: size in bytes}`` for every file under ``root``."""
-    return {str(p.relative_to(root)): p.stat().st_size
-            for p in sorted(root.rglob("*")) if p.is_file()}
