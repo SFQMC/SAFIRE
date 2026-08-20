@@ -21,11 +21,15 @@ the ``hst_type`` variants under ``square_4x4_hubbard_nup5_ndn5`` and the whole
 because the point of this tool is that the inputs tree can be rebuilt in full.
 """
 
+import shutil
 from typing import Dict, List
 
 import numpy as np
 
 from . import BuildContext, Recipe
+from ._common import ASSETS, copy_groups
+
+FINITE_T_ASSETS = ASSETS / "finiteT"
 
 # The free-electron trial is written straight from the one-body term, so the
 # twist is what keeps it from being degenerate at a closed shell. afqmctools
@@ -125,13 +129,20 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
     # --- Hubbard-Stratonovich variants (C++ unit tests only) ---------------
     # For U > 0 the builder infers a discrete *spin* decomposition and for
     # U < 0 a discrete *charge* one; `hst_types` overrides that inference.
+    # Together with ham_collinear.h5's inferred discrete_spin, the three
+    # overrides below cover all four decompositions the C++ reader accepts
+    # (`ModelHamOpsGenerator.cpp`).
     #
-    # NOTE: `ham_collinear_cont_spin.h5` is written without an override, which
-    # reproduces the committed file - its stored hst_type is `discrete_spin`,
-    # not the continuous one its name suggests. Passing
-    # `hst_types={"U": "continuous_spin"}` here would change data the C++ unit
-    # tests read, so the mismatch is left as-is rather than silently fixed.
-    _write_model_hamiltonian(HUBBARD_4X4, out / "ham_collinear_cont_spin.h5",
+    # The committed ham_collinear_cont_spin.h5 predates this override and
+    # stores discrete_spin despite its name, so it duplicated ham_collinear.h5
+    # and left continuous_spin exercised by nothing.
+    continuous_spin = {
+        "hamiltonian": {"t": 1.0, "U": 6.0,
+                        "hst_types": {"U": "continuous_spin"}},
+        "lattice": HUBBARD_4X4["lattice"],
+        "misc_params": HUBBARD_4X4["misc_params"],
+    }
+    _write_model_hamiltonian(continuous_spin, out / "ham_collinear_cont_spin.h5",
                              spin_symm=SpinSymm.COLLINEAR, nelec=None,
                              verbose=ctx.verbose)
 
@@ -370,25 +381,30 @@ HUBBARD_2X2 = {
 def build_hubbard_2x2_finite_t(ctx: BuildContext) -> None:
     """Hamiltonian for the finite-temperature C++ unit test fixture.
 
-    Only ``ham_collinear.h5`` is produced. The two things this directory also
-    holds have no generator in this repository:
+    Only the hamiltonian is computed. Two pieces of this directory have no
+    generator anywhere in this repository, so they are checked in under
+    ``assets/finiteT/`` and grafted on here:
 
-    - ``wfn_collinear.h5`` is a thermal propagator factorisation
-      (UL/UR, VL/VR, DL/DR blocks), a format afqmctools does not write.
-    - the ``TEST_RESULTS`` group inside ``ham_collinear.h5`` holds the expected
-      E1/EJ/EXX/VHS/vbias arrays the unit test asserts against.
+    - ``wfn_collinear.h5``, a thermal propagator factorisation
+      (UL/UR, VL/VR, DL/DR blocks) in a format afqmctools does not write.
+    - the ``TEST_RESULTS`` group inside ``ham_collinear.h5``, holding the
+      expected E1/EJ/EXX/VHS/vbias arrays the unit test asserts against.
 
-    ``TEST_RESULTS`` is carried across regeneration by the runner (see the
-    recipe's ``preserve``). That is only sound while the regenerated
-    hamiltonian matches the one those numbers were computed from - run
-    ``--check`` on this recipe before trusting a rebuild of it.
+    Copying ``TEST_RESULTS`` onto a freshly computed hamiltonian is only sound
+    while that hamiltonian still matches the one the numbers were computed
+    from, so run this recipe and read its diff before trusting a rebuild.
     """
     from afqmctools.utils.types import SpinSymm
 
-    _write_model_hamiltonian(HUBBARD_2X2, ctx.out_dir / "ham_collinear.h5",
+    hamiltonian = ctx.out_dir / "ham_collinear.h5"
+    _write_model_hamiltonian(HUBBARD_2X2, hamiltonian,
                              spin_symm=SpinSymm.COLLINEAR,
                              nelec=HUBBARD_2X2["misc_params"]["nelec"],
                              verbose=ctx.verbose)
+
+    copy_groups(FINITE_T_ASSETS / "test_results.h5", hamiltonian, ["TEST_RESULTS"])
+    shutil.copy(FINITE_T_ASSETS / "wfn_collinear.h5",
+                ctx.out_dir / "wfn_collinear.h5")
 
 
 # ============================================================================
@@ -429,6 +445,9 @@ def recipes() -> List[Recipe]:
                 "wfn_fe_noncollinear.h5",
             ],
             build=build_hubbard_kanamori,
+            notes="reproduces the committed files apart from "
+                  "maximum_connectivity, which write_model_hamiltonian now "
+                  "floors at 12; the committed files predate that.",
         ),
         Recipe(
             key="rashba_soc",
@@ -446,10 +465,10 @@ def recipes() -> List[Recipe]:
             data_dir="square_2x2_hubbard_Beta3_nt100",
             description="2x2 Hubbard hamiltonian for the finite-temperature "
                         "C++ unit tests (not used by any functional case)",
-            produces=["ham_collinear.h5"],
+            produces=["ham_collinear.h5", "wfn_collinear.h5"],
             build=build_hubbard_2x2_finite_t,
-            preserve={"ham_collinear.h5": ["TEST_RESULTS"]},
-            notes="wfn_collinear.h5 in this directory has no generator; the "
-                  "TEST_RESULTS group is carried over rather than recomputed.",
+            notes="wfn_collinear.h5 and the TEST_RESULTS group have no "
+                  "generator; they are copied from assets/finiteT/ rather than "
+                  "recomputed, so only the hamiltonian is really rebuilt.",
         ),
     ]
