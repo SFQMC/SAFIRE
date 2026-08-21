@@ -532,67 +532,8 @@ def build_pb(ctx: BuildContext) -> None:
 
 def recipes() -> List[Recipe]:
     return [
-        Recipe(
-            key="BH",
-            data_dir="BH",
-            description="BH at 1.5x equilibrium bond length; RHF-basis hamiltonians "
-                        "and NOMSD/ph-MSD trials in all three spin symmetries",
-            produces=[
-                "afqmc_H_rhf_closed.h5",
-                "afqmc_H_rhf_collinear.h5",
-                "afqmc_H_rhf_noncollinear.h5",
-                "afqmc_rhf_nomsd.h5",
-                "afqmc_uhf_nomsd.h5",
-                "afqmc_uhf_nomsd_init_rhf.h5",
-                "afqmc_ghf_nomsd.h5",
-                "afqmc_casci_rhf_nomsd.h5",
-                "afqmc_casci_uhf_nomsd.h5",
-                "afqmc_casci_ghf_nomsd.h5",
-                "afqmc_casci_rhf_phmsd.h5",
-                "afqmc_casci_uhf_phmsd.h5",
-                "afqmc_casci_ghf_phmsd.h5",
-                "afqmc_casci_rhf_1phmsd.h5",
-                "afqmc_casci_uhf_1phmsd.h5",
-                "afqmc_casci_ghf_1phmsd.h5",
-            ],
-            build=build_bh,
-            notes="the CASCI expansion runs over degenerate pi orbitals, so "
-                  "which determinants survive truncation depends on the orbital "
-                  "gauge; expect the casci_* trials to differ from the committed "
-                  "ones.",
-        ),
-        Recipe(
-            key="N2",
-            data_dir="N2",
-            description="stretched N2 (3.0 Bohr) with a CASSCF(12o,6e) ph-MSD trial",
-            produces=["cas_basis_hamil.h5", "cas_wfn.h5"],
-            build=build_n2,
-            notes="CASSCF fixes its active orbitals only up to a rotation, so "
-                  "the truncated CI expansion is not bit-reproducible.",
-        ),
-        Recipe(
-            key="Li",
-            data_dir="Li",
-            description="fully polarised Li atom, nelec = (3, 0)",
-            produces=["hamil_closed.h5", "rohf_nomsd_polarized.h5"],
-            build=build_li,
-            notes="differs from the committed files only by ROHF orbital signs.",
-        ),
-        Recipe(
-            key="Pb",
-            data_dir="Pb",
-            description="Pb anion with a spin-orbit ECP; spin-free and "
-                        "spin-orbit noncollinear hamiltonians",
-            produces=[
-                "afqmc_H_rhf_basis_noncollinear_sf.h5",
-                "afqmc_H_rhf_basis_noncollinear_soc.h5",
-                "afqmc_uhf_nomsd.h5",
-                "afqmc_ghf_sf_nomsd.h5",
-                "afqmc_ghf_soc_nomsd.h5",
-            ],
-            build=build_pb,
-            notes="reproduces the original ROHF/UHF/GHF/SOC-GHF energies to "
-                  "twelve digits; the orbital basis is rotated within the "
-                  "degenerate atomic shells.",
-        ),
+        Recipe(key="BH", data_dir="BH", build=build_bh),
+        Recipe(key="N2", data_dir="N2", build=build_n2),
+        Recipe(key="Li", data_dir="Li", build=build_li),
+        Recipe(key="Pb", data_dir="Pb", build=build_pb),
     ]

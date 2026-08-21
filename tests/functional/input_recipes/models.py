@@ -413,62 +413,14 @@ def build_hubbard_2x2_finite_t(ctx: BuildContext) -> None:
 
 def recipes() -> List[Recipe]:
     return [
-        Recipe(
-            key="hubbard",
-            data_dir="square_4x4_hubbard_nup5_ndn5",
-            description="4x4 Hubbard at U/t = 6 with five electrons per spin, "
-                        "plus the Hubbard-Stratonovich variants",
-            produces=[
-                "ham_closed.h5",
-                "ham_collinear.h5",
-                "ham_noncollinear.h5",
-                "wfn_fe_collinear.h5",
-                "wfn_fe_noncollinear.h5",
-                "ham_collinear_cont_spin.h5",
-                "ham_collinear_Um4_disc_charge.h5",
-                "ham_collinear_Um4_cont_charge.h5",
-                "uhf_U0.1_wfn_nup5_ndn5.h5",
-            ],
-            build=build_hubbard_4x4,
-            notes="uhf_U0.1_wfn_nup5_ndn5.h5 comes from a variational solve; it "
-                  "lands on the same determinant as the committed file but in a "
-                  "different orbital gauge and scaling.",
-        ),
-        Recipe(
-            key="hubbard_kanamori",
-            data_dir="square_6x1_hubbard_kanamori_nup6_ndn6",
-            description="two-band Hubbard-Kanamori chain, six electrons per spin",
-            produces=[
-                "ham_collinear.h5",
-                "ham_noncollinear.h5",
-                "wfn_fe_collinear.h5",
-                "wfn_fe_noncollinear.h5",
-            ],
-            build=build_hubbard_kanamori,
-            notes="reproduces the committed files apart from "
-                  "maximum_connectivity, which write_model_hamiltonian now "
-                  "floors at 12; the committed files predate that.",
-        ),
-        Recipe(
-            key="rashba_soc",
-            data_dir="rashba_soc",
-            description="3x3 honeycomb Hubbard with Rashba spin-orbit coupling; "
-                        "hamiltonian and trial share one file",
-            produces=["afqmc_U1.0_lambda0.1sqrt3_free_elec_trial.h5"],
-            build=build_rashba_soc,
-            notes="the trial's occupied shell is degenerate, so the orbitals "
-                  "come out rotated relative to the committed file while "
-                  "spanning exactly the same space.",
-        ),
-        Recipe(
-            key="hubbard_2x2_finite_t",
-            data_dir="square_2x2_hubbard_Beta3_nt100",
-            description="2x2 Hubbard hamiltonian for the finite-temperature "
-                        "C++ unit tests (not used by any functional case)",
-            produces=["ham_collinear.h5", "wfn_collinear.h5"],
-            build=build_hubbard_2x2_finite_t,
-            notes="wfn_collinear.h5 and the TEST_RESULTS group have no "
-                  "generator; they are copied from assets/finiteT/ rather than "
-                  "recomputed, so only the hamiltonian is really rebuilt.",
-        ),
+        Recipe(key="hubbard", data_dir="square_4x4_hubbard_nup5_ndn5",
+               build=build_hubbard_4x4),
+        Recipe(key="hubbard_kanamori",
+               data_dir="square_6x1_hubbard_kanamori_nup6_ndn6",
+               build=build_hubbard_kanamori),
+        Recipe(key="rashba_soc", data_dir="rashba_soc",
+               build=build_rashba_soc),
+        Recipe(key="hubbard_2x2_finite_t",
+               data_dir="square_2x2_hubbard_Beta3_nt100",
+               build=build_hubbard_2x2_finite_t),
     ]

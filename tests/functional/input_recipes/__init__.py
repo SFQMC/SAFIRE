@@ -9,12 +9,11 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 """
-Registry of recipes that regenerate ``tests/functional/afqmc_inputs``.
+Registry of recipes that rebuild ``tests/functional/afqmc_inputs``.
 
-Each :class:`Recipe` owns one system directory and declares the files it writes
-there. ``make_inputs.py`` imports :func:`build_recipes` and does the scheduling
-and checking; the recipe itself only has to produce the files, into an empty
-directory it is handed.
+Each :class:`Recipe` owns one system directory. ``make_inputs.py`` imports
+:func:`build_recipes` and does the scheduling; the recipe only has to write its
+files into the empty directory it is handed.
 
 The inputs tree is shared: ``run_functional.py`` reads it through
 ``functional_cases.py``, and the C++ unit tests read the same directory through
@@ -27,13 +26,13 @@ Adding a recipe
 Write a ``build(ctx)`` function taking a :class:`BuildContext`, writing its files
 into ``ctx.out_dir``, then register it in :func:`build_recipes`. Keep any
 intermediate files (pyscf checkpoints, plane-wave runs) under ``ctx.scratch`` so
-that the inputs tree only ever gains the declared outputs.
+that the inputs tree only ever gains the finished outputs.
 """
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Callable, Dict, List, Tuple
 
 # jax reads this when it is imported, and afqmctools pulls it in indirectly, so
 # it has to be set before anything else here. Without it jax claims a cuda
@@ -66,9 +65,6 @@ class Recipe:
     ----------
     data_dir
         Directory under ``afqmc_inputs/`` that the recipe fills.
-    produces
-        Filenames written into ``data_dir``. The runner checks after the fact
-        that every one of them appeared.
     build
         ``build(ctx: BuildContext) -> None``.
     external
@@ -79,18 +75,8 @@ class Recipe:
 
     key: str
     data_dir: str
-    produces: List[str]
     build: Callable[[BuildContext], None]
-    description: str = ""
     external: Tuple[str, ...] = ()
-    notes: str = ""
-
-    def out_dir(self, inputs_root: Path) -> Path:
-        return inputs_root / self.data_dir
-
-    def targets(self, inputs_root: Path) -> List[Path]:
-        out = self.out_dir(inputs_root)
-        return [out / name for name in self.produces]
 
 
 def build_recipes() -> Dict[str, Recipe]:
@@ -112,15 +98,6 @@ def build_recipes() -> Dict[str, Recipe]:
     return by_key
 
 
-def unclaimed_files(recipes: Sequence[Recipe], inputs_root: Path) -> List[str]:
-    """Files present in the inputs tree that no recipe claims to produce."""
-    claimed = {str(p.relative_to(inputs_root))
-               for r in recipes for p in r.targets(inputs_root)}
-    present = {str(p.relative_to(inputs_root))
-               for p in inputs_root.rglob("*.h5") if p.is_file()}
-    return sorted(present - claimed)
-
-
 __all__ = [
     "BuildContext",
     "INPUTS_ROOT",
@@ -128,5 +105,4 @@ __all__ = [
     "Recipe",
     "ROOT",
     "build_recipes",
-    "unclaimed_files",
 ]
