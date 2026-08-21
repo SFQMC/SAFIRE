@@ -67,7 +67,7 @@ They consist of both AFQMC runtime parameters and references to the following fi
 1. wavefunction - **always required!**
 2. hamiltonian
 3. walker_set
-4. projector
+4. propagator
 5. estimator
 
 The wavefunction, hamiltonian, and walker_set blocks can be defined either directly within
@@ -207,7 +207,7 @@ td, th {
 
 The execute block is used to define an AFQMC calculation.
 As described earlier, it needs a wavefunction, walker_set, hamiltonian,
-projector, and estimator.
+propagator, and estimator.
 Of these, **the wavefunction must always be defined** while the others have default values.
 The blocks can either be defined within the "execute" block, or defined
 outside and referenced by name.
@@ -222,7 +222,7 @@ Here is a sample execute block with options exposed and default values where app
   "hamiltonian" : { /* ... */ },
   "walker_set" : { /* ... */ },
   "estimator" : { /* ... */ },
-  "projector" : { /* ... */ },
+  "propagator" : { /* ... */ },
   "timestep": "0.01",
   "steps": "1",
   "n_walkers_per_mpi_task": "10",
@@ -447,7 +447,7 @@ td, th {
 
 +++ {"id": "72f853ff"}
 
-## The "projector" block
+## The "propagator" block
 
 <!--
 <div>
@@ -457,7 +457,7 @@ td, th {
 
 ![](files/input_file_06_propagator.png)
 
-The projector block is used to set properties of the AFQMC projector.
+The propagator block is used to set properties of the AFQMC propagator.
 A typical user will not need to interact with this input block;
 however, we include it here for completeness.
 

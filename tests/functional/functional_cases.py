@@ -20,7 +20,7 @@ the runner focused on scheduling and checking logic.
 import enum
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from afqmctools.utils.types import SpinSymm
 
@@ -52,6 +52,7 @@ class Hamiltonian:
     spin: SpinSymm
     type: HamiltonianClass
     runparams: dict = field(default_factory=dict)
+    hst: Optional[Tuple[str, ...]] = None
 
 
 @dataclass
@@ -142,10 +143,10 @@ def build_systems() -> Dict[str, System]:
         "hubbard": System(
             data_dir="square_4x4_hubbard_nup5_ndn5",
             hamiltonians={
-                "ham_closed": Hamiltonian("ham_closed.h5", S.CLOSED, HC.MODEL),
-                "ham_collinear": Hamiltonian("ham_collinear.h5", S.COLLINEAR, HC.MODEL),
-                "ham_collinear_cont_spin": Hamiltonian("ham_collinear_cont_spin.h5", S.COLLINEAR, HC.MODEL),
-                "ham_noncollinear": Hamiltonian("ham_noncollinear.h5", S.NONCOLLINEAR, HC.MODEL),
+                "ham_closed": Hamiltonian("ham_closed.h5", S.CLOSED, HC.MODEL, hst=("discrete_spin",)),
+                "ham_collinear": Hamiltonian("ham_collinear.h5", S.COLLINEAR, HC.MODEL, hst=("discrete_spin",)),
+                "ham_collinear_cont_spin": Hamiltonian("ham_collinear_cont_spin.h5", S.COLLINEAR, HC.MODEL, hst=("continuous_spin",)),
+                "ham_noncollinear": Hamiltonian("ham_noncollinear.h5", S.NONCOLLINEAR, HC.MODEL, hst=("discrete_spin",)),
             },
             wavefunctions={
                 "fe_collinear": Wavefunction("wfn_fe_collinear.h5", S.COLLINEAR, WC.NOMSD),
@@ -163,8 +164,8 @@ def build_systems() -> Dict[str, System]:
         "hubbard_charge": System(
             data_dir="square_4x4_hubbard_nup5_ndn5",
             hamiltonians={
-                "ham_collinear_disc_charge": Hamiltonian("ham_collinear_Um4_disc_charge.h5", S.COLLINEAR, HC.MODEL),
-                "ham_collinear_cont_charge": Hamiltonian("ham_collinear_Um4_cont_charge.h5", S.COLLINEAR, HC.MODEL),
+                "ham_collinear_disc_charge": Hamiltonian("ham_collinear_Um4_disc_charge.h5", S.COLLINEAR, HC.MODEL, hst=("discrete_charge",)),
+                "ham_collinear_cont_charge": Hamiltonian("ham_collinear_Um4_cont_charge.h5", S.COLLINEAR, HC.MODEL, hst=("continuous_charge",)),
             },
             wavefunctions={
                 "hf_U0.1_collinear": Wavefunction("uhf_U0.1_wfn_nup5_ndn5.h5", S.COLLINEAR, WC.NOMSD),
@@ -175,8 +176,10 @@ def build_systems() -> Dict[str, System]:
         "hubbard_kanamori": System(
             data_dir="square_6x1_hubbard_kanamori_nup6_ndn6",
             hamiltonians={
-                "ham_collinear": Hamiltonian("ham_collinear.h5", S.COLLINEAR, HC.MODEL),
-                "ham_noncollinear": Hamiltonian("ham_noncollinear.h5", S.NONCOLLINEAR, HC.MODEL),
+                # Two components: the Hund's J term, then the Hubbard U term.
+                # A discrete decomposition is not allowed for J.
+                "ham_collinear": Hamiltonian("ham_collinear.h5", S.COLLINEAR, HC.MODEL, hst=("continuous_spin", "discrete_spin")),
+                "ham_noncollinear": Hamiltonian("ham_noncollinear.h5", S.NONCOLLINEAR, HC.MODEL, hst=("continuous_spin", "discrete_spin")),
             },
             wavefunctions={
                 "fe_collinear": Wavefunction("wfn_fe_collinear.h5", S.COLLINEAR, WC.NOMSD),
@@ -194,7 +197,7 @@ def build_systems() -> Dict[str, System]:
         "rashba_soc": System(
             data_dir="rashba_soc",
             hamiltonians={
-                "lambda0.1sqrt3_noncollinear": Hamiltonian("afqmc_U1.0_lambda0.1sqrt3_free_elec_trial.h5", S.NONCOLLINEAR, HC.MODEL),
+                "lambda0.1sqrt3_noncollinear": Hamiltonian("afqmc_U1.0_lambda0.1sqrt3_free_elec_trial.h5", S.NONCOLLINEAR, HC.MODEL, hst=("discrete_spin",)),
             },
             wavefunctions={
                 "ghf_nomsd_free_elec_trial": Wavefunction("afqmc_U1.0_lambda0.1sqrt3_free_elec_trial.h5", S.NONCOLLINEAR, WC.NOMSD),

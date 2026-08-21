@@ -139,6 +139,48 @@ def should_skip(c: Case) -> bool:
     return False
 
 
+def stored_hst_types(hamil_file: Path) -> Optional[List[str]]:
+    """The Hubbard-Stratonovich type of each ModelComponent, in order.
+
+    ``None`` for a hamiltonian that is not a lattice model - those have no
+    ModelHamiltonian group and nothing to check.
+    """
+    with h5.File(hamil_file, "r") as f:
+        model = f.get("Hamiltonian/ModelHamiltonian")
+        if model is None:
+            return None
+        components = sorted((k for k in model if k.startswith("ModelComponent_")),
+                            key=lambda k: int(k.rsplit("_", 1)[1]))
+        return [model[k]["hst_type"][()].decode() for k in components
+                if "hst_type" in model[k]]
+
+
+def check_hst(system, inputs_dir: Path) -> List[str]:
+    """Confirm each model hamiltonian decomposes the way its case says it does.
+
+    A lattice-model file records which Hubbard-Stratonovich transformation the
+    code should apply, and nothing downstream notices if that stops matching
+    what the case is meant to exercise - the run simply samples a different
+    decomposition and still produces a plausible energy. Checking it here turns
+    that into a reported mismatch instead.
+    """
+    problems: List[str] = []
+    for name, ham in system.hamiltonians.items():
+        found = stored_hst_types(inputs_dir / ham.file)
+        if ham.hst is None:
+            if found:
+                problems.append(f"{name}: file declares hst_type {found} but the "
+                                "case does not say what to expect")
+            continue
+        if found is None:
+            problems.append(f"{name}: expected hst_type {list(ham.hst)} but "
+                            f"{ham.file} has no ModelHamiltonian group")
+        elif found != list(ham.hst):
+            problems.append(f"{name}: expected hst_type {list(ham.hst)}, "
+                            f"file has {found}")
+    return problems
+
+
 def should_backprop(c: Case) -> bool:
     """Back-propagation subset selection from should_succeed.
 
@@ -800,7 +842,7 @@ def main(argv=None) -> int:
         ranks = detect_ranks(args.mpiexec)
         print(f"Detected {ranks} MPI rank(s) for launcher: {args.mpiexec!r}")
 
-    total_pass = total_fail = total_skip = 0
+    total_pass = total_fail = total_skip = total_hst_bad = 0
     for name in selected:
         system = systems[name]
         all_cases = generate(system)
@@ -811,6 +853,13 @@ def main(argv=None) -> int:
 
         print(f"=== {name}: {len(success)} expected-success, "
               f"{len(fail)} expected-fail, {len(backprop)} back-propagation ===")
+
+        # Before running anything: does each model hamiltonian actually
+        # decompose the way its case claims?
+        hst_problems = check_hst(system, INPUTS_ROOT / system.data_dir)
+        for problem in hst_problems:
+            print(f"  [hst] MISMATCH {problem}")
+        total_hst_bad += len(hst_problems)
 
         for c in all_cases:
             if should_skip(c):
@@ -849,7 +898,10 @@ def main(argv=None) -> int:
         else:
             print(f"\n==== {total_pass} passed, {total_fail} failed, "
                   f"{total_skip} skipped ====")
-    return 1 if total_fail else 0
+    if total_hst_bad:
+        print(f"==== {total_hst_bad} hamiltonian(s) do not use the expected "
+              "Hubbard-Stratonovich decomposition ====")
+    return 1 if (total_fail or total_hst_bad) else 0
 
 
 if __name__ == "__main__":

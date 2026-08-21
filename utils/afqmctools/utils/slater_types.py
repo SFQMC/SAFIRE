@@ -135,68 +135,108 @@ class ParticleHoleMSD(MultiSlater):
         pass
 
 
-def _is_collinear(phi,nelec):
+def _is_collinear(phi,nelec,M):
     """
     Determine if the Slater matrix is collinear-like
     (i.e. UHF or ROHF-like) based on the shape of the
     Slater matrix and the number of electrons.
+
+    Collinear determinants come in two equivalent layouts:
+    the spin-resolved `(2,M,*)` form, and the 2-D form with
+    the alpha and beta blocks concatenated column-wise,
+    `(M,nalpha+nbeta)`.
     """
 
     # UHF-like
     if len(phi.shape) == 3:
-        return True
-    # ROHF-like
-    elif len(phi.shape) == 2 and nelec[0] != nelec[1]:
-        return True
-    else:
+        return phi.shape[0] == 2 and phi.shape[1] == M
+    elif len(phi.shape) != 2:
         return False
+    return phi.shape[0] == M and phi.shape[1] == nelec[0] + nelec[1]
 
-def _is_closed(phi,nelec):
-    if len(phi.shape) == 2 and nelec[0] == nelec[1]:
-        return True
-    else:
+def _is_closed(phi,nelec,M):
+    """
+    Determine if the Slater matrix is closed-shell-like (i.e. RHF-like):
+    a single spin block of doubly-occupied orbitals, so phi is 2-D with
+    M rows and exactly nalpha == nbeta columns.
+    """
+    if len(phi.shape) != 2 or nelec[0] != nelec[1]:
         return False
+    return phi.shape[0] == M and phi.shape[1] == nelec[0]
 
-def _is_noncollinear(phi,M):
-    if len(phi.shape) == 2 and phi.shape[0] == 2*M:
-        return True
-    else:
+def _is_noncollinear(phi,nelec,M):
+    """
+    Determine if the Slater matrix is noncollinear-like (i.e. GHF-like):
+    every column spans both spin blocks, so phi is 2-D with 2*M rows
+    and nalpha+nbeta columns.
+    """
+    if len(phi.shape) != 2:
         return False
+    return phi.shape[0] == 2*M and phi.shape[1] == nelec[0] + nelec[1]
 
 def _get_slater_type(phi,nelec,M):
     """
     Determine the Slater determinant type based
-      on the given Slater matrix dimensions, and 
+      on the given Slater matrix dimensions, and
       the number of electrons (nelec) if provided.
 
     Parameters
     ----------
     phi : np.ndarray
-        the Slater matrix of the wavefunction with shape (Nmo,Nelec)
+        the Slater matrix of the wavefunction, holding only the *occupied*
+        orbitals. The expected shapes are `(M,nalpha)` for Closed,
+        `(M,nalpha+nbeta)` or `(2,M,*)` for Collinear, and
+        `(2*M,nalpha+nbeta)` for Noncollinear.
     nelec : tuple
         the number of electrons in the system.
     M : int
         the number of spatial orbitals in the system.
-        
+
+    Returns
+    -------
+    _SlaterType
+        the type of the Slater determinant.
+
+    Raises
+    ------
+    ValueError
+        if the shape of `phi` is not consistent with any Slater determinant
+        type for the given `nelec` and `M`.
+
     Notes
     -----
-    A collinear determinant can be unambigiously determined
-      by the shape of phi since it is the only Slater matrix with 3 dimensions.
+    This expects a Slater matrix over the occupied orbitals only, *not* a full
+      molecular orbital coefficient matrix. The two conventions are
+      indistinguishable by shape alone (an RHF coefficient matrix `(M,M)` at
+      half filling looks exactly like a Collinear `(M,nalpha+nbeta)` block), so
+      callers holding a full coefficient matrix must determine the type from
+      the occupations instead - see `afqmctools.utils.pyscf_utils`.
 
-    For Closed / Noncollinear determinants, we can't distinguish between the two without
-       using nelec.
+    A collinear determinant in the `(2,M,*)` layout is unambiguous, since it is
+      the only Slater matrix with 3 dimensions.
 
-    There is no way to distinguish between ROHF-like Collinear and Noncollinear without
-       also using M (i.e. the number of spatial orbitals!)
-    
+    Closed and Collinear are distinguished by the number of columns: a Closed
+      determinant carries one spin block (nalpha columns), a Collinear
+      determinant carries both (nalpha+nbeta columns).
+
+    Collinear and Noncollinear are distinguished by the number of rows, and so
+      require M (i.e. the number of spatial orbitals).
+
+    The three predicates below are mutually exclusive for any M >= 1 and any
+      nelec other than the (0,0) vacuum, so the order of the checks does not
+      affect the result. Shapes matching none of them are rejected.
     """
 
-    # NOTE: the order of checks is important!
-    if _is_noncollinear(phi,M=M):
+    if _is_noncollinear(phi,nelec=nelec,M=M):
         return _SlaterType.NONCOLLINEAR
-    elif _is_closed(phi,nelec=nelec):
+    elif _is_closed(phi,nelec=nelec,M=M):
         return _SlaterType.CLOSED
-    elif _is_collinear(phi,nelec=nelec):
+    elif _is_collinear(phi,nelec=nelec,M=M):
         return _SlaterType.COLLINEAR
     else:
-        raise ValueError("Unable to determine a valid Slater determinant type.")
+        raise ValueError(
+            f"Unable to determine a valid Slater determinant type: phi has shape "
+            f"{phi.shape}, which is not consistent with nelec={tuple(nelec)} and "
+            f"M={M}. Expected (M,nalpha), (M,nalpha+nbeta), (2,M,*) or "
+            f"(2*M,nalpha+nbeta)."
+        )

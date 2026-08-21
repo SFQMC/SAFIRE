@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import h5py as h5
 
-JSON_EXECUTE_INPUT_BLOCKS = ("walker_set", "wavefunction", "hamiltonian", "projector")
+JSON_EXECUTE_INPUT_BLOCKS = ("walker_set", "wavefunction", "hamiltonian", "propagator")
 
 def get_estimator_settings(exec_opts,args=None):
 
@@ -145,7 +145,7 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
          # we want to append the settings in each known input block to what (may) exist in inps
         input_block_generator = ( (key,exec_opts[key]) for key in JSON_EXECUTE_INPUT_BLOCKS if key in exec_opts )
         for key,input_block in input_block_generator:
-            input_block_dict = inps["afqmc"]["execute"][key]
+            input_block_dict = inps["afqmc"]["execute"].setdefault(key, {})
             for subkey,val in input_block.items():
                 input_block_dict[subkey] = val
             # remove the key from exec_opts so it doesn't get passed to .update(exec_opts)

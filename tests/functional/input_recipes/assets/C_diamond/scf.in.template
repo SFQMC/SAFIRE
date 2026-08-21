@@ -1,0 +1,36 @@
+&control
+   calculation = 'scf',
+   prefix = 'pwscf',
+   outdir = 'OUT',
+   pseudo_dir = './',
+   verbosity = 'high'
+/
+&system
+   ibrav=2,
+   A = 3.57,
+   nat=2,
+   ntyp = 1,
+   nbnd = 8,
+   ecutwfc = 70,
+   force_symmorphic=.true.,
+   input_dft = 'pbe'
+/
+&electrons
+   electron_maxstep = 500
+   conv_thr = 1.0d-10
+   mixing_mode = 'plain'
+   mixing_beta = 0.7
+   mixing_ndim = 8
+   diagonalization = 'david'
+   diago_david_ndim = 4
+   !diago_full_acc = .true.
+/
+ATOMIC_SPECIES
+  C  12.011   C_ONCV_PBE-1.2.upf
+
+ATOMIC_POSITIONS (crystal)
+  C 0.0 0.0 0.0
+  C 0.25 0.25 0.25
+
+K_POINTS automatic
+  {kgrid} 0 0 0
