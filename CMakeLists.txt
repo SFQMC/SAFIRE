@@ -158,8 +158,8 @@ block()
   set(PythonSupport OFF)
   FetchContent_Declare(
           nda
-          GIT_REPOSITORY "https://github.com/lukas-weber/nda.git"
-          GIT_TAG        safire-adjustments
+          GIT_REPOSITORY "https://github.com/TRIQS/nda.git"
+          GIT_TAG        5046352
           SYSTEM
   )
   FetchContent_MakeAvailable(nda)
