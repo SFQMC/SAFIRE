@@ -84,7 +84,8 @@ plot_lattice(lattice,show_coords=False)
 :id: 364ee811-8242-45ce-88ee-69fcaa6901fd
 :outputId: b64b276a-cae9-4c47-a315-e9c015fc264a
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
+from afqmctools.hamiltonian.model.ham_class import SpinSymm
 from afqmctools.utils.io import write_model_hamiltonian
 
 #TODO: need AFM (staggered) pinning at y=1 and  y=Ly with h_pin = 0.25 only for AFQMC!!
@@ -96,16 +97,15 @@ hamiltonian_params = {
     }
 }
 
-director = HamiltonianDirector(hamiltonian_params,lattice=lattice)
-
-# we can take more direct control of build steps like this
-builder = director.release_builder()
+# afm_pinning() needs axis=1 and pin_type="same", which HamiltonianBuilder.from_input()
+# cannot express, so we call the build steps directly instead and finalize once at the end
+builder = HamiltonianBuilder(lattice=lattice,spin_symm=SpinSymm.COLLINEAR)
+builder.nth_neighbor_hopping(hamiltonian_params["hamiltonian"]["t"])
+builder.onsite_hubbard(hamiltonian_params["hamiltonian"]["U"])
 builder.afm_pinning(h_afm_pin=0.25,axis=1,pin_type="same")
+builder.finalize()
 
-# ... and we can resume using the director as usual
-director.bind_builder(builder)
-
-hamiltonian = director.build()
+hamiltonian = builder.hamiltonian
 write_model_hamiltonian(hamiltonian,fname=scratch_dir/"Hubbard_tprime0.4_U4.0.h5")
 ```
 

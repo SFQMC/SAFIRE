@@ -53,20 +53,14 @@ This provides great flexibility in specifying Hamiltonians, however care must be
 afqmctools provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
 on a variety of lattices, using consistent conventions for indexing.
 The framework consists of a Lattice class which is responsible for geometry (see {doc}`../03_setting_up_a_lattice/03_setting_up_a_lattice`),
-a Hamiltonian builder which is responsible for generating specific Hamiltonian terms on demand given a specific Lattice instance,
-and a Hamiltonian "Director" which is responsible for choosing which build steps to perform based on
-a set of input Hamiltonian parameters.
-Each component of the framework can be used directly; however
-the Director class represents the highest-level interface of the lattice Hamiltonian framework and
-can manage the underlying Lattice instance and Builder instance.
-Users who want direct control over the Hamiltonian build steps can directly
-use the Hamiltonian "Builder". See {doc}`../05_hamiltonian_builder/05_hamiltonian_builder` for
+and a Hamiltonian "Builder" which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
+The `HamiltonianBuilder.from_input()` classmethod accepts a set of input Hamiltonian parameters (as a Python
+dict or a toml file) and automatically runs the corresponding build steps, which covers most use cases.
+Users who want direct control over the Hamiltonian build steps can instead construct a `HamiltonianBuilder`
+and invoke build steps directly. See {doc}`../05_hamiltonian_builder/05_hamiltonian_builder` for
 more detail.
-It is recommended to use the Director whenever possible.
 
-![](files/HamilDirectorSystem.png)
-
-<b>In this tutorial, we focus on building Hamiltonian terms via the Hamiltonian "Director".</b>
+<b>In this tutorial, we focus on building Hamiltonian terms via `HamiltonianBuilder.from_input()`.</b>
 We will explore the possible input parameters and their respective meanings/conventions.
 
 +++ {"id": "pGSnNnm7Rr54"}
@@ -88,27 +82,27 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 
 +++ {"id": "WcOH6y7xOK_V"}
 
-## Hamiltonian Director Tutorial
+## Building Hamiltonians from Input Parameters
 
 The `afqmctools` Python package provides a framework for generating lattice model Hamiltonians.
-The Hamiltonian Director is the highest-level interface to this framework.
+`HamiltonianBuilder.from_input()` is the highest-level interface to this framework.
 It may be invoked as a command line tool using an input file, or a directly within a Python script.
-We will briefly demonstrate the command line tool, but we will focus on using the Director within a Python script for most of this tutorial.
+We will briefly demonstrate the command line tool, but we will focus on using `HamiltonianBuilder.from_input()` within a Python script for most of this tutorial.
 
-The Hamiltonian Director is meant to handle building Hamiltonians which can be expressed in terms of a few simple parameters on relatively simple lattices.
+`HamiltonianBuilder.from_input()` is meant to handle building Hamiltonians which can be expressed in terms of a few simple parameters on relatively simple lattices.
 While SAFIRE supports any combination of lattice, sublattice, and band degrees-of-freedom in the Hamiltonian, it is not always feasible to map such general models onto a few simple parameters.
 For these cases, we provide lower-level classes to assist as much as possible. See {doc}`../03_setting_up_a_lattice/03_setting_up_a_lattice` for example.
 For example, the Hubbard model only needs a single parameter, $U/t$, and a lattice / boundary conditions in order to be fully specified.
-More general Hamiltonians can also be built using the Director; however, it may be useful to some users to work directly with the Lattice and Hamiltonian Builder in a Python script. See {doc}`../05_hamiltonian_builder/05_hamiltonian_builder` for more advance uses.
+More general Hamiltonians can also be built via `from_input()`; however, it may be useful to some users to work directly with the Lattice and Hamiltonian Builder in a Python script. See {doc}`../05_hamiltonian_builder/05_hamiltonian_builder` for more advance uses.
 
-In this tutorial, we will cover how to request specific Hamiltonian terms from the Hamiltonian Director.
+In this tutorial, we will cover how to request specific Hamiltonian terms via `HamiltonianBuilder.from_input()`.
 We will also cover the details of the input conventions for each of the terms needed to build these Hamiltonians.
 
 +++ {"id": "DvPH8LBbOK_V"}
 
-## Invoking the Hamiltonian Director via the CLI
+## Invoking the Hamiltonian Builder via the CLI
 
-In addition to the ability to invoke the Hamiltonian director directly within a Python script, afqmctools provides a command line tool that invokes the Hamiltonian director.
+In addition to the ability to invoke the Hamiltonian builder directly within a Python script, afqmctools provides a command line tool that invokes it.
 If you installed `afqmctools` using the official instructions, you can run the following to see possible options
 
 ```bash
@@ -135,7 +129,7 @@ options:
 ```
 
 The primary option that we are interested in here is `-i` which allows an input file (in .toml format) containing Hamiltonian parameters to be specified.
-The parameter input conventions are the same whether we use the `make_model_ham` CLI tool, or use the Hamiltonian Director within a Python script.
+The parameter input conventions are the same whether we use the `make_model_ham` CLI tool, or use `HamiltonianBuilder.from_input()` within a Python script.
 
 Here is a sample input file which will generate a Hubbard model with nearest-neighbor hopping, on a 4x4 square lattice with periodic boundary conditions.
 
@@ -186,7 +180,7 @@ For example, we can see from the line,
 running build step nth_neighbor_hopping((1.0,))
 ```
 
-that the director called the nth_neighbor_hopping() build step with an argument of `1.0`.
+that the builder called the nth_neighbor_hopping() build step with an argument of `1.0`.
 We will see below that this generates nearest-neighbor hopping with t=1.0 (minus sign is implicit).
 We also see that an onsite Hubbard interaction with $U = 4$ was also generated.
 
@@ -197,8 +191,8 @@ make_model_ham -i input.toml -o example.h5
 ```
 will save the Hamiltonian in `example.h5`.
 
-We note that the in Python, the Hamiltonian Director can be given either the name of an input file or a Python dictionary containing the Hamiltonian parameters.
-The Director will interpret the parameters using the same conventions regardless of which input method is used.
+We note that the in Python, `HamiltonianBuilder.from_input()` can be given either the name of an input file or a Python dictionary containing the Hamiltonian parameters.
+It will interpret the parameters using the same conventions regardless of which input method is used.
 We refer you to the [TOML specification](https://toml.io/en/v1.0.0) for clarification on the TOML format.
 For the remainder of the tutorial, we will be working directly with Python within this notebook.
 
@@ -219,7 +213,7 @@ id: 6QgfLv7kOK_V
 outputId: c3552c28-5791-45f0-ae57-39f29435e27d
 ---
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
 # Define the lattice parameters
@@ -243,7 +237,7 @@ params = {
 lattice = get_lattice(lattice_params)
 plot_lattice(lattice)
 
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 ```
 
 +++ {"id": "_7Wg-_UGQuXr"}
@@ -286,7 +280,7 @@ outputId: bfe2522e-2996-43d9-88b3-ed2cd7b84350
 
 ### Adding Hopping
 
-The Hamiltonian Director supports nth-order neighbor hopping and band-dependent hopping.
+`HamiltonianBuilder.from_input()` supports nth-order neighbor hopping and band-dependent hopping.
 $n$ is limited by the condition that sites are not allowed to be their own neighbors via
 periodic boundary conditions.
 In this case, an error will be raised.
@@ -351,7 +345,7 @@ outputId: 731d316b-7dbb-4990-f273-0ad6da75081a
 import matplotlib.pyplot as plt
 
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
 # define Hamiltonian parameters
@@ -369,7 +363,7 @@ params = {
 }
 
 # this will make a Hubbard model on a 4x4 lattice with PBCs
-hamiltonian = HamiltonianDirector(source=params).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params).hamiltonian
 
 hopping = hamiltonian.get_one_body()
 plt.matshow(hopping.toarray())
@@ -416,7 +410,7 @@ id: i0l8VxorOK_W
 outputId: 4113cab3-7b9d-4366-edb5-ff8b22bd89fd
 ---
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
 import numpy as np
@@ -442,7 +436,7 @@ params = {
 }
 
 # this will make a Hubbard model on a 4x4 lattice with PBCs
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 
 # let's take a look at the U term:
 U = hamiltonian.get_U().toarray().diagonal().reshape(lattice.L)
@@ -474,7 +468,7 @@ id: jN42bp5cOK_W
 outputId: d257ba45-6561-41df-a581-8a19e1f73a2a
 ---
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
 import numpy as np
@@ -500,7 +494,7 @@ params = {
 }
 
 # this will make a Hubbard model on a 4x4 lattice with PBCs
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 
 # let's take a look at the U term:
 U_shape = (lattice.L[0],lattice.L[1],hamiltonian_params['nbands'])
@@ -525,7 +519,7 @@ plot_lattice(
 :id: _6grG3FOOK_X
 
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
 import numpy as np
@@ -551,7 +545,7 @@ params = {
 }
 
 # this will make a Hubbard model on a 4x4 lattice with PBCs
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 
 # let's take a look at the U term:
 U_shape = (lattice.L[0],lattice.L[1],hamiltonian_params['nbands'])
@@ -717,7 +711,7 @@ id: D72pRPc6OK_X
 outputId: b6f1c99c-e33b-4574-d108-3a2ea7f66d89
 ---
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
 # Define the lattice parameters
@@ -745,7 +739,7 @@ params = {
 lattice = get_lattice(lattice_params)
 plot_lattice(lattice)
 
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 ```
 
 +++ {"id": "W-TfLNDJOK_W"}
@@ -794,7 +788,7 @@ outputId: c5bfa756-3d14-4865-ddb6-2c4d9fac99e0
 import matplotlib.pyplot as plt
 
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
 # define Hamiltonian parameters
@@ -812,7 +806,7 @@ params = {
     }
 }
 
-hamiltonian = HamiltonianDirector(source=params).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params).hamiltonian
 ```
 
 ```{code-cell} ipython3

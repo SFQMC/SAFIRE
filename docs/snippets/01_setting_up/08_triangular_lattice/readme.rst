@@ -22,7 +22,7 @@ afqmctools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from afqmctools.hamiltonian.model.director import HamiltonianDirector
+    from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
     import afqmctools.utils.io as io
     from afqmctools.wavefunction.free_electron import free_electron
     import afqmctools.utils.visualize as vis
@@ -30,9 +30,9 @@ afqmctools can be invoked within a Python script as
     infile = "input.toml"
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian_dir = HamiltonianDirector(source=infile)
-    lattice = hamiltonian_dir.builder.lattice
-    hamiltonian = hamiltonian_dir.build()
+    hamiltonian_builder = HamiltonianBuilder.from_input(source=infile)
+    lattice = hamiltonian_builder.lattice
+    hamiltonian = hamiltonian_builder.hamiltonian
 
     # makes a visualization of the lattice and saves it "lattice.png"
     vis.plot_lattice(

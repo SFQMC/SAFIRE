@@ -21,16 +21,16 @@ autohf and afqmctools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from afqmctools.hamiltonian.model.director import HamiltonianDirector
+    from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
     import afqmctools.utils.io as io
     from autohf import lattice_hf
 
     infile = "input.toml"
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian_dir = HamiltonianDirector(source=infile)
-    lattice = hamiltonian_dir.builder.lattice
-    hamiltonian = hamiltonian_dir.build()
+    hamiltonian_builder = HamiltonianBuilder.from_input(source=infile)
+    lattice = hamiltonian_builder.lattice
+    hamiltonian = hamiltonian_builder.hamiltonian
 
 
     nelec = io.read_input_params(infile)["misc_params"]["nelec"]

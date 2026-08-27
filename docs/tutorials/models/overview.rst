@@ -52,20 +52,12 @@ to ensure that consistent index conventions are used.
 ``afqmctools`` provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
 on a variety of lattices, using consistent conventions for indexing.
 The framework consists of a Lattice class which is responsible for geometry (see the `lattice tutorial <03_setting_up_a_lattice/03_setting_up_a_lattice_executed.html>`_),
-a Hamiltonian builder which is responsible for generating specific Hamiltonian terms on demand given a specific Lattice instance,
-and a Hamiltonian *Director* which is responsible for choosing which build steps to perform based on
-a set of input Hamiltonian parameters.
-Each component of the framework can be used directly; however
-the Director class represents the highest-level interface of the lattice Hamiltonian framework and
-can manage the underlying Lattice instance and Builder instance.
-Users who want direct control over the Hamiltonian build steps can directly
-use the Hamiltonian *Builder*. See the `Hamiltonian Builder <05_hamiltonian_builder/05_hamiltonian_builder.html>`_ for
+and a Hamiltonian *Builder* which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
+The ``HamiltonianBuilder.from_input()`` classmethod accepts a set of input Hamiltonian parameters (as a Python
+dict or a toml file) and automatically runs the corresponding build steps, which covers most use cases.
+Users who want direct control over the Hamiltonian build steps can instead construct a ``HamiltonianBuilder``
+and invoke build steps directly. See the `Hamiltonian Builder <05_hamiltonian_builder/05_hamiltonian_builder.html>`_ for
 more detail.
-It is recommended to use the Director whenever possible.
-
-.. image:: /images/shared/models/00_overview/HamilDirectorSystem.png
-   :width: 1000
-
 
 Imaginary-Time Propagation
 --------------------------

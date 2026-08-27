@@ -144,7 +144,7 @@ for i in range(lattice.N_sites):
 :id: f59857be
 :outputId: 5555c96d-6bfe-445d-89a3-8fc90e952449
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 import afqmctools.utils.io as io
 
 hamiltonian_params = {
@@ -155,10 +155,10 @@ hamiltonian_params = {
     )
 }
 
-hamiltonian = HamiltonianDirector(
+hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice,
     source=hamiltonian_params
-).build()
+).hamiltonian
 
 io.write_model_hamiltonian(
     hamiltonian=hamiltonian,
@@ -292,7 +292,7 @@ vis.plot_lattice(
 
 import numpy as np
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 import afqmctools.utils.io as io
 from afqmctools.wavefunction.free_electron import free_electron
 from afqmctools.inputs.from_hdf import write_json
@@ -382,10 +382,10 @@ hamiltonian_params = {
     )
 }
 
-hamiltonian = HamiltonianDirector(
+hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice,
     source=hamiltonian_params
-).build()
+).hamiltonian
 
 io.write_model_hamiltion(
     hamiltonian=hamiltonian,
@@ -419,7 +419,6 @@ import numpy as np
 import h5py as h5
 
 import afqmctools.systems.lattice as lat
-import afqmctools.hamiltonian.model.director as ham
 import afqmctools.utils.io as io
 import afqmctools.utils.visualize as vis
 from afqmctools.wavefunction.free_electron import free_electron

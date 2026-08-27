@@ -199,7 +199,7 @@ We can generate a free-electron trial wavefunction using the `free_electron` fun
 :id: XDDPCMhvHKRc
 
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import HamiltonianComponent, SpinSymm
 from afqmctools.utils.io import write_model_hamiltonian
 from afqmctools.wavefunction.free_electron import free_electron
@@ -224,13 +224,13 @@ Uhubb = 4.0
 #    hopping[n-1] is 't^{n}'
 hopping = [1.0,0.0]
 
-hamiltonian = HamiltonianDirector(source=dict(
+hamiltonian = HamiltonianBuilder.from_input(source=dict(
     hamiltonian=dict(
         t=hopping,
         U=Uhubb,
     )),
     lattice=lattice
-).build()
+).hamiltonian
 
 nbasis = lattice.N_sites
 
