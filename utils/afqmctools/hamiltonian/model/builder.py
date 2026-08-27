@@ -524,7 +524,8 @@ class HamiltonianBuilder:
 
     @iterate_nth_order(1)
     @skip_empty_params
-    def nth_neighbor_hopping(self,t=1.0,nth_neighbor:int=1,spin_symm=None,opposite_twists=False):
+    def nth_neighbor_hopping(self,t=1.0,nth_neighbor:int=1,spin_symm=None,opposite_twists=False,
+                             force_herm=False):
         r"""adds an nth-order neighbor hopping term to the Hamiltonian
 
         .. math:: \sum_{\langle ij\rangle^n} (-t) \hat{c}^\dagger_i \hat{c}_j
@@ -723,7 +724,7 @@ class HamiltonianBuilder:
 
 
     @skip_empty_params
-    def onebody_onsite(self,epsilon,spin_symm=None):
+    def onebody_onsite(self,epsilon,spin_symm=None,force_herm=False):
         r"""
         Adds an onsite one-body term to the Hamiltonian (for example, a chemical potential,
             band energies, interband hopping, etc.)
