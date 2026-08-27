@@ -14,7 +14,6 @@ import numpy as np
 import scipy.sparse as sps
 
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import SpinSymm
 

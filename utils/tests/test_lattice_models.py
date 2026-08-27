@@ -14,7 +14,6 @@ import numpy as np
 import scipy.sparse as sps
 
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder, skip_empty_params
 from afqmctools.hamiltonian.model.ham_class import SpinSymm
 
@@ -388,7 +387,7 @@ class TestModelHamiltonianBuilder:
         """        
         expected_Umat = np.append(expectedU1,expectedU2,axis=0)
 
-        H = HamiltonianDirector(source=case).build()
+        H = HamiltonianBuilder.from_input(source=case).hamiltonian
 
         interactions = H["Uij"]
         actual_Umat = sum(interactions).toarray()
@@ -463,7 +462,7 @@ class TestModelHamiltonianBuilder:
         #         factors of 1/2 when evaluating the energy.
         expected_Jmat = 4*expectedU1
         
-        H = HamiltonianDirector(source=case).build()
+        H = HamiltonianBuilder.from_input(source=case).hamiltonian
         interactions = H["Uij"]
         actual_Umat_shape = max( [interaction.csr_array.shape for interaction in interactions] )
         actual_Umat = np.zeros(actual_Umat_shape)

@@ -23,7 +23,7 @@ import scipy.sparse.linalg as spsl
 import scipy.linalg as spl
 import scipy.sparse as sps
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import Hamiltonian,SpinSymm,get_spin_symm_enum
 from afqmctools.systems.lattice import Lattice
 from afqmctools.hamiltonian.converter import read_hamiltonian
@@ -119,11 +119,10 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
             lattice_params["twist"] = twist
             lattice = get_lattice(params=lattice_params)
 
-            hamiltonian_director = HamiltonianDirector(
+            hamiltonian = HamiltonianBuilder.from_input(
                 source=source,
                 lattice=lattice
-                )
-            hamiltonian = hamiltonian_director.build()
+                ).hamiltonian
     elif isinstance(source,Hamiltonian):
 
         hamiltonian = source
