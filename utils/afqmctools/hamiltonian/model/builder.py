@@ -9,15 +9,17 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 from warnings import warn
+from pathlib import Path
 import itertools
 import functools
 
 import numpy as np
 import scipy.sparse as sps
 
-from afqmctools.systems.lattice import Lattice
+from afqmctools.systems.lattice import Lattice, get_lattice
 import afqmctools.hamiltonian.model.ham_class as model
 from afqmctools.utils.matrix import force_herm, is_hermitian
+import afqmctools.utils.io as afqmc_io
 
 def skip_empty_params(func):
     """
@@ -106,6 +108,83 @@ def iterate_nth_order(start_n=1):
     return decorator
 
 
+def _get_builder_kwargs(**kwargs):
+    """Select the subset of hamiltonian input params that are forwarded to
+    ``HamiltonianBuilder.__init__``. Defaults ``spin_symm`` to COLLINEAR."""
+    _builder_keys = [
+        'nbands',
+        'spin_symm',
+    ]
+
+    builder_kwargs = {}
+
+    if 'spin_symm' not in kwargs:
+        kwargs['spin_symm'] = model.SpinSymm.COLLINEAR
+
+    for key in _builder_keys:
+        if key in kwargs.keys():
+            builder_kwargs[key] = kwargs[key]
+
+    return builder_kwargs
+
+
+def _parse_ham_input(input):
+    """Translate a 'hamiltonian' input mapping into the sequence of build steps
+    and hamiltonian parameters used by ``HamiltonianBuilder.from_input``.
+
+    Returns
+    -------
+    ham_params : list[tuple[str, object]]
+        (attribute, value) pairs to set on the built Hamiltonian.
+    build_steps : list[tuple[str, list]]
+        (builder method name, positional args) pairs to invoke, in order.
+    """
+    input = dict(input)
+
+    _known_params = {
+        'nbands' : 1,
+        'spindep' : 0 ,
+        'twist' : None,
+        'afm_pin_type': "staggered",
+        'fm_pin_type': "staggered",
+    }
+
+    _supported_steps = {
+        'nth_neighbor_hopping' : 't',
+        'custom_one_body' : 'custom_one_body',
+        'onsite_hubbard' : 'U',
+        'hubbard_U1_density_density' : 'U1',
+        'hubbard_U2_spin_spin' : 'U2',
+        'hubbard_Jij' : 'J',
+        'heisenberg_J' : 'J_heisenberg',
+        'nth_order_hubbard_Vij' : "V",
+        'afm_pinning' : 'h_afm_pin',
+        'fm_pinning' : 'h_fm_pin',
+        'charge_pinning' : 'h_charge_pin',
+    }
+
+    _hst_type_overrides = input.get("hst_types",None)
+
+    # TODO: consider how we want to handle defaulting to 1.0 AND allowing there
+    #        to be no hopping!
+    if input.get('t') is None or 't' not in input.keys():
+        input['t'] = 1.0
+
+    ham_params = [(param, input.get(param, default))
+                  for param, default in _known_params.items()]
+
+    build_steps = []
+    for step,key in _supported_steps.items():
+        if key in input.keys():
+            args = [input[key]]
+            # look for hst override
+            if _hst_type_overrides is not None and key in _hst_type_overrides:
+                args.append(_hst_type_overrides[key])
+            build_steps.append((step,args))
+
+    return ham_params, build_steps
+
+
 class HamiltonianBuilder:
     """Builder class for constructing a Hamiltonian.
 
@@ -171,6 +250,117 @@ class HamiltonianBuilder:
         if "spin_symm" in kwargs.keys():
             self.hamiltonian.spin_symm = kwargs["spin_symm"]
 
+    @classmethod
+    def from_input(
+        cls,
+        source:str|Path|dict,
+        lattice:Lattice=None,
+    ) -> "HamiltonianBuilder":
+        r"""Construct and fully build a HamiltonianBuilder from a declarative input.
+
+        Parses a 'hamiltonian' (and optionally 'lattice') description, runs the
+        corresponding build steps, and finalizes. The returned builder exposes the
+        completed Hamiltonian on ``builder.hamiltonian`` and the lattice on
+        ``builder.lattice``.
+
+        Parameters
+        ----------
+        source : str | pathlib.Path | dict
+            a description of the Hamiltonian (and possibly lattice) parameters.
+            If a str/Path is given, it is interpreted as a .toml input file and
+            parameters are read from that file. If a dict is given, parameters are
+            read directly from the dict.
+        lattice : afqmctools.systems.lattice.Lattice, optional
+            the Lattice instance describing the lattice geometry. If not specified,
+            the lattice is built from ``source['lattice']``.
+
+        Notes
+        -----
+        The Hamiltonian is built by a sequence of build steps specified as
+        key-value pairs in the 'hamiltonian' section of the input. By default,
+        nearest-neighbor hopping is included; all interaction terms must be
+        explicitly included in the input. See the ``HamiltonianBuilder`` build-step
+        methods for finer control and full input conventions.
+
+        The following build steps are supported, listed as `key : description`:
+
+        - t : nth-order neighbor hopping term; input convention are as follows:
+
+          - if t is a scalar, then nearest-neighbor hopping is included with strength t
+          - if t is a 1-dimensional list (i.e. [t1,t2,...,tn]), then up to nth-order hopping is included
+          - if t is a 2-dimensional with shape (nbands, nbands), then
+            the t is interpreted as an on-site inter-band hopping matrix
+          - if t is a list of 2-dimensional arrays, then each element is interpreted as an on-site
+            inter-band hopping matrix. This is functionally the same as :math:`t_{mn} = \sum t^{(i)}_{mn}`
+            where :math:`t^{(i)}` is the ith element of the list and :math:`m,n` are band indices.
+
+        - U : onsite Hubbard interaction term; input convention are as follows:
+
+          - if U is a scalar, then the onsite Hubbard interaction term is included with strength U
+            and applied to all sites and bands.
+          - if U is 1-dimensional with length nbands (i.e. [U1,U2,...,Um] where for an m-band model),
+            then the onsite Hubbard interaction term is included with strength U_i applied to band i
+            and uniformly across sites.
+          - if U is 1-dimensional with length nsites (i.e. [U1,U2,...,Un] where n is the number of sites),
+            then the onsite Hubbard interaction term is included with strength U_i applied to site i
+            and uniformly across bands.
+
+        - U1 : Hubbard density-density interaction term. Input convention are as follows:
+
+          - if U1 is a scalar, then the Hubbard density-density interaction term is included with strength U1
+            and is applied to all sites, and is uniform across bands.
+          - if U1 is a 2-dimensional with shape (nbands, nbands), then U1 is used as an intrasite density-density
+            interaction, and is applied uniformly across sites.
+
+        - U2 : Hubbard spin-spin interaction term. Input convention are as follows:
+
+          - if U2 is a scalar, then the Hubbard spin-spin interaction term is included with strength U2
+            and is applied to all sites, and is uniform across bands.
+          - if U2 is a 2-dimensional with shape (nbands, nbands), then U2 is used as an intrasite spin-spin
+            interaction, and is applied uniformly across sites.
+
+        - J : Hund's coupling interaction term. Input convention are as follows:
+
+          - if J is a scalar, then the Hund's coupling interaction term is included with strength J
+            and is applied to all sites, and is uniform across bands.
+          - if J is a 2-dimensional with shape (nbands, nbands), then J is used as an intrasite
+            Hund's coupling interaction, and is applied uniformly across sites.
+
+        Examples
+        --------
+        >>> builder = HamiltonianBuilder.from_input("input.toml")
+        >>> hamiltonian = builder.hamiltonian
+        """
+        if isinstance(source,(str,Path)):
+            source_dict = afqmc_io.read_input_params(source)
+        elif isinstance(source,dict):
+            source_dict = source
+        else:
+            raise ValueError(
+                "Invalid parameter source."
+                " source must be either a dict, or a str"
+                " containing the file name of a toml input file"
+            )
+
+        ham_input = source_dict['hamiltonian']
+        ham_params, build_steps = _parse_ham_input(ham_input)
+
+        if lattice is None:
+            print("No lattice instance supplied: building from parameters")
+            lattice = get_lattice(params=source_dict['lattice'])
+
+        builder = cls(lattice=lattice, **_get_builder_kwargs(**ham_input))
+
+        for param,value in ham_params:
+            setattr(builder.hamiltonian,param,value)
+
+        for step,args in build_steps:
+            print(f"running build step {step}({*args,})")
+            getattr(builder,step)(*args)
+
+        builder.finalize()
+
+        return builder
 
     def _add_term(self,key,term:model.HamiltonianComponent):
         """
