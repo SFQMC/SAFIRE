@@ -40,7 +40,7 @@ import numpy as np
 import afqmctools.systems.lattice as lat
 import afqmctools.utils.visualize as vis
 import afqmctools.utils.io as io
-import afqmctools.hamiltonian.model.director as ham
+import afqmctools.hamiltonian.model.builder as ham
 
 from afqmctools.wavefunction.converter import read_wavefunction
 from afqmctools.wavefunction.model import write_free_electron_wfn

@@ -77,7 +77,7 @@ colab:
   height: 979
 outputId: 20f4b568-da4f-4137-fb6f-575426ee0d09
 ---
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 import afqmctools.utils.io as io
 from afqmctools.systems.lattice import get_lattice
 import afqmctools.utils.visualize as vis
@@ -104,10 +104,10 @@ hamiltonian_params = {
 }
 
 # Step 3.b. build the lattice model Ha
-hamiltonian = HamiltonianDirector(
+hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice,
     source=hamiltonian_params
-).build()
+).hamiltonian
 ```
 
 +++ {"id": "MqK7sb3Z5xcn"}

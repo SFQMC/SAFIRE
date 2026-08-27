@@ -81,7 +81,7 @@ A Hamiltonian may be built from a Python ``dict`` as follows:
 
 .. code:: python
 
-   from afqmctools.hamiltonian.director import HamiltonianDirector
+   from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 
    params = {
        'hamiltonian' : {
@@ -98,9 +98,9 @@ A Hamiltonian may be built from a Python ``dict`` as follows:
      }
    }
 
-   hamiltonian = HamiltonianDirector(
+   hamiltonian = HamiltonianBuilder.from_input(
        source = params
-   ).build()
+   ).hamiltonian
 
    ...
 

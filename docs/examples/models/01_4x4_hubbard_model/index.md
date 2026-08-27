@@ -107,7 +107,7 @@ colab:
   base_uri: https://localhost:8080/
 outputId: 601a13a7-15f4-49d9-ba6a-01fb4ba3b173
 ---
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 import afqmctools.utils.io as io
 
 print(scratch_dir)
@@ -124,10 +124,10 @@ hamiltonian_params = {
 }
 
 # Step 3.b. build the lattice model Ha
-hamiltonian = HamiltonianDirector(
+hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice,
     source=hamiltonian_params
-).build()
+).hamiltonian
 
 # set the number of electrons - we'll use this again
 nelec = (8,8)

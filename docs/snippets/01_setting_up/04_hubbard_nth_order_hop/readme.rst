@@ -17,14 +17,14 @@ afqmctools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from afqmctools.hamiltonian.model.director import HamiltonianDirector
+    from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
     import afqmctools.utils.io as io
     from afqmctools.wavefunction.free_electron import free_electron
 
     infile = "input.toml"
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian = HamiltonianDirector(infile).build()
+    hamiltonian = HamiltonianBuilder.from_input(infile).hamiltonian
     nelec = io.read_input_params(infile)["misc_params"]["nelec"]
     io.write_model_hamiltion(
         hamiltonian=hamiltonian,

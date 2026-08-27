@@ -78,7 +78,7 @@ We will explore this in more detail below.
 ```{code-cell} ipython3
 from afqmctools.systems.lattice import get_lattice
 from afqmctools.utils.visualize import plot_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from pathlib import Path
 
 scratch_dir = Path("data")
@@ -103,7 +103,7 @@ params = dict(
     )
 )
 
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 
 from afqmctools.utils.io import write_model_hamiltonian
 

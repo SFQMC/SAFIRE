@@ -114,7 +114,7 @@ id: c844616d-45c5-498a-b6f9-c995027965e6
 outputId: 855ebc93-90d5-4e84-94ff-e974f19587fc
 ---
 from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.io import write_model_hamiltonian
 from afqmctools.inputs.from_autohf import autohf_to_afqmc
 
@@ -148,7 +148,7 @@ params = {
 
 lattice = get_lattice(lattice_params)
 
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 
 write_model_hamiltonian(
     hamiltonian=hamiltonian,
@@ -168,7 +168,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-hamiltonian_for_autohf = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian_for_autohf = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 
 
 hf_settings = dict(

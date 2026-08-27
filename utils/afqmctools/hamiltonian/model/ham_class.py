@@ -45,8 +45,8 @@ class Hamiltonian:
     
     Design notes for Developers:
 
-    - should serve only as a container for Hamiltonian terms 
-        which are built via the Director-Builder pattern.
+    - should serve only as a container for Hamiltonian terms
+        which are built via the HamiltonianBuilder.
     - this class should not directly reference the underlying lattice.
     """
 

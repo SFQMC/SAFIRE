@@ -57,7 +57,7 @@ import numpy as np
 
 from afqmctools.systems.lattice import get_lattice
 from afqmctools.utils.visualize import plot_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 import afqmctools.utils.io as io
 
 lattice = get_lattice(
@@ -82,10 +82,10 @@ params = {
 }
 
 # make the Hamiltonian
-hamiltonian = HamiltonianDirector(
+hamiltonian = HamiltonianBuilder.from_input(
     source=params,
     lattice=lattice
-).build()
+).hamiltonian
 
 # save for AFQMC
 io.write_model_hamiltonian(hamiltonian,fname=scratch_dir/"afqmc.h5")
@@ -110,10 +110,10 @@ params = {
 }
 
 # make the Hamiltonian
-effective_hamiltonian = HamiltonianDirector(
+effective_hamiltonian = HamiltonianBuilder.from_input(
     source=params,
     lattice=lattice
-).build()
+).hamiltonian
 
 # convert afqmctools Hamitlonian to AutoHFHamiltonian
 autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)

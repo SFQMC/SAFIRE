@@ -206,7 +206,7 @@ in the section [Model Hamiltonian Builder Input Conventions](#model-hamiltonian-
 A Hamiltonian may be built from a Python `dict` as follows:
 
 ```python
-from afqmctools.hamiltonian.director import InputFileDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 
 params = {
     'hamiltonian' : {
@@ -223,9 +223,9 @@ params = {
   }
 }
 
-hamiltonian = InputFileDirector(
+hamiltonian = HamiltonianBuilder.from_input(
     source = params
-).build()
+).hamiltonian
 
 ...
 
