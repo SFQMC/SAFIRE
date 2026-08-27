@@ -28,7 +28,7 @@ if USE_PYSCF:
 from afqmctools.utils.linalg import modified_cholesky_direct, get_ortho_ao
 from afqmctools.utils.slater_types import _SlaterType
 import afqmctools.systems.lattice as lat
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 
 
 def pytest_addoption(parser):
@@ -384,7 +384,7 @@ def oxygen_uhf(oxygen_rohf,tmp_path_factory):
 
 @pytest.fixture(scope='session')
 def hubbard_kanamori_6x1():
-    return HamiltonianDirector(
+    return HamiltonianBuilder.from_input(
         source={"hamiltonian" : dict(
             U=2.0,
             U1=1.5,
@@ -393,5 +393,5 @@ def hubbard_kanamori_6x1():
             nbands=2
         )},
         lattice=lat.SquareLattice(L=(6,1),axis1_boundary=lat.PBCBoundary),
-    ).build()
+    ).hamiltonian
 
