@@ -62,7 +62,14 @@ packages = [
     "cli",
     "stats",
     "stats.lib",
-    "tutorial_utils"
+    "tutorial_utils",
+    "safiretools",
+    "safiretools.analysis",
+    "safiretools.hamiltonian",
+    "safiretools.hamiltonian.model",
+    "safiretools.wavefunction",
+    "safiretools.convert",
+    "safiretools.qe"
 ]
 
 [project.scripts]
