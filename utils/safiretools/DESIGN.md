@@ -66,7 +66,7 @@ safiretools/
 │   │   ├── builder.py         # HamiltonianBuilder — public, used internally by from_dict()
 │   │   ├── lattice_hamiltonian.py  # LatticeHamiltonian(Hamiltonian)
 │   │   └── lattice.py         # Lattice (ABC) + SquareLattice/TriangularLattice/
-│   │                          #   HoneycombLattice/KagomeLattice, moved from
+│   │                          #   HoneycombLattice/KagomeLattice/CustomLattice, moved from
 │   │                          #   afqmctools/systems/lattice.py. Lattice.from_dict(params)
 │   │                          #   classmethod replaces the free function get_lattice(params) —
 │   │                          #   dispatches to the right concrete subclass. No standalone
@@ -130,16 +130,56 @@ plain attributes (not subclasses) for what's just *data* (spin_symm) or *provena
 external tool/domain built it).
 
 **`Lattice`** follows the same shape too: an ABC with concrete subclasses per lattice type
-(`SquareLattice`/`TriangularLattice`/`HoneycombLattice`/`KagomeLattice`), a `Lattice.from_dict()`
-classmethod replacing today's free-function `get_lattice()` factory, and no standalone
-`to_hdf5()`/`from_hdf5()` — it's only ever persisted embedded in a `LatticeHamiltonian`'s HDF5
-file. Exposed at the top level (`from safiretools import Lattice`) since users may want to
-construct/inspect lattice geometry independent of building a full Hamiltonian; only the base
-class is re-exported, not the concrete subclasses — `from_dict()` handles dispatch.
+(`SquareLattice`/`TriangularLattice`/`HoneycombLattice`/`KagomeLattice`, plus `CustomLattice` —
+see below), a `Lattice.from_dict()` classmethod replacing today's free-function `get_lattice()`
+factory, and no standalone `to_hdf5()`/`from_hdf5()` — it's only ever persisted embedded in a
+`LatticeHamiltonian`'s HDF5 file. Exposed at the top level (`from safiretools import Lattice`)
+since users may want to construct/inspect lattice geometry independent of building a full
+Hamiltonian; only the base class is re-exported, not the concrete subclasses — `from_dict()`
+handles dispatch.
+
+### Unit-cell geometry belongs to the lattice type
+
+`a1`, `a2` and `basis` **always exist** on a `Lattice` instance, but for the built-in types they
+are not caller-settable: they *are* the type. A `SquareLattice` is square precisely because its
+lattice vectors are the unit x- and y-vectors, and a `HoneycombLattice` is a honeycomb precisely
+because of its 2-site basis — handing either a different `a1` would produce something that is no
+longer the type it claims to be.
+
+**`CustomLattice` is the one subclass that takes `a1`/`a2`/`basis`, and defining your own unit
+cell is exactly what makes a lattice "custom."** It is therefore the supported way to build a
+lattice whose geometry isn't one of the built-in types, not a redundant alias for them. (It is
+also why `CustomLattice` is ported rather than dropped, even though the port fixes the bug that
+made the built-in types ignore geometry arguments.)
+
+Mechanically: each concrete type implements an abstract `_geometry() -> (a1, a2, basis)` hook, and
+the `Lattice` constructor — the only one, with no `**kwargs` — takes no geometry arguments at all,
+so the built-in types cannot accept them even by accident. Passing `a1`/`a2`/`basis` to a built-in
+type raises `TypeError`; the equivalent keys in a `from_dict()` parameter dict raise `ValueError`
+(a key present but set to `None` is fine, so parameter templates carrying unused keys still work).
+
+**The geometry is also immutable, not merely un-settable at construction.** `a1`/`a2`/`basis` are
+read-only properties over private backing state; the arrays they return have `writeable=False` and
+`basis` is a tuple, so the geometry can be neither replaced (`lattice.a1 = ...`) nor edited in place
+(`lattice.a1[0] = ...`, `lattice.basis.append(...)`). Construction copies whatever `_geometry()`
+returns before freezing it, so freezing never reaches an array the caller still holds. `cyl_mode`
+reshaping the cell inside `build()` is the one place the geometry changes, it is derived from the
+type's own `_geometry()` rather than from the caller, and building twice raises `RuntimeError` — so
+once a lattice is built its geometry is fixed. (`L` also changes under `cyl_mode` and is left a
+plain attribute; only the three geometry members are locked down.)
+
+`cyl_mode` itself is restricted to `TriangularLattice`. The XC/YC reshaping rotates `a2` onto
+`-a1 + 2*a2` and doubles the basis along `a2`, which is only the correct cell for hexagonal
+geometry — the old code said as much in a docstring but accepted the argument from any lattice type
+and silently produced a wrong cell. It now raises `ValueError` for every other type, `CustomLattice`
+included.
 
 Known bugs in `afqmctools/systems/lattice.py` to fix during the port (independent of the above):
 `get_lattice()`'s `a1`/`a2` overrides are silently discarded for every built-in lattice type
-(absorbed into `**kwargs`, never applied); `_neighbor_distance_map`'s `min_distance` parameter is
+(absorbed into `**kwargs`, never applied) — per the rule above the fix is to **reject** them
+loudly, not to start honoring them, and the same applies to `basis`, which the two types that
+define a default one (honeycomb/kagome) also discarded while square/triangular honored it;
+`_neighbor_distance_map`'s `min_distance` parameter is
 passed by `__init__` but doesn't exist on the method signature (`TypeError` if ever non-`None`,
 currently untested/unhit); `_is_allowed_site` is defined twice back-to-back (identical bodies);
 dead rotation-group neighbor-generation code (`ROTATION_GROUP`, `_rotations()`,
