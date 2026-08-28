@@ -193,19 +193,19 @@ In the `write_wfn` function, there is an `init` parameter that accepts the initi
 
 ## Example: free electron trial wavefunction
 
-We can generate a free-electron trial wavefunction using the `free_electron` function within `afqmctools`. First, we set up the lattice using the `get_lattice` function (in this case a square 4 x 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file "wfn.h5".
+We can generate a free-electron trial wavefunction using the `free_electron` function within `afqmctools`. First, we set up the lattice using `safiretools`' `Lattice.from_dict` (in this case a square 4 x 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file "wfn.h5".
 
 ```{code-cell} ipython3
 :id: XDDPCMhvHKRc
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import HamiltonianComponent, SpinSymm
 from afqmctools.utils.io import write_model_hamiltonian
 from afqmctools.wavefunction.free_electron import free_electron
 
 # define lattice
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=dict(
         L1 = 4,
         L2 = 4,

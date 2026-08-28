@@ -81,7 +81,7 @@ colab:
   height: 855
 outputId: c0edb976-6ddc-4ada-eb2f-66c8587a93b7
 ---
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 # Step 1. define the lattice parameters
@@ -93,7 +93,7 @@ lattice_params = dict(
 )
 
 # Step 3.a. build the lattice
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 

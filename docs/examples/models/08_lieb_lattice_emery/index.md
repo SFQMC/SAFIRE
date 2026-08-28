@@ -38,13 +38,15 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 :id: 3f6aeee9-53bd-41a8-be26-f00472aaf8f5
 :outputId: 41c1c867-f098-44c7-d47d-dfcb8232728e
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
     L1 = 4,
     L2 = 4,
-    type = 'square',
+    type = 'custom',   # a basis of our own choosing means a custom lattice
+    a1 = [1.0,0.0],
+    a2 = [0.0,1.0],
     basis = [
         [0.,0.],    # Cu 3d_{x^2 - y^2}
         [0.5,0.0],  # O 2p_x
@@ -52,7 +54,7 @@ lattice_params = dict(
     ]
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -314,7 +316,7 @@ lattice_params = dict(
     boundary2 = 'PBC'
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -418,7 +420,7 @@ This is a benchmarking script, so we'll keep things basic
 import numpy as np
 import h5py as h5
 
-import afqmctools.systems.lattice as lat
+from safiretools import Lattice
 import afqmctools.utils.io as io
 import afqmctools.utils.visualize as vis
 from afqmctools.wavefunction.free_electron import free_electron
@@ -597,14 +599,16 @@ def make_emery(lattice, show_mats=False):
 # 1. define the lattice
 basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
 
-lattice = lat.CustomLattice(
-    L=(4,4),
+lattice = Lattice.from_dict(dict(
+    L1=4,
+    L2=4,
+    type='custom',
     a1=np.array((1.0,-1.0)),
     a2=np.array((1.0,1.0)),
     basis=basis,
-    axis1_boundary=lat.PBCBoundary,
-    axis2_boundary=lat.PBCBoundary,
-)
+    boundary1='pbc',
+    boundary2='pbc',
+))
 
 if show_lattice_before:
     vis.plot_lattice(
@@ -622,13 +626,15 @@ THETA_X = 1/np.sqrt(592560607) # 592560607 is prime
 THETA_Y = 1/np.sqrt(47603)     # 47603 is prime
 twist = np.array((THETA_X,THETA_Y))
 
-lattice_wt_twist = lat.CustomLattice(
-    L=(4,4),
+lattice_wt_twist = Lattice.from_dict(dict(
+    L1=4,
+    L2=4,
+    type='custom',
     a1=np.array((1.0,-1.0)),
     a2=np.array((1.0,1.0)),
     basis=basis,
-    twist=twist
-)
+    twist=twist,
+))
 
 hamiltonian2 = make_emery(lattice_wt_twist)
 

@@ -114,7 +114,7 @@ are included.
 ```{code-cell} ipython3
 :id: fdf7cd0e-b553-4ac1-8f0f-1730a3faf403
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.io import write_model_hamiltonian
 from pathlib import Path
@@ -122,7 +122,7 @@ from pathlib import Path
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params={
         'L1' : 4,
         'L2' : 4,
@@ -261,9 +261,9 @@ import scipy.sparse as sps
 import numpy as np
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import SpinSymm
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=dict(
         L1 = 4,
         L2 = 4,

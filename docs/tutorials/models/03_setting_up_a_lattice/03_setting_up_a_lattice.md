@@ -16,15 +16,16 @@ kernelspec:
 # Lattice class tutorial
 
 In this tutorial, we will learn how to set up a lattice to define a Model Hamiltonian (See __LATTICE_HAMIL_TUTORIAL__ for details on building a Hamiltonian).
-The `afqmctools` Python package implements a Lattice class which is responsible for answering geometric questions about a specific lattice such as:
+The `safiretools` Python package implements a Lattice class which is responsible for answering geometric questions about a specific lattice such as:
 
 - what are the boundary conditions
 - what are the $n^{th}$-nearest neighbors
 - which of those neighbors are "direct" neighbors, and which are image neighbors
 
 and more.
-`afqmctools` provides a convenience function, `get_lattice()` to build a Lattice instance given a set of geometric parameters.
-In this tutorial, we will explore how the Lattice class works, and the available options for building a Lattice via `get_lattice()`.
+`Lattice` is an abstract base class with one concrete subclass per lattice type; its
+`Lattice.from_dict()` classmethod builds the right one for you given a set of geometric parameters.
+In this tutorial, we will explore how the Lattice class works, and the available options for building a Lattice via `Lattice.from_dict()`.
 
 ## Lattice formalism
 
@@ -47,9 +48,9 @@ is used to apply a phase where $\theta_1$/$\theta_2$ is applied when boundary 1 
 
 TODO add a figure illustrating this.
 
-## Summary of get_lattice()
+## Summary of Lattice.from_dict()
 
-The `get_lattice()` function takes a Python dictionary containing "lattice parameters" as an argument and returns a Lattice instance based on the provided "lattice parameters".
+The `Lattice.from_dict()` classmethod takes a Python dictionary containing "lattice parameters" as an argument and returns a Lattice instance based on the provided "lattice parameters".
 
 We'll explore the available options individually, but possible lattice parameters are:
 
@@ -59,7 +60,11 @@ We'll explore the available options individually, but possible lattice parameter
 - `boundary1` : the boundary *type* of the boundary normal to $\vec{a}_1$ (at $0 * \vec{a}_1$ and $L_1 * \vec{a}_1$ ). Defaults to an open boundary if not specified.
 - `boundary2` : the boundary *type* of the boundary normal to $\vec{a}_2$ (at $0 * \vec{a}_2$ and $L_2 * \vec{a}_2$ ). Defaults to an open boundary if not specified.
 - `twist` : the twist angle to apply, given as $\vec{\theta} = (\theta_1,\theta_2)$ in units of radians. Defaults to (0.0,0.0)
-- `basis` : the set of lattice basis vectors, $\delta_{n}$. Defaults to {(0.0,0.0)}
+- `a1`, `a2`, `basis` : the lattice vectors and basis. **Only for `type='custom'`** — every other type
+  defines its own geometry, and setting these for one of them is an error. See
+  [Lattice basis](#lattice-basis) and [Custom lattices](#custom-lattices) below.
+- `cyl_mode` : reshape the unit cell to be rectangular, `'XC'` or `'YC'`. **Only for
+  `type='triangular'`**, since the reshaping is hardcoded for hexagonal geometry.
 
 Below is a minimal example of building a lattice allowing most parameters to take on default values.
 We also use `afqmctool`'s `plot_lattice()` function so that we can visualize what we have made.
@@ -67,7 +72,7 @@ We also use `afqmctool`'s `plot_lattice()` function so that we can visualize wha
 ```{code-cell} ipython3
 :id: 68d02ad8-c469-49b2-a54c-f8611c4ecb68
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -75,7 +80,7 @@ lattice_params = dict(
     L2 = 4
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -164,7 +169,7 @@ neighbors with a black dotted line.
 ```{code-cell} ipython3
 :id: 08d214dc-f42a-48ca-9215-f17f86f481fa
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -174,7 +179,7 @@ lattice_params = dict(
     boundary2 = "pbc",
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -216,7 +221,7 @@ consistent with the boundaries.
 For example, in the code block
 
 ```python
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -227,7 +232,7 @@ lattice_params = dict(
     twist = ["1/2 Pi", "1/2 Pi"]
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 ```
@@ -248,7 +253,7 @@ Try building a few of these in the code block below.
 ```{code-cell} ipython3
 :id: 590508fb-00bd-4bb6-9e3a-03b95a19ba01
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -259,7 +264,7 @@ lattice_params = dict(
     type = "honeycomb"
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -270,42 +275,37 @@ vis.plot_lattice(lattice,title="Honeycomb lattice",show_labels=False)
 
 ## Lattice basis
 
-For the `square` lattice type, a lattice basis can be optionally supplied
-by setting `basis` in `lattice_params` to a list of vectors which
-represent the basis vectors **in spatial coordinates**.
-Currently only 2-dimensional lattices are supported, and all basis vectors
-must be 2-dimensional.
+The lattice vectors $\vec{a}_1$, $\vec{a}_2$ and the basis $\{ \delta_p \}$ are
+fixed by the lattice `type` — they are what *makes* a type that type.
+A `square` lattice is square precisely because its lattice vectors are the unit
+x- and y-vectors and it has one site per cell; the honeycomb and kagome lattices
+are the triangular lattice with a predefined 2- and 3-site basis, respectively.
 
-Note that the honeycomb lattice and the kagome lattice are both special cases
-of the triangular lattice with a basis that has been predefined.
-If a basis is provided in `lattice_params` for either of these lattices, it will
-be ignored.
+Consequently, setting `a1`, `a2` or `basis` in `lattice_params` for any of these
+types raises an error rather than being silently ignored:
+
+```{code-cell} ipython3
+from safiretools import Lattice
+
+try:
+    Lattice.from_dict(dict(L1=4, L2=4, type="square", basis=[[0.0,0.0],[0.5,0.5]]))
+except ValueError as e:
+    print("ValueError:", e)
+```
+
+To choose your own lattice vectors and basis, use the `custom` lattice type
+described in the next section — that is exactly what it is for.
+
+<div class="alert alert-block alert-info">
+<b>Note:</b>
+    Earlier versions of this tooling accepted <code>a1</code>/<code>a2</code>/<code>basis</code>
+    for the built-in types and then discarded them, so a lattice could quietly
+    differ from the one you asked for. Those keys are now rejected.
+</div>
 
 ### Exercise
 
-Play around with setting a basis.
-
-```{code-cell} ipython3
-:id: 77d03832-f8f2-4854-8e87-ce2f2946c191
-
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = "square",
-    basis = [[0.0],[0.5]]
-)
-
-lattice = get_lattice(
-    params=lattice_params
-)
-
-vis.plot_lattice(lattice,title="Square lattice with a basis",show_labels=False)
-```
+Play around with setting a basis, using the `custom` type below.
 
 +++ {"id": "67ef466a-2411-4d21-8fa1-8a2516db44e4"}
 
@@ -313,15 +313,17 @@ vis.plot_lattice(lattice,title="Square lattice with a basis",show_labels=False)
 
 If the lattice that you want is not specifically implemented, you can use the
 "custom" lattice.
-You will need to specify the lattice vectors, $\vec{a}_1$, and $\vec{a}_2$,
-and the lattice basis, $\{ \delta_p \}$.
+Defining the unit cell yourself is exactly what makes a lattice "custom", so this
+is the one type for which `a1`, `a2` and `basis` are accepted — and `a1` and `a2`
+are required.
+`basis` is optional and defaults to a single site at the cell origin.
 
 ```{code-cell} ipython3
 :id: 1f3486b9-62ab-4687-a322-295de51b8ae8
 :outputId: 220c8539-682a-473b-ce17-592734b4f775
 
 import numpy as np
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
@@ -337,7 +339,7 @@ lattice_params = dict(
     a2=np.array((1.0,1.0)),
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     lattice_params
 )
 vis.plot_lattice(lattice,title="Lieb lattice with tilted cell",show_labels=False)
@@ -372,7 +374,7 @@ lattice_params = dict(
     a2=np.array((1.0,1.0)),
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     lattice_params
 )
 vis.plot_lattice(
@@ -395,17 +397,19 @@ about mapping atoms in a solid onto a lattice model without the complication of 
 ```{code-cell} ipython3
 :id: 3c519903-9583-4236-9e64-192a8026b087
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
     L1 = 1,
     L2 = 1,
-    type = 'square',
+    type = 'custom',
+    a1 = [1.0,0.0],
+    a2 = [0.0,1.0],
     basis = [[0.,0.],[-0.5,-0.5],[0.5,-0.5]]
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -422,17 +426,19 @@ The Cu and O atoms are arranged in the Lieb lattice as shown below.
 ```{code-cell} ipython3
 :id: d4955fae-dac3-4197-a3b5-f35bf51b103e
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
     L1 = 4,
     L2 = 4,
-    type = 'square',
+    type = 'custom',
+    a1 = [1.0,0.0],
+    a2 = [0.0,1.0],
     basis = [[0.,0.],[0.5,0.0],[0.0,0.5]]
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -446,7 +452,7 @@ vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 3eac1b2a-f2e9-4416-81bb-88d02fb5952b
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -457,7 +463,7 @@ lattice_params = dict(
     type = 'kagome'
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -467,7 +473,7 @@ vis.plot_lattice(lattice,title="Kagome Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: ae7e9e7c-896b-4ce4-86c7-98f6951756f7
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -478,7 +484,7 @@ lattice_params = dict(
     type = 'triangular'
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -488,7 +494,7 @@ vis.plot_lattice(lattice,title="Triangular Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 9767452c-454d-4e3f-99a6-42a35f501b35
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -499,7 +505,7 @@ lattice_params = dict(
     type = 'honeycomb'
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -509,7 +515,7 @@ vis.plot_lattice(lattice,title="Honeycomb Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 669f3165-f665-4fbc-940b-5783f111b1a9
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -520,7 +526,7 @@ lattice_params = dict(
     type = 'square'
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 

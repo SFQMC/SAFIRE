@@ -59,7 +59,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 :id: 254dc31a-b763-4cb3-9867-5129279b9c2b
 :outputId: c065dd3d-6070-4a49-80ef-e02029ba7b13
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.utils.visualize import plot_lattice
 
 lattice_params = {
@@ -69,7 +69,7 @@ lattice_params = {
     "boundary2" : "open"
 }
 
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 
 plot_lattice(lattice,show_coords=False)
 ```

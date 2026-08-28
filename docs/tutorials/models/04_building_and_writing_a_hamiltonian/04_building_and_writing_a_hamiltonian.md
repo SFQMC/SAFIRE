@@ -212,7 +212,7 @@ colab:
 id: 6QgfLv7kOK_V
 outputId: c3552c28-5791-45f0-ae57-39f29435e27d
 ---
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
@@ -234,7 +234,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 plot_lattice(lattice)
 
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
@@ -344,7 +344,7 @@ outputId: 731d316b-7dbb-4990-f273-0ad6da75081a
 ---
 import matplotlib.pyplot as plt
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
@@ -409,7 +409,7 @@ colab:
 id: i0l8VxorOK_W
 outputId: 4113cab3-7b9d-4366-edb5-ff8b22bd89fd
 ---
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
@@ -422,7 +422,7 @@ lattice_params = {
     'boundary2': 'PBC'
 }
 
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 
 
 # define Hamiltonian parameters
@@ -467,7 +467,7 @@ colab:
 id: jN42bp5cOK_W
 outputId: d257ba45-6561-41df-a581-8a19e1f73a2a
 ---
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
@@ -479,7 +479,7 @@ lattice_params = {
     'boundary1': 'PBC',
     'boundary2': 'PBC'
 }
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 
 
 # define Hamiltonian parameters
@@ -518,7 +518,7 @@ plot_lattice(
 ```{code-cell} ipython3
 :id: _6grG3FOOK_X
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
@@ -530,7 +530,7 @@ lattice_params = {
     'boundary1': 'PBC',
     'boundary2': 'PBC'
 }
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 
 
 # define Hamiltonian parameters
@@ -710,7 +710,7 @@ colab:
 id: D72pRPc6OK_X
 outputId: b6f1c99c-e33b-4574-d108-3a2ea7f66d89
 ---
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 
@@ -736,7 +736,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 plot_lattice(lattice)
 
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
@@ -787,7 +787,7 @@ outputId: c5bfa756-3d14-4865-ddb6-2c4d9fac99e0
 ---
 import matplotlib.pyplot as plt
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.visualize import plot_lattice
 

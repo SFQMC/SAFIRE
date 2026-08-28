@@ -37,7 +37,7 @@ import numpy as np
 
 # all the imports used later in the tutorial, but put here for convenience
 
-import afqmctools.systems.lattice as lat
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 import afqmctools.utils.io as io
 import afqmctools.hamiltonian.model.builder as ham
@@ -102,7 +102,7 @@ lattice_params = {
 :id: b2a30f8a-5c48-4272-b0df-14d9c2062e59
 :outputId: 9a69fa7d-1093-4d5a-8245-f57f3639017c
 
-lattice = lat.get_lattice(params=lattice_params)
+lattice = Lattice.from_dict(params=lattice_params)
 
 Ne = int(lattice.N_sites)//2
 nelec = (Ne,Ne)

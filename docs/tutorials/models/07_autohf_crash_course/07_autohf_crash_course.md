@@ -79,7 +79,7 @@ outputId: 20f4b568-da4f-4137-fb6f-575426ee0d09
 ---
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 import afqmctools.utils.io as io
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
@@ -89,7 +89,7 @@ lattice_params = dict(
     boundary2 = 'PBC',
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
