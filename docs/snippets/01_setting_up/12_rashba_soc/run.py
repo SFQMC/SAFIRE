@@ -1,10 +1,10 @@
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import SpinSymm
 import afqmctools.utils.io as io
 from afqmctools.wavefunction.free_electron import free_electron
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=dict(
         L1 = 3,
         L2 = 3,

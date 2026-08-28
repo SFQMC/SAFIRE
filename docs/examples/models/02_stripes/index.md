@@ -37,7 +37,7 @@ config.update("jax_enable_x64", True)
 import matplotlib.pyplot as plt
 import numpy as np
 
-import afqmctools.systems.lattice as lat
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 import afqmctools.utils.io as io
 import afqmctools.hamiltonian.model.builder as ham
@@ -95,9 +95,9 @@ lattice_params = {
     'boundary2' : 'PBC'
 }
 
-import afqmctools.systems.lattice as lat
+from safiretools import Lattice
 
-lattice = lat.get_lattice(params=lattice_params)
+lattice = Lattice.from_dict(params=lattice_params)
 
 Ne = int(lattice.N_sites*(1-0.2))//2
 nelec = (Ne,Ne)

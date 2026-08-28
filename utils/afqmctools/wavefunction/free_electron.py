@@ -63,7 +63,7 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
         spin symmetry to use
     use_dense : bool
         whether to use dense matrix operations (default: True)
-    lattice : Lattice, optional
+    lattice : afqmctools.systems.lattice.Lattice, optional
         pre-constructed lattice object
     return_autohf : bool
         whether to return AutoHF results (default: False)

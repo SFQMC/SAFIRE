@@ -76,7 +76,7 @@ We will explore this in more detail below.
 ## Defining the Hamiltonian
 
 ```{code-cell} ipython3
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.utils.visualize import plot_lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from pathlib import Path
@@ -84,7 +84,7 @@ from pathlib import Path
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=dict(
         L1 = 4,
         L2 = 4,
@@ -329,7 +329,7 @@ run_afqmc(
 import numpy as np
 from warnings import warn
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.utils.visualize import plot_lattice
 from afqmctools.analysis.average import average_pair_correlation
 

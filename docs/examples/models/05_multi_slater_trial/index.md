@@ -55,12 +55,12 @@ outputId: 51107f5c-4186-4817-9e97-990b46c79acc
 # setup the Hamiltonian
 import numpy as np
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.utils.visualize import plot_lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 import afqmctools.utils.io as io
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=dict(
         L1 = 6,
         L2 = 6,

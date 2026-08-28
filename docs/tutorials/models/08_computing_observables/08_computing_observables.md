@@ -113,7 +113,7 @@ colab:
 id: c844616d-45c5-498a-b6f9-c995027965e6
 outputId: 855ebc93-90d5-4e84-94ff-e974f19587fc
 ---
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.utils.io import write_model_hamiltonian
 from afqmctools.inputs.from_autohf import autohf_to_afqmc
@@ -146,7 +146,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
 
