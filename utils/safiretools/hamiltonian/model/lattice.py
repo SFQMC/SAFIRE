@@ -460,6 +460,43 @@ class Lattice(ABC):
             old `get_lattice` discarded them silently. A key present but set to
             ``None`` is fine, so parameter templates that carry unused keys
             still work.
+
+        Examples
+        --------
+        This is the usual way to build any lattice. A 4x4 square lattice, fully
+        periodic:
+
+        >>> lattice = Lattice.from_dict(dict(
+        ...     L1=4,
+        ...     L2=4,
+        ...     boundary1='pbc',
+        ...     boundary2='pbc',
+        ... ))
+
+        A honeycomb lattice with a twist, open along the second axis:
+
+        >>> lattice = Lattice.from_dict(dict(
+        ...     type='honeycomb',
+        ...     L1=6,
+        ...     L2=6,
+        ...     boundary1='pbc',
+        ...     boundary2='open',
+        ...     twist=('1/2 pi', 0.0),
+        ... ))
+
+        A lattice whose unit cell is not one of the built-in types — see
+        `CustomLattice`:
+
+        >>> lattice = Lattice.from_dict(dict(
+        ...     type='custom',
+        ...     L1=4,
+        ...     L2=4,
+        ...     boundary1='pbc',
+        ...     boundary2='pbc',
+        ...     a1=[1.0, 0.0],
+        ...     a2=[0.0, 1.0],
+        ...     basis=[[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]],
+        ... ))
         """
         lattice_type = str(params.get('type', 'square')).lower()
         if lattice_type not in _LATTICE_TYPES:
@@ -1102,6 +1139,11 @@ class CustomLattice(Lattice):
     The built-in types own their geometry (see `Lattice`) and reject these
     arguments.
 
+    Prefer `Lattice.from_dict` with ``type='custom'`` over calling this
+    constructor directly, as in the example below. The parameters below are the
+    constructor's; `from_dict` spells the lattice size ``L1``/``L2`` rather than
+    ``L``, and takes boundaries as strings.
+
     Parameters
     ----------
     L : iterable(int)
@@ -1117,12 +1159,18 @@ class CustomLattice(Lattice):
 
     Examples
     --------
-    >>> lattice = CustomLattice(
-    ...     L=(2, 2),
-    ...     a1=np.array([1, 1]),
-    ...     a2=np.array([1, -1]),
-    ...     basis=[np.array([0, 0]), np.array([0, 0.5])],
-    ... )
+    Build one the usual way, through `Lattice.from_dict`:
+
+    >>> lattice = Lattice.from_dict(dict(
+    ...     type='custom',
+    ...     L1=2,
+    ...     L2=2,
+    ...     a1=[1, 1],
+    ...     a2=[1, -1],
+    ...     basis=[[0, 0], [0, 0.5]],
+    ...     boundary1='pbc',
+    ...     boundary2='pbc',
+    ... ))
 
     Notes
     -----
