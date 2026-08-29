@@ -387,6 +387,194 @@ class TestMinDistance:
         assert np.isclose(lattice._dist_map[1], 1.0)
 
 
+class TestBasisValidation:
+    """`build()` rejects the two basis layouts that made the neighbor machinery
+    silently disagree with the minimum-image answer.
+    """
+
+    @staticmethod
+    def _custom(basis, L=(3, 3), a1=(1.0, 0.0), a2=(0.0, 1.0)):
+        return CustomLattice(L=L, a1=a1, a2=a2, basis=basis,
+                             axis1_boundary=PBCBoundary, axis2_boundary=PBCBoundary)
+
+    @pytest.mark.parametrize("basis", [
+        [[0.0, 0.0], [1.0, 0.0]],          # differs by a1
+        [[0.0, 0.0], [0.0, 2.0]],          # differs by 2*a2
+        [[0.0, 0.0], [0.0, 0.0]],          # identical
+        [[0.5, 0.5], [1.5, -0.5]],         # differs by a1 - a2
+    ])
+    def test_basis_differing_by_a_lattice_translation_is_rejected(self, basis):
+        with pytest.raises(ValueError, match="describe the same site"):
+            self._custom(basis)
+
+    @pytest.mark.parametrize("basis", [
+        [[0.0, 0.0], [3.0, 0.0]],          # exactly one supercell along a1
+        [[0.0, 0.0], [3.5, 0.0]],
+        [[0.0, 0.0], [0.5, 4.5]],          # beyond the supercell along a2
+    ])
+    def test_basis_reaching_beyond_the_supercell_is_rejected(self, basis):
+        with pytest.raises(ValueError):
+            self._custom(basis)
+
+    @pytest.mark.parametrize("basis", [
+        [[0.0, 0.0], [0.5, 0.5]],
+        [[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]],       # Lieb
+        [[0.0, 0.0], [2.5, 0.0]],                   # outside the cell but reachable
+    ])
+    def test_valid_bases_are_accepted(self, basis):
+        lattice = self._custom(basis)
+
+        assert lattice.N_sites == 9 * len(basis)
+
+    def test_the_documented_lieb_example_still_builds(self):
+        # the tilted-cell Lieb lattice from the docs: basis vectors up to |1.5|
+        lattice = Lattice.from_dict(dict(
+            L1=4, L2=4, boundary1='pbc', boundary2='pbc', type='custom',
+            a1=[1.0, -1.0], a2=[1.0, 1.0],
+            basis=[[0, 0], [0.5, 0], [0, 0.5], [1.0, 0], [1.5, 0], [1.0, 0.5]],
+        ))
+
+        assert lattice.N_sites == 16 * 6
+
+    @pytest.mark.parametrize("lattice_type", sorted(LATTICE_CLASSES))
+    def test_built_in_types_pass(self, lattice_type):
+        assert Lattice.from_dict(_params(lattice_type)).N_sites > 0
+
+    @pytest.mark.parametrize("cyl_mode", ['XC', 'YC'])
+    def test_cyl_mode_doubled_basis_passes(self, cyl_mode):
+        # cyl_mode appends b + a2 for every b, so it must survive the check
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            lattice = Lattice.from_dict(
+                _params('triangular', L1=4, L2=4, cyl_mode=cyl_mode))
+
+        assert lattice.nb == 2
+
+    def test_a_translation_that_lands_outside_an_open_lattice_is_allowed(self):
+        """A molecule-in-a-box is not a broken basis.
+
+        These two basis vectors differ by exactly `a1`, but the lattice is one
+        cell wide with open boundaries, so nothing wraps and the sites are
+        distinct. This is the water-molecule example from the lattice tutorial.
+        """
+        lattice = Lattice.from_dict(dict(
+            L1=1, L2=1, type='custom', a1=[1.0, 0.0], a2=[0.0, 1.0],
+            basis=[[0.0, 0.0], [-0.5, -0.5], [0.5, -0.5]],
+        ))
+
+        assert lattice.N_sites == 3
+        positions = lattice.get_positions()
+        assert len({tuple(p) for p in positions}) == 3
+
+    def test_same_translation_is_rejected_once_the_axis_wraps(self):
+        # identical basis to the test above, but now the a1 axis is periodic,
+        # so the two sites really are one and the same
+        with pytest.raises(ValueError, match="describe the same site"):
+            Lattice.from_dict(dict(
+                L1=1, L2=1, boundary1='pbc', type='custom',
+                a1=[1.0, 0.0], a2=[0.0, 1.0],
+                basis=[[0.0, 0.0], [-0.5, -0.5], [0.5, -0.5]],
+            ))
+
+    def test_validation_happens_at_build_not_construction(self):
+        lattice = CustomLattice(L=(3, 3), a1=(1.0, 0.0), a2=(0.0, 1.0),
+                                basis=[[0.0, 0.0], [1.0, 0.0]], build=False)
+
+        with pytest.raises(ValueError, match="describe the same site"):
+            lattice.build()
+
+    @pytest.mark.parametrize("L,offset,should_build", [
+        # the same offset is fine in a big cell and wrong in a small one, because
+        # the image search only shifts by one supercell
+        ((4, 4), 2.5, True),
+        ((2, 2), 2.5, False),
+        ((6, 6), 5.5, True),
+        ((4, 4), 5.5, False),
+    ])
+    def test_rejection_tracks_the_minimum_image_answer(self, L, offset, should_build):
+        """The guard must fire exactly when the lattice would be wrong.
+
+        `builds` is compared against a brute-force minimum-image calculation
+        over a wide range of supercell shifts, so this pins the guard to the
+        physics rather than to the rule of thumb used to implement it.
+        """
+        basis = [[0.0, 0.0], [offset, 0.0]]
+        try:
+            lattice = self._custom(basis, L=L)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                pairs = lattice.get_nth_neighbors(1)
+            built = True
+        except ValueError:
+            built = False
+
+        assert built is should_build
+
+        if not built:
+            return
+
+        positions = lattice.get_positions()
+        v1 = lattice.L[0] * lattice.a1
+        v2 = lattice.L[1] * lattice.a2
+        best = np.full((lattice.N_sites,) * 2, np.inf)
+        for s1 in range(-6, 7):
+            for s2 in range(-6, 7):
+                separation = np.linalg.norm(
+                    positions[:, None] - (positions[None, :] + s1 * v1 + s2 * v2), axis=-1)
+                best = np.minimum(best, separation)
+        np.fill_diagonal(best, np.inf)
+
+        assert np.isclose(lattice._dist_map[1], best.min())
+        assert len(pairs) == int(np.isclose(best, best.min()).sum())
+
+
+def test_neighbor_pairs_are_directed_one_per_crossing():
+    """Neighbor pairs are directed, one per boundary crossing — not deduplicated
+    by minimum image.
+
+    On a 2x2 periodic square each site has 4 nearest neighbors, so there are 16
+    pairs even though only 8 distinct site-pairs are involved: site i reaches
+    site j through both the +a1 and the -a1 image, and those two crossings carry
+    opposite twist phases. Collapsing them would lose the sign the phase needs.
+    """
+    lattice = Lattice.from_dict(dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc',
+                                     twist=('1/2 pi', 0.0)))
+
+    direct = lattice.get_nth_direct_neighbors(1)
+    image = lattice.get_nth_image_neighbors(1)
+
+    # 4 sites x 4 nearest neighbors, split evenly between home cell and images
+    assert len(direct) + len(image) == 2 * 2 * 4
+    assert len(direct) == len(image) == 8
+
+    degrees = np.zeros(lattice.N_sites, dtype=int)
+    for pair in direct + image:
+        degrees[pair.i] += 1
+    assert np.all(degrees == 4)
+
+    # the same ordered pair appears twice: inside the cell, and across the
+    # boundary. Deduplicating by minimum image would merge these.
+    assert (0, 2) in {(p.i, p.j) for p in direct}
+    assert (0, 2) in {(p.i, p.j) for p in image}
+
+    # home-cell neighbors never pick up a twist
+    assert all(pair.phase == 0.0 for pair in direct)
+
+    # crossing the twisted axis in opposite directions gives opposite phases
+    crossings = {(pair.i, pair.j): (pair._shift, round(pair.phase, 12))
+                 for pair in image}
+    forward_shift, forward_phase = crossings[(0, 2)]
+    reverse_shift, reverse_phase = crossings[(2, 0)]
+
+    assert forward_shift == (-1, 0) and reverse_shift == (1, 0)
+    assert forward_phase == round(np.pi / 2, 12)
+    assert reverse_phase == -forward_phase
+
+    # the untwisted axis contributes no phase
+    assert all(round(phase, 12) == 0.0
+               for shift, phase in crossings.values() if shift[0] == 0)
+
+
 class TestAbstractBaseClass:
 
     def test_lattice_cannot_be_instantiated(self):

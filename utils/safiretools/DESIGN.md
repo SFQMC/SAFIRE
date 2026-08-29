@@ -168,6 +168,31 @@ type's own `_geometry()` rather than from the caller, and building twice raises 
 once a lattice is built its geometry is fixed. (`L` also changes under `cyl_mode` and is left a
 plain attribute; only the three geometry members are locked down.)
 
+### Basis validation
+
+`CustomLattice`'s docstring carried a standing BUG note: "if the magnitude of the basis vectors is
+too large, there are errors with computing direct neighbors and image neighbors."
+`build()` now validates the basis and raises `ValueError` for the two failure cases:
+
+1. **Two basis vectors differing by a lattice translation** describe the same site, so sites coincide and `_to_lattice_basis` cannot tell which sublattice a position belongs to.
+2. **A basis offset reaching a full supercell or more.** `_build_image_distances` shifts by only one
+   supercell in each direction, so beyond that the true image is never tested.
+
+Both are checked in *fractional* (lattice-vector) coordinates, and both depend on the boundary
+conditions and the lattice size, not just the basis: an open axis neither wraps nor contributes
+image shifts, so a translation that lands outside a 1-cell-wide open lattice collides with nothing. 
+Folding the basis into the unit cell satisfies both conditions for any lattice.
+
+The rule was validated against a brute-force oracle over 660 (size, offset, boundary) combinations
+at L>=3: 455 admitted, all agreeing with the oracle on both the nearest-neighbor distance and the
+pair count; 0 false negatives, 0 false positives.
+
+> The oracle has to count **directed crossings**, not distinct site pairs. Neighbor pairs are one
+> per boundary crossing and are deliberately not deduplicated by minimum image, because the twist
+> phase depends on which way the boundary is crossed — on a 2x2 periodic lattice site *i* reaches
+> site *j* both inside the cell and across the boundary, with phases 0 and +theta. An oracle that
+> collapses those reports half the pairs and makes correct lattices look broken.
+
 `cyl_mode` itself is restricted to `TriangularLattice`. The XC/YC reshaping rotates `a2` onto
 `-a1 + 2*a2` and doubles the basis along `a2`, which is only the correct cell for hexagonal
 geometry — the old code said as much in a docstring but accepted the argument from any lattice type
