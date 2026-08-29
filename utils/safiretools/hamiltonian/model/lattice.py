@@ -26,6 +26,7 @@ state inside a ``LatticeHamiltonian``'s HDF5 file, so there is no
 ``to_hdf5``/``from_hdf5`` here.
 """
 
+import itertools
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -736,8 +737,71 @@ class Lattice(ABC):
         self.A = np.array([self.a1, self.a2]).T
         self.Ainv = np.linalg.inv(self.A)
 
+        self._validate_basis()
+
         self._build()
         self._built = True
+
+    def _validate_basis(self):
+        """
+        Validates that a basis can be described by the neighbor machinery correctly.
+
+        Checks for both of the failure modes below:
+
+        1. **Two basis vectors differing by a lattice translation.** They
+           describe the *same* site, so the lattice holds coincident sites and
+           `_to_lattice_basis` cannot tell which sublattice a position belongs
+           to and image neighbors get mapped onto the wrong site index.
+        2. **A basis offset reaching a full supercell or more.**
+           `_build_image_distances` only shifts by one supercell in each
+           direction, so for larger offsets the true minimum image is never
+           tested.
+
+        Checked in fractional coordinates.
+        Folding the basis into the unit cell satisfies both conditions for any
+        lattice size.
+
+        Both conditions depend on the boundaries as well as the size, since an
+        open axis neither wraps nor contributes image shifts. A translation of
+        one cell along an open axis of a 1-cell-wide lattice, for instance,
+        lands outside the lattice and so collides with nothing.
+        """
+        periodic = (isinstance(self.axis1_boundary, PBCBoundary),
+                    isinstance(self.axis2_boundary, PBCBoundary))
+        fractional = [self.Ainv @ b for b in self._basis]
+
+        for (i, first), (j, second) in itertools.combinations(enumerate(fractional), 2):
+            offset = second - first
+
+            if np.allclose(offset, np.round(offset)):
+                translation = np.round(offset).astype(int)
+                # a periodic axis wraps, so any translation along it lands on a
+                #   real site; an open one only does if it stays in the lattice
+                reachable = all(
+                    wraps or abs(component) <= length - 1
+                    for component, length, wraps in zip(translation, self.L, periodic)
+                )
+                if reachable:
+                    raise ValueError(
+                        f"basis vectors {i} and {j} differ by the lattice translation "
+                        f"{translation.tolist()}, so they describe the same site in a "
+                        f"{tuple(self.L)} lattice: sites would coincide and neighbor "
+                        "lists would be wrong. Every basis vector must be distinct "
+                        "modulo the lattice vectors — fold the basis into the unit cell."
+                    )
+
+            # only periodic axes are searched for images, so only they can miss one
+            too_far = [axis for axis, (component, length, wraps)
+                       in enumerate(zip(offset, self.L, periodic))
+                       if wraps and abs(component) >= length]
+            if too_far:
+                spans = np.abs(offset).round(3).tolist()
+                raise ValueError(
+                    f"basis vectors {i} and {j} are {spans} unit cells apart along "
+                    f"(a1, a2), which reaches beyond the {tuple(self.L)} supercell on "
+                    f"axis {too_far}. Neighbor searches only shift by one supercell, "
+                    "fold the basis into the unit cell."
+                )
 
     def _build(self):
         """
@@ -1177,9 +1241,9 @@ class CustomLattice(Lattice):
     Currently only supports 2D lattices. Higher dimensions will be added in the
     future. Please contact the developers if you need this feature.
 
-    BUG: if the magnitude of the basis vectors is too large, there are errors
-    with computing direct neighbors and image neighbors. Try limiting basis
-    vectors to the unit cell.
+    Only basis vectors that are inside the unit cell are allowed.
+    `build()` checks for basis vectors that are outside the unit cell and raises
+    `ValueError` if any are found.
     """
 
     _type = "custom"
