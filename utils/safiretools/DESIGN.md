@@ -250,6 +250,13 @@ same time.
 - Lives in `safiretools/types.py` — dependency-free, so hamiltonian/wavefunction/observables all
   import it downward rather than `observables` reaching up into `hamiltonian` for it (today's
   layering inversion).
+- Two members carry the coercion that `get_spin_symm_enum` used to: `SpinSymm.from_input(value)`
+  accepts a `SpinSymm`, its int value, a spelling alias (`'closed'`/`'rhf'`, `'collinear'`/`'uhf'`,
+  `'noncollinear'`/`'ghf'`, ...), or another enum whose value is one of those — so partly-migrated
+  code can still hand over an `afqmctools._SlaterType`. `SpinSymm.label` is the lowercase name used
+  on disk and in AFQMC input files. `utils/io.py` wrote `'closed'` but its reader looked up
+  `'close'`, so a closed-shell Hamiltonian's `spin_type` could never be read back; `from_input`
+  accepts both spellings and `label` always writes `'closed'`.
 
 ## Known bug: `force_herm` diagonal-zeroing
 
@@ -260,10 +267,95 @@ the U1/U2/J convention below) — so this has been silently discarding onsite/di
 any caller using `force_herm=True` on a non-Hermitian `t`/`epsilon` input. Fix: reconstruct
 including the diagonal (`np.triu(M,0) + np.triu(M,1).conj().T`).
 
-**Distinct, correct convention — do not conflate:** only the U1 and U2 pieces of the interaction
-matrix, and J, are meant to be upper-triangular, with the diagonal genuinely unused (e.g. U1's
-diagonal is irrelevant because same-band interaction is already covered by the separate `U`
-parameter). This is a different code path from `force_herm` and should stay a separate helper.
+**Distinct, correct convention — do not conflate:** the U1 and U2 pieces of the interaction matrix,
+and J, follow a triangularity rule of their own. This is a different code path from `force_herm` and
+stays in separate helpers — `onsite_band_matrix` and `intersite_band_matrix`.
+
+The AFQMC executable has **no notion of sites versus bands**: it reads a triangle of the whole
+interaction matrix, indexed by the combined `mu = site * nbands + band`. Per
+`ModelHamOpsGenerator.cpp`, the density-density block (rows `[0, NMO)` of `Uij`) keeps `i <= j` — its
+diagonal *is* read, and that is where the onsite Hubbard U sits — while the spin-spin block (rows
+`[NMO, 2*NMO)`) and `Jij` keep `i < j`. Anything else is dropped with a warning. So the requirement
+is that U1, U2 and J land **strictly above the combined diagonal**, leaving it free for `U`; it is
+not that "the diagonal is unused" in general.
+
+A band matrix is only the second Kronecker factor of that, and **the two cases need different
+matrices**, because the site matrix they pair with maps the band triangles differently:
+
+| | site factor | band pair `(m, n)` lands at | which band pairs are read |
+|---|---|---|---|
+| onsite | identity, `I == J` | `(I*nb + m, I*nb + n)` | `m < n` only — `m > n` maps below the combined diagonal and is dropped |
+| inter-site | strictly upper, `I < J` | `(I*nb + m, J*nb + n)` | **all of them** — every `(m, n)` is above the combined diagonal |
+
+So the onsite band matrix is strictly upper-triangular (the unordered band pair `{m, n}` on one site
+is one interaction, counted once; `m == n` is the separate Hubbard U), while the **inter-site band
+matrix must be the full matrix, lower triangle included**. `(m, n)` there is band `m` on site `I`
+interacting with band `n` on site `J`, which is a different interaction from `(n, m)`.
+
+The fix was also unreachable as written: both call sites take a *boolean* parameter named
+`force_herm` that shadows the imported function, so the branch would have raised
+`TypeError: 'bool' object is not callable`. The function is `force_hermitian` in `safiretools`; the
+boolean parameter keeps its documented name.
+
+## Known bug: inverted `real_valued` flag
+
+`ham_class.py::HamiltonianComponent` set `_real_valued = np.iscomplexobj(csr_array)` — true exactly
+when the component is *complex* — and `Hamiltonian.__setitem__` cleared the Hamiltonian-level flag
+whenever a component was real. Every real-valued model Hamiltonian was therefore upcast to complex
+on write. `LatticeHamiltonian.real_valued` is a computed property over
+`HamiltonianComponent.is_complex` instead, so a real Hamiltonian writes rank-1 real data. The AFQMC
+executable already accepts both ranks and the real path is exercised by its own unit-test files.
+
+## Hamiltonian on-disk formats
+
+Each `Hamiltonian` subclass owns its format, and `Hamiltonian.from_hdf5` dispatches on what a file
+actually contains via the public `hamiltonian_format(path)` (which replaces
+`converter.py::read_hamil_type`): `model` -> `LatticeHamiltonian`, `dense` ->
+`MolecularHamiltonian`, `kpoint` -> `PeriodicHamiltonian`. Subclasses implement
+`_read_hdf5(path, fmt)` rather than overriding `from_hdf5`, so dispatch stays in one place.
+
+**Lattice metadata is recorded, the `Lattice` object is not.** A `LatticeHamiltonian`'s file carries
+the *shape* of the lattice it was built on under `Hamiltonian/ModelHamiltonian/Lattice`, written in
+the dimension-agnostic form a future N-dimensional `Lattice` will need — `L` and `boundaries` and
+`twist` as per-axis sequences, the unit cell as a `lattice_vectors` matrix — rather than as
+`L1`/`L2`/`a1`/`a2` pairs. Today `ndim` is always 2. `nbands` is written alongside, since `dims[3]`
+records only `nsites * nbands`. `LatticeHamiltonian.lattice_params` flattens the metadata back into
+the keys `Lattice.from_dict` takes, so a lattice can be rebuilt from a Hamiltonian file. All of this
+is additive — the executable ignores groups it does not read. (This resolves the question Phase 2
+left open.)
+
+**A supercell Hamiltonian is the Γ point of the supercell.** The sparse `Hamiltonian/Factorized`
+format `write_hamil_supercell` wrote is gone — the AFQMC executable's `HamiltonianFactory` offers
+only `KPTHC`, `KPFactorized`, `RealDenseFactorized`, `ModelHamiltonian` and `THC` — so the supercell
+path emits the ordinary k-point format with a single k-point instead: `nkpts=1`,
+`nmo_pk=[nmo_tot]`, `QKTok2=[[0]]`, `MinusK=[0]`, one `L0` of shape `(1, nmo_tot**2 * nchol)`. The
+Cholesky vectors stay complex, as `KPFactorizedHamiltonian` requires. Lattice models stay sparse —
+they are fundamentally sparse.
+
+This is a simplification, not a workaround: `PeriodicHamiltonian` has one on-disk format and one
+in-memory representation, `kpoint_symmetry` is only a knob on the *generator* rather than a property
+of the result, and nothing downstream branches on it. It also sidesteps the fact that
+`RealDenseHamiltonian` reads `DenseFactorized/L` into a *real* array and so could never have carried
+a k-point-mesh supercell's complex Cholesky vectors.
+
+> **Known, molecular-only.** `ComplexIntegrals` means "the Cholesky matrix is complex" to
+> afqmctools' dense *writer* and "hcore is complex" to its *reader*, so
+> `write_dense(real_chol=False)` has always produced a file that reader rejects. Preserved as-is;
+> `safiretools`' reader ignores the flag and takes the dtypes from the datasets.
+
+## Periodic Cholesky: one solver, one flag
+
+`kpoint.py`'s `KPCholesky` and `supercell.py`'s `Cholesky` become a single `PeriodicCholesky` with a
+`kp_sym` flag. The factorization loop is shared verbatim; only the k-point-pair enumeration, the
+pivot bookkeeping index, and the momentum-conservation test differ, each behind a small method.
+`run()` is a generator yielding one momentum block at a time, so the k-point path still streams to
+disk rather than materializing every `L_Q`. The flag stays inside the solver: a `kp_sym=False`
+result is recast as a Γ-point Hamiltonian (above), so both modes produce the same kind of object.
+
+Two entry points, because the `to_hdf5` contract and the existing streaming behavior pull in
+different directions: `PeriodicHamiltonian.from_pyscf(...)` builds in memory and is serial-only,
+while `PeriodicHamiltonian.write_from_pyscf(comm, ..., path)` generates and streams over any
+communicator. Both drive the same solver and produce identical files.
 
 ## Coding conventions
 
