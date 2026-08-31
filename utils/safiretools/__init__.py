@@ -15,8 +15,20 @@ module tree. This surface is filled in as the package is built out; see
 DESIGN.md for the intended final set.
 """
 
+from safiretools.hamiltonian.base import Hamiltonian
+from safiretools.hamiltonian.model.builder import HamiltonianBuilder
 from safiretools.hamiltonian.model.lattice import Lattice
+from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
+from safiretools.hamiltonian.molecular import MolecularHamiltonian
+from safiretools.hamiltonian.periodic import PeriodicHamiltonian
+from safiretools.types import SpinSymm
 
 __all__ = [
+    'Hamiltonian',
+    'HamiltonianBuilder',
     'Lattice',
+    'LatticeHamiltonian',
+    'MolecularHamiltonian',
+    'PeriodicHamiltonian',
+    'SpinSymm',
 ]
