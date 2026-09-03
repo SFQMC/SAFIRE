@@ -26,7 +26,6 @@ subclasses supply only the representation-specific payload.
 
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from importlib import import_module
 from warnings import warn
 
 import numpy as np
@@ -110,24 +109,6 @@ def wavefunction_format(path) -> str:
             return 'phmsd'
 
     raise ValueError(f"'{path}' holds no wavefunction safiretools recognizes")
-
-
-_READERS = {
-    'nomsd': ('safiretools.wavefunction.nomsd', 'NOMSDWavefunction'),
-    'phmsd': ('safiretools.wavefunction.phmsd', 'PHMSDWavefunction'),
-}
-"""Format name from `wavefunction_format` -> the module and class that reads it."""
-
-
-def _class_for_format(fmt: str):
-    """
-    The `Wavefunction` subclass that reads representation `fmt`.
-
-    Resolved by import at call time, so this module stays free of upward
-    imports.
-    """
-    module_name, class_name = _READERS[fmt]
-    return getattr(import_module(module_name), class_name)
 
 
 # ----------------------------------------------------------------------
@@ -468,8 +449,13 @@ class Wavefunction(ABC):
             If the file holds no wavefunction, or holds a representation that
             the subclass this was called on does not read.
         """
+        # imported here, not at module scope, because both subclasses import
+        #   this module
+        from safiretools.wavefunction.nomsd import NOMSDWavefunction
+        from safiretools.wavefunction.phmsd import PHMSDWavefunction
+
         fmt = wavefunction_format(path)
-        target = _class_for_format(fmt)
+        target = NOMSDWavefunction if fmt == 'nomsd' else PHMSDWavefunction
 
         if cls is not Wavefunction and not issubclass(target, cls):
             raise ValueError(
