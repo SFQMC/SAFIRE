@@ -53,9 +53,11 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
 
     Parameters
     ----------
-    source : str | dict | Hamiltonian
+    source : str | dict | afqmctools.hamiltonian.model.ham_class.Hamiltonian | ~safiretools.hamiltonian.model.lattice_hamiltonian.LatticeHamiltonian
         str - the name of an input file with lattice and hamiltonian blocks defined
         dict - a dict containing lattice and hamiltonian blocks
+        Hamiltonian - an already-built lattice model Hamiltonian, either
+        afqmctools' or safiretools' `LatticeHamiltonian`
     nelec : tuple(int,int)
         number of spin-up and spin-down electrons
     twist : array-like, optional
@@ -186,7 +188,7 @@ def _free_electron(hamiltonian:Hamiltonian,nelec,spin_symm=None,use_dense=True,f
 
     Parameters
     ----------        
-    hamiltonian : Hamiltonian
+    hamiltonian : afqmctools.hamiltonian.model.ham_class.Hamiltonian
         a Lattice Model Hamiltonian instance to build the Hamiltonian for.
     nelec : tuple(int,int)
         an iterable with the number of electrons per spin to use.
