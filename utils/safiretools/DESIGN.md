@@ -41,18 +41,44 @@ something on its own — these are library packages with external callers writin
 workflows. Everything marked "dropped" above was an explicit user call, not an inference from
 caller-count.
 
+## Transitional shim: `isinstance` gates in the un-ported packages
+
+Until the packages that consume a lattice model Hamiltonian are themselves ported, three
+`isinstance(source, Hamiltonian)` checks that tested only for afqmctools'
+`ham_class.Hamiltonian` accept a `safiretools.LatticeHamiltonian` as well (user call):
+`afqmctools/wavefunction/free_electron.py`, `afqmctools/inputs/from_autohf.py`, and
+`AutoHF/autohf/hamiltonian.py`. `LatticeHamiltonian` already satisfies the accessor contract those
+consumers use (`nsites`, `nbands`, `get_one_body()`, `get_U()`, `get_J()`, `get_heisenberg()`), so
+only the type test needed widening; afqmctools' `Hamiltonian` is a plain class rather than an ABC,
+so there was no `register()` route from the safiretools side.
+
+The AutoHF change lives in a **separate submodule/repository** and needs its own commit. It is
+guarded with `importlib.util.find_spec("safiretools")`, matching the pattern AutoHF already uses
+for afqmctools, so AutoHF still imports without safiretools installed.
+
+All three shims go away when `free_electron` (Phase 4) and the AutoHF interop (Phase 7) are ported,
+and afqmctools is retired (Phase 9).
+
 ## Package layout (sketch — not fully confirmed, see Open Questions)
 
 ```
 safiretools/
-├── __init__.py            # curated flat re-exports: Hamiltonian, LatticeHamiltonian,
-│                           #   Wavefunction, SpinSymm, HamiltonianBuilder, Lattice,
-│                           #   mean_and_error, ... (concrete Lattice subclasses NOT re-exported —
-│                           #   Lattice.from_dict() handles dispatch)
+├── __init__.py            # curated flat re-exports, and the definition of what is
+│                           #   user-facing: Hamiltonian, LatticeHamiltonian,
+│                           #   MolecularHamiltonian, PeriodicHamiltonian, HamiltonianBuilder,
+│                           #   Lattice, SpinSymm, the FCIDUMP I/O (read_fcidump,
+│                           #   read_fcidump_header, write_fcidump, write_fcidump_kpoint,
+│                           #   h1_spat2spin, h2_spat2spin), Wavefunction, mean_and_error, ...
+│                           #   NOT re-exported: concrete Lattice subclasses (Lattice.from_dict()
+│                           #   handles dispatch), HamiltonianComponent (build steps cover every
+│                           #   custom term), and the FCIDUMP format internals (fcidump_header,
+│                           #   check_sym, fmt_integral)
 ├── types.py                # canonical SpinSymm enum — dependency-free, no upward imports
-├── hdf5.py                  # generic HDF5 read/write primitives — dependency-free, top-level
+├── hdf5.py                  # HDF5 read/write primitives — dependency-free, top-level
 │                            #   like types.py (replaces utils/io.py's generic bits, rhonk.py's
-│                            #   vendored copy, stats/config_h5.py).
+│                            #   vendored copy, stats/config_h5.py). Also owns SAFIRE's
+│                            #   file-level complex convention, to_complex/from_complex — the one
+│                            #   definition, used by every schema (see "Complex arrays on disk").
 ├── stats.py                 # mean_and_error(), reblock(), autocorrelation estimator — generic,
 │                            #   top-level (not nested under analysis/) since the deferred
 │                            #   broader observables pipeline will need it too.
@@ -306,6 +332,29 @@ on write. `LatticeHamiltonian.real_valued` is a computed property over
 `HamiltonianComponent.is_complex` instead, so a real Hamiltonian writes rank-1 real data. The AFQMC
 executable already accepts both ranks and the real path is exercised by its own unit-test files.
 
+## Complex arrays on disk
+
+SAFIRE stores a complex array by interleaving the real and imaginary parts as a trailing length-2
+axis. That convention is **defined once**, in `safiretools/hdf5.py` as `to_complex`/`from_complex`,
+and every schema uses it — the dense `hcore`/Cholesky matrix, the k-point `H1_kp*`/`L*` blocks, and
+a model component's CSR `data_`. (Phase 1 put the pair there, per the layout above; Phase 3 then
+wrote three private copies — `molecular._to_complex`, `periodic._interleave`,
+`lattice_hamiltonian._to_complex` — while the shared pair went uncalled. Consolidated back onto
+`hdf5.py`.)
+
+**Real and interleaved data are told apart by rank, not by the trailing axis.** `to_complex` appends
+the axis, so an interleaved dataset has rank `real_ndim + 1`, where `real_ndim` is the rank the
+dataset has when stored real — 2 for a matrix, 1 for a flat array like a CSR `data_`. Testing
+"is the last axis length 2?" instead is ambiguous whenever a real dataset's own last axis happens to
+be 2, and silently reads it as complex: a real `(2, 2)` `hcore` (`nmo == 2`), a Cholesky matrix with
+`nchol == 2`. `from_complex(data, real_ndim=...)` therefore takes the expected real rank and raises
+on anything that is neither rank.
+
+Both ranks genuinely occur — the AFQMC executable accepts either for a model Hamiltonian's
+components, and a real-valued Hamiltonian is written real so the file stays half the size (see
+**Known bug: inverted `real_valued` flag**) — so the distinction cannot be avoided by always writing
+complex.
+
 ## Hamiltonian on-disk formats
 
 Each `Hamiltonian` subclass owns its format, and `Hamiltonian.from_hdf5` dispatches on what a file
@@ -370,6 +419,27 @@ communicator. Both drive the same solver and produce identical files.
 
 - **Import surface**: deep implementation tree, curated flat top-level `__init__.py` re-exports
   (numpy/scipy-style) — `from safiretools import Hamiltonian` without needing tree knowledge.
+- **The top-level import surface defines what is user-facing.** A name re-exported from
+  `safiretools/__init__.py` is user-facing; anything reachable only by a deeper path is an
+  implementation detail. `__all__` there is the whole definition — there is no second list to keep
+  in sync, and "is this public?" is decided by one lookup. It follows that:
+  - **Docstrings of user-facing objects reference only other user-facing objects, by their
+    top-level path** — `safiretools.Lattice`, never
+    `safiretools.hamiltonian.model.lattice.Lattice`. Dev-facing code may reference anything,
+    deep paths included, since its audience is reading the tree anyway.
+  - **User-facing documentation — tutorials, examples, reference prose, and error messages a user
+    can hit — shows only top-level imports.** If a doc or an exception needs to name something, that
+    something gets promoted; writing the deep path is not an option. This is a forcing function, not
+    a formatting rule: it turns "I'll just reference the module" into an explicit decision about
+    whether the thing is public. It is what promoted the FCIDUMP I/O (`read_fcidump`,
+    `read_fcidump_header`, `write_fcidump`, `write_fcidump_kpoint`, plus `h1_spat2spin`/
+    `h2_spat2spin`, which `write_fcidump_kpoint`'s own `NotImplementedError` tells users to call).
+  - **Reference docs document the public surface from `safiretools` itself**, so that the short
+    paths resolve as cross-references. Verified: `automodule:: safiretools` with `:members:` and
+    `:imported-members:` yields `safiretools.Lattice`, `safiretools.HamiltonianBuilder`, ... as
+    documented targets. Autodoc'ing the same classes from their implementation modules instead makes
+    the top-level path unresolvable — which is why the deep paths are in the docstrings today; see
+    **Future changes**.
 - **Construction**: classmethod factories (`from_dict`, `from_hdf5`, `from_fcidump`, ...) over
   parsing inside `__init__`. `__init__` is for already-fully-formed, validated in-memory data.
 - **Serialization**: instance method + classmethod pair — `obj.to_hdf5(path) -> None`,
@@ -382,6 +452,26 @@ communicator. Both drive the same solver and produce identical files.
   composition); `LatticeHamiltonian.from_dict(params)` wraps it internally for the common case.
 - Avoid bare mutable-attribute access on builder-style objects (`builder.hamiltonian`) — prefer
   explicit accessor methods (`builder.get_hamiltonian()`).
+- **`HamiltonianComponent` is not part of the public surface, and no documentation tells a user to
+  construct one** (user call). Every custom term a user needs is reachable through a build step —
+  `builder.custom_one_body(...)` for a one-body term, and the interaction build steps
+  (`onsite_hubbard`, `hubbard_U1_density_density`, `nth_order_hubbard_Vij`, ...) for everything
+  else — or through the equivalent key in the input dict. The build steps also handle the spin
+  structure and index mapping that hand-built components had to get right themselves.
+- **`nelec` and `spin_symm` are Hamiltonian state, not write-time arguments.** They are set when
+  the Hamiltonian is built (the `hamiltonian` input block, or the `HamiltonianBuilder` constructor)
+  and `to_hdf5(path)` takes only a path — replacing
+  `write_model_hamiltonian(ham, fname, nelec=..., spin_symm=...)`. In input files `nelec` therefore
+  belongs in the `[hamiltonian]` block, not a separate `[misc_params]`/`[cli_params]` section.
+- **`to_hdf5()` replaces the Hamiltonian in its target file, not the whole file.** It opens the file
+  in append mode (creating it if absent) and deletes an existing `Hamiltonian` group before writing.
+  A SAFIRE input file holds **at most one Hamiltonian and at most one wavefunction**, so replacing
+  rather than adding is the right semantics, and anything else in the file — notably `Wavefunction` —
+  survives. This is what lets a Hamiltonian and a wavefunction share one file **in either order**,
+  which is the common case; afqmctools' `write_wfn` already used exactly this pattern for
+  `Wavefunction`, so the two are now symmetric. Applies to `PeriodicHamiltonian.write_from_pyscf`
+  too, whose per-rank scratch files are still truncated since they hold only one run's partial
+  blocks. (HDF5 unlinks rather than reclaims, so repeatedly rewriting into one file grows it.)
 - `AFQMC_EXEC` must never be required just to import safiretools (today's
   `RuntimeError: AFQMC_EXEC environment variable is not set` fires at import time in
   `tutorial_utils/helper.py` — becomes a lazy check, only triggered when something actually
@@ -390,6 +480,40 @@ communicator. Both drive the same solver and produce identical files.
   subprocess/executable-path assumption that would preclude that later.
 - Dependency cleanup: drop `pytables` (`stats/config_h5.py`'s only reason for it, rewritten onto
   `h5py`); merge the `LATTICE_HF` optional-dependency group into `AUTOHF` (exact duplicate).
+
+## Future changes
+
+Deliberately **not** in the current task list — recorded here so they are not lost, and so nobody
+mistakes them for accidents. Add to these lists rather than widening a phase in progress.
+
+### Things we will change
+
+- **Shorten the deep paths in user-facing docstrings, and document the public surface from
+  `safiretools`.** Four `lattice : ~safiretools.hamiltonian.model.lattice.Lattice` type fields
+  (`HamiltonianBuilder` and its `from_input`, `LatticeHamiltonian.from_dict`, and the dev-facing
+  `lattice_metadata_from`) violate the rule above. They are written that way because a bare
+  `Lattice` is an **ambiguous cross-reference** while both `safiretools` and `afqmctools` are
+  autodoc'd, and the short `safiretools.Lattice` only resolves once the public surface is documented
+  at that path. The two halves therefore land together: a user-facing API page autodoc'ing
+  `safiretools`, with those classes no longer autodoc'd from their implementation modules on
+  user-facing pages, and the docstrings shortened. Belongs with **Phase 8** (top-level API surface);
+  the underlying ambiguity disappears anyway at **Phase 9** when afqmctools is retired.
+  The same page change decides whether `hamiltonian_format()` is promoted — it is genuinely useful
+  as "what is in this file?", but it is not public today, so the reference prose no longer names it.
+- **Port `docs/tutorials/solids/04_computing_observables` off afqmctools.** It is the last doc source
+  still calling `afqmctools.hamiltonian.converter.read_hamiltonian`, because its provided `hamil.h5`
+  is in **CoQuí** format — `hamiltonian_format()` identifies it as `kpoint_coqui`, and safiretools
+  has no reader for that, so `Hamiltonian.from_hdf5` raises `NotImplementedError`. Blocked on the
+  observables rewrite, but it **must** be ported before afqmctools is removed. A comment in the
+  tutorial cell records the same.
+
+### Things we might change
+
+- **Hamiltonians probably should not know `nelec` at all.** In principle the electron count is a
+  property of the *problem*, not of the Hamiltonian; it lives on `Hamiltonian` today only because
+  the on-disk formats record it in `dims`. Removing it is a change on **both** sides — SAFIRE would
+  have to stop reading it from the Hamiltonian file, and safiretools would drop it from the
+  constructors, the `hamiltonian` input block and `to_hdf5`. Worth doing together, not piecemeal.
 
 ## Open questions
 
