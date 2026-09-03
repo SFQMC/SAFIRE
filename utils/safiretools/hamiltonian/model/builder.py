@@ -23,6 +23,7 @@ covers.
 """
 
 import functools
+import inspect
 import itertools
 import logging
 from pathlib import Path
@@ -195,35 +196,84 @@ def intersite_band_matrix(value, nbands: int):
     return sps.csr_array(np.full((nbands, nbands), value))
 
 
+def _amplitude_binder(func):
+    """
+    Machinery for the build-step decorators below: the wrapped function's
+    signature, and the name of its amplitude parameter.
+
+    The amplitude is the first parameter after ``self`` — ``t``, ``U``, ``J``,
+    ``V``, ``epsilon``, ``rashba_lambda``, ... — and each build step documents
+    its own name for it. A decorator that declared its wrapper as
+    ``wrapper(self, params, *args, **kwargs)`` would rename that parameter to
+    ``params`` for every decorated step, so ``builder.onsite_hubbard(U=4.0)``
+    would raise ``TypeError: ... missing 1 required positional argument:
+    'params'``. Binding against the real signature instead keeps every
+    documented name callable, positionally or by keyword.
+
+    Returns
+    -------
+    signature : inspect.Signature
+        Signature of `func`. `functools.wraps` sets ``__wrapped__``, so this is
+        the *original* signature even when the decorators are stacked.
+    name : str
+        Name of the amplitude parameter.
+    """
+    signature = inspect.signature(func)
+
+    names = list(signature.parameters)
+    if len(names) < 2:
+        raise TypeError(
+            f"{func.__name__} takes no amplitude parameter to bind "
+            f"(signature {signature})"
+        )
+
+    return signature, names[1]
+
+
+def _bind(signature, args, kwargs):
+    """Bind a call to `signature`, with defaults filled in."""
+    bound = signature.bind(*args, **kwargs)
+    bound.apply_defaults()
+    return bound
+
+
 def skip_empty_params(func):
     """
-    Skip the decorated build step when every parameter is zero.
+    Skip the decorated build step when its amplitude is entirely zero.
 
     ``None`` counts as zero, so an input template carrying unset keys does not
-    build empty components. The decorated function's docstring is preserved.
+    build empty components.
+
+    Notes
+    -----
+    Signature-preserving: the wrapped step keeps its own amplitude parameter
+    name, so ``builder.onsite_hubbard(4.0)`` and ``builder.onsite_hubbard(U=4.0)``
+    both work. See `_amplitude_binder`.
     """
+    signature, amplitude = _amplitude_binder(func)
 
     @functools.wraps(func)
-    def wrapper(self, params, *args, **kwargs):
-        params = np.array(params)
+    def wrapper(*args, **kwargs):
+        bound = _bind(signature, args, kwargs)
+
+        params = np.array(bound.arguments[amplitude])
         # The following line looks wrong, but is correct!
         #   numpy properly handles the comparison with None behind the scenes!
         params[params == None] = 0.0  # noqa: E711
-        if not np.allclose(params, 0.0):
-            func(self, params, *args, **kwargs)
-        else:
+
+        if np.allclose(params, 0.0):
             logger.debug("skipping empty param in %s", func.__name__)
+            return
+
+        bound.arguments[amplitude] = params
+        return func(*bound.args, **bound.kwargs)
 
     return wrapper
 
 
 def iterate_nth_order(start_n=1):
     """
-    Iterate a build step over a sequence of per-neighbor-order parameters.
-
-    Decorates functions with the signature ::
-
-        func(self, params, nth_neighbor=n, *args, **kwargs)
+    Iterate a build step over a sequence of per-neighbor-order amplitudes.
 
     A scalar or a single 2-d matrix is passed straight through with
     ``nth_neighbor`` defaulting to `start_n`. A 1-d sequence (or a 3-d stack of
@@ -233,25 +283,38 @@ def iterate_nth_order(start_n=1):
     ----------
     start_n : int, optional
         Neighbor order the first element corresponds to. Default 1.
+
+    Notes
+    -----
+    Signature-preserving, as for `skip_empty_params`.
     """
     def decorator(func):
+        signature, amplitude = _amplitude_binder(func)
+
         @functools.wraps(func)
-        def wrapper(self, params, *args, **kwargs):
-            params = np.array(params)
+        def wrapper(*args, **kwargs):
+            bound = _bind(signature, args, kwargs)
+            params = np.array(bound.arguments[amplitude])
+
             if params.ndim in {0, 2}:
-                kwargs["nth_neighbor"] = kwargs.get("nth_neighbor", start_n)
-                func(self, params, *args, **kwargs)
-            elif params.ndim in {1, 3}:
+                if bound.arguments.get("nth_neighbor") is None:
+                    bound.arguments["nth_neighbor"] = start_n
+                bound.arguments[amplitude] = params
+                return func(*bound.args, **bound.kwargs)
+
+            if params.ndim in {1, 3}:
                 for n, param in enumerate(params, start=start_n):
                     logger.debug("calling %s with %s for nth_neighbor=%s",
                                  func.__name__, param, n)
-                    kwargs["nth_neighbor"] = n
-                    func(self, param, *args, **kwargs)
-            else:
-                raise ValueError(
-                    f"could not iterate over {func.__name__} with params = {params}: "
-                    "np.array(params) must have dimension 0, 1, 2, or 3"
-                )
+                    bound.arguments[amplitude] = param
+                    bound.arguments["nth_neighbor"] = n
+                    func(*bound.args, **bound.kwargs)
+                return None
+
+            raise ValueError(
+                f"could not iterate over {func.__name__} with params = {params}: "
+                "np.array(params) must have dimension 0, 1, 2, or 3"
+            )
         return wrapper
     return decorator
 
@@ -319,7 +382,7 @@ class HamiltonianBuilder:
 
     Parameters
     ----------
-    lattice : Lattice
+    lattice : ~safiretools.hamiltonian.model.lattice.Lattice
         Lattice describing the geometry the Hamiltonian is defined on.
     nbands : int, optional
         Number of bands. Default 1.
@@ -393,7 +456,7 @@ class HamiltonianBuilder:
         source : dict or str or pathlib.Path
             Hamiltonian (and possibly lattice) parameters. A str/Path is read as
             a TOML input file.
-        lattice : Lattice, optional
+        lattice : ~safiretools.hamiltonian.model.lattice.Lattice, optional
             Lattice describing the geometry. Built from ``source['lattice']`` if
             omitted.
 
@@ -786,8 +849,7 @@ class HamiltonianBuilder:
         Examples
         --------
         >>> import numpy as np
-        >>> from safiretools import Lattice
-        >>> from safiretools.hamiltonian.model.builder import HamiltonianBuilder
+        >>> from safiretools import HamiltonianBuilder, Lattice
         >>> lattice = Lattice.from_dict(
         ...     params=dict(L1=3, L2=2, boundary1="PBC", boundary2="PBC")
         ... )
