@@ -25,6 +25,7 @@ import scipy.sparse as sps
 
 from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import Hamiltonian,SpinSymm,get_spin_symm_enum
+from safiretools import LatticeHamiltonian
 from afqmctools.systems.lattice import Lattice
 from afqmctools.hamiltonian.converter import read_hamiltonian
 from afqmctools.systems.lattice import get_lattice
@@ -123,7 +124,7 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
                 source=source,
                 lattice=lattice
                 ).hamiltonian
-    elif isinstance(source,Hamiltonian):
+    elif isinstance(source,Hamiltonian|LatticeHamiltonian):
 
         hamiltonian = source
 
