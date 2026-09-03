@@ -34,6 +34,9 @@ from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
 from safiretools.hamiltonian.molecular import MolecularHamiltonian
 from safiretools.hamiltonian.periodic import PeriodicHamiltonian
 from safiretools.types import SpinSymm
+from safiretools.wavefunction.base import Wavefunction
+from safiretools.wavefunction.nomsd import NOMSDWavefunction
+from safiretools.wavefunction.phmsd import PHMSDWavefunction
 
 __all__ = [
     'Hamiltonian',
@@ -41,8 +44,11 @@ __all__ = [
     'Lattice',
     'LatticeHamiltonian',
     'MolecularHamiltonian',
+    'NOMSDWavefunction',
+    'PHMSDWavefunction',
     'PeriodicHamiltonian',
     'SpinSymm',
+    'Wavefunction',
     'h1_spat2spin',
     'h2_spat2spin',
     'read_fcidump',
