@@ -23,7 +23,8 @@ import numpy as np
 import scipy.sparse as sps
 import h5py as h5
 
-from safiretools.hamiltonian.base import Hamiltonian
+from safiretools.hamiltonian.base import Hamiltonian, open_for_hamiltonian
+from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
 
 HDF5_PREFIX = 'Hamiltonian/ModelHamiltonian'
@@ -312,7 +313,7 @@ class LatticeHamiltonian(Hamiltonian):
             Input parameters, as a dict with a ``'hamiltonian'`` section (and a
             ``'lattice'`` section unless `lattice` is given), or the path to a
             TOML file holding the same.
-        lattice : Lattice, optional
+        lattice : ~safiretools.hamiltonian.model.lattice.Lattice, optional
             Lattice to build on. Built from ``source['lattice']`` if omitted.
 
         Returns
@@ -383,7 +384,10 @@ class LatticeHamiltonian(Hamiltonian):
         Parameters
         ----------
         path : str or pathlib.Path
-            HDF5 file to write. Overwritten if it exists.
+            HDF5 file to write into. Created if it does not exist. A Hamiltonian
+            already in the file is replaced; everything else — notably a
+            ``Wavefunction`` — is left alone, so a Hamiltonian and a
+            wavefunction can share one file in either order.
 
         Notes
         -----
@@ -401,7 +405,7 @@ class LatticeHamiltonian(Hamiltonian):
 
         real_valued = self.real_valued
 
-        with h5.File(path, 'w') as fh5:
+        with open_for_hamiltonian(path) as fh5:
             fh5.create_dataset(
                 'Hamiltonian/dims',
                 data=np.array([0, 0, 0, self.nbasis, nup, ndown, 0, 0], dtype=np.int64)
@@ -538,7 +542,7 @@ def lattice_metadata_from(lattice) -> dict:
 
     Parameters
     ----------
-    lattice : Lattice
+    lattice : ~safiretools.hamiltonian.model.lattice.Lattice
         The lattice a `LatticeHamiltonian` is being built on.
 
     Returns
@@ -677,12 +681,6 @@ def _split_hubbard_u(component: HamiltonianComponent, nbasis: int):
         yield _SPIN_SPIN_KEY, part(spin_spin)
 
 
-def _to_complex(array):
-    """SAFIRE's on-disk complex layout: real and imaginary parts interleaved."""
-    array = np.ascontiguousarray(array.astype(np.complex128, copy=False))
-    return array.view(np.float64).reshape(array.shape + (2,))
-
-
 def _write_csr(fh5, csr_array, prefix: str) -> None:
     """
     Write `csr_array` under `prefix` in the CSR layout the AFQMC executable
@@ -691,7 +689,7 @@ def _write_csr(fh5, csr_array, prefix: str) -> None:
     """
     data = csr_array.data
     if np.iscomplexobj(data):
-        data = _to_complex(data)
+        data = to_complex(data)
 
     fh5.create_dataset(
         name=prefix + '/dims',
@@ -709,9 +707,8 @@ def _write_csr(fh5, csr_array, prefix: str) -> None:
 
 def _read_csr(group):
     """Read back a CSR matrix written by `_write_csr`."""
-    data = group['data_'][...]
-    if data.ndim == 2 and data.shape[1] == 2:
-        data = data[:, 0] + 1j * data[:, 1]
+    # a CSR `data_` array is flat when stored real, so its interleaved rank is 2
+    data = from_complex(group['data_'][...], real_ndim=1)
 
     indices = group['jdata_'][...]
     pointers_begin = group['pointers_begin_'][...]

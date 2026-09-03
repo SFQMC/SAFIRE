@@ -20,11 +20,56 @@ axis.
 """
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from importlib import import_module
 
 import h5py as h5
 
 from safiretools.types import SpinSymm
+
+HAMILTONIAN_GROUP = 'Hamiltonian'
+"""Top-level HDF5 group every Hamiltonian format writes into."""
+
+
+def clear_hamiltonian(fh5) -> None:
+    """
+    Remove the Hamiltonian already in the open HDF5 file `fh5`, if there is one.
+
+    A SAFIRE input file holds at most one Hamiltonian and at most one
+    wavefunction, so writing a Hamiltonian replaces any Hamiltonian already
+    present while leaving everything else — notably ``Wavefunction`` — alone.
+    """
+    if HAMILTONIAN_GROUP in fh5:
+        del fh5[HAMILTONIAN_GROUP]
+
+
+@contextmanager
+def open_for_hamiltonian(path):
+    """
+    Open `path` for writing one Hamiltonian, creating the file if needed.
+
+    Anything else already in the file is preserved; only a Hamiltonian already
+    present is replaced. This is what lets a Hamiltonian and a wavefunction
+    share one file in either order.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        HDF5 file to write into.
+
+    Yields
+    ------
+    h5py.File
+        The open file, with no ``Hamiltonian`` group in it.
+
+    Notes
+    -----
+    HDF5 unlinks rather than reclaims, so repeatedly rewriting a Hamiltonian
+    into the same file grows it. Write to a fresh path if that matters.
+    """
+    with h5.File(path, 'a') as fh5:
+        clear_hamiltonian(fh5)
+        yield fh5
 
 
 def hamiltonian_format(path) -> str:

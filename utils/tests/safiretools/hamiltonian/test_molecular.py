@@ -280,3 +280,64 @@ class TestFromPyscf:
 
         with pytest.raises(ValueError, match="cannot be used at the same time"):
             MolecularHamiltonian.from_pyscf(scf_data, cas=(4, 4), ortho_ao=True)
+
+
+class TestRealAndComplexAreToldApartByRank:
+    """
+    `safiretools.hdf5.to_complex` appends a trailing axis of length 2, so the two
+    on-disk layouts differ in *rank*. These cases check that end-to-end through a
+    Hamiltonian round trip; `tests/safiretools/test_hdf5.py` checks the helper
+    itself.
+    """
+
+    @staticmethod
+    def _round_trip(tmp_path, hcore, chol, name):
+        hamiltonian = MolecularHamiltonian.from_integrals(
+            hcore, chol=chol, enuc=0.5, nelec=(1, 1))
+        path = tmp_path / name
+        hamiltonian.to_hdf5(path)
+
+        restored = Hamiltonian.from_hdf5(path)
+        assert np.allclose(restored.hcore, hamiltonian.hcore)
+        assert np.allclose(restored.chol, hamiltonian.chol)
+        return restored
+
+    def test_two_orbitals(self, tmp_path):
+        """`nmo == 2` makes a real hcore look interleaved by the old rule."""
+        hcore = np.array([[-1.25, 0.0], [0.0, -0.48]])
+        chol = np.arange(3 * 4, dtype=float).reshape(3, 4)   # (nchol=3, nmo**2)
+
+        restored = self._round_trip(tmp_path, hcore, chol, 'nmo2.h5')
+        assert restored.nmo == 2
+        assert restored.hcore.shape == (2, 2)
+        assert not np.iscomplexobj(restored.hcore)
+
+    def test_two_cholesky_vectors(self, tmp_path):
+        """`nchol == 2` makes a real Cholesky matrix look interleaved."""
+        hcore = np.diag([-1.0, -0.5, -0.25])
+        chol = np.arange(2 * 9, dtype=float).reshape(2, 9)   # (nchol=2, nmo**2)
+
+        restored = self._round_trip(tmp_path, hcore, chol, 'nchol2.h5')
+        assert restored.nchol == 2
+        assert restored.chol.shape == (9, 2)
+        assert not np.iscomplexobj(restored.chol)
+
+    def test_complex_data_is_still_recognized(self, tmp_path):
+        hcore = np.array([[-1.25 + 0.0j, 0.3j], [-0.3j, -0.48 + 0.0j]])
+        chol = np.arange(3 * 4, dtype=complex).reshape(3, 4) + 1j
+
+        restored = self._round_trip(tmp_path, hcore, chol, 'cplx.h5')
+        assert np.iscomplexobj(restored.hcore)
+        assert np.iscomplexobj(restored.chol)
+
+    def test_a_malformed_rank_is_rejected(self, tmp_path):
+        path = tmp_path / 'bad.h5'
+        MolecularHamiltonian.from_integrals(
+            np.diag([-1.0, -0.5]), chol=np.ones((2, 4))).to_hdf5(path)
+
+        with h5.File(path, 'a') as fh5:
+            del fh5['Hamiltonian/hcore']
+            fh5.create_dataset('Hamiltonian/hcore', data=np.zeros((2, 2, 2, 2)))
+
+        with pytest.raises(ValueError, match="rank 4"):
+            Hamiltonian.from_hdf5(path)

@@ -30,7 +30,8 @@ import numpy as np
 import scipy.linalg
 import h5py as h5
 
-from safiretools.hamiltonian.base import Hamiltonian
+from safiretools.hamiltonian.base import Hamiltonian, open_for_hamiltonian
+from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
@@ -304,9 +305,12 @@ class MolecularHamiltonian(Hamiltonian):
         Parameters
         ----------
         path : str or pathlib.Path
-            HDF5 file to write. Overwritten if it exists.
+            HDF5 file to write into. Created if it does not exist. A Hamiltonian
+            already in the file is replaced; everything else — notably a
+            ``Wavefunction`` — is left alone, so a Hamiltonian and a
+            wavefunction can share one file in either order.
         """
-        with h5.File(path, 'w') as fh5:
+        with open_for_hamiltonian(path) as fh5:
             write_dense_hamiltonian(
                 fh5,
                 hcore=self.hcore,
@@ -382,11 +386,11 @@ def write_dense_hamiltonian(fh5, hcore, chol, nelec, nmo, enuc=0.0,
         complex_chol = bool(np.any(np.iscomplex(chol)))
 
     _write(fh5, 'Hamiltonian/DenseFactorized/L',
-           _to_complex(chol) if complex_chol else np.real(chol))
+           to_complex(chol) if complex_chol else np.real(chol))
 
     complex_hcore = bool(np.any(np.iscomplex(hcore)))
     _write(fh5, 'Hamiltonian/hcore',
-           _to_complex(hcore) if complex_hcore else np.real(hcore))
+           to_complex(hcore) if complex_hcore else np.real(hcore))
 
     _write(fh5, 'Hamiltonian/Energies', np.array([enuc, 0.], dtype=np.float64))
     _write(fh5, 'Hamiltonian/dims',
@@ -442,8 +446,8 @@ def read_dense_hamiltonian(path):
         nchol = int(dims[-1])
         enuc = float(fh5['Hamiltonian/Energies'][...][0])
 
-        chol = _from_complex(fh5[CHOLESKY_DATASET][...]).reshape(-1, nchol)
-        hcore = _from_complex(fh5['Hamiltonian/hcore'][...])
+        chol = from_complex(fh5[CHOLESKY_DATASET][...]).reshape(-1, nchol)
+        hcore = from_complex(fh5['Hamiltonian/hcore'][...])
 
     return enuc, hcore, chol, nelec, nmo
 
@@ -453,24 +457,6 @@ def _write(fh5, name, data) -> None:
     if name in fh5:
         del fh5[name]
     fh5.create_dataset(name, data=data)
-
-
-def _to_complex(array):
-    """SAFIRE's on-disk complex layout: real and imaginary parts interleaved."""
-    array = np.ascontiguousarray(np.asarray(array).astype(np.complex128, copy=False))
-    return array.view(np.float64).reshape(array.shape + (2,))
-
-
-def _from_complex(data):
-    """
-    Undo `_to_complex`. Real datasets are returned unchanged: the interleaved
-    layout is recognized by its trailing length-2 axis, which is how the AFQMC
-    executable tells the two apart as well.
-    """
-    data = np.asarray(data)
-    if data.ndim >= 2 and data.shape[-1] == 2:
-        return np.ascontiguousarray(data).view(np.complex128).reshape(data.shape[:-1])
-    return data
 
 
 # ----------------------------------------------------------------------
