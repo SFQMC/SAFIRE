@@ -13,9 +13,21 @@
 The public API is re-exported flat here, so callers do not need to know the
 module tree. This surface is filled in as the package is built out; see
 DESIGN.md for the intended final set.
+
+**This list defines what is user-facing.** A name re-exported here is public;
+anything reachable only by a deeper path is an implementation detail. See
+"The top-level import surface defines what is user-facing" in DESIGN.md.
 """
 
 from safiretools.hamiltonian.base import Hamiltonian
+from safiretools.hamiltonian.fcidump import (
+    h1_spat2spin,
+    h2_spat2spin,
+    read_fcidump,
+    read_fcidump_header,
+    write_fcidump,
+    write_fcidump_kpoint,
+)
 from safiretools.hamiltonian.model.builder import HamiltonianBuilder
 from safiretools.hamiltonian.model.lattice import Lattice
 from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
@@ -31,4 +43,10 @@ __all__ = [
     'MolecularHamiltonian',
     'PeriodicHamiltonian',
     'SpinSymm',
+    'h1_spat2spin',
+    'h2_spat2spin',
+    'read_fcidump',
+    'read_fcidump_header',
+    'write_fcidump',
+    'write_fcidump_kpoint',
 ]
