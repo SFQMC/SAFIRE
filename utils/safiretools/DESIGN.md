@@ -463,6 +463,10 @@ communicator. Both drive the same solver and produce identical files.
   and `to_hdf5(path)` takes only a path — replacing
   `write_model_hamiltonian(ham, fname, nelec=..., spin_symm=...)`. In input files `nelec` therefore
   belongs in the `[hamiltonian]` block, not a separate `[misc_params]`/`[cli_params]` section.
+
+  > **`nelec` is on its way out entirely** — see **Future changes**. It is Hamiltonian state only
+  > because the on-disk formats still record it; the executable already ignores those fields. This
+  > bullet describes where it lives *today*, and reduces to `spin_symm` alone once it is gone.
 - **`to_hdf5()` replaces the Hamiltonian in its target file, not the whole file.** It opens the file
   in append mode (creating it if absent) and deletes an existing `Hamiltonian` group before writing.
   A SAFIRE input file holds **at most one Hamiltonian and at most one wavefunction**, so replacing
@@ -500,6 +504,44 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   the underlying ambiguity disappears anyway at **Phase 9** when afqmctools is retired.
   The same page change decides whether `hamiltonian_format()` is promoted — it is genuinely useful
   as "what is in this file?", but it is not public today, so the reference prose no longer names it.
+- **Remove `nelec` from Hamiltonians entirely — C++ and Python.** The electron count is a property
+  of the *problem*, not of the Hamiltonian; it sits on `Hamiltonian` today only because the on-disk
+  formats record it. The end state is that **nothing writes `nelec` to a Hamiltonian and nothing
+  reads `nelec` from one**; `dims[4]`/`dims[5]` become unused.
+
+  **The C++ side is already there.** Every Hamiltonian reader loads the 8-element `dims`
+  (`HamiltonianFactory.cpp`, `RealDenseHamiltonian.cpp`, `KPFactorizedHamiltonian.cpp`,
+  `ModelHamOpsGenerator.cpp`) but uses only `Idata[2]` (nkpts) and `Idata[3]` (NMO) — no reader
+  touches `Idata[4]`/`Idata[5]`. Electron counts reach the executable from the wavefunction. Note
+  the readers still declare `Idata(8)`, so **the two slots go unused rather than disappearing**: the
+  array keeps its length and the fields are written as zero (or dropped from the writer while the
+  readers keep skipping them). Changing the array length would be a format break, and is not part
+  of this.
+
+  **The Python side is what there is to do.** On all three subclasses: the `nelec` constructor
+  argument and `.nelec` attribute; `MolecularHamiltonian.from_integrals`/`from_pyscf`;
+  `LatticeHamiltonian`'s `nelec` key in the `hamiltonian` input block (`_parse_ham_input`'s
+  `_known_params`) and `HamiltonianBuilder(nelec=)`; `PeriodicHamiltonian.from_pyscf` /
+  `write_from_pyscf` and `_default_nelec`; the `dims` writes in `write_dense_hamiltonian`,
+  `LatticeHamiltonian.to_hdf5` and `_write_kpoint_descriptors`; and the reads in
+  `read_dense_hamiltonian` and each `_read_hdf5`.
+
+  Two things this does **not** touch:
+
+  - **FCIDUMP keeps its `nelec`.** `NELEC` is a field of that external format's own header, so
+    `read_fcidump`, `read_fcidump_header`, `write_fcidump` and `write_fcidump_kpoint` are unaffected.
+  - **The periodic generator still needs an electron count as an argument**, transiently:
+    `from_pyscf`/`write_from_pyscf` pass `sum(nelec)` to `_zero_electron_energy`, which computes the
+    Madelung/`exxdiv` correction that goes into `enuc`. Deleting that argument along with the
+    attribute would silently change the constant energy. The rule is about *stored state and file
+    fields*, not about arguments used to compute something else.
+
+  Doc churn to expect: the `nelec` key currently in the `[hamiltonian]` block of the eleven
+  `docs/snippets/01_setting_up/*/input*.toml` files, and in the Python parameter dicts across
+  `docs/examples/models/*` and `docs/tutorials/models/*`, all comes back out — it went *in* during
+  Phase 3b precisely because `to_hdf5` records it (see **Public API patterns**), so that bullet
+  changes too.
+
 - **Port `docs/tutorials/solids/04_computing_observables` off afqmctools.** It is the last doc source
   still calling `afqmctools.hamiltonian.converter.read_hamiltonian`, because its provided `hamil.h5`
   is in **CoQuí** format — `hamiltonian_format()` identifies it as `kpoint_coqui`, and safiretools
@@ -509,11 +551,7 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
 
 ### Things we might change
 
-- **Hamiltonians probably should not know `nelec` at all.** In principle the electron count is a
-  property of the *problem*, not of the Hamiltonian; it lives on `Hamiltonian` today only because
-  the on-disk formats record it in `dims`. Removing it is a change on **both** sides — SAFIRE would
-  have to stop reading it from the Hamiltonian file, and safiretools would drop it from the
-  constructors, the `hamiltonian` input block and `to_hdf5`. Worth doing together, not piecemeal.
+*(nothing recorded here at the moment.)*
 
 ## Open questions
 
