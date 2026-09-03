@@ -351,3 +351,13 @@ class TestSpinSymmCoercion:
 
         assert wavefunction.spin_symm is expected
 
+    def test_a_polarized_wavefunction_is_collinear_with_no_beta_electrons(
+            self, make_nomsd):
+        # the replacement for what FULLYPOLARIZED used to encode
+        wavefunction = make_nomsd('collinear', nelec=(3, 0), nmo=6)
+
+        assert wavefunction.spin_symm is SpinSymm.COLLINEAR
+        assert wavefunction.nelec_per_spin == (3, 0)
+        assert wavefunction.nelec_on_disk == (3, 0)
+        assert wavefunction.psi0[1].shape == (6, 0)
+
