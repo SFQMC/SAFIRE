@@ -198,10 +198,7 @@ We can generate a free-electron trial wavefunction using the `free_electron` fun
 ```{code-cell} ipython3
 :id: XDDPCMhvHKRc
 
-from safiretools import Lattice
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-from afqmctools.hamiltonian.model.ham_class import HamiltonianComponent, SpinSymm
-from afqmctools.utils.io import write_model_hamiltonian
+from safiretools import HamiltonianBuilder, Lattice, SpinSymm
 from afqmctools.wavefunction.free_electron import free_electron
 
 # define lattice
@@ -228,17 +225,14 @@ hamiltonian = HamiltonianBuilder.from_input(source=dict(
     hamiltonian=dict(
         t=hopping,
         U=Uhubb,
+        nelec=nelec,
     )),
     lattice=lattice
-).hamiltonian
+).get_hamiltonian()
 
 nbasis = lattice.N_sites
 
-write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=scratch_dir / "hamil.h5",
-    nelec=nelec
-)
+hamiltonian.to_hdf5(scratch_dir / "hamil.h5")
 
 # compute a free-electron trial wfn
 wfn,spin_symm = free_electron(

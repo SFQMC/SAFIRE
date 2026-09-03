@@ -15,29 +15,23 @@ interaction term regardless of the sign of the interaction strength.
 
 .. literalinclude:: input.toml
 
-afqmctools can be invoked within a Python script as
+safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
+    from safiretools import HamiltonianBuilder
     from afqmctools.wavefunction.free_electron import free_electron
 
     infile = "input.toml"
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian = HamiltonianBuilder.from_input(source=infile).hamiltonian
-    input_params = io.read_input_params(infile)
-    nelec = input_params["misc_params"]["nelec"]
-    io.write_model_hamiltion(
-        hamiltonian=hamiltonian,
-        fname="afqmc.h5",
-        nelec=nelec
-    )
+    hamiltonian = HamiltonianBuilder.from_input(source=infile).get_hamiltonian()
+    hamiltonian.to_hdf5("afqmc.h5")
 
     # compute and save a free-electron trial wfn
     free_electron(
         source=infile,
-        nelec=nelec,
+        nelec=hamiltonian.nelec,
         output="afqmc.h5"
     )
 

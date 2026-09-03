@@ -55,10 +55,8 @@ outputId: 51107f5c-4186-4817-9e97-990b46c79acc
 # setup the Hamiltonian
 import numpy as np
 
-from safiretools import Lattice
+from safiretools import HamiltonianBuilder, Lattice
 from afqmctools.utils.visualize import plot_lattice
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-import afqmctools.utils.io as io
 
 lattice = Lattice.from_dict(
     params=dict(
@@ -85,10 +83,10 @@ params = {
 hamiltonian = HamiltonianBuilder.from_input(
     source=params,
     lattice=lattice
-).hamiltonian
+).get_hamiltonian()
 
 # save for AFQMC
-io.write_model_hamiltonian(hamiltonian,fname=scratch_dir/"afqmc.h5")
+hamiltonian.to_hdf5(scratch_dir/"afqmc.h5")
 ```
 
 ```{code-cell} ipython3
@@ -113,7 +111,7 @@ params = {
 effective_hamiltonian = HamiltonianBuilder.from_input(
     source=params,
     lattice=lattice
-).hamiltonian
+).get_hamiltonian()
 
 # convert afqmctools Hamitlonian to AutoHFHamiltonian
 autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)

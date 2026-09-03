@@ -1,5 +1,6 @@
 [hamiltonian]
 U = 4
+nelec = [24,24]
 
 [lattice]
 L1 = 4
@@ -7,6 +8,3 @@ L2 = 8
 boundary1 = "PBC" # or "open" for open boundaries
 boundary2 = "PBC" # or "open" for open boundaries
 twist = [0.0,2.748893571891069] # 'Pi' is parsed and converted! So are fractions expressed as 'num/denom'
-
-[misc_params]
-nelec = [24,24]

@@ -84,9 +84,7 @@ plot_lattice(lattice,show_coords=False)
 :id: 364ee811-8242-45ce-88ee-69fcaa6901fd
 :outputId: b64b276a-cae9-4c47-a315-e9c015fc264a
 
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-from afqmctools.hamiltonian.model.ham_class import SpinSymm
-from afqmctools.utils.io import write_model_hamiltonian
+from safiretools import HamiltonianBuilder, SpinSymm
 
 #TODO: need AFM (staggered) pinning at y=1 and  y=Ly with h_pin = 0.25 only for AFQMC!!
 
@@ -105,8 +103,8 @@ builder.onsite_hubbard(hamiltonian_params["hamiltonian"]["U"])
 builder.afm_pinning(h_afm_pin=0.25,axis=1,pin_type="same")
 builder.finalize()
 
-hamiltonian = builder.hamiltonian
-write_model_hamiltonian(hamiltonian,fname=scratch_dir/"Hubbard_tprime0.4_U4.0.h5")
+hamiltonian = builder.get_hamiltonian()
+hamiltonian.to_hdf5(scratch_dir/"Hubbard_tprime0.4_U4.0.h5")
 ```
 
 +++ {"id": "81220323-65d6-4438-91db-87cc44e71047"}

@@ -1,6 +1,7 @@
 [hamiltonian]
 t = 1.0 # defaults to 1.0
 U = 2.0 
+nelec = [2,2]
 
 [lattice]
 L1 = 3
@@ -8,6 +9,3 @@ L2 = 3
 boundary1 = "PBC" # or "open" for open boundaries
 boundary2 = "PBC" # or "open" for open boundaries
 type = "triangular" # defaults to square
-
-[misc_params]
-nelec = [2,2]

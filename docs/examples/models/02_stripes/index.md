@@ -37,10 +37,8 @@ config.update("jax_enable_x64", True)
 import matplotlib.pyplot as plt
 import numpy as np
 
-from safiretools import Lattice
+from safiretools import HamiltonianBuilder, Lattice
 import afqmctools.utils.visualize as vis
-import afqmctools.utils.io as io
-import afqmctools.hamiltonian.model.builder as ham
 
 from afqmctools.wavefunction.converter import read_wavefunction
 from afqmctools.wavefunction.model import write_free_electron_wfn
@@ -130,9 +128,10 @@ outputId: 731af8f0-e234-49d5-cfc5-d38fb5483845
 colab:
   base_uri: https://localhost:8080/
 ---
-builder = ham.HamiltonianBuilder(
+builder = HamiltonianBuilder(
           lattice=lattice,
-          spin_symm="collinear" # we have no spin-flip terms
+          spin_symm="collinear", # we have no spin-flip terms
+          nelec=nelec
 )
 # add standard Hubbard terms
 builder.nth_neighbor_hopping(1.0)
@@ -144,8 +143,7 @@ builder.finalize()
 ```{code-cell} ipython3
 :id: f94e92dd-9802-46ea-a1db-0baffb7efbb4
 
-io.write_model_hamiltonian(builder.hamiltonian, scratch_dir / "afqmc.h5",
-                        nelec=nelec,spin_symm="collinear")
+builder.get_hamiltonian().to_hdf5(scratch_dir / "afqmc.h5")
 ```
 
 ```{code-cell} ipython3
@@ -338,9 +336,10 @@ _Note:_ The Hartree-Fock code is faster if you use a GPU
 Ueffs = [1,2,3,4]
 for Ueff in Ueffs:
 
-    builder_eff = ham.HamiltonianBuilder(
+    builder_eff = HamiltonianBuilder(
               lattice=lattice,
-              spin_symm="collinear"
+              spin_symm="collinear",
+              nelec=nelec
                   )
     # add standard Hubbard terms
     builder_eff.nth_neighbor_hopping(1.0)
@@ -350,9 +349,8 @@ for Ueff in Ueffs:
 
     # NOTICE: we must be careful here! We can either keep around afqmc.h5
     # which has the original Hamiltonian (U=6) and keep the wf and its Hamiltonian together
-    # or we have one file with afqmc_Ueff which has both the wf and builder.hamiltonian
-    io.write_model_hamiltonian(builder_eff.hamiltonian, scratch_dir / f"afqmc_{Ueff}.h5",
-                            nelec=nelec,spin_symm="collinear")
+    # or we have one file with afqmc_Ueff which has both the wf and builder.get_hamiltonian()
+    builder_eff.get_hamiltonian().to_hdf5(scratch_dir / f"afqmc_{Ueff}.h5")
 
     hf_settings = dict(
         steps = 2000,
@@ -364,7 +362,7 @@ for Ueff in Ueffs:
         noncollinear = False
     )
     results = autohf.solver.lattice_hf(
-        hamiltonian=autohf.AutoHFHamiltonian(builder_eff.hamiltonian),
+        hamiltonian=autohf.AutoHFHamiltonian(builder_eff.get_hamiltonian()),
         lattice=lattice,
         settings=hf_settings,
     )

@@ -113,9 +113,7 @@ colab:
 id: c844616d-45c5-498a-b6f9-c995027965e6
 outputId: 855ebc93-90d5-4e84-94ff-e974f19587fc
 ---
-from safiretools import Lattice
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-from afqmctools.utils.io import write_model_hamiltonian
+from safiretools import HamiltonianBuilder, Lattice
 from afqmctools.inputs.from_autohf import autohf_to_afqmc
 
 from autohf import lattice_hf,AutoHFHamiltonian
@@ -139,7 +137,8 @@ lattice_params = {
 hamiltonian_params = {
     't' : 1.0,
     'U': 8.0,
-    'spin_symm' : "closed"
+    'spin_symm' : "closed",
+    'nelec' : nelec
 }
 
 params = {
@@ -148,12 +147,9 @@ params = {
 
 lattice = Lattice.from_dict(lattice_params)
 
-hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 
-write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=scratch_dir/"hamiltonian.h5"
-)
+hamiltonian.to_hdf5(scratch_dir/"hamiltonian.h5")
 
 
 # autoHF does not support closed integrals to collinear integrals
@@ -168,7 +164,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-hamiltonian_for_autohf = HamiltonianBuilder.from_input(source=params, lattice=lattice).hamiltonian
+hamiltonian_for_autohf = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 
 
 hf_settings = dict(
@@ -560,7 +556,6 @@ from types import SimpleNamespace
 import matplotlib.pyplot as plt
 import numpy as np
 
-from afqmctools.hamiltonian.converter import read_common_input
 from afqmctools.analysis.extraction import extract_observable,get_metadata
 from afqmctools.analysis.transform import hermitize_factory,eval_one_body_obs_factory,eval_two_body_obs_factory
 
