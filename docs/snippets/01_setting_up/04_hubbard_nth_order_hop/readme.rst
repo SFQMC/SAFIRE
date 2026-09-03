@@ -6,36 +6,30 @@ Hubbard with nth-order hopping
 This example covers building a Hubbard model Hamiltonian on square Lattice with a t' (i.e next-nearest neighbor hopping), 
 and generating a free-electron trial wavefunction.
 
-A lattice model Hamiltonian can be generated using afqmctools and
+A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
 Below is a sample input file, which we name `input.toml`, for a Hubbard model 
 on a 3x2 square lattice with periodic boundary conditions.
 
 .. literalinclude:: input.toml
 
-afqmctools can be invoked within a Python script as
+safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-    import afqmctools.utils.io as io
+    from safiretools import HamiltonianBuilder
     from afqmctools.wavefunction.free_electron import free_electron
 
     infile = "input.toml"
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian = HamiltonianBuilder.from_input(infile).hamiltonian
-    nelec = io.read_input_params(infile)["misc_params"]["nelec"]
-    io.write_model_hamiltion(
-        hamiltonian=hamiltonian,
-        fname="afqmc.h5",
-        nelec=nelec
-    )
+    hamiltonian = HamiltonianBuilder.from_input(infile).get_hamiltonian()
+    hamiltonian.to_hdf5("afqmc.h5")
 
     # compute and save a free-electron trial wfn
     free_electron(
         source=infile,
-        nelec=nelec,
+        nelec=hamiltonian.nelec,
         output="afqmc.h5"
     )
 

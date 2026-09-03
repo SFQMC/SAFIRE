@@ -107,19 +107,22 @@ colab:
   base_uri: https://localhost:8080/
 outputId: 601a13a7-15f4-49d9-ba6a-01fb4ba3b173
 ---
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-import afqmctools.utils.io as io
+from safiretools import HamiltonianBuilder
 
 print(scratch_dir)
 
 fe_scratch_dir = scratch_dir / "fe"
 fe_scratch_dir.mkdir(exist_ok=True)
 
+# set the number of electrons - we'll use this again
+nelec = (8,8)
+
 # Step 2. define Hamiltonian parameters
 hamiltonian_params = {
     'hamiltonian' : {
         "t" : 1.0,  # note: we could omit this, nearest-neighbor hoping with t=1 is included by default
-        "U" : 4.0
+        "U" : 4.0,
+        "nelec" : nelec
     }
 }
 
@@ -127,17 +130,10 @@ hamiltonian_params = {
 hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice,
     source=hamiltonian_params
-).hamiltonian
-
-# set the number of electrons - we'll use this again
-nelec = (8,8)
+).get_hamiltonian()
 
 # AND save it!
-io.write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=fe_scratch_dir/"afqmc.h5",
-    nelec=nelec
-)
+hamiltonian.to_hdf5(fe_scratch_dir/"afqmc.h5")
 ```
 
 +++ {"id": "MqK7sb3Z5xcn"}
@@ -813,7 +809,6 @@ from types import SimpleNamespace
 import numpy as np
 import matplotlib.pyplot as plt
 
-from afqmctools.hamiltonian.converter import read_hamiltonian
 from afqmctools.analysis.transform import hermitize_factory
 from afqmctools.analysis.average import WALKER_TYPE,get_metadata,average_observable
 

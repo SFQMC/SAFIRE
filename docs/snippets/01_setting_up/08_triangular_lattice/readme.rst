@@ -10,7 +10,7 @@ and generating a free-electron trial wavefunction.
     :width: 600
     :alt: a 3x3x triangular lattice
 
-A lattice model Hamiltonian can be generated using afqmctools and
+A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
 Below is a sample input file, which we name `input.toml`
 
@@ -18,12 +18,11 @@ Below is a sample input file, which we name `input.toml`
 
 if no "type" is specified in the "lattice" section, then a square lattice is used.
 
-afqmctools can be invoked within a Python script as
+safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-    import afqmctools.utils.io as io
+    from safiretools import HamiltonianBuilder
     from afqmctools.wavefunction.free_electron import free_electron
     import afqmctools.utils.visualize as vis
 
@@ -31,8 +30,8 @@ afqmctools can be invoked within a Python script as
 
     # Build and save a lattice model Hamiltonian
     hamiltonian_builder = HamiltonianBuilder.from_input(source=infile)
-    lattice = hamiltonian_builder.lattice
-    hamiltonian = hamiltonian_builder.hamiltonian
+    lattice = hamiltonian_builder.get_lattice()
+    hamiltonian = hamiltonian_builder.get_hamiltonian()
 
     # makes a visualization of the lattice and saves it "lattice.png"
     vis.plot_lattice(
@@ -40,17 +39,12 @@ afqmctools can be invoked within a Python script as
         save=True
     )
 
-    nelec = io.read_input_params(infile)["misc_params"]["nelec"]
-    io.write_model_hamiltion(
-        hamiltonian=hamiltonian,
-        fname="afqmc.h5",
-        nelec=nelec
-    )
+    hamiltonian.to_hdf5("afqmc.h5")
 
     # compute and save a free-electron trial wfn
     free_electron(
         source=infile,
-        nelec=nelec,
+        nelec=hamiltonian.nelec,
         output="afqmc.h5"
     )
 

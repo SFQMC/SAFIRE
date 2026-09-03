@@ -79,7 +79,7 @@ import afqmctools
 import autohf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
+from safiretools import MolecularHamiltonian
 from afqmctools.wavefunction.mol import write_cas_wfn
 from afqmctools.inputs.from_hdf import write_json
 
@@ -272,12 +272,11 @@ def setup_benchmark(key:str, case:dict):
     )
 
     # write Hamiltonian
-    write_hamil_mol(
+    MolecularHamiltonian.from_pyscf(
         basis_scf_data,
-        hamil_file = local_scratch_dir / 'afqmc.h5',
         chol_cut = 1e-6, # from the PRX
         verbose=True
-    )
+    ).to_hdf5(local_scratch_dir / 'afqmc.h5')
 
     execute_options = {
         "timestep": 0.005,

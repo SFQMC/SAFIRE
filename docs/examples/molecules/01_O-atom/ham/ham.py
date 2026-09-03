@@ -9,7 +9,7 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
+from safiretools import MolecularHamiltonian
 from afqmctools.wavefunction.mol import write_wfn_mol
 
 
@@ -35,13 +35,12 @@ def main():
         'scf'
     )
 
-    write_hamil_mol(
+    MolecularHamiltonian.from_pyscf(
         scf_data=scf_data,
-        hamil_file=fout, 
-        chol_cut=chol_tol, 
-        real_chol=True, 
+        chol_cut=chol_tol,
+        real_chol=True,
         verbose=True
-    )
+    ).to_hdf5(fout)
     
     #####################################
     #                                   #

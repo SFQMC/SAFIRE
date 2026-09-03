@@ -36,7 +36,6 @@ import numpy as np
 from pyscf import gto,scf,mcscf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
 from afqmctools.wavefunction.mol import write_cas_wfn
 from afqmctools.inputs.from_hdf import write_json
 

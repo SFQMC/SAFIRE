@@ -49,7 +49,7 @@ It simply accepts Hamiltonian "components" which are interpreted as above.
 This provides great flexibility in specifying Hamiltonians; however, if Hamiltonians are generated externally, care must be taken
 to ensure that consistent index conventions are used.
 
-``afqmctools`` provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
+``safiretools`` provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
 on a variety of lattices, using consistent conventions for indexing.
 The framework consists of a Lattice class which is responsible for geometry (see the `lattice tutorial <03_setting_up_a_lattice/03_setting_up_a_lattice_executed.html>`_),
 and a Hamiltonian *Builder* which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
@@ -98,7 +98,7 @@ Typical Workflow
 Software prerequisites
 ======================
 
-The afqmctools Python package provides tools for generating a broad range of lattice model Hamiltonians.
+The safiretools Python package provides tools for generating a broad range of lattice model Hamiltonians.
 Additionally, afqmctools and the autoHF Hartree-Fock solver allow single-Slater determinant trial wavefunctions to be computed.
 In these tutorials, we will use these tools exclusively;
 however, from the tutorials, it should also be clear how to import

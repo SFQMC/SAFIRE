@@ -1,12 +1,10 @@
 [hamiltonian]
 nbands = 3  # edit to change number of bands
 U = 2.0 
+nelec = [3,3]
 
 [lattice]
 L1 = 2
 L2 = 3
 boundary1 = "PBC" # or "open" for open boundaries
 boundary2 = "PBC" # or "open" for open boundaries
-
-[misc_params]
-nelec = [3,3]

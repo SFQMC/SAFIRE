@@ -1,7 +1,4 @@
-from safiretools import Lattice
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-from afqmctools.hamiltonian.model.ham_class import SpinSymm
-import afqmctools.utils.io as io
+from safiretools import HamiltonianBuilder, Lattice, SpinSymm
 from afqmctools.wavefunction.free_electron import free_electron
 
 lattice = Lattice.from_dict(
@@ -23,7 +20,8 @@ hopping = [1.0,0.5]
 
 builder = HamiltonianBuilder(
     lattice=lattice,
-    spin_symm=SpinSymm.NONCOLLINEAR
+    spin_symm=SpinSymm.NONCOLLINEAR,
+    nelec=nelec
 )
 # add standard Hubbard terms
 builder.nth_neighbor_hopping(t=hopping)
@@ -33,13 +31,9 @@ builder.onsite_hubbard(U=8.0)
 builder.rashba_soc(rashba_lambda=0.3, t=hopping)
 builder.finalize()
 
-hamiltonian = builder.hamiltonian
+hamiltonian = builder.get_hamiltonian()
 
-io.write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname="afqmc.h5",
-    nelec=nelec
-)
+hamiltonian.to_hdf5("afqmc.h5")
 free_electron(
     source=hamiltonian,
     nelec=nelec,

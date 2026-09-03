@@ -5,12 +5,10 @@ U = 2.0
 U1 = 1.5
 U2 = 1.0
 J = 0.5
+nelec = [6,6]
 
 [lattice]
 L1 = 6
 L2 = 1
 boundary1 = "PBC"
 # boundary condidtions default to "open"
-
-[misc_params]
-nelec = [6,6]
