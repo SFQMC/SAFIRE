@@ -418,3 +418,80 @@ def test_skip_empty_params(params, expected_calls):
     recorder = Recorder()
     recorder.step(params)
     assert len(recorder.calls) == expected_calls
+
+
+class TestBuildStepsArePassableByKeyword:
+    """
+    The build-step decorators must preserve the wrapped signature, so the
+    amplitude parameter each step documents (`t`, `U`, `U1`, `J`, ...) can be
+    given by keyword. A wrapper declared as ``(self, params, *args, **kwargs)``
+    renames every one of them to ``params`` and raises
+    ``TypeError: missing 1 required positional argument: 'params'`` instead.
+    """
+
+    @pytest.mark.parametrize("step,kwargs", [
+        ('nth_neighbor_hopping', dict(t=[1.0, 0.5])),
+        ('onebody_onsite', dict(epsilon=0.1)),
+        ('onsite_hubbard', dict(U=4.0)),
+        ('hubbard_U1_density_density', dict(U1=1.5)),
+        ('hubbard_U2_spin_spin', dict(U2=1.0)),
+        ('hubbard_Jij', dict(J=0.5)),
+        ('heisenberg_J', dict(J=0.3)),
+        ('nth_order_hubbard_Vij', dict(V=2.0)),
+    ])
+    def test_amplitude_by_keyword(self, square_2x2, step, kwargs):
+        builder = HamiltonianBuilder(lattice=square_2x2, nbands=2,
+                                     spin_symm=SpinSymm.COLLINEAR)
+        getattr(builder, step)(**kwargs)
+        assert builder.get_hamiltonian().num_components > 0
+
+    @pytest.mark.parametrize("step,kwargs", [
+        ('nth_neighbor_hopping', dict(t=1.0)),
+        ('onsite_hubbard', dict(U=4.0)),
+    ])
+    def test_keyword_and_positional_agree(self, square_2x2, step, kwargs):
+        (value,) = kwargs.values()
+
+        positional = HamiltonianBuilder(lattice=square_2x2)
+        getattr(positional, step)(value)
+
+        keyword = HamiltonianBuilder(lattice=square_2x2)
+        getattr(keyword, step)(**kwargs)
+
+        for key in positional.get_hamiltonian().keys():
+            a = sum(positional.get_hamiltonian()[key]).csr_array
+            b = sum(keyword.get_hamiltonian()[key]).csr_array
+            assert (a != b).nnz == 0
+
+    @pytest.mark.parametrize("step,amplitude", [
+        ('nth_neighbor_hopping', 't'),
+        ('onsite_hubbard', 'U'),
+        ('nth_order_hubbard_Vij', 'V'),
+        ('rashba_soc', 'rashba_lambda'),
+    ])
+    def test_signature_survives_decoration(self, step, amplitude):
+        """Introspection (and therefore autodoc) sees the real parameter names."""
+        import inspect
+
+        parameters = inspect.signature(getattr(HamiltonianBuilder, step)).parameters
+        assert list(parameters)[:2] == ['self', amplitude]
+        assert 'params' not in parameters
+
+    def test_rashba_soc_iterates_a_list_of_hoppings(self, square_4x4):
+        """
+        `rashba_soc` recurses for a list-valued `t`, passing `rashba_lambda` by
+        keyword — impossible while the decorator renamed the first parameter.
+        """
+        builder = HamiltonianBuilder(lattice=square_4x4,
+                                     spin_symm=SpinSymm.NONCOLLINEAR)
+        builder.nth_neighbor_hopping([1.0, 0.5])
+        builder.rashba_soc(rashba_lambda=0.3, t=[1.0, 0.5])
+        builder.finalize()
+
+        assert builder.get_hamiltonian()['tij']
+
+    def test_a_zero_amplitude_given_by_keyword_still_skips(self, square_2x2):
+        builder = HamiltonianBuilder(lattice=square_2x2)
+        builder.onsite_hubbard(U=0.0)
+        builder.hubbard_Jij(J=None)
+        assert builder.get_hamiltonian().num_components == 0
