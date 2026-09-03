@@ -10,6 +10,7 @@
 
 import numpy as np
 import h5py as h5
+import pytest
 
 from safiretools.hdf5 import (
     add_dataset,
@@ -43,8 +44,52 @@ def test_to_from_complex_round_trip():
     on_disk = to_complex(array)
     assert on_disk.shape == array.shape + (2,)
     assert on_disk.dtype == np.float64
-    recovered = from_complex(on_disk, shape=array.shape)
+
+    recovered = from_complex(on_disk, real_ndim=1)
+    assert recovered.shape == array.shape
     np.testing.assert_allclose(recovered, array)
+
+
+@pytest.mark.parametrize("shape", [(3,), (2, 2), (4, 2), (2, 3, 2)])
+def test_to_from_complex_preserves_shape(shape):
+    rng = np.random.default_rng(0)
+    array = rng.random(shape) + 1j * rng.random(shape)
+
+    recovered = from_complex(to_complex(array), real_ndim=len(shape))
+    assert recovered.shape == shape
+    np.testing.assert_allclose(recovered, array)
+
+
+class TestFromComplexTellsTheLayoutsApartByRank:
+    """
+    `to_complex` appends a trailing length-2 axis, so the layouts differ in
+    *rank*. Recognizing the complex one by "the last axis has length 2" instead
+    is ambiguous whenever a real dataset's own last axis happens to be 2.
+    """
+
+    @pytest.mark.parametrize("array,real_ndim", [
+        (np.zeros(2), 1),               # a flat real array of length 2
+        (np.zeros((2, 2)), 2),          # a real 2x2 matrix
+        (np.zeros((4, 2)), 2),          # a real matrix with two columns
+    ])
+    def test_real_data_is_returned_unchanged(self, array, real_ndim):
+        recovered = from_complex(array, real_ndim=real_ndim)
+        assert recovered.shape == array.shape
+        assert not np.iscomplexobj(recovered)
+
+    @pytest.mark.parametrize("real_ndim", [1, 2, 3])
+    def test_interleaved_data_is_converted(self, real_ndim):
+        rng = np.random.default_rng(1)
+        shape = (2,) * real_ndim
+        array = rng.random(shape) + 1j * rng.random(shape)
+
+        recovered = from_complex(to_complex(array), real_ndim=real_ndim)
+        assert np.iscomplexobj(recovered)
+        np.testing.assert_allclose(recovered, array)
+
+    def test_a_wrong_rank_is_rejected(self):
+        with pytest.raises(ValueError, match="rank 3"):
+            from_complex(np.zeros((2, 2, 3)), real_ndim=1)
 
 
 def test_dict_to_h5_round_trip_with_nested_groups(tmp_path):

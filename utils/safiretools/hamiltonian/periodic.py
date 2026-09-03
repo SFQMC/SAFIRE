@@ -49,7 +49,12 @@ import warnings
 import numpy as np
 import h5py as h5
 
-from safiretools.hamiltonian.base import Hamiltonian
+from safiretools.hamiltonian.base import (
+    Hamiltonian,
+    clear_hamiltonian,
+    open_for_hamiltonian,
+)
+from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
@@ -788,7 +793,9 @@ class FileHandler:
     filename : str or pathlib.Path
         File to open.
     mode : str, optional
-        h5py file mode. Default ``'w'``.
+        h5py file mode for the real output file. Default ``'w'``. The per-rank
+        scratch files are always truncated, since they only ever hold one run's
+        partial Cholesky blocks.
     phdf : bool, optional
         Use parallel HDF5. Default False.
 
@@ -808,7 +815,7 @@ class FileHandler:
         elif comm.rank == 0:
             self.h5f = h5.File(filename, mode)
         else:
-            self.h5f = h5.File(rank_filename(comm.rank, filename), mode)
+            self.h5f = h5.File(rank_filename(comm.rank, filename), "w")
 
     def __enter__(self):
         self.h5f.phdf = self.phdf
@@ -1001,7 +1008,9 @@ class PeriodicHamiltonian(Hamiltonian):
         scf_data : dict
             Unpacked PySCF checkpoint; see `from_pyscf`.
         path : str or pathlib.Path
-            HDF5 file to write.
+            HDF5 file to write into. Created if it does not exist; a Hamiltonian
+            already in it is replaced and anything else preserved, as for
+            `to_hdf5`.
         kpoint_symmetry : bool, optional
             Factorize per momentum transfer (True) rather than as one supercell
             (False). Default True.
@@ -1040,7 +1049,8 @@ class PeriodicHamiltonian(Hamiltonian):
         solver = PeriodicCholesky(comm, cell, kpts, nmo_pk, kp_sym=True,
                                   maxvecs=maxvecs, gtol_chol=chol_cut, verbose=verbose)
 
-        with FileHandler(comm, path, "w", phdf) as h5file:
+        with FileHandler(comm, path, "a", phdf) as h5file:
+            clear_hamiltonian(h5file)
             group = h5file.create_group("Hamiltonian")
             kp_group = h5file.create_group(KPOINT_GROUP)
 
@@ -1078,9 +1088,12 @@ class PeriodicHamiltonian(Hamiltonian):
         Parameters
         ----------
         path : str or pathlib.Path
-            HDF5 file to write. Overwritten if it exists.
+            HDF5 file to write into. Created if it does not exist. A Hamiltonian
+            already in the file is replaced; everything else — notably a
+            ``Wavefunction`` — is left alone, so a Hamiltonian and a
+            wavefunction can share one file in either order.
         """
-        with h5.File(path, 'w') as fh5:
+        with open_for_hamiltonian(path) as fh5:
             group = fh5.create_group("Hamiltonian")
             _write_kpoint_descriptors(group, self.kpts, self.nmo_pk, self.qk_to_k2,
                                       self.minus_k, self.nelec, self.enuc)
@@ -1091,7 +1104,7 @@ class PeriodicHamiltonian(Hamiltonian):
 
             kp_group = fh5.create_group(KPOINT_GROUP)
             for Q, L in self.chol.items():
-                kp_group.create_dataset(f"L{Q}", data=_interleave(L))
+                kp_group.create_dataset(f"L{Q}", data=to_complex(L))
 
     @classmethod
     def _read_hdf5(cls, path, fmt: str) -> "PeriodicHamiltonian":
@@ -1109,8 +1122,8 @@ class PeriodicHamiltonian(Hamiltonian):
             minus_k = group['MinusK'][...]
             nchol_pk = group['NCholPerKP'][...]
 
-            hcore = [_deinterleave(group[f'H1_kp{ki}'][...]) for ki in range(nkpts)]
-            chol = {Q: _deinterleave(fh5[f'{KPOINT_GROUP}/L{Q}'][...])
+            hcore = [from_complex(group[f'H1_kp{ki}'][...]) for ki in range(nkpts)]
+            chol = {Q: from_complex(fh5[f'{KPOINT_GROUP}/L{Q}'][...])
                     for Q in range(nkpts) if f'L{Q}' in fh5[KPOINT_GROUP]}
 
         return cls(hcore=hcore, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
@@ -1185,20 +1198,6 @@ class _SerialComm:
 # ----------------------------------------------------------------------
 # assembling and writing
 # ----------------------------------------------------------------------
-
-def _interleave(array):
-    """SAFIRE's on-disk complex layout: real and imaginary parts interleaved."""
-    array = np.ascontiguousarray(np.asarray(array).astype(np.complex128, copy=False))
-    return array.view(np.float64).reshape(array.shape + (2,))
-
-
-def _deinterleave(data):
-    """Undo `_interleave`."""
-    data = np.asarray(data)
-    if data.ndim >= 2 and data.shape[-1] == 2:
-        return np.ascontiguousarray(data).view(np.complex128).reshape(data.shape[:-1])
-    return data
-
 
 def _transform_hcore(hcore, X, nmo_pk):
     """The one-body Hamiltonian at each k-point, in the working basis."""
@@ -1382,7 +1381,7 @@ def _write_kpoint_block(comm, kp_group, solver, Q, cholvecs, phdf=False) -> None
             dtype=np.float64)
         for kk in range(part.nkk):
             LQ[kk + part.kk0, part.ij0 * numv:part.ijN * numv, :] = (
-                _interleave(cholvecs[kk, :, :].ravel() * factor))
+                to_complex(cholvecs[kk, :, :].ravel() * factor))
     else:
         kp_group.create_dataset(
             f"Ldim{Q}",
@@ -1391,7 +1390,7 @@ def _write_kpoint_block(comm, kp_group, solver, Q, cholvecs, phdf=False) -> None
         LQ = kp_group.create_dataset(f"L{Q}", (part.nkk, part.nij * numv, 2),
                                      dtype=np.float64)
         for kk in range(part.nkk):
-            LQ[kk, :, :] = _interleave(cholvecs[kk, :, :].ravel() * factor)
+            LQ[kk, :, :] = to_complex(cholvecs[kk, :, :].ravel() * factor)
 
 
 def _merge_rank_files(comm, kp_group, path, minus_k) -> None:

@@ -94,3 +94,68 @@ def test_spin_symm_is_coerced():
 
     with pytest.raises(ValueError, match="Unknown spin symmetry"):
         hamiltonian.spin_symm = 'sideways'
+
+
+class TestWritingPreservesTheRestOfTheFile:
+    """
+    A SAFIRE input file holds at most one Hamiltonian and at most one
+    wavefunction, so `to_hdf5` replaces the Hamiltonian rather than the file.
+    That is what lets the two be written in either order.
+    """
+
+    @staticmethod
+    def _wavefunction(path):
+        """Stand in for a wavefunction writer: a `Wavefunction` group."""
+        with h5.File(path, 'a') as fh5:
+            fh5.create_dataset('Wavefunction/NOMSD/ci_coeffs', data=np.ones(2))
+
+    @staticmethod
+    def _hamiltonian(**kwargs):
+        return LatticeHamiltonian.from_dict({
+            'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
+            'hamiltonian': dict(t=1.0, nelec=(2, 2), **kwargs),
+        })
+
+    def test_a_wavefunction_written_first_survives(self, tmp_path):
+        path = tmp_path / 'afqmc.h5'
+        self._wavefunction(path)
+        self._hamiltonian(U=4.0).to_hdf5(path)
+
+        with h5.File(path) as fh5:
+            assert 'Wavefunction/NOMSD/ci_coeffs' in fh5
+            assert 'Hamiltonian' in fh5
+
+    def test_a_wavefunction_written_second_survives(self, tmp_path):
+        path = tmp_path / 'afqmc.h5'
+        self._hamiltonian(U=4.0).to_hdf5(path)
+        self._wavefunction(path)
+
+        with h5.File(path) as fh5:
+            assert 'Wavefunction/NOMSD/ci_coeffs' in fh5
+        assert Hamiltonian.from_hdf5(path).num_components == 2
+
+    def test_to_hdf5_creates_a_file_that_does_not_exist(self, tmp_path):
+        path = tmp_path / 'new.h5'
+        self._hamiltonian(U=4.0).to_hdf5(path)
+        assert hamiltonian_format(path) == 'model'
+
+    def test_rewriting_replaces_the_hamiltonian_without_leaving_stale_terms(self, tmp_path):
+        path = tmp_path / 'afqmc.h5'
+        self._wavefunction(path)
+
+        many = self._hamiltonian(nbands=2, U=4.0, U1=1.0, J=0.25)
+        many.to_hdf5(path)
+        few = self._hamiltonian(U=4.0)
+        few.to_hdf5(path)
+
+        assert many.num_components > few.num_components
+
+        restored = Hamiltonian.from_hdf5(path)
+        assert restored.num_components == few.num_components
+        assert sorted(restored.keys()) == sorted(few.keys())
+
+        with h5.File(path) as fh5:
+            components = fh5['Hamiltonian/ModelHamiltonian']
+            stale = [k for k in components if k.startswith('ModelComponent_')]
+            assert len(stale) == few.num_components
+            assert 'Wavefunction/NOMSD/ci_coeffs' in fh5

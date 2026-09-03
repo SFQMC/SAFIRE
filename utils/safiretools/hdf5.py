@@ -8,8 +8,10 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-"""Generic HDF5 read/write primitives shared by the Hamiltonian, Wavefunction,
-and analysis layers. Nothing here knows about any particular on-disk schema.
+"""HDF5 read/write primitives shared by the Hamiltonian, Wavefunction and
+analysis layers. Nothing here knows about any particular on-disk *schema*, but
+`to_complex`/`from_complex` do implement SAFIRE's file-level convention for
+storing complex arrays, which every schema builds on.
 """
 
 import numpy as np
@@ -56,22 +58,78 @@ def add_group(fh5: h5.File, name):
     return fh5.create_group(name)
 
 
-def to_complex(array: np.array):
-    """Convert a numpy.complex128 array to SAFIRE's on-disk complex format:
-    real and imaginary parts interleaved as a trailing length-2 axis.
+def to_complex(array):
     """
-    if array.dtype != np.complex128:
-        array = array.astype(np.complex128, casting='same_kind')
-    shape = array.shape
-    return np.ascontiguousarray(array).view(np.float64).reshape(shape + (2,))
+    Convert a complex array to SAFIRE's on-disk complex format: the real and
+    imaginary parts interleaved as a trailing length-2 axis.
+
+    Parameters
+    ----------
+    array : array_like
+        Array to convert. Cast to ``complex128`` if it is not already.
+
+    Returns
+    -------
+    numpy.ndarray
+        Real ``float64`` array of shape ``array.shape + (2,)``.
+
+    See Also
+    --------
+    from_complex : the inverse.
+    """
+    array = np.ascontiguousarray(np.asarray(array).astype(np.complex128, copy=False))
+    return array.view(np.float64).reshape(array.shape + (2,))
 
 
-def from_complex(data, shape=None):
-    """Convert from SAFIRE's on-disk complex format back to numpy.complex128."""
-    if shape is not None:
-        return data.view(np.complex128).ravel().reshape(shape)
-    else:
-        return data.view(np.complex128).ravel()
+def from_complex(data, real_ndim: int = 2):
+    """
+    Convert from SAFIRE's on-disk complex format back to ``complex128``,
+    returning a dataset that was stored real unchanged.
+
+    Parameters
+    ----------
+    data : array_like
+        Dataset as stored.
+    real_ndim : int, optional
+        Rank this dataset has when it is stored *real*. Default 2, which suits
+        matrices; pass 1 for a flat array such as a CSR matrix's ``data_``.
+
+    Returns
+    -------
+    numpy.ndarray
+        The dataset, complex if it was stored interleaved and untouched if it
+        was stored real.
+
+    Raises
+    ------
+    ValueError
+        If `data` has neither the real nor the interleaved rank.
+
+    Notes
+    -----
+    The two layouts are told apart by **rank**, not by the length of the
+    trailing axis: `to_complex` appends an axis of length 2, so an interleaved
+    dataset has rank ``real_ndim + 1``. Testing the trailing axis instead is
+    ambiguous whenever the real dataset's own last axis happens to have length
+    2 — a real ``(2, 2)`` one-body matrix, or a Cholesky matrix with two
+    vectors — and silently reads it as complex.
+
+    Both ranks occur in practice: the AFQMC executable accepts either for a
+    model Hamiltonian's components, and a real-valued Hamiltonian is written
+    real so that the file stays half the size.
+    """
+    data = np.asarray(data)
+
+    if data.ndim == real_ndim + 1 and data.shape[-1] == 2:
+        return np.ascontiguousarray(data).view(np.complex128).reshape(data.shape[:-1])
+
+    if data.ndim != real_ndim:
+        raise ValueError(
+            f"dataset has rank {data.ndim}; expected {real_ndim} if real or "
+            f"{real_ndim + 1} if interleaved complex"
+        )
+
+    return data
 
 
 def _read_group(group):
