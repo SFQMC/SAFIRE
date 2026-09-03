@@ -258,7 +258,7 @@ def write_model_hamiltonian(
 
     Parameters
     ----------
-    hamiltonian : Hamiltonian
+    hamiltonian : afqmctools.hamiltonian.model.ham_class.Hamiltonian
         Hamiltonian object to write.
     fname : str
         File name of HDF5 file to write to.
