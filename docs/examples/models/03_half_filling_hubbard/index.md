@@ -40,8 +40,7 @@ import numpy as np
 from safiretools import HamiltonianBuilder, Lattice
 import afqmctools.utils.visualize as vis
 
-from afqmctools.wavefunction.converter import read_wavefunction
-from afqmctools.wavefunction.model import write_free_electron_wfn, make_free_elec,write_wfn
+from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
 from afqmctools.analysis.rdm import average_afqmc_rdm
 
@@ -492,7 +491,7 @@ plt.show()
 * What if we didn't use the correct signs ($M_i = (-1)^i\Delta_i$) for the HF ansatz? Could we construct an even more constrained wave function?
 * What do the local spin/charge observables of the optimized ansatz look like?
 * What happens for $U=8$? Do we need a different wave function?
-* What happens if you start from a free electron state instead of the HF state? (`(coeffs,free_wfn),spin_symm = make_free_elec(ham_fname,nelec,spin_symm="nc")`)
+* What happens if you start from a free electron state instead of the HF state? (`free_wfn = Wavefunction.from_free_electron(ham_fname, nelec, spin_symm="nc")`)
 
 +++ {"id": "f7eab26a-3624-402e-83de-00ee38daf267"}
 

@@ -290,8 +290,7 @@ vis.plot_lattice(
 
 import numpy as np
 
-from safiretools import HamiltonianBuilder
-from afqmctools.wavefunction.free_electron import free_electron
+from safiretools import HamiltonianBuilder, NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 import afqmctools.utils.visualize as vis
 
@@ -411,10 +410,9 @@ This is a benchmarking script, so we'll keep things basic
 import numpy as np
 import h5py as h5
 
-from safiretools import HamiltonianBuilder, Lattice, SpinSymm
+from safiretools import (HamiltonianBuilder, Lattice, NOMSDWavefunction, SpinSymm,
+                         Wavefunction)
 import afqmctools.utils.visualize as vis
-from afqmctools.wavefunction.free_electron import free_electron
-from afqmctools.wavefunction.common import modified_gram_schmidt
 
 
 import faulthandler; faulthandler.enable()
@@ -606,15 +604,14 @@ lattice_wt_twist = Lattice.from_dict(dict(
 
 hamiltonian2 = make_emery(lattice_wt_twist)
 
-wfn,spin_symm = free_electron(
+wfn = Wavefunction.from_free_electron(
     source=hamiltonian2,
     nelec=nelec,
-    lattice=lattice,
     spin_symm=SpinSymm.NONCOLLINEAR
 )
 
 # add noise to the initial guess
-wfn = (wfn[0],wfn[1] + annealing_amplitude*np.random.randn(*wfn[1].shape))
+wfn.dets += annealing_amplitude*np.random.randn(*wfn.dets.shape)
 
 # 4. run autohf
 from autohf import lattice_hf, AutoHFHamiltonian
@@ -622,7 +619,7 @@ best_E_final = None
 for a in range(annealing_steps):
     print(f"Annealing step {a}")
 
-    slater_det = wfn[1][0]
+    slater_det = wfn.dets[0]
 
     hf_settings = dict(
         ansatz = 'SD',#'SD_Rot',
@@ -659,11 +656,16 @@ for a in range(annealing_steps):
     orbitals = results['orbitals'][0]
 
     slater_det = np.array(orbitals[:,:sum(nelec)])
-    # orthonormalize!
-    slater_det = modified_gram_schmidt(slater_det)
-    slater_det = slater_det + annealing_amplitude*np.random.randn(*slater_det.shape)
 
-    wfn = (wfn[0],[slater_det])
+    # orthonormalize! (orthonormalize() returns a new, orthonormal wavefunction)
+    wfn = NOMSDWavefunction(
+        coeffs=wfn.coeffs,
+        dets=slater_det[np.newaxis],
+        nelec=nelec,
+        spin_symm=SpinSymm.NONCOLLINEAR
+    ).orthonormalize()
+
+    wfn.dets += annealing_amplitude*np.random.randn(*wfn.dets.shape)
 
     L = lattice.L
 

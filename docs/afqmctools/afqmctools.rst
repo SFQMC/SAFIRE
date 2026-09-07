@@ -111,7 +111,8 @@ Lattice Models
 
 Unlike quantum chemistry, and ab initio solids, there are few mature software packages
 for setting up lattice model Hamiltonians and trial wavefunctions.
-afqmctools provides a lattice builder and a general model Hamiltonian builder.
+safiretools provides a lattice builder, a general model Hamiltonian builder, and
+trial wavefunction classes.
 The Hamiltonian builder takes a general lattice instance as input and constructs
 one of several model Hamiltonian terms including up to the Hubbard-Kanamori model.
 See the following for more details.

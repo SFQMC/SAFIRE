@@ -60,8 +60,8 @@ the minimal basis hydrogen dimer with a bond length of 1.4 Bohr radii.
 from pathlib import Path
 
 
-from safiretools import MolecularHamiltonian
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import Hamiltonian
+from safiretools import NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 
 from tutorial_utils import run_afqmc
@@ -141,7 +141,7 @@ bond length of $\delta_{H-H} = 1.4$ Bohr radii in a standard sto-3g basis.
 
 import numpy as np
 
-from safiretools import MolecularHamiltonian
+from safiretools import Hamiltonian
 
 number_of_electrons = (1,1) # up, down
 number_of_orbitals = 2
@@ -198,7 +198,7 @@ using a Cholesky tolerance of $\delta_{Chol}$ where a smaller
 value of $\delta_{Chol}$ produces a more accurate representation.
 
 The Cholesky decomposition is automatically performed within
-`MolecularHamiltonian.from_integrals()` if you provide it with the electron Coulomb
+`Hamiltonian.from_integrals()` if you provide it with the electron Coulomb
 interaction tensor via the `eri` argument.
 Alternatively, 3-index integrals (from density fitting, for example) can be provided to use
 directly with no further modifications.
@@ -212,7 +212,7 @@ colab:
 id: JyCauZJfyCNe
 outputId: 5e7b4b17-4e40-4189-ac2e-633cfb904805
 ---
-hamiltonian = MolecularHamiltonian.from_integrals(
+hamiltonian = Hamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
     enuc=H0,
@@ -243,7 +243,7 @@ in the same HDF5 file as the Hamiltonian.**
 
 import numpy as np
 
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 
 # RHF orbtials represented in the basis of RHF orbitals
@@ -257,15 +257,13 @@ phi_0 = np.array([
 ])
 C_0 = 1.0
 
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/ "wfn.h5",
-    wfn=wfn,
-    walker_type="rhf",
+NOMSDWavefunction(
+    coeffs=np.array([C_0]),
+    dets=phi_0,
+    spin_symm="rhf",
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/ "wfn.h5")
 
 write_json(scratch_dir / "afqmc.json", scratch_dir / "wfn.h5", scratch_dir / "hamil.h5", exec_opts=dict(timestep=0.005, steps=20000))
 ```
@@ -421,7 +419,7 @@ The `safiretools` Python package provides the following, which allow us to conve
 the SAFIRE format.
 
 - `read_fcidump()`, re-exported at the top level as `safiretools.read_fcidump`
-- `MolecularHamiltonian.from_integrals()`, followed by `.to_hdf5()`
+- `Hamiltonian.from_integrals()`, followed by `.to_hdf5()`
 
 ### read_fcidump()
 
@@ -439,9 +437,9 @@ terms as well as the number of electrons.
 
 see the {doc}`Hamiltonian reference <../../../afqmctools/lattice_models>` for more.
 
-### MolecularHamiltonian.from_integrals()
+### Hamiltonian.from_integrals()
 
-As we saw above, `MolecularHamiltonian.from_integrals()` builds a Hamiltonian that
+As we saw above, `Hamiltonian.from_integrals()` builds a Hamiltonian that
 `.to_hdf5()` writes in the form the SAFIRE executable reads.
 It will automatically generate a Cholesky decomposed form of the interaction if electron-repulsion integrals are provided via the `eri` keyword argument.
 Alternatively, any 3-index factorized form of the electron interaction can be provided
@@ -451,13 +449,13 @@ Exactly one of `chol` or `eri` must be provided.
 ```python
     import numpy as np
 
-    from safiretools import MolecularHamiltonian
+    from safiretools import Hamiltonian
 
 
     # transopose to match the eri convention from_integrals() expects
     H2_ijkl = numpy.transpose(H2_ijkl,(0,1,3,2))
 
-    MolecularHamiltonian.from_integrals(
+    Hamiltonian.from_integrals(
         hcore=H1_ij,
         eri=H2_ijkl,
         enuc=H0,
@@ -473,7 +471,7 @@ see the {doc}`Hamiltonian reference <../../../afqmctools/lattice_models>` for mo
 :id: 6ej77YPU2JmI
 
 import numpy as np
-from safiretools import MolecularHamiltonian, read_fcidump
+from safiretools import Hamiltonian, read_fcidump
 
 H1_ij, H2_ijkl, E0, _ = read_fcidump(
     filename="files/H2_FCIDUMP"
@@ -482,7 +480,7 @@ H1_ij, H2_ijkl, E0, _ = read_fcidump(
 # transopose to match the eri convention from_integrals() expects
 H2_ijkl = np.transpose(H2_ijkl,(0,1,3,2))
 
-MolecularHamiltonian.from_integrals(
+Hamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
     enuc=E0,
@@ -518,26 +516,25 @@ mf.chkfile = f"{scratch_dir}/h2_rhf.h5"
 mf.kernel()
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.wavefunction.mol import write_wfn_mol
-from safiretools import MolecularHamiltonian
+from safiretools import Wavefunction
+from safiretools import Hamiltonian
 
 # reload the mf data
 mf_data = load_from_pyscf_chk_mol(f"{scratch_dir}/h2_rhf.h5", 'scf')
 
 # dump the Hamiltonian and the wavefunction to the same h5df
 fout = f"{scratch_dir}/h2_from_pyscf.h5"
-MolecularHamiltonian.from_pyscf(
+Hamiltonian.from_pyscf(
     mf_data,
     chol_cut=1e-6,
     real_chol=True,
     verbose=True
 ).to_hdf5(fout)
 
-write_wfn_mol(
+Wavefunction.from_pyscf(
     mf_data,
-    fout,
     basis_scf_data=mf_data
-)
+).to_hdf5(fout)
 ```
 
 +++ {"id": "ZX0-iQdzyCNg"}
@@ -566,8 +563,8 @@ from pathlib import Path
 
 import numpy as np
 
-from safiretools import MolecularHamiltonian
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import Hamiltonian
+from safiretools import NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 from stats.scalar_dat import analyze_scalar_data
 
@@ -612,7 +609,7 @@ Sij = np.array([[1.,         0.65931821],
                 [0.65931821, 1.        ]])
 
 # Save the Hamiltonian to HDF5
-MolecularHamiltonian.from_integrals(
+Hamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
     enuc=H0,
@@ -629,15 +626,13 @@ phi_0 = np.array([
     orbitals[:, :number_of_electrons[0]]
 ])
 C_0 = 1.0
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/"H2_rhf_wfn.h5", # this is the name of the file that will be created
-    wfn=wfn,
-    walker_type="rhf",
+NOMSDWavefunction(
+    coeffs=np.array([C_0]),
+    dets=phi_0,
+    spin_symm="rhf",
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/"H2_rhf_wfn.h5")  # this is the name of the file that will be created
 
 # make an input file
 

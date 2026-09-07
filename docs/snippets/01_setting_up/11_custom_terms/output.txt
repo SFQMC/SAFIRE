@@ -1,71 +1,11 @@
-computing and storing 1th-nearest neighbors
-Computing distance matrix of lattice
-Reading lattice site positions from Lattice
-computing and storing 1th-nearest image neighbors
-computing and storing 2th-nearest neighbors
-computing and storing 2th-nearest image neighbors
-Building Hubbard U term with U=8.0
-Building onsite hubbard with positive U values: 8.0
-Building Hubbard-Kanamori density-density U1 term with U1=2.0
-Building hubbard term with positive U values:   (0, 0)	2.0
-H_U =    (0, 1)	4.0
-  (0, 2)	2.0
-  (0, 4)	2.0
-  (1, 3)	2.0
-  (1, 5)	2.0
-  (2, 3)	4.0
-  (2, 4)	2.0
-  (3, 5)	2.0
-  (4, 5)	4.0
-Building Hubbard-Kanamori spin-spin U2 term with U2=2.0
-Building hubbard term with positive U values:   (0, 0)	2.0
-H_U =    (0, 1)	4.0
-  (0, 2)	2.0
-  (0, 4)	2.0
-  (1, 3)	2.0
-  (1, 5)	2.0
-  (2, 3)	4.0
-  (2, 4)	2.0
-  (3, 5)	2.0
-  (4, 5)	4.0
-Combining terms of the same type
-Combining tij terms
-Combining Hubbard U, U1, and U2 terms where possible
-Max spin symmetry is  SpinSymm.COLLINEAR
-Generating free-electron trial wavefunction with twist = [4.10803005e-06 4.58334805e-04]
-using dense representation of 1-body Hamiltonian to find eigenvalues and orbitals
-Eigenvalues of the non-interacting Hamiltonian:  [-5.67587361 -0.50001411  0.17622459  1.499989    1.9999482   2.50000033]
-using dense representation of 1-body Hamiltonian to find eigenvalues and orbitals
-Eigenvalues of the non-interacting Hamiltonian:  [-5.67587361 -0.50001411  0.17622459  1.499989    1.9999482   2.50000033]
-
-    -----------------------
-    - ╔═╗ ------- ╖ ╓╔═╕ --
-    - ╠═╣ ╖╖╒╦╕╔╗ ╠═╣╠╕ ---
-    - ╜ ╙ ╚╝ ╜ ╚╝ ╜ ╙╨ ----
-    -----------------------
-    
- ===== AutoHF Settings ===== 
-
-        inputfile                                          input.toml
-        noncollinear                                            False
-        gpu                                                     False
-        approx_expm                                             False
-        force_complex                                           False
-        ansatz                                                     SD
-        opt_method                                              lbfgs
-        seed                                               1724357167
-        eta                                                       0.1
-        numSteps                                                   -1
-        numTrials                                                   1
-        plot                                                    False
-        verbose                                                  True
-        output                                               afqmc.h5
-        dumpTrials                                                   
-adding flags
-[CpuDevice(id=0)]
-default dtype: float64
-Reading hopping from spin sector 0
-Running in Slater Detemrinant Mode
-energyCall: Etotal=(0.9667596040380748+0j) with EK=(-12.35177544441989+0j) EU=(5.854828038995469+0j) EU1=(5.463707008753402+0j)                  EU2=(2.000000000709093+0j) EJ=0 Eheisenber=0
-Reference HF Energy = 0.9667596040380748
-energyCall: Etotal=(0.9667596040380748+0j) with EK=(-12.35177544441989+0j) EU=(5.854828038995469+0j) EU1=(5.463707008753402+0j)                  EU2=(2.000000000709093+0j) EJ=0 Eheisenber=0
+building Hubbard U term with U=8.0
+building Hubbard-Kanamori density-density U1 term with U1=2.0
+building Hubbard-Kanamori spin-spin U2 term with U2=2.0
+max spin symmetry is 2
+processing the spin-up channel (2 electrons)
+eigenvalues of the non-interacting Hamiltonian: [-5.67585552 -0.50001798  0.17619434  1.4999946   2.00003383  2.50001605]
+filling 2 electrons over 6 shell(s) using the 'aufbau' strategy
+processing the spin-down channel (2 electrons)
+eigenvalues of the non-interacting Hamiltonian: [-5.67585552 -0.50001798  0.17619434  1.4999946   2.00003383  2.50001605]
+filling 2 electrons over 6 shell(s) using the 'aufbau' strategy
+built a collinear free-electron determinant: 4 electrons (up: 2, down: 2)

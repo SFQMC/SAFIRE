@@ -570,7 +570,6 @@ import shutil
 
 import numpy as np
 
-from afqmctools.wavefunction.mol import write_wfn
 from afqmctools.inputs.from_hdf import write_json
 from tutorial_utils import run_afqmc
 from stats.scalar_dat import analyze_scalar_data

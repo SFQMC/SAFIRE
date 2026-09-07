@@ -1,5 +1,9 @@
-from safiretools import HamiltonianBuilder, Lattice, SpinSymm
-from afqmctools.wavefunction.free_electron import free_electron
+import logging
+
+from safiretools import HamiltonianBuilder, Lattice, SpinSymm, Wavefunction
+
+# safiretools reports what it builds through the standard logging module
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 lattice = Lattice.from_dict(
     params=dict(
@@ -34,9 +38,7 @@ builder.finalize()
 hamiltonian = builder.get_hamiltonian()
 
 hamiltonian.to_hdf5("afqmc.h5")
-free_electron(
+Wavefunction.from_free_electron(
     source=hamiltonian,
-    nelec=nelec,
-    output="afqmc.h5",
-    lattice=lattice
-)
+    nelec=nelec
+).to_hdf5("afqmc.h5")

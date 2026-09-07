@@ -46,8 +46,7 @@ safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from safiretools import HamiltonianBuilder
-    from afqmctools.wavefunction.free_electron import free_electron
+    from safiretools import HamiltonianBuilder, Wavefunction
 
     infile = "input_afm.toml"
 
@@ -55,32 +54,22 @@ safiretools can be invoked within a Python script as
     hamiltonian = HamiltonianBuilder.from_input(infile).get_hamiltonian()
     hamiltonian.to_hdf5("afqmc.h5")
 
-    # compute and save a free-electron trial wfn
-    free_electron(
+    # compute and save a free-electron trial wfn, into the same file
+    Wavefunction.from_free_electron(
         source=infile,
         nelec=hamiltonian.nelec,
-        output="afqmc.h5"
-    )
+    ).to_hdf5("afqmc.h5")
 
-The `free_electron()` function accepts a `twist` keyword argument for the sake of 
-reproducibility for open-shell systems. 
+`Wavefunction.from_free_electron()` accepts a `twist` keyword argument for the
+sake of reproducibility for open-shell systems.
 `twist` should be a 2-d iterable containing :math:`\vec{\theta}=(\theta_1,\theta_2)`
 in radians even if one component is set to 0.0.
 By default, a small incommensurate twist angle is used.
 
-If the sample Python script is run above with the sample input file, the following
-should be present at the end of the output.
-
-.. code-block:: text
-
-    Running in Slater Detemrinant Mode
-    energyCall: Etotal=(-14.568331718444824+0j) with EK=(-14.848626136779785+0j) EU=(0.2802944779396057+0j) EU1=0 EU2=0 EJ=0
-    Reference HF Energy = -14.568331718444824
-
-
-Internally, the AutoHF Hartree-Fock code is used to evaluate the energy of the free-electron
-trial wavefunction with respect to the interacting Hamiltonian.
-This allows the initial energy to be checked within the AFQMC code.
+Building the trial wavefunction does not measure its energy.
+To evaluate the variational energy of a trial wavefunction with respect to the
+interacting Hamiltonian, run the AutoHF Hartree-Fock solver explicitly, as shown
+in :ref:`setup_ex_9`.
 
 
 **Charge Pinning**
@@ -92,8 +81,7 @@ The charge pinning case can be set up similarly using
 
 .. code-block:: python
 
-    from safiretools import HamiltonianBuilder
-    from afqmctools.wavefunction.free_electron import free_electron
+    from safiretools import HamiltonianBuilder, Wavefunction
 
     infile = "input_charge.toml"
 
@@ -101,21 +89,10 @@ The charge pinning case can be set up similarly using
     hamiltonian = HamiltonianBuilder.from_input(infile).get_hamiltonian()
     hamiltonian.to_hdf5("afqmc.h5")
 
-    # compute and save a free-electron trial wfn
-    free_electron(
+    # compute and save a free-electron trial wfn, into the same file
+    Wavefunction.from_free_electron(
         source=infile,
         nelec=hamiltonian.nelec,
-        output="afqmc.h5"
-    )
-
-
-If the sample Python script is run above with the sample input file, the following
-should be present at the end of the output.
-
-.. code-block:: text
-
-    Running in Slater Detemrinant Mode
-    energyCall: Etotal=(-13.653738975524902+0j) with EK=(-13.951533317565918+0j) EU=(0.2977941334247589+0j) EU1=0 EU2=0 EJ=0
-    Reference HF Energy = -13.653738975524902
+    ).to_hdf5("afqmc.h5")
 
 See the examples in :ref:`run_afqmc_exs` for how to run AFQMC.

@@ -113,8 +113,7 @@ hamiltonian.to_hdf5(scratch_dir/"Hubbard_tprime0.4_U4.0.h5")
 
 ```{code-cell} ipython3
 # First, let's compute the Free-Electron trial wavefunction
-from afqmctools.wavefunction.free_electron import free_electron
-from afqmctools.wavefunction.common import write_wfn
+from safiretools import Wavefunction
 
 nelec = (16,16)
 
@@ -125,17 +124,25 @@ input_params = dict(
 
 # twist from ref 1:
 twist = (0.0,0.0) #(0.01,0.01) # this twist was used for 4x16 with t' = 0.3t
-wfn,_,results = free_electron(
+
+# The trial wavefunction is built from the *un-pinned* Hamiltonian - the pinning
+# field added above is only wanted for the AFQMC run itself. Build it explicitly
+# so that the same Hamiltonian can be handed to the HF solver below.
+fe_lattice = Lattice.from_dict(dict(lattice_params, twist=twist))
+fe_hamiltonian = HamiltonianBuilder.from_input(
     source=input_params,
-    nelec=nelec,
-    twist=twist,                          # (optional) using the default small twist
-    return_autohf = True
+    lattice=fe_lattice
+).get_hamiltonian()
+
+wfn = Wavefunction.from_free_electron(
+    source=fe_hamiltonian,
+    nelec=nelec
 )
 
 # get lattice dimensions from the Lattice instance
 L = lattice.L
 
-write_wfn(scratch_dir/"free_elec_wfn.h5", wfn, walker_type='collinear', norb=L[0]*L[1], nelec=nelec)
+wfn.to_hdf5(scratch_dir/"free_elec_wfn.h5")
 ```
 
 ```{code-cell} ipython3
@@ -143,6 +150,22 @@ write_wfn(scratch_dir/"free_elec_wfn.h5", wfn, walker_type='collinear', norb=L[0
 :outputId: 55190e94-44ed-4b7c-9f28-7cdcd5d151ba
 
 import afqmctools.utils.visualize as vis
+from autohf import AutoHFHamiltonian, lattice_hf
+
+# building the wavefunction does not measure anything, so run the HF solver
+# explicitly to get the trial wavefunction's density matrices
+results = lattice_hf(
+    AutoHFHamiltonian(source=fe_hamiltonian),
+    settings=dict(
+        ansatz='SD',
+        steps=-1,          # report the reference energy; do not optimize
+        verbose=True,
+        nelec=nelec,
+        batch_size=1
+    ),
+    initial_guess=wfn.dets[0],
+    suppress_logo=True
+)
 
 # convert the 'results' from autohf to a charge density
 makeRDMs = results[1]['makeRDMs']

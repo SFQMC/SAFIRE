@@ -40,8 +40,7 @@ import numpy as np
 from safiretools import HamiltonianBuilder, Lattice
 import afqmctools.utils.visualize as vis
 
-from afqmctools.wavefunction.converter import read_wavefunction
-from afqmctools.wavefunction.model import write_free_electron_wfn
+from safiretools import Wavefunction
 from afqmctools.analysis.rdm import average_afqmc_rdm
 
 from afqmctools.observables.greens import greens_1body
@@ -153,12 +152,13 @@ outputId: a0cc1270-40df-46ca-fc5a-094aae93aa2b
 colab:
   base_uri: https://localhost:8080/
 ---
-# get a trial wavefunction: First, let's try a free-electron (i.e. non-interacting) wavefunction
-from afqmctools.wavefunction.model import write_free_electron_wfn
-write_free_electron_wfn(
-    hamiltonian_fname=scratch_dir / "afqmc.h5",
+# get a trial wavefunction: First, let's try a free-electron (i.e. non-interacting) wavefunction.
+# from_free_electron() reads the Hamiltonian back out of the file we just wrote, and
+# to_hdf5() appends the wavefunction to that same file.
+Wavefunction.from_free_electron(
+    source=scratch_dir / "afqmc.h5",
     nelec=nelec
-)
+).to_hdf5(scratch_dir / "afqmc.h5")
 ```
 
 +++ {"id": "ec2d1ea0-fc24-45f6-a799-5e9d14e39639"}
@@ -448,10 +448,10 @@ for Ueff in Ueffs:
         fname = "afqmc.h5"
     else:
         fname = f"afqmc_{Ueff}.h5"
-    (coeffs,wfn), psi0, (na, nb),spintype = read_wavefunction(scratch_dir / fname)
-    # We assume spin balance below
-    o = wfn.reshape(lattice.N_sites,na,2,order='F').real
-    o = np.stack([o[:,:,0],o[:,:,1]])
+    trial = Wavefunction.from_hdf5(scratch_dir / fname)
+    # spin_blocks() splits the leading determinant into its alpha and beta columns
+    alpha, beta = trial.spin_blocks(0)
+    o = np.stack([alpha.real, beta.real])
 
     rdm = greens_1body(o)
     trial_rhos.append(rdm)

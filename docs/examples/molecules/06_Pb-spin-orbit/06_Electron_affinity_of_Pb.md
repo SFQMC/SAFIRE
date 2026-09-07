@@ -214,8 +214,8 @@ import h5py as h5
 import numpy as np
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import MolecularHamiltonian
-from afqmctools.wavefunction.mol import write_wfn_mol
+from safiretools import Hamiltonian
+from safiretools import Wavefunction
 
 # inputs
 local_scratch_dir = neutral_scratch_dir
@@ -243,7 +243,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
 # The SOC integrals come from load_from_pyscf_chk_mol(soc_type='ecp') above, which
 #   makes hcore a spin-orbital matrix. That requires a noncollinear spin symmetry
 #   and the orthogonalized-AO basis.
-MolecularHamiltonian.from_pyscf(
+Hamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut=chol_tol,
     real_chol=True,
@@ -261,11 +261,10 @@ wfn_scf_data = load_from_pyscf_chk_mol(
     chkfile = ghf_soc_chkfile,
 )
 
-write_wfn_mol(
+Wavefunction.from_pyscf(
     wfn_scf_data,
-    fout_soc,
-    basis_scf_data=basis_scf_data,
-)
+    basis_scf_data=basis_scf_data
+).to_hdf5(fout_soc)
 ```
 
 +++ {"id": "atWbeuX8i2Xd"}
@@ -400,8 +399,8 @@ outputId: 8a825787-6626-44d1-97c4-ee738d109252
 import numpy as np
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import MolecularHamiltonian
-from afqmctools.wavefunction.mol import write_wfn_mol
+from safiretools import Hamiltonian
+from safiretools import Wavefunction
 
 
 # inputs
@@ -430,7 +429,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
 # The SOC integrals come from load_from_pyscf_chk_mol(soc_type='ecp') above, which
 #   makes hcore a spin-orbital matrix. That requires a noncollinear spin symmetry
 #   and the orthogonalized-AO basis.
-MolecularHamiltonian.from_pyscf(
+Hamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut=chol_tol,
     real_chol=True,
@@ -448,11 +447,10 @@ wfn_scf_data = load_from_pyscf_chk_mol(
     chkfile = ghf_soc_chkfile,
 )
 
-write_wfn_mol(
+Wavefunction.from_pyscf(
     wfn_scf_data,
-    fout_soc,
     basis_scf_data=basis_scf_data
-)
+).to_hdf5(fout_soc)
 ```
 
 ```{code-cell} ipython3

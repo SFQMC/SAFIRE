@@ -79,8 +79,8 @@ import afqmctools
 import autohf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import MolecularHamiltonian
-from afqmctools.wavefunction.mol import write_cas_wfn
+from safiretools import Hamiltonian
+from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
 
 scratch_dir = Path("data")
@@ -258,13 +258,12 @@ def setup_benchmark(key:str, case:dict):
     lib.chkfile.save(mc.chkfile, 'mcscf/ci', mc.ci)
     
     # write the CAS wavefunction to a file
-    write_cas_wfn(
+    Wavefunction.from_pyscf_cas(
         mol=mol,
         cas_chkfile=casscf_chkfile,
-        tol_trunc=0.001, # from the PRX
-        outname=local_scratch_dir / 'afqmc.h5',
+        tol=0.001, # from the PRX
         max_det=2000
-    )
+    ).to_hdf5(local_scratch_dir / 'afqmc.h5')
     
     basis_scf_data = load_from_pyscf_chk_mol(
         chkfile = casscf_chkfile,
@@ -272,7 +271,7 @@ def setup_benchmark(key:str, case:dict):
     )
 
     # write Hamiltonian
-    MolecularHamiltonian.from_pyscf(
+    Hamiltonian.from_pyscf(
         basis_scf_data,
         chol_cut = 1e-6, # from the PRX
         verbose=True
