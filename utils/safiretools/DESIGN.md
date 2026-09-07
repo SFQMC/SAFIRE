@@ -1,7 +1,7 @@
 # safiretools — Design Decisions
 
 Status: living document. Records decisions actually made, not the discussion that produced them.
-Anything not listed here is still undecided — don't infer intent beyond what's written.
+Anything not listed here is still undecided. Don't infer intent beyond what's written.
 
 `safiretools` replaces the existing `afqmctools` + `stats` packages under `utils/`. `AutoHF` is a
 separate package (its own git history) and is out of scope for this document.
@@ -16,6 +16,8 @@ separate package (its own git history) and is out of scope for this document.
 - `scalar_stats` — the only CLI entry point kept (`energy_stats`, a duplicate alias, is dropped).
 - QE interop — bugs fixed, behavior preserved. `qe_driver.py` may be dropped outright (currently
   unimportable — references a nonexistent module — and superseded).
+- CAS/CI wavefunction import from a PySCF checkpoint (`write_cas_wfn`) — kept as
+  `PHMSDWavefunction.from_pyscf_cas`; `ci_wavefunction` came with it, as `ci_expansion`.
 - AutoHF interop — kept, fragile unguarded import gets hardened.
 - Dice-SHCI wavefunction import — kept, split into its own module, proper exceptions.
 - `rhonk.py` (real-space observables) — kept for external callers; its vendored duplicate HDF5
@@ -28,17 +30,26 @@ separate package (its own git history) and is out of scope for this document.
 - `inputs/energy.py`-style Hamiltonian/HF-energy validation.
 
 **Dropped entirely:**
+- The AutoHF variational-energy measurement inside the free-electron wavefunction builder
+  (`free_electron(measure_evar=...)`, `measure_spin`, `return_autohf`) — the wrong pathway for
+  measuring an energy (user call), and an upward dependency from `wavefunction/` into the AutoHF
+  interop that Phase 7 owns. Building a wavefunction and evaluating its energy are separate calls.
+- `wavefunction/pbc.py::slater_gto2mo` — no callers anywhere, and unable to run as written (its
+  `NONCOLLINEAR` branch returns `None`; its `'mol'` path reads `kwargs['cell']`). The conversion it
+  describes is what `from_pyscf`'s basis transform already does.
+- `wavefunction/pbc.py::write_wfn_pbc_old` — superseded by `write_wfn_pbc`.
 - AIMBES interop (`aimbes_utils.py`, `aimbes_to_2nd_quant`/`aimbes_to_afqmc` CLIs) — AIMBES now
   generates its own SAFIRE-compatible inputs directly. Note current location in case this
   changes back; do not port.
+- AIMBES was renames to CoQuí. Any references to AIMBES should be updated to CoQuí
 - `analysis/new_rdm.py` — a third, weaker parallel 1-RDM implementation, fully superseded, no
   known external dependents.
 - The entire CLI surface except `scalar_stats`.
 - `FULLYPOLARIZED` as a distinct spin-symmetry value (removed C++-side too, this branch).
 
-**Rule for all of the above:** "no callers found in `utils/`" is never sufficient reason to drop
-something on its own — these are library packages with external callers writing their own AFQMC
-workflows. Everything marked "dropped" above was an explicit user call, not an inference from
+**Rule for all of the above:** "no callers found in `utils/`" is never sufficient reason to drop something on its own.
+These are library packages with external callers writing their own AFQMC workflows. 
+Everything marked "dropped" above was an explicit decision, not an inference from
 caller-count.
 
 ## Transitional shim: `isinstance` gates in the un-ported packages
@@ -47,7 +58,8 @@ Until the packages that consume a lattice model Hamiltonian are themselves porte
 `isinstance(source, Hamiltonian)` checks that tested only for afqmctools'
 `ham_class.Hamiltonian` accept a `safiretools.LatticeHamiltonian` as well (user call):
 `afqmctools/wavefunction/free_electron.py`, `afqmctools/inputs/from_autohf.py`, and
-`AutoHF/autohf/hamiltonian.py`. `LatticeHamiltonian` already satisfies the accessor contract those
+`AutoHF/autohf/hamiltonian.py`. 
+`LatticeHamiltonian` already satisfies the accessor contract those
 consumers use (`nsites`, `nbands`, `get_one_body()`, `get_U()`, `get_J()`, `get_heisenberg()`), so
 only the type test needed widening; afqmctools' `Hamiltonian` is a plain class rather than an ABC,
 so there was no `register()` route from the safiretools side.
@@ -68,7 +80,8 @@ safiretools/
 │                           #   MolecularHamiltonian, PeriodicHamiltonian, HamiltonianBuilder,
 │                           #   Lattice, SpinSymm, the FCIDUMP I/O (read_fcidump,
 │                           #   read_fcidump_header, write_fcidump, write_fcidump_kpoint,
-│                           #   h1_spat2spin, h2_spat2spin), Wavefunction, mean_and_error, ...
+│                           #   h1_spat2spin, h2_spat2spin), Wavefunction,
+│                           #   NOMSDWavefunction, PHMSDWavefunction, mean_and_error, ...
 │                           #   NOT re-exported: concrete Lattice subclasses (Lattice.from_dict()
 │                           #   handles dispatch), HamiltonianComponent (build steps cover every
 │                           #   custom term), and the FCIDUMP format internals (fcidump_header,
@@ -112,7 +125,10 @@ safiretools/
 │   │                           #   .from_free_electron()/.from_pyscf()/.from_pbc_scf() dispatch
 │   │                           #   to the implementation modules below.
 │   ├── phmsd.py                # PHMSDWavefunction(Wavefunction): coeffs + occa/occb.
-│   │                           #   Classmethod .from_dice() dispatches to dice.py.
+│   │                           #   Classmethods .from_dice(), .from_pyscf_cas() and
+│   │                           #   .from_pbc_scf() dispatch to the modules below — the periodic
+│   │                           #   path produces this representation whenever bands are
+│   │                           #   partially occupied and more than one determinant is asked for.
 │   ├── free_electron.py       # from_free_electron() implementation; model.py's legacy
 │   │                          #   duplicate retired
 │   ├── pyscf.py                # from_pyscf() implementation (from wavefunction/mol.py)
@@ -144,9 +160,9 @@ determinant orbital matrices) and `PHMSDWavefunction` (coeffs + occa/occb occupa
 strings). This matches what `write_wfn` already does today via ad hoc length-checking
 (`len(wfn)==2` vs `==3`). Domain (free-electron / PySCF / PBC / Dice) becomes a factory
 classmethod on the appropriate subclass (`NOMSDWavefunction.from_free_electron/.from_pyscf/
-.from_pbc_scf`, `PHMSDWavefunction.from_dice`) rather than its own subclass — a free-electron
-wavefunction and a PySCF UHF wavefunction are the same NOMSD representation, just built
-differently. `spin_symm` is a plain attribute here too, for consistency with `Hamiltonian` —
+.from_pbc_scf`, `PHMSDWavefunction.from_dice`) rather than its own subclass.
+A free-electron wavefunction and a PySCF UHF wavefunction are the same NOMSD representation, 
+just built differently. `spin_symm` is a plain attribute here too, for consistency with `Hamiltonian` —
 RHF/UHF/GHF don't get their own subclasses. `Wavefunction`'s base class implements
 `to_hdf5()`/`from_hdf5()` once (not per-subclass) since the format is identical across domains.
 
@@ -155,34 +171,90 @@ different (storage format for Hamiltonian, mathematical representation for Wavef
 plain attributes (not subclasses) for what's just *data* (spin_symm) or *provenance* (which
 external tool/domain built it).
 
+`Wavefunction`'s single `to_hdf5`/`from_hdf5` pair is implemented the way `Hamiltonian`'s dispatch
+is: the base owns the file handling, the format detection (`wavefunction_format(path)` -> `nomsd` /
+`phmsd`) and the shared header, and each subclass supplies only a `_write_payload`/`_read_payload`
+hook for its own part. `PHMSDWavefunction` is always `SpinSymm.COLLINEAR` — the AFQMC executable's
+`read_ph_wavefunction_hdf` rejects both closed-shell and noncollinear particle-hole wavefunctions.
+Spin symmetry is a plain attribute there in the sense of "recorded", not "free".
+
+### A wavefunction's determinants carry one block per independent spin channel
+
+`NOMSDWavefunction.dets` is `(ndets, npol*nmo, sum(nelec_per_spin))`: `nup` columns for a
+closed-shell wavefunction (the beta channel repeats alpha), `nup + ndown` when collinear, and
+`nup + ndown` over `2*nmo` rows when noncollinear. `Wavefunction.nelec_per_spin` is the one place
+that mapping lives, and every producer already builds exactly this shape.
+
+`nelec` is the physical `(nup, ndown)` in memory; `nelec_on_disk` derives the `(nup + ndown, 0)`
+pair a noncollinear file's `dims` records. Reading such a file back therefore reports
+`(nup + ndown, 0)` — the split is not part of the format, and the executable does not use it.
+
+### Writing never orthonormalizes
+
+`orthonormalize()` is an explicit method returning a *new* instance, which the domain factories call
+by default; `to_hdf5` warns about a non-orthonormal Slater matrix rather than quietly repairing it.
+afqmctools orthonormalized inside `write_wfn`, and — because it applied its 1e-8 sparsification
+threshold to the determinant array first — sometimes orthonormalized *because of* its own
+thresholding.
+
+**Every Slater matrix is covered, `psi0` included.** Both `orthonormalize()` and the write-time check
+walk the same set, so there is no dense array that only one of them sees:
+
+| matrix | `orthonormalize()` | checked by `to_hdf5` |
+|---|---|---|
+| `NOMSDWavefunction.dets[i]`, per spin channel | ✅ | ✅ as `dets[i] spin s` |
+| `psi0` supplied explicitly, or assigned afterwards | ✅ | ✅ as `psi0 spin s` |
+| `psi0` left to default | ✅ (re-derived from the fixed determinants) | ✅ — it *is* a copy of `dets[0]`'s blocks, so the determinant check covers it, and reports it under the determinant's name, which is where a caller would fix it |
+| `PHMSDWavefunction.orbitals` | ✅ | ✅ as `orbitals[i]` |
+| `PHMSDWavefunction`'s default `psi0` | ✅ | ✅ — identity columns, orthonormal by construction |
+
+**Blocks are checked per independent spin channel**, which is the physically correct grain: a
+collinear determinant's alpha and beta columns describe different spin sectors and need not be
+orthogonal to each other — identical alpha and beta orbitals are an ordinary UHF-shaped determinant —
+while a noncollinear determinant is a single `(2*nmo, nup + ndown)` block and is checked whole.
+`Wavefunction.nelec_per_spin` supplies the split, as everywhere else.
+
+**The `PsiT` blocks are checked again after sparsifying, because that is what reaches disk.** The
+1e-8 threshold applies only to the sparse `PsiT` blocks it exists to sparsify, never to the dense
+`Psi0` — that is the afqmctools bug above, and it is why `Psi0` goes to disk verbatim. But
+sparsifying happens *after* `to_hdf5`'s check and can cost a determinant its orthonormality on its
+own, when the columns' mutual orthogonality was carried by entries below the threshold: the
+in-memory check then passes and the file still fails it on read-back. `write_nomsd` therefore
+re-checks each thresholded block and warns naming the dataset (`PsiT_k`), so the warning describes
+the bytes on disk rather than the array in memory. It still only warns — the two possible causes are
+a determinant that was never orthonormal (call `orthonormalize()`) and sparsification damage (lower
+`threshold`), and neither is something the writer should silently decide.
+
+> The check tolerance is 1e-10 and the sparsification threshold is 1e-8, so this warning can fire on
+> a wavefunction whose error is bounded by the threshold and therefore physically negligible for
+> AFQMC. That is deliberate (user call): the predicate reported is the same one `is_orthonormal`
+> applies everywhere else, rather than a second, looser one that would have to be explained.
+
 **`Lattice`** follows the same shape too: an ABC with concrete subclasses per lattice type
-(`SquareLattice`/`TriangularLattice`/`HoneycombLattice`/`KagomeLattice`, plus `CustomLattice` —
-see below), a `Lattice.from_dict()` classmethod replacing today's free-function `get_lattice()`
-factory, and no standalone `to_hdf5()`/`from_hdf5()` — it's only ever persisted embedded in a
-`LatticeHamiltonian`'s HDF5 file. Exposed at the top level (`from safiretools import Lattice`)
-since users may want to construct/inspect lattice geometry independent of building a full
-Hamiltonian; only the base class is re-exported, not the concrete subclasses — `from_dict()`
-handles dispatch.
+(`SquareLattice`/`TriangularLattice`/`HoneycombLattice`/`KagomeLattice`, plus `CustomLattice`,
+see below), a `Lattice.from_dict()` classmethod replacing today's free-function `get_lattice()` factory,
+and no standalone `to_hdf5()`/`from_hdf5()`. It's only ever persisted embedded in a `LatticeHamiltonian`'s HDF5 file. Exposed at the top level (`from safiretools import Lattice`)
+since users may want to construct/inspect lattice geometry independent of building a full Hamiltonian.
+Only the base class is re-exported, not the concrete subclasses. 
+`from_dict()` handles dispatch.
 
 ### Unit-cell geometry belongs to the lattice type
 
 `a1`, `a2` and `basis` **always exist** on a `Lattice` instance, but for the built-in types they
 are not caller-settable: they *are* the type. A `SquareLattice` is square precisely because its
 lattice vectors are the unit x- and y-vectors, and a `HoneycombLattice` is a honeycomb precisely
-because of its 2-site basis — handing either a different `a1` would produce something that is no
-longer the type it claims to be.
+because of its 2-site basis.
 
 **`CustomLattice` is the one subclass that takes `a1`/`a2`/`basis`, and defining your own unit
 cell is exactly what makes a lattice "custom."** It is therefore the supported way to build a
-lattice whose geometry isn't one of the built-in types, not a redundant alias for them. (It is
-also why `CustomLattice` is ported rather than dropped, even though the port fixes the bug that
-made the built-in types ignore geometry arguments.)
+lattice whose geometry isn't one of the built-in types. 
 
 Mechanically: each concrete type implements an abstract `_geometry() -> (a1, a2, basis)` hook, and
-the `Lattice` constructor — the only one, with no `**kwargs` — takes no geometry arguments at all,
-so the built-in types cannot accept them even by accident. Passing `a1`/`a2`/`basis` to a built-in
-type raises `TypeError`; the equivalent keys in a `from_dict()` parameter dict raise `ValueError`
-(a key present but set to `None` is fine, so parameter templates carrying unused keys still work).
+the `Lattice` constructor takes no geometry arguments at all,
+so the built-in types cannot accept them even by accident. 
+Passing `a1`/`a2`/`basis` to a built-in type raises `TypeError`; the equivalent keys in a `from_dict()` 
+parameter dict raise `ValueError` (a key present but set to `None` is fine, so parameter templates 
+carrying unused keys still work).
 
 **The geometry is also immutable, not merely un-settable at construction.** `a1`/`a2`/`basis` are
 read-only properties over private backing state; the arrays they return have `writeable=False` and
@@ -190,9 +262,8 @@ read-only properties over private backing state; the arrays they return have `wr
 (`lattice.a1[0] = ...`, `lattice.basis.append(...)`). Construction copies whatever `_geometry()`
 returns before freezing it, so freezing never reaches an array the caller still holds. `cyl_mode`
 reshaping the cell inside `build()` is the one place the geometry changes, it is derived from the
-type's own `_geometry()` rather than from the caller, and building twice raises `RuntimeError` — so
-once a lattice is built its geometry is fixed. (`L` also changes under `cyl_mode` and is left a
-plain attribute; only the three geometry members are locked down.)
+type's own `_geometry()` rather than from the caller, and building twice raises `RuntimeError`. 
+(`L` also changes under `cyl_mode` and is left a plain attribute; only the three geometry members are locked down.)
 
 ### Basis validation
 
@@ -221,13 +292,14 @@ pair count; 0 false negatives, 0 false positives.
 
 `cyl_mode` itself is restricted to `TriangularLattice`. The XC/YC reshaping rotates `a2` onto
 `-a1 + 2*a2` and doubles the basis along `a2`, which is only the correct cell for hexagonal
-geometry — the old code said as much in a docstring but accepted the argument from any lattice type
+geometry. 
+The old code said as much in a docstring but accepted the argument from any lattice type
 and silently produced a wrong cell. It now raises `ValueError` for every other type, `CustomLattice`
 included.
 
 Known bugs in `afqmctools/systems/lattice.py` to fix during the port (independent of the above):
 `get_lattice()`'s `a1`/`a2` overrides are silently discarded for every built-in lattice type
-(absorbed into `**kwargs`, never applied) — per the rule above the fix is to **reject** them
+(absorbed into `**kwargs`, never applied). per the rule above the fix is to **reject** them
 loudly, not to start honoring them, and the same applies to `basis`, which the two types that
 define a default one (honeycomb/kagome) also discarded while square/triangular honored it;
 `_neighbor_distance_map`'s `min_distance` parameter is
@@ -276,6 +348,14 @@ same time.
 - Lives in `safiretools/types.py` — dependency-free, so hamiltonian/wavefunction/observables all
   import it downward rather than `observables` reaching up into `hamiltonian` for it (today's
   layering inversion).
+- **A wavefunction with no beta electrons is `COLLINEAR` with `ndown == 0`** (user call). That is
+  what `FULLYPOLARIZED` encoded, and there is no separate value for it: `dims[3]` is 2, and the beta
+  blocks go to disk with zero width (`Psi0_beta` of shape `(nmo, 0, 2)`, a `PsiT_1` whose `dims` is
+  `[0, nmo, 0]`), because the executable's readers open them for any collinear file.
+
+  > The C++ side of this branch is out of date relative to `main`, and its walker setup does not
+  > yet accept an empty beta sector — see **Future changes**. That is a C++ item to revisit after
+  > the sync, not a constraint on the Python format.
 - Two members carry the coercion that `get_spin_symm_enum` used to: `SpinSymm.from_input(value)`
   accepts a `SpinSymm`, its int value, a spelling alias (`'closed'`/`'rhf'`, `'collinear'`/`'uhf'`,
   `'noncollinear'`/`'ghf'`, ...), or another enum whose value is one of those — so partly-migrated
@@ -467,6 +547,11 @@ communicator. Both drive the same solver and produce identical files.
   > **`nelec` is on its way out entirely** — see **Future changes**. It is Hamiltonian state only
   > because the on-disk formats still record it; the executable already ignores those fields. This
   > bullet describes where it lives *today*, and reduces to `spin_symm` alone once it is gone.
+- **A wavefunction's `psi0` (the AFQMC initial walker) is instance state, not a write-time
+  argument.** `Wavefunction.psi0` defaults to something derived from the wavefunction itself — the
+  leading determinant's spin blocks for a NOMSD, identity columns at the leading occupations for a
+  PHMSD — and can be assigned. This replaces `write_wfn(..., init=...)` and `orbmat=`, the latter
+  becoming `PHMSDWavefunction(orbitals=...)`.
 - **`to_hdf5()` replaces the Hamiltonian in its target file, not the whole file.** It opens the file
   in append mode (creating it if absent) and deletes an existing `Hamiltonian` group before writing.
   A SAFIRE input file holds **at most one Hamiltonian and at most one wavefunction**, so replacing
@@ -484,6 +569,124 @@ communicator. Both drive the same solver and produce identical files.
   subprocess/executable-path assumption that would preclude that later.
 - Dependency cleanup: drop `pytables` (`stats/config_h5.py`'s only reason for it, rewritten onto
   `h5py`); merge the `LATTICE_HF` optional-dependency group into `AUTOHF` (exact duplicate).
+
+### Every factory dispatches from the base class
+
+**Every construction factory is reachable from the ABC, which picks the concrete subclass** (user
+call). The canonical safiretools script never names a subclass:
+
+```python
+from safiretools import Hamiltonian, Wavefunction
+
+hamiltonian = Hamiltonian.from_hdf5("hamiltonian.h5")     # or any other factory
+wavefunction = Wavefunction.from_hdf5("wavefunction.h5")  # or any other factory
+```
+
+The point is to minimize user friction and the chance of a mistake: picking the wrong subclass is an
+error the library can simply not have. **The subclass factories stay** as aliases (user call) — a
+caller who wants the type guarantee keeps it, and generic code can always be written against the
+base class.
+
+This matters more for `Wavefunction` than for `Hamiltonian`, because the two hierarchies split on
+different things (see **Class hierarchies**). A `Hamiltonian` subclass is the *source domain*, which
+the caller always knows — they ran a molecule or a solid. A `Wavefunction` subclass is the
+*mathematical representation*, which often falls out of the **data**: `from_pbc_scf` cannot know
+whether it will produce a particle-hole expansion until it sees whether bands came out partially
+occupied. Dispatching is therefore not merely a convenience there — it is the only honest signature.
+
+**Mechanism.** The base classmethod imports its subclasses *inside the method body*, which is how
+`Hamiltonian.from_hdf5` and `Wavefunction.from_hdf5` already avoid the circular import (the
+subclasses import the base module at module scope). **No `_Hamiltonian`/`_Wavefunction` split is
+needed**, and none should be added.
+
+**The aliases are inherited, not duplicated.** A factory defined on the ABC is already reachable as
+`NOMSDWavefunction.from_pyscf(...)` — that *is* the alias, and it cannot drift from the base method
+because it is the same function object. The cost is that inheritance offers **every** factory on
+**every** subclass, including the ones that cannot produce that subclass: `Wavefunction` and
+`Hamiltonian` each carry factories that are fixed to one representation or one domain. So every such
+factory guards the class it was called on and raises a `ValueError` naming both classes rather than
+quietly returning the wrong type — `PHMSDWavefunction.from_free_electron(...)` does not hand back an
+`NOMSDWavefunction`.
+
+**There are two guard mechanisms, because the target is known at two different times.** A
+fixed-answer factory knows its target from its own definition and guards with `_check_representation`
+(`wavefunction/base.py`) or `_check_domain` (`hamiltonian/base.py`). `from_hdf5` cannot: its target
+comes from the *file*, so it resolves the format first and then applies the same test inline
+(`issubclass(target, cls)`). That is why `NOMSDWavefunction.from_hdf5` on a particle-hole file raises
+instead of returning a `PHMSDWavefunction`, while `Wavefunction.from_hdf5` on the same file returns
+one.
+
+| factory | guard | refuses |
+|---|---|---|
+| `Wavefunction.from_free_electron` / `.from_pyscf` | `_check_representation` | called on `PHMSDWavefunction` |
+| `Wavefunction.from_pyscf_cas` / `.from_dice` | `_check_representation` | called on `NOMSDWavefunction` |
+| `Hamiltonian.from_dict` | `_check_domain` | called on `Molecular`/`PeriodicHamiltonian` |
+| `Hamiltonian.from_integrals` | `_check_domain` | called on `Lattice`/`PeriodicHamiltonian` |
+| `Hamiltonian.write_from_pyscf` | `_check_domain` | called on `Lattice`/`MolecularHamiltonian` |
+| `Hamiltonian.from_pyscf` | `_check_domain` on the resolved target | called on `LatticeHamiltonian` — but see the gap below |
+| `Hamiltonian.from_hdf5` / `Wavefunction.from_hdf5` | inline `issubclass(target, cls)` | a stored format the subclass does not read |
+| `Wavefunction.from_pbc_scf` | **none, deliberately** | — see below |
+
+**A guard only runs when the call actually reaches the base method.** In the `Wavefunction` hierarchy
+that is always: both subclasses *inherit* every fixed-answer factory, so every mismatched call is
+refused. In the `Hamiltonian` hierarchy the implementations *are* the subclass classmethods (above),
+so a subclass that defines a factory does not route through the base and is not guarded — which is
+harmless wherever the defining class is the only right answer (`LatticeHamiltonian.from_dict`,
+`MolecularHamiltonian.from_integrals`, `PeriodicHamiltonian.write_from_pyscf`).
+
+> **Known gap: `from_pyscf` is the one factory two Hamiltonian subclasses both define**, so the
+> cross-call is the one mismatch nothing catches. `Hamiltonian.from_pyscf` and
+> `LatticeHamiltonian.from_pyscf` reach the guarded base method, but
+> `MolecularHamiltonian.from_pyscf(periodic_scf_data)` runs the molecular implementation directly and
+> dies on `KeyError: 'walker_type'`, and `PeriodicHamiltonian.from_pyscf(molecular_scf_data)` on
+> `KeyError: 'cell'` — instead of the `ValueError` naming both classes that every other mismatch
+> gets. The dispatching `Hamiltonian.from_pyscf` is unaffected and remains the recommended call.
+
+`Wavefunction.from_pbc_scf` is the one base factory with no guard, and that is correct rather than an
+oversight: it is the honest dispatcher, returning whichever representation the occupancies call for,
+so there is no target to check it against. The subclasses do not inherit it — they **override** it
+with narrowing forms that validate in their own way (below), which is where the equivalent refusal
+lives.
+
+**What each factory dispatches on:**
+
+| factory | dispatches on |
+|---|---|
+| `Hamiltonian.from_hdf5` | `hamiltonian_format(path)` |
+| `Wavefunction.from_hdf5` | `wavefunction_format(path)` |
+| `Hamiltonian.from_pyscf` | `'cell' in scf_data` -> periodic, `'mol'` -> molecular |
+| `Wavefunction.from_pbc_scf` | whatever `wavefunction/pbc.py::from_pbc_scf` returns |
+| `Hamiltonian.from_dict` / `.from_integrals` / `.write_from_pyscf` | fixed (lattice / molecular / periodic) |
+| `Wavefunction.from_free_electron` / `.from_pyscf` / `.from_dice` / `.from_pyscf_cas` | fixed (NOMSD / NOMSD / PHMSD / PHMSD) |
+
+A fixed-answer factory still belongs on the base class: the caller should not have to know that
+`from_dice` happens to produce a particle-hole expansion in order to ask for one.
+
+**The two hierarchies differ in where the implementation lives, and the signatures follow.**
+`Wavefunction`'s factories delegate to *free functions* in `wavefunction/{free_electron,pyscf,pbc,
+dice}.py`, so the base method is the only wrapper and spells out **real parameters**; the subclasses
+add nothing. `Hamiltonian`'s implementations *are* the subclass classmethods, so the base method
+delegates to them and forwards `**kwargs`, leaving the concrete classmethod the single place the
+defaults and the parameter documentation live.
+
+**`scf_data` is told apart by key, not by type.** `pyscf.pbc.gto.Cell` is a *subclass* of
+`gto.Mole`, so an `isinstance` test on the object would report a periodic cell as molecular. The
+loaders are disjoint on the key — `load_from_pyscf_chk` stores `'cell'` (plus `'kpts'`, `'nmo_pk'`)
+and `load_from_pyscf_chk_mol` stores `'mol'` — and that is the discriminator.
+
+**`Hamiltonian.from_pyscf` forwards `**kwargs`** (user call). The two subclass signatures share only
+`scf_data`, `chol_cut` and `verbose`; everything else is domain-specific
+(`cas`/`ortho_ao`/`df`/`real_chol` molecular, `comm`/`kpoint_symmetry`/`maxvecs`/`exxdiv` periodic).
+A merged union signature would silently accept `kpoint_symmetry=` for a molecular calculation, so the
+base method forwards instead and lets the concrete classmethod raise its own `TypeError` naming the
+real parameter. The docstring carries both parameter lists, and `inspect.signature` on the concrete
+classmethod is still exact.
+
+**`NOMSDWavefunction.from_pbc_scf` is not a pure alias** and stays documented as a *narrowing* form:
+it forces `ndet_max=1` to guarantee a single determinant, where `Wavefunction.from_pbc_scf` passes
+`ndet_max` through and returns whichever representation the occupancies call for.
+`PHMSDWavefunction.from_pbc_scf` likewise still raises when a single determinant would describe the
+system exactly.
 
 ## Future changes
 
@@ -549,9 +752,36 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   observables rewrite, but it **must** be ported before afqmctools is removed. A comment in the
   tutorial cell records the same.
 
+- **Let a collinear walker set have an empty beta sector (C++), after the C++ side is synced with
+  `main`.** This is what the `FULLYPOLARIZED`-removal decision above implies, and it is *not* done
+  on this branch — but the C++ here is out of date relative to `main`, so **re-check it against
+  `main` before acting on any of the following.** As observed on this branch (2026-09):
+  `walker::SlaterMatrix(Beta)` guards on `desc[2] > 0` while
+  `WalkerSetBase::populate_from_guess` writes the beta block unconditionally, so a `COLLINEAR`
+  wavefunction with `ndown == 0` is read correctly and the run then aborts with
+  ``error:walker spin out of range in SlaterMatrix(SpinType)``. Every downstream consumer of a
+  collinear walker's beta sector wants the same audit, so this is a deliberate change rather than a
+  one-line guard.
+
+  Two things wait on it: retiring `FULLYPOLARIZED` from `src/AFQMC/config.h` and
+  `WalkerSetBase::parse_walker_type` (it is still parsed from input today), and porting
+  `docs/examples/molecules/04_V-fully_polarized`, whose `afqmc.json` still asks for
+  `"walker_type": "FULLYPOLARIZED"` — a file safiretools cannot write.
+
 ### Things we might change
 
-*(nothing recorded here at the moment.)*
+- **The periodic multi-determinant expansion keeps the *least* probable determinants.**
+  `reoccupy` selects with `probabilities.argsort()[:ndets]`, and `argsort` is ascending, so
+  determinant 0 — which the executable takes as its reference configuration — is the least likely
+  configuration rather than the most likely. Almost certainly a bug, fixed by one `[::-1]`, but it
+  changes numerics on a path with established behavior (and would break the `ndet_max=4` periodic
+  equivalence check), so it is preserved verbatim pending a decision.
+- **Direct use of NOMSDWavefunction and PHMSDWavefunction in tutorials is potentially confusing.**
+  (This applies mostly to the Molecules writting a Wavefunction tutorial) We added to factories to the 
+  Wavefunction baseclass to specifically avoid users needed to do this; however, one could argue that
+  it is better for pedagogical reasons to work with explicit classes here; in that case, we can add a
+  section near the end (or maybe beginning?) that demonstrates that we could have written all of the
+  wavefunctions using `Wavefunction.from_[X]` etc.
 
 ## Open questions
 

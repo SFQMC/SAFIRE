@@ -18,8 +18,7 @@ FCI energy:	       -14.9005
 from pyscf import gto,scf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import MolecularHamiltonian
-from afqmctools.wavefunction.mol import write_wfn_mol
+from safiretools import Hamiltonian, Wavefunction
 
 
 # run PySCF calculation to generate RHF wavefunction
@@ -53,7 +52,7 @@ scf_data = load_from_pyscf_chk_mol(wfn_chk)
 # use `no=-1` to include all remaining orbitlas in the CAS space
 ne = 2 # [He] 2s^1 for each Li
 no = -1 # use all remaining orbitals in CAS space
-MolecularHamiltonian.from_pyscf(
+Hamiltonian.from_pyscf(
     scf_data = scf_data,
     chol_cut = chol_tol,
     cas = (ne,no),
@@ -61,8 +60,8 @@ MolecularHamiltonian.from_pyscf(
 ).to_hdf5(fout)
 
 # write the frozen core trial wavefunction
-wfn = write_wfn_mol(
+wfn = Wavefunction.from_pyscf(
     scf_data = scf_data,
-    filename = fout,
     cas = (ne,no)
 )
+wfn.to_hdf5(fout)

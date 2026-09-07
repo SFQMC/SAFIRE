@@ -195,24 +195,16 @@ autohf_to_afqmc(
 ### experiment : add a little noise to the UHF wfn ###
 import numpy as np
 
-from afqmctools.wavefunction.converter import read_wavefunction
-from afqmctools.wavefunction.common import write_wfn
+from safiretools import Wavefunction
 
 # 1. read the uhf wfn from file
-wfn = read_wavefunction(scratch_dir/"uhf_wfn.h5")[0]
-
-Ci, Phi = wfn
+wfn = Wavefunction.from_hdf5(scratch_dir/"uhf_wfn.h5")
 
 # 2. add noise
-Phi = Phi + 1.0e-4*np.random.rand(*Phi.shape)
+wfn.dets += 1.0e-4*np.random.rand(*wfn.dets.shape)
 
 # 3. save the uhf wfn with noise
-write_wfn(filename=scratch_dir/"uhf_wfn_noise.h5",
-    wfn=(Ci,Phi),
-    walker_type='uhf',
-    nelec=nelec,
-    norb=hamiltonian_for_autohf.nsites
-)
+wfn.to_hdf5(scratch_dir/"uhf_wfn_noise.h5")
 ```
 
 +++ {"id": "dSJ9e4tRBxxx"}

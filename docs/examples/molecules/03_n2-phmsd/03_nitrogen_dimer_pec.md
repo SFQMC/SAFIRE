@@ -36,8 +36,8 @@ import numpy as np
 from pyscf import gto,scf,mcscf,lib
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import MolecularHamiltonian
-from afqmctools.wavefunction.mol import write_cas_wfn
+from safiretools import Hamiltonian
+from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
 
 from stats.scalar_dat import analyze_scalar_data
@@ -178,13 +178,12 @@ mc = mcscf.CASSCF(rhf, 12, 6).run() # (12o,6e)
 lib.chkfile.save(mc.chkfile, 'mcscf/ci', mc.ci)
 
 # write the CAS wavefunction to a file
-write_cas_wfn(
+Wavefunction.from_pyscf_cas(
     mol=mol,
     cas_chkfile= casscf_chkfile,
-    tol_trunc=1.0e-3, # use a small value to save *many* determinants.
-    outname=scratch_dir / 'afqmc.h5',
+    tol=1.0e-3, # use a small value to save *many* determinants.
     max_det=2000
-)
+).to_hdf5(scratch_dir / 'afqmc.h5')
 ```
 
 +++ {"id": "iIgGy3gjiv0l"}
@@ -204,7 +203,7 @@ We have already chosen the set of CASSCF orbitals as a trial wavefunction.
 We will now build the Hamiltonian in the basis of CASSCF orbitals, and save it to an SAFIRE HDF5 Hamiltonian file.
 
 afqmctools provides a helper function, `load_from_pyscf_chk_mol()`,  to read all of the necessary information from a PySCF checkpoint file.
-`MolecularHamiltonian.from_pyscf()` then builds the Hamiltonian from it, and `.to_hdf5()` writes it out.
+`Hamiltonian.from_pyscf()` then builds the Hamiltonian from it, and `.to_hdf5()` writes it out.
 `.to_hdf5()` replaces only the Hamiltonian in the file it is given, so it can be added to the
 file that already holds the trial wavefunction.
 
@@ -221,7 +220,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
 )
 
 # write Hamiltonian
-MolecularHamiltonian.from_pyscf(
+Hamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut = 1e-5,
     verbose=True
@@ -419,13 +418,12 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
     # write the CAS wavefunction to a file
     fout = scratch_dir / 'afqmc.h5'
 
-    write_cas_wfn(
+    Wavefunction.from_pyscf_cas(
         mol=mol,
         cas_chkfile=scratch_dir / casscf_chkfile,
-        tol_trunc= 1.0e-4,
-        outname=fout,
+        tol= 1.0e-4,
         max_det=10000
-    )
+    ).to_hdf5(fout)
 
     # 2. write the Hamiltonian, into the same file as the wavefunction
     basis_scf_data = load_from_pyscf_chk_mol(scratch_dir / casscf_chkfile, 'scf')
@@ -433,7 +431,7 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
     chol_tol = 1e-5
 
     # write Hamiltonian
-    MolecularHamiltonian.from_pyscf(
+    Hamiltonian.from_pyscf(
         basis_scf_data,
         chol_cut=chol_tol,
         verbose=True

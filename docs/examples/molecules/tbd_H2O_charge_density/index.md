@@ -36,7 +36,7 @@ import numpy as np
 from pyscf import gto,scf,mcscf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.wavefunction.mol import write_cas_wfn
+from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
 
 from stats.scalar_dat import analyze_scalar_data

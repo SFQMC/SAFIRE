@@ -8,7 +8,7 @@ twist angles applied and generating a free-electron trial wavefunction.
 
 A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
-Below is a sample input file, which we name `input1.toml`, for a Hubbard model 
+Below is a sample input file, which we name `input.toml`, for a Hubbard model
 on a 4x8 square lattice with periodic boundary conditions.
 
 .. literalinclude:: input.toml
@@ -24,47 +24,37 @@ safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from safiretools import HamiltonianBuilder
-    from afqmctools.wavefunction.free_electron import free_electron
+    import toml
 
-    infile = "input1.toml"
+    from safiretools import HamiltonianBuilder, Wavefunction
+
+    input_params = toml.load("input.toml")
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian = HamiltonianBuilder.from_input(source=infile).get_hamiltonian()
+    hamiltonian = HamiltonianBuilder.from_input(source=input_params).get_hamiltonian()
     hamiltonian.to_hdf5("afqmc.h5")
 
-    # compute and save a free-electron trial wfn
-    free_electron(
-        source=infile,
+    # compute and save a free-electron trial wfn, into the same file
+    Wavefunction.from_free_electron(
+        source=input_params,
         nelec=hamiltonian.nelec,
-        twist=input_params["lattice"].get("twist",None),
-        output="afqmc.h5"
-    )
+        twist=input_params["lattice"].get("twist", None),
+    ).to_hdf5("afqmc.h5")
 
-The `free_electron()` function accepts a `twist` keyword argument for the sake of 
-reproducibility for open-shell systems. 
+`Wavefunction.from_free_electron()` accepts a `twist` keyword argument for the
+sake of reproducibility for open-shell systems.
 Unlike many of the other examples, here we explicitly set the twist to that 
 of the lattice.
 By default, i.e. if twist is None, a small incommensurate twist angle is used instead.
 
-If the sample Python script is run above with the sample input file, the following
-should be present at the end of the output.
-
-.. code-block:: text
-
-    Running in Slater Detemrinant Mode
-    energyCall: Etotal=(31.609146118164062-6.798654794692993e-07j) with EK=(-40.39085388183594-2.384185791015625e-07j) EU=(72-4.414469003677368e-07j) EU1=0 EU2=0 EJ=0
-    Reference HF Energy = 31.609146118164062
-
-
-Internally, the AutoHF Hartree-Fock code is used to evaluate the energy of the free-electron
-trial wavefunction with respect to the interacting Hamiltonian.
-This allows the initial energy to be checked within the AFQMC code.
+Building the trial wavefunction does not measure its energy.
+To evaluate the variational energy of a trial wavefunction with respect to the
+interacting Hamiltonian, run the AutoHF Hartree-Fock solver explicitly, as shown
+in :ref:`setup_ex_9`.
 
 .. code-block:: python
 
-    from safiretools import HamiltonianBuilder
-    from afqmctools.wavefunction.free_electron import free_electron
+    from safiretools import HamiltonianBuilder, Wavefunction
 
     infile = "input_charge.toml"
 
@@ -72,21 +62,10 @@ This allows the initial energy to be checked within the AFQMC code.
     hamiltonian = HamiltonianBuilder.from_input(infile).get_hamiltonian()
     hamiltonian.to_hdf5("afqmc.h5")
 
-    # compute and save a free-electron trial wfn
-    free_electron(
+    # compute and save a free-electron trial wfn, into the same file
+    Wavefunction.from_free_electron(
         source=infile,
         nelec=hamiltonian.nelec,
-        output="afqmc.h5"
-    )
-
-
-If the sample Python script is run above with the sample input file, the following
-should be present at the end of the output.
-
-.. code-block:: text
-
-    Running in Slater Detemrinant Mode
-    energyCall: Etotal=(-13.653738975524902+0j) with EK=(-13.951533317565918+0j) EU=(0.2977941334247589+0j) EU1=0 EU2=0 EJ=0
-    Reference HF Energy = -13.653738975524902
+    ).to_hdf5("afqmc.h5")
 
 See the examples in :ref:`run_afqmc_exs` for how to run AFQMC.

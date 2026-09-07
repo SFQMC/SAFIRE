@@ -140,7 +140,7 @@ results = lattice_hf(hamiltonian=autohf_hamiltonian,settings=settings)
 
 ## Construct and Save the trial wavefunction
 
-A trial wavefunction can be written to AuxiliaryField's HDF5 format using the `write_wfn()` function from the `afqmctools.wavefunction.common` submodule of afqmctools.
+A trial wavefunction can be written to AuxiliaryField's HDF5 format by building a `NOMSDWavefunction` from `safiretools` and calling its `to_hdf5()` method.
 In general, the trial wavefunction in AFQMC is a linear combination of Slater determinants,
 
 $$
@@ -181,7 +181,7 @@ outputId: 7849db3e-aaec-42e5-dfb0-fafe361b3a39
 # construct the multi-Slater trial AND save
 import numpy as np
 
-from afqmctools.wavefunction.common import write_wfn
+from safiretools import NOMSDWavefunction
 
 # get the orbitals from the AutoHF results.
 orbitals_up = results[0]['orbitals'][0]
@@ -207,15 +207,15 @@ phi_1 = np.hstack((phi_down, phi_up)) # |phi_0> = |phi_down> X |phi_up>
 
 C_0 = 1.0 / np.sqrt(2)
 
-wfn = ( np.array([C_0,C_0]), np.array([phi_0,phi_1]))
-
-write_wfn(
-    filename=scratch_dir/ "afqmc.h5",
-    wfn=wfn,
-    walker_type="uhf",
+wfn = NOMSDWavefunction(
+    coeffs=np.array([C_0,C_0]),
+    dets=np.array([phi_0,phi_1]),
     nelec=nelec,
-    norb=lattice.N_sites
+    spin_symm="uhf",
+    nmo=lattice.N_sites
 )
+
+wfn.to_hdf5(scratch_dir/ "afqmc.h5")
 ```
 
 ```{code-cell} ipython3

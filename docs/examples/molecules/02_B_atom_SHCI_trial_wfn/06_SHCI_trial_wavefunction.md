@@ -216,7 +216,7 @@ Simply run this python script to generate a SAFIRE Hamiltonian file for the B at
 from pyscf import gto, scf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import MolecularHamiltonian
+from safiretools import Hamiltonian
 
 
 ### Step 1. Run PySCF to generate a basis
@@ -248,7 +248,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
 )
 
 # write Hamiltonian
-MolecularHamiltonian.from_pyscf(
+Hamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut = 1e-6,
     verbose=True

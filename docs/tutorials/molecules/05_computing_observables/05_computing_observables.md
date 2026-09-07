@@ -124,7 +124,7 @@ import numpy as np
 from pyscf import gto,scf,mcscf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian, MolecularHamiltonian
+from safiretools import Hamiltonian
 from afqmctools.inputs.from_hdf import write_json
 
 from stats.scalar_dat import analyze_scalar_data
@@ -152,7 +152,7 @@ rhf.run()
 
 
 import numpy as np
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import NOMSDWavefunction
 
 number_of_electrons = mol.nelec
 number_of_orbitals = mol.nao_nr()
@@ -165,7 +165,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
     chkfile = scratch_dir / rhf_chkfile,
 )
 
-MolecularHamiltonian.from_pyscf(
+Hamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut = 1e-5,
     verbose=True
@@ -179,15 +179,13 @@ phi_0 = np.array([
 ])
 C_0 = 1.0
 
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/ "afqmc.h5",
-    wfn=wfn,
-    walker_type="rhf",
+NOMSDWavefunction(
+    coeffs=np.array([C_0]),
+    dets=phi_0,
+    spin_symm="rhf",
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/ "afqmc.h5")
 ```
 
 +++ {"id": "dSJ9e4tRBxxx"}
