@@ -26,6 +26,8 @@ and ``WavefunctionFactory``'s ``getInitialGuess``), so none of it is
 configurable.
 """
 
+from warnings import warn
+
 import numpy as np
 import scipy.sparse as sps
 
@@ -210,16 +212,38 @@ def write_nomsd(group, dets, nelec_per_spin, threshold=DEFAULT_THRESHOLD) -> Non
     threshold : float, optional
         Coefficients with magnitude below this are zeroed before sparsifying.
         Default `DEFAULT_THRESHOLD`.
+
+    Notes
+    -----
+    Each block's columns are checked for orthonormality *after* screening small
+    values. `Wavefunction.to_hdf5` already checks the in-memory determinants, 
+    but sparsifying can potentially break orthonormality if the
+    columns' mutual orthogonality was carried by entries below `threshold`.
+    A block that fails is warned about and written as is.
     """
+    from safiretools.wavefunction.base import is_orthonormal
+
     dets = np.asarray(dets)
     nspin = len(nelec_per_spin)
+    offenders = []
 
     for idet, det in enumerate(dets):
         for ispin, block in enumerate(spin_blocks(det, nelec_per_spin)):
             block = block.copy()
             block[abs(block) < threshold] = 0.0
-            write_orbitals(group, f'PsiT_{nomsd_orbital_index(idet, ispin, nspin)}',
-                           block)
+            name = f'PsiT_{nomsd_orbital_index(idet, ispin, nspin)}'
+            if not is_orthonormal(block):
+                offenders.append(name)
+            write_orbitals(group, name, block)
+
+    if offenders:
+        warn(
+            f"Written without orthonormal columns: {', '.join(offenders)}. "
+            f"Columns are checked after sparsifying at threshold={threshold}."
+            "Either the original determinant was not orthonormal "
+            "(call orthonormalize() before writing) or orthogonality the sparisty"
+            " threshold is too aggresive (make `threshold` smaller)."
+        )
 
 
 def read_nomsd(group, ndets: int, nelec_per_spin):
