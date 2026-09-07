@@ -13,6 +13,8 @@ The `Wavefunction` ABC: derived shape, the initial Slater determinant,
 orthonormality, format detection, and the file semantics of ``to_hdf5``.
 """
 
+import warnings
+
 import h5py as h5
 import numpy as np
 import pytest
@@ -176,6 +178,54 @@ class TestOrthonormality:
             wavefunction.to_hdf5(path)
 
         assert np.allclose(Wavefunction.from_hdf5(path).dets, dets)
+
+    def test_the_check_covers_psi0_not_just_the_determinants(self, rng,
+                                                             tmp_path):
+        """
+        `psi0` is a dense Slater matrix like any other and its columns must be
+        orthonormal too, so it is checked even when the determinants are clean.
+        """
+        dets = modified_gram_schmidt(rng.normal(size=(6, 3)))[np.newaxis]
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
+                                         spin_symm='closed')
+        wavefunction.psi0 = (rng.normal(size=(6, 3)) + 0j,)
+
+        with pytest.warns(UserWarning, match=r"not orthonormal: psi0 spin 0"):
+            wavefunction.to_hdf5(tmp_path / 'wfn.h5')
+
+    def test_a_defaulted_psi0_is_covered_through_the_leading_determinant(
+            self, rng, tmp_path):
+        """
+        The default `psi0` is a copy of ``dets[0]``'s spin blocks, so the
+        determinant check already covers it -- and it is named as the
+        determinant, which is where a caller would fix it.
+        """
+        dets = rng.normal(size=(1, 6, 3)) + 0j
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
+                                         spin_symm='closed')
+
+        with pytest.warns(UserWarning, match=r"not orthonormal: dets\[0\] spin 0"):
+            wavefunction.to_hdf5(tmp_path / 'wfn.h5')
+
+    def test_a_determinant_broken_only_by_sparsifying_is_reported_on_write(
+            self, tmp_path):
+        """
+        The in-memory check passes and the on-disk one does not: sparsifying
+        happens after `to_hdf5`'s check, so `write_nomsd` has the last word.
+        See `TestNomsdOrthonormalityOnDisk` in ``test_io.py``.
+        """
+        seed = np.zeros((8, 2))
+        seed[:, 0] = [1.0, 1e-4, 0, 0, 0, 0, 0, 0]
+        seed[:, 1] = [0.0, 1e-5, 1.0, 0, 0, 0, 0, 0]
+        dets = modified_gram_schmidt(seed)[np.newaxis]
+
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(2, 2),
+                                         spin_symm='closed')
+        assert all(is_orthonormal(block)
+                   for block in wavefunction.spin_blocks(0))
+
+        with pytest.warns(UserWarning, match="Written without orthonormal"):
+            wavefunction.to_hdf5(tmp_path / 'wfn.h5')
 
 
 class TestFormatDetection:
@@ -361,3 +411,80 @@ class TestSpinSymmCoercion:
         assert wavefunction.nelec_on_disk == (3, 0)
         assert wavefunction.psi0[1].shape == (6, 0)
 
+
+
+# ----------------------------------------------------------------------
+# base-class factory dispatch (Phase 4c)
+# ----------------------------------------------------------------------
+
+class TestFactoryDispatch:
+    """
+    Every construction factory is reachable from `Wavefunction`, which picks the
+    concrete subclass. The subclasses get the fixed-representation ones by
+    inheritance rather than by a second definition, so the aliases cannot drift.
+    See DESIGN.md "Every factory dispatches from the base class".
+    """
+
+    FIXED = {
+        'from_free_electron': NOMSDWavefunction,
+        'from_pyscf': NOMSDWavefunction,
+        'from_dice': PHMSDWavefunction,
+        'from_pyscf_cas': PHMSDWavefunction,
+    }
+
+    @pytest.mark.parametrize('factory', sorted(FIXED))
+    def test_the_subclass_alias_is_the_inherited_base_method(self, factory):
+        """
+        `NOMSDWavefunction.from_pyscf` and friends are the *same function* as
+        the base one, not a copy of its signature.
+        """
+        target = self.FIXED[factory]
+        assert getattr(target, factory).__func__ is \
+            getattr(Wavefunction, factory).__func__
+        assert factory not in vars(target)
+
+    @pytest.mark.parametrize('factory', sorted(FIXED))
+    def test_a_fixed_representation_factory_refuses_the_wrong_subclass(self,
+                                                                       factory):
+        target = self.FIXED[factory]
+        other = (PHMSDWavefunction if target is NOMSDWavefunction
+                 else NOMSDWavefunction)
+
+        with pytest.raises(ValueError, match=target.__name__):
+            getattr(other, factory)(None, None)
+
+    def test_from_free_electron_dispatches_to_nomsd(self):
+        params = {'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
+                  'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear')}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            wavefunction = Wavefunction.from_free_electron(params, nelec=(2, 2))
+
+        assert isinstance(wavefunction, NOMSDWavefunction)
+        assert wavefunction.nelec == (2, 2)
+
+    def test_from_free_electron_matches_the_subclass_alias(self):
+        params = {'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
+                  'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear')}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            viaBase = Wavefunction.from_free_electron(params, nelec=(2, 2))
+            viaSubclass = NOMSDWavefunction.from_free_electron(params,
+                                                               nelec=(2, 2))
+
+        assert np.allclose(viaBase.dets, viaSubclass.dets)
+        assert np.allclose(viaBase.coeffs, viaSubclass.coeffs)
+
+    def test_the_base_factories_keep_their_real_signatures(self):
+        """
+        `Wavefunction`'s factories delegate to free functions, so each can be
+        spelled out once with real parameters rather than `**kwargs`.
+        """
+        import inspect
+
+        parameters = inspect.signature(Wavefunction.from_free_electron).parameters
+        assert 'filling_strategy' in parameters
+        assert parameters['filling_strategy'].default == 'aufbau'
+        assert not any(p.kind is p.VAR_KEYWORD for p in parameters.values())
