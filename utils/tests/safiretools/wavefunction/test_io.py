@@ -10,12 +10,15 @@
 
 """The native wavefunction HDF5 schema, exercised directly."""
 
+import warnings
+
 import h5py as h5
 import numpy as np
 import pytest
 
 from safiretools import SpinSymm
 from safiretools.wavefunction import io
+from safiretools.wavefunction.base import is_orthonormal, modified_gram_schmidt
 
 
 @pytest.fixture
@@ -141,6 +144,78 @@ class TestNomsdPayload:
 
         with pytest.raises(ValueError, match="no PsiT_0 group"):
             io.read_nomsd(group, 1, (2,))
+
+
+class TestNomsdOrthonormalityOnDisk:
+    """
+    The blocks are checked *after* sparsifying, because that is the state that
+    reaches disk. `Wavefunction.to_hdf5` checks the in-memory determinants, but
+    thresholding happens after that check and can break orthonormality by itself.
+    """
+
+    @staticmethod
+    def _orthonormal_via_subthreshold_entries():
+        """
+        Two exactly-orthonormal columns whose mutual orthogonality is carried by
+        entries below the 1e-8 sparsification threshold.
+        """
+        seed = np.zeros((8, 2))
+        seed[:, 0] = [1.0, 1e-4, 0, 0, 0, 0, 0, 0]
+        seed[:, 1] = [0.0, 1e-5, 1.0, 0, 0, 0, 0, 0]
+        return modified_gram_schmidt(seed)
+
+    def test_sparsifying_can_break_orthonormality_and_is_reported(self, group):
+        block = self._orthonormal_via_subthreshold_entries()
+        assert is_orthonormal(block)              # nothing wrong in memory
+        assert np.min(np.abs(block[block != 0])) < io.DEFAULT_THRESHOLD
+
+        with pytest.warns(UserWarning, match=r"Written without orthonormal "
+                                             r"columns: PsiT_0"):
+            io.write_nomsd(group, block[np.newaxis], (2,))
+
+        assert not is_orthonormal(io.read_nomsd(group, 1, (2,))[0])
+
+    def test_the_written_block_is_not_repaired(self, group):
+        block = self._orthonormal_via_subthreshold_entries()
+
+        with pytest.warns(UserWarning):
+            io.write_nomsd(group, block[np.newaxis], (2,))
+
+        written = io.read_nomsd(group, 1, (2,))[0]
+        thresholded = block.copy()
+        thresholded[abs(thresholded) < io.DEFAULT_THRESHOLD] = 0.0
+        assert np.array_equal(written, thresholded)
+
+    def test_an_orthonormal_determinant_writes_silently(self, group, rng):
+        block = modified_gram_schmidt(rng.normal(size=(8, 2)))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            io.write_nomsd(group, block[np.newaxis], (2,))
+
+    def test_the_spin_channels_are_checked_separately(self, group):
+        """
+        Alpha and beta columns need not be orthogonal to each other; only the
+        columns *within* a channel must be. Identical alpha and beta orbitals are
+        a perfectly ordinary collinear determinant.
+        """
+        det = np.zeros((8, 2))
+        det[0, 0] = 1.0
+        det[0, 1] = 1.0
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            io.write_nomsd(group, det[np.newaxis], (1, 1))
+
+    def test_every_offending_block_is_named(self, group, rng):
+        dets = rng.normal(size=(2, 8, 4))       # nothing orthonormal here
+
+        with pytest.warns(UserWarning) as record:
+            io.write_nomsd(group, dets, (2, 2))
+
+        message = str(record[0].message)
+        for name in ('PsiT_0', 'PsiT_1', 'PsiT_2', 'PsiT_3'):
+            assert name in message
 
 
 class TestPhmsdPayload:

@@ -20,6 +20,8 @@ from afqmctools.wavefunction.converter import read_wavefunction
 from afqmctools.hamiltonian.model.ham_class import SpinSymm
 from afqmctools.observables.greens import greens_1body
 
+TEST_ROOT = Path(__file__).resolve().parent.parent
+
 def _h5_are_same(fname1,fname2,datasets=None):
     """
     compare `datasets` (by name) in hdf5 files 
@@ -133,7 +135,7 @@ class TestHubbardKanamori:
 
         assert _h5_are_same(
             run_file,
-            (Path('tests/data')/'afqmc_hk_6x1.h5').absolute().as_posix(),
+            (TEST_ROOT/'data'/'afqmc_hk_6x1.h5').as_posix(),
             datasets=comparison_list
         )
 
@@ -150,7 +152,7 @@ class TestHubbardKanamori:
         )
 
         wfn_ref, psi0_ref, nelec_ref, _ = read_wavefunction(
-            (Path('tests/data')/'afqmc_hk_6x1.h5').absolute().as_posix()
+            (TEST_ROOT/'data'/'afqmc_hk_6x1.h5').as_posix()
         )
 
         assert nelec_test == nelec_ref

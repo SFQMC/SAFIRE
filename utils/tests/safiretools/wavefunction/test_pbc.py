@@ -270,3 +270,49 @@ class TestEquivalenceWithAfqmctools:
         #   executable read only the alpha one
         assert int(a['Wavefunction/PHMSD/type']) == 1
         assert int(b['Wavefunction/PHMSD/type']) == 2
+
+
+class TestBaseClassDispatch:
+    """
+    `Wavefunction.from_pbc_scf` is the factory that motivates dispatching from
+    the base class at all: the representation depends on the occupancies, not
+    on what the caller asked for. See DESIGN.md "Every factory dispatches from
+    the base class".
+    """
+
+    def test_integer_occupancies_give_an_nomsd(self, collinear_scf_data):
+        wavefunction = Wavefunction.from_pbc_scf(collinear_scf_data)
+
+        assert isinstance(wavefunction, NOMSDWavefunction)
+
+    def test_partial_occupancies_give_a_phmsd(self, degenerate_scf_data):
+        wavefunction = Wavefunction.from_pbc_scf(degenerate_scf_data,
+                                                 ndet_max=4)
+
+        assert isinstance(wavefunction, PHMSDWavefunction)
+        assert wavefunction.ndets > 1
+
+    def test_the_default_stays_a_single_determinant(self, degenerate_scf_data):
+        """
+        The base factory inherits ``ndet_max=1`` from the implementation, so the
+        expansion is opt-in rather than a surprise.
+        """
+        wavefunction = Wavefunction.from_pbc_scf(degenerate_scf_data)
+
+        assert isinstance(wavefunction, NOMSDWavefunction)
+
+    def test_the_subclasses_still_narrow(self, degenerate_scf_data):
+        """
+        `NOMSDWavefunction.from_pbc_scf` forces a single determinant even where
+        the base factory would expand, and is therefore not a plain alias.
+        """
+        forced = NOMSDWavefunction.from_pbc_scf(degenerate_scf_data)
+        expanded = Wavefunction.from_pbc_scf(degenerate_scf_data, ndet_max=4)
+
+        assert isinstance(forced, NOMSDWavefunction)
+        assert isinstance(expanded, PHMSDWavefunction)
+
+    def test_a_single_determinant_system_still_refuses_the_phmsd_form(self,
+                                                                      collinear_scf_data):
+        with pytest.raises(ValueError, match='NOMSDWavefunction.from_pbc_scf'):
+            PHMSDWavefunction.from_pbc_scf(collinear_scf_data, ndet_max=4)
