@@ -182,42 +182,6 @@ class NOMSDWavefunction(Wavefunction):
     # construction
     # ------------------------------------------------------------------
 
-    @classmethod
-    def from_free_electron(cls, source, nelec, twist=None, spin_symm=None,
-                           use_dense=True, lattice=None,
-                           filling_strategy='aufbau', shell_tol=1e-6,
-                           orthonormalize=True) -> "NOMSDWavefunction":
-        """
-        Build a free-electron trial wavefunction from a lattice model.
-
-        See `safiretools.wavefunction.free_electron.from_free_electron` for the
-        full parameter documentation; this classmethod is the public entry point.
-        """
-        from safiretools.wavefunction.free_electron import from_free_electron
-
-        return from_free_electron(
-            source, nelec=nelec, twist=twist, spin_symm=spin_symm,
-            use_dense=use_dense, lattice=lattice,
-            filling_strategy=filling_strategy, shell_tol=shell_tol,
-            orthonormalize=orthonormalize,
-        )
-
-    @classmethod
-    def from_pyscf(cls, scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
-                   spin_symm=None, orthonormalize=True) -> "NOMSDWavefunction":
-        """
-        Build a single-determinant trial wavefunction from a molecular PySCF SCF
-        calculation.
-
-        See `safiretools.wavefunction.pyscf.from_pyscf` for the full parameter
-        documentation; this classmethod is the public entry point.
-        """
-        from safiretools.wavefunction.pyscf import from_pyscf
-
-        return from_pyscf(
-            scf_data, basis_scf_data=basis_scf_data, ortho_ao=ortho_ao, cas=cas,
-            spin_symm=spin_symm, orthonormalize=orthonormalize,
-        )
 
     @classmethod
     def from_pbc_scf(cls, scf_data, ortho_ao=True, rediag=True, low=0.1,
