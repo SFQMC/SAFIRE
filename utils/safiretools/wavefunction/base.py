@@ -111,6 +111,37 @@ def wavefunction_format(path) -> str:
     raise ValueError(f"'{path}' holds no wavefunction safiretools recognizes")
 
 
+def _check_representation(cls, target, factory: str) -> None:
+    """
+    Guard a fixed-representation factory against being called on a subclass it
+    can never return.
+
+    The factories live on `Wavefunction` and reach the subclasses by
+    inheritance, so without this ``PHMSDWavefunction.from_free_electron(...)``
+    would quietly hand back an `NOMSDWavefunction`.
+
+    Parameters
+    ----------
+    cls : type
+        The class the factory was called on.
+    target : type
+        The concrete subclass this factory always builds.
+    factory : str
+        Name of the factory, for the error message.
+
+    Raises
+    ------
+    ValueError
+        If `target` is not a `cls`.
+    """
+    if cls is not Wavefunction and not issubclass(target, cls):
+        raise ValueError(
+            f"{factory} always builds a {target.__name__}, which is not a "
+            f"{cls.__name__}; call it on {target.__name__} or on the "
+            "dispatching Wavefunction"
+        )
+
+
 # ----------------------------------------------------------------------
 # orthonormality
 # ----------------------------------------------------------------------
@@ -483,3 +514,114 @@ class Wavefunction(ABC):
         Subclasses implement this rather than overriding `from_hdf5`, so that
         dispatch stays in one place.
         """
+
+    # ------------------------------------------------------------------
+    # construction
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_free_electron(cls, source, nelec, twist=None, spin_symm=None,
+                           use_dense=True, lattice=None,
+                           filling_strategy='aufbau', shell_tol=1e-6,
+                           orthonormalize=True) -> "Wavefunction":
+        """
+        Build a free-electron trial wavefunction from a lattice model. Always a
+        `safiretools.NOMSDWavefunction`.
+
+        See `safiretools.wavefunction.free_electron.from_free_electron` for the
+        full parameter documentation.
+        """
+        from safiretools.wavefunction.free_electron import from_free_electron
+        from safiretools.wavefunction.nomsd import NOMSDWavefunction
+
+        _check_representation(cls, NOMSDWavefunction, 'from_free_electron')
+
+        return from_free_electron(
+            source, nelec=nelec, twist=twist, spin_symm=spin_symm,
+            use_dense=use_dense, lattice=lattice,
+            filling_strategy=filling_strategy, shell_tol=shell_tol,
+            orthonormalize=orthonormalize,
+        )
+
+    @classmethod
+    def from_pyscf(cls, scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
+                   spin_symm=None, orthonormalize=True) -> "Wavefunction":
+        """
+        Build a single-determinant trial wavefunction from a molecular PySCF SCF
+        calculation. Always a `safiretools.NOMSDWavefunction`.
+
+        See `safiretools.wavefunction.pyscf.from_pyscf` for the full parameter
+        documentation.
+        """
+        from safiretools.wavefunction.nomsd import NOMSDWavefunction
+        from safiretools.wavefunction.pyscf import from_pyscf
+
+        _check_representation(cls, NOMSDWavefunction, 'from_pyscf')
+
+        return from_pyscf(
+            scf_data, basis_scf_data=basis_scf_data, ortho_ao=ortho_ao, cas=cas,
+            spin_symm=spin_symm, orthonormalize=orthonormalize,
+        )
+
+    @classmethod
+    def from_pyscf_cas(cls, mol, cas_chkfile, tol=1e-4,
+                       max_det=None) -> "Wavefunction":
+        """
+        Read a CASSCF/CASCI expansion from a PySCF checkpoint file. Always a
+        `safiretools.PHMSDWavefunction`.
+
+        See `safiretools.wavefunction.pyscf.from_pyscf_cas` for the full
+        parameter documentation.
+        """
+        from safiretools.wavefunction.phmsd import PHMSDWavefunction
+        from safiretools.wavefunction.pyscf import from_pyscf_cas
+
+        _check_representation(cls, PHMSDWavefunction, 'from_pyscf_cas')
+
+        return from_pyscf_cas(mol, cas_chkfile, tol=tol, max_det=max_det)
+
+    @classmethod
+    def from_dice(cls, path, ndets, state=0) -> "Wavefunction":
+        """
+        Read a selected-CI expansion from Dice's output. Always a
+        `safiretools.PHMSDWavefunction`.
+
+        See `safiretools.wavefunction.dice.from_dice` for the full parameter
+        documentation.
+        """
+        from safiretools.wavefunction.dice import from_dice
+        from safiretools.wavefunction.phmsd import PHMSDWavefunction
+
+        _check_representation(cls, PHMSDWavefunction, 'from_dice')
+
+        return from_dice(path, ndets=ndets, state=state)
+
+    @classmethod
+    def from_pbc_scf(cls, scf_data, ortho_ao=True, rediag=True, ndet_max=1,
+                     low=0.1, high=0.95,
+                     orthonormalize=True) -> "Wavefunction":
+        """
+        Build a trial wavefunction from a periodic PySCF SCF calculation.
+
+        **Returns whichever representation the occupancies call for**: a
+        `safiretools.PHMSDWavefunction` when bands are partially occupied and
+        `ndet_max` allows more than one determinant, and a
+        `safiretools.NOMSDWavefunction` otherwise. This is the factory that
+        motivates dispatching from the base class at all — the representation
+        cannot be known until the occupancies have been looked at.
+
+        The subclass classmethods override this with the *narrowing* forms:
+        `safiretools.NOMSDWavefunction.from_pbc_scf` forces ``ndet_max=1`` to
+        guarantee a single determinant, and
+        `safiretools.PHMSDWavefunction.from_pbc_scf` raises when a single
+        determinant would describe the system exactly.
+
+        See `safiretools.wavefunction.pbc.from_pbc_scf` for the full parameter
+        documentation.
+        """
+        from safiretools.wavefunction.pbc import from_pbc_scf
+
+        return from_pbc_scf(
+            scf_data, ortho_ao=ortho_ao, rediag=rediag, ndet_max=ndet_max,
+            low=low, high=high, orthonormalize=orthonormalize,
+        )

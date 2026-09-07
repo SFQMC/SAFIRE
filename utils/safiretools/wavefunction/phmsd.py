@@ -198,31 +198,6 @@ class PHMSDWavefunction(Wavefunction):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_dice(cls, path, ndets, state=0) -> "PHMSDWavefunction":
-        """
-        Read a selected-CI expansion from Dice's output.
-
-        See `safiretools.wavefunction.dice.from_dice` for the full parameter
-        documentation; this classmethod is the public entry point.
-        """
-        from safiretools.wavefunction.dice import from_dice
-
-        return from_dice(path, ndets=ndets, state=state)
-
-    @classmethod
-    def from_pyscf_cas(cls, mol, cas_chkfile, tol=1e-4,
-                       max_det=None) -> "PHMSDWavefunction":
-        """
-        Read a CASSCF/CASCI expansion from a PySCF checkpoint file.
-
-        See `safiretools.wavefunction.pyscf.from_pyscf_cas` for the full
-        parameter documentation; this classmethod is the public entry point.
-        """
-        from safiretools.wavefunction.pyscf import from_pyscf_cas
-
-        return from_pyscf_cas(mol, cas_chkfile, tol=tol, max_det=max_det)
-
-    @classmethod
     def from_pbc_scf(cls, scf_data, ortho_ao=True, rediag=True, ndet_max=None,
                      low=0.1, high=0.95,
                      orthonormalize=True) -> "PHMSDWavefunction":
