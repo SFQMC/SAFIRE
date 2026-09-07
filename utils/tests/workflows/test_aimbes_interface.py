@@ -21,8 +21,10 @@ from afqmctools.utils.aimbes_utils import (
     AIMBESHamiltonian
 )
 
-TEST_INPUT_DATA_PATH = Path("tests/workflows/data/aimbes/")
-TEST_REF_DATA_PATH = Path("tests/workflows/data/aimbes/ref")
+TEST_ROOT = Path(__file__).resolve().parent
+
+TEST_INPUT_DATA_PATH = TEST_ROOT / "data/aimbes"
+TEST_REF_DATA_PATH = TEST_ROOT / "data/aimbes/ref"
 
 @pytest.mark.dev
 @pytest.mark.aimbes
