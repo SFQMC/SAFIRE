@@ -14,17 +14,27 @@ Running the Example
 
 The workflow follows three steps:
 
-1. **Generate an orbital basis**: Execute ``scf/scf.py`` to perform ROHF on the vanadium atom which we will use as a basis,
-   and to generate a trial wavefunction for AFQMC.
+1. **Generate an orbital basis**: Execute ``scf/scf.py`` to perform ROHF on the vanadium atom, whose
+   orbitals we will use as a basis, saving them to ``rohf.chk``.
+   The trial wavefunction is built from those orbitals in step 2.
    We also run a CASCI(32o,3e) calculation to provide a reference energy.
    
-   The ROHF energy should be around -942.873080272797 Ha, and the CASCI(32o,3e) energy should be 
-   around -942.901099297148 Ha where the contribution in the active space is -3.53263111527235 Ha.
+   The ROHF energy should be around -942.884910 Ha, and the CASCI(32o,3e) energy should be
+   around -942.902127 Ha, where the contribution from the active space is -3.535253 Ha.
 
-2. **Create AFQMC inputs**: Execute ``input/setup.py`` to generate the SAFIRE inputs.
-   Note that script uses an active space for AFQMC of `cas_afqmc = (3,32)`. 
-   This treats the system as having all electrons in the spin-up channel. 
+   .. note::
+
+      An isolated vanadium atom has other ROHF solutions, and the CASCI and
+      AFQMC energies quoted in this example all assume the lowest one. ``scf.py`` therefore runs an
+      internal stability analysis, re-solving from any instability it finds, and then checks the
+      total energy against the value above.
+
+2. **Create AFQMC inputs**: Execute ``inputs/setup.py`` to generate the SAFIRE inputs.
+   Note that script uses an active space for AFQMC of `cas_afqmc = (3,32)`.
+   This treats the system as having all electrons in the spin-up channel.
    The script writes both the Hamiltonian and a fully polarized trial wavefunction to ``afqmc.h5``.
+   A trial with no beta electrons is collinear with ``ndown == 0``, so ``walker_type`` in
+   ``afqmc.json`` is ``"collinear"`` and the wavefunction's beta blocks are written with zero width.
 
 3. **Run SAFIRE**: Execute SAFIRE using the provided ``afqmc.json`` input file:
 
@@ -34,7 +44,7 @@ The workflow follows three steps:
 
       mpirun -n 64 safire afqmc.json
 
-4. **analyze the results**: Use the `scalar_stats` command-line tool from afqmctools to analyze the energy output:
+4. **analyze the results**: Use the `scalar_stats` command-line tool to analyze the energy output:
 
    .. code-block:: bash
 
@@ -74,10 +84,12 @@ The workflow follows three steps:
          :align: center
 
 
-5. compare with the reference CASCI energy: The AFQMC energy, -942.9017(2) Ha, agrees with the CASCI energy, -942.902141 Ha,
+5. compare with the reference CASCI energy: The AFQMC energy, -942.9017(2) Ha, agrees with the CASCI energy, -942.902127 Ha,
    which is the exact energy within the active space, to well within chemical accuracy.
-    
-See ``run.sh`` for execution details. The ``dice/`` directory contains an alternative trial wavefunction generation approach using selected CI.
+
+``inputs/run_safire_cpu.sh`` is a sample Slurm batch script for step 3.
+For an alternative way to build the trial wavefunction, using selected CI instead of a single
+determinant, see :doc:`../02_B_atom_SHCI_trial_wfn/06_SHCI_trial_wavefunction`.
 
 Files
 -----

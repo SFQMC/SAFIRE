@@ -9,14 +9,7 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian
-
-# NOTE: deliberately still on afqmctools' write_wfn_mol. This example's afqmc.json
-# asks for "walker_type": "FULLYPOLARIZED", a spin symmetry safiretools no longer
-# has: a reference with no beta electrons is COLLINEAR with ndown == 0 there, and
-# the SAFIRE walker setup does not yet accept an empty beta sector. Port this to
-# Wavefunction.from_pyscf once that C++ change lands.
-from afqmctools.wavefunction.mol import write_wfn_mol
+from safiretools import Hamiltonian, Wavefunction
 
 
 def main():
@@ -49,11 +42,12 @@ def main():
         cas=cas_afqmc  # provide the CAS info here
     ).to_hdf5(fout)
     
-    write_wfn_mol(
+    # Freezing the 10 doubly occupied core orbitals leaves 3 alpha and 0 beta
+    #   electrons in the active space, so the trial is collinear with ndown == 0
+    Wavefunction.from_pyscf(
         scf_data = basis_scf_data,
-        filename = fout,
         cas = cas_afqmc  # must match the CAS info used for the Hamiltonian!
-    )
+    ).to_hdf5(fout)
 
 
 if __name__ == '__main__':

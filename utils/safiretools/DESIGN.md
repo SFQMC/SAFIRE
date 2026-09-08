@@ -786,20 +786,6 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   observables rewrite, but it **must** be ported before afqmctools is removed. A comment in the
   tutorial cell records the same.
 
-- **Let a collinear walker set have an empty beta sector (C++), after the C++ side is synced with
-  `main`.** This is what the `ndown == 0` decision above implies, and it is *not* done
-  on this branch — but the C++ here is out of date relative to `main`, so **re-check it against
-  `main` before acting on any of the following.** As observed on this branch (2026-09):
-  `walker::SlaterMatrix(Beta)` guards on `desc[2] > 0` while
-  `WalkerSetBase::populate_from_guess` writes the beta block unconditionally, so a `COLLINEAR`
-  wavefunction with `ndown == 0` is read correctly and the run then aborts with
-  ``error:walker spin out of range in SlaterMatrix(SpinType)``. Every downstream consumer of a
-  collinear walker's beta sector wants the same audit, so this is a deliberate change rather than a
-  one-line guard.
-
-  One thing waits on it: porting `docs/examples/molecules/04_V-fully_polarized`, whose `afqmc.json`
-  still asks for a walker type safiretools cannot write.
-
 ### Things we might change
 
 - **The periodic multi-determinant expansion keeps the *least* probable determinants.**
