@@ -114,8 +114,7 @@ class TestFromPyscf:
         assert wavefunction.nmo == 3
 
     def test_a_frozen_core_can_empty_the_beta_channel(self, lithium_rohf):
-        # this was afqmctools' fully-polarized case; it is collinear with
-        #   ndown == 0 now, and afqmctools itself crashed here
+        # a reference with no beta electrons is collinear with ndown == 0
         mol, mf = lithium_rohf
         wavefunction = NOMSDWavefunction.from_pyscf(
             scf_data_from(mol, mf, 'collinear'), cas=(1, 4))
@@ -123,14 +122,6 @@ class TestFromPyscf:
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (1, 0)
         assert wavefunction.dets.shape == (1, 4, 1)
-
-    def test_afqmctools_could_not_build_that_case(self, lithium_rohf):
-        from afqmctools.wavefunction.mol import generate_wavefunction
-
-        mol, mf = lithium_rohf
-        with pytest.raises(IndexError):
-            generate_wavefunction(scf_data_from(mol, mf, 'collinear'),
-                                  cas=(1, 4))
 
     def test_the_spin_symmetry_can_be_overridden(self, neon_rhf):
         mol, mf = neon_rhf

@@ -148,7 +148,7 @@ class TestInferSpinSymm:
             is SpinSymm.COLLINEAR
 
     def test_a_polarized_matrix_is_collinear(self):
-        # this was the fully-polarized case, which no longer exists
+        # no beta electrons: one nup-wide block over nmo rows, ndown == 0
         assert infer_spin_symm(np.zeros((6, 3)), (3, 0), nmo=6) \
             is SpinSymm.COLLINEAR
 

@@ -106,7 +106,8 @@ decision.
 - `analysis/new_rdm.py` — a third, weaker parallel 1-RDM implementation, fully superseded, no
   known external dependents.
 - The entire CLI surface except `scalar_stats`.
-- `FULLYPOLARIZED` as a distinct spin-symmetry value — gone from the C++ `WALKER_TYPES` as well.
+- `FULLYPOLARIZED` as a distinct spin-symmetry value; a wavefunction with no beta electrons is
+  `COLLINEAR` with `ndown == 0` instead as in the current C++ (see **Spin-symmetry enum**).
 
 **Rule for all of the above:** "no callers found in `utils/`" is never sufficient reason to drop
 something on its own. These are library packages with external callers writing their own AFQMC
@@ -370,9 +371,16 @@ only one of two BP-average endpoints' errors) gets fixed at the same time.
   separate value for that case: `dims[3]` is 2, and the beta blocks go to disk with zero width (`Psi0_beta` of shape `(nmo, 0, 2)`, a `PsiT_1` whose `dims` is
   `[0, nmo, 0]`), because the executable's readers open them for any collinear file.
 
-  > The C++ side of this branch is out of date relative to `main`, and its walker setup does not
-  > yet accept an empty beta sector — see **Future changes**. That is a C++ item to revisit after
-  > the sync, not a constraint on the Python format.
+  > **On the C++ side:**` WALKER_TYPES` is exactly
+  > `CLOSED`/`COLLINEAR`/`NONCOLLINEAR` ([config.h:48](../../src/AFQMC/config.h#L48)), and a
+  > collinear walker set accepts an empty beta sector: `walker::SlaterMatrix(Beta)` returns a
+  > zero-width view rather than raising, the zero-extent beta operations are skipped where they
+  > would trap on GPU, and
+  > [tests/test_polarized_consistency.cpp](../../tests/test_polarized_consistency.cpp) pins a
+  > `ndown == 0` collinear run against an up-only noncollinear reference. Its
+  > `derive_polarized_wfn` writes exactly the layout above — `dims = [nmo, nup, 0, 2, ndets]`,
+  > `Psi0_beta` of shape `(nmo, 0)`, `PsiT_1` a `(0, nmo)` CSR — so the format here is the one the
+  > executable's own test data uses.
 - Two members carry the coercion that `get_spin_symm_enum` used to: `SpinSymm.from_input(value)`
   accepts a `SpinSymm`, its int value, a spelling alias (`'closed'`/`'rhf'`, `'collinear'`/`'uhf'`,
   `'noncollinear'`/`'ghf'`, ...), or another enum whose value is one of those — so partly-migrated
