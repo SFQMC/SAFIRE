@@ -82,8 +82,7 @@ def from_pyscf(scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
 
     A reference with no beta electrons — which a large enough frozen core can
     produce from an open-shell one — is `SpinSymm.COLLINEAR` with
-    ``ndown == 0``. afqmctools converted that case to a distinct fully-polarized
-    spin symmetry, which no longer exists.
+    ``ndown == 0``, and its beta blocks go to disk with zero width.
     """
     from safiretools.wavefunction.nomsd import NOMSDWavefunction, infer_spin_symm
 

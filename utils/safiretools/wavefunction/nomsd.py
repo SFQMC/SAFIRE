@@ -248,9 +248,8 @@ def infer_spin_symm(orbitals, nelec, nmo: int) -> SpinSymm:
     ``nup == ndown``) from a collinear one (``nup + ndown`` columns).
 
     afqmctools' ``_get_slater_type`` tested ``nup == ndown`` alone and so read
-    any equal-population collinear matrix as closed-shell, halving it. It also
-    had a fourth, fully-polarized case, which no longer exists: a matrix with no
-    beta electrons is collinear with ``ndown == 0``.
+    any equal-population collinear matrix as closed-shell, halving it. A matrix
+    with no beta electrons is `SpinSymm.COLLINEAR` with ``ndown == 0``.
     """
     orbitals = np.asarray(orbitals)
     if orbitals.ndim != 2:

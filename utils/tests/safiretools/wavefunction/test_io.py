@@ -66,8 +66,8 @@ class TestHeader:
         assert len(io.read_header(group)['psi0']) == 1
 
     def test_an_empty_beta_channel_still_gets_its_block(self, group):
-        # a fully polarized wavefunction is collinear with ndown == 0, and the
-        #   executable's reader opens Psi0_beta whenever the file is collinear
+        # a wavefunction with no beta electrons is collinear with ndown == 0,
+        #   and the executable's reader opens Psi0_beta for any collinear file
         io.write_header(group, nmo=6, nelec=(3, 0),
                         spin_symm=SpinSymm.COLLINEAR,
                         coeffs=np.array([1.0 + 0j]),
