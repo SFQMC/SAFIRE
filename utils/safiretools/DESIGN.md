@@ -739,7 +739,10 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   of the *problem*, not of the Hamiltonian; it sits on `Hamiltonian` today only because the on-disk
   formats record it. The end state is that **nothing writes `nelec` to a Hamiltonian and nothing
   reads `nelec` from one**; `dims[4]`/`dims[5]` become unused.
-
+    - a Blocking item for this is computing the exchange divergence correction energy from the madelung
+    constant (found in the CoQuí Hamiltonian format) and electron number (from the Wavefunction) instead of 
+    reading the energy directly from HDF5. **Would require adding the madelung constant in the periodice PySCF**
+    **to SAFIRE route as well**.
   **The C++ side is already there.** Every Hamiltonian reader loads the 8-element `dims`
   (`HamiltonianFactory.cpp`, `RealDenseHamiltonian.cpp`, `KPFactorizedHamiltonian.cpp`,
   `ModelHamOpsGenerator.cpp`) but uses only `Idata[2]` (nkpts) and `Idata[3]` (NMO) — no reader
@@ -748,7 +751,6 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   array keeps its length and the fields are written as zero (or dropped from the writer while the
   readers keep skipping them). Changing the array length would be a format break, and is not part
   of this.
-
   **The Python side is what there is to do.** On all three subclasses: the `nelec` constructor
   argument and `.nelec` attribute; `MolecularHamiltonian.from_integrals`/`from_pyscf`;
   `LatticeHamiltonian`'s `nelec` key in the `hamiltonian` input block (`_parse_ham_input`'s
@@ -794,6 +796,7 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   configuration rather than the most likely. Almost certainly a bug, fixed by one `[::-1]`, but it
   changes numerics on a path with established behavior (and would break the `ndet_max=4` periodic
   equivalence check), so it is preserved verbatim pending a decision.
+    - **This was flagged by AI** It is likely wrong here.
 - **Direct use of NOMSDWavefunction and PHMSDWavefunction in tutorials is potentially confusing.**
   (This applies mostly to the Molecules writting a Wavefunction tutorial) We added to factories to the 
   Wavefunction baseclass to specifically avoid users needed to do this; however, one could argue that
