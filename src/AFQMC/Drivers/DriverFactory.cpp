@@ -222,8 +222,6 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
   // estimator setup
   Estimators<MEM> estim0{mpi, exec, wset, WfnFac, wfn0, prop0, HamFac, hybrid};
 
-  app_log(1, banner("Finished Driver initialization"));
-
   AFQMCDriver<MEM> driver(mpi, title, m_series, block0, step0, Eshift, exec, wfn0, prop0, estim0);
 
   // free any shared windows that were abandoned during initialization
@@ -357,8 +355,6 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
 
   // estimator setup
   Estimators<MEM> estim0{mpi, exec, wset, WfnFac, wfn0, prop0, HamFac, addEnergyEstim};
-
-  app_log(1, banner("Finished Driver initialization"));
 
   FTAFQMCDriver<MEM> driver(mpi, title, m_series, block0, step0, Eshift, exec, wfn0, prop0, estim0);
 
@@ -589,8 +585,6 @@ bool DriverFactory<MEM>::executeCSAFQMCDriver([[maybe_unused]] std::string title
   int max_nCV=0;
   for(auto& v : wfn_ref) max_nCV = std::max(max_nCV, v.get().local_number_of_cholesky_vectors()); 
   for(auto& v : prop_ref) v.get().set_rng_block_size(max_nCV);
-
-  app_log(1, banner("Finished Driver initialization"));
 
   gTG.Global().barrier();
 / *
