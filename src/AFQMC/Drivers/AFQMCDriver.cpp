@@ -75,7 +75,7 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
       wset.popControl(); // make this a call to actual pop control
       popcontrol_time.stop();
 
-      if(iStep > nEquilibration) {
+      if(iStep >= nEquilibration) {
         estimators_.measure(*mpi, iStep / nPopulation, wset);
       } else {
         Eshift += dShift * (averageEloc(*mpi, wset) - Eshift);

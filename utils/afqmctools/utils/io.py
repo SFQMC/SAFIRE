@@ -60,6 +60,17 @@ def from_complex(data, shape=None):
         return data.view(np.complex128).ravel()
 
 
+def read_dataset(dset:h5.Dataset):
+    """Read a dataset, converting it from the internal complex format if it is marked as
+    complex. Datasets written by SAFIRE carry the "__complex__" attribute and a trailing
+    size-2 axis; the returned array keeps the leading axes and drops that one.
+    """
+    data = dset[...]
+    if "__complex__" in dset.attrs:
+        return from_complex(data, shape=data.shape[:-1])
+    return data
+
+
 def add_dataset(fh5:h5.File, name, value):
     """
     Adds value to dataset, and creates dataset if it does not exist.

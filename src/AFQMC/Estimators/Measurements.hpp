@@ -38,7 +38,8 @@ struct sample_type {
 };
 template<typename A>
 struct sample_type<A, true> {
-  using type = nda::get_regular_t<std::remove_cvref_t<A>>;
+  using type = nda::array<std::remove_const_t<nda::get_value_t<std::remove_cvref_t<A>>>,
+                          nda::get_rank<std::remove_cvref_t<A>>>;
 };
 
 /// The type an Accumulator stores for a sample of type A: arrays lose their view-ness
@@ -95,11 +96,11 @@ public:
     using Arr = decltype(sample);
     if constexpr(nda::Array<Arr>) {
       memory::buffered_array<HOST_MEMORY, nda::get_value_t<Arr>, nda::get_rank<Arr>> buffer(sample);
-      buffer() /= denominator_;
 
       mpi.reduce(buffer, std::plus{});
 
       if(mpi.comm.root()) {
+        buffer() /= denominator_;
         meas_.measure(obs_name, buffer);
       }
     } else {
