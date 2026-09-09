@@ -23,7 +23,11 @@ import numpy as np
 import scipy.sparse as sps
 import h5py as h5
 
-from safiretools.hamiltonian.base import Hamiltonian, open_for_hamiltonian
+from safiretools.hamiltonian.base import (
+    Hamiltonian,
+    open_for_hamiltonian,
+    write_hamiltonian_format,
+)
 from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
 
@@ -406,6 +410,8 @@ class LatticeHamiltonian(Hamiltonian):
         real_valued = self.real_valued
 
         with open_for_hamiltonian(path) as fh5:
+            write_hamiltonian_format(fh5, 'model')
+
             fh5.create_dataset(
                 'Hamiltonian/dims',
                 data=np.array([0, 0, 0, self.nbasis, nup, ndown, 0, 0], dtype=np.int64)

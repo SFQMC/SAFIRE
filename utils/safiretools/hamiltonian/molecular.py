@@ -30,7 +30,11 @@ import numpy as np
 import scipy.linalg
 import h5py as h5
 
-from safiretools.hamiltonian.base import Hamiltonian, open_for_hamiltonian
+from safiretools.hamiltonian.base import (
+    Hamiltonian,
+    open_for_hamiltonian,
+    write_hamiltonian_format,
+)
 from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
 
@@ -384,6 +388,8 @@ def write_dense_hamiltonian(fh5, hcore, chol, nelec, nmo, enuc=0.0,
     """
     if complex_chol is None:
         complex_chol = bool(np.any(np.iscomplex(chol)))
+
+    write_hamiltonian_format(fh5, 'dense')
 
     _write(fh5, 'Hamiltonian/DenseFactorized/L',
            to_complex(chol) if complex_chol else np.real(chol))

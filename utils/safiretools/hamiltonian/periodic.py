@@ -53,6 +53,7 @@ from safiretools.hamiltonian.base import (
     Hamiltonian,
     clear_hamiltonian,
     open_for_hamiltonian,
+    write_hamiltonian_format,
 )
 from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
@@ -1077,6 +1078,14 @@ class PeriodicHamiltonian(Hamiltonian):
 
         comm.barrier()
 
+        # the format tag is a variable-length string, which parallel HDF5 cannot
+        # write, so it goes in from one rank once every rank has closed the file
+        if comm.rank == 0:
+            with h5.File(path, 'a') as fh5:
+                write_hamiltonian_format(fh5, 'kpoint')
+
+        comm.barrier()
+
     # ------------------------------------------------------------------
     # serialization
     # ------------------------------------------------------------------
@@ -1094,7 +1103,8 @@ class PeriodicHamiltonian(Hamiltonian):
             wavefunction can share one file in either order.
         """
         with open_for_hamiltonian(path) as fh5:
-            group = fh5.create_group("Hamiltonian")
+            write_hamiltonian_format(fh5, 'kpoint')
+            group = fh5['Hamiltonian']
             _write_kpoint_descriptors(group, self.kpts, self.nmo_pk, self.qk_to_k2,
                                       self.minus_k, self.nelec, self.enuc)
             for ki in range(self.nkpts):

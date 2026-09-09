@@ -25,10 +25,13 @@ from importlib import import_module
 
 import h5py as h5
 
-from safiretools.types import SpinSymm
+from safiretools.types import HamiltonianFormat, SpinSymm
 
 HAMILTONIAN_GROUP = 'Hamiltonian'
 """Top-level HDF5 group every Hamiltonian format writes into."""
+
+TYPE_DATASET = f'{HAMILTONIAN_GROUP}/type'
+"""Dataset a writer records its on-disk format in; see `write_hamiltonian_format`."""
 
 
 def clear_hamiltonian(fh5) -> None:
@@ -72,6 +75,42 @@ def open_for_hamiltonian(path):
         yield fh5
 
 
+def write_hamiltonian_format(fh5, fmt) -> None:
+    """
+    Record `fmt` as the on-disk format of the Hamiltonian being written into
+    `fh5`, so that a reader does not have to infer it from the layout.
+
+    Parameters
+    ----------
+    fh5 : h5py.File
+        Destination, open for writing. The ``Hamiltonian`` group is created if
+        it does not exist yet, so this can be called before or after the rest of
+        the Hamiltonian is written.
+    fmt : HamiltonianFormat or str
+        The format being written, or its safiretools name.
+
+    Raises
+    ------
+    ValueError
+        If `fmt` names no known format, or names one that is never recorded.
+
+    Notes
+    -----
+    `fh5` must be a serially opened file: this writes a variable-length string,
+    as ``spin_type`` does, and parallel HDF5 cannot write variable-length data.
+    The one Hamiltonian written in parallel tags itself afterwards, from one
+    rank — see `~safiretools.PeriodicHamiltonian.write_from_pyscf`.
+    """
+    fmt = HamiltonianFormat(fmt)
+    if not fmt.tag:
+        raise ValueError(f"the '{fmt}' format is never recorded in a file")
+
+    if TYPE_DATASET in fh5:
+        del fh5[TYPE_DATASET]
+
+    fh5.create_dataset(TYPE_DATASET, data=fmt.tag)
+
+
 def hamiltonian_format(path) -> str:
     """
     Identify the Hamiltonian format stored in the HDF5 file at `path`.
@@ -83,26 +122,49 @@ def hamiltonian_format(path) -> str:
 
     Returns
     -------
-    str
-        One of ``'model'``, ``'dense'``, ``'kpoint'``, ``'thc'``, or
-        ``'kpoint_coqui'``.
+    HamiltonianFormat
+        The stored format. It is a string too, so it compares equal to its
+        safiretools name (``'model'``, ``'dense'``, ...).
 
     Raises
     ------
     ValueError
-        If the file matches none of the known formats.
+        If the file records a format safiretools does not know, or records none
+        and matches none of the known layouts.
+
+    Notes
+    -----
+    A file written by `write_hamiltonian_format` says outright which format it
+    holds. Files written before that key existed do not, so their format is
+    inferred from which datasets are present — see `_format_from_layout`.
     """
     with h5.File(path, 'r') as fh5:
-        if 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5:
-            return 'model'
-        if 'Hamiltonian/DenseFactorized/L' in fh5:
-            return 'dense'
-        if 'Hamiltonian/KPFactorized/L0' in fh5:
-            return 'kpoint'
-        if 'Hamiltonian/THC/Luv' in fh5:
-            return 'thc'
-        if 'Interaction/Vq0' in fh5:
-            return 'kpoint_coqui'
+        if TYPE_DATASET not in fh5:
+            return _format_from_layout(fh5, path)
+
+        try:
+            return HamiltonianFormat.from_tag(fh5[TYPE_DATASET].asstr()[()])
+        except ValueError as error:
+            raise ValueError(f"'{path}' records an {error}") from None
+
+
+def _format_from_layout(fh5, path) -> "HamiltonianFormat":
+    """
+    Infer the format of a file that records none from the datasets it holds.
+
+    What `hamiltonian_format` did for every file before writers began recording
+    `TYPE_DATASET`, and still the only way to identify one written back then.
+    """
+    if 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5:
+        return HamiltonianFormat.MODEL
+    if 'Hamiltonian/DenseFactorized/L' in fh5:
+        return HamiltonianFormat.DENSE
+    if 'Hamiltonian/KPFactorized/L0' in fh5:
+        return HamiltonianFormat.KPOINT
+    if 'Hamiltonian/THC/Luv' in fh5:
+        return HamiltonianFormat.THC
+    if 'Interaction/Vq0' in fh5:
+        return HamiltonianFormat.KPOINT_COQUI
 
     raise ValueError(f"'{path}' holds no Hamiltonian in a format safiretools recognizes")
 

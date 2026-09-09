@@ -85,3 +85,61 @@ _SPIN_SYMM_ALIASES = {
     'ghf': SpinSymm.NONCOLLINEAR,
 }
 """Recognized spelling aliases, mapped onto the canonical `SpinSymm` members."""
+
+
+class HamiltonianFormat(str, Enum):
+    """
+    An on-disk Hamiltonian format, paired with the name the AFQMC executable
+    knows it by.
+
+    Members are strings, so a format compares, hashes and formats as its
+    safiretools name (``'model'``, ``'dense'``, ...) anywhere one of those is
+    expected. `tag` is the executable's own ``HamiltonianTypes`` spelling, which
+    is what a Hamiltonian file records — see
+    `safiretools.hamiltonian.base.write_hamiltonian_format`.
+    """
+
+    # Python 3.11 made a mixin Enum's str() its member name; this keeps both
+    #   str() and f-strings rendering the value, as the pre-enum strings did.
+    __str__ = str.__str__
+
+    def __new__(cls, value, tag=''):
+        """Build a member from its safiretools name and, if it has one, its tag."""
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member._tag = tag
+        return member
+
+    MODEL = 'model', 'ModelHamiltonian'
+    DENSE = 'dense', 'RealDenseFactorized'
+    KPOINT = 'kpoint', 'KPFactorized'
+    THC = 'thc', 'THC'
+    KPOINT_COQUI = 'kpoint_coqui'
+
+    @property
+    def tag(self) -> str:
+        """
+        The ``HamiltonianTypes`` name a file records this format as, or ``''``
+        for a format that is never recorded: a CoQuí file has no ``Hamiltonian``
+        group to record a type in, so `KPOINT_COQUI` has no tag.
+        """
+        return self._tag
+
+    @classmethod
+    def from_tag(cls, tag: str) -> "HamiltonianFormat":
+        """
+        The format a file recorded as `tag`.
+
+        Raises
+        ------
+        ValueError
+            If `tag` names no format safiretools recognizes.
+        """
+        for member in cls:
+            if member.tag and member.tag == tag:
+                return member
+
+        raise ValueError(
+            f"unknown Hamiltonian type '{tag}': safiretools recognizes "
+            f"{sorted(member.tag for member in cls if member.tag)}"
+        )
