@@ -210,7 +210,8 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   }
 
   // Using NOMSD as reference. Making h5 from input phmsd wfn
-  std::string nomsd_file = "_nomsd_dummy_.h5";
+  utils::TemporaryDirectory tmpdir;
+  std::string nomsd_file = (tmpdir / "nomsd.h5").string();
   if(mpi->comm.root()) {
     // 
     h5::file f_(nomsd_file,'w');
@@ -418,8 +419,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     write_test_results_to_hdf(hamil_file, test_wfn, file_data);
   }
 
-  mpi->comm.barrier();
-  if(mpi->comm.root()) remove(nomsd_file.c_str());
+  // tmpdir removes nomsd_file on the root rank alone, so no rank may still be reading
   mpi->comm.barrier();
 }
 

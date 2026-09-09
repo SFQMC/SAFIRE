@@ -22,12 +22,10 @@
 #include "configuration.hpp"
 #include "IO/AppAbort.hpp"
 #include "utilities/Random.hpp"
-#include "test_common.hpp"
 
 #include "AFQMC/parameters.hpp"
 #include "IO/app_loggers.h"
 
-#include <stdio.h>
 #include <string>
 #include <vector>
 #include <complex>
@@ -308,6 +306,9 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
   using Type = std::complex<double>;
   auto& mpi = utils::make_unit_test_mpi_context();
 
+  utils::TemporaryDirectory tmpdir;
+  const std::string walker_file = (tmpdir / "walkers.h5").string();
+
   int NMO = 8, nup = 2, ndown = 2, nwalkers = 10;
   if (wtype == NONCOLLINEAR)
   {
@@ -362,13 +363,13 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
   // dump restart file
   {
     h5::file fh5;
-    if(mpi->comm.root()) fh5 = h5::file(std::string("dummy_walkers.h5"),'w');
+    if(mpi->comm.root()) fh5 = h5::file(walker_file,'w');
     dumpToHDF5(wset, fh5);
   }
   mpi->comm.barrier();
 
   {
-    h5::file fh5(std::string("dummy_walkers.h5"),'r');
+    h5::file fh5(walker_file,'r');
     auto wset2 = readWalkersFromHDF5<WalkerSet<MEM>>(mpi, wlk_params, rng,
                                                      wtype, fh5, nwalkers, true);
     std::array<walker_data,5> tags = {WEIGHT,OVLP,E1_,EXX_,EJ_};
@@ -380,9 +381,8 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
     }
   }
 
+  // tmpdir removes the file on the root rank alone, so no rank may still be reading
   mpi->comm.barrier();
-  if (mpi->comm.root())
-    remove("dummy_walkers.h5");
 
 }
 

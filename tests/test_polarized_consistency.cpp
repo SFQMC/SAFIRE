@@ -51,7 +51,6 @@
 #include <vector>
 #include <complex>
 #include <format>
-#include <filesystem>
 
 #include "AFQMC/config.h"
 #include "AFQMC/Hamiltonians/HamiltonianFactory.h"
@@ -96,14 +95,6 @@ inline PsiT_Matrix<HOST_MEMORY> widen_csr(PsiT_Matrix<HOST_MEMORY> const& up, in
     }
   }
   return out;
-}
-
-// Path for a derived trial file in the scratch dir.
-inline std::string polarized_tmp_path(std::string const& tag, WALKER_TYPES target)
-{
-  auto p = std::filesystem::temp_directory_path() /
-           std::format("polarized_{}_{}_{}.h5", tag, walkerTypeToString(target), getpid());
-  return p.string();
 }
 
 // Derive a polarized trial file (dropping the down block) from a COLLINEAR NOMSD
@@ -288,14 +279,10 @@ void polarized_consistency(std::shared_ptr<utils::mpi_context_t<boost::mpi3::com
   constexpr int nsteps = 6;
   constexpr int nStab  = 3;
 
-  auto stem = [](std::string const& p) {
-    auto s = p.find_last_of("\\/");
-    auto e = p.find_last_of(".");
-    return p.substr(s + 1, e - s - 1);
-  }(src_wfn_file);
+  utils::TemporaryDirectory tmpdir;
 
   // Reference: up-only noncollinear (well-supported path).
-  std::string ref_file = polarized_tmp_path(stem, NONCOLLINEAR);
+  std::string ref_file = (tmpdir / "ref_noncollinear.h5").string();
   if(mpi->comm.root()) {
     derive_polarized_wfn(src_wfn_file, NONCOLLINEAR, ref_file);
   }
@@ -307,15 +294,17 @@ void polarized_consistency(std::shared_ptr<utils::mpi_context_t<boost::mpi3::com
   std::vector<WALKER_TYPES> candidates = {COLLINEAR};
 
   for(auto cand_type : candidates) {
-    std::string cand_file = polarized_tmp_path(stem, cand_type);
+    std::string cand_file = (tmpdir / std::format("cand_{}.h5", walkerTypeToString(cand_type))).string();
     if(mpi->comm.root()) {
       derive_polarized_wfn(src_wfn_file, cand_type, cand_file);
     }
     mpi->comm.barrier();
     auto cand = run_polarized<MEM>(mpi, hamil_file, cand_file, nsteps, nStab);
     compare_to_reference(walkerTypeToString(cand_type), cand, ref);
-    std::filesystem::remove(cand_file);
   }
+
+  // tmpdir removes the derived files on the root rank alone, so no rank may still be reading
+  mpi->comm.barrier();
 }
 
 } // namespace
