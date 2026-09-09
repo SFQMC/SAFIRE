@@ -14,6 +14,7 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <format>
 #include <tuple>
 #include <map>
 #include <string>
@@ -28,6 +29,7 @@
 #include "IO/banner.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "FTAFQMCDriver.h"
+#include "averageEloc.hpp"
 #include "AFQMC/Walkers/WalkerIO.hpp"
 
 namespace sfqmc
@@ -88,15 +90,11 @@ bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
         ortho_time.stop();
       }
 
-      if (total_time < weight_reset_period && !prop0.free_propagation()){
-        wset.resetWeights();
-      }
-
-      if (total_time < 1.0) 
+      if (total_time < 1.0)
       {
         wset.processWalkerData(curData);
-        estim0.accumulate_step(total_time, wset, curData);
-      } 
+        Eshift = averageEloc(*mpi, wset);
+      }
 
       // KE: should there be a check for population control interval here?
       if ((iStep + 1) % nPopulation == 0 || iStep == 0 || iStep == nStep-1)
@@ -105,33 +103,22 @@ bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
         wset.processWalkerData(curData);
         wset.popControl();
         popcontrol_time.stop();
-        estim0.accumulate_step(total_time,wset,curData);
+
+        if(total_time >= 1.0) {
+          Eshift += dShift * (averageEloc(*mpi, wset) - Eshift);
+        }
       }
-
-      //estim0.accumulate_step(total_time,wset,curData);
-
-      if (total_time < 1.0)
-      {
-        Eshift = estim0.getEloc_step();
-      }
-      else if ((iStep + 1) % nAccumulate == 0)
-        Eshift += dShift * (estim0.getEloc_step() - Eshift);
-
-      //estim0.print_walker_info(iSweep+1, total_time);
 
       // resize stack pointers to match maximum buffer use
-      //update_memory_managers();
       utils::resize_nda_static_allocator();
     }
 
     block_time.stop();
 
-    // accumulate measurements
-    // for measurement we need nt = nStep
-    //wset.advanceTauStep();
-    estim0.accumulate_block(double(nStep), wset);
-    estim0.print(iSweep + 1, total_time, Eshift, wset);
-    
+    // one sweep is one measurement sample. The walker set is still at nt = nStep here,
+    // i.e. the full path has been constructed.
+    estimators_.measure(*mpi, iSweep, wset);
+
     //add finite-T checkpoint?
 
     wset.clean(); // reset walker buffer
@@ -145,8 +132,10 @@ bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
 
   // print timers
   if(mpi->comm.root()) timers.print_all();
-  
-  app_log(1, banner("Finished AFQMC calculation"));
+
+  estimators_.write(std::format("{}.results.h5", project_title));
+
+  app_log(1, banner("Finished FT-AFQMC calculation"));
 
   return true;
 

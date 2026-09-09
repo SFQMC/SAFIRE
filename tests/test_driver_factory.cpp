@@ -280,14 +280,6 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     CHECK(prop.lower_cutoff_scale.has_value());
     CHECK(prop.denseP2.has_value());
     CHECK(prop.symmetric_split.has_value());
-
-    // the basic estimator always runs, and every estimator inherits from the execute block
-    REQUIRE(exec.estimator.size() == 1);
-    const EstimatorParameters& basic = exec.estimator[0];
-    CHECK(basic.name == EstimatorType::basic);
-    CHECK(measure_interval_multipliers(basic) == std::vector<int>{exec.measure_interval_multiplier});
-    CHECK(basic.wfn == wfn_name);
-    CHECK(basic.ham == ham_name);
   }
 
   // what the input sets is never replaced by a default, and a block declared inside an execute
@@ -307,7 +299,7 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
                                                   .lower_cutoff_scale = 0.25,
                                                   .denseP2            = false,
                                                   .symmetric_split    = false},
-             .estimator = {EstimatorParameters{.name                        = EstimatorType::basic,
+             .estimator = {EstimatorParameters{.name                        = EstimatorType::mixed,
                                                .wfn                         = "estimator_wfn",
                                                .ham                         = "estimator_ham",
                                                .measure_interval_multiplier = std::vector<int>{3}}},

@@ -41,7 +41,6 @@
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Propagators/Propagator.hpp"
-#include "AFQMC/Estimators/EstimatorHandler.h"
 
 namespace sfqmc
 {
@@ -121,10 +120,8 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
 
   std::string hdf_read_restart;
   bool set_nWalker_target;
-  double dt;
   hdf_read_restart = exec.hdf_read_file;
   set_nWalker_target = exec.set_nwalker_to_target;
-  dt = exec.timestep;
   int nWalkers = exec.n_walkers_per_mpi_task;
 
   bool restarted = false;
@@ -221,15 +218,9 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
     }
   }
 
-  // is this run using importance sampling? 
-// MAM: should be asking for importance sampling and not for free_propagation...
-  bool free_proj = prop0.free_propagation();
-  // if hybrid calculation, set to true
-  bool addEnergyEstim = hybrid;
 
   // estimator setup
-  auto estim0 = EstimatorHandler<MEM>(mpi, title, exec, wset, WfnFac, wfn0,
-         prop0, HamFac, dt, addEnergyEstim, !free_proj);
+  Estimators<MEM> estim0{mpi, exec, wset, WfnFac, wfn0, prop0, HamFac, hybrid};
 
   app_log(1, banner("Finished Driver initialization"));
 
@@ -361,15 +352,11 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
     Eshift = real(ComplexType(wset[0].energy()));
   }
 
-  // is this run using importance sampling? 
-// MAM: should be asking for importance sampling and not for free_propagation...
-  bool free_proj = prop0.free_propagation();
   // if hybrid calculation, set to true
   bool addEnergyEstim = hybrid;
 
   // estimator setup
-  auto estim0 = EstimatorHandler<MEM>(mpi, title, exec, wset, WfnFac, wfn0,
-         prop0, HamFac, exec.timestep, addEnergyEstim, !free_proj);
+  Estimators<MEM> estim0{mpi, exec, wset, WfnFac, wfn0, prop0, HamFac, addEnergyEstim};
 
   app_log(1, banner("Finished Driver initialization"));
 

@@ -104,17 +104,11 @@ public:
     std::visit([&](auto&& a) { a.updateLogScale(std::forward<Args>(args)...); }, var);
   }
 
-  template<class... Args>
-  void accumulate_estimators(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.accumulate_estimators(std::forward<Args>(args)...); }, var);
-  }
-
   int total_number_of_references() const;
 
   int getNMO() const;
 
-  ComplexType getReferenceWeight(int i);
+  ComplexType getReferenceWeight(int i) const;
 
   void getReferences(memory::buffered_array<MEM,ComplexType,3>& Refs);
 

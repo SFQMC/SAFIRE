@@ -77,7 +77,8 @@ class System:
                              # and the walker_type of the generated input
     # Observable blocks spliced into the back-propagation estimator, keyed by the name the
     # input schema gives them. A non-empty dict is what makes a system run back-propagation
-    # cases at all. A relative `filename` is resolved against the system's afqmc_inputs dir.
+    # cases at all. A relative `filename` in a stored-input block is resolved against the
+    # system's afqmc_inputs dir.
     observables: Dict[str, dict] = field(default_factory=dict)
 
 
@@ -117,14 +118,14 @@ def build_systems() -> Dict[str, System]:
                 "rcasci_ghf_1phmsd": Wavefunction("afqmc_casci_ghf_1phmsd.h5", S.NONCOLLINEAR, WC.PHMSD),
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}},
         ),
         "Li": System(
             data_dir="Li",
             hamiltonians={"hamil_closed": Hamiltonian("hamil_closed.h5", S.CLOSED, HC.GENERIC_DENSE)},
             wavefunctions={"rohf_wfn_polarized": Wavefunction("rohf_nomsd_polarized.h5", S.COLLINEAR, WC.NOMSD)},
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}},
         ),
         "Pb": System(
             data_dir="Pb",
@@ -153,11 +154,10 @@ def build_systems() -> Dict[str, System]:
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
             observables={
-                "onerdm": {"name": "one_rdm"},
-                "spinspin": {"name": "spinspin"},
-                "pair_correlators": {"name": "pair_correlators",
-                                     "filename": "pair_correlators.h5",
-                                     "pair_type": ["s", "+x", "+y"]},
+                "onerdm": {},
+                "spincorr": {},
+                "paircorr": {"pairs": {"filename": "pair_correlators.h5",
+                                       "group": "PairCorrelator/orbital_map"}},
             },
         ),
         "hubbard_charge": System(
@@ -170,7 +170,7 @@ def build_systems() -> Dict[str, System]:
                 "hf_U0.1_collinear": Wavefunction("uhf_U0.1_wfn_nup5_ndn5.h5", S.COLLINEAR, WC.NOMSD),
             },
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}},
         ),
         "hubbard_kanamori": System(
             data_dir="square_6x1_hubbard_kanamori_nup6_ndn6",
@@ -184,11 +184,10 @@ def build_systems() -> Dict[str, System]:
             },
             walkers=[S.COLLINEAR, S.NONCOLLINEAR],
             observables={
-                "onerdm": {"name": "one_rdm"},
-                "spinspin": {"name": "spinspin"},
-                "pair_correlators": {"name": "pair_correlators",
-                                     "filename": "pair_correlators.h5",
-                                     "pair_type": ["s", "+x"]},
+                "onerdm": {},
+                "spincorr": {},
+                "paircorr": {"pairs": {"filename": "pair_correlators.h5",
+                                       "group": "PairCorrelator/orbital_map"}},
             },
         ),
         "rashba_soc": System(
@@ -213,7 +212,7 @@ def build_systems() -> Dict[str, System]:
                 "pbe_collinear_nomsd_noncollinear": Wavefunction("wfn_mf_pbe_noncollinear.h5", S.NONCOLLINEAR, WC.NOMSD),
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}},
         ),
         "diamond_2x2x2": System(
             data_dir="C_diamond_coqui",
@@ -222,6 +221,6 @@ def build_systems() -> Dict[str, System]:
             },
             wavefunctions={"pbe_wfn_2x2x2_collinear": Wavefunction("wfn_mf_2x2x2_pbe.h5", S.COLLINEAR, WC.NOMSD)},
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}},
         ),
     }

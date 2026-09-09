@@ -42,13 +42,12 @@ SAFIRE_DEFINE_ENUM_NAMES(PHMSDEnergyAlgorithm, reference, woodbury);
 
 enum class EstimatorType {
   undefined,
-  basic,
   mixed,
   energy,
   back_propagation,
   time_evolved_operators,
 };
-SAFIRE_DEFINE_ENUM_NAMES(EstimatorType, undefined, basic, mixed, energy, back_propagation, time_evolved_operators);
+SAFIRE_DEFINE_ENUM_NAMES(EstimatorType, undefined, mixed, energy, back_propagation, time_evolved_operators);
 
 
 struct ProjectParameters {
@@ -148,37 +147,28 @@ struct H5PathParameters {
 SAFIRE_DEFINE_PARAMETERS(H5PathParameters, filename, group);
 
 struct OneRDMParameters {
-  std::string name{};
-  std::string rotation{};
-  std::string path{"/"};
-  bool with_index_list{false};
+  std::optional<H5PathParameters> rotation{};
 };
-SAFIRE_DEFINE_PARAMETERS(OneRDMParameters, name, rotation, path, with_index_list);
+SAFIRE_DEFINE_PARAMETERS(OneRDMParameters, rotation);
 
-struct DiagTwoRDMParameters {
-  std::string name{};
+struct DiagonalTwoRDMParameters {
 };
-SAFIRE_DEFINE_PARAMETERS(DiagTwoRDMParameters, name);
+SAFIRE_DEFINE_EMPTY_PARAMETERS(DiagonalTwoRDMParameters);
 
 struct TwoRDMParameters {
-  std::string name{};
-  std::string rotation{};
-  std::string path{"/"};
 };
-SAFIRE_DEFINE_PARAMETERS(TwoRDMParameters, name, rotation, path);
+SAFIRE_DEFINE_EMPTY_PARAMETERS(TwoRDMParameters);
 
-struct PairCorrelatorParameters {
-    std::string name{"pair_correlator"};
-    std::string filename{""};
-
-    std::vector<std::string> pair_type{}; // required, at least one entry
+/// `pairs` points at an h5 group whose datasets each define one orbital pair map. Every
+/// dataset in the group becomes a correlator, named after the dataset.
+struct PairCorrParameters {
+  H5PathParameters pairs{};
 };
-SAFIRE_DEFINE_PARAMETERS(PairCorrelatorParameters, name, filename, pair_type);
+SAFIRE_DEFINE_PARAMETERS(PairCorrParameters, pairs);
 
-struct SpinSpinCorrParameters {
-  std::string name{};
+struct SpinCorrParameters {
 };
-SAFIRE_DEFINE_PARAMETERS(SpinSpinCorrParameters, name);
+SAFIRE_DEFINE_EMPTY_PARAMETERS(SpinCorrParameters);
 
 struct EstimatorParameters {
   EstimatorType name{};
@@ -197,12 +187,6 @@ struct EstimatorParameters {
   bool print_components{};
   bool print_sign{};
 
-  int equil{};
-  int skip{}; // ?
-
-  // mixed
-  int equil_multiplier{};
-
   // bp
   int bp_walker_ortho_interval{10}; // in units of steps
   bool path_restoration{true};
@@ -211,15 +195,16 @@ struct EstimatorParameters {
   // resolve_defaults falls back to the measure_interval_multiplier of the enclosing execute block
   std::optional<std::vector<int>> measure_interval_multiplier{};
 
-  // observables
+  // observables: an observable is measured if and only if its block is present in the input,
+  // so one that takes no parameters is requested by an empty block, e.g. "twordm": {}
   std::optional<OneRDMParameters> onerdm{};
-  std::optional<DiagTwoRDMParameters> diag2rdm{};
+  std::optional<DiagonalTwoRDMParameters> diag2rdm{};
   std::optional<TwoRDMParameters> twordm{};
-  std::optional<PairCorrelatorParameters> pair_correlators{};
-  std::optional<SpinSpinCorrParameters> spinspin{};
+  std::optional<PairCorrParameters> pair_correlators{};
+  std::optional<SpinCorrParameters> spinspin{};
 };
 SAFIRE_DEFINE_PARAMETERS(EstimatorParameters, name, remove, wfn, ham, timers, nhist, overwrite, print_components,
-                         print_sign, equil, skip, equil_multiplier, bp_walker_ortho_interval, path_restoration,
+                         print_sign, bp_walker_ortho_interval, path_restoration,
                          extra_path_restoration, measure_interval_multiplier, onerdm, diag2rdm, twordm,
                          pair_correlators, spinspin);
 
@@ -249,12 +234,12 @@ struct ExecuteParameters {
   std::string hdf_read_file{}; // restart from checkpoint
   std::string hdf_write_file{}; // write checkpoint
   int steps{1};
+  int equilibration_steps{};
   int sweeps{1}; // finite temperature sweeps
   int population_control_interval{DEFAULT_POPULATION_CONTROL_INTERVAL};
   int measure_interval_multiplier{DEFAULT_MEASURE_INTERVAL_MULTIPLIER};
   int walker_ortho_interval{DEFAULT_WALKER_ORTHO_INTERVAL};
   int checkpoint_interval{-1};
-  double weight_reset{0.0}; // in units of time
   double dshift{1.0};
   bool print_sweep_step{false}; // ftafqmc only
 
@@ -269,8 +254,8 @@ struct ExecuteParameters {
   std::optional<int> seed{};
 };
 SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimator, hdf_read_file,
-                         hdf_write_file, steps, sweeps, population_control_interval, measure_interval_multiplier,
-                         walker_ortho_interval, checkpoint_interval, weight_reset, dshift, print_sweep_step,
+                         hdf_write_file, steps, equilibration_steps, sweeps, population_control_interval, measure_interval_multiplier,
+                         walker_ortho_interval, checkpoint_interval, dshift, print_sweep_step,
                          timestep, n_walkers_per_mpi_task, set_nwalker_to_target, initial_Eshift, seed);
 
 

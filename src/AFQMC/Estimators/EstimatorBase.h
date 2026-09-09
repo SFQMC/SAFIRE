@@ -17,43 +17,22 @@
 #pragma once
 
 #include "AFQMC/config.h"
-#include <vector>
-#include <iostream>
-#include <fstream>
 
-#include "nda/h5.hpp"
+#include <nda/h5.hpp>
 #include "AFQMC/parameters.hpp"
 
 #include "AFQMC/Walkers/WalkerSet.hpp"
+#include "Measurements.hpp"
 
-namespace sfqmc
-{
-namespace afqmc
-{
+namespace sfqmc::afqmc {
+
 template<MEMORY_SPACE MEM>
 class EstimatorBase
 {
 public:
   virtual ~EstimatorBase() {}
-
-  virtual void accumulate_block(double time, WalkerSet<MEM>& wlks) = 0;
-
-  virtual void accumulate_step(double time, WalkerSet<MEM>& wlks, std::vector<ComplexType>& curData) = 0;
-
-  virtual void print(std::ofstream& out, h5::file&, WalkerSet<MEM>& wlks) = 0;
-
-  virtual void print_timers([[maybe_unused]] std::ofstream& out) {}
-
-  virtual void tags(std::ofstream& out) = 0;
-
-  virtual void tags_timers([[maybe_unused]] std::ofstream& out) {}
-
-  virtual int get_measurement_interval() { return 1; }
-
-  virtual double getEloc() { return 0; }
-
-  virtual double getEloc_step() { return 0; }
+  virtual void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock, Measurements& meas, WalkerSet<MEM> &wset) = 0;
 };
-} // namespace afqmc
-} // namespace sfqmc
+
+} // namespace sfqmc::afqmc
 
