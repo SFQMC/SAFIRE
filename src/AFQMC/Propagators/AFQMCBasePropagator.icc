@@ -439,9 +439,9 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset,
                        SY, "nkj", Y(all,ispin,all,all), "nij");
 
       // M += H(Ynew) * X
-      nda::tensor::contract(one, nda::conj(wset.SlaterMatrices(stype[ispin])), "nki",
+      nda::tensor::contract(one, nda::conj(Y(all,ispin,all,all)), "nki",
                                  X(all,ispin,all,all), "nkj",
-                            one, M(all,ispin, all, all), "nij"); 
+                            one, M(all,ispin, all, all), "nij");
 
       // SY = H(S) * X
       nda::tensor::contract(nda::conj(wset.SlaterMatrices(stype[ispin])), "nki",
