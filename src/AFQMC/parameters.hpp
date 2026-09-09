@@ -10,6 +10,7 @@
 #include "AFQMC/config.h"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
 #include "utilities/json.hpp"
+#include "numerics/shared_array/const_shared_array.hpp"
 
 
 namespace sfqmc::afqmc {
@@ -127,7 +128,25 @@ SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, exte
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
                          symmetric_split, use_cp_constraint, use_real_vbias, external_field, excited);
 
-// the name of an observable is a label that the code does not use for anything
+struct H5PathParameters {
+  std::string filename{};
+  std::string group{"/"};
+
+  template<MEMORY_SPACE MEM, typename T, int Rank>
+  memory::const_shared_array<MEM, T, Rank> load_shared(utils::mpi_context_t<boost::mpi3::communicator>& mpi, std::string const& dataset) const {
+    return memory::share_from_root(mpi, [&dataset, this] {
+      h5::file f(filename, 'r');
+      h5::group root(f);
+      h5::group g = root.open_group(group);
+
+      nda::array<T, Rank> result;
+      h5::read(g, dataset, result);
+      return memory::to_memory_space<MEM>(result);
+    });
+  }
+};
+SAFIRE_DEFINE_PARAMETERS(H5PathParameters, filename, group);
+
 struct OneRDMParameters {
   std::string name{};
   std::string rotation{};
