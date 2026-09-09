@@ -40,6 +40,9 @@ decision.
 - `Hamiltonian` subclasses each implement the pair; `Wavefunction` implements it once, in the base.
 - `from_hdf5` dispatches on the file's own contents, via `hamiltonian_format` /
   `wavefunction_format`.
+- A Hamiltonian file records its own format in `Hamiltonian/type`; the layout heuristic is the
+  fallback for files written before that key existed.
+- `HamiltonianFormat` pairs each format's safiretools name with its on-disk tag, and is not public.
 - `to_hdf5` replaces its own group in the target file, so a Hamiltonian and a wavefunction can
   share one file in either order.
 - A complex array goes to disk as an interleaved trailing length-2 axis, defined once in `hdf5.py`.
@@ -140,7 +143,8 @@ safiretools/
 │                           #   Deliberately NOT re-exported: the concrete Lattice subclasses,
 │                           #   HamiltonianComponent, and the FCIDUMP format internals
 │                           #   (fcidump_header, check_sym, fmt_integral)
-├── types.py                # canonical SpinSymm enum — dependency-free, no upward imports
+├── types.py                # canonical SpinSymm and HamiltonianFormat enums — dependency-free,
+│                           #   no upward imports
 ├── hdf5.py                  # HDF5 read/write primitives — dependency-free, top-level like
 │                            #   types.py (replaces utils/io.py's generic bits, rhonk.py's
 │                            #   vendored copy, stats/config_h5.py). Also owns to_complex/
@@ -462,7 +466,43 @@ actually contains via the public `hamiltonian_format(path)` (which replaces
 `MolecularHamiltonian`, `kpoint` -> `PeriodicHamiltonian`. It also recognizes `thc` and
 `kpoint_coqui`, which safiretools has no reader for — `from_hdf5` raises `NotImplementedError` for
 those. Subclasses implement `_read_hdf5(path, fmt)` rather than overriding `from_hdf5`, so dispatch
-stays in one place.
+stays in one place. Those format names are `HamiltonianFormat` members, which are strings too, so
+they read and compare as the bare names throughout.
+
+**A file says which format it is; the layout heuristic is the fallback.** Every writer records its
+format in `Hamiltonian/type` via `write_hamiltonian_format`, and `hamiltonian_format` reads that key
+in preference to guessing. Guessing is what it did for every file originally — `model` if
+`ModelHamiltonian/number_of_components` is there, `dense` if `DenseFactorized/L` is, and so on — and
+that path stays, because files written before the key existed are still perfectly good input. A tag
+that contradicts the layout wins: it is what the writer said. The value stored is the executable's
+own `HamiltonianTypes` spelling (`ModelHamiltonian`, `RealDenseFactorized`, `KPFactorized`, `THC`)
+rather than safiretools' shorter name, so that the C++ side can eventually read this key instead of
+running the same heuristic in `peekHamType`. `kpoint_coqui` has no tag — a CoQuí file has no
+`Hamiltonian` group to put one in — and neither do the hand-rolled writers in `afqmctools`/`cli`,
+which is exactly what the fallback is for. 
+It is desirable to update CoQuí to write a tag as well.
+The dataset is a variable-length string, the same as
+`spin_type`, so the C++ side reads it the way it already reads that; parallel HDF5 cannot write
+variable-length data, so `write_from_pyscf` — the one Hamiltonian written in parallel — tags itself
+from rank 0 after every rank has closed the file, rather than the tag costing the file a second
+string convention of its own.
+
+**The two names for a format live together in `HamiltonianFormat`.** Each format has a safiretools
+name and, usually, an on-disk tag, and `types.HamiltonianFormat` (beside `SpinSymm`) is the single
+place that pairs them: `MODEL = 'model', 'ModelHamiltonian'`, with `.tag` reading the second and
+`.from_tag()` going back the other way. Members subclass `str`, so a format still compares, hashes
+and formats as its safiretools name — `hamiltonian_format(path) == 'model'` holds, `_READERS` stays
+keyed on plain strings, and nothing that formats a format into a message had to change. That mixin
+needs one guard: Python 3.11 made a mixin `Enum`'s `str()` its *member* name, so the class sets
+`__str__ = str.__str__` to keep `f"{fmt}"` rendering `model` rather than `HamiltonianFormat.MODEL`.
+Keeping the pairing there leaves `TYPE_DATASET` as the only global the tag itself needs in
+`hamiltonian/base.py`, alongside the `_READERS` table that was already there.
+
+**`HamiltonianFormat` is deliberately not re-exported.** Nothing in the public API takes or returns
+a format — `hamiltonian_format()` is not public either (see **Future changes**) — so the enum is an
+implementation detail that `types.py` happens to be the right home for, next to `SpinSymm`, rather
+than a second public enum. That is also what lets its docstring name
+`hamiltonian.base.write_hamiltonian_format` by its real path.
 
 **Lattice metadata is recorded, the `Lattice` object is not.** A `LatticeHamiltonian`'s file carries
 the *shape* of the lattice it was built on under `Hamiltonian/ModelHamiltonian/Lattice`, written in
@@ -601,6 +641,15 @@ does not apply — and `kpoint_symmetry=True` is the path that runs in parallel.
   subprocess/executable-path assumption that would preclude that later.
 - Dependency cleanup: drop `pytables` (`stats/config_h5.py`'s only reason for it, rewritten onto
   `h5py`); merge the `LATTICE_HF` optional-dependency group into `AUTOHF` (exact duplicate).
+- **Python 3.10 is the floor**, in `requires-python` and in ruff's `target-version`. It is what the
+  code already required rather than a new minimum: shipped `afqmctools` uses PEP 604 unions in
+  runtime annotations (`utils/io.py`, `hamiltonian/model/builder.py`, `observables/rhonk.py`,
+  `utils/aimbes_utils.py`) and `zip(strict=)` (`rhonk.py`), so 3.9 could not import it. Nothing
+  needs 3.11 or 3.12 — the `itertools.batched` import in `analysis/common.py` sits behind a
+  disabled guard with a local fallback. The previous `">3.9"` was doubly wrong: it admitted every
+  3.9.x above 3.9.0 too, since `3.9.1 > 3.9`. Raising ruff's target turns on `B905` (bare `zip()`
+  without `strict=`), which is left unaddressed — those findings are all pre-existing calls, and
+  adding `strict=` changes behavior.
 
 ### Every factory dispatches from the base class
 
@@ -774,6 +823,16 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   `docs/examples/models/*` and `docs/tutorials/models/*`, all comes back out — it went *in* during
   Phase 3b precisely because `to_hdf5` records it (see **Public API patterns**), so that bullet
   changes too.
+
+- **Read `Hamiltonian/type` on the C++ side instead of guessing from the layout.** `peekHamType`
+  ([hdf5_helpers.hpp](../../src/AFQMC/Hamiltonians/hdf5_helpers.hpp)) runs the same subgroup-name
+  heuristic safiretools now only falls back to, so the two implementations have to stay in step.
+  Writing the key is the half that had to come first: the executable cannot rely on it until enough
+  files carry it. The stored value is already the `HamiltonianTypes` spelling precisely so this step
+  is a lookup rather than a translation table, and `h5::h5_read(grp, "type", std::string&)` reads
+  the variable-length string as-is — the same call that already reads `spin_type`. It must keep the
+  layout fallback for untagged files, exactly as the Python side does, and the `format`
+  (`"std"`/`"coqui"`) axis is unaffected: a CoQuí file has no `Hamiltonian` group and so no tag.
 
 - **`from_free_electron` should not overwrite a parameter dict's own `lattice.twist`.** It
   substitutes `DEFAULT_TWIST` unless `twist=` is passed explicitly, so a twist supplied in an input
