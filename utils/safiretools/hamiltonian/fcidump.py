@@ -24,7 +24,6 @@ from itertools import product
 
 import numpy as np
 import scipy.sparse
-from numba import jit
 
 logger = logging.getLogger(__name__)
 
@@ -271,8 +270,7 @@ def check_sym(ikjl, nmo, sym) -> bool:
     return (i >= k and j >= l) and (i + k * nmo) >= (j + l * nmo)
 
 
-@jit(nopython=True, cache=True)
-def h1_spat2spin(h1e_new, h1e_old, Mspatial):
+def h1_spat2spin(h1e_new, h1e_old):
     r"""
     Convert a 1-body Hamiltonian from a spatial to a spinor basis.
 
@@ -289,23 +287,18 @@ def h1_spat2spin(h1e_new, h1e_old, Mspatial):
         Output buffer, ``(2*Mspatial, 2*Mspatial)``.
     h1e_old : numpy.ndarray
         One-body Hamiltonian in the spatial basis.
-    Mspatial : int
-        Number of spatial orbitals.
 
     Returns
     -------
     numpy.ndarray
         `h1e_new`, filled.
     """
-    for i in range(Mspatial):
-        for j in range(Mspatial):
-            h1e_new[i * 2, j * 2] = h1e_old[i, j]
-            h1e_new[i * 2 + 1, j * 2 + 1] = h1e_old[i, j]
+    h1e_new[0::2, 0::2] = h1e_old
+    h1e_new[1::2, 1::2] = h1e_old
     return h1e_new
 
 
-@jit(nopython=True, cache=True)
-def h2_spat2spin(h2e_new, h2e_old, Mspatial):
+def h2_spat2spin(h2e_new, h2e_old):
     r"""
     Convert a 2-body Hamiltonian from a spatial to a spinor basis.
 
@@ -327,22 +320,16 @@ def h2_spat2spin(h2e_new, h2e_old, Mspatial):
         Output buffer, ``(2*Mspatial,) * 4``.
     h2e_old : numpy.ndarray
         Two-body Hamiltonian in the spatial basis.
-    Mspatial : int
-        Number of spatial orbitals.
 
     Returns
     -------
     numpy.ndarray
         `h2e_new`, filled.
     """
-    for i in range(Mspatial):
-        for j in range(Mspatial):
-            for k in range(Mspatial):
-                for l in range(Mspatial):
-                    h2e_new[i * 2, j * 2, k * 2, l * 2] = h2e_old[i, j, k, l]
-                    h2e_new[i * 2, j * 2 + 1, k * 2, l * 2 + 1] = h2e_old[i, j, k, l]
-                    h2e_new[i * 2 + 1, j * 2, k * 2 + 1, l * 2] = h2e_old[i, j, k, l]
-                    h2e_new[i * 2 + 1, j * 2 + 1, k * 2 + 1, l * 2 + 1] = h2e_old[i, j, k, l]
+    h2e_new[0::2, 0::2, 0::2, 0::2] = h2e_old
+    h2e_new[0::2, 1::2, 0::2, 1::2] = h2e_old
+    h2e_new[1::2, 1::2, 1::2, 1::2] = h2e_old
+    h2e_new[1::2, 0::2, 1::2, 0::2] = h2e_old
     return h2e_new
 
 
@@ -457,10 +444,10 @@ def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
     if use_spinor:
         hcore = h1_spat2spin(
             h1e_new=np.zeros((2 * nmo, 2 * nmo), dtype=np.complex128),
-            h1e_old=hcore, Mspatial=nmo)
+            h1e_old=hcore)
         eris = h2_spat2spin(
             h2e_new=np.zeros((2 * nmo,) * 4, dtype=np.complex128),
-            h2e_old=eris, Mspatial=nmo)
+            h2e_old=eris)
         nmo = 2 * nmo
 
     with open(filename, 'w') as f:
