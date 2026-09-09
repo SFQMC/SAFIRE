@@ -183,10 +183,12 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   push_blocks(WSetFac, params.walker_set);
   push_blocks(PropFac, params.propagator);
 
+  utils::TemporaryDirectory tmpdir;
+
   for(std::size_t i = 0; i < scenarios.size(); ++i) {
     const auto& [label, drv] = scenarios[i];
     app_log(0, "[driver_factory] TEST: {}; walker_type={}", label, walkerTypeToString(walker_type));
-    CHECK(DriverFac.executeDriver(drv, "drv_test", 0, params.execute[i]));
+    CHECK(DriverFac.executeDriver(drv, (tmpdir / "drv_test").string(), 0, params.execute[i]));
   }
 }
 
