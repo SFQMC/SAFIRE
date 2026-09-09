@@ -143,4 +143,11 @@ auto h5_read(h5::group& g, std::string name, nda::MemoryArray auto && A)
   }
 }
 
+inline h5::group h5_open_or_create(h5::group& group, std::string const& key) {
+  if(group.has_key(key)) {
+    return group.open_group(key);
+  }
+  return group.create_group(key);
+}
+
 } // namespace sfqmc::utils
