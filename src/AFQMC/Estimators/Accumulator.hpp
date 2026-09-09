@@ -79,7 +79,8 @@ public:
   virtual void write(h5::group const& out) = 0;
 };
 
-/// Accumulator averages `nda::array` samples of arbitrary rank and shape into bins of size `binsize`. 
+/// Accumulator averages scalar or `nda::array` samples of arbitrary rank and shape into bins of size `binsize`.
+/// The averaged bins can then be appended to an hdf5 dataset.
 template<typename T>
 class Accumulator : public AccumulatorBase {
 public:
