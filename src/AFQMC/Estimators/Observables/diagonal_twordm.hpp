@@ -60,20 +60,23 @@ public:
       memory::buffered_array<MEM, ComplexType, 4> XwG(singleRefG.shape());
       nda::tensor::contract(weightedCoeff(), "w", singleRefG, "wsij", XwG, "wsij");
 
+      // the Hartree terms only read the diagonal of G. Taking it as a strided view rather
+      // than as a repeated contraction index ("wii") keeps this expressible on the device:
+      // cuTENSOR requires every mode to appear at most once per tensor.
+      auto diag = [](auto&& a) { return memory::diagonal_view(a); };
+
       // (aaaa) and (bbbb)
       for(int spin = 0; spin < nspin; ++spin) {
         auto XwGs = XwG(all, spin, ellipsis{});
         auto Gs   = singleRefG(all, spin, ellipsis{});
-        nda::tensor::contract(1.0, XwGs, "wii", Gs, "wjj", 1.0, avg(2 * spin, ellipsis{}), "ij");
+        nda::tensor::contract(1.0, diag(XwGs), "wi", diag(Gs), "wj", 1.0, avg(2 * spin, ellipsis{}), "ij");
         nda::tensor::contract(-1.0, XwGs, "wij", Gs, "wji", 1.0, avg(2 * spin, ellipsis{}), "ij");
       }
       // (aabb) does not exist for noncollinear
-      if(walker_type == CLOSED) {
-        nda::tensor::contract(1.0, XwG(all, 0, ellipsis{}), "wii", singleRefG(all, 0, ellipsis{}), "wjj", 1.0,
-                              avg(1, ellipsis{}), "ij");
-      } else if(walker_type == COLLINEAR) {
-        nda::tensor::contract(1.0, XwG(all, 0, ellipsis{}), "wii", singleRefG(all, 1, ellipsis{}), "wjj", 1.0,
-                              avg(1, ellipsis{}), "ij");
+      if(walker_type == CLOSED || walker_type == COLLINEAR) {
+        auto XwGup = XwG(all, 0, ellipsis{});
+        auto Gdn   = singleRefG(all, (walker_type == COLLINEAR) ? 1 : 0, ellipsis{});
+        nda::tensor::contract(1.0, diag(XwGup), "wi", diag(Gdn), "wj", 1.0, avg(1, ellipsis{}), "ij");
       }
     });
 

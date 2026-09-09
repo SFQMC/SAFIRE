@@ -85,9 +85,10 @@ struct MeasurementInputs {
 
 class MeasurementOutput {
 public:
-  MeasurementOutput(utils::mpi_context_t<boost::mpi3::communicator>& mpi, Measurements& meas, std::string_view prefix, nda::vector_view<ComplexType const> weights)
+  MeasurementOutput(utils::mpi_context_t<boost::mpi3::communicator>& mpi, Measurements& meas, std::string_view prefix, nda::MemoryVector auto const& weights)
     : prefix_{prefix.empty() ? std::string{} : std::format("{}/", prefix)}, meas_{meas} {
-    denominator_ = nda::sum(weights);
+    // nda::sum folds with host element access, so the weights have to be on the host
+    denominator_ = nda::sum(nda::to_host(weights));
     denominator_ = mpi.comm.reduce_value(denominator_);
   }
 
