@@ -10,7 +10,7 @@
 
 line-length = 100
 
-target-version = "py39" # Minimum jax version
+target-version = "py310" # matches requires-python in pyproject.toml
 
 [lint]
 select =[
