@@ -27,8 +27,10 @@ decision.
 - `Wavefunction` splits by representation: NOMSD / PHMSD.
 - `spin_symm` is a plain attribute on both hierarchies, never a subclass axis.
 - Construction is by classmethod factory; `__init__` takes already-formed, validated data.
-- Every factory is reachable from the ABC, which picks the concrete subclass.
-- Subclass factories are inherited rather than redefined, and guard the class they were called on.
+- A factory lives on the class that can produce it: `Hamiltonian` keeps only the shared `from_hdf5`
+  and defines each domain factory on its subclass; every `Wavefunction` factory is on the ABC.
+- `Wavefunction`'s inherited factories guard the class they were called on; a `Hamiltonian` domain
+  factory needs no guard, because a sibling's factory is simply not there to call.
 - `nelec` and `spin_symm` are Hamiltonian state, not write-time arguments.
 - `psi0` is wavefunction state with a derived default, not a write-time argument.
 - A determinant carries one column block per independent spin channel.
@@ -651,113 +653,88 @@ does not apply — and `kpoint_symmetry=True` is the path that runs in parallel.
   without `strict=`), which is left unaddressed — those findings are all pre-existing calls, and
   adding `strict=` changes behavior.
 
-### Every factory dispatches from the base class
+### Where a factory lives
 
-**Every construction factory is reachable from the ABC, which picks the concrete subclass** (user
-call). The canonical safiretools script never names a subclass:
+**A factory lives on the class that can actually produce the result, and the two hierarchies answer
+that differently** (user call):
+
+- **`Hamiltonian`** keeps only `from_hdf5` on the base class. Every domain factory is defined on the
+  subclass that builds it — `LatticeHamiltonian.from_dict`,
+  `MolecularHamiltonian.from_integrals`/`.from_pyscf`,
+  `PeriodicHamiltonian.from_pyscf`/`.write_from_pyscf`.
+- **`Wavefunction`** puts *every* factory on the base class, which picks the representation.
 
 ```python
-from safiretools import Hamiltonian, Wavefunction
+from safiretools import Hamiltonian, MolecularHamiltonian, Wavefunction
 
-hamiltonian = Hamiltonian.from_hdf5("hamiltonian.h5")     # or any other factory
-wavefunction = Wavefunction.from_hdf5("wavefunction.h5")  # or any other factory
+hamiltonian = Hamiltonian.from_hdf5("hamiltonian.h5")     # shared: dispatches on the file
+hamiltonian = MolecularHamiltonian.from_pyscf(scf_data)   # domain factory: name the class
+wavefunction = Wavefunction.from_hdf5("wavefunction.h5")  # or any other Wavefunction factory
 ```
 
-Picking the wrong subclass is an error the library can simply not have. **The subclass calls stay
-reachable** (user call) — a caller who wants the type guarantee keeps it, and generic code can
-always be written against the base class.
+**Why the two differ: what the subclass axis means** (see **Class hierarchies**). A `Hamiltonian`
+subclass is the *source domain* — lattice, molecular, periodic — which the caller always knows,
+because they are holding the `scf_data` or the parameter dict that only one domain can consume.
+Dispatch there would resolve a question nobody was asking. A `Wavefunction` subclass is the
+*mathematical representation*, which often falls out of the **data**: `from_pbc_scf` cannot know
+whether it will produce a particle-hole expansion until it sees whether bands came out partially
+occupied. Dispatching is the only honest signature there.
 
-This matters more for `Wavefunction` than for `Hamiltonian`, because the two hierarchies split on
-different things (see **Class hierarchies**). A `Hamiltonian` subclass is the *source domain*, which
-the caller always knows. A `Wavefunction` subclass is the *mathematical representation*, which often
-falls out of the **data**: `from_pbc_scf` cannot know whether it will produce a particle-hole
-expansion until it sees whether bands came out partially occupied. Dispatching is therefore the only
-honest signature there.
+**`from_hdf5` is a genuinely shared factory**. Its target comes from the *file*, not from the call site, so the caller
+cannot name the subclass without peeking at file contents. 
+It resolves the format first (`hamiltonian_format(path)`)
+and then checks the resolved class against the class it was called on, so
+`MolecularHamiltonian.from_hdf5` on a k-point file raises instead of returning a
+`PeriodicHamiltonian`, while `Hamiltonian.from_hdf5` on the same file returns one. Subclasses
+implement `_read_hdf5(path, fmt)` rather than overriding `from_hdf5`, so dispatch stays in one place.
 
-**Mechanism.** The base classmethod imports its subclasses *inside the method body*, which is how
-both `from_hdf5` methods already avoid the circular import. **No `_Hamiltonian`/`_Wavefunction`
-split is needed**, and none should be added.
+`Wavefunction`'s base-class factories still need their guard, because inheritance does offer every
+one of them on every subclass. A fixed-answer factory knows its target from its own definition and
+guards with `_check_representation` (`wavefunction/base.py`), raising a `ValueError` naming both
+classes rather than quietly returning the wrong type — `PHMSDWavefunction.from_free_electron(...)`
+does not hand back an `NOMSDWavefunction`. `Wavefunction.from_hdf5` cannot guard that way, since its
+target comes from the file, so it applies the same test inline (`issubclass(target, cls)`) after
+resolving the format.
 
-**The aliases are inherited, not duplicated.** A factory defined on the ABC is already reachable as
-`NOMSDWavefunction.from_pyscf(...)` — that *is* the alias, and it cannot drift from the base method
-because it is the same function object. The cost is that inheritance offers **every** factory on
-**every** subclass, including the ones that cannot produce that subclass. So every such factory
-guards the class it was called on and raises a `ValueError` naming both classes rather than quietly
-returning the wrong type — `PHMSDWavefunction.from_free_electron(...)` does not hand back an
-`NOMSDWavefunction`.
-
-**There are two guard mechanisms, because the target is known at two different times.** A
-fixed-answer factory knows its target from its own definition and guards with `_check_representation`
-(`wavefunction/base.py`) or `_check_domain` (`hamiltonian/base.py`). `from_hdf5` cannot: its target
-comes from the *file*, so it resolves the format first and then applies the same test inline
-(`issubclass(target, cls)`). That is why `NOMSDWavefunction.from_hdf5` on a particle-hole file raises
-instead of returning a `PHMSDWavefunction`, while `Wavefunction.from_hdf5` on the same file returns
-one.
-
-| factory | guard | refuses |
+| factory | lives on | target decided by |
 |---|---|---|
-| `Wavefunction.from_free_electron` / `.from_pyscf` | `_check_representation` | called on `PHMSDWavefunction` |
-| `Wavefunction.from_pyscf_cas` / `.from_dice` | `_check_representation` | called on `NOMSDWavefunction` |
-| `Hamiltonian.from_dict` | `_check_domain` | called on `Molecular`/`PeriodicHamiltonian` |
-| `Hamiltonian.from_integrals` | `_check_domain` | called on `Lattice`/`PeriodicHamiltonian` |
-| `Hamiltonian.write_from_pyscf` | `_check_domain` | called on `Lattice`/`MolecularHamiltonian` |
-| `Hamiltonian.from_pyscf` | `_check_domain` on the resolved target | called on `LatticeHamiltonian` — but see the gap below |
-| `Hamiltonian.from_hdf5` / `Wavefunction.from_hdf5` | inline `issubclass(target, cls)` | a stored format the subclass does not read |
-| `Wavefunction.from_pbc_scf` | **none, deliberately** | — see below |
-
-**A guard only runs when the call actually reaches the base method.** In the `Wavefunction` hierarchy
-that is always: both subclasses *inherit* every fixed-answer factory, so every mismatched call is
-refused. In the `Hamiltonian` hierarchy the implementations *are* the subclass classmethods, so a
-subclass that defines a factory does not route through the base and is not guarded — which is
-harmless wherever the defining class is the only right answer (`LatticeHamiltonian.from_dict`,
-`MolecularHamiltonian.from_integrals`, `PeriodicHamiltonian.write_from_pyscf`).
-
-> **Known gap: `from_pyscf` is the one factory two Hamiltonian subclasses both define**, so the
-> cross-call is the one mismatch nothing catches. `Hamiltonian.from_pyscf` and
-> `LatticeHamiltonian.from_pyscf` reach the guarded base method, but
-> `MolecularHamiltonian.from_pyscf(periodic_scf_data)` runs the molecular implementation directly and
-> dies on `KeyError: 'walker_type'`, and `PeriodicHamiltonian.from_pyscf(molecular_scf_data)` on
-> `KeyError: 'cell'` — instead of the `ValueError` naming both classes that every other mismatch
-> gets. The dispatching `Hamiltonian.from_pyscf` is unaffected and remains the recommended call.
+| `Hamiltonian.from_hdf5` | base — shared | `hamiltonian_format(path)`, then `issubclass(target, cls)` |
+| `LatticeHamiltonian.from_dict` | subclass | the class named at the call site |
+| `MolecularHamiltonian.from_integrals` / `.from_pyscf` | subclass | the class named at the call site |
+| `PeriodicHamiltonian.from_pyscf` / `.write_from_pyscf` | subclass | the class named at the call site |
+| `Wavefunction.from_hdf5` | base | `wavefunction_format(path)`, then `issubclass(target, cls)` |
+| `Wavefunction.from_free_electron` / `.from_pyscf` | base | fixed NOMSD, `_check_representation` |
+| `Wavefunction.from_pyscf_cas` / `.from_dice` | base | fixed PHMSD, `_check_representation` |
+| `Wavefunction.from_pbc_scf` | base | the occupancies — **no guard, deliberately** |
 
 `Wavefunction.from_pbc_scf` is the one base factory with no guard, and that is correct rather than an
 oversight: it is the honest dispatcher, returning whichever representation the occupancies call for,
 so there is no target to check it against. The subclasses do not inherit it — they **override** it
 with narrowing forms that validate in their own way (below).
 
-**What each factory dispatches on:**
+A fixed-answer `Wavefunction` factory still belongs on the base class: the caller should not have to
+know that `from_dice` happens to produce a particle-hole expansion in order to ask for one.
 
-| factory | dispatches on |
-|---|---|
-| `Hamiltonian.from_hdf5` | `hamiltonian_format(path)` |
-| `Wavefunction.from_hdf5` | `wavefunction_format(path)` |
-| `Hamiltonian.from_pyscf` | `'cell' in scf_data` -> periodic, `'mol'` -> molecular |
-| `Wavefunction.from_pbc_scf` | whatever `wavefunction/pbc.py::from_pbc_scf` returns |
-| `Hamiltonian.from_dict` / `.from_integrals` / `.write_from_pyscf` | fixed (lattice / molecular / periodic) |
-| `Wavefunction.from_free_electron` / `.from_pyscf` / `.from_dice` / `.from_pyscf_cas` | fixed (NOMSD / NOMSD / PHMSD / PHMSD) |
+**Mechanism, where a base factory dispatches.** The base classmethod imports its subclasses *inside
+the method body*, which is how both `from_hdf5` methods avoid the circular import. **No
+`_Hamiltonian`/`_Wavefunction` split is needed**, and none should be added.
 
-A fixed-answer factory still belongs on the base class: the caller should not have to know that
-`from_dice` happens to produce a particle-hole expansion in order to ask for one.
+**Each hierarchy's signatures follow from where the implementation lives.** `Wavefunction`'s base
+factories delegate to *free functions* in `wavefunction/{free_electron,pyscf,pbc,dice}.py`, so the
+base method is the only wrapper and spells out **real parameters**; the subclasses add nothing. A
+`Hamiltonian` domain factory *is* the subclass classmethod, so it spells out its own real parameters
+and documents them in the one place they apply with no `**kwargs` forwarding layer in between.
+That is the practical payoff of pushing them down: the two `from_pyscf` signatures share only
+`scf_data`, `chol_cut` and `verbose`, and everything else is domain-specific
+(`cas`/`ortho_ao`/`df`/`real_chol` molecular; `comm`/`kpoint_symmetry`/`maxvecs`/`exxdiv` periodic),
+so `inspect.signature` is exact and a keyword aimed at the wrong domain is a plain `TypeError` from
+the method the caller actually named.
 
-**The two hierarchies differ in where the implementation lives, and the signatures follow.**
-`Wavefunction`'s factories delegate to *free functions* in `wavefunction/{free_electron,pyscf,pbc,
-dice}.py`, so the base method is the only wrapper and spells out **real parameters**; the subclasses
-add nothing. `Hamiltonian`'s implementations *are* the subclass classmethods, so the base method
-delegates to them and forwards `**kwargs`, leaving the concrete classmethod the single place the
-defaults and the parameter documentation live.
-
-**`scf_data` is told apart by key, not by type.** `pyscf.pbc.gto.Cell` is a *subclass* of
+**`scf_data` is told apart by key, not by type** wherever something still has to tell them apart
+(`PeriodicHamiltonian.from_pyscf` reads `'cell'`). `pyscf.pbc.gto.Cell` is a *subclass* of
 `gto.Mole`, so an `isinstance` test on the object would report a periodic cell as molecular. The
 loaders are disjoint on the key — `load_from_pyscf_chk` stores `'cell'` (plus `'kpts'`, `'nmo_pk'`)
 and `load_from_pyscf_chk_mol` stores `'mol'` — and that is the discriminator.
-
-**`Hamiltonian.from_pyscf` forwards `**kwargs`** (user call). The two subclass signatures share only
-`scf_data`, `chol_cut` and `verbose`; everything else is domain-specific
-(`cas`/`ortho_ao`/`df`/`real_chol` molecular, `comm`/`kpoint_symmetry`/`maxvecs`/`exxdiv` periodic).
-A merged union signature would silently accept `kpoint_symmetry=` for a molecular calculation, so the
-base method forwards instead and lets the concrete classmethod raise its own `TypeError` naming the
-real parameter. The docstring carries both parameter lists, and `inspect.signature` on the concrete
-classmethod is still exact.
 
 **`NOMSDWavefunction.from_pbc_scf` is not a pure alias** and stays documented as a *narrowing* form:
 it forces `ndet_max=1` to guarantee a single determinant, where `Wavefunction.from_pbc_scf` passes
