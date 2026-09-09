@@ -92,9 +92,9 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
   //std::cout<<" X: " <<nda::sum(nda::to_host(X)) <<std::endl;
 
   // Store sqrtdt*X in wset if back propagating
-  int bp_step = wset.getBPPos(), bp_max = wset.NumBackProp();
-  if (bp_step >= 0 && bp_step < bp_max)
-    wset.storeFields(bp_step,X);
+  if(wset.NumBackProp() > 0) {
+    wset.storeFields(wset.getHistoryPos() % wset.NumBackProp(), X);
+  }
 
   if(denseP2) {
     // 3. Calculate vHS
@@ -151,8 +151,7 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
     local_energy_walker_update(wset, dt, apply_constrain, Eshift, new_overlaps, new_energies, MFfactor,
                                lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
   }
-  if (wset.getBPPos() >= 0) {
-    if(wset.getBPPos() < wset.NumBackProp()) wset.advanceBPPos();
+  if(wset.NumBackProp() > 0) {
     wset.advanceHistoryPos();
   }
   extra_time.stop();
@@ -192,6 +191,7 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
 
   // Fields(nwalk, steps, nCV)
   auto Fields = wset.getFields();
+  utils::check(nbpsteps > 0, "Error in BackPropagate: nbpsteps:{}",nbpsteps);
   utils::check(Fields.extent(1) >= nbpsteps, "Size mismatch");
   utils::check(Fields.extent(0) == nwalk and Fields.extent(2) == nCV, "Size mismatch");
 
@@ -210,10 +210,15 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
     SMB() = wset.SlaterMatrices(Beta);
   }
   
+  int nfields = wset.NumBackProp();
+  int slot    = wset.getHistoryPos() % nfields;
   for (int ni = nbpsteps - 1; ni >= 0; --ni)
   {
+    // walk the field ring backwards from the newest entry; the cursor is already
+    // advanced for the next step, so step back before reading
+    slot = ((slot == 0) ? nfields - 1 : slot - 1);
     // 1. Get X(nwalk,nCV) from wset
-    X() = Fields(all,ni,all); 
+    X() = Fields(all,slot,all); 
 
     if(denseP2) {
 
@@ -311,7 +316,6 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset,
   int nspin        = (walker_type == COLLINEAR) ? 2 : 1;
   int nwalk        = wset.size();
   int nCV          = wfn->number_of_cholesky_vectors();
-  int bp_step      = wset.getBPPos();
   ComplexType one(1.0,0.0);
   // Dimensions inferred from the walker Slater matrices (nwalk, npol*NMO, naea/naeb).
   const int NMO    = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
@@ -322,7 +326,7 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset,
   auto Fields = wset.getFields();
   utils::check(Fields.extent(1) >= nsteps, "Size mismatch");
   utils::check(Fields.extent(0) == nwalk and Fields.extent(2) == nCV, "Size mismatch");
-  utils::check(bp_step > 0 and bp_step >= nsteps, "Error in PropagateOperators: bp_step:{}, nstep:{}",bp_step,nsteps);
+  utils::check(nsteps > 0, "Error in PropagateOperators: nsteps:{}",nsteps);
 
   // generate P1x_inv if not yet constructed
   // NOTE: if time step changes after this point, 
@@ -335,11 +339,14 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset,
     // MAM: Regularization is done after all nsteps are applied.
     //      If this leads to instabilities (e.g. for large nsteps),
     //      apply regularization inside this loop with some frequency
-    for (int i = 0, ni=bp_step-nsteps; i <nsteps; ++i, ++ni)
+    // replay the nsteps most recent slots of the ring, oldest first
+    int nfields = wset.NumBackProp();
+    int slot    = (wset.getHistoryPos() % nfields + nfields - nsteps) % nfields;
+    for (int i = 0; i < nsteps; ++i, slot = (slot + 1) % nfields)
     {
 
       // 1. Get Xfield(nwalk,nCV) from wset
-      Xfield() = Fields(all,ni,all);
+      Xfield() = Fields(all,slot,all);
 
       if(denseP2) {
 

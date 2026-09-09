@@ -26,15 +26,9 @@
 #include "AFQMC/parameters.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/mpi_context.h"
-#include "utilities/type_traits.hpp"
-
-#include "nda/nda.hpp"
-#include "nda/tensor.hpp"
 
 #include "AFQMC/config.h"
 #include "IO/app_loggers.h"
-#include "AFQMC/Utilities/AFQMCTimer.h"
-#include "AFQMC/Utilities/type_conversion.hpp"
 
 #include "AFQMC/Walkers/Walkers.hpp"
 #include "AFQMC/Walkers/WalkerControl.hpp"
@@ -83,7 +77,6 @@ public:
         walker_memory_usage(0),
         bp_walker_size(0),
         bp_walker_memory_usage(0),
-        bp_pos(-1),
         tau_step(0),
         history_pos(0),
         walkerType(walker_type),
@@ -157,13 +150,6 @@ public:
    */
   int HistoryBufferLength() const { return wlk_desc[6]; }
 
-  /*
-   * Returns the position of the insertion point in the BP stack. 
-   */
-  int getBPPos() const { return bp_pos; }
-  void setBPPos(int p) { bp_pos = p; }
-  void advanceBPPos() { bp_pos++; }
-
    /*
    * Current imaginary-time slice index. Set to 0 for ground state walker types.
    * Used by FT wavefunction routines to select DL matrix slice.
@@ -173,10 +159,11 @@ public:
   void advanceTauStep() { tau_step++; }
 
   /*
-   * Returns, sets and advances the position of the insertion point in the History circular buffers. 
+   * Returns and advances the position of the insertion point in the History circular buffers.
+   * The FIELDS ring is indexed by history_pos % NumBackProp(), so a single cursor drives
+   * both it and the (three times longer) weight history.
    */
   int getHistoryPos() const { return history_pos; }
-  void setHistoryPos(int p) { history_pos = p % wlk_desc[6]; }
   void advanceHistoryPos() { history_pos = (history_pos + 1) % wlk_desc[6]; }
 
 
@@ -614,7 +601,6 @@ protected:
 
   int walker_size, walker_memory_usage;
   int bp_walker_size, bp_walker_memory_usage;
-  int bp_pos;
   int tau_step;
   int history_pos;
 

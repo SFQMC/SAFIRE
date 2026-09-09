@@ -21,7 +21,7 @@
 #include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
-#include "AFQMC/Estimators/EstimatorHandler.h"
+#include "AFQMC/Estimators/Estimators.hpp"
 
 namespace sfqmc
 {
@@ -40,43 +40,30 @@ public:
               const ExecuteParameters& exec,
               Wavefunction<MEM>& wfn_,
               Propagator<MEM>& prpg_,
-              EstimatorHandler<MEM>& estim_)
+              Estimators<MEM>& estim_)
       : mpi(_mpi),
         m_series(mser),
         project_title(title),
+        hdf_write_restart{exec.hdf_write_file},
+        nStep{exec.steps},
+        nSweep{exec.sweeps},
+        nPopulation{exec.population_control_interval},
+        nCheckpoint{exec.checkpoint_interval},
+        nStabilize{exec.walker_ortho_interval},
+        dt{exec.timestep},
         block0(blk0),
         step0(stp0),
         wfn0(wfn_),
         prop0(prpg_),
-        estim0(estim_),
-        weight_reset_period(0.0),
+        estimators_(estim_),
+        dShift{exec.dshift}, // update factor for Eshift
         Eshift(eshft_),
-        Eshift0(eshft_)
+        Eshift0(eshft_),
+        print_sweep_step{exec.print_sweep_step}
   {
-    name = "FTAFQMCDriver";
-    hdf_write_restart = exec.hdf_write_file;
-    nStep = exec.steps;
-    nSweep = exec.sweeps;
-    measure_interval_multiplier = exec.measure_interval_multiplier;
-    nPopulation = exec.population_control_interval;
-    nStabilize = exec.walker_ortho_interval;
-    nCheckpoint = exec.checkpoint_interval;
-    samplePeriod = -1; // KE: hardcoded until relevant feature is implemented
-    weight_reset_period = exec.weight_reset; // in units of time
-    dt = exec.timestep;
-    dShift = exec.dshift;  // Etrial shift scale
-    print_sweep_step = exec.print_sweep_step;
-
     // the steps/measure_interval commensurability check that the ground state driver does is
     // not currently relevant for finite-T, but may be useful if backward sweeps are implemented
-
-    // KE: to make sure that all Estimators are measured at their own desired intervals
-    _measure_interval = estim0.get_max_common_interval();
-    // current implementation assumes that population control is called just before accumulate_step()
-    // forcing to be the same interval for now.
-    nAccumulate = nPopulation;
-    // measurements only happen after full path has been constructed (i.e. at nStep = L)
-    //estim0.display_measurement_intervals();
+    // measurements only happen after the full path has been constructed (i.e. at nStep = L)
   }
 
   bool run(WalkerSet<MEM>&);
@@ -88,8 +75,6 @@ public:
 protected:
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
-  std::string name;
-
   int m_series;
   std::string project_title;
 
@@ -97,9 +82,6 @@ protected:
 
   int nStep;
   int nSweep;
-  int nAccumulate;
-  int measure_interval_multiplier;
-  int _measure_interval; // determined as `_measure_interval = measure_interval_multiplier*nPopulation`
   int nPopulation;
 
   int nCheckpoint;
@@ -113,13 +95,7 @@ protected:
 
   Propagator<MEM>& prop0;
 
-  EstimatorHandler<MEM>& estim0;
-
-  bool writeSamples(WalkerSet<MEM>&);
-
-  int samplePeriod;
-
-  double weight_reset_period;
+  Estimators<MEM>& estimators_;
 
   RealType dShift;
   RealType Eshift;

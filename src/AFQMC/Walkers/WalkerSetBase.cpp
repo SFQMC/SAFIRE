@@ -507,6 +507,11 @@ void WalkerSetBase<MEM>::resize_bp(int nbp, int nCV, int nref)
   wlk_desc[4] = nCV;
   wlk_desc[5] = nref;
   wlk_desc[6] = 3 * nbp;
+  // the FIELDS ring is indexed by history_pos % nbp, which only advances consistently
+  // across the outer wrap if the field ring divides the history ring
+  utils::check(nbp == 0 or wlk_desc[6] % nbp == 0,
+               "resize_bp: field ring ({}) must divide history ring ({}).", nbp, wlk_desc[6]);
+  history_pos = 0;
   // For all T=0 walker types (the only ones supported here), the Slater matrix
   // dimensions are recovered directly from wlk_desc: nrow = wlk_desc[0] (already
   // carries the 2*NMO factor for NONCOLLINEAR), ncol = wlk_desc[1] + wlk_desc[2]

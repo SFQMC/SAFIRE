@@ -16,75 +16,64 @@
 
 #pragma once
 
-#include "AFQMC/config.h"
-#include <configuration.hpp>
-#include <variant>
-#include "AFQMC/parameters.hpp"
-#include "utilities/check.hpp"
+#include <optional>
+#include <tuple>
 
-#include "AFQMC/Estimators/Observables/full1rdm.hpp"
-#include "AFQMC/Estimators/Observables/full2rdm.hpp"
-#include "AFQMC/Estimators/Observables/diagonal2rdm.hpp"
-#include "AFQMC/Estimators/Observables/pair_correlators.hpp"
-#include "AFQMC/Estimators/Observables/spinspin.hpp"
+#include "onerdm.hpp"
+#include "twordm.hpp"
+#include "diagonal_twordm.hpp"
+#include "spincorr.hpp"
+#include "paircorr.hpp"
 
-namespace sfqmc
-{
-namespace afqmc
-{
+namespace sfqmc::afqmc {
 
-/*
- * Variant class for observables. 
- * Defines a common interface for all observable classes.
- */
+namespace detail {
+/// Constructs the observable Obs if the input declared a block of parameters for it.
+template<typename Obs, typename Params, typename... Args>
+std::optional<Obs> observable_from_params(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+                                         std::optional<Params> const& params, Args&&... args) {
+  if(!params) {
+    return std::nullopt;
+  }
+  return std::optional<Obs>(std::in_place, mpi, *params, std::forward<Args>(args)...);
+}
+} // namespace detail
+
 template<MEMORY_SPACE MEM>
-class Observable  
-{
+class Observables {
 public:
-  template<class Obs>
-  explicit Observable(Obs&& other) : var(std::forward<Obs>(other)) {}
+  Observables(utils::mpi_context_t<boost::mpi3::communicator>& mpi, auto const& params,
+              WALKER_TYPES walker_type, int NMO)
+      : observables_{detail::observable_from_params<OneRDM<MEM>>(mpi, params.onerdm, walker_type, NMO),
+                     detail::observable_from_params<TwoRDM<MEM>>(mpi, params.twordm, walker_type, NMO),
+                     detail::observable_from_params<DiagonalTwoRDM<MEM>>(mpi, params.diag2rdm, walker_type, NMO),
+                     detail::observable_from_params<SpinCorr<MEM>>(mpi, params.spinspin, walker_type, NMO),
+                     detail::observable_from_params<PairCorr<MEM>>(mpi, params.pair_correlators, walker_type,
+                                                                   NMO)} {}
 
-/*******   Interface for sum over independent references, e.g. NOMSD  *******/
-  template<class... Args>
-  void accumulate(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.accumulate(std::forward<Args>(args)...); }, var);
+  template<typename RefLoop>
+  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, MeasurementOutput& output,
+               MeasurementInputs<MEM, RefLoop>& inputs) {
+    std::apply([&](auto&... obs) {
+      auto measure_if_requested = [&](auto& o) {
+        if(o) {
+          o->measure(mpi, output, inputs);
+        }
+      };
+      (measure_if_requested(obs), ...);
+    }, observables_);
   }
-
-/*******   Interface for PHMSD-like wfns: Reference + excited configurations  *******/ 
-  template<class... Args>
-  void accumulate_reference_configuration(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.accumulate_reference_configuration(std::forward<Args>(args)...); }, var);
-  }
-
-  template<class... Args>
-  void accumulate_excited_configuration_first(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.accumulate_excited_configuration_first(std::forward<Args>(args)...); }, var);
-  }
-
-  template<class... Args>
-  void accumulate_excited_configuration_second(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.accumulate_excited_configuration_second(std::forward<Args>(args)...); }, var);
-  }
-
-/*******   single print routine for all cases   *******/ 
-  template<class... Args>
-  void print(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.print(std::forward<Args>(args)...); }, var);
-  }
-
 private:
+  std::tuple<
+    std::optional<OneRDM<MEM>>,
+    std::optional<TwoRDM<MEM>>,
+    std::optional<DiagonalTwoRDM<MEM>>,
+    std::optional<SpinCorr<MEM>>,
+    std::optional<PairCorr<MEM>>
+  > observables_;
 
-  std::variant<full1rdm, diagonal2rdm<MEM>, full2rdm<MEM>, pair_correlator, spinspinobs> var;
 };
 
 
-} // namespace afqmc
 
-} // namespace sfqmc
-
-
+} // namespace sfqmc::afqmc

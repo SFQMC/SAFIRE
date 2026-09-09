@@ -228,27 +228,6 @@ public:
    */
   void Log_Overlap(WalkerSet<MEM>& wset);
 
-  template<class WlkSet, class Observable>
-  void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
-        std::vector<Observable>& properties_1body, std::vector<Observable>& properties, 
-        nda::MemoryArrayOfRank<4> auto* X, nda::MemoryArrayOfRank<4> auto* Yc, 
-        nda::MemoryArrayOfRank<4> auto* M, bool time_evolved, bool importanceSampling=true)
-  {
-    utils::check(false,"finish");
-  }
-
-  /*
-   * Calculates Green functions and calls Observables.
-   */
-  template<class WlkSet, class Observable>
-  void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
-        std::vector<Observable>& properties_1body,
-        std::vector<Observable>& properties, bool importanceSampling = true)
-  {
-    memory::buffered_array<MEM,ComplexType,4> *X = nullptr;
-    accumulate_estimators(iav,wset,wgt,properties_1body,properties,X,X,X,false,importanceSampling);
-  }
-
   ComplexType getReferenceWeight(int i) const { return std::get<2>(*abij.configuration(i)); }
 
   int total_number_of_references() const { return abij.number_of_configurations(); }

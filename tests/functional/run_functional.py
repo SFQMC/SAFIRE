@@ -193,13 +193,16 @@ def resolve_observable_inputs(observables: dict, inputs_dir: Path) -> dict:
     """`observables` with every stored-input `filename` made absolute.
 
     The blocks name their inputs relative to the system's afqmc_inputs directory, but AFQMC
-    runs in the case output directory.
+    runs in the case output directory. A stored input is an h5 path block, i.e. a nested
+    `{"filename": ..., "group": ...}`, so the walk goes one level down.
     """
     resolved = {}
     for name, block in observables.items():
-        block = dict(block)
-        if "filename" in block:
-            block["filename"] = str(inputs_dir / block["filename"])
+        block = {key: dict(value) if isinstance(value, dict) else value
+                 for key, value in block.items()}
+        for value in block.values():
+            if isinstance(value, dict) and "filename" in value:
+                value["filename"] = str(inputs_dir / value["filename"])
         resolved[name] = block
     return resolved
 
@@ -353,14 +356,14 @@ def record_results(out_dir: Path, return_code: int, ranks: int, run_time: float,
                     f.create_dataset("avg_1rdm_stoch_error", data=drho)
                 except Exception as e:  # noqa: BLE001
                     print(f"  [warn] could not average back-propagated 1-RDM: {e}")
-            if "spinspin" in observables:
+            if "spincorr" in observables:
                 try:
                     ss, dss = average_spinspin(stat_file, eqlb=0)
                     f.create_dataset("avg_spinspin", data=ss)
                     f.create_dataset("avg_spinspin_stoch_error", data=dss)
                 except Exception as e:  # noqa: BLE001
                     print(f"  [warn] could not average back-propagated spin-spin correlator: {e}")
-            if "pair_correlators" in observables:
+            if "paircorr" in observables:
                 try:
                     pair, dpair, names = average_pair_correlation(stat_file, eqlb=0)
                     f.create_dataset("avg_pair_correlation", data=pair)

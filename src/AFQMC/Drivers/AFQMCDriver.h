@@ -21,7 +21,7 @@
 #include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
-#include "AFQMC/Estimators/EstimatorHandler.h"
+#include "AFQMC/Estimators/Estimators.hpp"
 
 namespace sfqmc
 {
@@ -40,43 +40,25 @@ public:
               const ExecuteParameters& exec,
               Wavefunction<MEM>& wfn_,
               Propagator<MEM>& prpg_,
-              EstimatorHandler<MEM>& estim_)
+              Estimators<MEM>& estim_)
       : mpi(_mpi),
         m_series(mser),
         project_title(title),
+        hdf_write_restart{exec.hdf_write_file},
+        nStep{exec.steps},
+        nPopulation{exec.population_control_interval},
+        nEquilibration{exec.equilibration_steps},
+        nCheckpoint{exec.checkpoint_interval},        
+        nStabilize{exec.walker_ortho_interval},
+        dt{exec.timestep},
         block0(blk0),
         step0(stp0),
         wfn0(wfn_),
         prop0(prpg_),
-        estim0(estim_),
-        weight_reset_period(0.0),
+        estimators_(estim_),
+        dShift{exec.dshift}, // update factor for Eshift
         Eshift(eshft_)
   {
-    hdf_write_restart = exec.hdf_write_file;
-    nStep = exec.steps;
-    nPopulation = exec.population_control_interval;
-    nStabilize = exec.walker_ortho_interval;
-    nCheckpoint = exec.checkpoint_interval;
-    samplePeriod = -1; // KE: hardcoded until relevant feature is implemented
-    weight_reset_period = exec.weight_reset; // in units of time
-    dt = exec.timestep;
-    dShift = exec.dshift;  // Etrial shift scale
-
-    // if steps and measure_interval are not commensurate, add steps so that
-    //  the last block will be.
-    const int measure_interval = exec.measure_interval_multiplier * nPopulation;
-    if (nStep % measure_interval != 0)
-    {
-      nStep = measure_interval * int(std::ceil(double(nStep) / double(measure_interval)));
-      app_log(1, "Warning: 'steps' is not evenly divisible by 'measure_interval'. Setting 'steps' to {} steps \n", nStep);
-    }
-
-    // KE: to make sure that all Estimators are measured at their own desired intervals
-    _measure_interval = estim0.get_max_common_interval();
-    // current implementation assumes that population control is called just before accumulate_step()
-    // forcing to be the same interval for now.
-    nAccumulate = nPopulation;
-    estim0.display_measurement_intervals();
   }
 
 
@@ -95,9 +77,8 @@ protected:
   std::string hdf_write_restart;
 
   int nStep;
-  int nAccumulate;
-  int _measure_interval; // the interval that is commensurate with every estimator
   int nPopulation;
+  int nEquilibration{};
 
   int nCheckpoint;
   int nStabilize;
@@ -108,17 +89,13 @@ protected:
 
   Propagator<MEM>& prop0;
 
-  EstimatorHandler<MEM>& estim0;
+  Estimators<MEM>& estimators_;
 
   bool writeSamples(WalkerSet<MEM>&);
 
-  int samplePeriod;
-
-  double weight_reset_period;
-
   RealType dShift;
   RealType Eshift;
-  RealType Etav;
+  RealType Etav{};
 };
 
 } // namespace afqmc

@@ -17,7 +17,6 @@ target_sources(safire_lib
     Wavefunctions/PHMSD.cpp
     Wavefunctions/NOMSD_FT.cpp
     HamiltonianOperations/HamiltonianOperations.cpp
-    Estimators/EstimatorHandler.cpp
     Hamiltonians/KPFactorizedHamiltonian.cpp
     Hamiltonians/RealDenseHamiltonian.cpp
     Hamiltonians/ModelHamOpsGenerator.cpp

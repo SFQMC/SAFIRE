@@ -113,7 +113,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
                           BoundStats &eloc_stats) {
   auto all = nda::range::all;
   int nwalk = w.size();
-  bool BackProp = (w.getBPPos() >= 0 && w.getBPPos() < w.NumBackProp());
+  bool BackProp = (w.NumBackProp() > 0);
   nda::range rng(nwalk);
   memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(11, nwalk);
   auto weight = work(0, all);
@@ -258,7 +258,7 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constrain,
                                 BoundStats &eloc_stats) {
   auto all = nda::range::all;
   int nwalk = w.size();
-  bool BackProp = (w.getBPPos() >= 0 && w.getBPPos() < w.NumBackProp());
+  bool BackProp = (w.NumBackProp() > 0);
   nda::range rng(nwalk);
   memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(14, nwalk);
   auto weight = work(0, all);

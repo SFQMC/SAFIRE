@@ -24,6 +24,7 @@
 #include "AFQMC/parameter_defaults.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/check.hpp"
+#include "utilities/check_shape.hpp"
 #include "test_common.hpp"
 #include "utilities/h5_utils.hpp"
 #include "IO/app_loggers.h"
@@ -36,13 +37,14 @@
 #include <vector>
 #include <complex>
 #include <format>
-#include <fstream>
+#include <memory>
 
 #include "AFQMC/config.h"
 #include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Wavefunctions/WavefunctionFactory.h"
 #include "AFQMC/Estimators/EstimatorBase.h"
-#include "AFQMC/Estimators/BackPropagatedEstimator.hpp"
+#include "AFQMC/Estimators/Measurements.hpp"
+#include "AFQMC/Estimators/BackPropEstimator.hpp"
 #include "AFQMC/Propagators/PropagatorFactory.h"
 #include "AFQMC/Utilities/readWfn.h"
 #include "test_utils.hpp"
@@ -56,45 +58,33 @@ using namespace afqmc;
 
 namespace
 {
-inline std::string test_hdf_name(std::string const& wfn_file,
-                                 std::string const& hamil_file,
-                                 std::string const& suffix)
-{
-  auto stem = [](std::string const& p) {
-    auto s = p.find_last_of("\\/");
-    auto e = p.find_last_of(".");
-    return p.substr(s + 1, e - s - 1);
-  };
-  return stem(wfn_file) + "_" + stem(hamil_file) + "_" + suffix + ".h5";
-}
-
 template<MEMORY_SPACE MEM>
-void verify_bp_matches_mixed(h5::file const& file, std::string const& avg_path, int iblock,
+void verify_bp_matches_mixed(Measurements& meas, std::string const& obs_path, int ibin,
                              WALKER_TYPES type, int NMO, int nup, int ndown,
                              Wavefunction<MEM>& wfn, WalkerSet<MEM>& wset)
 {
-  int nspin = (type == COLLINEAR) ? 2 : 1;
-  int npol  = (type == NONCOLLINEAR) ? 2 : 1;
+  auto [nspin, npol] = walkerTypeToDims(type);
+  int npolNMO = npol * NMO;
 
-  std::string suffix = std::format("{:09d}", iblock);
-
-  nda::array<ComplexType, 1> read_data;
-  ComplexType denom{};
+  nda::array<ComplexType, 4> bins;
   {
+    h5::file file{};
     h5::group root(file);
-    utils::h5_read(root, avg_path + "/one_rdm_" + suffix, read_data);
-    h5::read(root, avg_path + "/denominator_" + suffix, denom);
+    meas.write(root);
+    h5::read(root, obs_path + "/bins", bins);
   }
+
+  // The measurement output already divides by the weight denominator, so the bins hold
+  // the normalized 1RDM directly.
+  utils::check_shape(bins, obs_path, bins.extent(0), nspin, npolNMO, npolNMO);
+  REQUIRE(ibin < bins.extent(0));
+  auto BPRDM = bins(ibin, nda::ellipsis{});
 
   // Since no back propagation has been performed (dt=0), the BP RDM should
   // equal the mixed estimate.
-  REQUIRE(read_data.size() == nspin * npol * NMO * npol * NMO);
-  auto BPRDM = nda::reshape(read_data, std::array<long, 3>{nspin, npol * NMO, npol * NMO});
-  BPRDM *= 1.0 / denom;
-
   ComplexType trace{};
   for(int spin = 0; spin < nspin; spin++) {
-    for(int i = 0; i < npol * NMO; ++i) {
+    for(int i = 0; i < npolNMO; ++i) {
       trace += BPRDM(spin, i, i);
     }
   }
@@ -104,10 +94,26 @@ void verify_bp_matches_mixed(h5::file const& file, std::string const& avg_path, 
   REQUIRE_THAT(trace.real(), utils::Approx(nup + ndown));
   REQUIRE_THAT(trace.imag(), utils::Approx(0.0, 1e-9));
 
-  memory::array<MEM, ComplexType, 2> Gw(wset.size(), nspin * npol * NMO * npol * NMO);
+  memory::array<MEM, ComplexType, 2> Gw(wset.size(), nspin * npolNMO * npolNMO);
   wfn.MixedDensityMatrix(wset, Gw, false);
-  auto G = nda::reshape(Gw(0,nda::ellipsis{}), std::array<long, 3>{nspin, npol * NMO, npol * NMO});
+  auto G = nda::reshape(Gw(0,nda::ellipsis{}), std::array<long, 3>{nspin, npolNMO, npolNMO});
   CHECK_THAT(G, utils::Approx(BPRDM));
+}
+
+/// Runs the estimator over nblocks measurement blocks. The walkers are never propagated, so
+/// only the back propagation history position advances.
+template<MEMORY_SPACE MEM>
+void run_measurement_blocks(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+                            EstimatorBase<MEM>& estimator, Measurements& meas,
+                            WalkerSet<MEM>& wset, int pop_control_interval, long nblocks)
+{
+  for(long measureBlock = 1; measureBlock <= nblocks; ++measureBlock) {
+    // one measurement block worth of propagation steps
+    for(int k = 0; k < pop_control_interval; ++k) {
+      wset.advanceHistoryPos();
+    }
+    estimator.measure(mpi, measureBlock, meas, wset);
+  }
 }
 } // namespace
 
@@ -128,8 +134,7 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
-  int nspin = (type == COLLINEAR) ? 2 : 1;
-  int npol  = (type == NONCOLLINEAR) ? 2 : 1;
+  auto [nspin, npol] = walkerTypeToDims(type);
 
   int nwalk = 2;
   WavefunctionFactory<MEM> WfnFac{};
@@ -153,65 +158,39 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   // we cannot actually use exactly 0 because that changes the sparsity structure in model hamiltonians
   prop.generateP1(1e-10, wset.getWalkerType());
 
-  using EstimPtr = std::unique_ptr<EstimatorBase<MEM>>;
-
   constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
+  constexpr long nblocks = 8;
 
-  // ---- Run 1: scalar measure_interval_multiplier ----
+  // ---- Run 1: single measure_interval_multiplier ----
   {
-    // test with a single value
     const EstimatorParameters est_params{.name = EstimatorType::back_propagation,
                                          .measure_interval_multiplier = std::vector<int>{2},
                                          .onerdm = OneRDMParameters{}};
 
-    std::vector<EstimPtr> estimators;
-    estimators.push_back(std::make_unique<BackPropagatedEstimator<MEM>>(
-        mpi, "none", est_params, pop_control_interval, wset, wfn, prop, true));
+    std::unique_ptr<EstimatorBase<MEM>> estimator = std::make_unique<BackPropEstimator<MEM>>(
+        *mpi, est_params, pop_control_interval, wset, wfn, prop);
 
-    std::string file = test_hdf_name(UTEST_WFN, UTEST_HAMIL, "run1");
-    std::ofstream out;
-    {
-      h5::file h5out{};
-      for (int iblock = 0; iblock < 10*afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL; ++iblock)
-      {
-        wset.advanceBPPos();
-        estimators[0]->accumulate_block(iblock*0.01, wset);
-        estimators[0]->print(out, h5out, wset);
-      }
-      verify_bp_matches_mixed<MEM>(h5out,
-          "Observables/BackPropagated/FullOneRDM/Average_0", 5,
-          type, NMO, nup, ndown, wfn, wset);
-    }
-
+    // measurements land on blocks 2 and 5, since the BP anchor resets after 2 blocks
+    Measurements meas{};
+    run_measurement_blocks(*mpi, *estimator, meas, wset, pop_control_interval, nblocks);
+    verify_bp_matches_mixed<MEM>(meas, "BackPropEstimator/Steps=2/OneRDM", 0,
+                                 type, NMO, nup, ndown, wfn, wset);
   }
 
-  // ---- Run 2: vector measure_interval_multiplier ----
+  // ---- Run 2: multiple measure_interval_multipliers ----
   {
     const EstimatorParameters est_params{.name = EstimatorType::back_propagation,
                                          .measure_interval_multiplier = std::vector<int>{1, 2, 3},
                                          .onerdm = OneRDMParameters{}};
 
-    std::vector<EstimPtr> estimators2;
-    estimators2.push_back(std::make_unique<BackPropagatedEstimator<MEM>>(
-        mpi, "none", est_params, pop_control_interval, wset, wfn, prop, true));
+    std::unique_ptr<EstimatorBase<MEM>> estimator = std::make_unique<BackPropEstimator<MEM>>(
+        *mpi, est_params, pop_control_interval, wset, wfn, prop);
 
-    std::string file = test_hdf_name(wfn_file, hamil_file, "run2");
-    std::ofstream out;
-    {
-      h5::file h5out{};
-      // 6 * pc_interval = 60 steps, with max_nback_prop = 3 * pc_interval = 30
-      // => iblock reaches 2; check Average_1 (multiplier=2) written at iblock=2
-      for (int iblock = 0; iblock < 6*afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL; ++iblock)
-      {
-        wset.advanceBPPos();
-        estimators2[0]->accumulate_block(iblock*0.01, wset);
-        estimators2[0]->print(out, h5out, wset);
-      }
-      verify_bp_matches_mixed<MEM>(h5out,
-          "Observables/BackPropagated/FullOneRDM/Average_1", 2,
-          type, NMO, nup, ndown, wfn, wset);
-    }
-
+    // the anchor resets after 3 blocks, so Steps=2 is measured on blocks 2 and 6
+    Measurements meas{};
+    run_measurement_blocks(*mpi, *estimator, meas, wset, pop_control_interval, nblocks);
+    verify_bp_matches_mixed<MEM>(meas, "BackPropEstimator/Steps=2/OneRDM", 0,
+                                 type, NMO, nup, ndown, wfn, wset);
   }
 }
 

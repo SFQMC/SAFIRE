@@ -174,14 +174,6 @@ void apply_defaults(ExecuteParameters& exec) {
     utils::check(estimator.name != EstimatorType::undefined, "An estimator block requires a name.");
   }
 
-  const auto is_basic = [](const EstimatorParameters& e) { return e.name == EstimatorType::basic; };
-  const auto nbasic = std::ranges::count_if(exec.estimator, is_basic);
-  utils::check(nbasic <= 1, "An execute block cannot contain more than one basic estimator block.");
-  if(nbasic == 0) {
-    // the basic estimator always runs, so its block is always present
-    exec.estimator.insert(exec.estimator.begin(), EstimatorParameters{.name = EstimatorType::basic});
-  }
-
   for(auto& estimator : exec.estimator) {
     apply_defaults(estimator, exec);
   }

@@ -141,7 +141,7 @@ int Wavefunction<MEM>::getNMO() const {
 }
 
 template<MEMORY_SPACE MEM>
-ComplexType Wavefunction<MEM>::getReferenceWeight(int i) {
+ComplexType Wavefunction<MEM>::getReferenceWeight(int i) const {
   return std::visit([&](auto&& a) { return a.getReferenceWeight(i); }, var);
 }
 
