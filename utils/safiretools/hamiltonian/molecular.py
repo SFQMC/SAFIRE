@@ -432,8 +432,6 @@ def read_dense_hamiltonian(path):
         If the file holds no Cholesky matrix, or if ``dims`` is malformed.
     """
     with h5.File(path, 'r') as fh5:
-        if CHOLESKY_DATASET not in fh5:
-            raise ValueError(f"no dataset called '{CHOLESKY_DATASET}' in {path}")
 
         dims = fh5['Hamiltonian/dims'][...]
         if len(dims) != 8:
