@@ -51,27 +51,18 @@ namespace afqmc
  *
  */
 
-/*
- * IMPLEMENTATION NOTE:
- * Routines that return an array view to local memory are now templated on the
- * MEMORY_SPACE. This is needed to be able to use the member functions as visitors,
- * since they must return the same type. If the memory spaces are incompatible, 
- * the call will abort the execution. 
- */
-template<MEMORY_SPACE _MEM_>
+template<MEMORY_SPACE MEM>
 class WalkerSetBase
 {
 public:
-  static constexpr MEMORY_SPACE MEM    = _MEM_;
-
   // contiguous_walker = true means that all the data of a walker is continguous in memory
   static const bool contiguous_walker = true;
   // contiguous_storage = true means that the data of all walker is continguous in memory
   static const bool contiguous_storage = true;
   static const bool fixed_population   = true;
 
-  using reference = walker<_MEM_,ComplexType>;
-  using const_reference = walker<_MEM_,const ComplexType>;
+  using reference = walker<MEM,ComplexType>;
+  using const_reference = walker<MEM,const ComplexType>;
 
   /// Constructor: build a set of nWalkers walkers with the given dimensions
   /// {rows, naea, naeb}. The walker type is parsed by the caller and passed in
@@ -437,7 +428,7 @@ public:
   // counts is one {weight, multiplicity} entry per local walker and is reordered in place;
   // walkers beyond the target population are written to M.
   void branch(std::span<std::pair<double, int>> counts,
-              memory::array_view<_MEM_, ComplexType, 2> M);
+              memory::array_view<MEM, ComplexType, 2> M);
 
   template<class T>
   void scaleWeight(const T& w0, bool scale_last_history = false)

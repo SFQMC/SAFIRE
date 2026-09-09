@@ -49,8 +49,8 @@ inline std::string_view branching_explanation(BranchingAlgorithm algorithm)
 }
 } // namespace detail
 
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::parse(const WalkerSetParameters& params)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::parse(const WalkerSetParameters& params)
 {
   app_log(1, section(std::format("Initializing Walker Set \"{}\"", params.name)));
   // The walker type is resolved by the caller and passed to the constructor, so it is
@@ -64,7 +64,7 @@ void WalkerSetBase<_M_>::parse(const WalkerSetParameters& params)
   utils::check(load_balance != LoadBalanceAlgorithm::undefined, "undefined load balancing algorithm");
   utils::check(pop_control != BranchingAlgorithm::undefined, "undefined population control algorithm");
 
-  if constexpr (_M_ == HOST_MEMORY)
+  if constexpr (MEM == HOST_MEMORY)
     app_log(1, "Walker resides in CPU memory");
   else
     app_log(1, "Walker resides in GPU memory");
@@ -77,8 +77,8 @@ void WalkerSetBase<_M_>::parse(const WalkerSetParameters& params)
   app_log(1, "");
 }
 
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::setup(std::array<int, 3> dims)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::setup(std::array<int, 3> dims)
 {
   utils::check(walkerType != UNDEFINED_WALKER_TYPE,
                " Error: Undefined walker_type on WalkerSetBase::setup ");
@@ -169,8 +169,8 @@ void WalkerSetBase<_M_>::setup(std::array<int, 3> dims)
 /*
  * Increases the capacity of the containers to n.
  */
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::reserve(int n)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::reserve(int n)
 {
   if (walker_buffer.extent(0) < n  || walker_buffer.extent(1) != walker_size) 
   {
@@ -208,8 +208,8 @@ void WalkerSetBase<_M_>::reserve(int n)
  * Capacity is increased if necessary.
  * Target Populations are set to n.
  */
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::resize(int n)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::resize(int n)
 {
   auto all = nda::range::all;
   utils::check(tot_num_walkers>0, "WalkerSetBase::resize: empty set.");
@@ -257,8 +257,8 @@ void WalkerSetBase<_M_>::resize(int n)
  *
  * @throws std::runtime_error If the total number of walkers does not match the target number per task group.
  */
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::processWalkerData(std::vector<ComplexType>& curData)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::processWalkerData(std::vector<ComplexType>& curData)
 {
   curData.resize(7);
   using std::fill;
@@ -287,8 +287,8 @@ void WalkerSetBase<_M_>::processWalkerData(std::vector<ComplexType>& curData)
 //  4: sum_i abs(<psi_T|phi_i>)
 //  5: total number of walkers
 //  6: total number of "healthy" walkers (those with weight > 1e-6, ovlp>1e-8, etc)
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::popControl()
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::popControl()
 {
   auto branching_time = timers.branching.start();
 
@@ -335,8 +335,8 @@ void WalkerSetBase<_M_>::popControl()
 //  4: sum_i abs(<psi_T|phi_i>)
 //  5: total number of walkers
 //  6: total number of "healthy" walkers (those with weight > 1e-6, ovlp>1e-8, etc)
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::popControl(std::vector<ComplexType>& curData, bool skip)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::popControl(std::vector<ComplexType>& curData, bool skip)
 {
   app_warning("For Developers: popControl(curData,skip) is deprecated. Use popControl() instead.");
   processWalkerData(curData);
@@ -350,8 +350,8 @@ void WalkerSetBase<_M_>::popControl(std::vector<ComplexType>& curData, bool skip
  * default values (unit weight/overlap/phase, zero Slater matrices). This
  * always leaves the set fully populated with n walkers.
 */
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::allocate_walkers(int n)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::allocate_walkers(int n)
 {
   auto all = nda::range::all;
   reserve(n);
@@ -387,8 +387,8 @@ void WalkerSetBase<_M_>::allocate_walkers(int n)
  * Each matrix is already exactly (rows x naea) / (NMO x naeb), so no truncation
  * is needed.
 */
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::populate_from_guess(const std::vector<nda::matrix<ComplexType>>& guess)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::populate_from_guess(const std::vector<nda::matrix<ComplexType>>& guess)
 {
   auto all = nda::range::all;
   utils::check((walkerType == COLLINEAR) == (guess.size() == 2),
@@ -408,8 +408,8 @@ void WalkerSetBase<_M_>::populate_from_guess(const std::vector<nda::matrix<Compl
  * used. The set must already be sized and default-initialized (weights, phases,
  * LOGSCL_*, IS_UNITARY) by allocate_walkers, so this only fills U/D/V.
 */
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::populate_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::populate_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV)
 {
   auto all = nda::range::all;
   int nspin = (walkerType == COLLINEAR ? 2 : 1);
@@ -431,8 +431,8 @@ void WalkerSetBase<_M_>::populate_from_guess_ft(memory::array_view<HOST_MEMORY, 
 
 // for finite-T : resets walker set for start of each sweep
 // UR, DR, VR --> Identity matrices, log scales --> 0
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::reset(int n)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::reset(int n)
 { 
   auto all = nda::range::all;
 
@@ -483,8 +483,8 @@ void WalkerSetBase<_M_>::reset(int n)
            targetN,targetN_per_rank,mpi->comm.size());
 }
 
-template<MEMORY_SPACE _M_>
-bool WalkerSetBase<_M_>::clean()
+template<MEMORY_SPACE MEM>
+bool WalkerSetBase<MEM>::clean()
 {
   walker_buffer.resize(0, walker_size);
   bp_buffer.resize(0, bp_walker_size);
@@ -496,8 +496,8 @@ bool WalkerSetBase<_M_>::clean()
 * Resizes back propagation buffers
 * Must be called before any call to bp-related routines.
 */
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::resize_bp(int nbp, int nCV, int nref)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::resize_bp(int nbp, int nCV, int nref)
 {
   utils::check(walker_buffer.extent(0) == bp_buffer.extent(0), "Size mismatch.");
   utils::check(bp_buffer.extent(1) == bp_walker_size, "Size mismatch.");
@@ -548,8 +548,8 @@ void WalkerSetBase<_M_>::resize_bp(int nbp, int nCV, int nref)
   }
 }  
 
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M)
 {
   utils::check(tot_num_walkers + M.extent(0) <= capacity(), "Insufficient capacity");
   utils::check(single_walker_size() + single_walker_bp_size() == M.extent(1), 
@@ -565,8 +565,8 @@ void WalkerSetBase<_M_>::push_walkers(memory::array_view<HOST_MEMORY, const Comp
   }
 }
 
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::pop_walkers(memory::array_view<HOST_MEMORY, ComplexType, 2> M)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::pop_walkers(memory::array_view<HOST_MEMORY, ComplexType, 2> M)
 {
   utils::check(tot_num_walkers >= M.extent(0), "Insufficient walkers");
   utils::check(walker_size + (wlk_desc[3]>0 ? bp_walker_size : 0 ) == int(M.extent(1)),
@@ -582,9 +582,9 @@ void WalkerSetBase<_M_>::pop_walkers(memory::array_view<HOST_MEMORY, ComplexType
   }
 }
 
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::branch(std::span<std::pair<double, int>> counts,
-                                memory::array_view<_M_, ComplexType, 2> M)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::branch(std::span<std::pair<double, int>> counts,
+                                memory::array_view<MEM, ComplexType, 2> M)
 {
   auto itbegin = counts.begin();
   auto itend   = counts.end();
@@ -691,8 +691,8 @@ void WalkerSetBase<_M_>::branch(std::span<std::pair<double, int>> counts,
   }
 }
 
-template<MEMORY_SPACE _M_>
-void WalkerSetBase<_M_>::benchmark(std::string& blist, int maxnW, int delnW, int repeat)
+template<MEMORY_SPACE MEM>
+void WalkerSetBase<MEM>::benchmark(std::string& blist, int maxnW, int delnW, int repeat)
 {
   if (blist.find("comm") != std::string::npos)
   {
