@@ -14,12 +14,10 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <array>
-#include <tuple>
-#include <map>
-#include <optional>
+#include <chrono>
+#include <format>
 #include <string>
-#include <iomanip>
+#include <string_view>
 
 #include "config.h"
 #include "utilities/check.hpp"
@@ -33,10 +31,8 @@
 #include "averageEloc.hpp"
 #include "AFQMC/Walkers/WalkerIO.hpp"
 
-namespace sfqmc
-{
-namespace afqmc
-{
+namespace sfqmc::afqmc {
+
 template<MEMORY_SPACE MEM>
 bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   app_log(1, banner("Beginning AFQMC calculation"));
@@ -52,6 +48,21 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   // problems with using step_tot to do ortho and load balance
   double total_time = step0 * dt;
   int step_tot      = step0;
+
+  prop0.generateP1(dt, wset.getWalkerType());
+  
+  const int log_interval = std::max(1, nStep / 100);
+  const int steps_total  = nStep + step0;
+  const int step_format_width   = int(std::to_string(steps_total).size());
+
+  // three equal columns tiling the full rule width, shared by the header and the rows
+  constexpr int log_col = default_banner_width / 3;
+  static_assert(3 * log_col == default_banner_width, "columns must tile the rule exactly");
+  constexpr std::string_view log_row = "{:<{}}{:>{}}{:>{}}";
+
+  app_log(2, hrule());
+  app_log(2, log_row, "Wall clock", log_col, "Step", log_col, "Energy", log_col);
+  app_log(2, hrule());
 
   // KE: need to change the hard-coded 1.0 to an equilibration phase.
   for (int iStep = 0; iStep < nStep; ++iStep, ++step_tot) {
@@ -92,9 +103,23 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
       }
     }
 
+    if(iStep % log_interval == 0) {
+      const double energy = averageEloc(*mpi, wset);
+      const auto now = std::chrono::current_zone()->to_local(
+          std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
+
+      // app_log formats through spdlog's bundled fmt, which has no chrono formatter here,
+      // so the timestamp is rendered by std::format and passed on as a string
+      app_log(2, log_row, std::format("{:%F %T}", now), log_col,
+              std::format("{:>{}}/{}", step_tot + 1, step_format_width, steps_total), log_col,
+              std::format("{:#.8g}", energy), log_col);
+    }
+
     // resize stack pointers to match maximum buffer use
     utils::resize_nda_static_allocator();
   }
+  app_log(2, hrule());
+
   // steps left over by an nStep that is not a multiple of the interval
 
   if (nCheckpoint > 0)
@@ -102,9 +127,10 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
 
   prop0.printBoundStatistics();
   // print timers
-  if(mpi->comm.root()) timers.print_all();
-
-  estimators_.write(std::format("{}.results.h5", project_title));
+  if(mpi->comm.root()){
+    timers.print_all();
+    estimators_.write(std::format("{}.results.h5", project_title));
+  }
 
   app_log(1, banner("Finished AFQMC calculation"));
 
@@ -158,6 +184,4 @@ __inst__(HOST_MEMORY)
 __inst__(DEVICE_MEMORY)
 #endif
 
-} // namespace afqmc
-
-} // namespace sfqmc
+} // namespace sfqmc::afqmc
