@@ -91,7 +91,7 @@ auto constructTimeEvolvedMeasurementInputs(nda::MemoryVector auto const& weights
       offset += nel[spin];
     }
     if(walker_type == CLOSED) {
-      singleRefOverlaps() *= 2.0;
+      nda::tensor::scale(2.0, singleRefOverlaps);
     }
     nda::tensor::add(-1.0, logShift, "w", 1.0, singleRefOverlaps, "w");
     nda::apply(std::conj(wfn.getReferenceWeight(d)), singleRefOverlaps, nda::tensor::unary_op::EXP);
@@ -133,7 +133,7 @@ auto constructTimeEvolvedMeasurementInputs(nda::MemoryVector auto const& weights
         offset += nel[spin];
       }
       if(walker_type == CLOSED) {
-        singleRefOverlaps() *= 2.0;
+        nda::tensor::scale(2.0, singleRefOverlaps);
       }
 
       nda::tensor::add(-1.0, logShift, "w", 1.0, singleRefOverlaps, "w");
@@ -256,8 +256,12 @@ private:
     // 3. calculate properties
     memory::buffered_array<MEM,ComplexType,3> references;
     wfn_.getReferences(references);
-    auto inputs = detail::constructTimeEvolvedMeasurementInputs(weights, wfn_, wset, references,
-                                                               X_, Y_, M_);
+    // the path restoration above runs on the host, while the observables consume the
+    // weights wherever the walkers live
+    decltype(auto) measurement_weights = memory::to_memory_space<MEM>(weights);
+
+    auto inputs = detail::constructTimeEvolvedMeasurementInputs<MEM>(measurement_weights, wfn_, wset,
+                                                                    references, X_, Y_, M_);
     MeasurementOutput output{mpi, meas, std::format("TimeEvolvedBP/Steps={}", bp_step), weights};
 
     // the reference loop expects conj(Y), while PropagateOperators keeps Y unconjugated

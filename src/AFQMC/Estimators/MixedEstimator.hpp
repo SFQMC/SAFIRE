@@ -117,7 +117,9 @@ public:
       : wfn_{wfn},
         observables_{mpi, params, walker_type, wfn.getNMO()},
         measure_interval_multiplier_{resolved(
-            params.measure_interval_multiplier, "measure_interval_multiplier").at(0)} {}
+            params.measure_interval_multiplier, "measure_interval_multiplier").at(0)} {
+
+  }
 
   void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock,
                Measurements& meas, WalkerSet<MEM> &wset) override {

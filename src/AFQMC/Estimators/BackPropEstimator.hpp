@@ -58,7 +58,7 @@ auto constructBPMeasurementInputs(nda::MemoryVector auto& weights, Wavefunction<
   
   // add contribution from down electrons if CLOSED 
   if(walker_type == CLOSED) {
-    logdetR() *= 2.0;
+    nda::tensor::scale(2.0, logdetR);
   }
 
   // calculate all overlaps and accumulate denominator 
@@ -74,7 +74,7 @@ auto constructBPMeasurementInputs(nda::MemoryVector auto& weights, Wavefunction<
 
     // 2.accumulate totalOverlaps[m] += ci[n] * exp(logSingleRefOverlaps[n] + logR[n])
     if (walker_type == CLOSED) {
-      singleRefOverlaps() *= 2.0;
+      nda::tensor::scale(2.0, singleRefOverlaps);
     }
     nda::tensor::add(1.0,nda::conj(logdetR(all,d)),"w",1.0,singleRefOverlaps,"w");
     nda::apply(std::conj(wfn.getReferenceWeight(d)),singleRefOverlaps,nda::tensor::unary_op::EXP);
@@ -109,7 +109,7 @@ auto constructBPMeasurementInputs(nda::MemoryVector auto& weights, Wavefunction<
       // the same combination the denominator above was built from, so that the reference
       // weights of a walker sum to one
       if(walker_type == CLOSED) {
-        singleRefOverlaps() *= 2.0;
+        nda::tensor::scale(2.0, singleRefOverlaps);
       }
       nda::tensor::add(1.0,nda::conj(logdetR(all,d)),"w",1.0,singleRefOverlaps,"w");
       nda::apply(std::conj(wfn.getReferenceWeight(d)),singleRefOverlaps,nda::tensor::unary_op::EXP);
@@ -196,12 +196,13 @@ private:
     prop_.BackPropagate(nbpsteps, walker_ortho_interval_, wset, Refs, logdetR);
 
     // logdetR_shift[w] = (1/Nd) * sum_d logdetR[w][d]
-    // apply shift: logdetR[w][d] = logdetR[w][d] - logdetR_shift[w]  
-    for(int iw=0; iw<nwalk; ++iw) { 
-      auto shift = nda::sum(logdetR(iw,all))/double(wfn_.total_number_of_references());
-      logdetR(iw,all) -= shift;
-    }
-    
+    // apply shift: logdetR[w][d] = logdetR[w][d] - logdetR_shift[w]
+    int const nrefs = wfn_.total_number_of_references();
+    memory::buffered_array<MEM,ComplexType,1> ones(nrefs, 1.0);
+    memory::buffered_array<MEM,ComplexType,1> shift(nwalk, 0);
+    nda::blas::gemv(1.0/double(nrefs), logdetR, ones, 0.0, shift);
+    nda::tensor::add(-1.0, shift, "w", 1.0, logdetR, "wd");
+
     //4. calculate properties
     // adjust weights here if path restoration
     memory::buffered_array<HOST_MEMORY,ComplexType,1> weights(nwalk);
@@ -222,7 +223,11 @@ private:
       }
     }
 
-    auto inputs = detail::constructBPMeasurementInputs<MEM>(weights, wfn_, wset, Refs, logdetR);
+    // the path restoration above runs on the host, while the observables consume the
+    // weights wherever the walkers live
+    decltype(auto) measurement_weights = memory::to_memory_space<MEM>(weights);
+
+    auto inputs = detail::constructBPMeasurementInputs<MEM>(measurement_weights, wfn_, wset, Refs, logdetR);
     MeasurementOutput output{mpi, meas, std::format("BackPropEstimator/Steps={}", bp_step), weights};
     observables_.measure(mpi, output, inputs);
 
