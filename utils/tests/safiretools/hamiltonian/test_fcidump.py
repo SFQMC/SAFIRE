@@ -168,7 +168,7 @@ class TestSpatToSpin:
 
     def test_h1_alternates_up_and_down(self):
         h1 = np.arange(4, dtype=np.complex128).reshape(2, 2)
-        out = h1_spat2spin(np.zeros((4, 4), dtype=np.complex128), h1, 2)
+        out = h1_spat2spin(np.zeros((4, 4), dtype=np.complex128), h1)
 
         assert np.allclose(out[0::2, 0::2], h1)   # up-up block
         assert np.allclose(out[1::2, 1::2], h1)   # down-down block
@@ -176,7 +176,7 @@ class TestSpatToSpin:
 
     def test_h2_has_no_opposite_spin_coupling_within_a_pair(self):
         h2 = np.arange(16, dtype=np.complex128).reshape((2,) * 4)
-        out = h2_spat2spin(np.zeros((4,) * 4, dtype=np.complex128), h2, 2)
+        out = h2_spat2spin(np.zeros((4,) * 4, dtype=np.complex128), h2)
 
         assert np.allclose(out[0::2, 0::2, 0::2, 0::2], h2)
         assert np.allclose(out[0::2, 1::2, 0::2, 1::2], h2)
