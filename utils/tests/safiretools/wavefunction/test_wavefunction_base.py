@@ -422,7 +422,7 @@ class TestFactoryDispatch:
     Every construction factory is reachable from `Wavefunction`, which picks the
     concrete subclass. The subclasses get the fixed-representation ones by
     inheritance rather than by a second definition, so the aliases cannot drift.
-    See DESIGN.md "Every factory dispatches from the base class".
+    See DESIGN.md "Where a factory lives".
     """
 
     FIXED = {

@@ -9,7 +9,7 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian, Wavefunction
+from safiretools import MolecularHamiltonian, Wavefunction
 
 
 def main():
@@ -34,7 +34,7 @@ def main():
         'scf'
     )
 
-    Hamiltonian.from_pyscf(
+    MolecularHamiltonian.from_pyscf(
         scf_data=scf_data,
         chol_cut=chol_tol,
         real_chol=True,

@@ -124,7 +124,7 @@ import numpy as np
 from pyscf import gto,scf,mcscf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian
+from safiretools import Hamiltonian, MolecularHamiltonian
 from afqmctools.inputs.from_hdf import write_json
 
 from stats.scalar_dat import analyze_scalar_data
@@ -165,7 +165,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
     chkfile = scratch_dir / rhf_chkfile,
 )
 
-Hamiltonian.from_pyscf(
+MolecularHamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut = 1e-5,
     verbose=True

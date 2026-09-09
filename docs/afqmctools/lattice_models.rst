@@ -78,14 +78,12 @@ results, rather than bare attributes:
     hamiltonian = builder.get_hamiltonian()   # the LatticeHamiltonian
     lattice = builder.get_lattice()           # the Lattice it was built on
 
-For the common case, ``Hamiltonian.from_dict()`` wraps the builder and hands back
-the finished Hamiltonian directly:
+For the common case, ``LatticeHamiltonian.from_dict()`` wraps the builder and
+hands back the finished Hamiltonian directly:
 
 .. code-block:: python
 
-    from safiretools import Hamiltonian
-
-    hamiltonian = Hamiltonian.from_dict(params)
+    hamiltonian = LatticeHamiltonian.from_dict(params)
 
 Reach for ``HamiltonianBuilder`` itself when you need to compose terms that no
 input key covers — see :doc:`../tutorials/models/05_hamiltonian_builder/05_hamiltonian_builder`.
@@ -99,24 +97,17 @@ input key covers — see :doc:`../tutorials/models/05_hamiltonian_builder/05_ham
 Construction
 ------------
 
-Every construction factory is reachable from ``Hamiltonian`` itself, which picks
-the concrete subclass for you, so you never have to name one:
+A construction factory lives on the subclass for the *source domain* it builds
+from For lattice models, this is the LatticeHamiltonian
 
 .. code-block:: python
 
-    from safiretools import Hamiltonian
+    from safiretools import LatticeHamiltonian
 
-    hamiltonian = Hamiltonian.from_dict(params)          # lattice model
-    hamiltonian = Hamiltonian.from_integrals(hcore, ...) # molecular
-    hamiltonian = Hamiltonian.from_pyscf(scf_data)       # molecular or periodic
-    Hamiltonian.write_from_pyscf(comm, scf_data, path)   # periodic, streamed
+    hamiltonian = LatticeHamiltonian.from_dict(params)            # lattice model
 
-``from_pyscf()`` reads the ``scf_data`` it is handed — a ``'cell'`` entry means a
-periodic calculation, ``'mol'`` a molecular one — and the remaining factories have
-one answer each. The same call on the concrete subclass
-(``MolecularHamiltonian.from_pyscf(...)``) is the *same* method and behaves
-identically; asking a subclass for a Hamiltonian it cannot produce raises
-``ValueError`` rather than returning the wrong type.
+Additionally ``from_hdf5()`` is defined in the ``Hamiltonian`` base class and is accessible 
+from the LatticeHamiltonian. See **Serialization** below.
 
 Serialization
 -------------

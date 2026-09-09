@@ -75,7 +75,7 @@ import matplotlib.pyplot as plt
 from pyscf import gto, scf, lo
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian, NOMSDWavefunction
+from safiretools import MolecularHamiltonian, NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 from stats.scalar_dat import analyze_scalar_data
 
@@ -210,7 +210,7 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
     # edit the orbitals!
     scf_data["mo_coeff"] = local_basis
 
-    Hamiltonian.from_pyscf(
+    MolecularHamiltonian.from_pyscf(
         scf_data,
         cas=(2*(N_active_occ),ncas),
         chol_cut = 1e-5,
