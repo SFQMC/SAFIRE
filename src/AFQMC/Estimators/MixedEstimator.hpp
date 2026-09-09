@@ -130,8 +130,9 @@ public:
     memory::buffered_array<MEM,ComplexType,1> weights(wset.size());
     wset.getProperty(WEIGHT, weights);
 
-    wfn_.getReferences(references_);
-    auto inputs = detail::constructMixedMeasurementInputs<MEM>(weights, wfn_, wset, references_);
+    memory::buffered_array<MEM,ComplexType,3> references;
+    wfn_.getReferences(references);
+    auto inputs = detail::constructMixedMeasurementInputs<MEM>(weights, wfn_, wset, references);
     MeasurementOutput output{mpi, meas, "MixedEstimator", weights};
     observables_.measure(mpi, output, inputs);
 
@@ -142,9 +143,6 @@ private:
   Observables<MEM> observables_;
 
   int measure_interval_multiplier_{};
-
-  // resized by getReferences, kept between measurements to avoid reallocating
-  memory::buffered_array<MEM,ComplexType,3> references_;
 };
 
 }

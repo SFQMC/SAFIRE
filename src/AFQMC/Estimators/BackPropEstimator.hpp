@@ -72,12 +72,11 @@ auto constructBPMeasurementInputs(nda::MemoryVector auto& weights, Wavefunction<
     if (walker_type == COLLINEAR)
       det_ops::Log_Overlap(Refs(all,d,all,range(nup,nup+ndown)), SMB, singleRefOverlaps);
 
-    // 2.accumulate totalOverlaps[m] += ci[n] * exp(logSingleRefOverlaps[n] + logR[n]) 
-    ComplexType ci{wfn.getReferenceWeight(d)};
+    // 2.accumulate totalOverlaps[m] += ci[n] * exp(logSingleRefOverlaps[n] + logR[n])
     if (walker_type == CLOSED) {
       singleRefOverlaps() *= 2.0;
     }
-    nda::tensor::add(1.0,nda::conj(logdetR),"w",1.0,singleRefOverlaps,"w");
+    nda::tensor::add(1.0,nda::conj(logdetR(all,d)),"w",1.0,singleRefOverlaps,"w");
     nda::apply(std::conj(wfn.getReferenceWeight(d)),singleRefOverlaps,nda::tensor::unary_op::EXP);
     nda::tensor::add(1.0, singleRefOverlaps, 1.0, invTotalOverlaps);
   }
@@ -107,7 +106,12 @@ auto constructBPMeasurementInputs(nda::MemoryVector auto& weights, Wavefunction<
         det_ops::MixedDensityMatrix(Refs(all,d,all,range(nup,nup+ndown)), SMB, singleRefG(all,1,all,all), singleRefOverlaps, false);
       }
       
-      nda::tensor::add(-1.0,logdetR,"w",1.0,singleRefOverlaps,"w");
+      // the same combination the denominator above was built from, so that the reference
+      // weights of a walker sum to one
+      if(walker_type == CLOSED) {
+        singleRefOverlaps() *= 2.0;
+      }
+      nda::tensor::add(1.0,nda::conj(logdetR(all,d)),"w",1.0,singleRefOverlaps,"w");
       nda::apply(std::conj(wfn.getReferenceWeight(d)),singleRefOverlaps,nda::tensor::unary_op::EXP);
       nda::tensor::elementwise(1.0, invTotalOverlaps, 1.0, singleRefOverlaps, nda::tensor::binary_op::PROD);
 
@@ -149,31 +153,30 @@ public:
     int ncv(prop_.number_of_cholesky_vectors());
     int number_of_references = wfn_.total_number_of_references();
     wset.resize_bp(nback_prop_multipliers_.back() * steps_per_interval_, ncv, number_of_references);
-    // set SMN in case BP begins right away
-    for(int iw = 0; iw < wset.size(); ++iw) {
-      wset[iw].setSlaterMatrixN();
-    }
+    setAnchor(wset, -1);
   }
 
 
   void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock, Measurements& meas, WalkerSet<MEM> &wset) override {
+    int const bp_step = measureBlock - bp_pos_;
+    utils::check(bp_step >= 0, " Error: Found bp_step < 0 in BackPropEstimator::measure. ");
+
+    if(std::ranges::binary_search(nback_prop_multipliers_, bp_step)) {
+      backPropagate(mpi, bp_step, meas, wset);
+    }
+    // the longest average has been taken over this block, so the next one starts here. A
+    // block that overshoots the longest average without matching it re-anchors as well.
+    if(bp_step >= nback_prop_multipliers_.back()) {
+      setAnchor(wset, measureBlock);
+    }
+  }
+
+private:
+  /// Back propagate the references over `bp_step` blocks and measure the observables on them.
+  void backPropagate(utils::mpi_context_t<boost::mpi3::communicator>& mpi, int bp_step,
+                     Measurements& meas, WalkerSet<MEM>& wset) {
     auto all = nda::range::all;
-    int bp_step = measureBlock - bp_pos_;
     int nwalk = wset.size();
-    utils::check(bp_step>0," Error: Found bp_step <=0 in BackPropagate::accumulate_block. ");
-
-    if(bp_step > nback_prop_multipliers_.back()) { // reset BP anchor
-      for(int iw = 0; iw < wset.size(); ++iw) {
-        wset[iw].setSlaterMatrixN();
-      }
-      bp_pos_ = measureBlock;
-      return;
-    }
-
-    // check if measurement is needed
-    if(!std::ranges::any_of(nback_prop_multipliers_, [=](auto const& s) { return s == bp_step; })) {
-      return;
-    }
 
     auto back_propagate_time = timers.back_propagate.start();
 
@@ -226,11 +229,21 @@ public:
     back_propagate_time.stop();
   }
 
-private:
+  /// Anchor back propagation at `block`, the last block it will propagate back over. The
+  /// constructor anchors before the first block is propagated, which is block -1.
+  void setAnchor(WalkerSet<MEM>& wset, long block) {
+    for(int iw = 0; iw < wset.size(); ++iw) {
+      wset[iw].setSlaterMatrixN();
+    }
+    bp_pos_ = block;
+  }
+
   Wavefunction<MEM>& wfn_;
   Propagator<MEM>& prop_;
   Observables<MEM> observables_;
 
+  // block the anchor sits at, see setAnchor: at block b, b - bp_pos_ blocks have been
+  // propagated over since it
   int bp_pos_{};
   std::vector<int> nback_prop_multipliers_;
 

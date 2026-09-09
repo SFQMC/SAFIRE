@@ -189,7 +189,7 @@ public:
     X_.resize(wset.size(), nspin, npolNMO, npolNMO);
     Y_.resize(wset.size(), nspin, npolNMO, npolNMO);
     M_.resize(wset.size(), nspin, npolNMO, npolNMO);
-    reset();
+    setAnchor(-1);
 
     app_log(1, "\n  --   Back Propagation with Time Evolved Operators -- \n");
     if(extra_path_restoration_) {
@@ -205,23 +205,31 @@ public:
 
   void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock,
                Measurements& meas, WalkerSet<MEM>& wset) override {
+    int const bp_step = int(measureBlock - bp_pos_);
+    utils::check(bp_step >= 0, " Error: Found bp_step < 0 in TimeEvolvedBPEstimator::measure. ");
+
+    // the operators are evolved one segment at a time, so a measurement needs the index of
+    // the multiplier it belongs to and not just the fact that there is one
+    auto const it = std::ranges::lower_bound(nback_prop_multipliers_, bp_step);
+    if(it != nback_prop_multipliers_.end() && *it == bp_step) {
+      evolveAndMeasure(mpi, bp_step, int(std::distance(nback_prop_multipliers_.begin(), it)),
+                       meas, wset);
+    }
+    // the longest average has been taken over this block, so the next one starts here. A
+    // block that overshoots the longest average without matching it re-anchors as well.
+    if(bp_step >= nback_prop_multipliers_.back()) {
+      setAnchor(measureBlock);
+    }
+  }
+
+private:
+  /// Evolve the operators over the segment since the previous measurement and measure the
+  /// observables on the Green functions they dress. `iav` is the index of `bp_step` in
+  /// nback_prop_multipliers_, which is where the previous segment ended.
+  void evolveAndMeasure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, int bp_step,
+                        int iav, Measurements& meas, WalkerSet<MEM>& wset) {
     auto all = nda::range::all;
-    int bp_step = int(measureBlock - bp_pos_);
     int nwalk = wset.size();
-    utils::check(bp_step > 0, " Error: Found bp_step <= 0 in TimeEvolvedBPEstimator::measure. ");
-
-    if(bp_step > nback_prop_multipliers_.back()) { // reset BP anchor
-      bp_pos_ = measureBlock;
-      reset();
-      return;
-    }
-
-    // check if measurement is needed
-    auto it = std::ranges::find(nback_prop_multipliers_, bp_step);
-    if(it == nback_prop_multipliers_.end()) {
-      return;
-    }
-    int iav = int(std::distance(nback_prop_multipliers_.begin(), it));
 
     auto back_propagate_time = timers.back_propagate.start();
 
@@ -246,8 +254,9 @@ public:
     }
 
     // 3. calculate properties
-    wfn_.getReferences(references_);
-    auto inputs = detail::constructTimeEvolvedMeasurementInputs(weights, wfn_, wset, references_,
+    memory::buffered_array<MEM,ComplexType,3> references;
+    wfn_.getReferences(references);
+    auto inputs = detail::constructTimeEvolvedMeasurementInputs(weights, wfn_, wset, references,
                                                                X_, Y_, M_);
     MeasurementOutput output{mpi, meas, std::format("TimeEvolvedBP/Steps={}", bp_step), weights};
 
@@ -256,20 +265,17 @@ public:
     observables_.measure(mpi, output, inputs);
     nda::tensor::scale(1.0, Y_, nda::tensor::unary_op::CONJ);
 
-    if(bp_step == nback_prop_multipliers_.back()) {
-      // last measurement of this cycle
-      bp_pos_ = measureBlock;
-      reset();
-    }
-
     back_propagate_time.stop();
   }
 
-private:
-  void reset() {
+  /// Anchor back propagation at `block`, the last block the evolved operators cover, and
+  /// restart them from the identity. The constructor anchors before the first block is
+  /// propagated, which is block -1.
+  void setAnchor(long block) {
     M_() = 0.0;
     math::set_identity(X_);
     math::set_identity(Y_);
+    bp_pos_ = block;
   }
 
   Wavefunction<MEM>& wfn_;
@@ -293,9 +299,6 @@ private:
   memory::array<MEM,ComplexType,4> Y_;
   // Accumulates the scalar terms coming from the stabilization procedure
   memory::array<MEM,ComplexType,4> M_;
-
-  // resized by getReferences, kept between measurements to avoid reallocating
-  memory::buffered_array<MEM,ComplexType,3> references_;
 };
 
 } // namespace sfqmc::afqmc

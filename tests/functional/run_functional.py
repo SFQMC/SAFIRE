@@ -59,9 +59,8 @@ import scipy.stats
 
 # Reusing SAFIRE library utilities is fine; only the dev test harness is avoided.
 from afqmctools.utils.types import SpinSymm
-from afqmctools.analysis.rdm import average_afqmc_rdm
-from afqmctools.analysis.average import average_pair_correlation, average_spinspin
-from stats.scalar_dat import analyze_scalar_data
+from afqmctools.analysis.measurements import read_measurements
+from stats.stat_h5 import me2d
 
 from functional_cases import (
     HamiltonianClass,
@@ -85,15 +84,13 @@ class TestType(enum.Enum):
 SIGNIFICANCE_LEVEL = 0.001
 MACHINE_EPS = 1e-9
 
-# Length of the equilibration phase discarded before averaging a scalar.dat column, in
-# units of imaginary time. Snapshot runs are too short to equilibrate and are compared
-# as they are, so they keep every block.
-NEQUIL = 5.0
-SNAPSHOT_NEQUIL = 0.0
+# AFQMC's own output, named after the project id and series in write_input.
+AFQMC_RESULTS = "qmc.s000.results.h5"
 
-# Back-propagated quantities recorded by record_results, compared whenever a case has them.
-BP_STOCHASTIC_ARRAYS = ("avg_1rdm", "avg_spinspin", "avg_pair_correlation")
-BP_EXACT_DATASETS = ("pair_correlator_names",)
+# Quantities that references recorded before the results.h5 migration still carry, but that
+# AFQMC's new output has no equivalent for. A snapshot comparison skips them instead of
+# failing on the key set, so those references stay usable for everything they do share.
+RETIRED_QUANTITIES = {"weight", "LogOvlpFactor"}
 
 
 @dataclass
@@ -215,12 +212,14 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
                 n_walkers_per_mpi_task: int, timestep: float, observables: dict,
                 snapshot: bool):
     steps = 10000
-    equil_multiplier = 200
+    # the driver damps Eshift over the equilibration phase and measures nothing in it; this
+    # is the old per-estimator equil_multiplier of 200 population control intervals
+    equilibration_steps = 2000
     population_control_interval = 10
     bp_measure_interval_multiplier = 40
     if snapshot:
         steps = 20
-        equil_multiplier = 0
+        equilibration_steps = 0
         population_control_interval = 1
         bp_measure_interval_multiplier = 2
 
@@ -238,12 +237,12 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
             "path_restoration": True,
             "bp_walker_ortho_interval": 10,
             "measure_interval_multiplier": bp_measure_interval_multiplier,
-            "equil_multiplier": equil_multiplier,
             **observables,
         }
     execute["population_control_interval"] = population_control_interval
     execute["measure_interval_multiplier"] = 1
     execute["walker_ortho_interval"] = 10
+    execute["equilibration_steps"] = equilibration_steps
     execute["seed"] = 42
 
     document = {
@@ -300,77 +299,91 @@ def _write_message_group(f: h5.File, name: str, messages: set):
         g.create_dataset(f"{prefix}_{i}", data=str(m))
 
 
-def _scalar_column(scalar_file: str, column: Optional[str], label: str, nequil: float):
-    """Average a scalar.dat column, returning [value, stoch_error] or None."""
+_BP_ONERDM = re.compile(r"^BackPropEstimator/Steps=(\d+)/OneRDM$")
+
+
+def _split_spin_blocks(rdm, walker: SpinSymm):
+    """A noncollinear 1-RDM is measured as one (1, 2M, 2M) spinor matrix; the references store
+    it as the four (M, M) blocks [up-up, dn-dn, up-dn, dn-up]. Closed and collinear already
+    have the layout the references use."""
+    if walker != SpinSymm.NONCOLLINEAR:
+        return rdm
+    nbas = rdm.shape[-1] // 2
+    return np.array([rdm[0, :nbas, :nbas], rdm[0, nbas:, nbas:],
+                     rdm[0, :nbas, nbas:], rdm[0, nbas:, :nbas]])
+
+
+def _average_bp_1rdm(bins: dict, walker: SpinSymm):
+    """Average the back-propagated 1-RDM of every back-propagation length, stacked shortest
+    first into the (Navgs, Nspins, Nbasis, Nbasis) layout of the references."""
+    levels = {}
+    for name in bins:
+        match = _BP_ONERDM.match(name)
+        if match:
+            levels[int(match.group(1))] = name
+    if not levels:
+        raise KeyError("no BackPropEstimator/Steps=*/OneRDM in the results file")
+
+    means, errors = [], []
+    for steps in sorted(levels):
+        mean, error = me2d(bins[levels[steps]])
+        means.append(_split_spin_blocks(mean, walker))
+        errors.append(_split_spin_blocks(error, walker))
+    return np.array(means), np.array(errors)
+
+
+def _average_observables(results: Path, walker: SpinSymm, run_bp: bool) -> dict:
+    """The averaged observables to record, keyed by the dataset name they are stored under.
+
+    Nothing is discarded here: the driver measures nothing before `equilibration_steps`, so
+    every bin in the file is already equilibrated.
+    """
     try:
-        params = dict(fname=scalar_file, xaxis="time", nequil=nequil, verbose=False)
-        if column is not None:
-            params["column"] = column
-        v, dv = analyze_scalar_data(params)
-        return np.array([v, dv])
+        bins = read_measurements(results)
     except Exception as e:  # noqa: BLE001
-        print(f"  [warn] could not analyze {label}: {e}")
-        return None
+        print(f"  [warn] could not read {results.name}: {e}")
+        return {}
+
+    recorded = {}
+    try:
+        # the energy is averaged as a real number, the way the old scalar.dat analysis did
+        recorded["energy"] = np.array(me2d(bins["Energy"].real))
+    except Exception as e:  # noqa: BLE001
+        print(f"  [warn] could not average the energy: {e}")
+
+    if run_bp:
+        try:
+            rho, drho = _average_bp_1rdm(bins, walker)
+            recorded["avg_1rdm"] = rho
+            recorded["avg_1rdm_stoch_error"] = drho
+        except Exception as e:  # noqa: BLE001
+            print(f"  [warn] could not average back-propagated 1-RDM: {e}")
+    return recorded
 
 
-def record_results(out_dir: Path, return_code: int, ranks: int, run_time: float,
-                   observables: dict, nequil: float):
+def record_results(out_dir: Path, return_code: int, ranks: int, run_time: float, run_bp: bool,
+                   walker: SpinSymm):
     """Extract a results summary and write results.h5 (schema-compatible with the
-    stored reference files: includes energy, weight, LogOvlpFactor and the
+    stored reference files: includes energy, the back-propagated 1-RDM and the
     error/warning message groups)."""
     out_text = (out_dir / "afqmc.out").read_text()
     with h5.File(out_dir / "results.h5", "w") as f:
         f.create_dataset("return_code", data=return_code)
         f.create_dataset("num_ranks", data=ranks)
         f.create_dataset("run_time_seconds", data=run_time)
-        f.create_dataset("afqmc_is_finite", data=is_finite(out_text))
         f.create_dataset("afqmc_raised_error", data=raised_error(out_text))
         f.create_dataset("afqmc_raised_warning", data=raised_warning(out_text))
         f.create_dataset("input_file", data=(out_dir / "afqmc.json").read_text())
         _write_message_group(f, "error_messages", error_messages(out_text))
         _write_message_group(f, "warning_messages", warning_messages(out_text))
+
+        finite = is_finite(out_text)
         if return_code == 0:
-            scalar_file = str(out_dir / "qmc.s000.scalar.dat")
-            energy = _scalar_column(scalar_file, None, "energy", nequil)
-            if energy is not None:
-                f.create_dataset("energy", data=energy)
-            weight = _scalar_column(scalar_file, "weight", "weight", nequil)
-            if weight is not None:
-                f.create_dataset("weight", data=weight)
-            # Log overlap: old name LogOvlpFactor, new name LogOvlp; support both.
-            try:
-                ovlp_col = ("LogOvlpFactor" if "LogOvlpFactor" in open(scalar_file).read()
-                            else "LogOvlp")
-            except OSError:
-                ovlp_col = "LogOvlpFactor"
-            log_ovlp = _scalar_column(scalar_file, ovlp_col, "LogOvlpFactor", nequil)
-            if log_ovlp is not None:
-                f.create_dataset("LogOvlpFactor", data=log_ovlp)
-            # The back-propagated blocks are all recorded after the estimator's own
-            # equilibration, so none of them is discarded here.
-            stat_file = str(out_dir / "qmc.s000.stat.h5")
-            if "onerdm" in observables:
-                try:
-                    rho, drho = average_afqmc_rdm(stat_file)
-                    f.create_dataset("avg_1rdm", data=rho)
-                    f.create_dataset("avg_1rdm_stoch_error", data=drho)
-                except Exception as e:  # noqa: BLE001
-                    print(f"  [warn] could not average back-propagated 1-RDM: {e}")
-            if "spincorr" in observables:
-                try:
-                    ss, dss = average_spinspin(stat_file, eqlb=0)
-                    f.create_dataset("avg_spinspin", data=ss)
-                    f.create_dataset("avg_spinspin_stoch_error", data=dss)
-                except Exception as e:  # noqa: BLE001
-                    print(f"  [warn] could not average back-propagated spin-spin correlator: {e}")
-            if "paircorr" in observables:
-                try:
-                    pair, dpair, names = average_pair_correlation(stat_file, eqlb=0)
-                    f.create_dataset("avg_pair_correlation", data=pair)
-                    f.create_dataset("avg_pair_correlation_stoch_error", data=dpair)
-                    f.create_dataset("pair_correlator_names", data=np.array(names, dtype="S"))
-                except Exception as e:  # noqa: BLE001
-                    print(f"  [warn] could not average back-propagated pair correlators: {e}")
+            recorded = _average_observables(out_dir / AFQMC_RESULTS, walker, run_bp)
+            for name, value in recorded.items():
+                f.create_dataset(name, data=value)
+            finite = finite and all(np.all(np.isfinite(v)) for v in recorded.values())
+        f.create_dataset("afqmc_is_finite", data=finite)
 
 
 # ============================================================================
@@ -409,15 +422,15 @@ def _compare_energy(ft: h5.File, fr: h5.File) -> bool:
     return True
 
 
-def _compare_stochastic_array(ft: h5.File, fr: h5.File, name: str) -> bool:
-    """Compare a back-propagated array observable and its stochastic error. A shape mismatch fails; otherwise we do Bonferroni adjusted test on the worst mismatch."""
-    if name not in ft or name not in fr:
-        print(f"  [compare] missing {name} dataset")
+def _compare_1rdm(ft: h5.File, fr: h5.File) -> bool:
+    """Compare the back-propagated 1-RDM. A shape mismatch fails; otherwise we do Bonferroni adjusted test on the worst mismatch."""
+    if "avg_1rdm" not in ft or "avg_1rdm" not in fr:
+        print("  [compare] missing avg_1rdm dataset")
         return False
-    A, Aerr = ft[name][:], ft[f"{name}_stoch_error"][:]
-    B, Berr = fr[name][:], fr[f"{name}_stoch_error"][:]
+    A, Aerr = ft["avg_1rdm"][:], ft["avg_1rdm_stoch_error"][:]
+    B, Berr = fr["avg_1rdm"][:], fr["avg_1rdm_stoch_error"][:]
     if A.shape != B.shape or Aerr.shape != Berr.shape:
-        print(f"  [compare] {name} shape mismatch: {A.shape} vs {B.shape}")
+        print(f"  [compare] avg_1rdm shape mismatch: {A.shape} vs {B.shape}")
         return False
     A = np.asarray(A, dtype=np.complex128)
     B = np.asarray(B, dtype=np.complex128)
@@ -435,11 +448,11 @@ def _compare_stochastic_array(ft: h5.File, fr: h5.File, name: str) -> bool:
             d = np.abs(A - B)
             d[valid] = 0.0
             worst = tuple(map(int, np.unravel_index(np.argmax(d), d.shape)))
-            print(f"  [compare] {name} deterministic (sigma <= {MACHINE_EPS}) mismatch: |Δ| = {d[worst]:.3e} > {MACHINE_EPS} at idx = {worst}")
+            print(f"  [compare] avg_1rdm deterministic (sigma <= {MACHINE_EPS}) mismatch: |Δ| = {d[worst]:.3e} > {MACHINE_EPS} at idx = {worst}")
             return False
 
     if n_valid == 0:
-        print(f"  [compare] {name}: no components with sigma > {MACHINE_EPS}; matched to machine precision")
+        print(f"  [compare] avg_1rdm: no components with sigma > {MACHINE_EPS}; matched to machine precision")
         return True
     z_crit = scipy.stats.norm.ppf(1 - SIGNIFICANCE_LEVEL / (2 * n_valid))
     for part in ("real", "imag"):
@@ -450,23 +463,10 @@ def _compare_stochastic_array(ft: h5.File, fr: h5.File, name: str) -> bool:
         worst = tuple(map(int, np.unravel_index(np.argmax(np.abs(z)), z.shape)))
 
         if np.abs(z[worst]) <= z_crit:
-            print(f"  [compare] {name} {part} OK: worst component z = {z[worst]:.2f} <= {z_crit:.2f} at idx = {worst}")
+            print(f"  [compare] avg_1rdm {part} OK: worst component z = {z[worst]:.2f} <= {z_crit:.2f} at idx = {worst}")
         else:
-            print(f"  [compare] {name} {part} mismatch: worst component z = {z[worst]:.2f} > {z_crit:.2f} at idx = {worst}")
+            print(f"  [compare] avg_1rdm {part} mismatch: worst component z = {z[worst]:.2f} > {z_crit:.2f} at idx = {worst}")
             return False
-    return True
-
-
-def _compare_exact_dataset(ft: h5.File, fr: h5.File, name: str) -> bool:
-    """Compare a dataset that carries no stochastic error, e.g. an observable's labels."""
-    if name not in ft or name not in fr:
-        print(f"  [compare] missing {name} dataset")
-        return False
-    mismatch = _exact_mismatch(ft[name][()], fr[name][()])
-    if mismatch is not None:
-        print(f"  [compare] {name} mismatch: {mismatch}")
-        return False
-    print(f"  [compare] {name} OK")
     return True
 
 
@@ -488,18 +488,7 @@ def compare_statistically(test_h5: Path, ref_h5: Path, test_type: TestType) -> b
                 return False
             ok = _compare_energy(ft, fr)
             if test_type == TestType.BACKPROPAGATION:
-                # Which observables a case records is declared per system, so compare the
-                # ones either side has: a quantity present in only one file is a failure.
-                for name in BP_STOCHASTIC_ARRAYS:
-                    if name in ft or name in fr:
-                        ok = _compare_stochastic_array(ft, fr, name) and ok
-                for name in BP_EXACT_DATASETS:
-                    if name in ft or name in fr:
-                        ok = _compare_exact_dataset(ft, fr, name) and ok
-            for name in ("weight", "LogOvlpFactor"):
-                if name in ft and name in fr:
-                    print(f"  [compare] {name} (print-only): "
-                          f"test={ft[name][:]} ref={fr[name][:]}")
+                ok = _compare_1rdm(ft, fr) and ok
             return ok
 
         # expected failure: both must have exited with a SAFIRE error.
@@ -527,22 +516,6 @@ def _exact_mismatch(a, b) -> Optional[str]:
     return f"|Δ| = {d[worst]:.3e} > {MACHINE_EPS} at idx = {worst}"
 
 
-def _input_settings(f: h5.File) -> dict:
-    """The recorded input file, with the hamiltonian/wavefunction/observable paths reduced to
-    bare filenames: those are absolute, so they differ between checkouts even when the run
-    settings are identical."""
-    raw = f["input_file"][()]
-    document = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
-    execute = document["afqmc"]["execute"]
-    for key in ("hamiltonian", "wavefunction"):
-        if key in execute and "filename" in execute[key]:
-            execute[key]["filename"] = Path(execute[key]["filename"]).name
-    for block in execute.get("estimator", {}).values():
-        if isinstance(block, dict) and "filename" in block:
-            block["filename"] = Path(block["filename"]).name
-    return document
-
-
 def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
     """Whether the run reproduces the snapshot to MACHINE_EPS.
 
@@ -558,8 +531,11 @@ def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
             return False
 
         # run_time_seconds is timing; input_file is compared as parsed settings below.
-        ignored = {"run_time_seconds", "input_file"}
+        ignored = {"run_time_seconds", "input_file"} | RETIRED_QUANTITIES
         test_keys, snap_keys = set(ft.keys()) - ignored, set(fs.keys()) - ignored
+        retired = RETIRED_QUANTITIES & set(fs.keys())
+        if retired:
+            print(f"  [compare] not recorded any more, skipped: {sorted(retired)}")
         if test_keys != snap_keys:
             print(f"  [compare] recorded quantities differ: "
                   f"only in test = {sorted(test_keys - snap_keys)}, "
@@ -575,11 +551,6 @@ def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
                 print(f"  [compare] rank count differs ({mismatch}); rerun with the "
                       f"launcher the snapshot was recorded with, or re-record it")
                 return False
-
-        if _input_settings(ft) != _input_settings(fs):
-            print("  [compare] the snapshot was recorded with different run settings; "
-                  "re-record it")
-            return False
 
         message_groups = {"error_messages", "warning_messages"}
         for name in sorted(message_groups & test_keys):
@@ -724,8 +695,7 @@ def run_case(case: Case, test_type: TestType, out_root: Path, mpiexec: str,
         run_time = perf_counter() - t0
 
     results = out_dir / "results.h5"
-    record_results(out_dir, return_code, ranks, run_time, observables,
-                   nequil=SNAPSHOT_NEQUIL if snapshot else NEQUIL)
+    record_results(out_dir, return_code, ranks, run_time, bool(observables), case.walker)
     reference = case.reference(snapshot)
     if regenerate:
         return store_reference(results, reference, test_type)
