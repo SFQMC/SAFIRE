@@ -88,18 +88,22 @@ public:
       case EstimatorType::energy:
         estimators_.emplace_back(
             std::make_unique<EnergyEstimator<MEM>>(mpi, params, measure_interval, estimator_wavefunction(params)));
+        app_log(1, "Energy estimator initialized");
         break;
       case EstimatorType::mixed:
         estimators_.emplace_back(std::make_unique<MixedEstimator<MEM>>(*mpi, params, wset.getWalkerType(),
                                                                       estimator_wavefunction(params)));
+        app_log(1, "Mixed estimator initialized");
         break;
       case EstimatorType::back_propagation:
         estimators_.emplace_back(std::make_unique<BackPropEstimator<MEM>>(
             *mpi, params, pop_control_interval, wset, estimator_wavefunction(params), prop));
+        app_log(1, "Back-propagation estimator initialized");
         break;
       case EstimatorType::time_evolved_operators:
         estimators_.emplace_back(std::make_unique<TimeEvolvedBPEstimator<MEM>>(
             *mpi, params, pop_control_interval, wset, estimator_wavefunction(params), prop));
+        app_log(1, "Time-evolved back-propagation estimator initialized");
         break;
       default:
         APP_ABORT("undefined estimator");
