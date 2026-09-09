@@ -146,7 +146,7 @@ for i in range(lattice.N_sites):
 :id: f59857be
 :outputId: 5555c96d-6bfe-445d-89a3-8fc90e952449
 
-from safiretools import Hamiltonian
+from safiretools import LatticeHamiltonian
 
 hamiltonian_params = {
     'hamiltonian' : dict(
@@ -156,7 +156,7 @@ hamiltonian_params = {
     )
 }
 
-hamiltonian = Hamiltonian.from_dict(
+hamiltonian = LatticeHamiltonian.from_dict(
     lattice=lattice,
     source=hamiltonian_params
 )
@@ -290,7 +290,7 @@ vis.plot_lattice(
 
 import numpy as np
 
-from safiretools import Hamiltonian, NOMSDWavefunction
+from safiretools import LatticeHamiltonian, NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 import afqmctools.utils.visualize as vis
 
@@ -378,7 +378,7 @@ hamiltonian_params = {
     )
 }
 
-hamiltonian = Hamiltonian.from_dict(
+hamiltonian = LatticeHamiltonian.from_dict(
     lattice=lattice,
     source=hamiltonian_params
 )

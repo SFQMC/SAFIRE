@@ -214,7 +214,7 @@ import h5py as h5
 import numpy as np
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian
+from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 
 # inputs
@@ -243,7 +243,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
 # The SOC integrals come from load_from_pyscf_chk_mol(soc_type='ecp') above, which
 #   makes hcore a spin-orbital matrix. That requires a noncollinear spin symmetry
 #   and the orthogonalized-AO basis.
-Hamiltonian.from_pyscf(
+MolecularHamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut=chol_tol,
     real_chol=True,
@@ -399,7 +399,7 @@ outputId: 8a825787-6626-44d1-97c4-ee738d109252
 import numpy as np
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian
+from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 
 
@@ -429,7 +429,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
 # The SOC integrals come from load_from_pyscf_chk_mol(soc_type='ecp') above, which
 #   makes hcore a spin-orbital matrix. That requires a noncollinear spin symmetry
 #   and the orthogonalized-AO basis.
-Hamiltonian.from_pyscf(
+MolecularHamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut=chol_tol,
     real_chol=True,

@@ -79,7 +79,7 @@ import afqmctools
 import autohf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian
+from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
 
@@ -271,7 +271,7 @@ def setup_benchmark(key:str, case:dict):
     )
 
     # write Hamiltonian
-    Hamiltonian.from_pyscf(
+    MolecularHamiltonian.from_pyscf(
         basis_scf_data,
         chol_cut = 1e-6, # from the PRX
         verbose=True

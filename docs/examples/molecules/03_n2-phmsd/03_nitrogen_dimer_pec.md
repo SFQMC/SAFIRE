@@ -36,7 +36,7 @@ import numpy as np
 from pyscf import gto,scf,mcscf,lib
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from safiretools import Hamiltonian
+from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
 
@@ -203,7 +203,7 @@ We have already chosen the set of CASSCF orbitals as a trial wavefunction.
 We will now build the Hamiltonian in the basis of CASSCF orbitals, and save it to an SAFIRE HDF5 Hamiltonian file.
 
 afqmctools provides a helper function, `load_from_pyscf_chk_mol()`,  to read all of the necessary information from a PySCF checkpoint file.
-`Hamiltonian.from_pyscf()` then builds the Hamiltonian from it, and `.to_hdf5()` writes it out.
+`MolecularHamiltonian.from_pyscf()` then builds the Hamiltonian from it, and `.to_hdf5()` writes it out.
 `.to_hdf5()` replaces only the Hamiltonian in the file it is given, so it can be added to the
 file that already holds the trial wavefunction.
 
@@ -220,7 +220,7 @@ basis_scf_data = load_from_pyscf_chk_mol(
 )
 
 # write Hamiltonian
-Hamiltonian.from_pyscf(
+MolecularHamiltonian.from_pyscf(
     basis_scf_data,
     chol_cut = 1e-5,
     verbose=True
@@ -431,7 +431,7 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
     chol_tol = 1e-5
 
     # write Hamiltonian
-    Hamiltonian.from_pyscf(
+    MolecularHamiltonian.from_pyscf(
         basis_scf_data,
         chol_cut=chol_tol,
         verbose=True

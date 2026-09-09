@@ -86,7 +86,7 @@ This all-in-one script:
 - Sets up the Li₂ molecule with PySCF at equilibrium bond length
 - Performs RHF calculation to generate molecular orbitals
 - Specifies active space using ``cas=(ne, no)`` notation: 2 valence electrons in all remaining orbitals (``no=-1``)
-- Applies frozen-core transformation via ``Hamiltonian.from_pyscf`` with the ``cas`` parameter
+- Applies frozen-core transformation via ``MolecularHamiltonian.from_pyscf`` with the ``cas`` parameter
 - Writes Hamiltonian in the active space representation (including the constant core energy) to ``afqmc.h5``
 - Generates the trial wavefunction via ``Wavefunction.from_pyscf`` and the ``cas`` parameter
 

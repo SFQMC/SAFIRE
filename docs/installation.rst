@@ -158,7 +158,7 @@ Additionally, the afqmctools library can be imported and used in Python:
 
 .. code-block:: python
 
-    from safiretools import Hamiltonian
+    from safiretools import MolecularHamiltonian
 
     ... 
 

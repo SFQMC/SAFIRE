@@ -60,7 +60,7 @@ the minimal basis hydrogen dimer with a bond length of 1.4 Bohr radii.
 from pathlib import Path
 
 
-from safiretools import Hamiltonian
+from safiretools import MolecularHamiltonian
 from safiretools import NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 
@@ -141,7 +141,7 @@ bond length of $\delta_{H-H} = 1.4$ Bohr radii in a standard sto-3g basis.
 
 import numpy as np
 
-from safiretools import Hamiltonian
+from safiretools import MolecularHamiltonian
 
 number_of_electrons = (1,1) # up, down
 number_of_orbitals = 2
@@ -198,7 +198,7 @@ using a Cholesky tolerance of $\delta_{Chol}$ where a smaller
 value of $\delta_{Chol}$ produces a more accurate representation.
 
 The Cholesky decomposition is automatically performed within
-`Hamiltonian.from_integrals()` if you provide it with the electron Coulomb
+`MolecularHamiltonian.from_integrals()` if you provide it with the electron Coulomb
 interaction tensor via the `eri` argument.
 Alternatively, 3-index integrals (from density fitting, for example) can be provided to use
 directly with no further modifications.
@@ -212,7 +212,7 @@ colab:
 id: JyCauZJfyCNe
 outputId: 5e7b4b17-4e40-4189-ac2e-633cfb904805
 ---
-hamiltonian = Hamiltonian.from_integrals(
+hamiltonian = MolecularHamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
     enuc=H0,
@@ -419,7 +419,7 @@ The `safiretools` Python package provides the following, which allow us to conve
 the SAFIRE format.
 
 - `read_fcidump()`, re-exported at the top level as `safiretools.read_fcidump`
-- `Hamiltonian.from_integrals()`, followed by `.to_hdf5()`
+- `MolecularHamiltonian.from_integrals()`, followed by `.to_hdf5()`
 
 ### read_fcidump()
 
@@ -437,9 +437,9 @@ terms as well as the number of electrons.
 
 see the {doc}`Hamiltonian reference <../../../afqmctools/lattice_models>` for more.
 
-### Hamiltonian.from_integrals()
+### MolecularHamiltonian.from_integrals()
 
-As we saw above, `Hamiltonian.from_integrals()` builds a Hamiltonian that
+As we saw above, `MolecularHamiltonian.from_integrals()` builds a Hamiltonian that
 `.to_hdf5()` writes in the form the SAFIRE executable reads.
 It will automatically generate a Cholesky decomposed form of the interaction if electron-repulsion integrals are provided via the `eri` keyword argument.
 Alternatively, any 3-index factorized form of the electron interaction can be provided
@@ -449,13 +449,13 @@ Exactly one of `chol` or `eri` must be provided.
 ```python
     import numpy as np
 
-    from safiretools import Hamiltonian
+    from safiretools import MolecularHamiltonian
 
 
     # transopose to match the eri convention from_integrals() expects
     H2_ijkl = numpy.transpose(H2_ijkl,(0,1,3,2))
 
-    Hamiltonian.from_integrals(
+    MolecularHamiltonian.from_integrals(
         hcore=H1_ij,
         eri=H2_ijkl,
         enuc=H0,
@@ -471,7 +471,7 @@ see the {doc}`Hamiltonian reference <../../../afqmctools/lattice_models>` for mo
 :id: 6ej77YPU2JmI
 
 import numpy as np
-from safiretools import Hamiltonian, read_fcidump
+from safiretools import MolecularHamiltonian, read_fcidump
 
 H1_ij, H2_ijkl, E0, _ = read_fcidump(
     filename="files/H2_FCIDUMP"
@@ -480,7 +480,7 @@ H1_ij, H2_ijkl, E0, _ = read_fcidump(
 # transopose to match the eri convention from_integrals() expects
 H2_ijkl = np.transpose(H2_ijkl,(0,1,3,2))
 
-Hamiltonian.from_integrals(
+MolecularHamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
     enuc=E0,
@@ -517,14 +517,14 @@ mf.kernel()
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import Wavefunction
-from safiretools import Hamiltonian
+from safiretools import MolecularHamiltonian
 
 # reload the mf data
 mf_data = load_from_pyscf_chk_mol(f"{scratch_dir}/h2_rhf.h5", 'scf')
 
 # dump the Hamiltonian and the wavefunction to the same h5df
 fout = f"{scratch_dir}/h2_from_pyscf.h5"
-Hamiltonian.from_pyscf(
+MolecularHamiltonian.from_pyscf(
     mf_data,
     chol_cut=1e-6,
     real_chol=True,
@@ -563,7 +563,7 @@ from pathlib import Path
 
 import numpy as np
 
-from safiretools import Hamiltonian
+from safiretools import MolecularHamiltonian
 from safiretools import NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 from stats.scalar_dat import analyze_scalar_data
@@ -609,7 +609,7 @@ Sij = np.array([[1.,         0.65931821],
                 [0.65931821, 1.        ]])
 
 # Save the Hamiltonian to HDF5
-Hamiltonian.from_integrals(
+MolecularHamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
     enuc=H0,
