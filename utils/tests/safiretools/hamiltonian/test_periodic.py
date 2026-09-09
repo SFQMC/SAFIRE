@@ -184,6 +184,8 @@ class TestKpointFormat:
         hamiltonian.to_hdf5(path)
 
         assert hamiltonian_format(path) == 'kpoint'
+        with h5.File(path, 'r') as fh5:
+            assert fh5['Hamiltonian/type'].asstr()[()] == 'KPFactorized'
 
         restored = Hamiltonian.from_hdf5(path)
         assert isinstance(restored, PeriodicHamiltonian)
@@ -263,6 +265,12 @@ class TestGeneration:
             _SerialComm(), scf_data, streamed, kpoint_symmetry=True,
             chol_cut=1e-3, maxvecs=20)
 
+        # the streaming writer tags the file after closing it, from one rank;
+        # the comparison below reads names out of this file, so it alone would
+        # not notice the tag going missing here
+        with h5.File(streamed, 'r') as fh5:
+            assert fh5['Hamiltonian/type'].asstr()[()] == 'KPFactorized'
+
         in_memory = tmp_path / 'in_memory.h5'
         PeriodicHamiltonian.from_pyscf(
             scf_data, kpoint_symmetry=True, chol_cut=1e-3,
@@ -274,7 +282,10 @@ class TestGeneration:
             assert names
             for name in names:
                 assert name in b, name
-                assert np.allclose(a[name][...], b[name][...]), name
+                if h5.check_string_dtype(a[name].dtype):
+                    assert a[name][()] == b[name][()], name
+                else:
+                    assert np.allclose(a[name][...], b[name][...]), name
 
     def test_supercell_hamiltonian_is_a_gamma_point_kpoint_hamiltonian(self, scf_data,
                                                                        tmp_path):
