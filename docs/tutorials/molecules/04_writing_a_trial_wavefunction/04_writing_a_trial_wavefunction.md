@@ -133,23 +133,21 @@ phi_0 = np.array([
 C_0 = 1.0
 ```
 
-Finally, we write this to an HDF5 file in the SAFIRE format using the `write_wfn()` function as,
+Finally, we build a `NOMSDWavefunction` and write it to an HDF5 file in the SAFIRE format with `to_hdf5()` as,
 
 ```python
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import NOMSDWavefunction
 
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/ "rhf_wavefunction.h5",
-    wfn=wfn,
-    walker_type="rhf",
+NOMSDWavefunction(
+    coeffs=np.array([C_0]),
+    dets=phi_0,
+    spin_symm="rhf",
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/ "rhf_wavefunction.h5")
 ```
 
-Note that we write the "wavefunction" as a tuple of length two where the first entry is a 1-dimensional array with the CI coefficient, and the second entry is a 3 dimensional array where the first index corresponds to the Slater determinant index, the second index corresponds to the basis set index, and the third index corresponds to the electron index.
+Note that `coeffs` is a 1-dimensional array with the CI coefficient, and `dets` is a 3 dimensional array where the first index corresponds to the Slater determinant index, the second index corresponds to the basis set index, and the third index corresponds to the electron index.
 
 We put all of this together in the following code block.
 
@@ -163,7 +161,7 @@ outputId: b67f9653-4cfe-4ef4-ad16-1b9b5502444f
 ---
 import numpy as np
 
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import NOMSDWavefunction
 
 number_of_electrons = (1,1)
 number_of_orbitals = 2
@@ -178,15 +176,13 @@ phi_0 = np.array([
 ])
 C_0 = 1.0
 
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/ "rhf_wfn.h5",
-    wfn=wfn,
-    walker_type="rhf",
+NOMSDWavefunction(
+    coeffs=np.array([C_0]),
+    dets=phi_0,
+    spin_symm="rhf",
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/ "rhf_wfn.h5")
 ```
 
 we can use the `h5dump` utility to inspect the contents of the file that we just generated. 
@@ -240,20 +236,18 @@ C_1 = 1.0
 
 The dimensions of `phi_nomsd` should be (N$_\mathrm{dets}$,N$_\mathrm{basis}$,N$_\mathrm{elec}$), as previously indicated in the single determinant case.
 
-Finally, we write this to an HDF5 file in the SAFIRE format using the `write_wfn()` function as,
+Finally, we build a `NOMSDWavefunction` and write it to an HDF5 file in the SAFIRE format with `to_hdf5()` as,
 
 ```python
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import NOMSDWavefunction
 
-wfn = ( np.array([C_0,C_1]), phi_nomsd)
-
-write_wfn(
-    filename=scratch_dir/ "NOMSD_wfn.h5",
-    wfn=wfn,
-    walker_type="rhf",
+NOMSDWavefunction(
+    coeffs=np.array([C_0,C_1]),
+    dets=phi_nomsd,
+    spin_symm="rhf",
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/ "NOMSD_wfn.h5")
 ```
 
 We put all of this together in the code block below.
@@ -276,15 +270,13 @@ phi_nomsd = np.array([
 C_0 = 1.0
 C_1 = 1.0
 
-wfn = ( np.array([C_0,C_1]), phi_nomsd)
-
-write_wfn(
-    filename=scratch_dir/ "NOMSD_wfn.h5",
-    wfn=wfn,
-    walker_type="rhf",
+NOMSDWavefunction(
+    coeffs=np.array([C_0,C_1]),
+    dets=phi_nomsd,
+    spin_symm="rhf",
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/ "NOMSD_wfn.h5")
 ```
 
 ```{code-cell} ipython3
@@ -325,7 +317,7 @@ $$
 where we explicitly create holes (through the $a_{g,\downarrow} a_{g,\uparrow}$ operators) and particles (through the $a_{u,\downarrow}^\dagger a_{u,\uparrow}^\dagger$) operators on top of a reference state.
 
 For the tooling side of the AFQMC, to write a ph-mSD trial wavefunction we need to specify an array with the occupied orbitals in each Slater determinant. $α$ and $β$ electrons should be specified separately. Finally, we need to provide an array containing the normalized weights/coefficients associated with each determinant in our trial wavefunction.
-Combining these ingredients (array of normalized coefficients, array of occupied $α$ orbitals and array of occupied $β$ orbitals) as a tuple objects allows us to write the ph-mSD wavefunction as an hdf5 file for the AFQMC code
+Combining these ingredients (array of normalized coefficients, array of occupied $α$ orbitals and array of occupied $β$ orbitals) into a `PHMSDWavefunction` allows us to write the ph-mSD wavefunction as an hdf5 file for the AFQMC code
 
 In our example, if we enumerate the orbitals in set starting with 0, we have:
 
@@ -333,6 +325,8 @@ In our example, if we enumerate the orbitals in set starting with 0, we have:
 :id: 9u7rGYAqrlrV
 
 import numpy as np
+
+from safiretools import PHMSDWavefunction
 
 number_of_electrons = (1,1)
 number_of_orbitals = 2
@@ -354,18 +348,15 @@ occb_1 = np.array([1])
 occa = np.array((occa_0, occa_1))
 occb = np.array((occb_0, occb_1))
 
-# Create a tuple object with the coefficients, α and β occupied arrays
-# to write our ph-mSD trial wavefunction in the appropriate hdf5 format.
-wfn = ( Cn, occa, occb )
-
-
-write_wfn(
-    filename=scratch_dir/ "PHMSD_wfn.h5",
-    wfn=wfn,
-    walker_type="uhf",
+# Build a PHMSDWavefunction from the coefficients and the α and β occupied
+# arrays, and write it in the appropriate hdf5 format.
+PHMSDWavefunction(
+    coeffs=Cn,
+    occa=occa,
+    occb=occb,
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/ "PHMSD_wfn.h5")
 ```
 
 ```{code-cell} ipython3

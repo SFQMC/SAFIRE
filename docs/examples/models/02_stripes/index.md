@@ -37,13 +37,10 @@ config.update("jax_enable_x64", True)
 import matplotlib.pyplot as plt
 import numpy as np
 
-import afqmctools.systems.lattice as lat
+from safiretools import HamiltonianBuilder, Lattice
 import afqmctools.utils.visualize as vis
-import afqmctools.utils.io as io
-import afqmctools.hamiltonian.model.director as ham
 
-from afqmctools.wavefunction.converter import read_wavefunction
-from afqmctools.wavefunction.model import write_free_electron_wfn
+from safiretools import Wavefunction
 from afqmctools.analysis.rdm import average_afqmc_rdm
 
 from afqmctools.observables.greens import greens_1body
@@ -95,9 +92,9 @@ lattice_params = {
     'boundary2' : 'PBC'
 }
 
-import afqmctools.systems.lattice as lat
+from safiretools import Lattice
 
-lattice = lat.get_lattice(params=lattice_params)
+lattice = Lattice.from_dict(params=lattice_params)
 
 Ne = int(lattice.N_sites*(1-0.2))//2
 nelec = (Ne,Ne)
@@ -130,9 +127,10 @@ outputId: 731af8f0-e234-49d5-cfc5-d38fb5483845
 colab:
   base_uri: https://localhost:8080/
 ---
-builder = ham.HamiltonianBuilder(
+builder = HamiltonianBuilder(
           lattice=lattice,
-          spin_symm="collinear" # we have no spin-flip terms
+          spin_symm="collinear", # we have no spin-flip terms
+          nelec=nelec
 )
 # add standard Hubbard terms
 builder.nth_neighbor_hopping(1.0)
@@ -144,8 +142,7 @@ builder.finalize()
 ```{code-cell} ipython3
 :id: f94e92dd-9802-46ea-a1db-0baffb7efbb4
 
-io.write_model_hamiltonian(builder.hamiltonian, scratch_dir / "afqmc.h5",
-                        nelec=nelec,spin_symm="collinear")
+builder.get_hamiltonian().to_hdf5(scratch_dir / "afqmc.h5")
 ```
 
 ```{code-cell} ipython3
@@ -155,12 +152,13 @@ outputId: a0cc1270-40df-46ca-fc5a-094aae93aa2b
 colab:
   base_uri: https://localhost:8080/
 ---
-# get a trial wavefunction: First, let's try a free-electron (i.e. non-interacting) wavefunction
-from afqmctools.wavefunction.model import write_free_electron_wfn
-write_free_electron_wfn(
-    hamiltonian_fname=scratch_dir / "afqmc.h5",
+# get a trial wavefunction: First, let's try a free-electron (i.e. non-interacting) wavefunction.
+# from_free_electron() reads the Hamiltonian back out of the file we just wrote, and
+# to_hdf5() appends the wavefunction to that same file.
+Wavefunction.from_free_electron(
+    source=scratch_dir / "afqmc.h5",
     nelec=nelec
-)
+).to_hdf5(scratch_dir / "afqmc.h5")
 ```
 
 +++ {"id": "ec2d1ea0-fc24-45f6-a799-5e9d14e39639"}
@@ -338,9 +336,10 @@ _Note:_ The Hartree-Fock code is faster if you use a GPU
 Ueffs = [1,2,3,4]
 for Ueff in Ueffs:
 
-    builder_eff = ham.HamiltonianBuilder(
+    builder_eff = HamiltonianBuilder(
               lattice=lattice,
-              spin_symm="collinear"
+              spin_symm="collinear",
+              nelec=nelec
                   )
     # add standard Hubbard terms
     builder_eff.nth_neighbor_hopping(1.0)
@@ -350,9 +349,8 @@ for Ueff in Ueffs:
 
     # NOTICE: we must be careful here! We can either keep around afqmc.h5
     # which has the original Hamiltonian (U=6) and keep the wf and its Hamiltonian together
-    # or we have one file with afqmc_Ueff which has both the wf and builder.hamiltonian
-    io.write_model_hamiltonian(builder_eff.hamiltonian, scratch_dir / f"afqmc_{Ueff}.h5",
-                            nelec=nelec,spin_symm="collinear")
+    # or we have one file with afqmc_Ueff which has both the wf and builder.get_hamiltonian()
+    builder_eff.get_hamiltonian().to_hdf5(scratch_dir / f"afqmc_{Ueff}.h5")
 
     hf_settings = dict(
         steps = 2000,
@@ -364,7 +362,7 @@ for Ueff in Ueffs:
         noncollinear = False
     )
     results = autohf.solver.lattice_hf(
-        hamiltonian=autohf.AutoHFHamiltonian(builder_eff.hamiltonian),
+        hamiltonian=autohf.AutoHFHamiltonian(builder_eff.get_hamiltonian()),
         lattice=lattice,
         settings=hf_settings,
     )
@@ -450,10 +448,10 @@ for Ueff in Ueffs:
         fname = "afqmc.h5"
     else:
         fname = f"afqmc_{Ueff}.h5"
-    (coeffs,wfn), psi0, (na, nb),spintype = read_wavefunction(scratch_dir / fname)
-    # We assume spin balance below
-    o = wfn.reshape(lattice.N_sites,na,2,order='F').real
-    o = np.stack([o[:,:,0],o[:,:,1]])
+    trial = Wavefunction.from_hdf5(scratch_dir / fname)
+    # spin_blocks() splits the leading determinant into its alpha and beta columns
+    alpha, beta = trial.spin_blocks(0)
+    o = np.stack([alpha.real, beta.real])
 
     rdm = greens_1body(o)
     trial_rhos.append(rdm)

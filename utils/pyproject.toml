@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "afqmctools"
 version = "0.0.3"
-requires-python = ">3.9"
+requires-python = ">=3.10"
 dependencies = [
     "numpy > 1.11.2",
     "mpi4py >= 2.0.0",
@@ -62,7 +62,14 @@ packages = [
     "cli",
     "stats",
     "stats.lib",
-    "tutorial_utils"
+    "tutorial_utils",
+    "safiretools",
+    "safiretools.analysis",
+    "safiretools.hamiltonian",
+    "safiretools.hamiltonian.model",
+    "safiretools.wavefunction",
+    "safiretools.convert",
+    "safiretools.qe"
 ]
 
 [project.scripts]
@@ -84,11 +91,13 @@ coqui_to_2nd_quant = "cli.aimbes_to_2nd_quant:main"
 check_one_rdm = "cli.check_one_rdm:main"
 
 [tool.pytest.ini_options]
-minversion = "6.0"
+minversion = "7.0"
 addopts = "-m 'not dev and not debug' --verbose --html=./.htmlpytest/pytest.html --strict-markers"
+
 testpaths = [
     "tests",
 ]
+pythonpath = ["."]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "pyscf: marks tests as pyscf-dependent (deselect with '-m \"not pyscf\"')",

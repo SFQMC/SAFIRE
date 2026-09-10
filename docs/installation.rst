@@ -158,7 +158,7 @@ Additionally, the afqmctools library can be imported and used in Python:
 
 .. code-block:: python
 
-    from afqmctools.hamiltonian.mol import write_hamil_mol
+    from safiretools import MolecularHamiltonian
 
     ... 
 

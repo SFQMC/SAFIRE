@@ -21,10 +21,130 @@ neighbors, boundary conditions, etc.
 Lattice Class
 -------------
 
+The ``Lattice`` class lives in the ``safiretools`` package and is re-exported at
+the top level:
+
+.. code-block:: python
+
+    from safiretools import Lattice
+
+    lattice = Lattice.from_dict(dict(
+        L1=4, L2=4, boundary1='PBC', boundary2='PBC',
+    ))
+
+``Lattice`` is an abstract base class with one concrete subclass per lattice type
+(square, triangular, honeycomb, kagome, custom); ``Lattice.from_dict()``
+dispatches to the right one based on the ``type`` parameter.
+
+.. important::
+
+   Passing ``a1``, ``a2`` or ``basis`` for any type other than ``custom`` raises
+   an error, and the values are immutable once the lattice is built. Use
+   ``type='custom'`` to define your own lattice vectors and basis.
+
+See :doc:`../tutorials/models/03_setting_up_a_lattice/03_setting_up_a_lattice`
+for a guided tour.
+
+.. automodule:: safiretools.hamiltonian.model.lattice
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 
 Hamiltonian Builder
 -------------------
 
+``HamiltonianBuilder`` and the ``LatticeHamiltonian`` it produces both live in the
+``safiretools`` package and are re-exported at the top level:
+
+.. code-block:: python
+
+    from safiretools import HamiltonianBuilder, LatticeHamiltonian
+
+The builder owns the *how* — one method per Hamiltonian term ("build step") — and
+the ``LatticeHamiltonian`` is the container it fills. Two accessors reach the
+results, rather than bare attributes:
+
+.. code-block:: python
+
+    builder = HamiltonianBuilder.from_input(source=params, lattice=lattice)
+
+    hamiltonian = builder.get_hamiltonian()   # the LatticeHamiltonian
+    lattice = builder.get_lattice()           # the Lattice it was built on
+
+For the common case, ``LatticeHamiltonian.from_dict()`` wraps the builder and
+hands back the finished Hamiltonian directly:
+
+.. code-block:: python
+
+    hamiltonian = LatticeHamiltonian.from_dict(params)
+
+Reach for ``HamiltonianBuilder`` itself when you need to compose terms that no
+input key covers — see :doc:`../tutorials/models/05_hamiltonian_builder/05_hamiltonian_builder`.
+
+.. note::
+
+   ``nelec`` and ``spin_symm`` are properties of the Hamiltonian, set when it is
+   built (via the ``hamiltonian`` input block or the ``HamiltonianBuilder``
+   constructor), not arguments given when it is written.
+
+Construction
+------------
+
+A construction factory lives on the subclass for the *source domain* it builds
+from For lattice models, this is the LatticeHamiltonian
+
+.. code-block:: python
+
+    from safiretools import LatticeHamiltonian
+
+    hamiltonian = LatticeHamiltonian.from_dict(params)            # lattice model
+
+Additionally ``from_hdf5()`` is defined in the ``Hamiltonian`` base class and is accessible 
+from the LatticeHamiltonian. See **Serialization** below.
+
+Serialization
+-------------
+
+Every ``Hamiltonian`` subclass implements the same pair: an instance method that
+writes, and a classmethod that reads.
+
+.. code-block:: python
+
+    from safiretools import Hamiltonian
+
+    hamiltonian.to_hdf5('afqmc.h5')            # write the format SAFIRE reads
+
+    hamiltonian = Hamiltonian.from_hdf5('afqmc.h5')
+
+``Hamiltonian.from_hdf5()`` inspects what the file actually contains and returns
+an instance of the matching subclass — ``LatticeHamiltonian`` for a model
+Hamiltonian, ``MolecularHamiltonian`` for a dense one, ``PeriodicHamiltonian``
+for a k-point-factorized one.
+
+.. note::
+
+   ``to_hdf5()`` replaces only the Hamiltonian in the file it is given, creating
+   the file if it does not exist. Anything else already there — notably a
+   ``Wavefunction`` — is preserved, so a Hamiltonian and a trial wavefunction can
+   share one file and be written in either order. A SAFIRE input file holds at
+   most one Hamiltonian and at most one wavefunction, which is why writing a
+   second Hamiltonian replaces the first rather than adding to it.
+
+.. automodule:: safiretools.hamiltonian.base
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+.. automodule:: safiretools.hamiltonian.model.builder
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+.. automodule:: safiretools.hamiltonian.model.lattice_hamiltonian
+   :members:
+   :show-inheritance:
+   :undoc-members:
 
 
 Model Hamiltonian Builder
@@ -32,7 +152,7 @@ Model Hamiltonian Builder
 
 TODO: explain the combined (lattice,band) indices
 
-The afqmctools Python module includes tooling to build general,
+The safiretools Python package includes tooling to build general,
 multi-band Hubbard-Kanamori Hamiltonians of the type:
 
 .. math::
@@ -81,15 +201,17 @@ A Hamiltonian may be built from a Python ``dict`` as follows:
 
 .. code:: python
 
-   from afqmctools.hamiltonian.director import HamiltonianDirector
+   from safiretools import HamiltonianBuilder
 
    params = {
        'hamiltonian' : {
+           'nbands' : 2,
            't' : 1.0,
            'U' : 2.0,
            'U1' : 1.5,
            'U2' : 1.0,
-           'J' : 0.5
+           'J' : 0.5,
+           'nelec' : (6,6)
      },
      'lattice' : {
          'L1' : 6,
@@ -98,9 +220,9 @@ A Hamiltonian may be built from a Python ``dict`` as follows:
      }
    }
 
-   hamiltonian = HamiltonianDirector(
+   hamiltonian = HamiltonianBuilder.from_input(
        source = params
-   ).build()
+   ).get_hamiltonian()
 
    ...
 
@@ -110,13 +232,7 @@ the Hamiltonian can then be saved in the SAFIRE format with:
 
    ...
 
-   from afqmctools.utils.io import write_model_hamiltion
-
-   write_model_hamiltion(
-       hamiltonian=hamiltonian,
-           fname='afqmc.h5',
-           nelec=(6,6)
-   )
+   hamiltonian.to_hdf5('afqmc.h5')
 
 Alternatively, the cli includes a tool to automatically build and save a
 Hamiltonian from parameters saved in an input file (in toml format). 
@@ -142,14 +258,12 @@ In TOML:
    U1 = 1.5
    U2 = 1.0
    J = 0.5
+   nelec = [6,6]
 
    [lattice]
    L1 = 6
    L2 = 1
    boundary1 = "PBC"
-
-   [cli_params]
-   nelec = [6,6]
 
 
 Model Hamiltonian Builder Input Conventions

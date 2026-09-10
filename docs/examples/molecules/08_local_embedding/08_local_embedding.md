@@ -75,8 +75,7 @@ import matplotlib.pyplot as plt
 from pyscf import gto, scf, lo
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import MolecularHamiltonian, NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 from stats.scalar_dat import analyze_scalar_data
 
@@ -211,13 +210,12 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
     # edit the orbitals!
     scf_data["mo_coeff"] = local_basis
 
-    write_hamil_mol(
+    MolecularHamiltonian.from_pyscf(
         scf_data,
         cas=(2*(N_active_occ),ncas),
-        hamil_file = afqmc_hamil_file,
         chol_cut = 1e-5,
         verbose=False
-    )
+    ).to_hdf5(afqmc_hamil_file)
 
     # 5. Write the trial wavefunction
 
@@ -225,17 +223,15 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
     afqmc_wfn_file = local_scratch / "active_space_rhf_wfn.h5"
 
     active_det_up = np.eye(ncas,N_active_occ)
-    wfn = ( np.array([1.0]), np.array([active_det_up]))
     nelec_active = (N_active_occ,N_active_occ)
 
-    write_wfn(
-        afqmc_wfn_file,
-        wfn,
-        walker_type='closed',
+    NOMSDWavefunction(
+        coeffs=np.array([1.0]),
+        dets=np.array([active_det_up]),
+        spin_symm='closed',
         nelec=nelec_active,
-        norb=ncas,
-        verbose=False
-    )
+        nmo=ncas
+    ).to_hdf5(afqmc_wfn_file)
 
     # 6. write json input file
     execute_options = {

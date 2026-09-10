@@ -1,13 +1,13 @@
-import scipy.sparse as sps
+import logging
+
 import numpy as np
 
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-from afqmctools.hamiltonian.model.ham_class import HamiltonianComponent,SpinSymm
-import afqmctools.utils.io as io
-from afqmctools.wavefunction.free_electron import free_electron
+from safiretools import HamiltonianBuilder, Lattice, Wavefunction
 
-lattice = get_lattice(
+# safiretools reports what it builds through the standard logging module
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+lattice = Lattice.from_dict(
     params=dict(
         L1 = 3,
         L2 = 2,
@@ -17,7 +17,7 @@ lattice = get_lattice(
 )
 nelec = (2,2)
 
-builder = HamiltonianBuilder(lattice=lattice)
+builder = HamiltonianBuilder(lattice=lattice, nelec=nelec)
 
 # add some terms
 builder.nth_neighbor_hopping(t=[1.0,0.5])
@@ -26,33 +26,20 @@ builder.nth_order_hubbard_Vij(V=2.0)
 
 nbasis = lattice.N_sites
 
-# add a custom term - in this case, randon symetric noise
+# add a custom term - in this case, random symmetric noise. Give it as a plain
+#   (nbasis,nbasis) matrix; the builder stacks the spin sectors for you to match
+#   the Hamiltonian's spin symmetry.
 one_body_matrix = 0.0001*np.random.rand(nbasis,nbasis)
-one_body_matrix = sps.csr_matrix(0.5*(one_body_matrix + one_body_matrix.T))
-# the convention is to stack the spin-up hopping matrix on the spin-down hopping matrix
-one_body_matrix = sps.vstack([one_body_matrix,one_body_matrix])
+one_body_matrix = 0.5*(one_body_matrix + one_body_matrix.T)
 
-custom_one_body = HamiltonianComponent(
-    csr_matrix=one_body_matrix,
-    model_type='one_body',
-    spin_symm=SpinSymm.COLLINEAR
-)
-
-# manually add the custom term
-builder.hamiltonian["tij"] = custom_one_body
+builder.custom_one_body(one_body_matrix)
 
 builder.finalize()
 
-hamiltonian = builder.hamiltonian
+hamiltonian = builder.get_hamiltonian()
 
-io.write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname="afqmc.h5",
-    nelec=nelec
-)
-free_electron(
+hamiltonian.to_hdf5("afqmc.h5")
+Wavefunction.from_free_electron(
     source=hamiltonian,
-    nelec=nelec,
-    output="afqmc.h5",
-    lattice=lattice
-)
+    nelec=nelec
+).to_hdf5("afqmc.h5")

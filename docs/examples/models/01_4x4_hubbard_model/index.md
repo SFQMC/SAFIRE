@@ -81,7 +81,7 @@ colab:
   height: 855
 outputId: c0edb976-6ddc-4ada-eb2f-66c8587a93b7
 ---
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 # Step 1. define the lattice parameters
@@ -93,7 +93,7 @@ lattice_params = dict(
 )
 
 # Step 3.a. build the lattice
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -107,37 +107,33 @@ colab:
   base_uri: https://localhost:8080/
 outputId: 601a13a7-15f4-49d9-ba6a-01fb4ba3b173
 ---
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-import afqmctools.utils.io as io
+from safiretools import HamiltonianBuilder
 
 print(scratch_dir)
 
 fe_scratch_dir = scratch_dir / "fe"
 fe_scratch_dir.mkdir(exist_ok=True)
 
+# set the number of electrons - we'll use this again
+nelec = (8,8)
+
 # Step 2. define Hamiltonian parameters
 hamiltonian_params = {
     'hamiltonian' : {
         "t" : 1.0,  # note: we could omit this, nearest-neighbor hoping with t=1 is included by default
-        "U" : 4.0
+        "U" : 4.0,
+        "nelec" : nelec
     }
 }
 
 # Step 3.b. build the lattice model Ha
-hamiltonian = HamiltonianDirector(
+hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice,
     source=hamiltonian_params
-).build()
-
-# set the number of electrons - we'll use this again
-nelec = (8,8)
+).get_hamiltonian()
 
 # AND save it!
-io.write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=fe_scratch_dir/"afqmc.h5",
-    nelec=nelec
-)
+hamiltonian.to_hdf5(fe_scratch_dir/"afqmc.h5")
 ```
 
 +++ {"id": "MqK7sb3Z5xcn"}
@@ -177,19 +173,15 @@ to unrestricted Hartree-Fock trial wavefunctions.
 
 ### Free-electron Trial Wavefunction
 
-`afqmctools` provides a convenience function, `free_electron()` ,for calculating free-electron trial wavefunctions.
-Internally, `free_electron()` applies a small twist in order to break k-space degeneracy for open-shell systems.
-It also accepts a user-supplied twist angle to used instead.
-`free_electron()` will print the actual twist used in units of radians as, for example,
+`safiretools` provides a convenience classmethod, `Wavefunction.from_free_electron()`,
+for calculating free-electron trial wavefunctions.
+A small twist is applied to break k-space degeneracy for open-shell systems; the
+classmethod applies a small default twist, and also accepts a user-supplied one.
 
-```
-Generating free-electron trial wavefunction with twist = [4.10803005e-06 4.58334805e-04]
-```
-
-
-We note that, because of the twist angle, the Hamiltonian will typically need to be rebuilt.
-All of this is done internally if `free_electron()` is given the original lattice, and hamiltonian parameters
-as shown below.
+We note that, because of the twist angle, the Hamiltonian will typically need to be
+rebuilt. `from_free_electron()` will do that for you if it is handed the lattice and
+Hamiltonian parameters, but here we build the twisted Hamiltonian explicitly, since we
+want to hand the *same* Hamiltonian to the Hartree-Fock solver further down.
 
 ... do we want to have a diagram here of k-space, and the expected one-body
 
@@ -201,40 +193,41 @@ colab:
 outputId: e6000516-1e4f-4ae3-db34-af0b0c4d03f7
 ---
 # First, let's compute the Free-Electron trial wavefunction
-from afqmctools.wavefunction.free_electron import free_electron
-from afqmctools.wavefunction.common import write_wfn
+from safiretools import Wavefunction
 
 input_params = dict(
     lattice = lattice_params,                           # from step 1. above
     hamiltonian = hamiltonian_params["hamiltonian"]     # from step 2. above
 )
 
+# a small twist, in radians per axis, breaks the k-space degeneracy
+twist = (4.10803005e-06, 4.58334805e-04)
 
-wfn,spin_symm,autohf_results = free_electron(
+fe_lattice = Lattice.from_dict(params=dict(lattice_params, twist=twist))
+fe_hamiltonian = HamiltonianBuilder.from_input(
     source=input_params,
+    lattice=fe_lattice
+).get_hamiltonian()
+
+wfn = Wavefunction.from_free_electron(
+    source=fe_hamiltonian,
     nelec=nelec,
-    twist=None,                          # (optional) using the default small twist
-    return_autohf = True,
     filling_strategy="balanced"
 )
 
 # and write the wavefunction for use in SAFIRE
-write_wfn(
-    filename=fe_scratch_dir/"free_electron.h5",
-    wfn=wfn,
-    walker_type=spin_symm,
-    nelec=nelec,
-    norb=lattice.N_sites
-)
+wfn.to_hdf5(fe_scratch_dir/"free_electron.h5")
 ```
 
 +++ {"id": "-xW_O9f35xco"}
 
 Now that we have computed a free-electron wavefunction, we can inspect the results to validate it.
-Internally, `free_electron()` uses the `autohf` HF solver in order to evaluate the energy of the free-electron trial wavefunction
-for the interacting Hamiltonian.
-In this case, for $N_{\uparrow} = N_{\downarrow} = 8$, we see that the total energy is
-Etotal = Etotal=-5.18522319306247 $t$ with a one-body contribution of EK = -22.69026695983466 $t$,
+Building a wavefunction and evaluating its energy are separate calls, so we run the
+`autohf` HF solver explicitly to evaluate the energy of the free-electron trial
+wavefunction for the interacting Hamiltonian — passing `steps=-1` so that it reports
+the reference energy of the determinant we give it rather than optimizing it.
+For $N_{\uparrow} = N_{\downarrow} = 8$, the total energy is
+Etotal = -5.18522319306247 $t$ with a one-body contribution of EK = -22.69026695983466 $t$,
 and a Hubbard U contribution of EU=17.50504376677219.
 
 Next, let's take a look at the charge and spin densities of the trial wavefunction.
@@ -247,6 +240,21 @@ colab:
   height: 701
 outputId: a868b2dd-398f-40d5-90b7-9a8036f6659b
 ---
+from autohf import AutoHFHamiltonian, lattice_hf
+
+autohf_results = lattice_hf(
+    AutoHFHamiltonian(source=fe_hamiltonian),
+    settings=dict(
+        ansatz='SD',
+        steps=-1,          # report the reference energy; do not optimize
+        verbose=True,
+        nelec=nelec,
+        batch_size=1
+    ),
+    initial_guess=wfn.dets[0],
+    suppress_logo=True
+)
+
 state_results, functions = autohf_results
 
 # get the density from autohf
@@ -813,7 +821,6 @@ from types import SimpleNamespace
 import numpy as np
 import matplotlib.pyplot as plt
 
-from afqmctools.hamiltonian.converter import read_hamiltonian
 from afqmctools.analysis.transform import hermitize_factory
 from afqmctools.analysis.average import WALKER_TYPE,get_metadata,average_observable
 

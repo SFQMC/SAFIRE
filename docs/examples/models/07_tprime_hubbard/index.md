@@ -59,7 +59,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 :id: 254dc31a-b763-4cb3-9867-5129279b9c2b
 :outputId: c065dd3d-6070-4a49-80ef-e02029ba7b13
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.utils.visualize import plot_lattice
 
 lattice_params = {
@@ -69,7 +69,7 @@ lattice_params = {
     "boundary2" : "open"
 }
 
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 
 plot_lattice(lattice,show_coords=False)
 ```
@@ -84,8 +84,7 @@ plot_lattice(lattice,show_coords=False)
 :id: 364ee811-8242-45ce-88ee-69fcaa6901fd
 :outputId: b64b276a-cae9-4c47-a315-e9c015fc264a
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.io import write_model_hamiltonian
+from safiretools import HamiltonianBuilder, SpinSymm
 
 #TODO: need AFM (staggered) pinning at y=1 and  y=Ly with h_pin = 0.25 only for AFQMC!!
 
@@ -96,17 +95,16 @@ hamiltonian_params = {
     }
 }
 
-director = HamiltonianDirector(hamiltonian_params,lattice=lattice)
-
-# we can take more direct control of build steps like this
-builder = director.release_builder()
+# afm_pinning() needs axis=1 and pin_type="same", which HamiltonianBuilder.from_input()
+# cannot express, so we call the build steps directly instead and finalize once at the end
+builder = HamiltonianBuilder(lattice=lattice,spin_symm=SpinSymm.COLLINEAR)
+builder.nth_neighbor_hopping(hamiltonian_params["hamiltonian"]["t"])
+builder.onsite_hubbard(hamiltonian_params["hamiltonian"]["U"])
 builder.afm_pinning(h_afm_pin=0.25,axis=1,pin_type="same")
+builder.finalize()
 
-# ... and we can resume using the director as usual
-director.bind_builder(builder)
-
-hamiltonian = director.build()
-write_model_hamiltonian(hamiltonian,fname=scratch_dir/"Hubbard_tprime0.4_U4.0.h5")
+hamiltonian = builder.get_hamiltonian()
+hamiltonian.to_hdf5(scratch_dir/"Hubbard_tprime0.4_U4.0.h5")
 ```
 
 +++ {"id": "81220323-65d6-4438-91db-87cc44e71047"}
@@ -115,8 +113,7 @@ write_model_hamiltonian(hamiltonian,fname=scratch_dir/"Hubbard_tprime0.4_U4.0.h5
 
 ```{code-cell} ipython3
 # First, let's compute the Free-Electron trial wavefunction
-from afqmctools.wavefunction.free_electron import free_electron
-from afqmctools.wavefunction.common import write_wfn
+from safiretools import Wavefunction
 
 nelec = (16,16)
 
@@ -127,17 +124,25 @@ input_params = dict(
 
 # twist from ref 1:
 twist = (0.0,0.0) #(0.01,0.01) # this twist was used for 4x16 with t' = 0.3t
-wfn,_,results = free_electron(
+
+# The trial wavefunction is built from the *un-pinned* Hamiltonian - the pinning
+# field added above is only wanted for the AFQMC run itself. Build it explicitly
+# so that the same Hamiltonian can be handed to the HF solver below.
+fe_lattice = Lattice.from_dict(dict(lattice_params, twist=twist))
+fe_hamiltonian = HamiltonianBuilder.from_input(
     source=input_params,
-    nelec=nelec,
-    twist=twist,                          # (optional) using the default small twist
-    return_autohf = True
+    lattice=fe_lattice
+).get_hamiltonian()
+
+wfn = Wavefunction.from_free_electron(
+    source=fe_hamiltonian,
+    nelec=nelec
 )
 
 # get lattice dimensions from the Lattice instance
 L = lattice.L
 
-write_wfn(scratch_dir/"free_elec_wfn.h5", wfn, walker_type='collinear', norb=L[0]*L[1], nelec=nelec)
+wfn.to_hdf5(scratch_dir/"free_elec_wfn.h5")
 ```
 
 ```{code-cell} ipython3
@@ -145,6 +150,22 @@ write_wfn(scratch_dir/"free_elec_wfn.h5", wfn, walker_type='collinear', norb=L[0
 :outputId: 55190e94-44ed-4b7c-9f28-7cdcd5d151ba
 
 import afqmctools.utils.visualize as vis
+from autohf import AutoHFHamiltonian, lattice_hf
+
+# building the wavefunction does not measure anything, so run the HF solver
+# explicitly to get the trial wavefunction's density matrices
+results = lattice_hf(
+    AutoHFHamiltonian(source=fe_hamiltonian),
+    settings=dict(
+        ansatz='SD',
+        steps=-1,          # report the reference energy; do not optimize
+        verbose=True,
+        nelec=nelec,
+        batch_size=1
+    ),
+    initial_guess=wfn.dets[0],
+    suppress_logo=True
+)
 
 # convert the 'results' from autohf to a charge density
 makeRDMs = results[1]['makeRDMs']

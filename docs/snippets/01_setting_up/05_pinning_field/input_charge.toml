@@ -2,12 +2,10 @@
 t = [1.0,0.5] # a 't' array of length n give nth-order neighbor hoping
 U = 2.0
 h_charge_pin = 0.5 # NOTE: syntax likely to change in the near future
+nelec = [16,16]
 
 [lattice]
 L1 = 8
 L2 = 4
 boundary1 = "PBC" # or "open" for open boundaries
 boundary2 = "PBC" # or "open" for open boundaries
-
-[misc_params]
-nelec = [16,16]

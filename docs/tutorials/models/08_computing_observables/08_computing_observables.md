@@ -113,9 +113,7 @@ colab:
 id: c844616d-45c5-498a-b6f9-c995027965e6
 outputId: 855ebc93-90d5-4e84-94ff-e974f19587fc
 ---
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.io import write_model_hamiltonian
+from safiretools import HamiltonianBuilder, Lattice
 from afqmctools.inputs.from_autohf import autohf_to_afqmc
 
 from autohf import lattice_hf,AutoHFHamiltonian
@@ -139,21 +137,19 @@ lattice_params = {
 hamiltonian_params = {
     't' : 1.0,
     'U': 8.0,
-    'spin_symm' : "closed"
+    'spin_symm' : "closed",
+    'nelec' : nelec
 }
 
 params = {
     'hamiltonian': hamiltonian_params
 }
 
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_dict(lattice_params)
 
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 
-write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=scratch_dir/"hamiltonian.h5"
-)
+hamiltonian.to_hdf5(scratch_dir/"hamiltonian.h5")
 
 
 # autoHF does not support closed integrals to collinear integrals
@@ -168,7 +164,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-hamiltonian_for_autohf = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian_for_autohf = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 
 
 hf_settings = dict(
@@ -199,24 +195,16 @@ autohf_to_afqmc(
 ### experiment : add a little noise to the UHF wfn ###
 import numpy as np
 
-from afqmctools.wavefunction.converter import read_wavefunction
-from afqmctools.wavefunction.common import write_wfn
+from safiretools import Wavefunction
 
 # 1. read the uhf wfn from file
-wfn = read_wavefunction(scratch_dir/"uhf_wfn.h5")[0]
-
-Ci, Phi = wfn
+wfn = Wavefunction.from_hdf5(scratch_dir/"uhf_wfn.h5")
 
 # 2. add noise
-Phi = Phi + 1.0e-4*np.random.rand(*Phi.shape)
+wfn.dets += 1.0e-4*np.random.rand(*wfn.dets.shape)
 
 # 3. save the uhf wfn with noise
-write_wfn(filename=scratch_dir/"uhf_wfn_noise.h5",
-    wfn=(Ci,Phi),
-    walker_type='uhf',
-    nelec=nelec,
-    norb=hamiltonian_for_autohf.nsites
-)
+wfn.to_hdf5(scratch_dir/"uhf_wfn_noise.h5")
 ```
 
 +++ {"id": "dSJ9e4tRBxxx"}
@@ -560,7 +548,6 @@ from types import SimpleNamespace
 import matplotlib.pyplot as plt
 import numpy as np
 
-from afqmctools.hamiltonian.converter import read_common_input
 from afqmctools.analysis.extraction import extract_observable,get_metadata
 from afqmctools.analysis.transform import hermitize_factory,eval_one_body_obs_factory,eval_two_body_obs_factory
 

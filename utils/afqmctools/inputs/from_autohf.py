@@ -13,6 +13,7 @@ from autohf import AutoHFHamiltonian,lattice_hf
 from afqmctools.wavefunction.model import write_wfn
 from afqmctools.wavefunction.common import modified_gram_schmidt, check_orthonormality
 from afqmctools.hamiltonian.model.ham_class import Hamiltonian
+from safiretools import LatticeHamiltonian
 import numpy as np
 
 def _autoHF_2_afqmc_wfn_noncollinear(orbs,N,nelec):
@@ -61,7 +62,7 @@ def autohf_to_afqmc(input_ = None,
       raise ValueError("Please supply Hamiltonian if running autohf from this function")
 
     # convert if handed afqmctools data, otherwise should be autohf
-    if isinstance(ham,Hamiltonian):
+    if isinstance(ham,Hamiltonian|LatticeHamiltonian):
       ham_ = AutoHFHamiltonian(source=ham)
     else:
       ham_ = ham

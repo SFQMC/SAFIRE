@@ -42,7 +42,7 @@ from afqmctools.utils.io import read_input_params,write_model_hamiltonian
 from stats.scalar_dat import analyze_scalar_data
 from afqmctools.analysis.rdm import average_afqmc_rdm
 from afqmctools.inputs.from_hdf import write_json
-import afqmctools.hamiltonian.model.director as ham
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 
 pytest.importorskip("optax")
 pytest.importorskip("autohf")
@@ -422,10 +422,9 @@ def setup_lattice_model(test_case:AFQMCTestCase):
 
     input_params = test_case.settings
 
-    hamiltonianDir = ham.HamiltonianDirector(
+    hamiltonian = HamiltonianBuilder.from_input(
         source=input_params
-    )
-    hamiltonian = hamiltonianDir.build()
+    ).hamiltonian
 
     misc_params = input_params["misc_params"]
     nelec = misc_params["nelec"]
@@ -454,10 +453,9 @@ def setup_lattice_model(test_case:AFQMCTestCase):
         if effective_hamiltonian is not None:
             new_in = {"lattice":input_params["lattice"],
                      "hamiltonian":effective_hamiltonian}
-            hamiltonianDir = ham.HamiltonianDirector(
+            hf_hamiltonian = HamiltonianBuilder.from_input(
                source=new_in
-            )
-            hf_hamiltonian = hamiltonianDir.build()
+            ).hamiltonian
         else:
             hf_hamiltonian = hamiltonian
         

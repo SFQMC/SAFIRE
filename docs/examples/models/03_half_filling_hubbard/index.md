@@ -37,13 +37,10 @@ import numpy as np
 
 # all the imports used later in the tutorial, but put here for convenience
 
-import afqmctools.systems.lattice as lat
+from safiretools import HamiltonianBuilder, Lattice
 import afqmctools.utils.visualize as vis
-import afqmctools.utils.io as io
-import afqmctools.hamiltonian.model.director as ham
 
-from afqmctools.wavefunction.converter import read_wavefunction
-from afqmctools.wavefunction.model import write_free_electron_wfn, make_free_elec,write_wfn
+from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
 from afqmctools.analysis.rdm import average_afqmc_rdm
 
@@ -102,7 +99,7 @@ lattice_params = {
 :id: b2a30f8a-5c48-4272-b0df-14d9c2062e59
 :outputId: 9a69fa7d-1093-4d5a-8245-f57f3639017c
 
-lattice = lat.get_lattice(params=lattice_params)
+lattice = Lattice.from_dict(params=lattice_params)
 
 Ne = int(lattice.N_sites)//2
 nelec = (Ne,Ne)
@@ -133,9 +130,10 @@ $$
 :id: 7416bbce-9541-46bb-bc52-1e6a42e2d001
 :outputId: 8bcb041d-4e1e-4a10-9bd2-d5a7a2385793
 
-builder = ham.HamiltonianBuilder(
+builder = HamiltonianBuilder(
           lattice=lattice,
-          spin_symm="collinear" # we have no spin-flip terms
+          spin_symm="collinear", # we have no spin-flip terms
+          nelec=nelec
               )
 # add standard Hubbard terms
 builder.nth_neighbor_hopping(1.0)
@@ -147,9 +145,10 @@ builder.finalize()
 :id: 3670ecc2-0aa9-4a34-ab5b-b903f7fddc08
 :outputId: 70b88144-c728-4f1c-d8de-70a78fa2914e
 
-builderHF = ham.HamiltonianBuilder(
+builderHF = HamiltonianBuilder(
           lattice=lattice,
-          spin_symm="collinear" # we have no spin-flip terms
+          spin_symm="collinear", # we have no spin-flip terms
+          nelec=nelec
               )
 # add standard Hubbard terms
 builderHF.nth_neighbor_hopping(1.0)
@@ -161,7 +160,7 @@ builderHF.finalize()
 :id: 67700d97-b76c-4d89-a7f9-0b814e411497
 
 # get the 1 body Hamiltonian
-T = builderHF.hamiltonian.get_one_body().toarray().reshape(2,lattice.N_sites,lattice.N_sites)
+T = builderHF.get_hamiltonian().get_one_body().toarray().reshape(2,lattice.N_sites,lattice.N_sites)
 ```
 
 +++ {"id": "d96b5df9-c26f-4dcc-87f6-bee7ed16e205"}
@@ -255,7 +254,7 @@ state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["batch_size"], N)
 
 
 dataHFC = autohf.solver.lattice_hf(
-    hamiltonian=autohf.AutoHFHamiltonian(builderHF.hamiltonian),
+    hamiltonian=autohf.AutoHFHamiltonian(builderHF.get_hamiltonian()),
     lattice=lattice,
     settings=hf_settings,
     state2orbitals=orbitalFunc,
@@ -318,7 +317,7 @@ state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["num_batches"], N
 
 
 dataHFC2 = autohf.solver.lattice_hf(
-    hamiltonian=autohf.AutoHFHamiltonian(builderHF.hamiltonian),
+    hamiltonian=autohf.AutoHFHamiltonian(builderHF.get_hamiltonian()),
     lattice=lattice,
     settings=hf_settings,
     state2orbitals=orbitalFunc,
@@ -403,8 +402,7 @@ First we'll manually create a non-interacting state as our RHF initial state for
 :id: 85b8e2f7-d035-4a12-bd53-a2eccf5ae40e
 
 ham_fname = f"hamU{U}_afqmc.h5"
-io.write_model_hamiltonian(builder.hamiltonian, scratch_dir / ham_fname,
-                        nelec=nelec,spin_symm="collinear")
+builder.get_hamiltonian().to_hdf5(scratch_dir / ham_fname)
 ```
 
 ```{code-cell} ipython3
@@ -493,7 +491,7 @@ plt.show()
 * What if we didn't use the correct signs ($M_i = (-1)^i\Delta_i$) for the HF ansatz? Could we construct an even more constrained wave function?
 * What do the local spin/charge observables of the optimized ansatz look like?
 * What happens for $U=8$? Do we need a different wave function?
-* What happens if you start from a free electron state instead of the HF state? (`(coeffs,free_wfn),spin_symm = make_free_elec(ham_fname,nelec,spin_symm="nc")`)
+* What happens if you start from a free electron state instead of the HF state? (`free_wfn = Wavefunction.from_free_electron(ham_fname, nelec, spin_symm="nc")`)
 
 +++ {"id": "f7eab26a-3624-402e-83de-00ee38daf267"}
 

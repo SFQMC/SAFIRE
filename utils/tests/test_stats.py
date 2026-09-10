@@ -24,6 +24,8 @@ import pytest
 import cli.scalar_tab as st
 from stats.scalar_dat import analyze_scalar_data
 
+TEST_ROOT = Path(__file__).resolve().parent
+
 
 @pytest.fixture
 def arguments(monkeypatch):
@@ -35,7 +37,7 @@ def arguments(monkeypatch):
         "argv",
         [
             'scalar_stats',
-            (Path('tests/data')/'qmc.s000.scalar.dat').absolute().as_posix(),
+            (TEST_ROOT/'data'/'qmc.s000.scalar.dat').as_posix(),
             '-s','time','-e','5.0'
         ]
     )

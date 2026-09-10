@@ -124,7 +124,7 @@ import numpy as np
 from pyscf import gto,scf,mcscf
 
 from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
+from safiretools import Hamiltonian, MolecularHamiltonian
 from afqmctools.inputs.from_hdf import write_json
 
 from stats.scalar_dat import analyze_scalar_data
@@ -152,13 +152,26 @@ rhf.run()
 
 
 import numpy as np
-from afqmctools.wavefunction.mol import write_wfn
+from safiretools import NOMSDWavefunction
 
 number_of_electrons = mol.nelec
 number_of_orbitals = mol.nao_nr()
 
 print("Number of orbitals = ", number_of_orbitals)
 
+# Save the Hamiltonian. .to_hdf5() replaces only the Hamiltonian in the file,
+#   so the Hamiltonian and the wavefunction can be written in either order.
+basis_scf_data = load_from_pyscf_chk_mol(
+    chkfile = scratch_dir / rhf_chkfile,
+)
+
+MolecularHamiltonian.from_pyscf(
+    basis_scf_data,
+    chol_cut = 1e-5,
+    verbose=True
+).to_hdf5(scratch_dir / "afqmc.h5")
+
+# now the trial wavefunction, appended to the same file
 orbitals = np.eye(number_of_orbitals)
 
 phi_0 = np.array([
@@ -166,29 +179,13 @@ phi_0 = np.array([
 ])
 C_0 = 1.0
 
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/ "afqmc.h5",
-    wfn=wfn,
-    walker_type="rhf",
+NOMSDWavefunction(
+    coeffs=np.array([C_0]),
+    dets=phi_0,
+    spin_symm="rhf",
     nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
-
-
-# Save the Hamiltonian
-basis_scf_data = load_from_pyscf_chk_mol(
-    chkfile = scratch_dir / rhf_chkfile,
-)
-
-# write Hamiltonian
-write_hamil_mol(
-    basis_scf_data,
-    hamil_file = scratch_dir / 'afqmc.h5',
-    chol_cut = 1e-5,
-    verbose=True
-)
+    nmo=number_of_orbitals
+).to_hdf5(scratch_dir/ "afqmc.h5")
 ```
 
 +++ {"id": "dSJ9e4tRBxxx"}
@@ -532,22 +529,21 @@ from types import SimpleNamespace
 import matplotlib.pyplot as plt
 import numpy as np
 
-from afqmctools.hamiltonian.converter import read_hamiltonian
 from afqmctools.analysis.extraction import extract_observable,get_metadata
 from afqmctools.analysis.transform import hermitize_factory,eval_one_body_obs_factory,eval_two_body_obs_factory
 
 from afqmctools.analysis.average import WALKER_TYPE
 
 # read the Hamiltonian
-H = read_hamiltonian(scratch_dir / "afqmc.h5")
-M = H["nmo"]
-Econst = H["enuc"]
+H = Hamiltonian.from_hdf5(scratch_dir / "afqmc.h5")
+M = H.nmo
+Econst = H.enuc
 
 walker_type = WALKER_TYPE[get_metadata(scratch_dir/"qmc.s001.stat.h5")["WalkerType"]]
 
 # set up a transform to compute the one-body energy from the one-rdm
 eval_one_body_energy = eval_one_body_obs_factory(
-    one_body_operator=H["hcore"],
+    one_body_operator=H.hcore,
     walker_type=walker_type
 )
 # set up a transform the hermitize the one-rdm
@@ -630,8 +626,8 @@ import matplotlib.pyplot as plt
 
 from afqmctools.analysis.transform import hermitize_factory,eval_one_body_obs_factory,eval_two_body_obs_factory
 
-ncv = H["chol"].shape[-1]
-cholesky_vectors = np.transpose(H["chol"].reshape((M,M,ncv)),(2,0,1))
+ncv = H.chol.shape[-1]
+cholesky_vectors = np.transpose(H.chol.reshape((M,M,ncv)),(2,0,1))
 eri = np.einsum("gil,gjk->iljk",cholesky_vectors,cholesky_vectors).flatten()
 
 eval_two_body_energy = eval_two_body_obs_factory(

@@ -38,13 +38,15 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 :id: 3f6aeee9-53bd-41a8-be26-f00472aaf8f5
 :outputId: 41c1c867-f098-44c7-d47d-dfcb8232728e
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 import afqmctools.utils.visualize as vis
 
 lattice_params = dict(
     L1 = 4,
     L2 = 4,
-    type = 'square',
+    type = 'custom',   # a basis of our own choosing means a custom lattice
+    a1 = [1.0,0.0],
+    a2 = [0.0,1.0],
     basis = [
         [0.,0.],    # Cu 3d_{x^2 - y^2}
         [0.5,0.0],  # O 2p_x
@@ -52,7 +54,7 @@ lattice_params = dict(
     ]
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -144,8 +146,7 @@ for i in range(lattice.N_sites):
 :id: f59857be
 :outputId: 5555c96d-6bfe-445d-89a3-8fc90e952449
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-import afqmctools.utils.io as io
+from safiretools import LatticeHamiltonian
 
 hamiltonian_params = {
     'hamiltonian' : dict(
@@ -155,15 +156,12 @@ hamiltonian_params = {
     )
 }
 
-hamiltonian = HamiltonianDirector(
+hamiltonian = LatticeHamiltonian.from_dict(
     lattice=lattice,
     source=hamiltonian_params
-).build()
-
-io.write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=scratch_dir/"afqmc.h5"
 )
+
+hamiltonian.to_hdf5(scratch_dir/"afqmc.h5")
 ```
 
 +++ {"id": "ef2ed76f-26fe-4818-9c90-8e74476d2bef"}
@@ -292,9 +290,7 @@ vis.plot_lattice(
 
 import numpy as np
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-import afqmctools.utils.io as io
-from afqmctools.wavefunction.free_electron import free_electron
+from safiretools import LatticeHamiltonian, NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 import afqmctools.utils.visualize as vis
 
@@ -314,7 +310,7 @@ lattice_params = dict(
     boundary2 = 'PBC'
 )
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=lattice_params
 )
 
@@ -382,16 +378,12 @@ hamiltonian_params = {
     )
 }
 
-hamiltonian = HamiltonianDirector(
+hamiltonian = LatticeHamiltonian.from_dict(
     lattice=lattice,
     source=hamiltonian_params
-).build()
-
-io.write_model_hamiltion(
-    hamiltonian=hamiltonian,
-    fname=scratch_dir/"lieb.h5",
-    nelec=nelec
 )
+
+hamiltonian.to_hdf5(scratch_dir/"lieb.h5")
 ```
 
 ```{code-cell} ipython3
@@ -418,15 +410,10 @@ This is a benchmarking script, so we'll keep things basic
 import numpy as np
 import h5py as h5
 
-import afqmctools.systems.lattice as lat
-import afqmctools.hamiltonian.model.director as ham
-import afqmctools.utils.io as io
+from safiretools import (HamiltonianBuilder, Lattice, NOMSDWavefunction, SpinSymm,
+                         Wavefunction)
 import afqmctools.utils.visualize as vis
-from afqmctools.wavefunction.free_electron import free_electron
-from afqmctools.wavefunction.common import modified_gram_schmidt
 
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-from afqmctools.hamiltonian.model.ham_class import HamiltonianComponent,SpinSymm
 
 import faulthandler; faulthandler.enable()
 
@@ -537,15 +524,16 @@ def make_emery(lattice, show_mats=False):
     hopping = hopping + hopping.T.conj()
 
 
-    # add in on-site energies
-    U = np.zeros((lattice.N_sites,lattice.N_sites))
+    # add in on-site energies. U is one value per site, which is the input
+    #   convention onsite_hubbard() takes for a site-dependent Hubbard U.
+    U = np.zeros(lattice.N_sites)
     for i in range(lattice.N_sites):
         if i % 3 == 0:
             hopping[i,i] = epsilon_d
-            U[i,i] = Ud
+            U[i] = Ud
         elif i % 3 == 1 or i % 3 == 2:
             hopping[i,i] = epsilon_p
-            U[i,i] = Up
+            U[i] = Up
 
     if show_mats:
         plt.matshow(hopping.real)
@@ -555,57 +543,38 @@ def make_emery(lattice, show_mats=False):
         plt.show()
 
     if show_mats:
-        plt.matshow(U)
+        plt.matshow(np.diag(U))
         plt.title("U matrix")
         plt.colorbar()
         plt.grid(True)
         plt.show()
 
-    hopping = np.block(
-        [[hopping,np.zeros(hopping_shape)]
-        ,[np.zeros(hopping_shape),hopping]]
-    )
-
-    # 3. save the Hamiltonian
-    builder = HamiltonianBuilder(lattice=lattice)
-    hopping = sps.csr_matrix(hopping)
-    custom_one_body = HamiltonianComponent(
-        csr_array=hopping,
-        model_type='one_body',
-        spin_symm=SpinSymm.NONCOLLINEAR
-    )
-
-    # manually add the custom term
-    builder.hamiltonian["tij"] = custom_one_body
-    custom_hubbard = HamiltonianComponent(
-        csr_array=U,
-        model_type='hubbard_u',
-        hst_type='discrete_spin'
-    )
-    builder.hamiltonian["Uij"] = custom_hubbard
+    # 3. save the Hamiltonian. The build steps take care of the spin structure,
+    #   so hand them the plain (nsites,nsites) hopping and the per-site U.
+    builder = HamiltonianBuilder(lattice=lattice, nelec=nelec)
+    builder.custom_one_body(hopping, spin_symm=SpinSymm.NONCOLLINEAR)
+    builder.onsite_hubbard(U)
     builder.finalize()
 
-    hamiltonian = builder.hamiltonian
+    hamiltonian = builder.get_hamiltonian()
 
-    io.write_model_hamiltonian(
-        hamiltonian=hamiltonian,
-        fname="afqmc.h5",
-        nelec=nelec
-    )
+    hamiltonian.to_hdf5("afqmc.h5")
 
     return hamiltonian
 
 # 1. define the lattice
 basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
 
-lattice = lat.CustomLattice(
-    L=(4,4),
+lattice = Lattice.from_dict(dict(
+    L1=4,
+    L2=4,
+    type='custom',
     a1=np.array((1.0,-1.0)),
     a2=np.array((1.0,1.0)),
     basis=basis,
-    axis1_boundary=lat.PBCBoundary,
-    axis2_boundary=lat.PBCBoundary,
-)
+    boundary1='pbc',
+    boundary2='pbc',
+))
 
 if show_lattice_before:
     vis.plot_lattice(
@@ -623,25 +592,26 @@ THETA_X = 1/np.sqrt(592560607) # 592560607 is prime
 THETA_Y = 1/np.sqrt(47603)     # 47603 is prime
 twist = np.array((THETA_X,THETA_Y))
 
-lattice_wt_twist = lat.CustomLattice(
-    L=(4,4),
+lattice_wt_twist = Lattice.from_dict(dict(
+    L1=4,
+    L2=4,
+    type='custom',
     a1=np.array((1.0,-1.0)),
     a2=np.array((1.0,1.0)),
     basis=basis,
-    twist=twist
-)
+    twist=twist,
+))
 
 hamiltonian2 = make_emery(lattice_wt_twist)
 
-wfn,spin_symm = free_electron(
+wfn = Wavefunction.from_free_electron(
     source=hamiltonian2,
     nelec=nelec,
-    lattice=lattice,
     spin_symm=SpinSymm.NONCOLLINEAR
 )
 
 # add noise to the initial guess
-wfn = (wfn[0],wfn[1] + annealing_amplitude*np.random.randn(*wfn[1].shape))
+wfn.dets += annealing_amplitude*np.random.randn(*wfn.dets.shape)
 
 # 4. run autohf
 from autohf import lattice_hf, AutoHFHamiltonian
@@ -649,7 +619,7 @@ best_E_final = None
 for a in range(annealing_steps):
     print(f"Annealing step {a}")
 
-    slater_det = wfn[1][0]
+    slater_det = wfn.dets[0]
 
     hf_settings = dict(
         ansatz = 'SD',#'SD_Rot',
@@ -686,11 +656,16 @@ for a in range(annealing_steps):
     orbitals = results['orbitals'][0]
 
     slater_det = np.array(orbitals[:,:sum(nelec)])
-    # orthonormalize!
-    slater_det = modified_gram_schmidt(slater_det)
-    slater_det = slater_det + annealing_amplitude*np.random.randn(*slater_det.shape)
 
-    wfn = (wfn[0],[slater_det])
+    # orthonormalize! (orthonormalize() returns a new, orthonormal wavefunction)
+    wfn = NOMSDWavefunction(
+        coeffs=wfn.coeffs,
+        dets=slater_det[np.newaxis],
+        nelec=nelec,
+        spin_symm=SpinSymm.NONCOLLINEAR
+    ).orthonormalize()
+
+    wfn.dets += annealing_amplitude*np.random.randn(*wfn.dets.shape)
 
     L = lattice.L
 

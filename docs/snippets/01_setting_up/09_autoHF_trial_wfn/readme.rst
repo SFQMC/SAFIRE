@@ -8,7 +8,7 @@ using autoHF on a Hubbard model Hamiltonian on square lattice as a test case.
 We note that autohf can handle general lattice model Hamiltonians just
 as SAFIRE can.
 
-A lattice model Hamiltonian can be generated using afqmctools and
+A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
 Below is a sample input file, which we name `input.toml`, for a Hubbard model 
 on a 2x3 square lattice with periodic boundary conditions.
@@ -17,40 +17,33 @@ on a 2x3 square lattice with periodic boundary conditions.
 
 if no "type" is specified in the "lattice" section, then a square lattice is used.
 
-autohf and afqmctools can be invoked within a Python script as
+autohf and safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from afqmctools.hamiltonian.model.director import HamiltonianDirector
-    import afqmctools.utils.io as io
-    from autohf import lattice_hf
+    from safiretools import HamiltonianBuilder
+    from autohf import AutoHFHamiltonian, lattice_hf
 
     infile = "input.toml"
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian_dir = HamiltonianDirector(source=infile)
-    lattice = hamiltonian_dir.builder.lattice
-    hamiltonian = hamiltonian_dir.build()
+    hamiltonian_builder = HamiltonianBuilder.from_input(source=infile)
+    lattice = hamiltonian_builder.get_lattice()
+    hamiltonian = hamiltonian_builder.get_hamiltonian()
 
-
-    nelec = io.read_input_params(infile)["misc_params"]["nelec"]
-    io.write_model_hamiltion(
-        hamiltonian=hamiltonian,
-        fname="afqmc.h5",
-        nelec=nelec
-    )
+    hamiltonian.to_hdf5("afqmc.h5")
 
     settings = dict(
         ansatz = 'SD_ROT',
         numSteps = 100,
         output = "afqmc.h5",
-        nelec = nelec,
+        nelec = hamiltonian.nelec,
         numTrials = 10,
         seed = 42
     )
 
     lattice_hf(
-        hamiltonian=hamiltonian,
+        hamiltonian=AutoHFHamiltonian(source=hamiltonian),
         lattice=lattice,
         settings=settings
     )

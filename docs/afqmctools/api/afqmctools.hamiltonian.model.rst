@@ -12,14 +12,6 @@ afqmctools.hamiltonian.model.builder module
    :show-inheritance:
    :undoc-members:
 
-afqmctools.hamiltonian.model.director module
---------------------------------------------
-
-.. automodule:: afqmctools.hamiltonian.model.director
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
 afqmctools.hamiltonian.model.ham\_class module
 ----------------------------------------------
 
