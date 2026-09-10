@@ -118,7 +118,7 @@ class TestFromDict:
         assert lattice._built is False
 
 
-class TestGeometryBelongsToTheType:
+class TestUnitcellBelongsToTheType:
     """The unit-cell geometry is a property of the lattice type: `a1`/`a2`/
     `basis` always exist, but only `CustomLattice` lets a caller set them.
 
@@ -133,14 +133,14 @@ class TestGeometryBelongsToTheType:
         ('a2', [0.0, 3.0]),
         ('basis', [[0.0, 0.0], [0.25, 0.25]]),
     ])
-    def test_from_dict_rejects_geometry_keys(self, lattice_type, key, value):
+    def test_from_dict_rejects_unitcell_keys(self, lattice_type, key, value):
         params = _params(lattice_type, **{key: value})
 
         with pytest.raises(ValueError, match="defines its own unit-cell geometry"):
             Lattice.from_dict(params)
 
     @pytest.mark.parametrize("lattice_type", sorted(LATTICE_CLASSES))
-    def test_from_dict_tolerates_geometry_keys_set_to_none(self, lattice_type):
+    def test_from_dict_tolerates_unitcell_keys_set_to_none(self, lattice_type):
         # parameter templates carrying unused keys must still work
         params = _params(lattice_type, a1=None, a2=None, basis=None)
 
@@ -148,21 +148,21 @@ class TestGeometryBelongsToTheType:
 
     @pytest.mark.parametrize("lattice_cls", sorted(LATTICE_CLASSES.values(), key=str))
     @pytest.mark.parametrize("key", ['a1', 'a2', 'basis'])
-    def test_constructors_reject_geometry_arguments(self, lattice_cls, key):
+    def test_constructors_reject_unitcell_arguments(self, lattice_cls, key):
         with pytest.raises(TypeError):
             lattice_cls(L=(3, 3), **{key: [[1.0, 1.0]]})
 
     @pytest.mark.parametrize("lattice_type", sorted(LATTICE_CLASSES))
-    def test_geometry_comes_from_the_type(self, lattice_type):
+    def test_unitcell_comes_from_the_type(self, lattice_type):
         lattice = Lattice.from_dict(_params(lattice_type))
-        a1, a2, basis = lattice._geometry()
+        a1, a2, basis = lattice._unitcell()
 
         np.testing.assert_allclose(lattice.a1, a1)
         np.testing.assert_allclose(lattice.a2, a2)
         np.testing.assert_allclose(lattice.basis, basis if basis is not None else [[0.0, 0.0]])
 
     @pytest.mark.parametrize("lattice_type", sorted(LATTICE_CLASSES))
-    def test_geometry_attributes_always_exist(self, lattice_type):
+    def test_unitcell_attributes_always_exist(self, lattice_type):
         lattice = Lattice.from_dict(_params(lattice_type))
 
         assert lattice.a1.shape == (2,)
@@ -177,14 +177,14 @@ class TestGeometryBelongsToTheType:
 
     @pytest.mark.parametrize("lattice_type", sorted(LATTICE_CLASSES))
     @pytest.mark.parametrize("attr", ['a1', 'a2', 'basis'])
-    def test_geometry_attributes_are_read_only(self, lattice_type, attr):
+    def test_unitcell_attributes_are_read_only(self, lattice_type, attr):
         lattice = Lattice.from_dict(_params(lattice_type))
 
         with pytest.raises(AttributeError):
             setattr(lattice, attr, [[9.0, 9.0]])
 
     @pytest.mark.parametrize("lattice_type", sorted(LATTICE_CLASSES))
-    def test_geometry_arrays_cannot_be_edited_in_place(self, lattice_type):
+    def test_unitcell_arrays_cannot_be_edited_in_place(self, lattice_type):
         lattice = Lattice.from_dict(_params(lattice_type))
 
         with pytest.raises(ValueError):
@@ -200,7 +200,7 @@ class TestGeometryBelongsToTheType:
         assert not hasattr(lattice.basis, 'append')
         assert lattice.nb == 2
 
-    def test_custom_geometry_is_copied_from_the_caller(self):
+    def test_custom_unitcell_is_copied_from_the_caller(self):
         a1 = np.array([2.0, 0.0])
         lattice = CustomLattice(L=(2, 2), a1=a1, a2=[0.0, 2.0])
 
@@ -242,7 +242,7 @@ class TestGeometryBelongsToTheType:
         with pytest.raises(ValueError, match="Unsupported cylinder mode"):
             Lattice.from_dict(_params('triangular', cyl_mode='ZC'))
 
-    def test_cyl_mode_geometry_is_applied_during_build(self):
+    def test_cyl_mode_unitcell_is_applied_during_build(self):
         params = _params('triangular', L1=4, L2=4, cyl_mode='XC', build=False)
         lattice = Lattice.from_dict(params)
         assert lattice.nb == 1
@@ -258,14 +258,14 @@ class TestGeometryBelongsToTheType:
         assert all(not b.flags.writeable for b in lattice.basis)
 
     def test_a_type_without_lattice_vectors_is_rejected(self):
-        class GeometrylessLattice(Lattice):
-            _type = "geometryless"
+        class UnitcellLessLattice(Lattice):
+            _type = "unitcell-less"
 
-            def _geometry(self):
+            def _unitcell(self):
                 return None, None, None
 
         with pytest.raises(ValueError, match="returned no lattice vectors"):
-            GeometrylessLattice(L=(2, 2))
+            UnitcellLessLattice(L=(2, 2))
 
     def test_unknown_keyword_is_not_swallowed(self):
         # the bug fixed above was caused by **kwargs absorbing a1/a2; unknown
@@ -274,7 +274,7 @@ class TestGeometryBelongsToTheType:
             SquareLattice(L=(3, 3), a3=[1.0, 1.0])
 
 
-class TestGeometryRegression:
+class TestUnitcellRegression:
     """Guards the dead rotation-group / `_is_valid_image_old` removal against
     any change in live geometry or neighbor maps.
     """
@@ -616,7 +616,7 @@ class TestCustomLattice:
         assert lattice.nb == 2
         assert lattice.N_sites == 9 * 2
 
-    def test_geometry_reaches_the_site_positions(self):
+    def test_unitcell_reaches_the_site_positions(self):
         a1, a2 = [2.0, 0.0], [0.0, 3.0]
         basis = [[0.0, 0.0], [0.5, 0.5]]
 

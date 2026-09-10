@@ -36,7 +36,7 @@ import scipy.spatial as spatial
 
 logger = logging.getLogger(__name__)
 
-GEOMETRY_KEYS = ('a1', 'a2', 'basis')
+UNITCELL_KEYS = ('a1', 'a2', 'basis')
 """Unit-cell geometry keys, settable only for `CustomLattice`."""
 
 
@@ -292,7 +292,7 @@ class Lattice(ABC):
     **The unit-cell geometry belongs to the lattice type, not to the caller.**
     Every instance always has an ``a1``, an ``a2`` and a ``basis``, but for the
     built-in types those define the type. The geometry is supplied by the type's
-    `_geometry()` implementation, and the constructor below — the only one —
+    `_unitcell()` implementation, and the constructor below — the only one —
     takes no geometry arguments at all.
 
     `CustomLattice` is used to define a custom lattice geometry: it is the
@@ -312,7 +312,7 @@ class Lattice(ABC):
     """Lattice type name, for reference only. Set by each concrete subclass."""
 
     @abstractmethod
-    def _geometry(self):
+    def _unitcell(self):
         """
         Return this lattice type's ``(a1, a2, basis)``.
 
@@ -360,14 +360,14 @@ class Lattice(ABC):
             Smallest nonzero distance to keep in the neighbor distance map.
             Applied when the map is first built. See `_neighbor_distance_map`.
         """
-        a1, a2, basis = self._geometry()
+        a1, a2, basis = self._unitcell()
 
         if a1 is None or a2 is None:
             raise ValueError(
-                f"{type(self).__name__}._geometry() returned no lattice vectors; "
+                f"{type(self).__name__}._unitcell() returned no lattice vectors; "
                 "every lattice type must define both 'a1' and 'a2'"
             )
-        self._set_geometry(a1, a2, [np.zeros(2)] if basis is None else basis)
+        self._set_unitcell(a1, a2, [np.zeros(2)] if basis is None else basis)
 
         self._pairs_by_distance = dict()
         self._image_pairs_by_distance = dict()
@@ -497,14 +497,14 @@ class Lattice(ABC):
             )
         lattice_cls = _LATTICE_TYPES[lattice_type]
 
-        geometry = {
-            key: params[key] for key in GEOMETRY_KEYS
+        unitcell = {
+            key: params[key] for key in UNITCELL_KEYS
             if params.get(key) is not None
         }
-        if geometry and not issubclass(lattice_cls, CustomLattice):
+        if unitcell and not issubclass(lattice_cls, CustomLattice):
             raise ValueError(
                 f"Lattice type '{lattice_type}' defines its own unit-cell geometry; "
-                f"{sorted(geometry)} can only be set for type='custom'"
+                f"{sorted(unitcell)} can only be set for type='custom'"
             )
 
         L = (
@@ -525,13 +525,13 @@ class Lattice(ABC):
             build=build,
             twist=params.get("twist", None),
             cyl_mode=params.get("cyl_mode", None),
-            **geometry,
+            **unitcell,
         )
 
     def __getitem__(self, index):
         return self.sites[index]
 
-    def _set_geometry(self, a1, a2, basis):
+    def _set_unitcell(self, a1, a2, basis):
         """
         Install the unit-cell geometry, as immutable copies.
 
@@ -691,7 +691,7 @@ class Lattice(ABC):
         Populate the lattice sites.
 
         Applying `cyl_mode` here is the one place the unit-cell geometry changes
-        after construction, and it is derived from the type's own `_geometry()`
+        after construction, and it is derived from the type's own `_unitcell()`
         rather than supplied by the caller. Building twice is an error: neither
         the geometry nor the site list changes once a lattice is built.
         """
@@ -717,7 +717,7 @@ class Lattice(ABC):
                 a1, a2 = a1[::-1], a2[::-1]
                 basis = [b[::-1] for b in basis]
 
-            self._set_geometry(a1, a2, basis)
+            self._set_unitcell(a1, a2, basis)
 
         # promised to have a1,a2 by now, so we can
         # do manipulations on them
@@ -1098,7 +1098,7 @@ class SquareLattice(Lattice):
 
     _type = "square"
 
-    def _geometry(self):
+    def _unitcell(self):
         return np.array([1., 0.]), np.array([0., 1.]), None
 
     def get_directed_pairs(self, directions=None):
@@ -1126,7 +1126,7 @@ class TriangularLattice(Lattice):
 
     _type = "triangular"
 
-    def _geometry(self):
+    def _unitcell(self):
         return np.array([1., 0.]), np.array([0.5, np.sqrt(3)/2]), None
 
 
@@ -1139,7 +1139,7 @@ class HoneycombLattice(Lattice):
 
     _type = "honeycomb"
 
-    def _geometry(self):
+    def _unitcell(self):
         # a1/a2 closer to the original triangular cell would be
         #   [1.,0.] and [0.5,sqrt(3)/2] with basis [(0,0),(0,1/sqrt(3))];
         #   the more square-like cell below follows netket's choices.
@@ -1160,7 +1160,7 @@ class KagomeLattice(Lattice):
 
     _type = "kagome"
 
-    def _geometry(self):
+    def _unitcell(self):
         # as for the honeycomb lattice, the more square-like cell here follows
         #   netket's choices rather than the original triangular cell.
         return (
@@ -1225,11 +1225,11 @@ class CustomLattice(Lattice):
     _type = "custom"
 
     def __init__(self, L=None, *, a1, a2, basis=None, **kwargs) -> None:
-        self._custom_geometry = (a1, a2, basis)
+        self._custom_unitcell = (a1, a2, basis)
         super().__init__(L=L, **kwargs)
 
-    def _geometry(self):
-        return self._custom_geometry
+    def _unitcell(self):
+        return self._custom_unitcell
 
 
 _LATTICE_TYPES = {
