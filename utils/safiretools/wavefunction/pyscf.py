@@ -21,14 +21,14 @@ the ``ortho_ao`` and ``cas`` arguments must match the ones
 `safiretools.MolecularHamiltonian.from_pyscf` was given.
 """
 
-from collections.abc import Iterable
 import logging
 
 import numpy as np
 import h5py as h5
 
-from safiretools.hamiltonian.molecular import _transform_from_scf_data
+from safiretools.hamiltonian.molecular import _get_transform_from_scf_data
 from safiretools.types import SpinSymm
+from safiretools.wavefunction.slater import make_slater, transform_slater
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ def from_pyscf(scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
     norb = scf_data['norb']
     reference_symm = SpinSymm.from_input(scf_data['walker_type'])
 
-    X, (nfzc, nfzv) = _transform_from_scf_data(basis_scf_data, ortho_ao, cas)
+    X, (nfzc, nfzv) = _get_transform_from_scf_data(basis_scf_data, ortho_ao, cas)
 
     nelec = tuple(n - nfzc for n in nelec)
     norb -= (nfzc + nfzv)
@@ -102,11 +102,11 @@ def from_pyscf(scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
                                    nfzc=nfzc, nfzv=nfzv)
     _check_occupations(occa, occb, nelec, reference_symm)
 
-    orbitals = _make_slater(reference_symm, scf_data['mo_coeff'],
-                            (occa, occb), nelec)
+    orbitals = make_slater(reference_symm, scf_data['mo_coeff'],
+                           (occa, occb), nelec)
 
     overlap = scf_data['mol'].intor('int1e_ovlp')
-    orbitals = _transform_slater(
+    orbitals = transform_slater(
         orbitals, overlap @ X[:, nfzc:X.shape[-1] - nfzv]) + 0j
 
     if spin_symm is None:
@@ -175,64 +175,8 @@ def from_pyscf_cas(mol, cas_chkfile, tol=1e-4, max_det=None):
 
 
 # ----------------------------------------------------------------------
-# building the Slater matrix
+# reading a reference's occupations
 # ----------------------------------------------------------------------
-
-def _make_slater_closed(mo_coeffs, nocc: Iterable, nelec: int):
-    """
-    One spin channel's Slater matrix: `nelec` columns selecting the orbitals
-    `nocc` out of `mo_coeffs`.
-    """
-    selection = np.zeros((mo_coeffs.shape[1], nelec))
-    selection[nocc, np.arange(nelec)] = 1
-
-    return mo_coeffs @ selection + 0j
-
-
-def _make_slater_collinear(mo_coeffs, nocc, nelec):
-    """
-    Both spin channels' Slater matrices, concatenated column-wise. `mo_coeffs`
-    may be one matrix (ROHF) or one per spin (UHF).
-    """
-    if len(nocc) != len(nelec):
-        raise ValueError(
-            f"nocc describes {len(nocc)} spin channels and nelec {len(nelec)}"
-        )
-
-    if mo_coeffs.ndim == 3:
-        blocks = [_make_slater_closed(spin_coeffs, spin_nocc, spin_nelec)
-                  for spin_coeffs, spin_nocc, spin_nelec
-                  in zip(mo_coeffs, nocc, nelec)]
-    else:
-        blocks = [_make_slater_closed(mo_coeffs, spin_nocc, spin_nelec)
-                  for spin_nocc, spin_nelec in zip(nocc, nelec)]
-
-    return np.concatenate(blocks, axis=1)
-
-
-def _make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
-    """
-    The Slater matrix for a reference of the given spin symmetry, in the column
-    layout `safiretools.NOMSDWavefunction` takes.
-    """
-    mo_coeffs = np.asarray(mo_coeffs)
-
-    if spin_symm is SpinSymm.CLOSED:
-        return _make_slater_closed(mo_coeffs, nocc[0], nelec[0])
-    if spin_symm is SpinSymm.COLLINEAR:
-        return _make_slater_collinear(mo_coeffs, nocc, nelec)
-    return _make_slater_closed(mo_coeffs, nocc[0], sum(nelec))
-
-
-def _transform_slater(orbitals, transform):
-    """
-    Express `orbitals` in the basis `transform` maps into, promoting the
-    transformation to the spinor basis when the orbitals are noncollinear.
-    """
-    if transform.shape[0] != orbitals.shape[0]:
-        transform = np.kron(np.eye(2), transform)
-    return transform.conj().T @ orbitals
-
 
 def _occupied_indices(mo_occ, spin_symm: SpinSymm, nfzc=0, nfzv=0):
     """

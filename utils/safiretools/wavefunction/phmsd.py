@@ -27,9 +27,9 @@ import numpy as np
 
 from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
-from safiretools.wavefunction.base import (
+from safiretools.wavefunction.base import Wavefunction
+from safiretools.wavefunction.slater import (
     ORTHONORMAL_TOL,
-    Wavefunction,
     is_orthonormal,
     modified_gram_schmidt,
 )
