@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from safiretools.hamiltonian.base import Hamiltonian, hamiltonian_format
+from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
 from safiretools.hamiltonian.periodic import (
     FileHandler,
     Partition,
@@ -205,6 +206,90 @@ class TestKpointFormat:
             dims = fh5['Hamiltonian/dims'][...]
         assert dims[2] == 2
         assert dims[3] == hamiltonian.nmo_tot
+
+
+def _mirrored_hamiltonian(nmo=2, nchol=2):
+    """
+    A 3-k-point Hamiltonian whose ``Q = 2`` block is not stored, since
+    ``minus_k[2] == 1 < 2`` — the layout every k-point factorization writes.
+    """
+    nkpts = 3
+    rng = np.random.default_rng(11)
+    hcore = [rng.random((nmo, nmo)) + 1j * rng.random((nmo, nmo))
+             for _ in range(nkpts)]
+    chol = {Q: rng.random((nkpts, nmo * nmo * nchol))
+               + 1j * rng.random((nkpts, nmo * nmo * nchol))
+            for Q in (0, 1)}
+
+    return PeriodicHamiltonian(
+        hcore=hcore, chol=chol, kpts=rng.random((nkpts, 3)),
+        nmo_pk=[nmo] * nkpts,
+        # k1 - k2 = Q on a 1D three-point mesh
+        qk_to_k2=np.array([[0, 1, 2], [2, 0, 1], [1, 2, 0]], dtype=np.int32),
+        minus_k=np.array([0, 2, 1], dtype=np.int32),
+        nchol_pk=np.array([nchol, nchol, 0], dtype=np.int32),
+        enuc=0.5, nelec=(2, 2),
+    )
+
+
+class TestFcidump:
+    """The FCIDUMP external format, over the combined basis of every k-point."""
+
+    def test_it_matches_the_writer_on_a_full_momentum_set(self, tmp_path):
+        hamiltonian = _kpoint_hamiltonian()
+        chol = [hamiltonian.chol[Q] for Q in range(hamiltonian.nkpts)]
+
+        from_method = tmp_path / 'method'
+        hamiltonian.to_fcidump(from_method, tol=1e-12)
+
+        direct = tmp_path / 'direct'
+        write_fcidump_kpoint(direct, hamiltonian.hcore, chol, hamiltonian.enuc,
+                             hamiltonian.nmo_tot, hamiltonian.nelec,
+                             hamiltonian.nmo_pk, hamiltonian.nchol_pk,
+                             hamiltonian.qk_to_k2, tol=1e-12)
+
+        assert from_method.read_text() == direct.read_text()
+
+    def test_the_unstored_momentum_transfer_is_reconstructed(self):
+        r"""
+        :math:`L^{-Q}_{k_1}[i, j, n] = (L^{Q}_{k_2}[j, i, n])^*` with
+        :math:`k_2 = \mathrm{qk\_to\_k2}[-Q, k_1]`, and the vector count comes
+        from the partner, where the factorization actually ran.
+        """
+        hamiltonian = _mirrored_hamiltonian()
+        nkpts, nmo, nchol = hamiltonian.nkpts, hamiltonian.nmo_max, 2
+
+        chol, nchol_pk = hamiltonian._chol_all_momenta()
+
+        assert len(chol) == nkpts
+        assert np.array_equal(nchol_pk, [nchol, nchol, nchol])
+        assert np.array_equal(hamiltonian.nchol_pk, [nchol, nchol, 0])
+
+        for Q in (0, 1):
+            assert np.array_equal(chol[Q], hamiltonian.chol[Q])
+
+        stored = hamiltonian.chol[1].reshape(nkpts, nmo, nmo, nchol)
+        expected = np.array([stored[k2].conj().swapaxes(0, 1)
+                             for k2 in hamiltonian.qk_to_k2[2]])
+        assert np.allclose(chol[2], expected.reshape(nkpts, nmo * nmo * nchol))
+
+    def test_a_momentum_transfer_with_no_partner_is_rejected(self, tmp_path):
+        hamiltonian = _mirrored_hamiltonian()
+        del hamiltonian.chol[1]
+
+        with pytest.raises(ValueError, match="momentum transfer 1, nor for its -Q"):
+            hamiltonian.to_fcidump(tmp_path / 'FCIDUMP')
+
+    def test_uneven_orbital_counts_are_rejected(self, tmp_path):
+        hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
+        hamiltonian.nmo_pk = np.array([3, 2])
+
+        with pytest.raises(ValueError, match="different orbital counts"):
+            hamiltonian.to_fcidump(tmp_path / 'FCIDUMP')
+
+    def test_a_spinor_basis_is_not_implemented(self, tmp_path):
+        with pytest.raises(NotImplementedError, match="spatial-orbital basis"):
+            _kpoint_hamiltonian().to_fcidump(tmp_path / 'FCIDUMP', use_spinor=True)
 
 
 # ----------------------------------------------------------------------
