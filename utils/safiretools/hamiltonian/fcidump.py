@@ -16,6 +16,12 @@ FCIDUMP stores integrals in chemists' notation, one matrix element per line as
 ``value i k j l``, with :math:`(ik|jl) = \langle ij|kl \rangle`. Indices are
 1-based, and ``0`` in the index columns marks a one-body element (``j == l ==
 0``) or the constant (all zero).
+
+This module is the implementation of that format and is dev-facing throughout.
+A user reaches it through `~safiretools.MolecularHamiltonian.from_fcidump` /
+`~safiretools.MolecularHamiltonian.to_fcidump` and
+`~safiretools.PeriodicHamiltonian.to_fcidump`, which supply the Hamiltonian's
+own integrals, electron count and dimensions.
 """
 
 import ast
@@ -531,8 +537,8 @@ def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
     if use_spinor:
         raise NotImplementedError(
             "Conversion to a spinor basis is not implemented for k-point "
-            "Hamiltonians. Instead, write the FCIDUMP in the spatial basis and "
-            "convert it afterwards with h1_spat2spin/h2_spat2spin."
+            "Hamiltonians. Write the FCIDUMP in the spatial-orbital basis "
+            "instead, with use_spinor=False."
         )
 
     nkp = len(nmo_pk)
