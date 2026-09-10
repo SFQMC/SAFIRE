@@ -55,6 +55,8 @@ decision.
   `Lattice` object.
 - One `PeriodicCholesky` solver with a `kp_sym` flag, and a supercell is the Γ point of the
   supercell.
+- FCIDUMP is reached only through the Hamiltonian classes: `MolecularHamiltonian.from_fcidump` /
+  `.to_fcidump` and `PeriodicHamiltonian.to_fcidump`. `hamiltonian/fcidump.py` is dev-facing.
 
 **Lattice**
 
@@ -143,8 +145,8 @@ check stays — at Phase 9 it simply stops testing for afqmctools' type as well.
 safiretools/
 ├── __init__.py            # curated flat re-exports; this list defines what is user-facing.
 │                           #   Deliberately NOT re-exported: the concrete Lattice subclasses,
-│                           #   HamiltonianComponent, and the FCIDUMP format internals
-│                           #   (fcidump_header, check_sym, fmt_integral)
+│                           #   HamiltonianComponent, and all of hamiltonian/fcidump.py,
+│                           #   which is reached through from_fcidump/to_fcidump
 ├── types.py                # canonical SpinSymm and HamiltonianFormat enums — dependency-free,
 │                           #   no upward imports
 ├── hdf5.py                  # HDF5 read/write primitives — dependency-free, top-level like
@@ -168,7 +170,8 @@ safiretools/
 │   │                          #   afqmctools/systems/lattice.py
 │   ├── molecular.py           # MolecularHamiltonian(Hamiltonian) — from hamiltonian/mol.py
 │   ├── periodic.py            # PeriodicHamiltonian(Hamiltonian) — merges kpoint.py+supercell.py
-│   └── fcidump.py             # FCIDUMP external-format I/O
+│   └── fcidump.py             # FCIDUMP external-format I/O — dev-facing, driven by the
+│                              #   Hamiltonian classes' from_fcidump/to_fcidump
 ├── wavefunction/
 │   ├── base.py                # Wavefunction ABC — spin_symm, nelec, nmo; implements
 │   │                          #   to_hdf5()/from_hdf5() ONCE, not per-subclass
@@ -555,6 +558,62 @@ supercell's complex Cholesky vectors.
 > `write_dense(real_chol=False)` has always produced a file that reader rejects. Preserved as-is;
 > `safiretools`' reader ignores the flag and takes the dtypes from the datasets.
 
+## FCIDUMP is an external format the Hamiltonian classes own
+
+FCIDUMP is a Hamiltonian on disk, so it is read and written the way every other Hamiltonian format
+is, through the class that holds those integrals.
+
+```python
+hamiltonian = MolecularHamiltonian.from_fcidump("FCIDUMP", cholesky_tol=1e-5)
+hamiltonian.to_fcidump("FCIDUMP.out")     # and PeriodicHamiltonian.to_fcidump likewise
+```
+
+`hamiltonian/fcidump.py` keeps the format itself — parsing, index symmetry, line formatting, the
+spatial-to-spinor conversion — and is **dev-facing in its entirety**.
+
+**There is no `PeriodicHamiltonian.from_fcidump`.** A
+FCIDUMP records one combined orbital basis and no k-point structure at all, so there is nothing in
+the file to rebuild a k-point factorization from; a FCIDUMP written from a periodic Hamiltonian
+reads back as a molecular one.
+
+**The write-time arguments that were Hamiltonian state are gone**, exactly as for `to_hdf5`:
+`hcore`, `chol`, `enuc`, `nmo`, `nelec` all come from the instance, and `chol_is_eri` disappears
+because a `MolecularHamiltonian` always holds a factorization. What is left is the format's own
+knobs — `tol`, `ctol`, `sym`, `cplx`, `paren`, `use_spinor`.
+
+**`to_fcidump` fills in the momentum transfers a k-point file does not store.** `chol` holds only
+`Q <= minus_k[Q]`; the FCIDUMP needs all of them, so `_chol_all_momenta` reconstructs each
+partner as
+`L[-Q][k1][i,j,n] == conj(L[Q][k2][j,i,n])` with `k2 = qk_to_k2[-Q, k1]`, and fills
+in the `nchol_pk` entry, which is zero wherever nothing was factorized. This is the same expansion
+any reader of the on-disk format performs — afqmctools did it in `get_kpoint_chol` at read time —
+so it is not new behavior, only relocated to the one place that needs the full set.
+
+**Uneven per-k-point orbital counts are rejected rather than written wrongly.** The FCIDUMP orbital
+index is the combined `k * nmo_pk + i`, and `write_fcidump_kpoint` walks it as though every k-point
+carried `nmo_max` orbitals, so a mesh with different counts per k-point (a nonzero `lindep_cutoff`
+in `get_ortho_ao`) silently produced garbage. `PeriodicHamiltonian.to_fcidump` raises `ValueError`
+instead. The underlying free function is left as it is.
+
+**A spinor-basis FCIDUMP is still not available for a k-point Hamiltonian**, and `to_fcidump` keeps
+`use_spinor` for the sake of saying so. Its `NotImplementedError` no longer names
+`h1_spat2spin`/`h2_spat2spin` (a user-facing message may not name something the user cannot
+import) and points at `use_spinor=False` instead. On the molecular side `use_spinor` works, and is
+refused only for a Hamiltonian already in a spin-orbital basis, where converting again would
+silently double the basis a second time.
+
+### The orbital-pair order between the two is load-bearing
+
+`read_fcidump` returns the chemists' `(ik|jl)` at `[i, k, j, l]`, while the Cholesky decomposition
+`from_integrals` performs needs the *hermitian* pair matrix `{(ik), (lj)}`.
+`from_fcidump` therefore transposes `(0, 1, 3, 2)` on the way in.
+
+> The same transpose was sitting in `tutorials/molecules/03` as a bare
+> `np.transpose(H2_ijkl, (0,1,3,2))` with the comment "match the eri convention from_integrals()
+> expects". It was correct and load-bearing, not decorative. `from_integrals`' own `eri`
+> documentation still says only "chemists' notation `(ij|kl)`", which is the ambiguous half of the
+> story; it is left as it is for now.
+
 ## Periodic Cholesky: one solver, one flag
 
 `kpoint.py`'s `KPCholesky` and `supercell.py`'s `Cholesky` become a single `PeriodicCholesky` with a
@@ -597,11 +656,13 @@ does not apply — and `kpoint_symmetry=True` is the path that runs in parallel.
     deep paths included, since its audience is reading the tree anyway.
   - **User-facing documentation — tutorials, examples, reference prose, and error messages a user
     can hit — shows only top-level imports.** If a doc or an exception needs to name something, that
-    something gets promoted; writing the deep path is not an option. This is a forcing function: it
-    turns "I'll just reference the module" into an explicit decision about whether the thing is
-    public. It is what promoted the FCIDUMP I/O (`read_fcidump`, `read_fcidump_header`,
-    `write_fcidump`, `write_fcidump_kpoint`, plus `h1_spat2spin`/`h2_spat2spin`, which
-    `write_fcidump_kpoint`'s own `NotImplementedError` tells users to call).
+    something gets promoted or the thing it names is reworked; writing the deep path is not an
+    option. This is a forcing function: it turns "I'll just reference the module" into an explicit
+    decision about whether the thing is public. The FCIDUMP I/O is where it bit hardest. Its six
+    functions were re-exported for exactly this reason — a tutorial and a `NotImplementedError`
+    named them — and the answer was to give the *Hamiltonian classes* the FCIDUMP entry points
+    instead (see **FCIDUMP is an external format the Hamiltonian classes own**), which took the whole
+    module off the public surface and made both the tutorial and the exception shorter.
   - **Reference docs document the public surface from `safiretools` itself** (`automodule::
     safiretools` with `:members:` and `:imported-members:`), so that the short paths resolve as
     cross-references. Autodoc'ing the same classes from their implementation modules instead makes
@@ -675,7 +736,7 @@ that differently** (user call):
 
 - **`Hamiltonian`** keeps only `from_hdf5` on the base class. Every domain factory is defined on the
   subclass that builds it — `LatticeHamiltonian.from_dict`,
-  `MolecularHamiltonian.from_integrals`/`.from_pyscf`,
+  `MolecularHamiltonian.from_integrals`/`.from_pyscf`/`.from_fcidump`,
   `PeriodicHamiltonian.from_pyscf`/`.write_from_pyscf`.
 - **`Wavefunction`** puts *every* factory on the base class, which picks the representation.
 
@@ -715,7 +776,7 @@ resolving the format.
 |---|---|---|
 | `Hamiltonian.from_hdf5` | base — shared | `hamiltonian_format(path)`, then `issubclass(target, cls)` |
 | `LatticeHamiltonian.from_dict` | subclass | the class named at the call site |
-| `MolecularHamiltonian.from_integrals` / `.from_pyscf` | subclass | the class named at the call site |
+| `MolecularHamiltonian.from_integrals` / `.from_pyscf` / `.from_fcidump` | subclass | the class named at the call site |
 | `PeriodicHamiltonian.from_pyscf` / `.write_from_pyscf` | subclass | the class named at the call site |
 | `Wavefunction.from_hdf5` | base | `wavefunction_format(path)`, then `issubclass(target, cls)` |
 | `Wavefunction.from_free_electron` / `.from_pyscf` | base | fixed NOMSD, `_check_representation` |
@@ -803,7 +864,10 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   Two things this does **not** touch:
 
   - **FCIDUMP keeps its `nelec`.** `NELEC` is a field of that external format's own header, so
-    `read_fcidump`, `read_fcidump_header`, `write_fcidump` and `write_fcidump_kpoint` are unaffected.
+    `hamiltonian/fcidump.py` is unaffected. The two entry points are not: `to_fcidump` writes the
+    header from `self.nelec` today, so it would take an explicit `nelec` argument — the format
+    demands the field, and there would be nothing on the Hamiltonian to fill it from.
+    `from_fcidump` reads it and would simply stop passing it on.
   - **The periodic generator still needs an electron count as an argument**, transiently:
     `from_pyscf`/`write_from_pyscf` pass `sum(nelec)` to `_zero_electron_energy`, which computes the
     Madelung/`exxdiv` correction that goes into `enuc`. Deleting that argument along with the
