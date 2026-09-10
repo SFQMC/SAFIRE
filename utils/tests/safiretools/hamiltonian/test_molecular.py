@@ -16,6 +16,7 @@ import pytest
 
 from safiretools import SpinSymm
 from safiretools.hamiltonian.base import Hamiltonian, hamiltonian_format
+from safiretools.hamiltonian.fcidump import read_fcidump_header
 from safiretools.hamiltonian.molecular import (
     MolecularHamiltonian,
     chunked_cholesky,
@@ -176,6 +177,113 @@ class TestHdf5:
 
         with pytest.raises(ValueError, match="no Hamiltonian in a format"):
             Hamiltonian.from_hdf5(path)
+
+
+class TestFcidump:
+    """The FCIDUMP external format, reached through the two class methods."""
+
+    def test_round_trip(self, random_hamiltonian, tmp_path):
+        nmo, hcore, chol, _ = random_hamiltonian
+        hamiltonian = MolecularHamiltonian.from_integrals(
+            hcore, chol=chol, enuc=1.5, nelec=(3, 2))
+
+        path = tmp_path / 'FCIDUMP'
+        hamiltonian.to_fcidump(path, tol=1e-12)
+        restored = MolecularHamiltonian.from_fcidump(path, cholesky_tol=1e-10)
+
+        assert restored.nmo == nmo
+        assert restored.nelec == (3, 2)
+        assert np.isclose(restored.enuc, 1.5)
+        assert np.allclose(restored.hcore, hcore)
+
+        eris = (hamiltonian.chol @ hamiltonian.chol.conj().T)
+        assert np.allclose(restored.chol @ restored.chol.conj().T, eris, atol=1e-6)
+
+    def test_complex_integrals_round_trip(self, tmp_path):
+        r"""
+        Pins the orbital-pair order the decomposition needs. FCIDUMP holds the
+        chemists' :math:`(ik|jl)`, whose hermitian pair matrix is
+        :math:`\{(ik), (lj)\}` — the same tensor with its last two indices
+        swapped. For real integrals the two coincide; for complex ones the
+        wrong one is not even hermitian, so its decomposition is meaningless.
+        """
+        rng = np.random.default_rng(3)
+        nmo = 3
+
+        # a physically shaped Cholesky matrix: L_ij = conj(L_ji) per vector
+        vectors = (rng.standard_normal((nmo, nmo, 4))
+                   + 1j * rng.standard_normal((nmo, nmo, 4)))
+        vectors = vectors + vectors.transpose((1, 0, 2)).conj()
+        chol = vectors.reshape(nmo * nmo, 4)
+
+        hcore = rng.standard_normal((nmo, nmo)) + 1j * rng.standard_normal((nmo, nmo))
+        hcore = hcore + hcore.conj().T
+
+        path = tmp_path / 'FCIDUMP'
+        MolecularHamiltonian(hcore=hcore, chol=chol, nelec=(2, 2)).to_fcidump(
+            path, tol=1e-12)
+        restored = MolecularHamiltonian.from_fcidump(path, cholesky_tol=1e-10)
+
+        assert np.allclose(restored.hcore, hcore)
+        assert np.allclose(restored.chol @ restored.chol.conj().T,
+                           chol @ chol.conj().T, atol=1e-6)
+
+    @pytest.mark.parametrize("nelec,expected", [((2, 2), SpinSymm.CLOSED),
+                                                ((3, 1), SpinSymm.COLLINEAR)])
+    def test_the_header_supplies_the_spin_symmetry(self, random_hamiltonian,
+                                                   tmp_path, nelec, expected):
+        _, hcore, chol, _ = random_hamiltonian
+        path = tmp_path / 'FCIDUMP'
+        MolecularHamiltonian(hcore=hcore, chol=chol.T, nelec=nelec).to_fcidump(path)
+
+        restored = MolecularHamiltonian.from_fcidump(path)
+        assert restored.nelec == nelec
+        assert restored.spin_symm is expected
+
+    def test_an_explicit_spin_symmetry_wins(self, random_hamiltonian, tmp_path):
+        """A spinor-basis FCIDUMP is not self-describing, so it has to be named."""
+        _, hcore, chol, _ = random_hamiltonian
+        path = tmp_path / 'FCIDUMP'
+        MolecularHamiltonian(hcore=hcore, chol=chol.T, nelec=(3, 1)).to_fcidump(path)
+
+        restored = MolecularHamiltonian.from_fcidump(path, spin_symm='closed')
+        assert restored.spin_symm is SpinSymm.CLOSED
+
+    def test_a_spinor_basis_doubles_the_orbital_count(self, random_hamiltonian,
+                                                      tmp_path):
+        nmo, hcore, chol, _ = random_hamiltonian
+        path = tmp_path / 'FCIDUMP'
+        MolecularHamiltonian(hcore=hcore, chol=chol.T).to_fcidump(
+            path, use_spinor=True, tol=1e-12)
+
+        assert read_fcidump_header(path)['nbasis'] == 2 * nmo
+
+    def test_a_noncollinear_hamiltonian_cannot_be_converted_again(self,
+                                                                  random_hamiltonian,
+                                                                  tmp_path):
+        nmo, _, chol, _ = random_hamiltonian
+        hamiltonian = MolecularHamiltonian(
+            hcore=np.zeros((2 * nmo, 2 * nmo)),
+            chol=np.zeros(((2 * nmo)**2, 4)),
+            spin_symm=SpinSymm.NONCOLLINEAR)
+
+        with pytest.raises(ValueError, match="already in a spin-orbital one"):
+            hamiltonian.to_fcidump(tmp_path / 'FCIDUMP', use_spinor=True)
+
+    def test_a_cholesky_matrix_in_the_other_basis_is_rejected(self,
+                                                              random_hamiltonian,
+                                                              tmp_path):
+        """
+        ``__init__`` allows a spatial-basis Cholesky matrix beside a
+        spin-orbital ``hcore``; a FCIDUMP holds one basis, so it cannot.
+        """
+        nmo, _, chol, _ = random_hamiltonian
+        hamiltonian = MolecularHamiltonian(
+            hcore=np.zeros((2 * nmo, 2 * nmo)), chol=chol.T,
+            spin_symm=SpinSymm.NONCOLLINEAR)
+
+        with pytest.raises(ValueError, match="have to be in the same one"):
+            hamiltonian.to_fcidump(tmp_path / 'FCIDUMP')
 
 
 class TestModifiedCholesky:

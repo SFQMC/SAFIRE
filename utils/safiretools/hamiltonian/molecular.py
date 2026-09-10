@@ -19,8 +19,10 @@ stored densely as ``hcore`` plus the Cholesky matrix ``chol`` with elements
 ``RealDenseHamiltonian`` reads.
 
 The Cholesky decomposition itself is generated either from a PySCF ``mol``
-object (`MolecularHamiltonian.from_pyscf`) or from integrals supplied directly
-(`MolecularHamiltonian.from_integrals`).
+object (`MolecularHamiltonian.from_pyscf`), from integrals supplied directly
+(`MolecularHamiltonian.from_integrals`), or from a plain-text FCIDUMP
+(`MolecularHamiltonian.from_fcidump`). `MolecularHamiltonian.to_fcidump` writes
+that external format back out.
 """
 
 import logging
@@ -35,6 +37,7 @@ from safiretools.hamiltonian.base import (
     open_for_hamiltonian,
     write_hamiltonian_format,
 )
+from safiretools.hamiltonian.fcidump import read_fcidump, write_fcidump
 from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
 
@@ -297,6 +300,64 @@ class MolecularHamiltonian(Hamiltonian):
             real_chol=real_chol,
         )
 
+    @classmethod
+    def from_fcidump(cls, path, symmetry=None, cholesky_tol=1e-6, spin_symm=None,
+                     verbose=False) -> "MolecularHamiltonian":
+        r"""
+        Build a Hamiltonian from a plain-text FCIDUMP file.
+
+        FCIDUMP stores the two-electron integrals in full rather than
+        factorized, so they are Cholesky-decomposed here, as
+        `from_integrals` does for an `eri` tensor.
+
+        The file's ``NELEC``/``MS2`` header fields supply `nelec`, and the
+        integrals are reoriented from FCIDUMP's :math:`(ik|jl)` to the
+        :math:`\{(ik), (lj)\}` pair order the decomposition needs.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            FCIDUMP file to read.
+        symmetry : int, optional
+            Permutational symmetry of the two-electron integrals, 1, 4 or 8.
+            Read from the file's header when omitted, since some codes
+            misreport it there.
+        cholesky_tol : float, optional
+            Tolerance for decomposing the two-electron integrals. Default 1e-6.
+        spin_symm : SpinSymm or str or int, optional
+            Spin symmetry. Defaults to `SpinSymm.CLOSED` when the header's
+            ``MS2`` is zero and `SpinSymm.COLLINEAR` otherwise. Pass
+            `SpinSymm.NONCOLLINEAR` for a FCIDUMP already written in a spinor
+            basis, which the file itself does not record.
+        verbose : bool, optional
+            Log what was read and the decomposition's convergence.
+
+        Returns
+        -------
+        MolecularHamiltonian
+
+        Raises
+        ------
+        ValueError
+            If the header has no end marker, or names a permutational symmetry
+            other than 1, 4 or 8.
+        """
+        hcore, integrals, enuc, nelec = read_fcidump(path, symmetry=symmetry,
+                                                     verbose=verbose)
+
+        # read_fcidump hands back the chemists' (ik|jl) at [i, k, j, l], while
+        #   the decomposition wants the hermitian pair matrix {(ik), (lj)}. The
+        #   two coincide for real integrals, and do not for complex ones.
+        eri = integrals.transpose((0, 1, 3, 2))
+
+        if spin_symm is None:
+            spin_symm = (SpinSymm.CLOSED if nelec[0] == nelec[1]
+                         else SpinSymm.COLLINEAR)
+
+        return cls.from_integrals(hcore=hcore, eri=eri, enuc=enuc, nelec=nelec,
+                                  spin_symm=spin_symm, cholesky_tol=cholesky_tol,
+                                  verbose=verbose)
+
     # ------------------------------------------------------------------
     # serialization
     # ------------------------------------------------------------------
@@ -325,6 +386,64 @@ class MolecularHamiltonian(Hamiltonian):
                 complex_chol=self.complex_chol,
                 ortho=self.ortho,
             )
+
+    def to_fcidump(self, path, tol=1e-8, ctol=1e-12, sym=1, cplx=True,
+                   paren=False, use_spinor=False) -> None:
+        """
+        Write this Hamiltonian as a plain-text FCIDUMP file.
+
+        The two-electron integrals are reconstructed from the Cholesky matrix
+        and written out in full, so the file is much larger than the HDF5
+        `to_hdf5` writes and this is only practical for small basis sets.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            FCIDUMP file to write. Overwritten if it exists.
+        tol : float, optional
+            Only write integrals above this magnitude. Default 1e-8.
+        ctol : float, optional
+            Largest imaginary part tolerated when `cplx` is False.
+            Default 1e-12.
+        sym : int, optional
+            Write only the symmetry-inequivalent integrals of this
+            permutational symmetry, 1, 4 or 8. Default 1, i.e. everything.
+        cplx : bool, optional
+            Write in the complex format. Default True.
+        paren : bool, optional
+            Write complex values parenthesized as ``(real,imag)`` rather than
+            in two columns. Which one a reader wants depends on the code.
+        use_spinor : bool, optional
+            Convert the spatial-orbital integrals to a spinor basis, doubling
+            the orbital count, before writing.
+
+        Raises
+        ------
+        ValueError
+            If the Cholesky matrix is in the spatial-orbital basis while
+            ``hcore`` is in the spin-orbital one, if `use_spinor` is asked of a
+            Hamiltonian that is already in a spin-orbital basis, or if `cplx`
+            is False and the integrals have imaginary parts above `ctol`.
+        """
+        nbasis = self.hcore.shape[0]
+
+        if self.chol.shape[0] != nbasis**2:
+            raise ValueError(
+                f"the Cholesky matrix spans {self.chol.shape[0]} orbital pairs but "
+                f"hcore spans {nbasis**2}; FCIDUMP holds one basis, so both have "
+                "to be in the same one"
+            )
+
+        if use_spinor and self.npol == 2:
+            raise ValueError(
+                "use_spinor converts spatial-orbital integrals to a spinor basis, "
+                f"and this {self.spin_symm.label} Hamiltonian is already in a "
+                "spin-orbital one"
+            )
+
+        write_fcidump(path, self.hcore, self.chol, self.enuc, nbasis, self.nelec,
+                      tol=tol, ctol=ctol, sym=sym, cplx=cplx, paren=paren,
+                      use_spinor=use_spinor)
 
     @classmethod
     def _read_hdf5(cls, path, fmt: str) -> "MolecularHamiltonian":
