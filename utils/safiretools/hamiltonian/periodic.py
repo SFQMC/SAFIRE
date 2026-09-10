@@ -55,6 +55,7 @@ from safiretools.hamiltonian.base import (
     open_for_hamiltonian,
     write_hamiltonian_format,
 )
+from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
 from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
 
@@ -1115,6 +1116,123 @@ class PeriodicHamiltonian(Hamiltonian):
             kp_group = fh5.create_group(KPOINT_GROUP)
             for Q, L in self.chol.items():
                 kp_group.create_dataset(f"L{Q}", data=to_complex(L))
+
+    def to_fcidump(self, path, tol=1e-8, ctol=1e-12, sym=1, cplx=True,
+                   paren=False, use_spinor=False) -> None:
+        """
+        Write this Hamiltonian as a plain-text FCIDUMP file, over the combined
+        basis of every k-point.
+
+        The two-electron integrals are reconstructed from the Cholesky vectors
+        and written out in full, so the file is far larger than the HDF5
+        `to_hdf5` writes and this is only practical for small cells and meshes.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            FCIDUMP file to write. Overwritten if it exists.
+        tol : float, optional
+            Only write integrals above this magnitude. Default 1e-8.
+        ctol : float, optional
+            Largest imaginary part tolerated when `cplx` is False.
+            Default 1e-12.
+        sym : int, optional
+            Write only the symmetry-inequivalent integrals of this
+            permutational symmetry, 1, 4 or 8. Default 1, i.e. everything.
+        cplx : bool, optional
+            Write in the complex format. Default True, and what a k-point
+            factorization normally needs.
+        paren : bool, optional
+            Write complex values parenthesized as ``(real,imag)`` rather than
+            in two columns.
+        use_spinor : bool, optional
+            Not implemented for a k-point Hamiltonian; see below.
+
+        Raises
+        ------
+        ValueError
+            If the k-points do not all carry the same number of orbitals, or if
+            `cplx` is False and the integrals have imaginary parts above `ctol`.
+        NotImplementedError
+            If `use_spinor` is set.
+
+        Notes
+        -----
+        The orbital index of the FCIDUMP is the combined
+        ``k * nmo_pk + i``, which the writer assumes to be laid out uniformly,
+        so a mesh whose k-points carry different orbital counts is rejected
+        rather than written wrongly. That happens when linear dependencies are
+        removed per k-point, i.e. when ``get_ortho_ao`` is given a nonzero
+        ``lindep_cutoff``.
+        """
+        if len(set(int(nmo) for nmo in self.nmo_pk)) > 1:
+            raise ValueError(
+                f"the k-points carry different orbital counts ({list(self.nmo_pk)}), "
+                "which the combined FCIDUMP orbital index cannot express"
+            )
+
+        chol, nchol_pk = self._chol_all_momenta()
+
+        write_fcidump_kpoint(path, self.hcore, chol, self.enuc, self.nmo_tot,
+                             self.nelec, self.nmo_pk, nchol_pk, self.qk_to_k2,
+                             tol=tol, sym=sym, paren=paren, cplx=cplx, ctol=ctol,
+                             use_spinor=use_spinor)
+
+    def _chol_all_momenta(self):
+        r"""
+        Every momentum transfer's Cholesky block in :math:`Q` order, and the
+        Cholesky-vector count that goes with each.
+
+        `chol` stores only the momentum transfers with ``Q <= minus_k[Q]``; the
+        partner of each is recovered by remapping the k-points and transposing
+        the orbital pair,
+
+        .. math:: L^{-Q}_{k_1}[i, j, n] = \big(L^{Q}_{k_2}[j, i, n]\big)^*,
+                  \quad k_2 = \mathrm{qk\_to\_k2}[-Q, k_1]
+
+        which is what any reader of the on-disk format has to do as well.
+        `nchol_pk` is zero at a reconstructed momentum transfer, since nothing
+        was factorized there, so it comes back filled in from the partner.
+
+        Returns
+        -------
+        chol : list of numpy.ndarray
+            One ``(nkpts, nmo_max**2 * nchol_Q)`` block per momentum transfer.
+        nchol_pk : numpy.ndarray
+            Cholesky-vector count per momentum transfer.
+
+        Raises
+        ------
+        ValueError
+            If neither a momentum transfer nor its partner has a block.
+        """
+        nmo = self.nmo_max
+        nchol_pk = np.array(self.nchol_pk, dtype=np.int32)
+        blocks = []
+
+        for Q in range(self.nkpts):
+            if Q in self.chol:
+                blocks.append(np.asarray(self.chol[Q]))
+                continue
+
+            partner = int(self.minus_k[Q])
+            if partner not in self.chol:
+                raise ValueError(
+                    f"no Cholesky vectors for momentum transfer {Q}, nor for its "
+                    f"-Q partner {partner}"
+                )
+
+            nchol = int(nchol_pk[partner])
+            nchol_pk[Q] = nchol
+
+            stored = np.asarray(self.chol[partner]).reshape(self.nkpts, nmo, nmo,
+                                                            nchol)
+            block = np.empty_like(stored)
+            for k1 in range(self.nkpts):
+                block[k1] = stored[self.qk_to_k2[Q][k1]].transpose(1, 0, 2).conj()
+            blocks.append(block.reshape(self.nkpts, nmo * nmo * nchol))
+
+        return blocks, nchol_pk
 
     @classmethod
     def _read_hdf5(cls, path, fmt: str) -> "PeriodicHamiltonian":
