@@ -29,13 +29,13 @@ HamiltonianTypes peek_hamiltonian_type(const HamiltonianParameters& params,
 void apply_defaults(WavefunctionParameters& params, HamiltonianTypes htype);
 void apply_defaults(PropagatorParameters& params, HamiltonianTypes htype);
 
-/// Fills the defaults that an estimator inherits from the execute block containing it. The
-/// blocks of `exec` have to be resolved to names already, which is what resolve_defaults does
-/// before it calls this.
+/// Fills the defaults that the estimators inherit from the execute block containing them, and
+/// checks that the set of estimators is consistent. The blocks of `exec` have to be resolved to
+/// names already, which is what resolve_defaults does before it calls this.
 void apply_defaults(EstimatorParameters& params, const ExecuteParameters& exec);
 
-/// Adds the estimator blocks that are always present and fills the defaults of all of them.
-/// The component blocks of `exec` have to be resolved to names already.
+/// Fills the defaults of every estimator the execute block requests. The component blocks of
+/// `exec` have to be resolved to names already.
 void apply_defaults(ExecuteParameters& exec);
 
 /// Applies every default that cannot be expressed as a member initializer of the parameter

@@ -14,55 +14,57 @@ from types import SimpleNamespace
 
 import h5py as h5
 
-JSON_EXECUTE_INPUT_BLOCKS = ("walker_set", "wavefunction", "hamiltonian", "projector")
+JSON_EXECUTE_INPUT_BLOCKS = ("walker_set", "wavefunction", "hamiltonian", "propagator", "estimators")
 
-def get_estimator_settings(exec_opts,args=None):
+# the default of the execute block's population_control_interval, in steps
+DEFAULT_POPULATION_CONTROL_INTERVAL = 10
 
-    if args is None:
-        return sum(k.startswith("estimator") for k in exec_opts.keys())
 
-    if isinstance(args,dict):
-        args = SimpleNamespace(args)
+def bp_measure_interval_multipliers(tbp, timestep, population_control_interval, num_bp,
+                                    verbose=False):
+    """The back propagation lengths that reach `tbp`, in units of the population control
+    interval: `num_bp` evenly spaced averages, the longest of them the requested time.
 
-    iest = 1
-    observables = ['onerdm']  # TODO: add more observables options
+    The spacing is what gets rounded, so that every average is a whole multiple of the
+    shortest one, as it was when the input took a step count and a number of averages.
+    """
+    spacing = max(1, round(tbp / (timestep * population_control_interval * num_bp)))
+    multipliers = [spacing * k for k in range(1, num_bp + 1)]
+
+    realized = multipliers[-1] * population_control_interval * timestep
+    msg = f"tbp = {realized} (requested {tbp})"
+    if verbose:
+        print(msg)
+    if abs((realized - tbp) / tbp) > 0.1:
+        raise RuntimeError(msg)
+    return multipliers
+
+
+def get_estimator_settings(args, population_control_interval=DEFAULT_POPULATION_CONTROL_INTERVAL):
+    """The "estimators" block the given arguments ask for, empty if they ask for none.
+
+    The energy estimator is not in it: it is measured unless the input removes it with
+    "energy": null.
+    """
+    if isinstance(args, dict):
+        args = SimpleNamespace(**args)
+
+    # an observable is measured if and only if its block is present, and one that takes no
+    # parameters is requested by an empty block
+    observables = {'onerdm': {}}  # TODO: add more observables options
+
+    estimators = {}
 
     if args.mixed_est:
-        # add mixed estimator
-        est = dict(
-            name = "mixed",
-        )
-        for obs in observables:
-            est[obs] = {"name" : obs}
-        exec_opts['estimator%d' % iest] = est
-        iest += 1
+        estimators['mixed'] = dict(observables)
 
     if args.time_bp is not None:
-        tbp = args.time_bp
-        dt = args.timestep
-        # determine back propagation steps
-        nstep_bp_ideal = tbp/dt
-        #nbase = args.steps*args.num_bp
-        nbase = args.num_bp
-        nmult = nstep_bp_ideal//nbase
-        nstep_bp = int(round(nmult*nbase))
-        tbp1 = nstep_bp*dt
-        msg = f"tbp = {tbp1} (requested {tbp})"
-        if args.verbose:
-            print(msg)
-        if abs((tbp1-tbp)/tbp) > 0.1:
-            raise RuntimeError(msg)
-        # add BP estimator
-        est = dict(
-            name = "back_propagation",
-            nsteps = nstep_bp,
-            naverages = args.num_bp,
-        )
-        for obs in observables:
-            est[obs] = {"name" : obs}
+        est = dict(observables)
+        est['measure_interval_multiplier'] = bp_measure_interval_multipliers(
+            args.time_bp, args.timestep, population_control_interval, args.num_bp, args.verbose)
         pr = args.path_restoration
         if pr == '0':
-            pass  # no PR is the default
+            est['path_restoration'] = False
         elif pr == '1':
             est['path_restoration'] = True
         elif pr == 'e':
@@ -72,10 +74,9 @@ def get_estimator_settings(exec_opts,args=None):
             msg = 'path_restoration must be one of "0", "1", "e"'
             msg += ' not "%s"' % pr
             raise RuntimeError(msg)
-        exec_opts['estimator%d' % iest] = est
-        iest += 1
+        estimators['backprop'] = est
 
-    return iest
+    return estimators
 
 
 def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_namespace=None, **kwargs):
@@ -140,12 +141,20 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
             inps["afqmc"]["execute"]["hamiltonian"] = dict(
                 filename = fham
             )
-    num_est = get_estimator_settings(exec_opts,args=args_namespace)
+    if args_namespace is not None:
+        # a block exec_opts names itself is more specific than one the arguments imply
+        estimators = exec_opts.setdefault("estimators", {})
+        for name, block in get_estimator_settings(args_namespace, exec_opts.get(
+                "population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL)).items():
+            estimators.setdefault(name, block)
+        if not estimators:
+            exec_opts.pop("estimators")
+
     if exec_opts is not None:
          # we want to append the settings in each known input block to what (may) exist in inps
         input_block_generator = ( (key,exec_opts[key]) for key in JSON_EXECUTE_INPUT_BLOCKS if key in exec_opts )
         for key,input_block in input_block_generator:
-            input_block_dict = inps["afqmc"]["execute"][key]
+            input_block_dict = inps["afqmc"]["execute"].setdefault(key, {})
             for subkey,val in input_block.items():
                 input_block_dict[subkey] = val
             # remove the key from exec_opts so it doesn't get passed to .update(exec_opts)
@@ -167,17 +176,6 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
     
     with open(fout, 'w') as f:
         json.dump(inps, f, indent=2)
-
-    # !!!! HACK to introduce more than 1 estimator node in JSON
-    #   KE: in principle, one could use a custom class based on dict along
-    #      with a custom json.JSONEncoder class to do this "correctly"
-    if num_est > 1:
-        with open(fout, 'r') as f:
-            text = f.read()
-        for i in range(1, num_est+1):
-            text = text.replace('estimator%d' % i, 'estimator')
-        with open(fout, 'w') as f:
-            f.write(text)
 
 def read_info(fwfn):
     walker_types = ['NONE', 'CLOSED', 'COLLINEAR', 'NONCOLLINEAR']

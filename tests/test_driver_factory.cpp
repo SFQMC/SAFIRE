@@ -280,6 +280,17 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     CHECK(prop.lower_cutoff_scale.has_value());
     CHECK(prop.denseP2.has_value());
     CHECK(prop.symmetric_split.has_value());
+
+    // the energy is the estimator that is present by default, and it is resolved to the
+    // driver's own blocks; nothing else is measured unless the input asks for it
+    const EstimatorParameters& estimators = exec.estimators;
+    REQUIRE(estimators.energy.has_value());
+    CHECK(estimators.energy->wavefunction == wfn_name);
+    CHECK(estimators.energy->hamiltonian == ham_name);
+    CHECK(estimators.energy->measure_interval_multiplier == exec.measure_interval_multiplier);
+    CHECK(!estimators.mixed.has_value());
+    CHECK(!estimators.backprop.has_value());
+    CHECK(!estimators.time_evolved_bp.has_value());
   }
 
   // what the input sets is never replaced by a default, and a block declared inside an execute
@@ -299,10 +310,12 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
                                                   .lower_cutoff_scale = 0.25,
                                                   .denseP2            = false,
                                                   .symmetric_split    = false},
-             .estimator = {EstimatorParameters{.name                        = EstimatorType::mixed,
-                                               .wfn                         = "estimator_wfn",
-                                               .ham                         = "estimator_ham",
-                                               .measure_interval_multiplier = std::vector<int>{3}}},
+             .estimators = EstimatorParameters{
+                 .energy = EnergyEstimatorParameters{.measure_interval_multiplier = 5},
+                 .mixed  = MixedEstimatorParameters{.wavefunction = "estimator_wfn",
+                                                    .hamiltonian  = "estimator_ham"},
+                 .backprop =
+                     BackPropEstimatorParameters{.measure_interval_multiplier = std::vector<int>{3}}},
              .measure_interval_multiplier = 7,
     }};
     resolve_defaults(params, *mpi);
@@ -331,12 +344,33 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     // a hamiltonian that names a file keeps it, rather than inheriting the one of the wavefunction
     CHECK(block_named(params.hamiltonian, ham_name).filename == hamil_file);
 
-    // an estimator keeps the intervals and the blocks it brings itself
-    REQUIRE(exec.estimator.size() == 1);
-    const EstimatorParameters& basic = exec.estimator[0];
-    CHECK(measure_interval_multipliers(basic) == std::vector<int>{3});
-    CHECK(basic.wfn == "estimator_wfn");
-    CHECK(basic.ham == "estimator_ham");
+    // an estimator keeps the blocks and the intervals it brings itself, and inherits the ones
+    // it leaves out from the execute block around it
+    const EstimatorParameters& estimators = exec.estimators;
+    REQUIRE(estimators.energy.has_value());
+    CHECK(estimators.energy->measure_interval_multiplier == 5);
+
+    REQUIRE(estimators.mixed.has_value());
+    CHECK(estimators.mixed->wavefunction == "estimator_wfn");
+    CHECK(estimators.mixed->hamiltonian == "estimator_ham");
+    CHECK(estimators.mixed->measure_interval_multiplier == exec.measure_interval_multiplier);
+
+    REQUIRE(estimators.backprop.has_value());
+    CHECK(measure_interval_multipliers(*estimators.backprop) == std::vector<int>{3});
+    CHECK(estimators.backprop->walker_ortho_interval == exec.walker_ortho_interval);
+    CHECK(estimators.backprop->wavefunction == wfn_name);
+    CHECK(estimators.backprop->hamiltonian == ham_name);
+  }
+
+  // only one back propagation estimator may be defined at once
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{
+        .wavefunction = WavefunctionParameters{.filename = hamil_file},
+        .estimators   = EstimatorParameters{.backprop        = BackPropEstimatorParameters{},
+                                            .time_evolved_bp = BackPropEstimatorParameters{}},
+    }};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 
   // a generated name never takes one the input uses, not even one that only appears further down

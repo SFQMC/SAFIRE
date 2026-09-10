@@ -39,75 +39,65 @@ namespace sfqmc::afqmc {
 template<MEMORY_SPACE MEM>
 class Estimators {
 public:
-  /// defaultEnergyEstimator adds an EnergyEstimator that is not part of the input. It is
-  /// needed when the propagator cannot supply the local energy by itself, i.e. for hybrid
-  /// propagation.
   Estimators(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
              ExecuteParameters const& exec,
              WalkerSet<MEM>& wset,
              WavefunctionFactory<MEM>& wfnFac,
              Wavefunction<MEM>& wfn0,
              Propagator<MEM>& prop,
-             HamiltonianFactory& hamFac,
-             bool defaultEnergyEstimator) {
+             HamiltonianFactory& hamFac) {
     app_log(1, section("Initializing Estimators"));
 
-    // every measurement interval is a multiple of the population control interval
+    // the driver counts measurement blocks in population control intervals, so every
+    // estimator's measure_interval_multiplier is a multiple of that block count rather than
+    // a number of steps. Only the back propagation estimators need the interval itself, to
+    // turn a block count into a number of propagation steps.
     int const pop_control_interval = exec.population_control_interval;
-    int const measure_interval = exec.measure_interval_multiplier * pop_control_interval;
 
     // an estimator may use a different hamiltonian and wavefunction than the driver.
     // resolve_defaults has set both names to the driver's in the common case.
-    auto estimator_wavefunction = [&](EstimatorParameters const& params) -> Wavefunction<MEM>& {
+    auto estimator_wavefunction = [&](auto const& params) -> Wavefunction<MEM>& {
+      std::string const& wfn_name = resolved(params.wavefunction, "wavefunction");
       Hamiltonian* ham = nullptr;
-      if(!wfnFac.is_constructed(params.wfn)) {
-        ham = std::addressof(hamFac.getHamiltonian(mpi, params.ham));
+      if(!wfnFac.is_constructed(wfn_name)) {
+        ham = std::addressof(hamFac.getHamiltonian(mpi, resolved(params.hamiltonian, "hamiltonian")));
       }
-      return wfnFac.getWavefunction(mpi, params.wfn, wfn0.getWalkerType(), wfn0.isFiniteTemperature(), ham,
+      return wfnFac.getWavefunction(mpi, wfn_name, wfn0.getWalkerType(), wfn0.isFiniteTemperature(), ham,
                                     exec.n_walkers_per_mpi_task);
     };
 
-    bool add_default_energy = defaultEnergyEstimator;
-    for(auto const& params : exec.estimator) {
-      if(params.name == EstimatorType::energy && (params.overwrite || params.remove)) {
-        add_default_energy = false;
-      }
-    }
-    if(add_default_energy) {
-      EstimatorParameters const params{.name = EstimatorType::energy,
-                                       .measure_interval_multiplier =
-                                           std::vector{exec.measure_interval_multiplier}};
-      estimators_.emplace_back(std::make_unique<EnergyEstimator<MEM>>(mpi, params, measure_interval, wfn0));
+    // apply_defaults has already rejected the combination of both back propagation estimators
+    EstimatorParameters const& estimators = exec.estimators;
+
+    if(estimators.energy) {
+      Wavefunction<MEM>& energy_wfn = estimator_wavefunction(*estimators.energy);
+      // the walkers only ever carry the local energy of the driver's own wavefunction
+      bool const walkers_carry_energy =
+          prop.stores_local_energy() && std::addressof(energy_wfn) == std::addressof(wfn0);
+      estimators_.emplace_back(std::make_unique<EnergyEstimator<MEM>>(
+          *estimators.energy, walkers_carry_energy, energy_wfn));
+      app_log(1, "Energy estimator initialized");
     }
 
-    for(auto const& params : exec.estimator) {
-      if(params.remove) {
-        continue;
-      }
-      switch(params.name) {
-      case EstimatorType::energy:
-        estimators_.emplace_back(
-            std::make_unique<EnergyEstimator<MEM>>(mpi, params, measure_interval, estimator_wavefunction(params)));
-        app_log(1, "Energy estimator initialized");
-        break;
-      case EstimatorType::mixed:
-        estimators_.emplace_back(std::make_unique<MixedEstimator<MEM>>(*mpi, params, wset.getWalkerType(),
-                                                                      estimator_wavefunction(params)));
-        app_log(1, "Mixed estimator initialized");
-        break;
-      case EstimatorType::back_propagation:
-        estimators_.emplace_back(std::make_unique<BackPropEstimator<MEM>>(
-            *mpi, params, pop_control_interval, wset, estimator_wavefunction(params), prop));
-        app_log(1, "Back-propagation estimator initialized");
-        break;
-      case EstimatorType::time_evolved_operators:
-        estimators_.emplace_back(std::make_unique<TimeEvolvedBPEstimator<MEM>>(
-            *mpi, params, pop_control_interval, wset, estimator_wavefunction(params), prop));
-        app_log(1, "Time-evolved back-propagation estimator initialized");
-        break;
-      default:
-        APP_ABORT("undefined estimator");
-      }
+    if(estimators.mixed) {
+      estimators_.emplace_back(std::make_unique<MixedEstimator<MEM>>(
+          *mpi, *estimators.mixed, wset.getWalkerType(),
+          estimator_wavefunction(*estimators.mixed)));
+      app_log(1, "Mixed estimator initialized");
+    }
+
+    if(estimators.backprop) {
+      estimators_.emplace_back(std::make_unique<BackPropEstimator<MEM>>(
+          *mpi, *estimators.backprop, pop_control_interval, wset,
+          estimator_wavefunction(*estimators.backprop), prop));
+      app_log(1, "Back-propagation estimator initialized");
+    }
+
+    if(estimators.time_evolved_bp) {
+      estimators_.emplace_back(std::make_unique<TimeEvolvedBPEstimator<MEM>>(
+          *mpi, *estimators.time_evolved_bp, pop_control_interval, wset,
+          estimator_wavefunction(*estimators.time_evolved_bp), prop));
+      app_log(1, "Time-evolved back-propagation estimator initialized");
     }
   }
 

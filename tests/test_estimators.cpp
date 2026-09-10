@@ -250,9 +250,10 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
 
   // ---- Run 1: single measure_interval_multiplier ----
   {
-    const EstimatorParameters est_params{.name = EstimatorType::back_propagation,
-                                         .measure_interval_multiplier = std::vector<int>{2},
-                                         .onerdm = OneRDMParameters{}};
+    const BackPropEstimatorParameters est_params{
+        .measure_interval_multiplier = std::vector<int>{2},
+        .walker_ortho_interval       = afqmc::DEFAULT_WALKER_ORTHO_INTERVAL,
+        .onerdm                      = OneRDMParameters{}};
 
     std::unique_ptr<EstimatorBase<MEM>> estimator = std::make_unique<BackPropEstimator<MEM>>(
         *mpi, est_params, pop_control_interval, wset, wfn, prop);
@@ -267,9 +268,10 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
 
   // ---- Run 2: multiple measure_interval_multipliers ----
   {
-    const EstimatorParameters est_params{.name = EstimatorType::back_propagation,
-                                         .measure_interval_multiplier = std::vector<int>{1, 2, 3},
-                                         .onerdm = OneRDMParameters{}};
+    const BackPropEstimatorParameters est_params{
+        .measure_interval_multiplier = std::vector<int>{1, 2, 3},
+        .walker_ortho_interval       = afqmc::DEFAULT_WALKER_ORTHO_INTERVAL,
+        .onerdm                      = OneRDMParameters{}};
 
     std::unique_ptr<EstimatorBase<MEM>> estimator = std::make_unique<BackPropEstimator<MEM>>(
         *mpi, est_params, pop_control_interval, wset, wfn, prop);
@@ -350,20 +352,26 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
   }
   mpi->comm.barrier();
 
-  // An observable is measured if and only if its parameter block is present. The estimator
-  // has to name its wavefunction and hamiltonian itself, because these parameters are built
-  // by hand and so resolve_defaults never ran over them.
-  auto with_observables = [&](EstimatorType name, std::vector<int> multipliers) {
-    return EstimatorParameters{
-        .name = name,
-        .wfn = "wfn0",
-        .ham = "ham0",
+  // An observable is measured if and only if its parameter block is present, so this asks for
+  // all of them, on whichever estimator parameters it is handed. Every hand-built block also
+  // has to set what resolve_defaults would have filled in -- the wavefunction, the hamiltonian,
+  // the measurement interval and, for back propagation, the orthogonalization interval --
+  // because it never ran here.
+  auto with_observables = [&](auto params) {
+    params.onerdm      = OneRDMParameters{};
+    params.diag_twordm = DiagonalTwoRDMParameters{};
+    params.twordm      = TwoRDMParameters{};
+    params.paircorr    = PairCorrParameters{.pairs = {.filename = map_file, .group = "orbital_map"}};
+    params.spincorr    = SpinCorrParameters{};
+    return params;
+  };
+
+  auto back_propagated = [&](std::vector<int> multipliers) {
+    return with_observables(BackPropEstimatorParameters{
+        .wavefunction                = "wfn0",
+        .hamiltonian                 = "ham0",
         .measure_interval_multiplier = std::move(multipliers),
-        .onerdm = OneRDMParameters{},
-        .diag2rdm = DiagonalTwoRDMParameters{},
-        .twordm = TwoRDMParameters{},
-        .pair_correlators = PairCorrParameters{.pairs = {.filename = map_file, .group = "orbital_map"}},
-        .spinspin = SpinCorrParameters{}};
+        .walker_ortho_interval       = afqmc::DEFAULT_WALKER_ORTHO_INTERVAL});
   };
 
   constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
@@ -385,17 +393,20 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
   // ---- energy, mixed and back propagation, sharing one walker set and one results file ----
   {
     const ExecuteParameters exec{
-        .estimator = {EstimatorParameters{.name = EstimatorType::energy,
-                                          .wfn = "wfn0",
-                                          .ham = "ham0",
-                                          .measure_interval_multiplier = std::vector{1}},
-                      with_observables(EstimatorType::mixed, {2}),
-                      with_observables(EstimatorType::back_propagation, {1, 2})},
+        .estimators = EstimatorParameters{
+            .energy   = EnergyEstimatorParameters{.wavefunction                = "wfn0",
+                                                  .hamiltonian                 = "ham0",
+                                                  .measure_interval_multiplier = 1},
+            .mixed    = with_observables(
+                MixedEstimatorParameters{.wavefunction                = "wfn0",
+                                         .hamiltonian                 = "ham0",
+                                         .measure_interval_multiplier = 2}),
+            .backprop = back_propagated({1, 2})},
         .population_control_interval = pop_control_interval,
         .n_walkers_per_mpi_task = nwalk};
 
     auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-    Estimators<MEM> estimators{mpi, exec, wset, WfnFac, wfn, prop, HamFac, false};
+    Estimators<MEM> estimators{mpi, exec, wset, WfnFac, wfn, prop, HamFac};
     // the PairCorr constructor was the last read of the temporary directory on every rank but
     // root, which is the one that deletes it
     mpi->comm.barrier();
@@ -432,13 +443,16 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
   // estimators reshape the back propagation buffers of the walker set in their constructor,
   // so they cannot share one ----
   {
+    // the energy estimator is the one that is present by default, so removing it takes an
+    // explicit null -- here it would only add datasets this case does not care about
     const ExecuteParameters exec{
-        .estimator = {with_observables(EstimatorType::time_evolved_operators, {1, 2})},
+        .estimators = EstimatorParameters{.energy          = std::nullopt,
+                                          .time_evolved_bp = back_propagated({1, 2})},
         .population_control_interval = pop_control_interval,
         .n_walkers_per_mpi_task = nwalk};
 
     auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-    Estimators<MEM> estimators{mpi, exec, wset, WfnFac, wfn, prop, HamFac, false};
+    Estimators<MEM> estimators{mpi, exec, wset, WfnFac, wfn, prop, HamFac};
     mpi->comm.barrier();
 
     auto const results = tmpdir / "run_b.results.h5";
@@ -471,6 +485,127 @@ TEST_CASE("estimators: all estimators write results", "[estimators]")
     estimators_all_observables<HOST_MEMORY>(mpi);
 #if defined(ENABLE_DEVICE)
     estimators_all_observables<DEVICE_MEMORY>(mpi);
+#endif
+  });
+}
+
+/// With local energy importance sampling the propagator evaluates the local energy itself and
+/// leaves its components on the walkers, so the energy estimator reads them off instead of
+/// recomputing them. That shortcut has to produce what the recomputation it replaces would.
+template<MEMORY_SPACE MEM>
+void estimators_local_energy_matches_recomputation(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi)
+{
+  std::string const inputs     = utils::unit_test_base() + "BH/";
+  std::string const hamil_file = inputs + "afqmc_H_rhf_collinear.h5";
+  std::string const wfn_file   = inputs + "afqmc_uhf_nomsd.h5";
+
+  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
+
+  HamiltonianFactory HamFac;
+  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
+  auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
+
+  int const nwalk = 4;
+  WavefunctionFactory<MEM> WfnFac{};
+  WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
+  apply_defaults(wfn_params, ham.getHamType());
+  WfnFac.push("wfn0", wfn_params);
+  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
+
+  // hybrid propagation would leave nothing but the overlap on the walkers, so the shortcut
+  // this exercises hangs off hybrid being false
+  PropagatorFactory<MEM> PropgFac;
+  PropagatorParameters prop_params{.name = "prop0", .hybrid = false};
+  apply_defaults(prop_params, ham.getHamType());
+  PropgFac.push("prop0", prop_params);
+  auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
+
+  constexpr double dt                = 0.005;
+  constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
+
+  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
+  auto wset                 = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
+
+  // a single step is enough, and it has to be a real one: the local energy only lands on the
+  // walkers when the propagator actually runs its local energy update
+  prop.generateP1(dt, type);
+  prop.Propagate(wset, 0.0, dt);
+
+  const ExecuteParameters exec{
+      .estimators = EstimatorParameters{
+          .energy = EnergyEstimatorParameters{.wavefunction                = "wfn0",
+                                              .hamiltonian                 = "ham0",
+                                              .measure_interval_multiplier = 1}},
+      .population_control_interval = pop_control_interval,
+      .n_walkers_per_mpi_task = nwalk};
+
+  Estimators<MEM> estimators{mpi, exec, wset, WfnFac, wfn, prop, HamFac};
+  estimators.measure(*mpi, 1, wset);
+
+  // the recomputation, averaged the way MeasurementOutput averages: weighted, reduced over the
+  // ranks and divided by the summed weight
+  int const nw = wset.size();
+  memory::buffered_array<MEM,ComplexType,1> weights(nw);
+  wset.getProperty(WEIGHT, weights);
+  memory::buffered_array<MEM,ComplexType,2> localEnergy(nw,3);
+  memory::buffered_array<MEM,ComplexType,1> ovlp(nw);
+  wfn.Energy(wset, localEnergy, ovlp, wset.getTauStep());
+
+  auto weights_h     = nda::to_host(weights);
+  auto localEnergy_h = nda::to_host(localEnergy);
+  auto ovlp_h        = nda::to_host(ovlp);
+
+  nda::array<ComplexType,1> expected(5);
+  expected() = 0.0;
+  for(int iw = 0; iw < nw; ++iw) {
+    for(int k = 0; k < 3; ++k) {
+      expected(k + 1) += weights_h(iw) * localEnergy_h(iw, k);
+    }
+    expected(4) += weights_h(iw) * ovlp_h(iw);
+  }
+  expected(0) = expected(1) + expected(2) + expected(3);
+
+  ComplexType denominator = nda::sum(weights_h);
+  for(int k = 0; k < expected.size(); ++k) {
+    expected(k) = mpi->comm.reduce_value(expected(k));
+  }
+  denominator = mpi->comm.reduce_value(denominator);
+
+  // only root records any bin, and Estimators::write is not guarded, so root alone writes
+  utils::TemporaryDirectory tmpdir;
+  if(mpi->comm.root()) {
+    auto const results = tmpdir / "local_energy.results.h5";
+    estimators.write(results);
+
+    h5::file out(results.string(), 'r');
+    h5::group root(out);
+
+    constexpr std::array<char const*,5> names{"Energy", "OnebodyEnergy", "ExchangeEnergy",
+                                              "CoulombEnergy", "Overlap"};
+    for(int k = 0; k < int(names.size()); ++k) {
+      nda::array<ComplexType,1> bins;
+      h5::read(root, std::format("Measurements/{}/bins", names[k]), bins);
+      REQUIRE(bins.extent(0) == 1);
+      // the two paths evaluate the energy on either side of the walker update, so they agree
+      // to roundoff rather than exactly
+      CHECK_THAT(bins(0), utils::Approx(expected(k) / denominator, 1e-10, 1e-10));
+    }
+  }
+}
+
+TEST_CASE("estimators: local energy is read off the walkers", "[estimators]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+
+  utils::catch_test_exceptions("estimators: local energy is read off the walkers", [&] {
+    estimators_local_energy_matches_recomputation<HOST_MEMORY>(mpi);
+#if defined(ENABLE_DEVICE)
+    estimators_local_energy_matches_recomputation<DEVICE_MEMORY>(mpi);
 #endif
   });
 }

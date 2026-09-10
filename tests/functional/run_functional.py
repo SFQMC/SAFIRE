@@ -232,12 +232,17 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
         "n_walkers_per_mpi_task": n_walkers_per_mpi_task,
     }
     if observables:
-        execute["estimator"] = {
-            "name": "back_propagation",
-            "path_restoration": True,
-            "bp_walker_ortho_interval": 10,
-            "measure_interval_multiplier": bp_measure_interval_multiplier,
-            **observables,
+        # the energy estimator is present unless the input removes it, so only back
+        # propagation has to be asked for here
+        execute["estimators"] = {
+            "backprop": {
+                "path_restoration": True,
+                # the interval back propagation orthogonalizes at, in steps, not the
+                # execute-level walker_ortho_interval set below
+                "walker_ortho_interval": 10,
+                "measure_interval_multiplier": bp_measure_interval_multiplier,
+                **observables,
+            }
         }
     execute["population_control_interval"] = population_control_interval
     execute["measure_interval_multiplier"] = 1

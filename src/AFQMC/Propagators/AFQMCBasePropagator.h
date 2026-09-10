@@ -217,6 +217,10 @@ public:
 
   bool free_propagation() { return free_projection; }
 
+  /// Whether Propagate leaves the components of the local energy on the walkers. Only the
+  /// local energy update evaluates them; hybrid and free projection do not.
+  bool stores_local_energy() const { return !hybrid && !free_projection; }
+
   int number_of_cholesky_vectors() const { return wfn->number_of_cholesky_vectors(); }
 
   // constructs the 1-body hamiltonian for propagation and generates the propagator

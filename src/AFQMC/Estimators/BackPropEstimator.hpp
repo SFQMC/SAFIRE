@@ -131,7 +131,7 @@ public:
   /// The measurement and equilibration intervals of the input are multiples of
   /// population_control_interval, which is given in steps.
   BackPropEstimator(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
-                          const EstimatorParameters& params,
+                          const BackPropEstimatorParameters& params,
                           int population_control_interval,
                           WalkerSet<MEM>& wset,
                           Wavefunction<MEM>& wfn,
@@ -140,7 +140,7 @@ public:
         prop_(prop),
         observables_(mpi, params, wset.getWalkerType(), wfn.getNMO()),
         nback_prop_multipliers_{measure_interval_multipliers(params)},
-        walker_ortho_interval_(params.bp_walker_ortho_interval), // units of steps
+        walker_ortho_interval_(resolved(params.walker_ortho_interval, "walker_ortho_interval")), // units of steps
         steps_per_interval_(population_control_interval),
         path_restoration(params.path_restoration),
         extra_path_restoration(params.extra_path_restoration) {
