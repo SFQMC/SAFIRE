@@ -294,7 +294,7 @@ except ValueError as e:
 ```
 
 To choose your own lattice vectors and basis, use the `custom` lattice type
-described in the next section — that is exactly what it is for.
+described in the next section.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
@@ -313,10 +313,8 @@ Play around with setting a basis, using the `custom` type below.
 
 If the lattice that you want is not specifically implemented, you can use the
 "custom" lattice.
-Defining the unit cell yourself is exactly what makes a lattice "custom", so this
-is the one type for which `a1`, `a2` and `basis` are accepted — and `a1` and `a2`
-are required.
-`basis` is optional and defaults to a single site at the cell origin.
+This is the one type for which `a1`, `a2` and `basis` are accepted; `a1` and `a2`
+are required, and `basis` defaults to a single site at the cell origin.
 
 ```{code-cell} ipython3
 :id: 1f3486b9-62ab-4687-a322-295de51b8ae8

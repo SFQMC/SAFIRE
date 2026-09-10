@@ -38,15 +38,9 @@ dispatches to the right one based on the ``type`` parameter.
 
 .. important::
 
-   The unit-cell geometry belongs to the lattice *type*. ``a1``, ``a2`` and
-   ``basis`` always exist on an instance, but for the built-in types they are
-   fixed by the type and cannot be set by the caller — a square lattice is
-   square *because* its lattice vectors are the unit x- and y-vectors. Passing
-   ``a1``, ``a2`` or ``basis`` for any type other than ``custom`` raises an
-   error, and the values are immutable once the lattice is built.
-
-   Use ``type='custom'`` to define your own lattice vectors and basis; that is
-   what the custom lattice is for.
+   Passing ``a1``, ``a2`` or ``basis`` for any type other than ``custom`` raises
+   an error, and the values are immutable once the lattice is built. Use
+   ``type='custom'`` to define your own lattice vectors and basis.
 
 See :doc:`../tutorials/models/03_setting_up_a_lattice/03_setting_up_a_lattice`
 for a guided tour.
