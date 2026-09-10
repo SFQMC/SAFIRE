@@ -220,7 +220,7 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
 
 
   // estimator setup
-  Estimators<MEM> estim0{mpi, exec, wset, WfnFac, wfn0, prop0, HamFac, hybrid};
+  Estimators<MEM> estim0{mpi, exec, wset, WfnFac, wfn0, prop0, HamFac};
 
   AFQMCDriver<MEM> driver(mpi, title, m_series, block0, step0, Eshift, exec, wfn0, prop0, estim0);
 
@@ -350,11 +350,8 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
     Eshift = real(ComplexType(wset[0].energy()));
   }
 
-  // if hybrid calculation, set to true
-  bool addEnergyEstim = hybrid;
-
   // estimator setup
-  Estimators<MEM> estim0{mpi, exec, wset, WfnFac, wfn0, prop0, HamFac, addEnergyEstim};
+  Estimators<MEM> estim0{mpi, exec, wset, WfnFac, wfn0, prop0, HamFac};
 
   FTAFQMCDriver<MEM> driver(mpi, title, m_series, block0, step0, Eshift, exec, wfn0, prop0, estim0);
 

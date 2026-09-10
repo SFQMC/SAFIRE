@@ -161,7 +161,7 @@ class TimeEvolvedBPEstimator : public EstimatorBase<MEM> {
 public:
   /// The measurement intervals of the input are multiples of population_control_interval.
   TimeEvolvedBPEstimator(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
-                             EstimatorParameters const& params,
+                             BackPropEstimatorParameters const& params,
                              int population_control_interval,
                              WalkerSet<MEM>& wset,
                              Wavefunction<MEM>& wfn,

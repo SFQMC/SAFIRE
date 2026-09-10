@@ -40,16 +40,6 @@ enum class PHMSDEnergyAlgorithm {
 };
 SAFIRE_DEFINE_ENUM_NAMES(PHMSDEnergyAlgorithm, reference, woodbury);
 
-enum class EstimatorType {
-  undefined,
-  mixed,
-  energy,
-  back_propagation,
-  time_evolved_operators,
-};
-SAFIRE_DEFINE_ENUM_NAMES(EstimatorType, undefined, mixed, energy, back_propagation, time_evolved_operators);
-
-
 struct ProjectParameters {
   std::string id{"afqmc"};
   int series{};
@@ -170,43 +160,69 @@ struct SpinCorrParameters {
 };
 SAFIRE_DEFINE_EMPTY_PARAMETERS(SpinCorrParameters);
 
-struct EstimatorParameters {
-  EstimatorType name{};
-  bool remove{false};
-
+struct EnergyEstimatorParameters {
   // the estimator may use a different wavefunction and hamiltonian than the driver
-  std::string wfn{};
-  std::string ham{};
-
-  // basic
-  bool timers{false};
-  int nhist{0};
-
-  // energy
-  bool overwrite{false};
-  bool print_components{};
-  bool print_sign{};
-
-  // bp
-  int bp_walker_ortho_interval{10}; // in units of steps
-  bool path_restoration{true};
-  bool extra_path_restoration{false};
+  std::optional<std::string> wavefunction{};
+  std::optional<std::string> hamiltonian{};
 
   // resolve_defaults falls back to the measure_interval_multiplier of the enclosing execute block
-  std::optional<std::vector<int>> measure_interval_multiplier{};
+  std::optional<int> measure_interval_multiplier{};
+};
+SAFIRE_DEFINE_PARAMETERS(EnergyEstimatorParameters, wavefunction, hamiltonian, measure_interval_multiplier);
+
+struct MixedEstimatorParameters {
+  std::optional<std::string> wavefunction{};
+  std::optional<std::string> hamiltonian{};
+
+  // resolve_defaults falls back to the measure_interval_multiplier of the enclosing execute block
+  std::optional<int> measure_interval_multiplier{};
 
   // observables: an observable is measured if and only if its block is present in the input,
   // so one that takes no parameters is requested by an empty block, e.g. "twordm": {}
   std::optional<OneRDMParameters> onerdm{};
-  std::optional<DiagonalTwoRDMParameters> diag2rdm{};
+  std::optional<DiagonalTwoRDMParameters> diag_twordm{};
   std::optional<TwoRDMParameters> twordm{};
-  std::optional<PairCorrParameters> pair_correlators{};
-  std::optional<SpinCorrParameters> spinspin{};
+  std::optional<PairCorrParameters> paircorr{};
+  std::optional<SpinCorrParameters> spincorr{};
 };
-SAFIRE_DEFINE_PARAMETERS(EstimatorParameters, name, remove, wfn, ham, timers, nhist, overwrite, print_components,
-                         print_sign, bp_walker_ortho_interval, path_restoration,
-                         extra_path_restoration, measure_interval_multiplier, onerdm, diag2rdm, twordm,
-                         pair_correlators, spinspin);
+SAFIRE_DEFINE_PARAMETERS(MixedEstimatorParameters, wavefunction, hamiltonian, measure_interval_multiplier,
+                         onerdm, diag_twordm, twordm, paircorr, spincorr);
+
+struct BackPropEstimatorParameters {
+  std::optional<std::string> wavefunction{};
+  std::optional<std::string> hamiltonian{};
+
+  // resolve_defaults falls back to the measure_interval_multiplier of the enclosing execute block
+  std::optional<std::vector<int>> measure_interval_multiplier{};
+
+  // in units of steps. if not set fall back to the walker_ortho_interval of the
+  // enclosing execute block, which is the interval the forward propagation orthogonalizes at
+  std::optional<int> walker_ortho_interval{};
+  bool path_restoration{true};
+  bool extra_path_restoration{false};
+
+  // observables: an observable is measured if and only if its block is present in the input,
+  // so one that takes no parameters is requested by an empty block, e.g. "twordm": {}
+  std::optional<OneRDMParameters> onerdm{};
+  std::optional<DiagonalTwoRDMParameters> diag_twordm{};
+  std::optional<TwoRDMParameters> twordm{};
+  std::optional<PairCorrParameters> paircorr{};
+  std::optional<SpinCorrParameters> spincorr{};
+};
+SAFIRE_DEFINE_PARAMETERS(BackPropEstimatorParameters, wavefunction, hamiltonian, measure_interval_multiplier,
+                         walker_ortho_interval, path_restoration, extra_path_restoration, onerdm, diag_twordm,
+                         twordm, paircorr, spincorr);
+
+struct EstimatorParameters {
+  // the energy is measured unless the input removes it with "energy": null
+  std::optional<EnergyEstimatorParameters> energy{EnergyEstimatorParameters{}};
+  std::optional<MixedEstimatorParameters> mixed{};
+
+  // only one bp estimator may be defined at once
+  std::optional<BackPropEstimatorParameters> backprop{};
+  std::optional<BackPropEstimatorParameters> time_evolved_bp{};
+};
+SAFIRE_DEFINE_PARAMETERS(EstimatorParameters, energy, mixed, backprop, time_evolved_bp);
 
 /// Reads a parameter whose default resolve_defaults is responsible for filling in.
 template<typename T>
@@ -216,7 +232,7 @@ const T& resolved(const std::optional<T>& value, std::string_view name) {
 }
 
 /// The measurement intervals of an estimator, in units of the population control interval.
-inline const std::vector<int>& measure_interval_multipliers(const EstimatorParameters& params) {
+inline const std::vector<int>& measure_interval_multipliers(const BackPropEstimatorParameters& params) {
   const std::vector<int>& multipliers = resolved(params.measure_interval_multiplier, "measure_interval_multiplier");
   utils::check(!multipliers.empty(), "'measure_interval_multiplier' must not be empty.");
   return multipliers;
@@ -228,8 +244,7 @@ struct ExecuteParameters {
   std::optional<utils::BlockRef<WavefunctionParameters>> wavefunction{}; // required
   std::optional<utils::BlockRef<HamiltonianParameters>> hamiltonian{};
   std::optional<utils::BlockRef<PropagatorParameters>> propagator{};
-  std::vector<EstimatorParameters> estimator{};
-
+  EstimatorParameters estimators{};
 
   std::string hdf_read_file{}; // restart from checkpoint
   std::string hdf_write_file{}; // write checkpoint
@@ -253,7 +268,7 @@ struct ExecuteParameters {
   double initial_Eshift{}; // make optional
   std::optional<int> seed{};
 };
-SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimator, hdf_read_file,
+SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, hdf_read_file,
                          hdf_write_file, steps, equilibration_steps, sweeps, population_control_interval, measure_interval_multiplier,
                          walker_ortho_interval, checkpoint_interval, dshift, print_sweep_step,
                          timestep, n_walkers_per_mpi_task, set_nwalker_to_target, initial_Eshift, seed);

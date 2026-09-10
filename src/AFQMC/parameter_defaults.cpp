@@ -12,11 +12,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <concepts>
 #include <format>
 #include <map>
 #include <set>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -109,6 +111,47 @@ void resolve_block_refs(std::string_view key, std::vector<Params>& blocks, std::
   }
 }
 
+/// Applies `body` to every estimator the input requests. The blocks have different types, so this
+/// is the one place that has to enumerate them.
+template<typename Estimators, typename Body>
+void for_each_estimator(Estimators& estimators, Body&& body) {
+  auto visit = [&](auto& block) {
+    if(block) {
+      body(*block);
+    }
+  };
+  visit(estimators.energy);
+  visit(estimators.mixed);
+  visit(estimators.backprop);
+  visit(estimators.time_evolved_bp);
+}
+
+/// Fills the defaults one estimator block inherits from the execute block containing it.
+void apply_estimator_defaults(auto& params, const ExecuteParameters& exec) {
+  // an estimator may use a different wavefunction and hamiltonian than the driver
+  if(!params.wavefunction) {
+    params.wavefunction = block_name(exec.wavefunction, "wavefunction");
+  }
+  if(!params.hamiltonian) {
+    params.hamiltonian = block_name(exec.hamiltonian, "hamiltonian");
+  }
+
+  if constexpr(std::same_as<std::remove_reference_t<decltype(params)>, BackPropEstimatorParameters>) {
+    // every back propagation length measures at an interval of its own
+    if(!params.measure_interval_multiplier) {
+      params.measure_interval_multiplier = std::vector{exec.measure_interval_multiplier};
+    }
+    // back propagation retraces the forward propagation, so it orthogonalizes as often
+    if(!params.walker_ortho_interval) {
+      params.walker_ortho_interval = exec.walker_ortho_interval;
+    }
+  } else {
+    if(!params.measure_interval_multiplier) {
+      params.measure_interval_multiplier = exec.measure_interval_multiplier;
+    }
+  }
+}
+
 } // namespace
 
 HamiltonianTypes peek_hamiltonian_type(const HamiltonianParameters& params,
@@ -157,26 +200,15 @@ void apply_defaults(PropagatorParameters& params, HamiltonianTypes htype) {
 }
 
 void apply_defaults(EstimatorParameters& params, const ExecuteParameters& exec) {
-  if(!params.measure_interval_multiplier) {
-    params.measure_interval_multiplier = std::vector<int>{exec.measure_interval_multiplier};
-  }
-  // an estimator may use a different wavefunction and hamiltonian than the driver
-  if(params.wfn.empty()) {
-    params.wfn = block_name(exec.wavefunction, "wavefunction");
-  }
-  if(params.ham.empty()) {
-    params.ham = block_name(exec.hamiltonian, "hamiltonian");
-  }
+  utils::check(!params.backprop || !params.time_evolved_bp,
+               "Only one back propagation estimator may be defined at once, but the input has both "
+               "\"backprop\" and \"time_evolved_bp\".");
+
+  for_each_estimator(params, [&](auto& estimator) { apply_estimator_defaults(estimator, exec); });
 }
 
 void apply_defaults(ExecuteParameters& exec) {
-  for(const auto& estimator : exec.estimator) {
-    utils::check(estimator.name != EstimatorType::undefined, "An estimator block requires a name.");
-  }
-
-  for(auto& estimator : exec.estimator) {
-    apply_defaults(estimator, exec);
-  }
+  apply_defaults(exec.estimators, exec);
 }
 
 void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::communicator>& mpi) {
@@ -224,10 +256,12 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
     apply_defaults(find_block(params.propagator, block_name(exec.propagator, "propagator"), "propagator"), htype);
 
     // an estimator that brings its own wavefunction builds it from its own hamiltonian
-    for(const auto& estimator : exec.estimator) {
-      apply_defaults(find_block(params.wavefunction, estimator.wfn, "wavefunction"),
-                     hamiltonian_type(estimator.ham));
-    }
+    for_each_estimator(exec.estimators, [&](const auto& estimator) {
+      const std::string& estimator_wfn = resolved(estimator.wavefunction, "wavefunction");
+      const std::string& estimator_ham = resolved(estimator.hamiltonian, "hamiltonian");
+      apply_defaults(find_block(params.wavefunction, estimator_wfn, "wavefunction"),
+                     hamiltonian_type(estimator_ham));
+    });
   }
 }
 

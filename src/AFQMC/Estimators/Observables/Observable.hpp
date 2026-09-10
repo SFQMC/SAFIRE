@@ -46,9 +46,9 @@ public:
               WALKER_TYPES walker_type, int NMO)
       : observables_{detail::observable_from_params<OneRDM<MEM>>(mpi, params.onerdm, walker_type, NMO),
                      detail::observable_from_params<TwoRDM<MEM>>(mpi, params.twordm, walker_type, NMO),
-                     detail::observable_from_params<DiagonalTwoRDM<MEM>>(mpi, params.diag2rdm, walker_type, NMO),
-                     detail::observable_from_params<SpinCorr<MEM>>(mpi, params.spinspin, walker_type, NMO),
-                     detail::observable_from_params<PairCorr<MEM>>(mpi, params.pair_correlators, walker_type,
+                     detail::observable_from_params<DiagonalTwoRDM<MEM>>(mpi, params.diag_twordm, walker_type, NMO),
+                     detail::observable_from_params<SpinCorr<MEM>>(mpi, params.spincorr, walker_type, NMO),
+                     detail::observable_from_params<PairCorr<MEM>>(mpi, params.paircorr, walker_type,
                                                                    NMO)} {}
 
   template<typename RefLoop>

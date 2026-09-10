@@ -78,6 +78,11 @@ public:
     return std::visit([&](auto&& a) { return a.free_propagation(); }, var);
   }
 
+  bool stores_local_energy() const
+  {
+    return std::visit([&](auto&& a) { return a.stores_local_energy(); }, var);
+  }
+
   int number_of_cholesky_vectors() const
   {
     return std::visit([&](auto&& a) { return a.number_of_cholesky_vectors(); }, var);

@@ -33,25 +33,18 @@ namespace sfqmc
 namespace afqmc
 {
 
-// use atan2 to enforce [-pi,pi] range of values
-inline ComplexType mod2pi(ComplexType x){
-  RealType x_r = std::real(x);
-  RealType x_i = std::imag(x);
-  return ComplexType(atan2(sin(x_r),cos(x_r)),
-                     atan2(sin(x_i),cos(x_i))
-                     );
-}
-
 template<MEMORY_SPACE MEM>
 class EnergyEstimator : public EstimatorBase<MEM>
 {
 public:
-  EnergyEstimator(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
-                  const EstimatorParameters& params,
-                  int measure_interval_,
-                  Wavefunction<MEM>& wfn)
+  /// `walkers_carry_energy` says whether the propagator already evaluated the local energy of
+  /// this wavefunction and left its components on the walkers, in which case there is nothing
+  /// to recompute here.
+  EnergyEstimator(EnergyEstimatorParameters const& params, bool walkers_carry_energy, Wavefunction<MEM>& wfn)
       : wfn_{wfn},
-        measure_interval_multiplier_{resolved(params.measure_interval_multiplier, "measure_interval_multiplier").at(0)}
+        measure_interval_multiplier_{resolved(params.measure_interval_multiplier,
+                                              "measure_interval_multiplier")},
+        walkers_carry_energy_{walkers_carry_energy}
   {
   }
 
@@ -61,15 +54,23 @@ public:
     }
 
     auto energy_time = timers.energy.start();
-    
+
+    auto all = nda::range::all;
     int nwalk = wset.size();
-    
+
     memory::buffered_array<MEM,ComplexType,1> weights(wset.size());
     wset.getProperty(WEIGHT, weights);
-    
+
     memory::buffered_array<MEM,ComplexType,2> localEnergy(nwalk,3);
     memory::buffered_array<MEM,ComplexType,1> ovlp(nwalk);
-    wfn_.Energy(wset, localEnergy, ovlp, wset.getTauStep());
+    if(walkers_carry_energy_) {
+      wset.getProperty(E1_, localEnergy(all, 0));
+      wset.getProperty(EXX_, localEnergy(all, 1));
+      wset.getProperty(EJ_, localEnergy(all, 2));
+      wset.getProperty(OVLP, ovlp);
+    } else {
+      wfn_.Energy(wset, localEnergy, ovlp, wset.getTauStep());
+    }
 
     MeasurementOutput output{mpi, meas, "", weights};
 
@@ -88,6 +89,7 @@ public:
 private:
   Wavefunction<MEM>& wfn_;
   int measure_interval_multiplier_{};
+  bool walkers_carry_energy_{};
 };
 } // namespace afqmc
 } // namespace sfqmc
