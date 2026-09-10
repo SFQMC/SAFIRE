@@ -415,50 +415,22 @@ Run the following codeblock to output the Wavefunction to an HDF5 file via the C
 
 ## Python: Covert from FCIDUMP to the SAFIRE format.
 
-The `safiretools` Python package provides the following, which allow us to convert from FCIDUMP to
-the SAFIRE format.
+`MolecularHamiltonian.from_fcidump()` does the conversion in the `safiretools` Python package:
+it builds a Hamiltonian from a FCIDUMP file, which `.to_hdf5()` then writes in the form the
+SAFIRE executable reads.
 
-- `read_fcidump()`, re-exported at the top level as `safiretools.read_fcidump`
-- `MolecularHamiltonian.from_integrals()`, followed by `.to_hdf5()`
+### MolecularHamiltonian.from_fcidump()
 
-### read_fcidump()
-
-The `read_fcidump()` function reads the Hamiltonian from the FCIDUMP file
-with name `filename`, and separately returns the 1-body, 2-body, and constant Hamiltonian
-terms as well as the number of electrons.
-
-```python
-    from safiretools import read_fcidump
-
-    H1_ij, H2_ijkl, E0, _ = read_fcidump(
-        filename="H2_FCIDUMP"
-    )
-```
-
-see the {doc}`Hamiltonian reference <../../../afqmctools/lattice_models>` for more.
-
-### MolecularHamiltonian.from_integrals()
-
-As we saw above, `MolecularHamiltonian.from_integrals()` builds a Hamiltonian that
-`.to_hdf5()` writes in the form the SAFIRE executable reads.
-It will automatically generate a Cholesky decomposed form of the interaction if electron-repulsion integrals are provided via the `eri` keyword argument.
-Alternatively, any 3-index factorized form of the electron interaction can be provided
-via the `chol` input parameter.
-Exactly one of `chol` or `eri` must be provided.
+`from_fcidump()` reads the one-body, two-body and constant terms from the file, along with
+the number of electrons in its header, and Cholesky-decomposes the two-electron integrals
+to the accuracy asked for by `cholesky_tol` — the same decomposition
+`MolecularHamiltonian.from_integrals()` performs for an `eri` tensor above.
 
 ```python
-    import numpy as np
-
     from safiretools import MolecularHamiltonian
 
-
-    # transopose to match the eri convention from_integrals() expects
-    H2_ijkl = numpy.transpose(H2_ijkl,(0,1,3,2))
-
-    MolecularHamiltonian.from_integrals(
-        hcore=H1_ij,
-        eri=H2_ijkl,
-        enuc=H0,
+    MolecularHamiltonian.from_fcidump(
+        "H2_FCIDUMP",
         cholesky_tol=1.0e-5
     ).to_hdf5(scratch_dir/"H2_hamiltonian.h5")
 ```
@@ -470,20 +442,10 @@ see the {doc}`Hamiltonian reference <../../../afqmctools/lattice_models>` for mo
 ```{code-cell} ipython3
 :id: 6ej77YPU2JmI
 
-import numpy as np
-from safiretools import MolecularHamiltonian, read_fcidump
+from safiretools import MolecularHamiltonian
 
-H1_ij, H2_ijkl, E0, _ = read_fcidump(
-    filename="files/H2_FCIDUMP"
-)
-
-# transopose to match the eri convention from_integrals() expects
-H2_ijkl = np.transpose(H2_ijkl,(0,1,3,2))
-
-MolecularHamiltonian.from_integrals(
-    hcore=H1_ij,
-    eri=H2_ijkl,
-    enuc=E0,
+MolecularHamiltonian.from_fcidump(
+    "files/H2_FCIDUMP",
     cholesky_tol=1.0e-5
 ).to_hdf5(scratch_dir/"H2_hamiltonian.h5")
 ```
