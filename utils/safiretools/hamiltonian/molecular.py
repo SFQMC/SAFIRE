@@ -247,7 +247,7 @@ class MolecularHamiltonian(Hamiltonian):
         mol = scf_data['mol']
         df_ints = scf_data.get('df_ints', None)
 
-        X, (nfzc, nfzv) = _transform_from_scf_data(scf_data, ortho_ao, cas)
+        X, (nfzc, nfzv) = _get_transform_from_scf_data(scf_data, ortho_ao, cas)
         nbasis = X.shape[-1]
 
         if hcore.shape == (2 * X.shape[0], 2 * X.shape[0]):
@@ -652,7 +652,7 @@ def transform_cholesky(chol, C):
     return chol_[:nchol * nik].reshape((nchol, nik))
 
 
-def _transform_from_scf_data(scf_data, ortho_ao, cas=None):
+def _get_transform_from_scf_data(scf_data, ortho_ao, cas=None):
     """
     Choose the working basis and the frozen-orbital counts from a PySCF
     checkpoint.
