@@ -28,11 +28,12 @@ import numpy as np
 
 from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
-from safiretools.wavefunction.base import (
+from safiretools.wavefunction.base import Wavefunction
+from safiretools.wavefunction.slater import (
     ORTHONORMAL_TOL,
-    Wavefunction,
     is_orthonormal,
     modified_gram_schmidt,
+    spin_blocks,
 )
 
 
@@ -109,7 +110,7 @@ class NOMSDWavefunction(Wavefunction):
         The per-spin column blocks of determinant `idet`, as a tuple of length
         `Wavefunction.nspin`.
         """
-        return tuple(io.spin_blocks(self.dets[idet], self.nelec_per_spin))
+        return tuple(spin_blocks(self.dets[idet], self.nelec_per_spin))
 
     def _default_psi0(self) -> tuple:
         """The leading determinant's spin blocks."""

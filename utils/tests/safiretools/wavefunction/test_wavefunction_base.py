@@ -26,11 +26,8 @@ from safiretools import (
     SpinSymm,
     Wavefunction,
 )
-from safiretools.wavefunction.base import (
-    is_orthonormal,
-    modified_gram_schmidt,
-    wavefunction_format,
-)
+from safiretools.wavefunction.base import wavefunction_format
+from safiretools.wavefunction.slater import is_orthonormal, modified_gram_schmidt
 
 
 class TestDerivedShape:
@@ -118,27 +115,6 @@ class TestPsi0:
 
 
 class TestOrthonormality:
-
-    def test_gram_schmidt_orthonormalizes(self, rng):
-        matrix = rng.normal(size=(6, 3)) + 1j * rng.normal(size=(6, 3))
-        orthonormalized = modified_gram_schmidt(matrix)
-
-        assert is_orthonormal(orthonormalized)
-        # the column space is preserved
-        assert np.linalg.matrix_rank(np.hstack([matrix, orthonormalized])) == 3
-
-    def test_gram_schmidt_rejects_linearly_dependent_columns(self):
-        matrix = np.ones((4, 2))
-
-        with pytest.raises(ValueError, match="linearly dependent"):
-            modified_gram_schmidt(matrix)
-
-    def test_gram_schmidt_rejects_a_non_matrix(self):
-        with pytest.raises(ValueError, match="2-dimensional"):
-            modified_gram_schmidt(np.zeros(4))
-
-    def test_an_empty_block_counts_as_orthonormal(self):
-        assert is_orthonormal(np.zeros((6, 0), dtype=complex))
 
     def test_orthonormalize_does_not_touch_the_original(self, rng):
         dets = (rng.normal(size=(1, 6, 5))

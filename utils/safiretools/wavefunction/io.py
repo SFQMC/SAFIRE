@@ -33,6 +33,7 @@ import scipy.sparse as sps
 
 from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
+from safiretools.wavefunction.slater import is_orthonormal, spin_blocks
 
 DEFAULT_THRESHOLD = 1e-8
 """Orbital coefficients smaller than this are dropped before sparsifying."""
@@ -221,8 +222,6 @@ def write_nomsd(group, dets, nelec_per_spin, threshold=DEFAULT_THRESHOLD) -> Non
     columns' mutual orthogonality was carried by entries below `threshold`.
     A block that fails is warned about and written as is.
     """
-    from safiretools.wavefunction.base import is_orthonormal
-
     dets = np.asarray(dets)
     nspin = len(nelec_per_spin)
     offenders = []
@@ -356,43 +355,3 @@ def read_phmsd(group, ndets: int, nelec, nmo: int):
                          for index in range(ntype))
 
     return occa, occb, orbitals
-
-
-# ----------------------------------------------------------------------
-# shared helpers
-# ----------------------------------------------------------------------
-
-def spin_blocks(orbitals, nelec_per_spin):
-    """
-    Split an orbital matrix into its per-spin column blocks.
-
-    Parameters
-    ----------
-    orbitals : numpy.ndarray
-        Orbital matrix, ``(npol*nmo, sum(nelec_per_spin))``.
-    nelec_per_spin : sequence of int
-        Electron count in each spin channel.
-
-    Yields
-    ------
-    numpy.ndarray
-        One view per spin channel, in order.
-
-    Raises
-    ------
-    ValueError
-        If the matrix has the wrong number of columns.
-    """
-    orbitals = np.asarray(orbitals)
-    expected = sum(nelec_per_spin)
-
-    if orbitals.shape[-1] != expected:
-        raise ValueError(
-            f"orbital matrix has {orbitals.shape[-1]} columns; expected "
-            f"{expected} for electron counts {tuple(nelec_per_spin)}"
-        )
-
-    start = 0
-    for nelec in nelec_per_spin:
-        yield orbitals[..., start:start + nelec]
-        start += nelec

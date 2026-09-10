@@ -179,6 +179,9 @@ safiretools/
 │   ├── pyscf.py                # from_pyscf() implementation (from wavefunction/mol.py)
 │   ├── pbc.py                  # from_pbc_scf() implementation
 │   ├── dice.py                 # from_dice() implementation, split out of wavefunction/converter.py
+│   ├── slater.py               # domain-independent Slater-matrix operations: make_slater(),
+│   │                            #   transform_slater(), spin_blocks(), modified_gram_schmidt(),
+│   │                            #   is_orthonormal()
 │   └── io.py                  # native SAFIRE HDF5 schema read/write (uses top-level hdf5.py),
 │                               #   shared by both NOMSDWavefunction and PHMSDWavefunction
 ├── execution.py              # redesigned AFQMC JSON execution-parameter generator
@@ -228,6 +231,18 @@ that mapping lives.
 `nelec` is the physical `(nup, ndown)` in memory; `nelec_on_disk` derives the `(nup + ndown, 0)`
 pair a noncollinear file's `dims` records. Reading such a file back therefore reports
 `(nup + ndown, 0)` — the split is not part of the format, and the executable does not use it.
+
+### Operations on that layout live in `wavefunction/slater.py`
+
+Building a Slater matrix, transforming it into another basis, splitting it into spin blocks, and
+checking or restoring its orthonormality are all independent of where the orbitals came from, so
+they live in one module rather than in whichever domain module needed them first. A domain module
+keeps only what decodes *its own* conventions — `pyscf.py` keeps the `mo_occ` readers (which
+orbitals PySCF calls occupied, and how an ROHF reference packs both channels into one vector),
+`pbc.py` keeps its fractional per-k-point occupancy logic.
+
+`slater.py` therefore imports nothing from the package but `types.py`, which is what lets `io.py`
+and `base.py` both use it without an import cycle.
 
 ### Writing never orthonormalizes
 

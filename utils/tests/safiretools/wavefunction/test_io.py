@@ -18,7 +18,7 @@ import pytest
 
 from safiretools import SpinSymm
 from safiretools.wavefunction import io
-from safiretools.wavefunction.base import is_orthonormal, modified_gram_schmidt
+from safiretools.wavefunction.slater import is_orthonormal, modified_gram_schmidt
 
 
 @pytest.fixture
@@ -279,17 +279,3 @@ class TestPhmsdPayload:
         with pytest.raises(ValueError, match="different numbers of determinants"):
             io.write_phmsd(group, np.array([[0, 1], [0, 2]]),
                            np.array([[0]]), nmo=6)
-
-
-class TestSpinBlocks:
-
-    def test_it_splits_consecutive_column_blocks(self):
-        orbitals = np.arange(6 * 5).reshape(6, 5)
-        alpha, beta = io.spin_blocks(orbitals, (3, 2))
-
-        assert np.array_equal(alpha, orbitals[:, :3])
-        assert np.array_equal(beta, orbitals[:, 3:])
-
-    def test_a_wrong_column_count_is_rejected(self):
-        with pytest.raises(ValueError, match="expected 5 for electron counts"):
-            list(io.spin_blocks(np.zeros((6, 4)), (3, 2)))

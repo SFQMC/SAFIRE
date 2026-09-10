@@ -33,13 +33,10 @@ import h5py as h5
 
 from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
+from safiretools.wavefunction.slater import ORTHONORMAL_TOL, is_orthonormal
 
 WAVEFUNCTION_GROUP = 'Wavefunction'
 """Top-level HDF5 group every wavefunction is written into."""
-
-ORTHONORMAL_TOL = 1e-10
-"""How far an overlap matrix may stray from the identity and still count as
-orthonormal."""
 
 
 def clear_wavefunction(fh5) -> None:
@@ -140,74 +137,6 @@ def _check_representation(cls, target, factory: str) -> None:
             f"{cls.__name__}; call it on {target.__name__} or on the "
             "dispatching Wavefunction"
         )
-
-
-# ----------------------------------------------------------------------
-# orthonormality
-# ----------------------------------------------------------------------
-
-def modified_gram_schmidt(matrix, tol=1e-12):
-    """
-    Orthonormalize the columns of `matrix` by modified Gram-Schmidt.
-
-    Parameters
-    ----------
-    matrix : numpy.ndarray
-        Matrix ``(n, m)`` whose columns are orthonormalized in place order.
-    tol : float, optional
-        Smallest norm accepted before columns count as linearly dependent.
-        Default 1e-12.
-
-    Returns
-    -------
-    numpy.ndarray
-        A new ``complex128`` matrix with orthonormal columns spanning the same
-        column space.
-
-    Raises
-    ------
-    ValueError
-        If `matrix` is not two-dimensional, or a column is (near) linearly
-        dependent on the previous ones.
-    """
-    matrix = np.asarray(matrix)
-    if matrix.ndim != 2:
-        raise ValueError(f"expected a 2-dimensional array, got {matrix.ndim}D")
-
-    orthonormal = np.zeros_like(matrix, dtype=np.complex128)
-
-    for column in range(matrix.shape[1]):
-        vector = np.array(matrix[:, column], dtype=np.complex128, copy=True)
-        for previous in range(column):
-            vector -= np.vdot(orthonormal[:, previous], vector) \
-                * orthonormal[:, previous]
-
-        norm = np.linalg.norm(vector)
-        if norm < tol:
-            raise ValueError(
-                "linearly dependent vectors encountered during Gram-Schmidt "
-                f"orthogonalization of column {column}"
-            )
-
-        orthonormal[:, column] = vector / norm
-
-    return orthonormal
-
-
-def is_orthonormal(matrix, tol=ORTHONORMAL_TOL) -> bool:
-    """
-    True when `matrix`'s columns are orthonormal, i.e. when
-    :math:`M^\\dagger M` is the identity to within `tol`.
-
-    A matrix with no columns is orthonormal: its overlap is the empty identity.
-    """
-    matrix = np.asarray(matrix)
-    if matrix.shape[-1] == 0:
-        return True
-
-    overlap = matrix.conj().T @ matrix
-    identity = np.eye(matrix.shape[-1], dtype=overlap.dtype)
-    return bool(np.max(np.abs(overlap - identity)) < tol)
 
 
 class Wavefunction(ABC):
@@ -386,7 +315,8 @@ class Wavefunction(ABC):
         Return a copy whose Slater matrices have orthonormal columns.
 
         Blocks that are already orthonormal to within `tol` are left exactly as
-        they are; the rest are orthonormalized by `modified_gram_schmidt`. The
+        they are; the rest are orthonormalized by
+        `safiretools.wavefunction.slater.modified_gram_schmidt`. The
         instance this is called on is never modified.
         """
 
