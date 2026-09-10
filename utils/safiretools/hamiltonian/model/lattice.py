@@ -16,10 +16,8 @@ boundary condition (open or periodic, optionally twisted) per axis, and lazily
 computed neighbor lists. Concrete subclasses differ only in their lattice
 vectors and basis; everything else lives on the ABC.
 
-The unit-cell geometry belongs to the lattice *type*. ``a1``, ``a2`` and
-``basis`` always exist on an instance, but for the built-in types they are
-pre-set, so they are not caller-settable. ``CustomLattice`` is
-used to define your own unit cell is precisely. See `Lattice` for the full rule.
+``CustomLattice`` is the type used to define your own unit cell; see `Lattice`
+for the full rule.
 
 Lattices are never serialized on their own. They are persisted as embedded
 state inside a ``LatticeHamiltonian``'s HDF5 file, so there is no
@@ -338,10 +336,6 @@ class Lattice(ABC):
         Initialize with an "empty" lattice containing no sites; ``build()``
         populates them.
 
-        There are deliberately no ``a1``/``a2``/``basis`` parameters here: the
-        unit-cell geometry comes from this lattice type's `_geometry()`. Use
-        `CustomLattice` to supply your own.
-
         Parameters
         ----------
         L : iterable(int)
@@ -456,11 +450,8 @@ class Lattice(ABC):
         ------
         ValueError
             If ``a1``, ``a2`` or ``basis`` is given for a type other than
-            'custom'. Those types define their own geometry (see `Lattice`), and
-            a dict that sets them is asking for something it will not get — the
-            old `get_lattice` discarded them silently. A key present but set to
-            ``None`` is fine, so parameter templates that carry unused keys
-            still work.
+            'custom' (see `Lattice`). A key present but set to ``None`` is fine,
+            so parameter templates that carry unused keys still work.
 
         Examples
         --------
@@ -485,8 +476,7 @@ class Lattice(ABC):
         ...     twist=('1/2 pi', 0.0),
         ... ))
 
-        A lattice whose unit cell is not one of the built-in types — see
-        `CustomLattice`:
+        A custom lattice — see `CustomLattice`:
 
         >>> lattice = Lattice.from_dict(dict(
         ...     type='custom',
@@ -559,25 +549,22 @@ class Lattice(ABC):
     @property
     def a1(self):
         """
-        First lattice vector. Read-only: the geometry belongs to the lattice
-        type (see `Lattice`) and does not change once the lattice is built.
+        First lattice vector. Read-only; see `Lattice`.
         """
         return self._a1
 
     @property
     def a2(self):
         """
-        Second lattice vector. Read-only: the geometry belongs to the lattice
-        type (see `Lattice`) and does not change once the lattice is built.
+        Second lattice vector. Read-only; see `Lattice`.
         """
         return self._a2
 
     @property
     def basis(self):
         """
-        Basis vectors within the unit cell. Read-only: the geometry belongs to
-        the lattice type (see `Lattice`) and does not change once the lattice is
-        built. The list and its arrays are both immutable.
+        Basis vectors within the unit cell. Read-only; see `Lattice`. The list
+        and its arrays are both immutable.
         """
         return tuple(self._basis)
 
@@ -1107,9 +1094,6 @@ class SquareLattice(Lattice):
 
     Here, we define a square lattice as a lattice in
       which sites are equidistant in the x-, and y-directions.
-
-    The unit cell is fixed by the type: unit lattice vectors along x and y, one
-    site per cell. Use `CustomLattice` for anything else.
     """
 
     _type = "square"
@@ -1132,10 +1116,9 @@ class TriangularLattice(Lattice):
     """
     Specialization of Lattice to a triangular lattice.
 
-    The unit cell is fixed by the type and holds a single site. For a
-    triangular Bravais lattice with a multi-site basis, use `HoneycombLattice`
-    or `KagomeLattice`, which are implemented separately; `CustomLattice` can
-    express other bases, with the caveat noted there.
+    For a triangular Bravais lattice with a multi-site basis, use
+    `HoneycombLattice` or `KagomeLattice`, which are implemented separately;
+    `CustomLattice` can express other bases, with the caveat noted there.
 
     This is the only lattice type that accepts `cyl_mode`: the XC/YC cell
     reshaping `build()` performs is hardcoded for hexagonal geometry.
@@ -1152,8 +1135,6 @@ class HoneycombLattice(Lattice):
     Specialization of Lattice to a Honeycomb lattice.
     The underlying lattice is a triangular lattice with an "extra"
     site per cell
-
-    Both the lattice vectors and the 2-site basis are fixed by the type.
     """
 
     _type = "honeycomb"
@@ -1175,8 +1156,6 @@ class KagomeLattice(Lattice):
     Specialization of Lattice to a Kagome lattice.
     The underlying lattice is a triangular lattice with 3
     site per cell
-
-    Both the lattice vectors and the 3-site basis are fixed by the type.
     """
 
     _type = "kagome"
@@ -1197,11 +1176,8 @@ class CustomLattice(Lattice):
     """
     The lattice type whose geometry the caller defines.
 
-    This is the **only** subclass that accepts ``a1``/``a2``/``basis``, and the
-    supported way to build a lattice whose unit cell is not one of the built-in
-    types — defining the unit cell yourself is what makes a lattice "custom".
-    The built-in types own their geometry (see `Lattice`) and reject these
-    arguments.
+    This is the **only** subclass that accepts ``a1``/``a2``/``basis`` — every
+    other type rejects them (see `Lattice`).
 
     Prefer `Lattice.from_dict` with ``type='custom'`` over calling this
     constructor directly, as in the example below. The parameters below are the
