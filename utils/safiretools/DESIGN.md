@@ -297,7 +297,7 @@ because of its 2-site basis.
 **`CustomLattice` is the one subclass that takes `a1`/`a2`/`basis`**, and it is therefore the
 supported way to build a lattice whose geometry isn't one of the built-in types.
 
-Mechanically: each concrete type implements an abstract `_geometry() -> (a1, a2, basis)` hook, and
+Mechanically: each concrete type implements an abstract `_unitcell() -> (a1, a2, basis)` hook, and
 the `Lattice` constructor takes no geometry arguments at all, so the built-in types cannot accept
 them even by accident. Passing `a1`/`a2`/`basis` to a built-in type raises `TypeError`; the
 equivalent keys in a `from_dict()` parameter dict raise `ValueError` (a key present but set to
@@ -306,9 +306,9 @@ equivalent keys in a `from_dict()` parameter dict raise `ValueError` (a key pres
 **The geometry is also immutable, not merely un-settable at construction.** `a1`/`a2`/`basis` are
 read-only properties over private backing state; the arrays they return have `writeable=False` and
 `basis` is a tuple, so the geometry can be neither replaced nor edited in place. Construction copies
-whatever `_geometry()` returns before freezing it, so freezing never reaches an array the caller
+whatever `_unitcell()` returns before freezing it, so freezing never reaches an array the caller
 still holds. `cyl_mode` reshaping the cell inside `build()` is the one place the geometry changes,
-it is derived from the type's own `_geometry()` rather than from the caller, and building twice
+it is derived from the type's own `_unitcell()` rather than from the caller, and building twice
 raises `RuntimeError`. (`L` also changes under `cyl_mode` and is left a plain attribute; only the
 three geometry members are locked down.)
 
