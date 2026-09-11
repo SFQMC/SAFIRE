@@ -26,8 +26,6 @@ from warnings import warn
 
 import numpy as np
 import scipy.linalg as spl
-import scipy.sparse as sps
-import scipy.sparse.linalg as spsl
 import toml
 
 from safiretools.types import SpinSymm
@@ -45,17 +43,12 @@ DEFAULT_TWIST = 0.1 * np.array((THETA_X, THETA_Y))
 """A small *irrational* twist, which lifts the degeneracies that make a
 free-electron determinant ill-defined on a finite lattice."""
 
-SHELL_BUFFER = 10
-"""Extra eigenvalues asked for beyond the occupied ones, so that a shell
-straddling the Fermi level is seen whole. Only affects the sparse solver."""
-
 FILLING_STRATEGIES = ('aufbau', 'balanced', 'hund', 'alternating')
 """Recognized ways to fill a partially occupied degenerate shell."""
 
 
-def from_free_electron(source, nelec, twist=None, spin_symm=None,
-                       use_dense=True, lattice=None, filling_strategy='aufbau',
-                       shell_tol=1e-6, orthonormalize=True):
+def from_free_electron(source, nelec, twist=None, spin_symm=None, lattice=None,
+                       filling_strategy='aufbau', shell_tol=1e-6):
     """
     Build a free-electron trial wavefunction for a lattice model.
 
@@ -74,9 +67,6 @@ def from_free_electron(source, nelec, twist=None, spin_symm=None,
         given, both of which carry their own twist.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry to build in. Taken from the Hamiltonian when omitted.
-    use_dense : bool, optional
-        Diagonalize the dense one-body matrix. Default True, and recommended:
-        the sparse solver does not handle complex matrices correctly.
     lattice : ~safiretools.hamiltonian.model.lattice.Lattice, optional
         Lattice to build `source` on, when `source` is a parameter dict or TOML
         file. Built from ``source['lattice']`` if omitted.
@@ -94,9 +84,6 @@ def from_free_electron(source, nelec, twist=None, spin_symm=None,
     shell_tol : float, optional
         Eigenvalues within this of each other belong to the same shell. Default
         1e-6.
-    orthonormalize : bool, optional
-        Orthonormalize the resulting Slater matrix. Default True. The
-        eigenvectors already are, so this normally changes nothing.
 
     Returns
     -------
@@ -113,9 +100,8 @@ def from_free_electron(source, nelec, twist=None, spin_symm=None,
 
     Notes
     -----
-    afqmctools' ``free_electron`` also evaluated the variational energy through
-    AutoHF. That is a separate concern from building the wavefunction and is not
-    done here; measure the energy explicitly if you want it.
+    The occupied orbitals are eigenvectors of a Hermitian one-body matrix, so
+    they are orthonormal by construction and nothing here orthonormalizes them.
     """
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
 
@@ -136,22 +122,20 @@ def from_free_electron(source, nelec, twist=None, spin_symm=None,
 
     if spin_symm is SpinSymm.COLLINEAR:
         orbitals = _collinear_orbitals(
-            one_body, nelec=nelec, nmo=nmo, use_dense=use_dense,
+            one_body, nelec=nelec, nmo=nmo,
             filling_strategy=filling_strategy, shell_tol=shell_tol)
     else:
         orbitals = _noncollinear_orbitals(
-            one_body, nelec=nelec, nmo=nmo, use_dense=use_dense,
+            one_body, nelec=nelec, nmo=nmo,
             filling_strategy=filling_strategy, shell_tol=shell_tol)
 
-    wavefunction = NOMSDWavefunction(
+    return NOMSDWavefunction(
         coeffs=np.array([1.0 + 0j]),
         dets=orbitals[np.newaxis, ...],
         nelec=nelec,
         spin_symm=spin_symm,
         nmo=nmo,
     )
-
-    return wavefunction.orthonormalize() if orthonormalize else wavefunction
 
 
 def _resolve_hamiltonian(source, twist, lattice):
@@ -206,48 +190,17 @@ def _resolve_hamiltonian(source, twist, lattice):
 # diagonalization and shell filling
 # ----------------------------------------------------------------------
 
-def _one_body_eigenstates(one_body, num_eigenvals, use_dense=True):
+def to_dense(matrix):
     """
-    The lowest eigenvalues and eigenvectors of a one-body Hamiltonian.
+    `matrix` as a dense array.
 
-    Parameters
-    ----------
-    one_body : scipy.sparse.csr_array
-        One-body Hamiltonian.
-    num_eigenvals : int
-        Number of eigenvalues wanted. The dense solver returns all of them
-        regardless.
-    use_dense : bool, optional
-        Use the dense solver. Default True.
-
-    Returns
-    -------
-    eigenvalues : numpy.ndarray
-        Ascending eigenvalues.
-    orbitals : numpy.ndarray
-        Corresponding eigenvectors, as columns.
+    A lattice model's one-body term is sparse, but for simplicity, we 
+    convert to dense before passing to ``scipy.linalg.eigh``. 
+    A sparse eigensolver only pays off when a few
+    eigenpairs are needed, and ``eigsh`` does not handle complex matrices
+    correctly, which a twisted lattice always produces.
     """
-    dimension = one_body.shape[0]
-    if num_eigenvals > dimension:
-        logger.info("requested %d of %d available eigenvalues: finding all %d",
-                    num_eigenvals, dimension, dimension)
-        num_eigenvals = dimension
-
-    if use_dense or num_eigenvals == dimension:
-        logger.debug("diagonalizing the dense one-body Hamiltonian")
-        return spl.eigh(a=one_body.toarray())
-
-    # only valid for num_eigenvals <= dimension - 1
-    logger.debug("diagonalizing the sparse one-body Hamiltonian")
-    warn(
-        "using the sparse one-body eigensolver, which is known not to handle "
-        "complex-valued matrices correctly; pass use_dense=True"
-    )
-    eigenvalues, orbitals = spsl.eigsh(
-        A=one_body, k=num_eigenvals, which='SA')
-
-    order = np.argsort(eigenvalues)
-    return np.asarray(eigenvalues)[order], np.asarray(orbitals)[:, order]
+    return matrix.toarray() if hasattr(matrix, 'toarray') else np.asarray(matrix)
 
 
 def group_by_shell(eigenvalues, orbitals, tol=1e-6):
@@ -392,11 +345,10 @@ def fill_shells(shells, nelec: int, strategy='aufbau'):
     return np.hstack(occupied), indices
 
 
-def _occupy(one_body, nelec: int, num_eigenvals: int, use_dense: bool,
-            filling_strategy: str, shell_tol: float):
+def _occupy(one_body, nelec: int, filling_strategy: str,
+            shell_tol: float):
     """Diagonalize `one_body` and return its `nelec` occupied orbitals."""
-    eigenvalues, orbitals = _one_body_eigenstates(
-        one_body, num_eigenvals, use_dense=use_dense)
+    eigenvalues, orbitals = spl.eigh(a=to_dense(one_body))
     logger.info("eigenvalues of the non-interacting Hamiltonian: %s", eigenvalues)
 
     shells = group_by_shell(eigenvalues, orbitals, tol=shell_tol)
@@ -404,8 +356,8 @@ def _occupy(one_body, nelec: int, num_eigenvals: int, use_dense: bool,
     return occupied
 
 
-def _collinear_orbitals(one_body, nelec, nmo: int, use_dense=True,
-                        filling_strategy='aufbau', shell_tol=1e-6):
+def _collinear_orbitals(one_body, nelec, nmo: int, filling_strategy='aufbau',
+                        shell_tol=1e-6):
     """
     Occupied orbitals for a collinear free-electron determinant: the two spin
     channels are diagonalized independently and their columns concatenated.
@@ -415,18 +367,14 @@ def _collinear_orbitals(one_body, nelec, nmo: int, use_dense=True,
     numpy.ndarray
         ``(nmo, nup + ndown)``.
     """
-    # enough eigenvalues to fill the fuller channel, plus room for a straddling
-    #   shell to be seen whole
-    num_eigenvals = min(max(nelec) + SHELL_BUFFER, nmo)
-
     occupied = []
     for label, block, nelec_spin in zip(('up', 'down'),
                                         _collinear_blocks(one_body, nmo),
                                         nelec):
         logger.info("processing the spin-%s channel (%d electrons)",
                     label, nelec_spin)
-        occupied.append(_occupy(block, nelec_spin, num_eigenvals, use_dense,
-                                filling_strategy, shell_tol))
+        occupied.append(_occupy(block, nelec_spin, filling_strategy,
+                                shell_tol))
 
     logger.info("built a collinear free-electron determinant: %d electrons "
                 "(up: %d, down: %d)", sum(nelec), *nelec)
@@ -439,8 +387,7 @@ def _collinear_blocks(one_body, nmo: int):
     The per-spin blocks of a collinear one-body term.
 
     A ``(2*nmo, nmo)`` term carries a block per spin; an ``(nmo, nmo)`` one is
-    spin-independent and is used for both. afqmctools sliced unconditionally and
-    so produced an empty beta block for the latter.
+    spin-independent and is used for both.
     """
     if one_body.shape == (2 * nmo, nmo):
         return one_body[:nmo, :], one_body[nmo:, :]
@@ -454,7 +401,7 @@ def _collinear_blocks(one_body, nmo: int):
     )
 
 
-def _noncollinear_orbitals(one_body, nelec, nmo: int, use_dense=True,
+def _noncollinear_orbitals(one_body, nelec, nmo: int,
                            filling_strategy='aufbau', shell_tol=1e-6):
     """
     Occupied orbitals for a noncollinear free-electron determinant: one
@@ -466,13 +413,12 @@ def _noncollinear_orbitals(one_body, nelec, nmo: int, use_dense=True,
         ``(2*nmo, nup + ndown)``.
     """
     nelec_total = sum(nelec)
-    num_eigenvals = min(nelec_total + SHELL_BUFFER, 2 * nmo)
 
     if one_body.shape == (2 * nmo, nmo):
-        one_body = sps.block_diag([one_body[:nmo, :], one_body[nmo:, :]],
-                                  format='csr')
+        one_body = spl.block_diag(to_dense(one_body[:nmo, :]),
+                                  to_dense(one_body[nmo:, :]))
     elif one_body.shape == (nmo, nmo):
-        one_body = sps.block_diag([one_body, one_body], format='csr')
+        one_body = spl.block_diag(to_dense(one_body), to_dense(one_body))
     elif one_body.shape != (2 * nmo, 2 * nmo):
         raise ValueError(
             f"the one-body term has shape {one_body.shape}, which is none of "
@@ -481,8 +427,7 @@ def _noncollinear_orbitals(one_body, nelec, nmo: int, use_dense=True,
         )
 
     logger.info("processing a noncollinear system (%d electrons)", nelec_total)
-    occupied = _occupy(one_body, nelec_total, num_eigenvals, use_dense,
-                       filling_strategy, shell_tol)
+    occupied = _occupy(one_body, nelec_total, filling_strategy, shell_tol)
 
     logger.info("built a noncollinear free-electron determinant: %d electrons "
                 "in %d spinor orbitals (originally up: %d, down: %d)",
