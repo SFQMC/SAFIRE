@@ -189,9 +189,9 @@ def intersite_band_matrix(value, nbands: int):
 
     Those pairs are also physically distinct: ``(m, n)`` is band ``m`` on site
     ``I`` interacting with band ``n`` on site ``J``, which is not the same
-    interaction as ``(n, m)``. Restricting to ``m <= n`` silently drops half of
-    them, which is what afqmctools' `_build_intersite_band_matrix` did — on a
-    2-band model it omitted the ``s0b1``–``s1b0`` interaction entirely.
+    interaction as ``(n, m)``. Restricting to ``m <= n`` would silently drop
+    half of them — on a 2-band model, the ``s0b1``–``s1b0`` interaction
+    entirely.
     """
     return sps.csr_array(np.full((nbands, nbands), value))
 
@@ -1083,7 +1083,6 @@ class HamiltonianBuilder:
         with lattice coordinate 0 or L-1, on the given axis.
         """
         if pin_type is None:
-            # afqmctools read afm_pin_type here, which made fm_pin_type dead input
             pin_type = self._hamiltonian.fm_pin_type
         pin_type = pin_type.lower()
         logger.info("using fm pin type: %s", pin_type)

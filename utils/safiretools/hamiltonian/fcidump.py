@@ -530,9 +530,8 @@ def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
 
     Notes
     -----
-    afqmctools computed the per-k-point index offsets as
-    ``cumsum(nmo_pk) - nmo_pk[0]``, which is only correct when every k-point has
-    the same number of orbitals. It is ``cumsum(nmo_pk) - nmo_pk`` here.
+    The per-k-point index offsets are ``cumsum(nmo_pk) - nmo_pk``, which holds
+    for a varying number of orbitals per k-point.
     """
     if use_spinor:
         raise NotImplementedError(

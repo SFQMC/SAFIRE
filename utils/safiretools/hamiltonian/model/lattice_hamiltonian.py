@@ -79,9 +79,8 @@ class HamiltonianComponent:
         """
         True if this term has complex matrix elements.
 
-        afqmctools stored the inverse of this under the name ``_real_valued``,
-        so every real-valued model Hamiltonian was upcast to complex on write.
-        See `LatticeHamiltonian.real_valued`.
+        See `LatticeHamiltonian.real_valued`, which decides the on-disk dtype
+        for the whole Hamiltonian from this.
         """
         return np.iscomplexobj(self.csr_array)
 

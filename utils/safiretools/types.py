@@ -29,8 +29,8 @@ class SpinSymm(IntEnum):
         Accepts a `SpinSymm`, its integer value, or one of the recognized
         spelling aliases (``'closed'``/``'rhf'``, ``'collinear'``/``'uhf'``,
         ``'noncollinear'``/``'ghf'``, ...), case-insensitively. Another
-        enumeration whose value is one of those (afqmctools' ``_SlaterType``,
-        say) is unwrapped, so partly-migrated code can hand its own enum over.
+        enumeration whose value is one of those is unwrapped, so code
+        carrying its own spin-symmetry enum can hand it over directly.
 
         Raises
         ------
@@ -72,9 +72,6 @@ class SpinSymm(IntEnum):
 
 _SPIN_SYMM_ALIASES = {
     'closed': SpinSymm.CLOSED,
-    # 'close' is not a typo here: afqmctools' writer wrote 'closed' while its
-    #   reader looked up 'close', so closed-shell files could never be read
-    #   back. We write 'closed' and accept both.
     'close': SpinSymm.CLOSED,
     'rhf': SpinSymm.CLOSED,
     'collinear': SpinSymm.COLLINEAR,
