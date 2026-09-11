@@ -34,6 +34,11 @@ ORTHONORMAL_TOL = 1e-10
 """How far an overlap matrix may stray from the identity and still count as
 orthonormal."""
 
+#Largest overlap-matrix condition number a Slater matrix may have before it
+#  is reported as ill conditioned
+CONDITION_MAX = 1.0 / np.sqrt(np.finfo(np.float64).eps)
+
+
 
 # ----------------------------------------------------------------------
 # building a Slater matrix
@@ -234,3 +239,44 @@ def is_orthonormal(matrix, tol=ORTHONORMAL_TOL) -> bool:
     overlap = matrix.conj().T @ matrix
     identity = np.eye(matrix.shape[-1], dtype=overlap.dtype)
     return bool(np.max(np.abs(overlap - identity)) < tol)
+
+
+def overlap_condition_number(matrix) -> float:
+    r"""
+    The condition number of a Slater matrix's overlap :math:`S = M^\dagger M`.
+
+    This is what decides whether a trial wavefunction is usable: AFQMC needs
+    :math:`S^{-1}` and :math:`\det S`, so a large condition number means the
+    walker overlaps are numerically meaningless however well the columns were
+    normalized.
+
+    Parameters
+    ----------
+    matrix : numpy.ndarray
+        Slater matrix, ``(nrows, ncols)``.
+
+    Returns
+    -------
+    float
+        The 2-norm condition number of :math:`S`, computed from `matrix`'s
+        singular values as :math:`(\sigma_{max}/\sigma_{min})^2`. ``inf`` when
+        `matrix` is rank deficient — an all-zero matrix included — and ``1.0``
+        for a matrix with no columns, whose overlap is the empty identity.
+
+    Examples
+    --------
+    >>> overlap_condition_number(np.eye(4)[:, :2])
+    1.0
+    >>> overlap_condition_number(np.zeros((4, 2)))
+    inf
+    """
+    matrix = np.asarray(matrix)
+
+    if matrix.shape[-1] == 0:
+        return 1.0
+
+    singular = np.linalg.svd(matrix, compute_uv=False)
+    if singular[-1] == 0.0:
+        return np.inf
+
+    return float((singular[0] / singular[-1]) ** 2)

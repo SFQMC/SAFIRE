@@ -160,9 +160,20 @@ class TestOrthonormalize:
 
         assert np.array_equal(wavefunction.orbitals[0], before)
 
-    def test_it_warns_on_write_when_a_reference_is_not_orthonormal(
-            self, make_phmsd, rng, tmp_path):
+    def test_it_warns_on_write_when_a_reference_is_ill_conditioned(
+            self, make_phmsd, tmp_path):
+        reference = np.eye(6) + 0j
+        reference[:, -1] = reference[:, 0] + 1e-12 * reference[:, -1]
+        wavefunction = make_phmsd(orbitals=[reference])
+
+        with pytest.warns(UserWarning, match="ill-conditioned overlap"):
+            wavefunction.to_hdf5(tmp_path / 'wfn.h5')
+
+    def test_a_well_conditioned_reference_writes_silently(self, make_phmsd,
+                                                          rng, tmp_path,
+                                                          recwarn):
         wavefunction = make_phmsd(orbitals=[rng.normal(size=(6, 6)) + 0j])
 
-        with pytest.warns(UserWarning, match="not orthonormal"):
-            wavefunction.to_hdf5(tmp_path / 'wfn.h5')
+        wavefunction.to_hdf5(tmp_path / 'wfn.h5')
+
+        assert [str(record.message) for record in recwarn] == []

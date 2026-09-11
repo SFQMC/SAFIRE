@@ -18,7 +18,10 @@ import pytest
 
 from safiretools import SpinSymm
 from safiretools.wavefunction import io
-from safiretools.wavefunction.slater import is_orthonormal, modified_gram_schmidt
+from safiretools.wavefunction.slater import (
+    CONDITION_MAX,
+    overlap_condition_number,
+)
 
 
 @pytest.fixture
@@ -30,11 +33,9 @@ def group(tmp_path):
 class TestHeader:
 
     def test_dims_records_the_shape_the_executable_reads(self, group):
-        io.write_header(group, nmo=6, nelec=(3, 2),
-                        spin_symm=SpinSymm.COLLINEAR,
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR,
                         coeffs=np.array([1.0 + 0j, 0.5 + 0j]),
-                        psi0=(np.zeros((6, 3), dtype=complex),
-                              np.zeros((6, 2), dtype=complex)))
+                        psi0=(np.eye(6, 3) + 0j, np.eye(6, 2) + 0j))
 
         dims = group['dims'][...]
         assert list(dims) == [6, 3, 2, int(SpinSymm.COLLINEAR), 2]
@@ -45,8 +46,8 @@ class TestHeader:
         psi0 = (rng.normal(size=(6, 3)) + 1j * rng.normal(size=(6, 3)),
                 rng.normal(size=(6, 2)) + 1j * rng.normal(size=(6, 2)))
 
-        io.write_header(group, nmo=6, nelec=(3, 2),
-                        spin_symm=SpinSymm.COLLINEAR, coeffs=coeffs, psi0=psi0)
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, coeffs=coeffs,
+                        psi0=psi0)
         header = io.read_header(group)
 
         assert header['nmo'] == 6
@@ -58,9 +59,9 @@ class TestHeader:
         assert np.allclose(header['psi0'][1], psi0[1])
 
     def test_a_single_channel_symmetry_writes_no_beta_block(self, group):
-        io.write_header(group, nmo=6, nelec=(3, 3), spin_symm=SpinSymm.CLOSED,
+        io.write_header(group, spin_symm=SpinSymm.CLOSED,
                         coeffs=np.array([1.0 + 0j]),
-                        psi0=(np.zeros((6, 3), dtype=complex),))
+                        psi0=(np.eye(6, 3) + 0j,))
 
         assert 'Psi0_beta' not in group
         assert len(io.read_header(group)['psi0']) == 1
@@ -68,10 +69,9 @@ class TestHeader:
     def test_an_empty_beta_channel_still_gets_its_block(self, group):
         # a wavefunction with no beta electrons is collinear with ndown == 0,
         #   and the executable's reader opens Psi0_beta for any collinear file
-        io.write_header(group, nmo=6, nelec=(3, 0),
-                        spin_symm=SpinSymm.COLLINEAR,
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR,
                         coeffs=np.array([1.0 + 0j]),
-                        psi0=(np.zeros((6, 3), dtype=complex),
+                        psi0=(np.eye(6, 3) + 0j,
                               np.zeros((6, 0), dtype=complex)))
 
         assert group['Psi0_beta'].shape == (6, 0, 2)
@@ -146,57 +146,115 @@ class TestNomsdPayload:
             io.read_nomsd(group, 1, (2,))
 
 
-class TestNomsdOrthonormalityOnDisk:
+class TestHeaderDims:
     """
-    The blocks are checked *after* sparsifying, because that is the state that
-    reaches disk. `Wavefunction.to_hdf5` checks the in-memory determinants, but
-    thresholding happens after that check and can break orthonormality by itself.
+    ``nmo`` and the electron counts are not inputs: `psi0`'s shape and the spin
+    symmetry fix both.
     """
 
-    @staticmethod
-    def _orthonormal_via_subthreshold_entries():
-        """
-        Two exactly-orthonormal columns whose mutual orthogonality is carried by
-        entries below the 1e-8 sparsification threshold.
-        """
-        seed = np.zeros((8, 2))
-        seed[:, 0] = [1.0, 1e-4, 0, 0, 0, 0, 0, 0]
-        seed[:, 1] = [0.0, 1e-5, 1.0, 0, 0, 0, 0, 0]
-        return modified_gram_schmidt(seed)
+    @pytest.mark.parametrize('spin_symm, widths, nmo, nelec', [
+        (SpinSymm.CLOSED, (3,), 6, (3, 3)),
+        (SpinSymm.COLLINEAR, (3, 2), 6, (3, 2)),
+        (SpinSymm.COLLINEAR, (3, 0), 6, (3, 0)),
+        (SpinSymm.NONCOLLINEAR, (5,), 6, (5, 0)),
+    ])
+    def test_it_reads_them_off_psi0(self, spin_symm, widths, nmo, nelec):
+        npol = 2 if spin_symm is SpinSymm.NONCOLLINEAR else 1
+        psi0 = tuple(np.zeros((npol * nmo, width)) for width in widths)
 
-    def test_sparsifying_can_break_orthonormality_and_is_reported(self, group):
-        block = self._orthonormal_via_subthreshold_entries()
-        assert is_orthonormal(block)              # nothing wrong in memory
-        assert np.min(np.abs(block[block != 0])) < io.DEFAULT_THRESHOLD
+        assert io.header_dims(spin_symm, psi0) == (nmo, nelec)
 
-        with pytest.warns(UserWarning, match=r"Written without orthonormal "
-                                             r"columns: PsiT_0"):
-            io.write_nomsd(group, block[np.newaxis], (2,))
+    def test_a_wrong_block_count_is_rejected(self):
+        with pytest.raises(ValueError, match="1 spin channel"):
+            io.header_dims(SpinSymm.CLOSED, (np.zeros((6, 3)),
+                                             np.zeros((6, 3))))
 
-        assert not is_orthonormal(io.read_nomsd(group, 1, (2,))[0])
+        with pytest.raises(ValueError, match="2 spin channel"):
+            io.header_dims(SpinSymm.COLLINEAR, (np.zeros((6, 3)),))
 
-    def test_the_written_block_is_not_repaired(self, group):
-        block = self._orthonormal_via_subthreshold_entries()
+    def test_a_noncollinear_block_needs_an_even_row_count(self):
+        with pytest.raises(ValueError, match="even number"):
+            io.header_dims(SpinSymm.NONCOLLINEAR, (np.zeros((7, 3)),))
 
-        with pytest.warns(UserWarning):
-            io.write_nomsd(group, block[np.newaxis], (2,))
 
-        written = io.read_nomsd(group, 1, (2,))[0]
-        thresholded = block.copy()
-        thresholded[abs(thresholded) < io.DEFAULT_THRESHOLD] = 0.0
-        assert np.array_equal(written, thresholded)
+class TestConditionNumberOnDisk:
+    """
+    Every Slater matrix that reaches disk has its overlap's condition number
+    checked, because AFQMC inverts that overlap. The check sits *after*
+    sparsifying, which is the state actually written — screening small values
+    can only make the conditioning worse.
+    """
 
-    def test_an_orthonormal_determinant_writes_silently(self, group, rng):
-        block = modified_gram_schmidt(rng.normal(size=(8, 2)))
+    def test_a_well_conditioned_block_writes_silently(self, group, rng):
+        block = rng.normal(size=(8, 2))
+        assert overlap_condition_number(block) < CONDITION_MAX
 
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             io.write_nomsd(group, block[np.newaxis], (2,))
 
+    def test_an_ill_conditioned_block_is_reported(self, group):
+        block = np.eye(8, 2)
+        block[:, 1] = block[:, 0] + 1e-12 * block[:, 1]
+
+        with pytest.warns(UserWarning,
+                          match=r"ill-conditioned overlap matrix: PsiT_0"):
+            io.write_nomsd(group, block[np.newaxis], (2,))
+
+    def test_an_all_zero_block_is_reported(self, group):
+        """
+        The degenerate case: a zero overlap matrix is singular, so its condition
+        number is infinite rather than undefined.
+        """
+        assert overlap_condition_number(np.zeros((8, 2))) == np.inf
+
+        with pytest.warns(UserWarning, match="cond inf"):
+            io.write_nomsd(group, np.zeros((1, 8, 2)), (2,))
+
+    def test_an_empty_block_is_fine(self, group):
+        """
+        A wavefunction with no beta electrons writes a zero-width beta block,
+        whose overlap is the empty identity.
+        """
+        assert overlap_condition_number(np.zeros((8, 0))) == 1.0
+
+        det = np.zeros((8, 2))
+        det[0, 0] = det[1, 1] = 1.0
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            io.write_nomsd(group, det[np.newaxis], (2, 0))
+
+    def test_sparsifying_can_be_what_breaks_it(self, group):
+        """
+        A block whose smallest singular value is carried entirely by entries
+        below the threshold becomes exactly singular once they are screened.
+        """
+        block = np.zeros((8, 2))
+        block[0, 0] = 1.0
+        block[1, 1] = 1e-10
+        assert np.min(np.abs(block[block != 0])) < io.DEFAULT_THRESHOLD
+
+        with pytest.warns(UserWarning, match="cond inf"):
+            io.write_nomsd(group, block[np.newaxis], (2,))
+
+        # the screened column is gone entirely, leaving a rank-1 block
+        written = io.read_nomsd(group, 1, (2,))[0]
+        assert np.count_nonzero(written) == 1
+        assert written[0, 0] == 1.0
+
+    def test_the_written_block_is_not_repaired(self, group):
+        block = np.eye(8, 2)
+        block[:, 1] = block[:, 0] + 1e-12 * block[:, 1]
+
+        with pytest.warns(UserWarning):
+            io.write_nomsd(group, block[np.newaxis], (2,))
+
+        assert np.allclose(io.read_nomsd(group, 1, (2,))[0], block)
+
     def test_the_spin_channels_are_checked_separately(self, group):
         """
         Alpha and beta columns need not be orthogonal to each other; only the
-        columns *within* a channel must be. Identical alpha and beta orbitals are
+        columns *within* a channel matter. Identical alpha and beta orbitals are
         a perfectly ordinary collinear determinant.
         """
         det = np.zeros((8, 2))
@@ -207,8 +265,8 @@ class TestNomsdOrthonormalityOnDisk:
             warnings.simplefilter('error')
             io.write_nomsd(group, det[np.newaxis], (1, 1))
 
-    def test_every_offending_block_is_named(self, group, rng):
-        dets = rng.normal(size=(2, 8, 4))       # nothing orthonormal here
+    def test_every_offending_block_is_named(self, group):
+        dets = np.zeros((2, 8, 4))      # every block singular
 
         with pytest.warns(UserWarning) as record:
             io.write_nomsd(group, dets, (2, 2))
@@ -216,6 +274,14 @@ class TestNomsdOrthonormalityOnDisk:
         message = str(record[0].message)
         for name in ('PsiT_0', 'PsiT_1', 'PsiT_2', 'PsiT_3'):
             assert name in message
+
+    def test_phmsd_orbital_references_are_checked_too(self, group):
+        occa, occb = np.array([[0, 1]]), np.array([[0, 1]])
+        reference = np.zeros((6, 6))
+
+        with pytest.warns(UserWarning,
+                          match=r"ill-conditioned overlap matrix: PsiT_0"):
+            io.write_phmsd(group, occa, occb, nmo=6, orbitals=[reference])
 
 
 class TestPhmsdPayload:

@@ -136,16 +136,30 @@ class TestOrthonormality:
         assert np.array_equal(wavefunction.orthonormalize().dets,
                               wavefunction.dets)
 
-    def test_writing_warns_about_non_orthonormal_matrices(self, rng, tmp_path):
-        dets = rng.normal(size=(1, 6, 5)) + 0j
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 2),
-                                         spin_symm='collinear')
+    def test_a_well_conditioned_determinant_writes_silently(self, rng,
+                                                             tmp_path, recwarn):
+        """
+        Writing checks *conditioning*, not exact orthonormality: a random
+        Slater matrix is not orthonormal but is perfectly usable.
+        """
+        dets = rng.normal(size=(1, 6, 3)) + 0j
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
+                                         spin_symm='closed')
 
-        with pytest.warns(UserWarning, match="not orthonormal"):
+        wavefunction.to_hdf5(tmp_path / 'wfn.h5')
+
+        assert [str(record.message) for record in recwarn] == []
+
+    def test_an_ill_conditioned_determinant_is_reported(self, tmp_path):
+        dets = _nearly_dependent(6, 3)[np.newaxis]
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
+                                         spin_symm='closed')
+
+        with pytest.warns(UserWarning, match="ill-conditioned overlap"):
             wavefunction.to_hdf5(tmp_path / 'wfn.h5')
 
-    def test_writing_does_not_orthonormalize(self, rng, tmp_path):
-        dets = rng.normal(size=(1, 6, 3)) + 0j
+    def test_writing_does_not_repair(self, tmp_path):
+        dets = _nearly_dependent(6, 3)[np.newaxis]
         wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
                                          spin_symm='closed')
         path = tmp_path / 'wfn.h5'
@@ -158,50 +172,43 @@ class TestOrthonormality:
     def test_the_check_covers_psi0_not_just_the_determinants(self, rng,
                                                              tmp_path):
         """
-        `psi0` is a dense Slater matrix like any other and its columns must be
-        orthonormal too, so it is checked even when the determinants are clean.
+        `psi0` is a dense Slater matrix like any other and AFQMC inverts its
+        overlap too, so it is checked even when the determinants are clean.
         """
         dets = modified_gram_schmidt(rng.normal(size=(6, 3)))[np.newaxis]
         wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
                                          spin_symm='closed')
-        wavefunction.psi0 = (rng.normal(size=(6, 3)) + 0j,)
+        wavefunction.psi0 = (_nearly_dependent(6, 3),)
 
-        with pytest.warns(UserWarning, match=r"not orthonormal: psi0 spin 0"):
+        with pytest.warns(UserWarning, match=r"ill-conditioned overlap matrix: "
+                                             r"Psi0_alpha"):
             wavefunction.to_hdf5(tmp_path / 'wfn.h5')
 
-    def test_a_defaulted_psi0_is_covered_through_the_leading_determinant(
-            self, rng, tmp_path):
+    def test_a_defaulted_psi0_is_covered_too(self, tmp_path):
         """
-        The default `psi0` is a copy of ``dets[0]``'s spin blocks, so the
-        determinant check already covers it -- and it is named as the
-        determinant, which is where a caller would fix it.
+        The default `psi0` is a copy of ``dets[0]``'s spin blocks, so both it
+        and the determinant are named.
         """
-        dets = rng.normal(size=(1, 6, 3)) + 0j
+        dets = _nearly_dependent(6, 3)[np.newaxis]
         wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
                                          spin_symm='closed')
 
-        with pytest.warns(UserWarning, match=r"not orthonormal: dets\[0\] spin 0"):
+        with pytest.warns(UserWarning) as record:
             wavefunction.to_hdf5(tmp_path / 'wfn.h5')
 
-    def test_a_determinant_broken_only_by_sparsifying_is_reported_on_write(
-            self, tmp_path):
-        """
-        The in-memory check passes and the on-disk one does not: sparsifying
-        happens after `to_hdf5`'s check, so `write_nomsd` has the last word.
-        See `TestNomsdOrthonormalityOnDisk` in ``test_io.py``.
-        """
-        seed = np.zeros((8, 2))
-        seed[:, 0] = [1.0, 1e-4, 0, 0, 0, 0, 0, 0]
-        seed[:, 1] = [0.0, 1e-5, 1.0, 0, 0, 0, 0, 0]
-        dets = modified_gram_schmidt(seed)[np.newaxis]
+        reported = ' '.join(str(entry.message) for entry in record)
+        assert 'Psi0_alpha' in reported
+        assert 'PsiT_0' in reported
 
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(2, 2),
-                                         spin_symm='closed')
-        assert all(is_orthonormal(block)
-                   for block in wavefunction.spin_blocks(0))
 
-        with pytest.warns(UserWarning, match="Written without orthonormal"):
-            wavefunction.to_hdf5(tmp_path / 'wfn.h5')
+def _nearly_dependent(nrows, ncols, gap=1e-12):
+    """
+    A Slater matrix whose last column is `gap` away from lying in the span of
+    the others, so its overlap is ill conditioned but not exactly singular.
+    """
+    matrix = np.eye(nrows, ncols) + 0j
+    matrix[:, -1] = matrix[:, 0] + gap * matrix[:, -1]
+    return matrix
 
 
 class TestFormatDetection:

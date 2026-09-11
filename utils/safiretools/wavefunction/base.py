@@ -26,14 +26,13 @@ subclasses supply only the representation-specific payload.
 
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from warnings import warn
 
 import numpy as np
 import h5py as h5
 
 from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
-from safiretools.wavefunction.slater import ORTHONORMAL_TOL, is_orthonormal
+from safiretools.wavefunction.slater import ORTHONORMAL_TOL
 
 WAVEFUNCTION_GROUP = 'Wavefunction'
 """Top-level HDF5 group every wavefunction is written into."""
@@ -363,11 +362,11 @@ class Wavefunction(ABC):
         the same for every representation and is written here; the subclass adds
         only its own payload.
 
-        Nothing is orthonormalized on the way out — a non-orthonormal Slater
-        matrix is warned about, not silently repaired.
+        Nothing is repaired on the way out. Every Slater matrix that reaches
+        disk has its overlap's condition number checked, and an ill-conditioned
+        one is warned about — see
+        `safiretools.wavefunction.io.warn_if_ill_conditioned`.
         """
-        self._warn_if_not_orthonormal()
-
         if self._psi0 is None:
             self._warn_about_default_psi0()
 
