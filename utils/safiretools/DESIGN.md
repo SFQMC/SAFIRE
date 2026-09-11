@@ -19,6 +19,7 @@ decision.
 - User-facing docstrings, documentation and error messages name only top-level paths.
 - `scalar_stats` is the only CLI entry point kept.
 - Importing safiretools never requires `AFQMC_EXEC`, and never pulls in pyscf or mpi4py.
+- Nothing in the package uses MPI; the periodic Cholesky factorization runs serially.
 - "No internal callers found in `utils/`" is never on its own a reason to drop something.
 
 **Hamiltonian and Wavefunction**
@@ -34,7 +35,12 @@ decision.
 - `nelec` and `spin_symm` are Hamiltonian state, not write-time arguments.
 - `psi0` is wavefunction state with a derived default, not a write-time argument.
 - A determinant carries one column block per independent spin channel.
-- Writing never orthonormalizes — `orthonormalize()` is explicit and `to_hdf5` only warns.
+- Writing never repairs: every Slater matrix reaching disk has its overlap's condition number
+  checked, and an ill-conditioned one is warned about. `orthonormalize()` is explicit, and the
+  domain factories do not call it.
+- `from_pyscf` takes a checkpoint path or a loaded `scf_data`; the loaders live in
+  `convert/pyscf.py`, and determine the spin symmetry at load time.
+- The wavefunction's basis and the solution it is built from are separate arguments.
 
 **On-disk formats**
 
@@ -190,8 +196,10 @@ safiretools/
 ├── execution.py              # redesigned AFQMC JSON execution-parameter generator
 │                              #   (from inputs/from_hdf.py) — naming/location still open
 ├── convert/
-│   ├── pyscf.py                # thin orchestration: calls hamiltonian.molecular +
-│   │                            #   wavefunction.pyscf (NOMSDWavefunction.from_pyscf)
+│   ├── pyscf.py                # PySCF checkpoint -> scf_data: load_pyscf_chk_mol,
+│   │                            #   load_pyscf_chk, as_scf_data, determine_spin_symm.
+│   │                            #   Shared by hamiltonian/{molecular,periodic} and
+│   │                            #   wavefunction/{pyscf,pbc}, so it can live in neither.
 │   └── autohf.py                # hardened AutoHF interop
 └── qe/                        # relocated QE interop (qe_tools.py, qe_utils.py contents)
 ```
@@ -247,40 +255,37 @@ orbitals PySCF calls occupied, and how an ROHF reference packs both channels int
 `slater.py` therefore imports nothing from the package but `types.py`, which is what lets `io.py`
 and `base.py` both use it without an import cycle.
 
-### Writing never orthonormalizes
+### Writing never repairs: the overlap's condition number is what is checked
 
-`orthonormalize()` is an explicit method returning a *new* instance, which the domain factories call
-by default; `to_hdf5` warns about a non-orthonormal Slater matrix rather than quietly repairing it.
+**Every Slater matrix that reaches disk has the condition number of its overlap :math:`S = M^\dagger M` checked**,
+and an ill-conditioned one is warned about and written as it stands (user call).
 
-**Every Slater matrix is covered, `psi0` included.** Both `orthonormalize()` and the write-time check
-walk the same set, so there is no dense array that only one of them sees:
+`overlap_condition_number` computes it from `M`'s singular values as
+:math:`(\sigma_{max}/\sigma_{min})^2`, never forming `S`. Two degenerate cases matter and are both
+pinned by tests: a **rank-deficient matrix (an all-zero one included) is `inf`**, and a matrix
+with **no columns is 1.0**, since a wavefunction with no beta electrons writes a zero-width beta
+block whose overlap is the empty identity. The limit is `CONDITION_MAX`, :math:`1/\sqrt{\epsilon}`
+≈ 6.7e7, because forming `S` squares the conditioning of `M`.
 
-| matrix | `orthonormalize()` | checked by `to_hdf5` |
-|---|---|---|
-| `NOMSDWavefunction.dets[i]`, per spin channel | ✅ | ✅ as `dets[i] spin s` |
-| `psi0` supplied explicitly, or assigned afterwards | ✅ | ✅ as `psi0 spin s` |
-| `psi0` left to default | ✅ (re-derived from the fixed determinants) | ✅ — it *is* a copy of `dets[0]`'s blocks, so the determinant check covers it, and reports it under the determinant's name |
-| `PHMSDWavefunction.orbitals` | ✅ | ✅ as `orbitals[i]` |
-| `PHMSDWavefunction`'s default `psi0` | ✅ | ✅ — identity columns, orthonormal by construction |
+`orthonormalize()` remains as an explicit, non-mutating method returning a *new* instance, for a
+caller who wants orthonormal columns; it uses `is_orthonormal` to leave already-orthonormal blocks
+exactly alone. **The domain factories no longer call it**, because every source they read from is
+orthonormal by construction: PySCF's orbitals are orthonormal in the basis they are expressed in,
+and the free-electron and periodic paths occupy eigenvectors of a Hermitian matrix.
+
+**`PsiT` blocks are checked after sparsifying.** The 1e-8
+threshold applies only to the sparse `PsiT` blocks it exists to sparsify, never to the dense `Psi0`,
+which goes to disk verbatim.
 
 **Blocks are checked per independent spin channel**, which is the physically correct grain: a
 collinear determinant's alpha and beta columns describe different spin sectors and need not be
 orthogonal to each other, while a noncollinear determinant is a single `(2*nmo, nup + ndown)` block
 and is checked whole. `Wavefunction.nelec_per_spin` supplies the split, as everywhere else.
 
-**The `PsiT` blocks are checked again after sparsifying, because that is what reaches disk.** The
-1e-8 threshold applies only to the sparse `PsiT` blocks it exists to sparsify, never to the dense
-`Psi0`, which goes to disk verbatim. Sparsifying happens *after* `to_hdf5`'s check and can cost a
-determinant its orthonormality on its own, when the columns' mutual orthogonality was carried by
-entries below the threshold. `write_nomsd` therefore re-checks each thresholded block and warns
-naming the dataset (`PsiT_k`), so the warning describes the bytes on disk rather than the array in
-memory. It still only warns: the caller has to choose between `orthonormalize()` and a lower
-`threshold`, and the writer should not decide that silently.
-
-> The check tolerance is 1e-10 and the sparsification threshold is 1e-8, so this warning can fire on
-> a wavefunction whose error is bounded by the threshold and therefore physically negligible for
-> AFQMC. That is deliberate (user call): the predicate reported is the same one `is_orthonormal`
-> applies everywhere else, rather than a second, looser one that would have to be explained.
+`modified_gram_schmidt` is a reduced QR decomposition rather than an explicit Gram-Schmidt loop —
+more accurate, faster, and the same path LAPACK uses. The sign convention is pinned so
+`R`'s diagonal is real and non-negative, which makes `Q` unique and keeps the function idempotent on
+an already orthonormal input instead of flipping column signs.
 
 **`Lattice`** follows the same shape too: an ABC with concrete subclasses per lattice type
 (`SquareLattice`/`TriangularLattice`/`HoneycombLattice`/`KagomeLattice`, plus `CustomLattice`), a
@@ -502,10 +507,7 @@ running the same heuristic in `peekHamType`. `kpoint_coqui` has no tag — a CoQ
 which is exactly what the fallback is for. 
 It is desirable to update CoQuí to write a tag as well.
 The dataset is a variable-length string, the same as
-`spin_type`, so the C++ side reads it the way it already reads that; parallel HDF5 cannot write
-variable-length data, so `write_from_pyscf` — the one Hamiltonian written in parallel — tags itself
-from rank 0 after every rank has closed the file, rather than the tag costing the file a second
-string convention of its own.
+`spin_type`, so the C++ side reads it the way it already reads that.
 
 **The two names for a format live together in `HamiltonianFormat`.** Each format has a safiretools
 name and, usually, an on-disk tag, and `types.HamiltonianFormat` (beside `SpinSymm`) is the single
@@ -614,24 +616,72 @@ silently double the basis a second time.
 > documentation still says only "chemists' notation `(ij|kl)`", which is the ambiguous half of the
 > story; it is left as it is for now.
 
-## Periodic Cholesky: one solver, one flag
+## Reading a PySCF checkpoint: `convert/pyscf.py`
+
+The loaders that produce the `scf_data` mapping (`load_pyscf_chk_mol` for a molecule and
+`load_pyscf_chk` for a cell) live in `convert/pyscf.py`.
+ They are shared by `hamiltonian/molecular.py`, `hamiltonian/periodic.py`, `wavefunction/pyscf.py` and
+`wavefunction/pbc.py`, so they cannot live in any one of those, and `convert/` is the subpackage for
+interop with an external tool.
+
+**Every `from_pyscf` factory takes a checkpoint path or an already-loaded mapping**, resolved by
+`as_scf_data`. The path form is the common case and makes the simple workflow one call; the mapping
+form is what lets one load serve several factories, which matters because **the basis and the
+wavefunction need not come from the same SCF calculation**:
+
+```python
+# simple: the factory loads the checkpoint itself
+MolecularHamiltonian.from_pyscf("rohf.chk", chol_cut=1e-5).to_hdf5("afqmc.h5")
+Wavefunction.from_pyscf("ghf.chk", basis="rohf.chk").to_hdf5("afqmc.h5")
+
+# one basis load, reused, when it needs non-default options
+basis = load_pyscf_chk_mol("rohf.chk", soc_type="ecp")
+MolecularHamiltonian.from_pyscf(basis, ortho_ao=True).to_hdf5("afqmc_soc.h5")
+Wavefunction.from_pyscf("ghf_soc.chk", basis=basis, ortho_ao=True).to_hdf5("afqmc_soc.h5")
+```
+
+`Wavefunction.from_pyscf`'s two arguments say which is which: `source` is the solution the
+wavefunction is *built from* and `basis` is the solution whose orbitals it is *expressed in*, which
+has to be the one the Hamiltonian was built in. `basis` defaults to `source`.
+
+**A checkpoint's kind is told apart by its serialized molecule, not by type.**
+`pyscf.pbc.gto.Cell` is a *subclass* of `gto.Mole`, so an `isinstance` test would report a periodic
+cell as molecular. `is_periodic_chk` looks for lattice vectors instead — PySCF stores them under the
+key `'a'` for a `Cell` and not at all for a `Mole` — and `as_scf_data` raises when a factory is
+handed the wrong kind.
+
+### The spin symmetry is determined, not inferred
+
+`determine_spin_symm` reads it off the *calculation*, at load time, and stores it in the mapping:
+a spin-orbit treatment (`'x2c'`/`'ecp'`) or a spinor basis is noncollinear; spin-resolved orbitals
+or a fractionally/singly occupied orbital are collinear; occupancies that are all 0 or 2 are closed
+shell. The order matters — a GHF solution has one `mo_coeff` matrix like an RHF one, and only the
+basis size separates them.
+
+This replaces inferring the symmetry from the *shape of the Slater matrix built later*, which was
+circular: the construction is driven by the reference's symmetry, so the shape could only ever
+report back what it was told. The explicit `spin_symm=` override on every factory is unaffected.
+
+## Periodic Cholesky: one solver, one flag, serially
 
 `kpoint.py`'s `KPCholesky` and `supercell.py`'s `Cholesky` become a single `PeriodicCholesky` with a
-`kp_sym` flag. The factorization loop is shared verbatim; only the k-point-pair enumeration, the
-pivot bookkeeping index, and the momentum-conservation test differ, each behind a small method.
-`run()` is a generator yielding one momentum block at a time, so the k-point path still streams to
-disk rather than materializing every `L_Q`. The flag stays inside the solver: a `kp_sym=False`
-result is recast as a Γ-point Hamiltonian (above), so both modes produce the same kind of object.
+`kp_sym` flag. The factorization loop is shared; only the k-point-pair enumeration, the pivot
+bookkeeping index, and the momentum-conservation test differ, each behind a small method. `run()` is
+a generator yielding one momentum block at a time. The flag stays inside the solver: a
+`kp_sym=False` result is recast as a Γ-point Hamiltonian (above), so both modes produce the same kind
+of object.
 
-Two entry points, because the `to_hdf5` contract and the existing streaming behavior pull in
-different directions: `PeriodicHamiltonian.from_pyscf(...)` builds in memory and is serial-only,
-while `PeriodicHamiltonian.write_from_pyscf(comm, ..., path)` generates and streams over any
-communicator. Both drive the same solver and produce identical files.
+**The solver is serial and there is one entry point**: `PeriodicHamiltonian.from_pyscf`
+builds the whole factorization in memory and `to_hdf5` writes it, like every other `Hamiltonian`
+subclass. The MPI machinery is gone. `Partition`, `fair_share`, `bisect`, `FileHandler`,
+`rank_filename`, `_SerialComm`, the per-rank scratch files and their merge, the parallel-HDF5 branch,
+the pivot `Allgather`/`Bcast`, and the second `write_from_pyscf` entry point that existed to stream
+over a communicator. It complicated the module out of proportion to what it bought, and **CoQuí is
+the supported route for production-sized solids**; see *Things we might change*.
 
-**Writing a supercell factorization in parallel raises `NotImplementedError`, and that is settled,
-not a gap** (user call): it is not needed. Each rank's Cholesky vectors scatter across the combined
-orbital basis rather than filling a contiguous slice, so the per-rank merge the k-point path uses
-does not apply — and `kpoint_symmetry=True` is the path that runs in parallel.
+The cost is that a large k-point mesh now needs every `L_Q` resident at once, where the streaming
+writer held one block. The `run()` generator is still block-at-a-time internally, so a streaming
+writer could be reintroduced without touching the solver.
 
 ## Coding conventions
 
@@ -708,9 +758,8 @@ does not apply — and `kpoint_symmetry=True` is the path that runs in parallel.
   A SAFIRE input file holds **at most one Hamiltonian and at most one wavefunction**, so replacing
   rather than adding is the right semantics, and anything else in the file — notably `Wavefunction` —
   survives. This is what lets a Hamiltonian and a wavefunction share one file **in either order**,
-  which is the common case. Applies to `PeriodicHamiltonian.write_from_pyscf` too, whose per-rank
-  scratch files are still truncated since they hold only one run's partial blocks. (HDF5 unlinks
-  rather than reclaims, so repeatedly rewriting into one file grows it.)
+  which is the common case. (HDF5 unlinks rather than reclaims, so repeatedly rewriting into one
+  file grows it.)
 - `AFQMC_EXEC` must never be required just to import safiretools (today's
   `RuntimeError: AFQMC_EXEC environment variable is not set` fires at import time in
   `tutorial_utils/helper.py` — becomes a lazy check, only triggered when something actually
@@ -777,16 +826,11 @@ resolving the format.
 | `Hamiltonian.from_hdf5` | base — shared | `hamiltonian_format(path)`, then `issubclass(target, cls)` |
 | `LatticeHamiltonian.from_dict` | subclass | the class named at the call site |
 | `MolecularHamiltonian.from_integrals` / `.from_pyscf` / `.from_fcidump` | subclass | the class named at the call site |
-| `PeriodicHamiltonian.from_pyscf` / `.write_from_pyscf` | subclass | the class named at the call site |
+| `PeriodicHamiltonian.from_pyscf` | subclass | the class named at the call site |
 | `Wavefunction.from_hdf5` | base | `wavefunction_format(path)`, then `issubclass(target, cls)` |
 | `Wavefunction.from_free_electron` / `.from_pyscf` | base | fixed NOMSD, `_check_representation` |
 | `Wavefunction.from_pyscf_cas` / `.from_dice` | base | fixed PHMSD, `_check_representation` |
-| `Wavefunction.from_pbc_scf` | base | the occupancies — **no guard, deliberately** |
-
-`Wavefunction.from_pbc_scf` is the one base factory with no guard, and that is correct rather than an
-oversight: it is the honest dispatcher, returning whichever representation the occupancies call for,
-so there is no target to check it against. The subclasses do not inherit it — they **override** it
-with narrowing forms that validate in their own way (below).
+| `Wavefunction.from_pbc_scf` | base | fixed NOMSD, `_check_representation` |
 
 A fixed-answer `Wavefunction` factory still belongs on the base class: the caller should not have to
 know that `from_dice` happens to produce a particle-hole expansion in order to ask for one.
@@ -806,17 +850,9 @@ That is the practical payoff of pushing them down: the two `from_pyscf` signatur
 so `inspect.signature` is exact and a keyword aimed at the wrong domain is a plain `TypeError` from
 the method the caller actually named.
 
-**`scf_data` is told apart by key, not by type** wherever something still has to tell them apart
-(`PeriodicHamiltonian.from_pyscf` reads `'cell'`). `pyscf.pbc.gto.Cell` is a *subclass* of
-`gto.Mole`, so an `isinstance` test on the object would report a periodic cell as molecular. The
-loaders are disjoint on the key — `load_from_pyscf_chk` stores `'cell'` (plus `'kpts'`, `'nmo_pk'`)
-and `load_from_pyscf_chk_mol` stores `'mol'` — and that is the discriminator.
-
-**`NOMSDWavefunction.from_pbc_scf` is not a pure alias** and stays documented as a *narrowing* form:
-it forces `ndet_max=1` to guarantee a single determinant, where `Wavefunction.from_pbc_scf` passes
-`ndet_max` through and returns whichever representation the occupancies call for.
-`PHMSDWavefunction.from_pbc_scf` likewise still raises when a single determinant would describe the
-system exactly.
+**No subclass overrides a base factory.** Every one returns a fixed representation, so each is a
+plain inherited alias guarded by `_check_representation`, which is what stops
+`PHMSDWavefunction.from_free_electron(...)` from quietly handing back a `NOMSDWavefunction`.
 
 ## Future changes
 
@@ -905,13 +941,12 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
 
 ### Things we might change
 
-- **The periodic multi-determinant expansion keeps the *least* probable determinants.**
-  `reoccupy` selects with `probabilities.argsort()[:ndets]`, and `argsort` is ascending, so
-  determinant 0 — which the executable takes as its reference configuration — is the least likely
-  configuration rather than the most likely. Almost certainly a bug, fixed by one `[::-1]`, but it
-  changes numerics on a path with established behavior (and would break the `ndet_max=4` periodic
-  equivalence check), so it is preserved verbatim pending a decision.
-    - **This was flagged by AI** It is likely wrong here.
+- **Drop PySCF support for periodic systems entirely.** `PeriodicHamiltonian.from_pyscf` and
+  `NOMSDWavefunction.from_pbc_scf` are the only two things left that build a solid from a PySCF
+  mean-field reference, and **CoQuí is the supported route for solids**. If that stays true, both
+  can go, along with `convert/pyscf.py`'s `load_pyscf_chk`, and `PeriodicHamiltonian` reduces to
+  reading CoQuí's k-point format. The serial-only Cholesky factorization is sized for the same
+  judgment: it is fine for a test case and not meant for a production mesh.
 - **Direct use of NOMSDWavefunction and PHMSDWavefunction in tutorials is potentially confusing.**
   (This applies mostly to the Molecules writting a Wavefunction tutorial) We added to factories to the 
   Wavefunction baseclass to specifically avoid users needed to do this; however, one could argue that
