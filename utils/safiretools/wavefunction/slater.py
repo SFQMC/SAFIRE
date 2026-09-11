@@ -175,15 +175,15 @@ def spin_blocks(orbitals, nelec_per_spin):
 
 def modified_gram_schmidt(matrix, tol=1e-12):
     """
-    Orthonormalize the columns of `matrix` by modified Gram-Schmidt.
+    Orthonormalize the columns of `matrix`.
 
     Parameters
     ----------
     matrix : numpy.ndarray
         Matrix ``(n, m)`` whose columns are orthonormalized in place order.
     tol : float, optional
-        Smallest norm accepted before columns count as linearly dependent.
-        Default 1e-12.
+        Smallest diagonal of ``R`` accepted before columns count as linearly
+        dependent. Default 1e-12.
 
     Returns
     -------
@@ -194,31 +194,30 @@ def modified_gram_schmidt(matrix, tol=1e-12):
     Raises
     ------
     ValueError
-        If `matrix` is not two-dimensional, or a column is (near) linearly
-        dependent on the previous ones.
+        If `matrix` is not two-dimensional, or its columns are (near) linearly
+        dependent.
+
+    Notes
+    -----
+    Implemented as a reduced QR decomposition. The sign convention is pinned so that 
+    ``R`` has a non-negative real diagonal, which makes ``Q`` unique and leaves an already
+    orthonormal input unchanged rather than flipped.
     """
     matrix = np.asarray(matrix)
     if matrix.ndim != 2:
         raise ValueError(f"expected a 2-dimensional array, got {matrix.ndim}D")
 
-    orthonormal = np.zeros_like(matrix, dtype=np.complex128)
+    Q, R = np.linalg.qr(matrix.astype(np.complex128, copy=False), mode='reduced')
 
-    for column in range(matrix.shape[1]):
-        vector = np.array(matrix[:, column], dtype=np.complex128, copy=True)
-        for previous in range(column):
-            vector -= np.vdot(orthonormal[:, previous], vector) \
-                * orthonormal[:, previous]
+    diagonal = np.diagonal(R)
+    dependent = np.flatnonzero(np.abs(diagonal) < tol)
+    if dependent.size:
+        raise ValueError(
+            "linearly dependent vectors encountered while orthogonalizing "
+            f"column {dependent[0]}"
+        )
 
-        norm = np.linalg.norm(vector)
-        if norm < tol:
-            raise ValueError(
-                "linearly dependent vectors encountered during Gram-Schmidt "
-                f"orthogonalization of column {column}"
-            )
-
-        orthonormal[:, column] = vector / norm
-
-    return orthonormal
+    return Q * (np.abs(diagonal) / diagonal)
 
 
 def is_orthonormal(matrix, tol=ORTHONORMAL_TOL) -> bool:
