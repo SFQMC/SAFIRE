@@ -33,10 +33,49 @@ import scipy.sparse as sps
 
 from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
-from safiretools.wavefunction.slater import is_orthonormal, spin_blocks
+from safiretools.wavefunction.slater import (
+    CONDITION_MAX,
+    overlap_condition_number,
+    spin_blocks,
+)
 
 DEFAULT_THRESHOLD = 1e-8
 """Orbital coefficients smaller than this are dropped before sparsifying."""
+
+
+def warn_if_ill_conditioned(named_matrices, condition_max=CONDITION_MAX) -> None:
+    r"""
+    Warn about each Slater matrix whose overlap is too ill conditioned to be
+    usable.
+
+    Every matrix that reaches disk passes through here, because this is the last
+    point at which a trial wavefunction AFQMC cannot work with can be flagged —
+    it needs :math:`(M^\dagger M)^{-1}` and its determinant, so an
+    ill-conditioned overlap makes the walker overlaps meaningless. Nothing is
+    repaired; the matrix is written as it stands.
+
+    Parameters
+    ----------
+    named_matrices : iterable of (str, numpy.ndarray)
+        The matrices to check, each with the dataset name to report it under.
+    condition_max : float, optional
+        Largest condition number accepted. Default `CONDITION_MAX`.
+    """
+    offenders = {name: overlap_condition_number(matrix)
+                 for name, matrix in named_matrices}
+    offenders = {name: condition for name, condition in offenders.items()
+                 if condition > condition_max}
+
+    if offenders:
+        reported = ', '.join(f'{name} (cond {condition:.2e})'
+                             for name, condition in offenders.items())
+        warn(
+            f"Written with an ill-conditioned overlap matrix: {reported}. "
+            f"The limit is {condition_max:.2e}. AFQMC inverts this overlap, so "
+            "the trial wavefunction is probably unusable as written: check for "
+            "linearly dependent orbitals, and call orthonormalize() if the "
+            "columns were never orthonormalized."
+        )
 
 
 # ----------------------------------------------------------------------
@@ -66,6 +105,9 @@ def write_header(group, nmo: int, nelec, spin_symm: SpinSymm, coeffs, psi0) -> N
         per spin channel — one block for closed/noncollinear, two for collinear.
     """
     coeffs = np.asarray(coeffs)
+    warn_if_ill_conditioned(
+        (name, block) for name, block
+        in zip(('Psi0_alpha', 'Psi0_beta'), psi0))
 
     group.create_dataset(
         'dims',
@@ -216,33 +258,22 @@ def write_nomsd(group, dets, nelec_per_spin, threshold=DEFAULT_THRESHOLD) -> Non
 
     Notes
     -----
-    Each block's columns are checked for orthonormality *after* screening small
-    values. `Wavefunction.to_hdf5` already checks the in-memory determinants, 
-    but sparsifying can potentially break orthonormality if the
-    columns' mutual orthogonality was carried by entries below `threshold`.
-    A block that fails is warned about and written as is.
+    Each block's overlap is checked *after* screening small values. A block that
+    fails is warned about and written as it stands.
     """
     dets = np.asarray(dets)
     nspin = len(nelec_per_spin)
-    offenders = []
+    written = []
 
     for idet, det in enumerate(dets):
         for ispin, block in enumerate(spin_blocks(det, nelec_per_spin)):
             block = block.copy()
             block[abs(block) < threshold] = 0.0
             name = f'PsiT_{nomsd_orbital_index(idet, ispin, nspin)}'
-            if not is_orthonormal(block):
-                offenders.append(name)
             write_orbitals(group, name, block)
+            written.append((name, block))
 
-    if offenders:
-        warn(
-            f"Written without orthonormal columns: {', '.join(offenders)}. "
-            f"Columns are checked after sparsifying at threshold={threshold}."
-            "Either the original determinant was not orthonormal "
-            "(call orthonormalize() before writing) or orthogonality the sparisty"
-            " threshold is too aggresive (make `threshold` smaller)."
-        )
+    warn_if_ill_conditioned(written)
 
 
 def read_nomsd(group, ndets: int, nelec_per_spin):
@@ -306,9 +337,7 @@ def write_phmsd(group, occa, occb, nmo: int, orbitals=None) -> None:
     Notes
     -----
     ``type`` records how many references follow: 0 for none, 1 for one, 2 for
-    two. afqmctools wrote 1 whenever *any* orbital matrix was given, even when
-    it went on to write two, so the executable read only the alpha reference and
-    silently ignored the beta one.
+    two.
     """
     occa = np.atleast_2d(np.asarray(occa, dtype=np.int32))
     occb = np.atleast_2d(np.asarray(occb, dtype=np.int32))
@@ -325,6 +354,9 @@ def write_phmsd(group, occa, occb, nmo: int, orbitals=None) -> None:
     group.create_dataset('type', data=len(references))
     for index, matrix in enumerate(references):
         write_orbitals(group, f'PsiT_{index}', matrix)
+
+    warn_if_ill_conditioned(
+        (f'PsiT_{index}', matrix) for index, matrix in enumerate(references))
 
     occs = np.concatenate([occa, occb + nmo], axis=1)
     group.create_dataset('occs', data=occs.ravel().astype(np.int32, copy=False))
