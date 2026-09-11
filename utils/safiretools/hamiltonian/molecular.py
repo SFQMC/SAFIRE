@@ -500,10 +500,10 @@ def write_dense_hamiltonian(fh5, hcore, chol, nelec, nmo, enuc=0.0,
 
     Notes
     -----
-    ``hcore``'s dtype follows its own values rather than `complex_chol`.
-    afqmctools decided it with ``numpy.all(numpy.iscomplex(hcore))``, which is
-    false for any Hermitian matrix — its diagonal is real — so a genuinely
-    complex ``hcore`` had its imaginary part silently discarded.
+    ``hcore``'s dtype follows its own values rather than `complex_chol`, and is
+    decided with ``numpy.any`` rather than ``numpy.all``: a Hermitian matrix has
+    a real diagonal, so ``all`` would call any such matrix real and discard its
+    imaginary part.
     """
     if complex_chol is None:
         complex_chol = bool(np.any(np.iscomplex(chol)))

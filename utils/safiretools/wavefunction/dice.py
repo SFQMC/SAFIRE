@@ -59,11 +59,6 @@ def from_dice(path, ndets, state=0):
         If `ndets` is not a positive integer, `state` is out of range, the file
         holds fewer determinants than requested, or an occupation string is
         malformed.
-
-    Notes
-    -----
-    afqmctools reported every one of these conditions with a bare
-    ``assert(0)``, after printing an explanation that a caller could not catch.
     """
     from safiretools.wavefunction.phmsd import PHMSDWavefunction
 
@@ -294,9 +289,8 @@ def _read_ascii(path, ndets: int, state: int):
         real_coefficients = has_real_coefficients(fields)
         first_occupation = 2 if real_coefficients else 3
 
-        # afqmctools computed this as len(fields) - 2 before deciding whether
-        #   the coefficient was complex, so it counted the imaginary column as
-        #   an orbital and reported nmo one too large for complex output.
+        # counted after the coefficient columns, so that a complex
+        #   coefficient's second column is not mistaken for an orbital
         nmo = len(fields) - first_occupation
 
         coeffs = np.zeros(ndets, dtype=np.complex128)
