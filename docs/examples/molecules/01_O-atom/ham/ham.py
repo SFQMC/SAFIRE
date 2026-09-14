@@ -8,7 +8,6 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import MolecularHamiltonian, Wavefunction
 
 
@@ -29,13 +28,8 @@ def main():
     #                                   #
     #####################################
 
-    scf_data = load_from_pyscf_chk_mol(
-        orbital_basis_chk,
-        'scf'
-    )
-
     MolecularHamiltonian.from_pyscf(
-        scf_data=scf_data,
+        orbital_basis_chk,
         chol_cut=chol_tol,
         real_chol=True,
         verbose=True
@@ -48,11 +42,8 @@ def main():
     #####################################
 
     Wavefunction.from_pyscf(
-        scf_data=load_from_pyscf_chk_mol(
-            wavefunction_chk,
-            'scf'
-        ),
-        basis_scf_data=scf_data
+        wavefunction_chk,
+        basis=orbital_basis_chk
     ).to_hdf5(fout)
 
 

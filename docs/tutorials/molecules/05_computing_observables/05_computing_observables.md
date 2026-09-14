@@ -123,7 +123,6 @@ import h5py as h5
 import numpy as np
 from pyscf import gto,scf,mcscf
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import Hamiltonian, MolecularHamiltonian
 from afqmctools.inputs.from_hdf import write_json
 
@@ -161,12 +160,8 @@ print("Number of orbitals = ", number_of_orbitals)
 
 # Save the Hamiltonian. .to_hdf5() replaces only the Hamiltonian in the file,
 #   so the Hamiltonian and the wavefunction can be written in either order.
-basis_scf_data = load_from_pyscf_chk_mol(
-    chkfile = scratch_dir / rhf_chkfile,
-)
-
 MolecularHamiltonian.from_pyscf(
-    basis_scf_data,
+    scratch_dir / rhf_chkfile,
     chol_cut = 1e-5,
     verbose=True
 ).to_hdf5(scratch_dir / "afqmc.h5")

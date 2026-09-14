@@ -74,7 +74,7 @@ import h5py as h5
 import matplotlib.pyplot as plt
 from pyscf import gto, scf, lo
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
+from safiretools.convert.pyscf import load_pyscf_chk_mol
 from safiretools import MolecularHamiltonian, NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 from stats.scalar_dat import analyze_scalar_data
@@ -203,7 +203,9 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
 
     afqmc_hamil_file = local_scratch / "local_embedding_H.h5"
 
-    scf_data = load_from_pyscf_chk_mol(
+    # loaded explicitly so the orbitals can be replaced below; with no such
+    #   edit, from_pyscf() takes the checkpoint path directly
+    scf_data = load_pyscf_chk_mol(
         chkfile = atom_chkfile
     )
 

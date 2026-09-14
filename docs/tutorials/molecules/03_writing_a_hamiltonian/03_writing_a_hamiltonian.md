@@ -477,26 +477,24 @@ mf = scf.RHF(mol)
 mf.chkfile = f"{scratch_dir}/h2_rhf.h5"
 mf.kernel()
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import Wavefunction
 from safiretools import MolecularHamiltonian
 
-# reload the mf data
-mf_data = load_from_pyscf_chk_mol(f"{scratch_dir}/h2_rhf.h5", 'scf')
+# both factories read the PySCF checkpoint themselves
+mf_chk = f"{scratch_dir}/h2_rhf.h5"
 
 # dump the Hamiltonian and the wavefunction to the same h5df
 fout = f"{scratch_dir}/h2_from_pyscf.h5"
 MolecularHamiltonian.from_pyscf(
-    mf_data,
+    mf_chk,
     chol_cut=1e-6,
     real_chol=True,
     verbose=True
 ).to_hdf5(fout)
 
-Wavefunction.from_pyscf(
-    mf_data,
-    basis_scf_data=mf_data
-).to_hdf5(fout)
+# `basis` defaults to `source`, i.e. the wavefunction is expressed in the
+#   orbitals of the same SCF solution it is built from
+Wavefunction.from_pyscf(mf_chk).to_hdf5(fout)
 ```
 
 +++ {"id": "ZX0-iQdzyCNg"}

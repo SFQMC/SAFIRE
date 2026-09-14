@@ -35,9 +35,9 @@ import h5py as h5
 import numpy as np
 from pyscf import gto,scf,mcscf,lib
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
+from safiretools.convert.pyscf import load_pyscf_chk_mol
 from afqmctools.inputs.from_hdf import write_json
 
 from stats.scalar_dat import analyze_scalar_data
@@ -202,19 +202,19 @@ In PySCF, these are simply saved within the Checkpoint (*.chk) file.
 We have already chosen the set of CASSCF orbitals as a trial wavefunction.
 We will now build the Hamiltonian in the basis of CASSCF orbitals, and save it to an SAFIRE HDF5 Hamiltonian file.
 
-afqmctools provides a helper function, `load_from_pyscf_chk_mol()`,  to read all of the necessary information from a PySCF checkpoint file.
-`MolecularHamiltonian.from_pyscf()` then builds the Hamiltonian from it, and `.to_hdf5()` writes it out.
+`MolecularHamiltonian.from_pyscf()` reads a PySCF checkpoint file directly, and `.to_hdf5()`
+writes the result out.
 `.to_hdf5()` replaces only the Hamiltonian in the file it is given, so it can be added to the
 file that already holds the trial wavefunction.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
-    By default, load_from_pyscf_chk_mol() will try to read data from an "scf" group in a PySCF checkpoint file. Set the "base" parameter to "mcscf" to read a CASSCF wavefunction.
+    Handed a checkpoint path, from_pyscf() reads the "scf" group. To build the Hamiltonian in the CASSCF orbital basis instead, load the checkpoint yourself with load_pyscf_chk_mol(base='mcscf') and pass the result.
 </div>
 
 ```{code-cell} ipython3
-# Save the Hamiltonian
-basis_scf_data = load_from_pyscf_chk_mol(
+# Save the Hamiltonian, in the basis of the CASSCF orbitals
+basis_scf_data = load_pyscf_chk_mol(
     chkfile = casscf_chkfile,
     base = 'mcscf'
 )
@@ -426,13 +426,11 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
     ).to_hdf5(fout)
 
     # 2. write the Hamiltonian, into the same file as the wavefunction
-    basis_scf_data = load_from_pyscf_chk_mol(scratch_dir / casscf_chkfile, 'scf')
-
     chol_tol = 1e-5
 
     # write Hamiltonian
     MolecularHamiltonian.from_pyscf(
-        basis_scf_data,
+        scratch_dir / casscf_chkfile,
         chol_cut=chol_tol,
         verbose=True
     ).to_hdf5(fout)

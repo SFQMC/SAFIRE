@@ -8,7 +8,6 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import MolecularHamiltonian, Wavefunction
 
 
@@ -22,30 +21,18 @@ def main():
     # output
     fout = 'afqmc.h5'
 
-    basis_scf_data = load_from_pyscf_chk_mol(basis_chk, 'scf')
-
-    mol = basis_scf_data['mol']
-    nelec = mol.nelec
-
-    ncore = nelec[0] - cas_afqmc[0]
-    assert ncore >= 0
-
-    print("="*20 + " scf_info " + "="*20)
-    for key,value in basis_scf_data.items():
-        print(f"{key}  :  {value}")
-
     MolecularHamiltonian.from_pyscf(
-        basis_scf_data,
+        basis_chk,
         chol_cut=chol_tol,
         real_chol=True,
         verbose=True,
         cas=cas_afqmc  # provide the CAS info here
     ).to_hdf5(fout)
-    
+
     # Freezing the 10 doubly occupied core orbitals leaves 3 alpha and 0 beta
     #   electrons in the active space, so the trial is collinear with ndown == 0
     Wavefunction.from_pyscf(
-        scf_data = basis_scf_data,
+        basis_chk,
         cas = cas_afqmc  # must match the CAS info used for the Hamiltonian!
     ).to_hdf5(fout)
 
