@@ -60,9 +60,6 @@ public:
       memory::buffered_array<MEM, ComplexType, 4> XwG(singleRefG.shape());
       nda::tensor::contract(weightedCoeff(), "w", singleRefG, "wsij", XwG, "wsij");
 
-      // the Hartree terms only read the diagonal of G. Taking it as a strided view rather
-      // than as a repeated contraction index ("wii") keeps this expressible on the device:
-      // cuTENSOR requires every mode to appear at most once per tensor.
       auto diag = [](auto&& a) { return memory::diagonal_view(a); };
 
       // (aaaa) and (bbbb)
