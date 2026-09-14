@@ -88,7 +88,7 @@ public:
     debug_verbosity     = params.debug_verbosity;
     natural_shift       = params.natural_shift;
     use_cp_constraint   = params.use_cp_constraint;
-    use_real_vbias      = params.use_real_vbias;
+    project_force_bias      = params.project_force_bias;
 
     if (free_projection)
     {
@@ -323,7 +323,7 @@ protected:
   bool natural_shift = true;
   bool symmetric_split = true;
   bool use_cp_constraint = false;
-  bool use_real_vbias = false;
+  bool project_force_bias = false;
 
   int nspins_in_vHS = 1;
   int npol_in_vHS   = 1;

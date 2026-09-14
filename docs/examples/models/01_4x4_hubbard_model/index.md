@@ -328,7 +328,7 @@ afqmc_params = {
     "seed" : 42,                          # just for reproducibility
     "propagator": {
       "use_cp_constraint": True,
-      "use_real_vbias" : True
+      "project_force_bias" : True
     }
 }
 
@@ -509,7 +509,7 @@ afqmc_params = {
     "seed" : 42,                          # just for reproducibility
     "propagator": {
       "use_cp_constraint": True,
-      "use_real_vbias" : True
+      "project_force_bias" : True
     }
 }
 
@@ -603,7 +603,7 @@ afqmc_params = {
     "seed" : 42,                          # just for reproducibility
     "propagator": {
       "use_cp_constraint": True,
-      "use_real_vbias" : True
+      "project_force_bias" : True
     }
 }
 
@@ -735,7 +735,7 @@ afqmc_params = {
     "seed" : 42,                          # just for reproducibility
     "propagator": {
       "use_cp_constraint": True,
-      "use_real_vbias" : True
+      "project_force_bias" : True
     },
     "estimator": {
           "name": "back_propagation",
