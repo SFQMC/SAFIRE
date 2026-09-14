@@ -108,14 +108,14 @@ struct PropagatorParameters {
   bool natural_shift{true};
   std::optional<bool> symmetric_split{};
   bool use_cp_constraint{false};
-  bool use_real_vbias{false};
+  bool project_force_bias{false};
   std::string external_field{""};
   std::string excited{""};
 };
 SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, external_field_scale, upper_cutoff_scale,
                          lower_cutoff_scale, apply_constraint, importance_sampling, subtractMF, hybrid,
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
-                         symmetric_split, use_cp_constraint, use_real_vbias, external_field, excited);
+                         symmetric_split, use_cp_constraint, project_force_bias, external_field, excited);
 
 struct H5PathParameters {
   std::string filename{};
