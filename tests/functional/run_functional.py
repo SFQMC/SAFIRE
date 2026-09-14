@@ -234,9 +234,6 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
             },
             "backprop": {
                 "path_restoration": True,
-                # the interval back propagation orthogonalizes at, in steps, not the
-                # execute-level walker_ortho_interval set below
-                "walker_ortho_interval": 10,
                 "measure_interval_multiplier": bp_measure_interval_multiplier,
                 **observables,
             },
