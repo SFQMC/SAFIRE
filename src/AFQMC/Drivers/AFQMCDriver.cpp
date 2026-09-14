@@ -126,12 +126,16 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   if (nCheckpoint > 0)
     checkpoint(wset, step_tot/nPopulation, step_tot);
 
-  propagator_.printBoundStatistics();
   // print timers
-  if(mpi_->comm.root()){
+  if(mpi_->comm.root()) {
     std::string results_filename = std::format("{}.results.h5", project_title_);
     estimators_.write(results_filename);
     app_log(1, "Results written to '{}'.", results_filename);
+  }
+
+  propagator_.printBoundStatistics();
+
+  if(mpi_->comm.root()) {
     timers.print_all();
   }
 
