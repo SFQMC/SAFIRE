@@ -316,12 +316,10 @@ class TestFromPyscf:
 
     def test_neon_hamiltonian_matches_the_scf_integrals(self, neon_atom, neon_rhf,
                                                         tmp_path):
-        from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-
         mf, _ = neon_rhf
-        scf_data = load_from_pyscf_chk_mol(mf.chkfile)
 
-        hamiltonian = MolecularHamiltonian.from_pyscf(scf_data, chol_cut=1e-5)
+        # the checkpoint path is loaded by the factory itself
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf.chkfile, chol_cut=1e-5)
 
         C = mf.mo_coeff
         expected_hcore = C.conj().T @ mf.get_hcore() @ C
@@ -373,23 +371,45 @@ class TestFromPyscf:
             freeze_core(h1e, chol, 0, 3, 4, verbose=False)
 
     def test_a_uhf_reference_needs_ortho_ao(self, neon_rhf):
-        from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
+        from safiretools.convert.pyscf import load_pyscf_chk_mol
 
         mf, _ = neon_rhf
-        scf_data = load_from_pyscf_chk_mol(mf.chkfile)
+        scf_data = load_pyscf_chk_mol(mf.chkfile)
         scf_data['mo_coeff'] = np.array([mf.mo_coeff, mf.mo_coeff])
 
         with pytest.raises(ValueError, match="Use ortho_ao"):
             MolecularHamiltonian.from_pyscf(scf_data)
 
     def test_cas_and_ortho_ao_are_mutually_exclusive(self, neon_rhf):
-        from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-
         mf, _ = neon_rhf
-        scf_data = load_from_pyscf_chk_mol(mf.chkfile)
 
         with pytest.raises(ValueError, match="cannot be used at the same time"):
-            MolecularHamiltonian.from_pyscf(scf_data, cas=(4, 4), ortho_ao=True)
+            MolecularHamiltonian.from_pyscf(mf.chkfile, cas=(4, 4),
+                                            ortho_ao=True)
+
+    def test_a_checkpoint_path_and_a_loaded_mapping_agree(self, neon_rhf,
+                                                          tmp_path):
+        from safiretools.convert.pyscf import load_pyscf_chk_mol
+
+        mf, _ = neon_rhf
+
+        by_path = MolecularHamiltonian.from_pyscf(mf.chkfile, chol_cut=1e-5)
+        by_mapping = MolecularHamiltonian.from_pyscf(
+            load_pyscf_chk_mol(mf.chkfile), chol_cut=1e-5)
+
+        assert np.allclose(by_path.hcore, by_mapping.hcore)
+        assert np.allclose(by_path.chol, by_mapping.chol)
+
+    def test_a_periodic_checkpoint_is_refused(self, neon_rhf, tmp_path):
+        """
+        The two checkpoint kinds are told apart by whether the serialized
+        molecule carries lattice vectors, so passing the wrong one is caught
+        before anything is read out of it.
+        """
+        from safiretools.convert.pyscf import is_periodic_chk
+
+        mf, _ = neon_rhf
+        assert is_periodic_chk(mf.chkfile) is False
 
 
 class TestRealAndComplexAreToldApartByRank:

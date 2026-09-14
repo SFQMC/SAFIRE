@@ -445,8 +445,8 @@ class Wavefunction(ABC):
         )
 
     @classmethod
-    def from_pyscf(cls, scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
-                   spin_symm=None, orthonormalize=True) -> "Wavefunction":
+    def from_pyscf(cls, source, basis=None, ortho_ao=False, cas=None,
+                   spin_symm=None) -> "Wavefunction":
         """
         Build a single-determinant trial wavefunction from a molecular PySCF SCF
         calculation. Always a `safiretools.NOMSDWavefunction`.
@@ -459,10 +459,8 @@ class Wavefunction(ABC):
 
         _check_representation(cls, NOMSDWavefunction, 'from_pyscf')
 
-        return from_pyscf(
-            scf_data, basis_scf_data=basis_scf_data, ortho_ao=ortho_ao, cas=cas,
-            spin_symm=spin_symm, orthonormalize=orthonormalize,
-        )
+        return from_pyscf(source, basis=basis, ortho_ao=ortho_ao, cas=cas,
+                          spin_symm=spin_symm)
 
     @classmethod
     def from_pyscf_cas(cls, mol, cas_chkfile, tol=1e-4,
