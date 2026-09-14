@@ -62,7 +62,7 @@ auto constructBPMeasurementInputs(nda::MemoryVector auto& weights, Wavefunction<
   }
 
   // calculate all overlaps and accumulate denominator 
-  // MAM: no reference overlap is being substracted yet, 
+  // MAM: no reference overlap is being subtracted yet, 
   // find a suitable common reference at this stage
   for (int d = 0; d < nrefs; d++) {
     singleRefOverlaps() = 0.0;

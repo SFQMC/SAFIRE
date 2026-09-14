@@ -79,7 +79,7 @@ public:
     order               = params.taylor_n;
     apply_constrain     = params.apply_constrain;
     importance_sampling = params.importance_sampling;
-    substractMF         = params.substractMF;
+    subtractMF         = params.subtractMF;
     hybrid              = params.hybrid;
     printP1eV           = params.printP1eigval;
     if(not mpi->comm.root()) printP1eV = false;
@@ -311,7 +311,7 @@ protected:
   bool printP1eV = false;
 
   RealType vbias_bound;
-  bool substractMF = true;
+  bool subtractMF = true;
 
   // type of propagation
   bool free_projection = false;

@@ -387,7 +387,7 @@ memory::const_shared_array<HOST_MEMORY,ComplexType,3> NOMSD<MEM,devPsiT>::G_MF()
           if( std::abs(Ov_h(0)) == ComplexType(0.0) and not found ) {
             found = true;
             app_warning(" WARNING: Found orthogonal determinants in trial wave function of NOMSD.");
-            app_warning("          The mean-field substraction potential is potentially wrong. !");
+            app_warning("          The mean-field subtraction potential is potentially wrong. !");
           }
           RealType scl = std::real(std::conj(ci(q)) * ci(p) * std::exp(Ov_h(0))); 
           Osum += scl; 
@@ -479,7 +479,7 @@ void NOMSD<MEM,devPsiT>::vMF(memory::array_view<MEM,ComplexType,1> v, double dt)
           if( std::abs(Ov_h(0)) == ComplexType(0.0) and not found ) {
             found = true;
             app_warning(" WARNING: Found orthogonal determinants in trial wave function of NOMSD.");
-            app_warning("          The mean-field substraction potential is potentially wrong. !");
+            app_warning("          The mean-field subtraction potential is potentially wrong. !");
           }
           RealType scl = std::real(std::conj(ci(q)) * ci(p) * std::exp(Ov_h(0))); 
           Osum += scl; 
