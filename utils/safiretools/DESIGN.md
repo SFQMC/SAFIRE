@@ -364,8 +364,14 @@ it could never run.
 - One generic primitive, `mean_and_error(samples, axis=0)`, replaces `stat_h5.py::me2d`,
   `scalar_dat.py::single_column_from_array`/`error`, and the `scipy.stats.sem` fallback in
   `analysis/average.py`. Works over arbitrary-shape data (scalar traces and RDM matrices alike).
-- Autocorrelation-time estimator: keep the current O(n²) + numba implementation — preserves
-  validated numerics over switching to an FFT-based approach.
+- Autocorrelation-time estimator: pure NumPy, one dot product per lag, keeping the early break at
+  the first non-positive lag — same O(n·*l*) cost in the autocorrelation length *l* as the previous
+  nested-loop version, and the same numerics (agreement to 1.2e-15 relative over 400 randomized
+  `mean_and_error` cases, with identical inf/NaN patterns). Chosen over the numba implementation
+  because it **drops `numba` as a `safiretools` dependency** and is *faster in practice*: numba
+  charges ~0.6 s to import and JIT-compile before the first result, which exceeds the entire
+  computation in every realistic case, so a fresh interprete is
+  3–19× faster end-to-end without it.
 - Degenerate/constant data: detect up front via a variance check, not the current post-hoc
   NaN/Inf-then-replace-with-1.0 approach.
 - Reblocking keeps a smaller trailing block for remainder samples (not discard-and-raise).
