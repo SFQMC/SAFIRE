@@ -23,7 +23,7 @@
 namespace sfqmc::afqmc {
 
 struct AFQMCTimers {
-  utils::Timer block{"Block"};
+  utils::Timer step{"Step"};
   utils::Timer pseudo_energy{"PseudoEnergy"};
   utils::Timer energy{"Energy"};
   utils::Timer vHS{"vHS"};
@@ -43,7 +43,7 @@ struct AFQMCTimers {
   static constexpr int ntimers = 16;
 
   std::array<utils::Timer*, ntimers> all() {
-    return {&block,           &pseudo_energy,  &energy, &vHS,   &assemble_X,   &vbias,
+    return {&step,            &pseudo_energy,  &energy, &vHS,   &assemble_X,   &vbias,
             &G_for_vbias,     &propagate,      &mixed_estimator, &back_propagate,
             &popcontrol,      &ortho,          &setup,  &extra, &load_balance, &branching};
   }

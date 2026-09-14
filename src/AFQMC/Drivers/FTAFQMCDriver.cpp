@@ -62,11 +62,11 @@ bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
   app_log(1, "Executing {} sweeps, with Beta = {} ", nSweep, beta);
 
   for(int iSweep = 0; iSweep < nSweep; ++iSweep) {
-    auto block_time = timers.block.start();
     Eshift = Eshift0; // Eshift set to same value at the beginning of each sweep
     total_time = 0.0;
     for (int iStep = 0; iStep < nStep; ++iStep)
     {
+      auto step_time = timers.step.start();
       if(iStep % print_interval == 0 and print_sweep_step)
         app_log(1, "sweep {}, step {} ", iSweep, iStep);
       // reset wset log(ovlp), read initial value
@@ -112,8 +112,6 @@ bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
       // resize stack pointers to match maximum buffer use
       utils::resize_nda_static_allocator();
     }
-
-    block_time.stop();
 
     // one sweep is one measurement sample. The walker set is still at nt = nStep here,
     // i.e. the full path has been constructed.
