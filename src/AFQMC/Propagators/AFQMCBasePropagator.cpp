@@ -88,7 +88,7 @@ void AFQMCBasePropagator<MEM>::generateP1(double dt, WALKER_TYPES walker_type, b
   // calculate vMF for the current time step
   memory::buffered_array<MEM,ComplexType,1> vt(nCV);
   vt() = ComplexType(0.0);
-  if (substractMF)
+  if (subtractMF)
   {
     auto hamtype(wfn->getHamType());
     // collective call

@@ -200,7 +200,7 @@ private:
   // transposed HS operator 
   csrMat<ComplexType> SpVnT;
 
-  // HS operator and 1-body MF substraction terms depend on timestep
+  // HS operator and 1-body MF subtraction terms depend on timestep
   // and on MF onsite occupations.    
   // follows addComponent from Hamiltonians/ModelHamOpsGenerator.icc, 
   // but uses correct prefactors, which are now functions of dt*U and nMFJ = <nI +- nJ>   

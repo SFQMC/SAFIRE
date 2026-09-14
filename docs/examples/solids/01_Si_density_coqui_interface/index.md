@@ -493,7 +493,7 @@ upper_cutoff_scale: 10
 lower_cutoff_scale: 1
 apply_constrain: true
 importance_sampling: true
-substractMF: true
+subtractMF: true
 hybrid: true
 printP1eigval: false
 free_projection: false

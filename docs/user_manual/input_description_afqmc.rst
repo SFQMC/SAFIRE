@@ -522,7 +522,7 @@ Settings
     "lower_cutoff_scale": 1.0,
     "apply_constrain": true,
     "importance_sampling": true,
-    "substractMF": true,
+    "subtractMF": true,
     "hybrid": true,
     "printP1eigval": false,
     "denseP1": false,
@@ -556,7 +556,7 @@ Settings
    * - **importance_sampling**
      - true
      - Whether to use importance sampling
-   * - **substractMF**
+   * - **subtractMF**
      - true
      - Whether to subtract mean field contribution
    * - **hybrid**
