@@ -624,6 +624,14 @@ The loaders that produce the `scf_data` mapping (`load_pyscf_chk_mol` for a mole
 `wavefunction/pbc.py`, so they cannot live in any one of those, and `convert/` is the subpackage for
 interop with an external tool.
 
+**The loaders are not re-exported, and a PySCF-interop example may name the deep path** (user call).
+This is the one acknowledged exception to "user-facing documentation shows only top-level imports":
+a handful of doc blocks need the mapping form rather than a path — a `base='mcscf'` orbital basis,
+`soc_type='ecp'` integrals, hand-edited `mo_coeff` — and every one of them already imports PySCF
+itself, so `from safiretools.convert.pyscf import load_pyscf_chk_mol` is in keeping with the code
+around it. Promoting the loader to buy a short path in four PySCF-specific examples would put a
+function on the public surface that nothing in the API takes or returns.
+
 **Every `from_pyscf` factory takes a checkpoint path or an already-loaded mapping**, resolved by
 `as_scf_data`. The path form is the common case and makes the simple workflow one call; the mapping
 form is what lets one load serve several factories, which matters because **the basis and the

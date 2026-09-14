@@ -78,7 +78,7 @@ import jax.numpy as jnp
 import afqmctools
 import autohf
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
+from safiretools.convert.pyscf import load_pyscf_chk_mol
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
@@ -265,7 +265,9 @@ def setup_benchmark(key:str, case:dict):
         max_det=2000
     ).to_hdf5(local_scratch_dir / 'afqmc.h5')
     
-    basis_scf_data = load_from_pyscf_chk_mol(
+    # the CASSCF orbital basis, so the checkpoint is loaded explicitly;
+    #   handed a path, from_pyscf() would read the "scf" group
+    basis_scf_data = load_pyscf_chk_mol(
         chkfile = casscf_chkfile,
         base = 'mcscf'
     )

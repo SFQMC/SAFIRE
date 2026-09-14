@@ -17,7 +17,7 @@ kernelspec:
 
 In this example, we will compute the ground state energy of the Boron (B) atom.
 This is an open-shell atom with a single p-electron.
-We used PySCF and `afqmctools` to generate a Hamiltonian and save it the SAFIRE HDF5 format (sample script at the end of this example); however, a FCIDUMP can be used instead.
+We used PySCF and `safiretools` to generate a Hamiltonian and save it the SAFIRE HDF5 format (sample script at the end of this example); however, a FCIDUMP can be used instead.
 If you already have a FCIDUMP, you can skip using the `afqmc_to_fcidump` tool,
 and instead, after running SHCI, you can use the `fcidump_to_afqmc` tool to generate a Hamiltonian for SAFIRE.
 
@@ -212,10 +212,9 @@ Simply run this python script to generate a SAFIRE Hamiltonian file for the B at
 :id: OX7sSXv5U7KH
 
 # sample script to generate a SAFIRE HDF5 Hamiltonian
-#  using afqmctools and PySCF.
+#  using safiretools and PySCF.
 from pyscf import gto, scf
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import MolecularHamiltonian
 
 
@@ -241,15 +240,10 @@ mf = mf.run(dm1)
 mf.stability()
 mf.kernel()
 
-### Step 2. use afqmctools to generate and save the Hamiltonian.
-# load data from PySCF checkpoint file
-basis_scf_data = load_from_pyscf_chk_mol(
-    chkfile = atom_chkfile
-)
-
-# write Hamiltonian
+### Step 2. use safiretools to generate and save the Hamiltonian
+# directly from the PySCF checkpoint file.
 MolecularHamiltonian.from_pyscf(
-    basis_scf_data,
+    atom_chkfile,
     chol_cut = 1e-6,
     verbose=True
 ).to_hdf5("afqmc.h5")

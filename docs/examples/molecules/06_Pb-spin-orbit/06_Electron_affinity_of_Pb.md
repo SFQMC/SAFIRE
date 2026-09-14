@@ -198,7 +198,7 @@ print(f"SOC-GHF electronic energy: {mf.energy_elec()}")
 ### ▶️ Generate and Write Hamiltonian and Trial wavefunction for Neutral Atom
 
 We generate the Hamiltonian and trial wavefunction in the usual way
-with the exception that `load_from_pyscf_chk_mol()` must be explicitly
+with the exception that `load_pyscf_chk_mol()` must be explicitly
 told to load ECP type spin-orbit coupling integrals via the `soc_type="ecp"`
 keyword argument.
 
@@ -213,9 +213,9 @@ the SOC-GHF or ROHF solution for the initial wavefunction.
 import h5py as h5
 import numpy as np
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
+from safiretools.convert.pyscf import load_pyscf_chk_mol
 
 # inputs
 local_scratch_dir = neutral_scratch_dir
@@ -235,12 +235,12 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 #####################################
 
 # Save the Hamiltonian
-basis_scf_data = load_from_pyscf_chk_mol(
+basis_scf_data = load_pyscf_chk_mol(
     chkfile = basis_chk,
-    soc_type='ecp',
+    soc_type = "ecp",
 )
 
-# The SOC integrals come from load_from_pyscf_chk_mol(soc_type='ecp') above, which
+# The SOC integrals come from load_pyscf_chk_mol(soc_type='ecp') above, which
 #   makes hcore a spin-orbital matrix. That requires a noncollinear spin symmetry
 #   and the orthogonalized-AO basis.
 MolecularHamiltonian.from_pyscf(
@@ -257,13 +257,9 @@ MolecularHamiltonian.from_pyscf(
 #                                   #
 #####################################
 
-wfn_scf_data = load_from_pyscf_chk_mol(
-    chkfile = ghf_soc_chkfile,
-)
-
 Wavefunction.from_pyscf(
-    wfn_scf_data,
-    basis_scf_data=basis_scf_data
+    ghf_soc_chkfile,
+    basis=basis_scf_data
 ).to_hdf5(fout_soc)
 ```
 
@@ -398,9 +394,9 @@ outputId: 8a825787-6626-44d1-97c4-ee738d109252
 ---
 import numpy as np
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
+from safiretools.convert.pyscf import load_pyscf_chk_mol
 
 
 # inputs
@@ -421,12 +417,12 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 #####################################
 
 # Save the Hamiltonian
-basis_scf_data = load_from_pyscf_chk_mol(
+basis_scf_data = load_pyscf_chk_mol(
     chkfile = basis_chk,
     soc_type = "ecp",
 )
 
-# The SOC integrals come from load_from_pyscf_chk_mol(soc_type='ecp') above, which
+# The SOC integrals come from load_pyscf_chk_mol(soc_type='ecp') above, which
 #   makes hcore a spin-orbital matrix. That requires a noncollinear spin symmetry
 #   and the orthogonalized-AO basis.
 MolecularHamiltonian.from_pyscf(
@@ -443,13 +439,9 @@ MolecularHamiltonian.from_pyscf(
 #                                   #
 #####################################
 
-wfn_scf_data = load_from_pyscf_chk_mol(
-    chkfile = ghf_soc_chkfile,
-)
-
 Wavefunction.from_pyscf(
-    wfn_scf_data,
-    basis_scf_data=basis_scf_data
+    ghf_soc_chkfile,
+    basis=basis_scf_data
 ).to_hdf5(fout_soc)
 ```
 
