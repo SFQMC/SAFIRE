@@ -9,10 +9,11 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 """
-`NOMSDWavefunction.from_pbc_scf` and `PHMSDWavefunction.from_pbc_scf`: the
-periodic construction paths, and their equivalence with afqmctools.
+`NOMSDWavefunction.from_pbc_scf`: the periodic construction path, and its
+equivalence with afqmctools.
 """
 
+import inspect
 import warnings
 
 import h5py as h5
@@ -153,65 +154,50 @@ class TestSingleDeterminant:
         assert np.allclose(read_back.dets, wavefunction.dets)
 
 
-class TestMultiDeterminant:
+class TestPartialOccupancies:
+    """
+    There is no multi-determinant route: **CoQuí is the supported path for
+    solids.** A metallic PySCF reference still gives a single determinant, over
+    the leading configuration of its partially occupied bands.
+    """
 
-    def test_degenerate_bands_give_a_particle_hole_expansion(
-            self, degenerate_scf_data):
-        wavefunction = PHMSDWavefunction.from_pbc_scf(degenerate_scf_data,
-                                                      ndet_max=4)
+    def test_the_leading_configuration_is_occupied(self, degenerate_scf_data):
+        wavefunction = NOMSDWavefunction.from_pbc_scf(degenerate_scf_data)
 
-        assert isinstance(wavefunction, PHMSDWavefunction)
-        assert wavefunction.ndets == 4
+        assert isinstance(wavefunction, NOMSDWavefunction)
+        assert wavefunction.ndets == 1
         assert wavefunction.nelec == (8, 8)
-        # the k-point orbital matrices become the expansion's reference
-        assert wavefunction.nreferences == 2
 
-    def test_every_determinant_is_kept_by_default(self, degenerate_scf_data):
-        # afqmctools raised TypeError on ndet_max=None, which is what its own
-        #   pyscf_to_afqmc CLI passed when -n was not given
-        wavefunction = PHMSDWavefunction.from_pbc_scf(degenerate_scf_data)
-        capped = PHMSDWavefunction.from_pbc_scf(degenerate_scf_data,
-                                                ndet_max=2)
+    def test_there_is_no_phmsd_route(self):
+        assert not hasattr(PHMSDWavefunction, 'from_pbc_scf') \
+            or PHMSDWavefunction.from_pbc_scf.__func__ \
+            is Wavefunction.from_pbc_scf.__func__
 
-        assert wavefunction.ndets == 4
-        assert capped.ndets == 2
+        from safiretools.wavefunction import pbc
 
-    def test_it_refuses_an_integer_occupancy_system(self, collinear_scf_data):
-        with pytest.raises(ValueError,
-                           match="no partially occupied degenerate bands"):
-            PHMSDWavefunction.from_pbc_scf(collinear_scf_data)
+        assert 'ndet_max' not in inspect.signature(pbc.from_pbc_scf).parameters
 
     def test_a_partially_occupied_closed_shell_reference_is_rejected(
             self, closed_scf_data):
-        # afqmctools reached this case too and failed with a TypeError deeper
-        #   in, dividing a list of occupancy arrays by two
         occ = np.full_like(np.array(closed_scf_data['Xocc'], dtype=float), 0.9)
         scf_data = dict(closed_scf_data, Xocc=occ)
 
         with pytest.raises(ValueError, match="closed-shell reference are"):
-            PHMSDWavefunction.from_pbc_scf(scf_data, ndet_max=4)
+            NOMSDWavefunction.from_pbc_scf(scf_data)
 
-    def test_afqmctools_failed_on_that_case(self, closed_scf_data):
-        from afqmctools.wavefunction.pbc import write_wfn_pbc
+    def test_too_few_degenerate_bands_is_reported(self, collinear_scf_data):
+        """
+        Electrons sitting in bands below `low` still count toward the total but
+        are not candidates to occupy, so a heavily smeared reference can leave
+        more electrons to place than there are bands to place them in.
+        """
+        occ = np.full_like(np.array(collinear_scf_data['Xocc'], dtype=float),
+                           0.09)
+        occ[:, :, 0] = 0.9
+        scf_data = dict(collinear_scf_data, Xocc=occ)
 
-        occ = np.full_like(np.array(closed_scf_data['Xocc'], dtype=float), 0.9)
-        scf_data = dict(closed_scf_data, Xocc=occ)
-
-        with pytest.raises(TypeError):
-            write_wfn_pbc(scf_data, True, '/dev/null', ndet_max=4)
-
-    def test_it_round_trips(self, degenerate_scf_data, tmp_path):
-        wavefunction = PHMSDWavefunction.from_pbc_scf(degenerate_scf_data,
-                                                      ndet_max=4)
-        path = tmp_path / 'wfn.h5'
-        wavefunction.to_hdf5(path)
-
-        read_back = Wavefunction.from_hdf5(path)
-
-        assert isinstance(read_back, PHMSDWavefunction)
-        assert np.array_equal(read_back.occa, wavefunction.occa)
-        assert np.array_equal(read_back.occb, wavefunction.occb)
-        assert read_back.nreferences == 2
+        with pytest.raises(ValueError, match="remain to be placed over"):
+            NOMSDWavefunction.from_pbc_scf(scf_data)
 
 
 class TestEquivalenceWithAfqmctools:
@@ -245,74 +231,24 @@ class TestEquivalenceWithAfqmctools:
             #   Psi0, which is stored dense; safiretools does not
             assert np.allclose(a[key], b[key], atol=1e-8), key
 
-    def test_the_expansion_matches_apart_from_the_reference_count(
-            self, degenerate_scf_data, tmp_path):
-        from afqmctools.wavefunction.pbc import write_wfn_pbc
-
-        old = tmp_path / 'old.h5'
-        new = tmp_path / 'new.h5'
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            write_wfn_pbc(degenerate_scf_data, True, old, rediag=True,
-                          ndet_max=4)
-            PHMSDWavefunction.from_pbc_scf(degenerate_scf_data,
-                                           ndet_max=4).to_hdf5(new)
-
-        a, b = datasets(old), datasets(new)
-        assert set(a) == set(b)
-
-        differing = [key for key in a
-                     if not np.allclose(a[key], b[key], atol=1e-8)]
-        assert differing == ['Wavefunction/PHMSD/type']
-
-        # afqmctools declared one reference while writing two, so the
-        #   executable read only the alpha one
-        assert int(a['Wavefunction/PHMSD/type']) == 1
-        assert int(b['Wavefunction/PHMSD/type']) == 2
-
 
 class TestBaseClassDispatch:
     """
-    `Wavefunction.from_pbc_scf` is the factory that motivates dispatching from
-    the base class at all: the representation depends on the occupancies, not
-    on what the caller asked for. See DESIGN.md "Every factory dispatches from
-    the base class".
+    `Wavefunction.from_pbc_scf` reaches the subclass through inheritance, and
+    always produces an `NOMSDWavefunction`. See DESIGN.md "Every factory
+    dispatches from the base class".
     """
 
-    def test_integer_occupancies_give_an_nomsd(self, collinear_scf_data):
-        wavefunction = Wavefunction.from_pbc_scf(collinear_scf_data)
+    def test_the_base_factory_gives_an_nomsd(self, collinear_scf_data):
+        assert isinstance(Wavefunction.from_pbc_scf(collinear_scf_data),
+                          NOMSDWavefunction)
 
-        assert isinstance(wavefunction, NOMSDWavefunction)
+    def test_the_subclass_alias_agrees(self, collinear_scf_data):
+        through_base = Wavefunction.from_pbc_scf(collinear_scf_data)
+        through_subclass = NOMSDWavefunction.from_pbc_scf(collinear_scf_data)
 
-    def test_partial_occupancies_give_a_phmsd(self, degenerate_scf_data):
-        wavefunction = Wavefunction.from_pbc_scf(degenerate_scf_data,
-                                                 ndet_max=4)
+        assert np.allclose(through_base.dets, through_subclass.dets)
 
-        assert isinstance(wavefunction, PHMSDWavefunction)
-        assert wavefunction.ndets > 1
-
-    def test_the_default_stays_a_single_determinant(self, degenerate_scf_data):
-        """
-        The base factory inherits ``ndet_max=1`` from the implementation, so the
-        expansion is opt-in rather than a surprise.
-        """
-        wavefunction = Wavefunction.from_pbc_scf(degenerate_scf_data)
-
-        assert isinstance(wavefunction, NOMSDWavefunction)
-
-    def test_the_subclasses_still_narrow(self, degenerate_scf_data):
-        """
-        `NOMSDWavefunction.from_pbc_scf` forces a single determinant even where
-        the base factory would expand, and is therefore not a plain alias.
-        """
-        forced = NOMSDWavefunction.from_pbc_scf(degenerate_scf_data)
-        expanded = Wavefunction.from_pbc_scf(degenerate_scf_data, ndet_max=4)
-
-        assert isinstance(forced, NOMSDWavefunction)
-        assert isinstance(expanded, PHMSDWavefunction)
-
-    def test_a_single_determinant_system_still_refuses_the_phmsd_form(self,
-                                                                      collinear_scf_data):
-        with pytest.raises(ValueError, match='NOMSDWavefunction.from_pbc_scf'):
-            PHMSDWavefunction.from_pbc_scf(collinear_scf_data, ndet_max=4)
+    def test_the_wrong_representation_is_refused(self, collinear_scf_data):
+        with pytest.raises(ValueError, match='from_pbc_scf'):
+            PHMSDWavefunction.from_pbc_scf(collinear_scf_data)

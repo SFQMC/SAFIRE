@@ -498,31 +498,19 @@ class Wavefunction(ABC):
         return from_dice(path, ndets=ndets, state=state)
 
     @classmethod
-    def from_pbc_scf(cls, scf_data, ortho_ao=True, rediag=True, ndet_max=1,
-                     low=0.1, high=0.95,
-                     orthonormalize=True) -> "Wavefunction":
+    def from_pbc_scf(cls, source, ortho_ao=True, rediag=True,
+                     low=0.1, high=0.95) -> "Wavefunction":
         """
-        Build a trial wavefunction from a periodic PySCF SCF calculation.
-
-        **Returns whichever representation the occupancies call for**: a
-        `safiretools.PHMSDWavefunction` when bands are partially occupied and
-        `ndet_max` allows more than one determinant, and a
-        `safiretools.NOMSDWavefunction` otherwise. This is the factory that
-        motivates dispatching from the base class at all — the representation
-        cannot be known until the occupancies have been looked at.
-
-        The subclass classmethods override this with the *narrowing* forms:
-        `safiretools.NOMSDWavefunction.from_pbc_scf` forces ``ndet_max=1`` to
-        guarantee a single determinant, and
-        `safiretools.PHMSDWavefunction.from_pbc_scf` raises when a single
-        determinant would describe the system exactly.
+        Build a single-determinant trial wavefunction from a periodic PySCF SCF
+        calculation. Always a `safiretools.NOMSDWavefunction`.
 
         See `safiretools.wavefunction.pbc.from_pbc_scf` for the full parameter
         documentation.
         """
+        from safiretools.wavefunction.nomsd import NOMSDWavefunction
         from safiretools.wavefunction.pbc import from_pbc_scf
 
-        return from_pbc_scf(
-            scf_data, ortho_ao=ortho_ao, rediag=rediag, ndet_max=ndet_max,
-            low=low, high=high, orthonormalize=orthonormalize,
-        )
+        _check_representation(cls, NOMSDWavefunction, 'from_pbc_scf')
+
+        return from_pbc_scf(source, ortho_ao=ortho_ao, rediag=rediag,
+                            low=low, high=high)

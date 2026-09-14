@@ -186,51 +186,6 @@ class PHMSDWavefunction(Wavefunction):
                    nmo=header['nmo'], nelec=header['nelec'],
                    orbitals=orbitals, psi0=header['psi0'])
 
-    # ------------------------------------------------------------------
-    # construction
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def from_pbc_scf(cls, scf_data, ortho_ao=True, rediag=True, ndet_max=None,
-                     low=0.1, high=0.95,
-                     orthonormalize=True) -> "PHMSDWavefunction":
-        """
-        Build a multi-determinant trial wavefunction from a periodic PySCF SCF
-        calculation with partially occupied degenerate bands.
-
-        Parameters
-        ----------
-        ndet_max : int, optional
-            Largest number of determinants to keep. Every determinant the
-            degeneracy allows when omitted.
-
-        Raises
-        ------
-        ValueError
-            If the SCF data has no partial occupancies, so that a single
-            determinant already describes it — use
-            `NOMSDWavefunction.from_pbc_scf` for that.
-
-        See Also
-        --------
-        safiretools.wavefunction.pbc.from_pbc_scf : full parameter documentation.
-        """
-        from safiretools.wavefunction.pbc import from_pbc_scf
-
-        wavefunction = from_pbc_scf(
-            scf_data, ortho_ao=ortho_ao, rediag=rediag, ndet_max=ndet_max,
-            low=low, high=high, orthonormalize=orthonormalize,
-        )
-
-        if not isinstance(wavefunction, cls):
-            raise ValueError(
-                "this SCF calculation has no partially occupied degenerate "
-                "bands, so a single determinant describes it exactly; use "
-                "NOMSDWavefunction.from_pbc_scf"
-            )
-
-        return wavefunction
-
 
 def _occupations(occ, name: str):
     """Coerce an occupation-number array to a 2-D ``(ndets, nelec)`` int array."""
