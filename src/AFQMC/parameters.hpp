@@ -40,13 +40,6 @@ enum class PHMSDEnergyAlgorithm {
 };
 SAFIRE_DEFINE_ENUM_NAMES(PHMSDEnergyAlgorithm, reference, woodbury);
 
-struct ProjectParameters {
-  std::string id{"afqmc"};
-  int series{};
-  int n_groups{1}; // csafqmc only
-};
-SAFIRE_DEFINE_PARAMETERS(ProjectParameters, id, series, n_groups);
-
 struct WalkerSetParameters {
   // an unnamed block cannot be referenced, so it is registered under a generated name
   std::string name{};
@@ -275,7 +268,9 @@ struct AFQMCParameters {
   // not a member of the object itself: the driver type is the key the object is stored under
   DriverType driver{DriverType::afqmc};
 
-  ProjectParameters project{};
+  // results will be written to `<output_name>.results.h5`. defaults to the name of the input file
+  // without its extension, in the current working directory
+  std::string output_name{};
 
   std::vector<ExecuteParameters> execute{};
 
@@ -285,11 +280,12 @@ struct AFQMCParameters {
   std::vector<HamiltonianParameters> hamiltonian{};
   std::vector<PropagatorParameters> propagator{};
 };
-SAFIRE_DEFINE_PARAMETERS(AFQMCParameters, project, execute, walker_set, wavefunction, hamiltonian,
+SAFIRE_DEFINE_PARAMETERS(AFQMCParameters, output_name, execute, walker_set, wavefunction, hamiltonian,
                          propagator);
 
 
 /// Reads the whole input document. The key of the top level object selects its driver, e.g. {"afqmc": {...}}.
+/// An input that does not name its output is named after the input file itself.
 inline AFQMCParameters parse_input_file(const std::filesystem::path& filename) {
   std::ifstream input{filename};
   if(!input) {
@@ -306,6 +302,10 @@ inline AFQMCParameters parse_input_file(const std::filesystem::path& filename) {
   AFQMCParameters params;
   from_json(nlohmann::json(simulation.key()), params.driver);
   simulation.value().get_to(params);
+
+  if(params.output_name.empty()) {
+    params.output_name = filename.stem().string();
+  }
   return params;
 }
 

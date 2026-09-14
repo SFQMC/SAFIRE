@@ -97,8 +97,7 @@ std::string parameter_string(const nlohmann::ordered_json& json, int column) {
 void print_parameters(const AFQMCParameters& params) {
   app_log(2, banner("Input parameters"));
 
-  app_log(2, section("Project"));
-  app_log(2, parameter_string(nlohmann::ordered_json(params.project), 2));
+  app_log(2, parameter_string(nlohmann::ordered_json(params.output_name), 0));
 
   int n{};
   for(const ExecuteParameters& exec : params.execute) {

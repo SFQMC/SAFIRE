@@ -77,18 +77,16 @@ class AFQMCFactory
 public:
   ///constructor
   AFQMCFactory(const AFQMCParameters& params,
-               std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi)
-     : m_series(params.project.series),
-       project_title(params.project.id),
-       mpi(_mpi),
+               std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi)
+     : stage_index_{0},
+       output_name_{params.output_name},
+       mpi_(mpi),
        HamFac(),
        WSetFac(),
        WfnFac{},
        PropFac(),
        DriverFac(mpi, WSetFac, PropFac, WfnFac, HamFac)
   {
-    utils::check(params.project.n_groups==1, "finish!!!");
-
     // parse input
     utils::check(parse(params), "Error in AFQMCFactory: Problems parsing the input file.");
 
@@ -98,10 +96,10 @@ public:
 
 private:
 
-  int m_series;
-  std::string project_title;
+  int stage_index_;
+  std::string output_name_;
 
-  std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
+  std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi_;
 
   // Hamiltonian factory
   HamiltonianFactory HamFac;
