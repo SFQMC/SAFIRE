@@ -29,7 +29,6 @@ import logging
 import time
 
 import numpy as np
-import scipy.linalg
 import h5py as h5
 
 from safiretools.hamiltonian.base import (
@@ -40,6 +39,7 @@ from safiretools.hamiltonian.base import (
 from safiretools.hamiltonian.fcidump import read_fcidump, write_fcidump
 from safiretools.hdf5 import from_complex, to_complex
 from safiretools.types import SpinSymm
+from safiretools.wavefunction.slater import gab
 
 logger = logging.getLogger(__name__)
 
@@ -957,36 +957,3 @@ def core_contribution_cholesky(chol_vecs, G):
     hcb_k = 0.5 * np.einsum('lrq,lsq->rs', np.einsum('lpr,pq->lrq', cv, G[1]), cv)
 
     return (hca_j - hca_k, hcb_j - hcb_k)
-
-
-def gab(A, B):
-    r"""One-particle Green's function.
-
-    This actually returns 1-G since it's more useful, i.e.,
-
-    .. math::
-        \langle \phi_A|c_i^{\dagger}c_j|\phi_B\rangle =
-        [B(A^{\dagger}B)^{-1}A^{\dagger}]_{ji}
-
-    where :math:`A,B` are the matrices representing the Slater determinants
-    :math:`|\psi_{A,B}\rangle`.
-
-    For example, usually A would represent (an element of) the trial wavefunction.
-
-    .. warning::
-        Assumes A and B are not orthogonal.
-
-    Parameters
-    ----------
-    A : numpy.ndarray
-        Matrix representation of the bra used to construct G.
-    B : numpy.ndarray
-        Matrix representation of the ket used to construct G.
-
-    Returns
-    -------
-    GAB : numpy.ndarray
-        (One minus) the Green's function.
-    """
-    inv_O = scipy.linalg.inv((A.conj().T).dot(B))
-    return B.dot(inv_O.dot(A.conj().T))
