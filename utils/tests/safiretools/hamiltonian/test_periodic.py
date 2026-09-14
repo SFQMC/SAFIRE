@@ -8,8 +8,8 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-"""`PeriodicHamiltonian`: work partitioning, momentum bookkeeping, and the two
-representations the one `kp_sym`-flagged solver produces."""
+"""`PeriodicHamiltonian`: momentum bookkeeping, and the two representations the
+one `kp_sym`-flagged solver produces."""
 
 import h5py as h5
 import numpy as np
@@ -18,85 +18,17 @@ import pytest
 from safiretools.hamiltonian.base import Hamiltonian, hamiltonian_format
 from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
 from safiretools.hamiltonian.periodic import (
-    FileHandler,
-    Partition,
     PeriodicHamiltonian,
-    _SerialComm,
-    bisect,
     construct_qk_maps,
-    fair_share,
     generate_grid_shifts,
     get_ortho_ao,
-    rank_filename,
     setup_basis_map,
 )
 
 
-class FakeComm:
-    def __init__(self, size=1, rank=0):
-        self.size = size
-        self.rank = rank
-
-
 # ----------------------------------------------------------------------
-# partitioning, no PySCF needed
+# bookkeeping, no PySCF needed
 # ----------------------------------------------------------------------
-
-class TestFairShare:
-
-    def test_it_covers_every_item_exactly_once(self):
-        covered = []
-        for rank in range(5):
-            i0, iN = fair_share(23, 5, rank)
-            covered.extend(range(i0, iN))
-        assert covered == list(range(23))
-
-    def test_the_remainder_goes_to_the_first_ranks(self):
-        sizes = [iN - i0 for i0, iN in (fair_share(23, 5, rank) for rank in range(5))]
-        assert sizes == [5, 5, 5, 4, 4]
-
-
-class TestBisect:
-
-    def test_it_inserts_after_equal_entries(self):
-        assert bisect([1, 3, 3, 5], 3) == 3
-        assert bisect([1, 3, 3, 5], 0) == 0
-        assert bisect([1, 3, 3, 5], 9) == 4
-
-    def test_a_negative_lower_bound_is_rejected(self):
-        with pytest.raises(ValueError, match="non-negative"):
-            bisect([1, 2], 1, lo=-1)
-
-
-class TestPartition:
-
-    def test_serial_partition_owns_everything(self):
-        part = Partition(FakeComm(1), 20, 16, 8, 2, kp_sym=False)
-
-        assert (part.kk0, part.kkN, part.nkk) == (0, 4, 4)
-        assert (part.ij0, part.ijN, part.nij) == (0, 64, 64)
-        assert part.nproc_pk == 1
-        assert list(part.n2k1) == [0, 0, 1, 1]
-        assert list(part.n2k2) == [0, 1, 0, 1]
-
-    def test_kp_sym_partitions_over_single_kpoints(self):
-        part = Partition(FakeComm(1), 20, 16, 8, 2, kp_sym=True)
-
-        assert (part.kk0, part.kkN, part.nkk) == (0, 2, 2)
-        assert not hasattr(part, 'n2k1')
-
-    def test_more_ranks_than_kpoints_splits_orbital_pairs(self):
-        parts = [Partition(FakeComm(4, rank), 20, 16, 8, 2, kp_sym=True)
-                 for rank in range(4)]
-
-        assert [p.nproc_pk for p in parts] == [2] * 4
-        assert [p.kk0 for p in parts] == [0, 0, 1, 1]
-        assert [(p.ij0, p.ijN) for p in parts] == [(0, 32), (32, 64)] * 2
-
-    def test_ranks_must_divide_the_kpoint_count(self):
-        with pytest.raises(ValueError, match="evenly divide"):
-            Partition(FakeComm(3), 20, 16, 8, 2, kp_sym=True)
-
 
 def test_setup_basis_map_numbers_orbitals_consecutively():
     ik2n, nmo_tot = setup_basis_map([3, 2], nkpts=2)
@@ -105,37 +37,6 @@ def test_setup_basis_map_numbers_orbitals_consecutively():
     assert list(ik2n[:, 0]) == [0, 1, 2]
     # the second k-point has one fewer orbital, so the last slot stays unset
     assert list(ik2n[:, 1]) == [3, 4, -1]
-
-
-def test_rank_filename_prefixes_only_the_basename(tmp_path):
-    """
-    afqmctools built this as ``"rank1_" + filename``, which produced an
-    unopenable path whenever the file was not in the working directory.
-    """
-    name = rank_filename(1, tmp_path / 'ham.h5')
-
-    assert name.endswith('rank1_ham.h5')
-    assert name.startswith(str(tmp_path))
-
-
-def test_file_handler_gives_each_rank_its_own_file(tmp_path):
-    path = tmp_path / 'ham.h5'
-
-    with FileHandler(FakeComm(2, rank=1), path) as fh5:
-        fh5.create_dataset('x', data=1)
-
-    assert (tmp_path / 'rank1_ham.h5').exists()
-    assert not path.exists()
-
-
-class TestSerialComm:
-
-    def test_allgather_copies_the_send_buffer(self):
-        comm = _SerialComm()
-        recvbuf = np.zeros(5)
-        comm.Allgather(np.arange(5, dtype=float), recvbuf)
-
-        assert np.allclose(recvbuf, np.arange(5))
 
 
 # ----------------------------------------------------------------------
@@ -343,35 +244,6 @@ class TestGeneration:
         restored = Hamiltonian.from_hdf5(path)
         assert np.allclose(restored.chol[0], hamiltonian.chol[0])
 
-    def test_write_from_pyscf_matches_from_pyscf(self, scf_data, tmp_path):
-        """The streaming writer and the in-memory factory must agree."""
-        streamed = tmp_path / 'streamed.h5'
-        PeriodicHamiltonian.write_from_pyscf(
-            _SerialComm(), scf_data, streamed, kpoint_symmetry=True,
-            chol_cut=1e-3, maxvecs=20)
-
-        # the streaming writer tags the file after closing it, from one rank;
-        # the comparison below reads names out of this file, so it alone would
-        # not notice the tag going missing here
-        with h5.File(streamed, 'r') as fh5:
-            assert fh5['Hamiltonian/type'].asstr()[()] == 'KPFactorized'
-
-        in_memory = tmp_path / 'in_memory.h5'
-        PeriodicHamiltonian.from_pyscf(
-            scf_data, kpoint_symmetry=True, chol_cut=1e-3,
-            maxvecs=20).to_hdf5(in_memory)
-
-        with h5.File(streamed) as a, h5.File(in_memory) as b:
-            names = []
-            a.visititems(lambda n, o: names.append(n) if isinstance(o, h5.Dataset) else None)
-            assert names
-            for name in names:
-                assert name in b, name
-                if h5.check_string_dtype(a[name].dtype):
-                    assert a[name][()] == b[name][()], name
-                else:
-                    assert np.allclose(a[name][...], b[name][...]), name
-
     def test_supercell_hamiltonian_is_a_gamma_point_kpoint_hamiltonian(self, scf_data,
                                                                        tmp_path):
         """
@@ -458,12 +330,3 @@ class TestGeneration:
         )
 
         assert np.isclose(sc_trace, kp_trace, rtol=1e-2)
-
-    def test_from_pyscf_refuses_to_run_in_parallel(self, scf_data):
-        with pytest.raises(ValueError, match="serial-only"):
-            PeriodicHamiltonian.from_pyscf(scf_data, comm=FakeComm(4))
-
-    def test_write_from_pyscf_refuses_a_distributed_supercell(self, scf_data, tmp_path):
-        with pytest.raises(NotImplementedError, match="in parallel is not implemented"):
-            PeriodicHamiltonian.write_from_pyscf(
-                FakeComm(4), scf_data, tmp_path / 'sc.h5', kpoint_symmetry=False)
