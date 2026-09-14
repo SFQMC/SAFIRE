@@ -885,7 +885,7 @@ def freeze_core(h1e, chol, ecore, nc, ncas, verbose=True):
     return h1e, chol, efzc[0]
 
 
-def local_energy_generic_cholesky(h1e, chol_vecs, G, ecore):
+def local_energy_generic_cholesky(h1e, chol_vecs, G, econstant):
     r"""
     Local energy for a generic two-body Hamiltonian, from Cholesky-decomposed
     two-electron integrals.
@@ -898,30 +898,38 @@ def local_energy_generic_cholesky(h1e, chol_vecs, G, ecore):
         Cholesky vectors, ``(nchol, nbasis, nbasis)``.
     G : list of numpy.ndarray
         Up and down Green's functions.
-    ecore : float
-        Constant energy contribution.
+    econstant : float
+        Constant energy contribution — nuclear repulsion plus any frozen-core
+        or other term that does not depend on `G`.
 
     Returns
     -------
     (E, T, V) : tuple
         Total, one-body and two-body energies.
+
+    Notes
+    -----
+    The Coulomb term couples the spin channels only through their sum, so the
+    four :math:`\{uu, dd, ud, du\}` contributions factorize into one product
+    over ``G[0] + G[1]``. The exchange term does not, and is summed over the
+    spin channels separately.
     """
-    e1b = np.sum(h1e * G[0]) + np.sum(h1e * G[1])
+    Gtot = G[0] + G[1]
 
-    ecoul_uu = ecoul_dd = ecoul_ud = ecoul_du = 0
-    exx_uu = exx_dd = 0
-    for c in chol_vecs:
-        ecoul_uu += np.sum(c * G[0]) * np.sum(c.conj().T * G[0])
-        ecoul_dd += np.sum(c * G[1]) * np.sum(c.conj().T * G[1])
-        ecoul_ud += np.sum(c * G[0]) * np.sum(c.conj().T * G[1])
-        ecoul_du += np.sum(c * G[1]) * np.sum(c.conj().T * G[0])
-        exx_uu += np.einsum('ij,ji->', np.dot(c.T, G[0]), np.dot(c.conj(), G[0]))
-        exx_dd += np.einsum('ij,ji->', np.dot(c.T, G[1]), np.dot(c.conj(), G[1]))
+    e1b = np.sum(h1e * Gtot)
 
-    e2b = (0.5 * (ecoul_uu - exx_uu) + 0.5 * (ecoul_dd - exx_dd)
-           + 0.5 * ecoul_ud + 0.5 * ecoul_du)
+    ecoul = np.dot(np.einsum('lij,ij->l', chol_vecs, Gtot),
+                   np.einsum('lji,ij->l', chol_vecs.conj(), Gtot))
 
-    return (e1b + e2b + ecore, e1b + ecore, e2b)
+    # sum is over spin axes; is a few orders of magnitude *faster* than including
+    #    in the einsum
+    exx = sum(np.einsum('lpi,pj,ljq,qi->', chol_vecs, Gs, chol_vecs.conj(), Gs,
+                        optimize=True)
+              for Gs in G)
+
+    e2b = 0.5 * (ecoul - exx)
+
+    return (e1b + e2b + econstant, e1b + econstant, e2b)
 
 
 def core_contribution_cholesky(chol_vecs, G):
