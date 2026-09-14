@@ -118,14 +118,14 @@ def build_systems() -> Dict[str, System]:
                 "rcasci_ghf_1phmsd": Wavefunction("afqmc_casci_ghf_1phmsd.h5", S.NONCOLLINEAR, WC.PHMSD),
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
-            observables={"onerdm": {}},
+            observables={"onerdm": {}, "diag_twordm": {}},
         ),
         "Li": System(
             data_dir="Li",
             hamiltonians={"hamil_closed": Hamiltonian("hamil_closed.h5", S.CLOSED, HC.GENERIC_DENSE)},
             wavefunctions={"rohf_wfn_polarized": Wavefunction("rohf_nomsd_polarized.h5", S.COLLINEAR, WC.NOMSD)},
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {}},
+            observables={"onerdm": {}, "diag_twordm": {}},
         ),
         "Pb": System(
             data_dir="Pb",
@@ -155,6 +155,7 @@ def build_systems() -> Dict[str, System]:
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
             observables={
                 "onerdm": {},
+                "diag_twordm": {},
                 "spincorr": {},
                 "paircorr": {"pairs": {"filename": "pair_correlators.h5",
                                        "group": "PairCorrelator/orbital_map"}},
@@ -170,7 +171,13 @@ def build_systems() -> Dict[str, System]:
                 "hf_U0.1_collinear": Wavefunction("uhf_U0.1_wfn_nup5_ndn5.h5", S.COLLINEAR, WC.NOMSD),
             },
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {}},
+            observables={
+                "onerdm": {},
+                "diag_twordm": {},
+                "spincorr": {},
+                "paircorr": {"pairs": {"filename": "pair_correlators.h5",
+                                       "group": "PairCorrelator/orbital_map"}},
+            },
         ),
         "hubbard_kanamori": System(
             data_dir="square_6x1_hubbard_kanamori_nup6_ndn6",
@@ -185,6 +192,7 @@ def build_systems() -> Dict[str, System]:
             walkers=[S.COLLINEAR, S.NONCOLLINEAR],
             observables={
                 "onerdm": {},
+                "diag_twordm": {},
                 "spincorr": {},
                 "paircorr": {"pairs": {"filename": "pair_correlators.h5",
                                        "group": "PairCorrelator/orbital_map"}},
@@ -212,7 +220,7 @@ def build_systems() -> Dict[str, System]:
                 "pbe_collinear_nomsd_noncollinear": Wavefunction("wfn_mf_pbe_noncollinear.h5", S.NONCOLLINEAR, WC.NOMSD),
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
-            observables={"onerdm": {}},
+            observables={"onerdm": {}, "diag_twordm": {}},
         ),
         "diamond_2x2x2": System(
             data_dir="C_diamond_coqui",
@@ -221,6 +229,6 @@ def build_systems() -> Dict[str, System]:
             },
             wavefunctions={"pbe_wfn_2x2x2_collinear": Wavefunction("wfn_mf_2x2x2_pbe.h5", S.COLLINEAR, WC.NOMSD)},
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {}},
+            observables={"onerdm": {}, "diag_twordm": {}},
         ),
     }
