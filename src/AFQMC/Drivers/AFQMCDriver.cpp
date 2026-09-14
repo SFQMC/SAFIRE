@@ -66,6 +66,7 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
 
   // KE: need to change the hard-coded 1.0 to an equilibration phase.
   for (int iStep = 0; iStep < nStep; ++iStep, ++step_tot) {
+    auto step_time = timers.step.start();
     propagator_.Propagate(wset, Eshift, dt);
     total_time += dt;
 
@@ -128,8 +129,10 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   propagator_.printBoundStatistics();
   // print timers
   if(mpi_->comm.root()){
+    std::string results_filename = std::format("{}.results.h5", project_title_);
+    estimators_.write(results_filename);
+    app_log(1, "Results written to '{}'.", results_filename);
     timers.print_all();
-    estimators_.write(std::format("{}.results.h5", project_title_));
   }
 
   app_log(1, banner("Finished AFQMC calculation"));
