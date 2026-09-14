@@ -520,7 +520,7 @@ Settings
     "vbias_bound": 50.0,
     "upper_cutoff_scale": 10.0,
     "lower_cutoff_scale": 1.0,
-    "apply_constrain": true,
+    "apply_constraint": true,
     "importance_sampling": true,
     "subtractMF": true,
     "hybrid": true,
@@ -550,7 +550,7 @@ Settings
    * - **lower_cutoff_scale**
      - 1.0
      - Lower cutoff scaling factor for pseudo local energy updates
-   * - **apply_constrain**
+   * - **apply_constraint**
      - true
      - Whether to apply constraints during propagation
    * - **importance_sampling**
@@ -585,9 +585,9 @@ Settings
       "external_field_scale": 1.0,
       "upper_cutoff_scale": 10.0,
       "lower_cutoff_scale": 1.0,
-      "apply_constrain": true,
+      "apply_constraint": true,
       "importance_sampling": true,
-      "substractMF": true,
+      "subtractMF": true,
       "hybrid": true,
       "printP1eigval": false,
       "free_projection": false,
@@ -626,13 +626,13 @@ Settings
     * - **lower_cutoff_scale**
       - 1.0
       - Lower cutoff scaling factor for pseudo local energy updates
-    * - **apply_constrain**
+    * - **apply_constraint**
       - true
       - Whether to apply constraints during propagation
     * - **importance_sampling**
       - true
       - Whether to use importance sampling
-    * - **substractMF**
+    * - **subtractMF**
       - true
       - Whether to subtract mean field contribution
     * - **hybrid**

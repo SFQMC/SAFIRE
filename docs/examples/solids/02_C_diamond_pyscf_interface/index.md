@@ -285,7 +285,7 @@ vbias_bound: 50
 external_field_scale: 1
 upper_cutoff_scale: 10
 lower_cutoff_scale: 1
-apply_constrain: true
+apply_constraint: true
 importance_sampling: true
 subtractMF: true
 hybrid: true

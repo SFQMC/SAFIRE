@@ -77,7 +77,7 @@ public:
     const std::string& external_field = params.external_field;
     const double external_field_scale = params.external_field_scale;
     order               = params.taylor_n;
-    apply_constrain     = params.apply_constrain;
+    apply_constraint     = params.apply_constraint;
     importance_sampling = params.importance_sampling;
     subtractMF         = params.subtractMF;
     hybrid              = params.hybrid;
@@ -92,12 +92,12 @@ public:
 
     if (free_projection)
     {
-      if (importance_sampling || !hybrid || apply_constrain)
+      if (importance_sampling || !hybrid || apply_constraint)
       {
         app_error("Free projection requires:");
         app_error(" importance_sampling = no, currently {}", importance_sampling);
         app_error(" hybrid = yes, currently {}", hybrid);
-        app_error(" apply_constrain = no, currently {}", apply_constrain);
+        app_error(" apply_constraint = no, currently {}", apply_constraint);
         utils::check(false,"BasePropagator: free_projection");
       }
     }
@@ -317,7 +317,7 @@ protected:
   bool free_projection = false;
   bool hybrid = true;
   bool importance_sampling = true;
-  bool apply_constrain = true;
+  bool apply_constraint = true;
   double upper_cutoff_scale = 10.0;
   double lower_cutoff_scale = 1.0;
   bool natural_shift = true;

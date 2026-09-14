@@ -96,7 +96,7 @@ struct PropagatorParameters {
   double external_field_scale{1.0};
   std::optional<double> upper_cutoff_scale{};
   std::optional<double> lower_cutoff_scale{};
-  bool apply_constrain{true};
+  bool apply_constraint{true};
   bool importance_sampling{true};
   bool subtractMF{true};
   bool hybrid{true};
@@ -113,7 +113,7 @@ struct PropagatorParameters {
   std::string excited{""};
 };
 SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, external_field_scale, upper_cutoff_scale,
-                         lower_cutoff_scale, apply_constrain, importance_sampling, subtractMF, hybrid,
+                         lower_cutoff_scale, apply_constraint, importance_sampling, subtractMF, hybrid,
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
                          symmetric_split, use_cp_constraint, use_real_vbias, external_field, excited);
 
