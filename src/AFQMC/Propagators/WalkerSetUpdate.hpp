@@ -101,7 +101,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
 }
 
 template <class Wlk>
-void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
+void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                           bool imp_sampl, RealType Eshift,
                           nda::MemoryVector auto &&overlap,
                           nda::MemoryVector auto &&MFfactor,
@@ -148,7 +148,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
     if (imp_sampl)
       ratioOverlaps = std::exp(new_ovlp(i) - old_ovlp);
 
-    if (!std::isfinite(ratioOverlaps.real()) && apply_constrain && imp_sampl) {
+    if (!std::isfinite(ratioOverlaps.real()) && apply_constraint && imp_sampl) {
       scale = 0.0;
       eloc = old_eloc;
     } else {
@@ -161,7 +161,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
         scale = (std::cos(delta_theta) > 0.0 ? 1.0 : 0.0);
         ratioOverlaps = std::real(ratioOverlaps); // is this needed?
       } else {
-        scale = (apply_constrain ? std::max(0.0, std::cos(delta_theta)) : 1.0);
+        scale = (apply_constraint ? std::max(0.0, std::cos(delta_theta)) : 1.0);
       }
 
       if (imp_sampl) {
@@ -248,7 +248,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constrain,
 }
 
 template <class Wlk>
-void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constrain,
+void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                                 RealType Eshift,
                                 nda::MemoryVector auto &&overlap,
                                 nda::MemoryMatrix auto &&energies,
@@ -296,13 +296,13 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constrain,
     ComplexType ratioOverlaps = std::exp(new_ovlp(i) - old_ovlp);
 
     if (!std::isfinite((ratioOverlaps * mf_factor(i)).real()) &&
-        apply_constrain) {
+        apply_constraint) {
       scale = 0.0;
       eloc = old_eloc;
     } else {
       theta(i) = std::arg(ratioOverlaps) - mf_factor(i).imag();
       scale =
-          (apply_constrain ? (std::max(0.0, std::cos(std::arg(ratioOverlaps) -
+          (apply_constraint ? (std::max(0.0, std::cos(std::arg(ratioOverlaps) -
                                                      mf_factor(i).imag())))
                            : 1.0);
     }

@@ -142,13 +142,13 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
   else if (hybrid)
   {
     if(nt==1) step0 = true;
-    hybrid_walker_update(wset, dt, apply_constrain, importance_sampling, Eshift, new_overlaps, MFfactor,
+    hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift, new_overlaps, MFfactor,
                          hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, symmetric_split, step0,
                          debug_verbosity, use_cp_constraint, eloc_bound_stats);
   }
   else
   {
-    local_energy_walker_update(wset, dt, apply_constrain, Eshift, new_overlaps, new_energies, MFfactor,
+    local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies, MFfactor,
                                lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
   }
   if(wset.NumBackProp() > 0) {
