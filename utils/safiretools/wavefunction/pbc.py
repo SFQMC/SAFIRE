@@ -12,61 +12,50 @@
 Trial wavefunctions from periodic PySCF calculations.
 
 The k-point orbitals are assembled into one supercell Slater matrix, block by
-k-point. Which representation comes out depends on the occupancies: a system
-with integer occupancies gives a single determinant, while partially occupied
-degenerate bands — a metal, typically — can give a multi-determinant expansion
-over the ways of distributing the leftover electrons among those bands.
+k-point, giving a single Slater determinant. Reached through
+`NOMSDWavefunction.from_pbc_scf`.
 
-Reached through `NOMSDWavefunction.from_pbc_scf` and
-`PHMSDWavefunction.from_pbc_scf`.
+.. note:: **CoQuí is the supported route for solids.** This path covers a PySCF
+          mean-field reference only, and only as a single determinant; see
+          DESIGN.md.
 """
 
-import itertools
 import logging
 
 import numpy as np
-import scipy.linalg
 
 from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
 
 
-def from_pbc_scf(scf_data, ortho_ao=True, rediag=True, ndet_max=1, low=0.1,
-                 high=0.95, orthonormalize=True):
+def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
     """
-    Build a trial wavefunction from a periodic PySCF SCF calculation.
+    Build a single-determinant trial wavefunction from a periodic PySCF SCF
+    calculation.
 
     Parameters
     ----------
-    scf_data : dict
-        Unpacked PySCF checkpoint, as produced by
-        ``afqmctools.utils.pyscf_utils.load_from_pyscf_chk``. Uses the keys
-        ``'X'``, ``'Xocc'``, ``'fock'``, ``'nmo_pk'``, ``'mo_energy'``,
-        ``'kpts'`` and ``'walker_type'``.
+    source : str or pathlib.Path or dict
+        A PySCF checkpoint file, or an already-loaded ``scf_data`` mapping from
+        `safiretools.convert.pyscf.load_pyscf_chk`. Uses the keys ``'X'``,
+        ``'Xocc'``, ``'fock'``, ``'nmo_pk'``, ``'mo_energy'``, ``'kpts'`` and
+        ``'walker_type'``.
     ortho_ao : bool, optional
         Whether the working basis is the orthogonalized AO basis. Must match the
         Hamiltonian. Default True; a collinear reference requires it.
     rediag : bool, optional
         Rediagonalize the Fock matrix to get MO coefficients in the
         orthogonalized AO basis. Default True.
-    ndet_max : int or None, optional
-        Largest number of determinants to keep. 1 (the default) forces a single
-        determinant even when bands are partially occupied; None means "as many
-        as the degeneracy allows".
     low, high : float, optional
-        Occupancies strictly between these bounds count as partial, and their
-        bands as the degenerate set to distribute the leftover electrons over.
-        Defaults 0.1 and 0.95.
-    orthonormalize : bool, optional
-        Orthonormalize the resulting Slater matrices. Default True.
+        Occupancies strictly between these bounds count as partial. The leading
+        configuration — the lowest-indexed of the partially occupied bands — is
+        the one occupied. Defaults 0.1 and 0.95.
 
     Returns
     -------
-    NOMSDWavefunction or PHMSDWavefunction
-        A single determinant when the occupancies are integer or `ndet_max` is
-        1; otherwise a particle-hole expansion over the degenerate bands, with
-        the k-point orbital matrices as its reference.
+    NOMSDWavefunction
+        A single-determinant wavefunction.
 
     Raises
     ------
@@ -78,12 +67,17 @@ def from_pbc_scf(scf_data, ortho_ao=True, rediag=True, ndet_max=1, low=0.1,
     -----
     Partial occupancies are only handled for a collinear reference. The
     occupancy bookkeeping doubles the count of every filled band for a
-    closed-shell one, which is only right for integer occupancies; afqmctools
-    reached that case too and failed with a ``TypeError`` deeper in. Present
-    such a calculation as a collinear reference.
+    closed-shell one, which is only right for integer occupancies; present such
+    a calculation as a collinear reference instead.
+
+    The orbitals are eigenvectors of a Hermitian Fock matrix (or columns of the
+    identity when ``ortho_ao=False``), so they are orthonormal by construction
+    and nothing here orthonormalizes them.
     """
+    from safiretools.convert.pyscf import as_scf_data
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
-    from safiretools.wavefunction.phmsd import PHMSDWavefunction
+
+    scf_data = as_scf_data(source, periodic=True)
 
     spin_symm = SpinSymm.from_input(scf_data['walker_type'])
     collinear = spin_symm is SpinSymm.COLLINEAR
@@ -105,9 +99,8 @@ def from_pbc_scf(scf_data, ortho_ao=True, rediag=True, ndet_max=1, low=0.1,
         fock, scf_data['X'], nmo_pk, rediag=rediag, ortho_ao=ortho_ao,
         mo_energy=scf_data['mo_energy'], collinear=collinear)
 
-    occupancies, expansion, ndeg, order = _reoccupy(
-        mo_occ, eigenvalues, collinear=collinear, ndet_max=ndet_max, low=low,
-        high=high)
+    occupancies, order = _reoccupy(mo_occ, eigenvalues, collinear=collinear,
+                                   low=low, high=high)
 
     # mo_occ from pyscf is a list of arrays of potentially different length, so
     #   np.sum is not available
@@ -116,63 +109,19 @@ def from_pbc_scf(scf_data, ortho_ao=True, rediag=True, ndet_max=1, low=0.1,
 
     _log_eigenvalues(eigenvalues, order, nelec, collinear=collinear)
 
-    if ndeg == 1 or ndet_max == 1:
-        logger.info("writing a single Slater determinant trial wavefunction")
-        wavefunction = NOMSDWavefunction(
-            coeffs=np.array([1.0 + 0j]),
-            dets=_supercell_slater(orbitals, occupancies, nmo_pk, nelec,
-                                   collinear=collinear)[np.newaxis, ...],
-            nelec=nelec,
-            spin_symm=spin_symm,
-            nmo=nmo_tot,
-        )
-    else:
-        coeffs, occa, occb = expansion
-        logger.info("writing a particle-hole trial wavefunction with %d "
-                    "determinant(s)", len(coeffs))
-        wavefunction = PHMSDWavefunction(
-            coeffs=np.asarray(coeffs, dtype=np.complex128),
-            occa=occa,
-            occb=occb,
-            nmo=nmo_tot,
-            nelec=nelec,
-            orbitals=[scipy.linalg.block_diag(*channel) for channel in orbitals
-                      if len(channel)],
-        )
-
-    return wavefunction.orthonormalize() if orthonormalize else wavefunction
+    return NOMSDWavefunction(
+        coeffs=np.array([1.0 + 0j]),
+        dets=_supercell_slater(orbitals, occupancies, nmo_pk, nelec,
+                               collinear=collinear)[np.newaxis, ...],
+        nelec=nelec,
+        spin_symm=spin_symm,
+        nmo=nmo_tot,
+    )
 
 
 # ----------------------------------------------------------------------
 # orbitals per k-point
 # ----------------------------------------------------------------------
-
-def rediag_fock(fock, X):
-    """
-    Rediagonalize one k-point's Fock matrix in the basis `X` maps into.
-
-    Parameters
-    ----------
-    fock : numpy.ndarray
-        Fock matrix for this k-point.
-    X : numpy.ndarray
-        Transformation into the working basis.
-
-    Returns
-    -------
-    eigenvalues : numpy.ndarray
-        MO eigenvalues.
-    orbitals : numpy.ndarray
-        MO coefficients, as columns.
-
-    Notes
-    -----
-    The products are associated as ``X^H (F X)``, matching afqmctools. The other
-    grouping differs in the last bits, which is enough to rotate the
-    eigenvectors of a degenerate subspace by ~1e-6.
-    """
-    return np.linalg.eigh(X.conj().T @ (fock @ X))
-
 
 def _generate_orbitals(fock, X, nmo_pk, rediag, ortho_ao, mo_energy, collinear):
     """
@@ -204,12 +153,13 @@ def _generate_orbitals(fock, X, nmo_pk, rediag, ortho_ao, mo_energy, collinear):
             continue
 
         for ispin in range(2 if collinear else 1):
-            energies, orbs = rediag_fock(fock[ispin, k], X[k][:, :nmo_pk[k]])
+            Xk = X[k][:, :nmo_pk[k]]
+            energies, orbs = np.linalg.eigh(Xk.conj().T @ (fock[ispin, k] @ Xk))
             eigenvalues[ispin].extend(energies)
             orbitals[ispin].append(orbs)
 
     if not collinear:
-        # the beta channel repeats alpha; `reoccupy` reads eigenvalues[0] for it
+        # the beta channel repeats alpha; `_reoccupy` reads eigenvalues[0] for it
         eigenvalues[1].extend(eigenvalues[0])
 
     return eigenvalues, orbitals
@@ -260,28 +210,22 @@ def _supercell_slater(orbitals, occupancies, nmo_pk, nelec, collinear):
 # occupancies
 # ----------------------------------------------------------------------
 
-def _reoccupy(mo_occ, mo_energy, collinear, low=0.1, high=0.95, ndet_max=1):
+def _reoccupy(mo_occ, mo_energy, collinear, low=0.1, high=0.95):
     """
-    Resolve the occupancies, and the multi-determinant expansion when bands are
-    partially occupied.
+    Resolve the per-spin, per-k-point occupancies of the single determinant.
 
     Returns
     -------
     occupancies : list
         Per-spin occupancies, k-point by k-point.
-    expansion : tuple or None
-        ``(coeffs, occa, occb)`` when a multi-determinant expansion was built.
-    ndeg : int
-        Number of partially occupied bands found; 1 when the occupancies are
-        integer.
     order : numpy.ndarray or tuple
         Energy-sorted index order, for logging.
     """
     if not collinear:
-        occupancies, ndeg, _, order, _, _ = _determine_occupancies(
+        occupancies, partial, order, _ = _determine_occupancies(
             mo_occ, mo_energy[0], closed=True, low=low, high=high)
 
-        if ndeg != 1:
+        if partial:
             raise ValueError(
                 "partially occupied bands with a closed-shell reference are "
                 "not supported: the occupancy bookkeeping doubles the count of "
@@ -290,65 +234,36 @@ def _reoccupy(mo_occ, mo_energy, collinear, low=0.1, high=0.95, ndet_max=1):
             )
 
         # a closed-shell reference splits its occupancies evenly
-        return [occupancies / 2.0, occupancies / 2.0], None, ndeg, order
+        return [occupancies / 2.0, occupancies / 2.0], order
 
     logger.debug("determining occupancies for the alpha electrons")
-    occ_a, ndeg_a, msd_a, order_a, _, p_a = _determine_occupancies(
+    occ_a, _, order_a, _ = _determine_occupancies(
         mo_occ[0], mo_energy[0], closed=False, low=low, high=high)
 
     logger.debug("determining occupancies for the beta electrons")
-    occ_b, ndeg_b, msd_b, order_b, _, p_b = _determine_occupancies(
+    occ_b, _, order_b, _ = _determine_occupancies(
         mo_occ[1], mo_energy[1], closed=False, low=low, high=high)
 
-    ndeg = max(ndeg_a, ndeg_b)
-    expansion = None
-
-    if msd_a is not None and msd_b is not None:
-        logger.info("maximum number of determinants: %d",
-                    len(msd_a) * len(msd_b))
-
-        if ndet_max == 1:
-            expansion = (np.array([1.0]), np.array([msd_a[0]]),
-                         np.array([msd_b[0]]))
-        else:
-            occs_a, occs_b = zip(*itertools.product(msd_a, msd_b))
-            probabilities = np.outer(p_a, p_b).ravel()
-            coeffs = (probabilities / sum(probabilities)) ** 0.5
-
-            ndets = len(occs_a) if ndet_max is None \
-                else min(len(occs_a), ndet_max)
-
-            # NOTE: argsort is ascending, so this keeps the *least* probable
-            #   determinants — and determinant 0 becomes the executable's
-            #   reference configuration. Preserved from afqmctools rather than
-            #   silently changed; see TASKS.md.
-            keep = probabilities.argsort()[:ndets]
-            expansion = (coeffs[keep], np.array(occs_a)[keep],
-                         np.array(occs_b)[keep])
-
-    return [occ_a, occ_b], expansion, ndeg, (order_a, order_b)
+    return [occ_a, occ_b], (order_a, order_b)
 
 
-def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95,
-                           refdet=0):
+def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95):
     """
-    Split the occupancies into a filled core and a partially occupied,
-    degenerate set, and enumerate the ways of distributing the leftover
-    electrons over the latter.
+    Split the occupancies into a filled core plus, when bands are partially
+    occupied, the leading configuration over them.
+
+    The leading configuration occupies the lowest-indexed of the partially
+    occupied bands, which is the reference determinant of the expansion those
+    bands span.
 
     Returns
     -------
     occupancies
-        Per-k-point occupancies of the reference determinant.
-    ndeg : int
-        Number of partially occupied bands; 1 when there are none.
-    determinants : list or None
-        Occupied-orbital indices of each enumerated determinant, in
-        (k-point, band) order. None when the occupancies are integer.
+        Per-k-point occupancies of the determinant to build.
+    partial : bool
+        Whether any band was partially occupied.
     order, inverse_order : numpy.ndarray
         Energy-sorted index order and its inverse.
-    probabilities : numpy.ndarray or None
-        Product of the partial occupancies of each enumerated determinant.
 
     Raises
     ------
@@ -373,11 +288,10 @@ def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95,
     nleft = int(round(nelec - nocc))
     if nleft == 0:
         logger.debug("all occupancies are one or zero")
-        return mo_occ, 1, None, order, inverse_order, None
+        return mo_occ, False, order, inverse_order
 
-    logger.info("found partially occupied bands: constructing a "
-                "multi-determinant trial wavefunction from the degenerate "
-                "orbitals")
+    logger.info("found partially occupied bands: occupying the leading "
+                "configuration over them")
 
     sorted_occ = np.array(mo_occ).ravel()[order]
     degenerate = (sorted_occ < high) & (sorted_occ > low)
@@ -404,36 +318,30 @@ def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95,
                 f"MO occupancies: {smallest}"
             )
 
+    if nleft > ndeg:
+        raise ValueError(
+            f"{nleft} electron(s) remain to be placed over {ndeg} partially "
+            f"occupied band(s) between {low} and {high}"
+        )
+
     logger.info("distributing %d electron(s) over %d orbital(s)", nleft, ndeg)
 
-    # supercell-indexed
-    degenerate_orbitals = np.where(degenerate)[0]
-    partial = sorted_occ[degenerate]
-    combinations = list(itertools.combinations(degenerate_orbitals, int(nleft)))
-    probabilities = np.array(
-        [np.prod(partial[np.array(c) - nocc]) for c in combinations])
-
-    core = list(np.where(sorted_occ > high)[0])
-    determinants = [core + list(extra) for extra in combinations]
+    # supercell-indexed, energy-sorted; the leading configuration takes the
+    #   first `nleft` of the partially occupied bands
+    occupied = np.zeros(len(sorted_occ), dtype=np.int32)
+    occupied[np.where(sorted_occ > high)[0]] = 1
+    occupied[np.where(degenerate)[0][:nleft]] = 1
 
     # remap to primitive-cell (kpoint, band) indexing
-    reordered = []
-    reference = None
-    for index, determinant in enumerate(determinants):
-        occupied = np.zeros(len(sorted_occ), dtype=np.int32)
-        occupied[determinant] = 1
-        if index == refdet:
-            reference = occupied[inverse_order]
-        reordered.append(np.where(occupied[inverse_order])[0])
+    reference = occupied[inverse_order]
 
     occupancies = []
-    start, end = 0, nmo_pk[0]
+    start = 0
     for k in range(len(mo_occ)):
-        occupancies.append(reference[start:end])
+        occupancies.append(reference[start:start + nmo_pk[k]])
         start += nmo_pk[k]
-        end = start + nmo_pk[k + 1] if k + 1 < len(nmo_pk) else -1
 
-    return occupancies, ndeg, reordered, order, inverse_order, probabilities
+    return occupancies, True, order, inverse_order
 
 
 def _log_eigenvalues(eigenvalues, order, nelec, collinear) -> None:

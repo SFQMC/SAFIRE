@@ -170,34 +170,6 @@ class NOMSDWavefunction(Wavefunction):
                    spin_symm=spin_symm, psi0=header['psi0'],
                    nmo=header['nmo'])
 
-    # ------------------------------------------------------------------
-    # construction
-    # ------------------------------------------------------------------
-
-
-    @classmethod
-    def from_pbc_scf(cls, scf_data, ortho_ao=True, rediag=True, low=0.1,
-                     high=0.95, orthonormalize=True) -> "NOMSDWavefunction":
-        """
-        Build a single-determinant trial wavefunction from a periodic PySCF SCF
-        calculation.
-
-        One determinant is used even when bands are partially occupied, by
-        occupying the leading configuration; use
-        `PHMSDWavefunction.from_pbc_scf` for the multi-determinant expansion
-        over those bands.
-
-        See Also
-        --------
-        safiretools.wavefunction.pbc.from_pbc_scf : full parameter documentation.
-        """
-        from safiretools.wavefunction.pbc import from_pbc_scf
-
-        return from_pbc_scf(
-            scf_data, ortho_ao=ortho_ao, rediag=rediag, ndet_max=1, low=low,
-            high=high, orthonormalize=orthonormalize,
-        )
-
 
 def _nelec_per_spin(spin_symm, nelec) -> tuple:
     """
@@ -209,66 +181,3 @@ def _nelec_per_spin(spin_symm, nelec) -> tuple:
     if spin_symm is SpinSymm.NONCOLLINEAR:
         return (sum(nelec),)
     return (nelec[0],)
-
-
-def infer_spin_symm(orbitals, nelec, nmo: int) -> SpinSymm:
-    """
-    Infer the spin symmetry an orbital matrix is expressed in.
-
-    Parameters
-    ----------
-    orbitals : numpy.ndarray
-        A single determinant's orbital matrix, ``(npol*nmo, ncols)``.
-    nelec : tuple(int, int)
-        Physical electron counts ``(nup, ndown)``.
-    nmo : int
-        Number of spatial orbitals.
-
-    Returns
-    -------
-    SpinSymm
-
-    Raises
-    ------
-    ValueError
-        If the shape matches no spin symmetry.
-
-    Notes
-    -----
-    Decided by shape: ``2*nmo`` rows means noncollinear; otherwise the column
-    count separates a closed-shell matrix (one ``nup``-wide block, requiring
-    ``nup == ndown``) from a collinear one (``nup + ndown`` columns).
-
-    afqmctools' ``_get_slater_type`` tested ``nup == ndown`` alone and so read
-    any equal-population collinear matrix as closed-shell, halving it. A matrix
-    with no beta electrons is `SpinSymm.COLLINEAR` with ``ndown == 0``.
-    """
-    orbitals = np.asarray(orbitals)
-    if orbitals.ndim != 2:
-        raise ValueError(
-            f"expected a single determinant's 2-dimensional orbital matrix, "
-            f"got shape {orbitals.shape}"
-        )
-
-    nup, ndown = nelec
-    nrows, ncols = orbitals.shape
-
-    if nrows == 2 * nmo and ncols == nup + ndown:
-        return SpinSymm.NONCOLLINEAR
-
-    if nrows != nmo:
-        raise ValueError(
-            f"orbital matrix has {nrows} rows, expected {nmo} (collinear or "
-            f"closed shell) or {2 * nmo} (noncollinear)"
-        )
-
-    if ncols == nup and nup == ndown:
-        return SpinSymm.CLOSED
-    if ncols == nup + ndown:
-        return SpinSymm.COLLINEAR
-
-    raise ValueError(
-        f"orbital matrix has {ncols} columns, which matches neither a closed "
-        f"shell ({nup}, and only when nup == ndown) nor a collinear "
-        f"({nup + ndown}) wavefunction with nelec={tuple(nelec)}"
-    )
