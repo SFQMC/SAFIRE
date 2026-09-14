@@ -93,7 +93,6 @@ struct PropagatorParameters {
   // where they default to 100.0, 50.0, 50.0, false, false. resolve_defaults fills them in.
   int taylor_n{6};
   std::optional<double> vbias_bound{};
-  double external_field_scale{1.0};
   std::optional<double> upper_cutoff_scale{};
   std::optional<double> lower_cutoff_scale{};
   bool apply_constraint{true};
@@ -109,13 +108,11 @@ struct PropagatorParameters {
   std::optional<bool> symmetric_split{};
   bool use_cp_constraint{false};
   bool project_force_bias{false};
-  std::string external_field{""};
-  std::string excited{""};
 };
-SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, external_field_scale, upper_cutoff_scale,
+SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, upper_cutoff_scale,
                          lower_cutoff_scale, apply_constraint, importance_sampling, subtractMF, hybrid,
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
-                         symmetric_split, use_cp_constraint, project_force_bias, external_field, excited);
+                         symmetric_split, use_cp_constraint, project_force_bias);
 
 struct H5PathParameters {
   std::string filename{};

@@ -64,7 +64,6 @@ public:
         rng_block_size(wfn->number_of_cholesky_vectors())
   {
     utils::check(bool(mpi), "Error: Null mpi_context.");
-    const int NMO = wfn->getNMO();
     std::tie(nspins_in_vHS, npol_in_vHS) = wfn->vHS_dims();
     app_log(1,"vHS dimensions: nspins = {}, npol = {}", nspins_in_vHS, npol_in_vHS);
     auto hamtype(wfn->getHamType());
@@ -74,8 +73,6 @@ public:
     denseP2            = resolved(params.denseP2, "denseP2");
     symmetric_split    = resolved(params.symmetric_split, "symmetric_split");
 
-    const std::string& external_field = params.external_field;
-    const double external_field_scale = params.external_field_scale;
     order               = params.taylor_n;
     apply_constraint     = params.apply_constraint;
     importance_sampling = params.importance_sampling;
@@ -173,27 +170,6 @@ public:
       //readWfn(excited_file, excitedOrbMat_, NMO, maxOccupExtendedMat.first, maxOccupExtendedMat.second);
     }
     */
-    if (external_field != std::string(""))
-    {
-      //    read_external_field(H1ext);
-      auto walker_type = wfn->getWalkerType();
-      int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
-      int nspin = walker_type == COLLINEAR ? 2 : 1;
-      external_H1 = true;
-      H1ext = memory::share_from_root(*mpi, [&] {
-        // use hdf5 format!!!
-        nda::array<ComplexType,3> h1ext(nspin, npol*NMO, npol*NMO);
-        std::ifstream in(external_field.c_str());
-        for (int is = 0; is < nspin; is++)
-          for (int i = 0; i < npol*NMO; i++)
-            for (int j = 0; j < npol*NMO; j++) {
-              in >> h1ext(is,i,j);
-              utils::check(not in.fail()," Error: Problems with external field.");
-            }
-        h1ext *= external_field_scale;
-        return h1ext;
-      });
-    }
 
   }
 
@@ -271,8 +247,6 @@ protected:
 
   Wavefunction<MEM>* wfn = nullptr;
 
-  memory::const_shared_array<HOST_MEMORY,ComplexType,3> H1ext;
-
   // 1Body propagator in sparse and dense forms
   bool denseP1 = false;
   // vHS in sparse and dense forms
@@ -307,7 +281,6 @@ protected:
 
   RealType old_dt = -123456.789;
   int order = 6;
-  bool external_H1 = false; 
   bool printP1eV = false;
 
   RealType vbias_bound;
