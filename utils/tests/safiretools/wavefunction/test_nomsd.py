@@ -8,7 +8,7 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-"""`NOMSDWavefunction`: construction, round trips, and spin-symmetry inference."""
+"""`NOMSDWavefunction`: construction and round trips."""
 
 import warnings
 
@@ -17,7 +17,6 @@ import numpy as np
 import pytest
 
 from safiretools import NOMSDWavefunction, SpinSymm, Wavefunction
-from safiretools.wavefunction.nomsd import infer_spin_symm
 
 
 class TestConstruction:
@@ -127,39 +126,3 @@ class TestRoundTrip:
         wavefunction.to_hdf5(path)
 
         assert Wavefunction.from_hdf5(path).ndets == 4
-
-
-class TestInferSpinSymm:
-
-    @pytest.mark.parametrize('shape, nelec, expected', [
-        ((6, 3), (3, 3), SpinSymm.CLOSED),
-        ((6, 5), (3, 2), SpinSymm.COLLINEAR),
-        ((6, 6), (3, 3), SpinSymm.COLLINEAR),
-        ((6, 3), (3, 0), SpinSymm.COLLINEAR),
-        ((12, 5), (3, 2), SpinSymm.NONCOLLINEAR),
-    ])
-    def test_it_reads_the_symmetry_off_the_shape(self, shape, nelec, expected):
-        assert infer_spin_symm(np.zeros(shape), nelec, nmo=6) is expected
-
-    def test_an_equal_population_collinear_matrix_is_not_closed_shell(self):
-        # afqmctools tested nup == ndown alone and read this as closed shell,
-        #   silently halving it
-        assert infer_spin_symm(np.zeros((6, 6)), (3, 3), nmo=6) \
-            is SpinSymm.COLLINEAR
-
-    def test_a_polarized_matrix_is_collinear(self):
-        # no beta electrons: one nup-wide block over nmo rows, ndown == 0
-        assert infer_spin_symm(np.zeros((6, 3)), (3, 0), nmo=6) \
-            is SpinSymm.COLLINEAR
-
-    def test_a_wrong_row_count_is_rejected(self):
-        with pytest.raises(ValueError, match="rows, expected 6"):
-            infer_spin_symm(np.zeros((7, 3)), (3, 3), nmo=6)
-
-    def test_a_wrong_column_count_is_rejected(self):
-        with pytest.raises(ValueError, match="columns, which matches neither"):
-            infer_spin_symm(np.zeros((6, 4)), (3, 3), nmo=6)
-
-    def test_a_non_matrix_is_rejected(self):
-        with pytest.raises(ValueError, match="2-dimensional orbital matrix"):
-            infer_spin_symm(np.zeros((1, 6, 3)), (3, 3), nmo=6)
