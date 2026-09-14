@@ -16,8 +16,9 @@ Every trial wavefunction here reduces to Slater matrices in the column layout
 `safiretools.NOMSDWavefunction` takes — the spin channels as consecutive column
 blocks. This module holds the operations on that layout: building one from
 orbital coefficients and occupied indices, expressing it in another basis,
-splitting it back into its spin blocks, and checking or restoring the
-orthonormality of its columns.
+forming the one-particle Green's function between two of them, splitting it
+back into its spin blocks, and checking or restoring the orthonormality of its
+columns.
 
 Nothing here reads an external convention, so a domain module (`pyscf.py`,
 `pbc.py`, `free_electron.py`) keeps only the code that decodes its own — which
@@ -27,6 +28,7 @@ orbitals a PySCF ``mo_occ`` vector calls occupied, say.
 from collections.abc import Iterable
 
 import numpy as np
+import scipy.linalg
 
 from safiretools.types import SpinSymm
 
@@ -132,6 +134,43 @@ def transform_slater(orbitals, transform):
     if transform.shape[0] != orbitals.shape[0]:
         transform = np.kron(np.eye(2), transform)
     return transform.conj().T @ orbitals
+
+
+# ----------------------------------------------------------------------
+# Green's function
+# ----------------------------------------------------------------------
+
+def gab(A, B):
+    r"""One-particle Green's function.
+
+    This actually returns 1-G since it's more useful, i.e.,
+
+    .. math::
+        \langle \phi_A|c_i^{\dagger}c_j|\phi_B\rangle =
+        [B(A^{\dagger}B)^{-1}A^{\dagger}]_{ji}
+
+    where :math:`A,B` are the matrices representing the Slater determinants
+    :math:`|\psi_{A,B}\rangle`.
+
+    For example, usually A would represent (an element of) the trial wavefunction.
+
+    .. warning::
+        Assumes A and B are not orthogonal.
+
+    Parameters
+    ----------
+    A : numpy.ndarray
+        Matrix representation of the bra used to construct G.
+    B : numpy.ndarray
+        Matrix representation of the ket used to construct G.
+
+    Returns
+    -------
+    GAB : numpy.ndarray
+        (One minus) the Green's function.
+    """
+    inv_O = scipy.linalg.inv((A.conj().T).dot(B))
+    return B.dot(inv_O.dot(A.conj().T))
 
 
 # ----------------------------------------------------------------------
