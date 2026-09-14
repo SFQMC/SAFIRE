@@ -33,22 +33,23 @@ from safiretools.wavefunction.slater import make_slater, transform_slater
 logger = logging.getLogger(__name__)
 
 
-def from_pyscf(scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
-               spin_symm=None, orthonormalize=True):
+def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
     """
     Build a single-determinant trial wavefunction from a molecular PySCF SCF
     calculation.
 
     Parameters
     ----------
-    scf_data : dict
-        Unpacked PySCF checkpoint, as produced by
-        ``afqmctools.utils.pyscf_utils.load_from_pyscf_chk_mol``. Uses the keys
+    source : str or pathlib.Path or dict
+        The SCF solution the wavefunction is built *from*: a PySCF checkpoint
+        file, or an already-loaded ``scf_data`` mapping from
+        `safiretools.convert.pyscf.load_pyscf_chk_mol`. Uses the keys
         ``'mol'``, ``'mo_coeff'``, ``'mo_occ'``, ``'nelec'``, ``'norb'``,
         ``'X'`` and ``'walker_type'``.
-    basis_scf_data : dict, optional
-        A second checkpoint whose orbitals define the basis to express the
-        wavefunction in. Defaults to `scf_data` itself.
+    basis : str or pathlib.Path or dict, optional
+        The SCF solution whose orbitals define the basis the wavefunction is
+        expressed *in*, which must be the one the Hamiltonian was built in.
+        Defaults to `source` itself.
     ortho_ao : bool, optional
         Work in the Löwdin-orthogonalized AO basis rather than the MO basis.
         Must match the Hamiltonian. Default False.
@@ -57,9 +58,9 @@ def from_pyscf(scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
         Occupied orbitals are trimmed to the active window and reindexed into
         it. Incompatible with `ortho_ao`.
     spin_symm : SpinSymm or str or int, optional
-        Overrides the spin symmetry inferred from the orbital matrix's shape.
-    orthonormalize : bool, optional
-        Orthonormalize the resulting Slater matrix. Default True.
+        Overrides the spin symmetry of the SCF solution, which
+        `safiretools.convert.pyscf.determine_spin_symm` decided when the
+        checkpoint was read.
 
     Returns
     -------
@@ -70,62 +71,59 @@ def from_pyscf(scf_data, basis_scf_data=None, ortho_ao=False, cas=None,
     ------
     ValueError
         If ``mo_occ`` does not describe the expected number of occupied
-        orbitals, or the orbital matrix's shape matches no spin symmetry.
+        orbitals.
 
     Notes
     -----
-    afqmctools' ``write_wfn_mol`` also took ``wfn=`` (a caller-supplied Slater
-    matrix, documented there as not fully supported) and ``init=`` (the initial
-    walker determinant). Neither is needed now: construct
-    `safiretools.NOMSDWavefunction` directly for the former, and assign to
-    ``wavefunction.psi0`` for the latter.
+    Set ``wavefunction.psi0`` afterwards to choose the AFQMC initial walker;
+    construct `safiretools.NOMSDWavefunction` directly to supply a Slater
+    matrix of your own.
 
     A reference with no beta electrons — which a large enough frozen core can
     produce from an open-shell one — is `SpinSymm.COLLINEAR` with
     ``ndown == 0``, and its beta blocks go to disk with zero width.
-    """
-    from safiretools.wavefunction.nomsd import NOMSDWavefunction, infer_spin_symm
 
-    if basis_scf_data is None:
-        basis_scf_data = scf_data
+    PySCF's orbitals are orthonormal in the basis they are expressed in, so
+    nothing here orthonormalizes them.
+    """
+    from safiretools.convert.pyscf import as_scf_data
+    from safiretools.wavefunction.nomsd import NOMSDWavefunction
+
+    scf_data = as_scf_data(source)
+    basis_scf_data = scf_data if basis is None else as_scf_data(basis)
 
     nelec = scf_data['nelec']
     norb = scf_data['norb']
-    reference_symm = SpinSymm.from_input(scf_data['walker_type'])
+
+    if spin_symm is None:
+        spin_symm = scf_data['walker_type']
+    spin_symm = SpinSymm.from_input(spin_symm)
 
     X, (nfzc, nfzv) = _get_transform_from_scf_data(basis_scf_data, ortho_ao, cas)
 
     nelec = tuple(n - nfzc for n in nelec)
     norb -= (nfzc + nfzv)
 
-    occa, occb = _occupied_indices(scf_data['mo_occ'], reference_symm,
+    occa, occb = _occupied_indices(scf_data['mo_occ'], spin_symm,
                                    nfzc=nfzc, nfzv=nfzv)
-    _check_occupations(occa, occb, nelec, reference_symm)
+    _check_occupations(occa, occb, nelec, spin_symm)
 
-    orbitals = make_slater(reference_symm, scf_data['mo_coeff'],
-                           (occa, occb), nelec)
+    orbitals = make_slater(spin_symm, scf_data['mo_coeff'], (occa, occb), nelec)
 
     overlap = scf_data['mol'].intor('int1e_ovlp')
     orbitals = transform_slater(
         orbitals, overlap @ X[:, nfzc:X.shape[-1] - nfzv]) + 0j
 
-    if spin_symm is None:
-        spin_symm = infer_spin_symm(orbitals, nelec, norb)
-    else:
-        spin_symm = SpinSymm.from_input(spin_symm)
-
     logger.info("built a %s single-determinant trial wavefunction: "
                 "nelec=%s, nmo=%d", spin_symm.label, nelec, norb)
 
-    wavefunction = NOMSDWavefunction(
+    return NOMSDWavefunction(
         coeffs=np.array([1.0 + 0j]),
         dets=orbitals[np.newaxis, ...],
         nelec=nelec,
         spin_symm=spin_symm,
         nmo=norb,
     )
-
-    return wavefunction.orthonormalize() if orthonormalize else wavefunction
 
 
 def from_pyscf_cas(mol, cas_chkfile, tol=1e-4, max_det=None):

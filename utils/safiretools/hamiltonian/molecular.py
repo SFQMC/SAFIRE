@@ -201,7 +201,7 @@ class MolecularHamiltonian(Hamiltonian):
                    spin_symm=spin_symm)
 
     @classmethod
-    def from_pyscf(cls, scf_data, chol_cut=1e-5, cas=None, ortho_ao=False,
+    def from_pyscf(cls, source, chol_cut=1e-5, cas=None, ortho_ao=False,
                    df=False, spin_symm=None, real_chol=None,
                    verbose=False) -> "MolecularHamiltonian":
         """
@@ -209,10 +209,12 @@ class MolecularHamiltonian(Hamiltonian):
 
         Parameters
         ----------
-        scf_data : dict
-            Unpacked PySCF checkpoint, as produced by
-            ``afqmctools.utils.pyscf_utils.load_from_pyscf_chk_mol``. Uses the
-            keys ``'hcore'``, ``'mo_coeff'``, ``'X'``, ``'mol'``, ``'nelec'``,
+        source : str or pathlib.Path or dict
+            A PySCF checkpoint file, or an already-loaded ``scf_data`` mapping
+            from `safiretools.convert.pyscf.load_pyscf_chk_mol`. Pass the
+            mapping when one load has to serve several factories — a
+            spin-orbit basis reused by the wavefunction, say. Uses the keys
+            ``'hcore'``, ``'mo_coeff'``, ``'X'``, ``'mol'``, ``'nelec'``,
             ``'norb'``, ``'walker_type'`` and (optionally) ``'df_ints'``.
         chol_cut : float, optional
             Cholesky decomposition accuracy. Default 1e-5.
@@ -242,6 +244,10 @@ class MolecularHamiltonian(Hamiltonian):
             `ortho_ao` are combined, or if the Hamiltonian is noncollinear but
             `spin_symm` says otherwise.
         """
+        from safiretools.convert.pyscf import as_scf_data
+
+        scf_data = as_scf_data(source)
+
         if spin_symm is None:
             spin_symm = scf_data["walker_type"]
         spin_symm = SpinSymm.from_input(spin_symm)

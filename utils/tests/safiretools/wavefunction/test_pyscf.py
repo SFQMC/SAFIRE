@@ -51,6 +51,39 @@ def neon_rhf():
 
 
 @pytest.fixture(scope='module')
+def rhf_chk(tmp_path_factory):
+    from pyscf import gto, scf
+
+    mol = gto.M(atom='O 0 0 0', basis='sto-3g', verbose=0)
+    mf = scf.RHF(mol)
+    mf.chkfile = str(tmp_path_factory.mktemp('wfn_rhf') / 'rhf.chk')
+    mf.kernel()
+    return mf.chkfile
+
+
+@pytest.fixture(scope='module')
+def rohf_chk(tmp_path_factory):
+    from pyscf import gto, scf
+
+    mol = gto.M(atom='O 0 0 0', basis='sto-3g', spin=2, verbose=0)
+    mf = scf.ROHF(mol)
+    mf.chkfile = str(tmp_path_factory.mktemp('wfn_rohf') / 'rohf.chk')
+    mf.kernel()
+    return mf.chkfile
+
+
+@pytest.fixture(scope='module')
+def uhf_chk(tmp_path_factory):
+    from pyscf import gto, scf
+
+    mol = gto.M(atom='O 0 0 0', basis='sto-3g', spin=2, verbose=0)
+    mf = scf.UHF(mol)
+    mf.chkfile = str(tmp_path_factory.mktemp('wfn_uhf') / 'uhf.chk')
+    mf.kernel()
+    return mf.chkfile
+
+
+@pytest.fixture(scope='module')
 def neon_rhf_631g():
     from pyscf import gto, scf
 
@@ -168,6 +201,54 @@ class TestFromPyscf:
         assert read_back.nelec == (5, 3)
         assert read_back.spin_symm is SpinSymm.COLLINEAR
         assert np.allclose(read_back.dets, wavefunction.dets)
+
+
+class TestSourceForms:
+    """
+    `from_pyscf` takes a checkpoint path or an already-loaded mapping, and takes
+    the *basis* separately from the solution the wavefunction is built from.
+    """
+
+    def test_a_path_and_a_loaded_mapping_agree(self, rohf_chk):
+        from safiretools.convert.pyscf import load_pyscf_chk_mol
+
+        by_path = NOMSDWavefunction.from_pyscf(rohf_chk)
+        by_mapping = NOMSDWavefunction.from_pyscf(load_pyscf_chk_mol(rohf_chk))
+
+        assert np.allclose(by_path.dets, by_mapping.dets)
+        assert by_path.spin_symm is by_mapping.spin_symm
+
+    def test_the_basis_defaults_to_the_solution_itself(self, rohf_chk):
+        explicit = NOMSDWavefunction.from_pyscf(rohf_chk, basis=rohf_chk)
+        implicit = NOMSDWavefunction.from_pyscf(rohf_chk)
+
+        assert np.allclose(explicit.dets, implicit.dets)
+
+    def test_the_basis_can_come_from_a_different_solution(self, rohf_chk,
+                                                          rhf_chk):
+        """
+        The Hamiltonian's basis and the trial wavefunction need not come from
+        one calculation: here an open-shell solution is expressed in a
+        closed-shell solution's molecular orbitals.
+        """
+        own_basis = NOMSDWavefunction.from_pyscf(rohf_chk)
+        rhf_basis = NOMSDWavefunction.from_pyscf(rohf_chk, basis=rhf_chk)
+
+        assert own_basis.nmo == rhf_basis.nmo
+        assert own_basis.nelec == rhf_basis.nelec
+        # a different basis is a different Slater matrix
+        assert not np.allclose(own_basis.dets, rhf_basis.dets)
+
+    def test_the_spin_symmetry_comes_from_the_solution_not_the_basis(
+            self, rhf_chk, uhf_chk):
+        """
+        A closed-shell basis does not make a spin-resolved wavefunction closed
+        shell: the symmetry is determined when the *solution* is read.
+        """
+        wavefunction = NOMSDWavefunction.from_pyscf(uhf_chk, basis=rhf_chk,
+                                                    ortho_ao=True)
+
+        assert wavefunction.spin_symm is SpinSymm.COLLINEAR
 
 
 class TestEquivalenceWithAfqmctools:
