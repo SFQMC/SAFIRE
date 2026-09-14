@@ -49,7 +49,7 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   double total_time = step0 * dt;
   int step_tot      = step0;
 
-  prop0.generateP1(dt, wset.getWalkerType());
+  propagator_.generateP1(dt, wset.getWalkerType());
   
   const int log_interval = std::max(1, nStep / 100);
   const int steps_total  = nStep + step0;
@@ -66,18 +66,18 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
 
   // KE: need to change the hard-coded 1.0 to an equilibration phase.
   for (int iStep = 0; iStep < nStep; ++iStep, ++step_tot) {
-    prop0.Propagate(wset, Eshift, dt);
+    propagator_.Propagate(wset, Eshift, dt);
     total_time += dt;
 
     if ((step_tot + 1) % nStabilize == 0) {
       auto ortho_time = timers.ortho.start();
-      prop0.Orthogonalize(wset);
+      propagator_.Orthogonalize(wset);
       ortho_time.stop();
     }
 
     if (total_time < 1.0) {
       wset.processWalkerData(curData);
-      Eshift = averageEloc(*mpi, wset);
+      Eshift = averageEloc(*mpi_, wset);
     }
 
     if ((iStep + 1) % nPopulation == 0 || iStep == 0) {
@@ -87,9 +87,9 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
       popcontrol_time.stop();
 
       if(iStep >= nEquilibration) {
-        estimators_.measure(*mpi, iStep / nPopulation, wset);
+        estimators_.measure(*mpi_, iStep / nPopulation, wset);
       } else {
-        Eshift += dShift * (averageEloc(*mpi, wset) - Eshift);
+        Eshift += dShift * (averageEloc(*mpi_, wset) - Eshift);
       }   
     }
 
@@ -104,7 +104,7 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
     }
 
     if(iStep % log_interval == 0) {
-      const double energy = averageEloc(*mpi, wset);
+      const double energy = averageEloc(*mpi_, wset);
       const auto now = std::chrono::current_zone()->to_local(
           std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
 
@@ -125,11 +125,11 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   if (nCheckpoint > 0)
     checkpoint(wset, step_tot/nPopulation, step_tot);
 
-  prop0.printBoundStatistics();
+  propagator_.printBoundStatistics();
   // print timers
-  if(mpi->comm.root()){
+  if(mpi_->comm.root()){
     timers.print_all();
-    estimators_.write(std::format("{}.results.h5", project_title));
+    estimators_.write(std::format("{}.results.h5", project_title_));
   }
 
   app_log(1, banner("Finished AFQMC calculation"));
@@ -142,13 +142,13 @@ template<MEMORY_SPACE MEM>
 bool AFQMCDriver<MEM>::checkpoint(WalkerSet<MEM>& wset, int block, int step)
 {
 return true;
-  if (mpi->comm.rank() == 0)
+  if (mpi_->comm.rank() == 0)
   {
     std::string file;
     if (hdf_write_restart != std::string(""))
       file = hdf_write_restart;
     else
-      file = project_title + std::string(".chk.h5");
+      file = project_title_ + std::string(".chk.h5");
 
     std::vector<RealType> Rdata(2);
     Rdata[0] = Eshift;

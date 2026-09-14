@@ -131,9 +131,10 @@ bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
 
 
   // print timers
-  if(mpi->comm.root()) timers.print_all();
-
-  estimators_.write(std::format("{}.results.h5", project_title));
+  if(mpi->comm.root()) {
+    timers.print_all();
+    estimators_.write(std::format("{}.results.h5", project_title));
+  }
 
   app_log(1, banner("Finished FT-AFQMC calculation"));
 

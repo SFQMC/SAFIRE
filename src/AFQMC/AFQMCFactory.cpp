@@ -14,31 +14,13 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
-
-// -*- C++ -*-
-/**@file AFQMCFactory.cpp
- * @brief Top level class for AFQMC. Parses input and performs setup of classes.
- */
-
-#include <iostream>
-#include <fstream>
+#include <filesystem>
+#include <format>
 #include <string>
-#include <vector>
-#include <map>
-#include <complex>
-#include <tuple>
-#include <queue>
-#include <algorithm>
 #include "config.h"
-#include "utilities/mpi_context.h"
-#include "utilities/check.hpp"
 
 #include "IO/app_loggers.h"
 #include "AFQMC/AFQMCFactory.h"
-#include "AFQMC/Walkers/WalkerSetFactory.hpp"
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
-#include "AFQMC/Propagators/PropagatorFactory.h"
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
 #include "AFQMC/Drivers/DriverFactory.h"
 
 namespace sfqmc
@@ -59,13 +41,16 @@ bool AFQMCFactory<MEM>::parse(const AFQMCParameters& params)
 }
 
 template<MEMORY_SPACE MEM>
-bool AFQMCFactory<MEM>::execute(const AFQMCParameters& params)
-{
-  for(const auto& exec : params.execute)
-  {
-    // execute driver
-    if (!DriverFac.executeDriver(params.driver, std::format("{}.s{:03d}", project_title, m_series), m_series, exec))
-    {
+bool AFQMCFactory<MEM>::execute(const AFQMCParameters& params) {
+  // every execute block appends its own stage to one results file, so a stale file from a
+  // previous run has to go before the first stage writes
+  if(mpi->comm.root()) {
+    std::filesystem::remove(std::format("{}.results.h5", project_title));
+  }
+  mpi->comm.barrier();
+
+  for(const auto& exec : params.execute) {
+    if(!DriverFac.executeDriver(params.driver, project_title, m_series, exec)) {
       app_error("Error in DriverFactory::executeDriver::run()");
       app_error_flush();
       return false;

@@ -50,6 +50,8 @@ using sample_t = typename sample_type<A>::type;
 
 class Measurements {
 public:
+  explicit Measurements(std::string prefix = {}) : prefix_{std::move(prefix)} {}
+
   void measure(std::string_view name, auto const &sample) {
     using Acc = Accumulator<detail::sample_t<decltype(sample)>>;
     auto [it, inserted] = observables_.try_emplace(std::string{name}, std::make_unique<Acc>(1));
@@ -60,10 +62,11 @@ public:
   }
 
   void write(h5::group& out) {
+    h5::group base = prefix_.empty() ? out : utils::h5_open_or_create(out, prefix_);
     for(auto& [name, obs] : observables_) {
       // an observable name is a '/'-separated path, which has to be created one component at a
       // time because H5Gcreate2 does not create intermediate groups
-      h5::group group = out;
+      h5::group group = base;
       for(auto const component : std::views::split(name, '/')) {
         group = utils::h5_open_or_create(group, std::string(component.begin(), component.end()));
       }
@@ -72,6 +75,7 @@ public:
   }
 
 private:
+  std::string prefix_{};
   std::map<std::string, std::unique_ptr<AccumulatorBase>> observables_{};
 };
 

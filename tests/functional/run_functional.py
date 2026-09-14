@@ -84,8 +84,9 @@ class TestType(enum.Enum):
 SIGNIFICANCE_LEVEL = 0.001
 MACHINE_EPS = 1e-9
 
-# AFQMC's own output, named after the project id and series in write_input.
-AFQMC_RESULTS = "qmc.s000.results.h5"
+# AFQMC's own output, named after the project id in write_input. One run writes one file, with
+# the observables of each execute block below a Stage<N> group of its own.
+AFQMC_RESULTS = "qmc.results.h5"
 
 # Quantities that references recorded before the results.h5 migration still carry, but that
 # AFQMC's new output has no equivalent for. A snapshot comparison skips them instead of
@@ -585,6 +586,7 @@ def store_reference(results: Path, dest: Path, test_type: TestType) -> bool:
     with h5.File(results, "r") as f:
         rc = _rc_class(f["return_code"][()])
         finite = bool(f["afqmc_is_finite"][()])
+        has_energy = "energy" in f
 
     if test_type == TestType.EXPECT_FAILURE:
         if rc == 0:
@@ -597,6 +599,10 @@ def store_reference(results: Path, dest: Path, test_type: TestType) -> bool:
         return False
     elif not finite:
         print("  [regenerate] refusing to store: results contain NaN")
+        return False
+    elif not has_energy:
+        print("  [regenerate] refusing to store: no energy was recorded, so AFQMC's output "
+              "file was not read")
         return False
 
     try:

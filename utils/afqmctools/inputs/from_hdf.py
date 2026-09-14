@@ -163,13 +163,13 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
         # set all other options directly
         inps["afqmc"]["execute"].update(exec_opts)
 
-    # get project settings
-    if args_namespace is not None and getattr(args_namespace, 'series'):
+    # get project settings. Not every caller's namespace carries them, so they are optional
+    if args_namespace is not None and getattr(args_namespace, 'series', None):
         inps["afqmc"]["project"]["series"] = getattr(args_namespace, 'series')
     elif kwargs.get('series'):
         inps["afqmc"]["project"]["series"] = kwargs['series']
 
-    if args_namespace is not None and getattr(args_namespace, 'id'):
+    if args_namespace is not None and getattr(args_namespace, 'id', None):
         inps["afqmc"]["project"]["id"] = getattr(args_namespace, 'id')
     elif kwargs.get('id'):
         inps["afqmc"]["project"]["id"] = kwargs['id']
