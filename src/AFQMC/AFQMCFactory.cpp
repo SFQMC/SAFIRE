@@ -44,19 +44,19 @@ template<MEMORY_SPACE MEM>
 bool AFQMCFactory<MEM>::execute(const AFQMCParameters& params) {
   // every execute block appends its own stage to one results file, so a stale file from a
   // previous run has to go before the first stage writes
-  if(mpi->comm.root()) {
-    std::filesystem::remove(std::format("{}.results.h5", project_title));
+  if(mpi_->comm.root()) {
+    std::filesystem::remove(std::format("{}.results.h5", output_name_));
   }
-  mpi->comm.barrier();
+  mpi_->comm.barrier();
 
   for(const auto& exec : params.execute) {
-    if(!DriverFac.executeDriver(params.driver, project_title, m_series, exec)) {
+    if(!DriverFac.executeDriver(params.driver, output_name_, stage_index_, exec)) {
       app_error("Error in DriverFactory::executeDriver::run()");
       app_error_flush();
       return false;
     }
 
-    m_series++;
+    stage_index_++;
   }
 
   return true;

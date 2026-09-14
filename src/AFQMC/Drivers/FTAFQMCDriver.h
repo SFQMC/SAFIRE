@@ -40,8 +40,8 @@ public:
               Propagator<MEM>& prpg_,
               Estimators<MEM>& estim_)
       : mpi(_mpi),
-        project_title(title),
-        hdf_write_restart{exec.hdf_write_file},
+        output_name_(title),
+        hdf_write_restart{},
         nStep{exec.steps},
         nSweep{exec.sweeps},
         nPopulation{exec.population_control_interval},
@@ -71,7 +71,7 @@ public:
 protected:
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
-  std::string project_title;
+  std::string output_name_;
 
   std::string hdf_write_restart;
 

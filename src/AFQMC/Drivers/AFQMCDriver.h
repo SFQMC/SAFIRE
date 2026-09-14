@@ -40,8 +40,7 @@ public:
               Propagator<MEM>& prpg_,
               Estimators<MEM>& estim_)
       : mpi_(mpi),
-        project_title_(title),
-        hdf_write_restart{exec.hdf_write_file},
+        output_name_(title),
         nStep{exec.steps},
         nPopulation{exec.population_control_interval},
         nEquilibration{exec.equilibration_steps},
@@ -67,7 +66,7 @@ public:
 protected:
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi_;
 
-  std::string project_title_{};
+  std::string output_name_{};
 
   std::string hdf_write_restart;
 

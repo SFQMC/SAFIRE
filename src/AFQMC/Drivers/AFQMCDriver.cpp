@@ -128,7 +128,7 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
 
   // print timers
   if(mpi_->comm.root()) {
-    std::string results_filename = std::format("{}.results.h5", project_title_);
+    std::string results_filename = std::format("{}.results.h5", output_name_);
     estimators_.write(results_filename);
     app_log(1, "Results written to '{}'.", results_filename);
   }
@@ -155,7 +155,7 @@ return true;
     if (hdf_write_restart != std::string(""))
       file = hdf_write_restart;
     else
-      file = project_title_ + std::string(".chk.h5");
+      file = output_name_ + std::string(".chk.h5");
 
     std::vector<RealType> Rdata(2);
     Rdata[0] = Eshift;
