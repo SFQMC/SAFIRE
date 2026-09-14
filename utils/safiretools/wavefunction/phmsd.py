@@ -151,13 +151,6 @@ class PHMSDWavefunction(Wavefunction):
         return (identity[:, self.occa[0]].copy(),
                 identity[:, self.occb[0]].copy())
 
-    def _slater_matrices(self):
-        for ispin, block in enumerate(self.psi0):
-            yield f'psi0 spin {ispin}', block
-
-        for index, matrix in enumerate(self.orbitals or ()):
-            yield f'orbitals[{index}]', matrix
-
     def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "PHMSDWavefunction":
         """
         Return a copy whose orbital references — and explicit `psi0`, if any —

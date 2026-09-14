@@ -129,15 +129,6 @@ class NOMSDWavefunction(Wavefunction):
                 "Slater determinants are recommended (pass psi0=)."
             )
 
-    def _slater_matrices(self):
-        for idet in range(self.ndets):
-            for ispin, block in enumerate(self.spin_blocks(idet)):
-                yield f'dets[{idet}] spin {ispin}', block
-
-        if self._psi0 is not None:
-            for ispin, block in enumerate(self._psi0):
-                yield f'psi0 spin {ispin}', block
-
     def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "NOMSDWavefunction":
         """
         Return a copy whose determinants — and explicit `psi0`, if any — have

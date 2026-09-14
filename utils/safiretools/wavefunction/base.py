@@ -319,31 +319,6 @@ class Wavefunction(ABC):
         instance this is called on is never modified.
         """
 
-    @abstractmethod
-    def _slater_matrices(self):
-        """
-        Every Slater matrix this wavefunction will write, as
-        ``(label, matrix)`` pairs, for the orthonormality check on write.
-        """
-
-    def _warn_if_not_orthonormal(self, tol=ORTHONORMAL_TOL) -> None:
-        """
-        Warn about each Slater matrix whose columns are not orthonormal.
-
-        Writing does not orthonormalize — nothing here mutates the caller's
-        data — so this is the last point at which a wavefunction that AFQMC
-        will struggle with can be flagged. Call `orthonormalize` to fix it.
-        """
-        offenders = [label for label, matrix in self._slater_matrices()
-                     if not is_orthonormal(matrix, tol=tol)]
-
-        if offenders:
-            warn(
-                f"Slater matrices are not orthonormal: {', '.join(offenders)}. "
-                "Call orthonormalize() before writing, or expect poor AFQMC "
-                "behavior."
-            )
-
     def to_hdf5(self, path) -> None:
         """
         Write this wavefunction in the format the AFQMC executable reads.
@@ -360,7 +335,8 @@ class Wavefunction(ABC):
         -----
         The header (``dims``, ``ci_coeffs``, ``Psi0_alpha``/``Psi0_beta``) is
         the same for every representation and is written here; the subclass adds
-        only its own payload.
+        only its own payload. ``nmo`` and the electron counts follow from `psi0`'s 
+        shape and `spin_symm`.
 
         Nothing is repaired on the way out. Every Slater matrix that reaches
         disk has its overlap's condition number checked, and an ill-conditioned
@@ -376,8 +352,6 @@ class Wavefunction(ABC):
 
             io.write_header(
                 group,
-                nmo=self.nmo,
-                nelec=self.nelec_on_disk,
                 spin_symm=self.spin_symm,
                 coeffs=self.coeffs,
                 psi0=self.psi0,
@@ -450,9 +424,8 @@ class Wavefunction(ABC):
 
     @classmethod
     def from_free_electron(cls, source, nelec, twist=None, spin_symm=None,
-                           use_dense=True, lattice=None,
-                           filling_strategy='aufbau', shell_tol=1e-6,
-                           orthonormalize=True) -> "Wavefunction":
+                           lattice=None, filling_strategy='aufbau',
+                           shell_tol=1e-6) -> "Wavefunction":
         """
         Build a free-electron trial wavefunction from a lattice model. Always a
         `safiretools.NOMSDWavefunction`.
@@ -467,9 +440,8 @@ class Wavefunction(ABC):
 
         return from_free_electron(
             source, nelec=nelec, twist=twist, spin_symm=spin_symm,
-            use_dense=use_dense, lattice=lattice,
-            filling_strategy=filling_strategy, shell_tol=shell_tol,
-            orthonormalize=orthonormalize,
+            lattice=lattice, filling_strategy=filling_strategy,
+            shell_tol=shell_tol,
         )
 
     @classmethod

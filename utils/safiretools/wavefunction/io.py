@@ -82,7 +82,64 @@ def warn_if_ill_conditioned(named_matrices, condition_max=CONDITION_MAX) -> None
 # the shared header
 # ----------------------------------------------------------------------
 
-def write_header(group, nmo: int, nelec, spin_symm: SpinSymm, coeffs, psi0) -> None:
+def header_dims(spin_symm: SpinSymm, psi0):
+    """
+    The ``nmo`` and on-disk ``(nup, ndown)`` that a spin symmetry and an initial
+    Slater determinant imply.
+
+    Both are fixed by `psi0`'s shape, so neither is a separate input: a block is
+    ``(npol*nmo, nelec_of_that_spin)``, and the number of blocks is the number of
+    independent spin channels.
+
+    Parameters
+    ----------
+    spin_symm : SpinSymm
+        Spin symmetry, which fixes ``npol`` and how many blocks to expect.
+    psi0 : sequence of numpy.ndarray
+        Initial Slater determinant, one block per spin channel.
+
+    Returns
+    -------
+    nmo : int
+        Number of *spatial* orbitals, even when noncollinear.
+    nelec : tuple(int, int)
+        Electron counts as ``dims[1:3]`` records them — ``(nup + ndown, 0)`` for
+        a noncollinear wavefunction, since both polarizations share one channel.
+
+    Raises
+    ------
+    ValueError
+        If the block count contradicts `spin_symm`, or a noncollinear block has
+        an odd number of rows.
+    """
+    expected_blocks = 2 if spin_symm is SpinSymm.COLLINEAR else 1
+    if len(psi0) != expected_blocks:
+        raise ValueError(
+            f"a {spin_symm.label} wavefunction has {expected_blocks} spin "
+            f"channel(s), but psi0 has {len(psi0)} block(s)"
+        )
+
+    nrows, nalpha = np.shape(psi0[0])
+
+    npol = 2 if spin_symm is SpinSymm.NONCOLLINEAR else 1
+    if nrows % npol:
+        raise ValueError(
+            f"a noncollinear psi0 spans both polarizations, so its {nrows} rows "
+            "must be an even number"
+        )
+
+    if spin_symm is SpinSymm.COLLINEAR:
+        nelec = (nalpha, np.shape(psi0[1])[1])
+    elif spin_symm is SpinSymm.CLOSED:
+        # the beta channel repeats alpha, and dims records both
+        nelec = (nalpha, nalpha)
+    else:
+        nelec = (nalpha, 0)
+
+    return nrows // npol, nelec
+
+
+def write_header(group, spin_symm: SpinSymm, coeffs, psi0) -> None:
     """
     Write the header both representations share.
 
@@ -90,12 +147,6 @@ def write_header(group, nmo: int, nelec, spin_symm: SpinSymm, coeffs, psi0) -> N
     ----------
     group : h5py.Group
         The ``Wavefunction/NOMSD`` or ``Wavefunction/PHMSD`` group.
-    nmo : int
-        Number of orbitals — *spatial* orbitals, even when noncollinear.
-    nelec : tuple(int, int)
-        Electron counts as they go on disk: ``(nup, ndown)``, or
-        ``(nup + ndown, 0)`` for a noncollinear wavefunction. See
-        `Wavefunction.nelec_on_disk`.
     spin_symm : SpinSymm
         Spin symmetry; its integer value is what ``dims[3]`` records.
     coeffs : array_like
@@ -103,8 +154,12 @@ def write_header(group, nmo: int, nelec, spin_symm: SpinSymm, coeffs, psi0) -> N
     psi0 : sequence of numpy.ndarray
         Initial Slater determinant, one ``(npol*nmo, nelec_of_that_spin)`` block
         per spin channel — one block for closed/noncollinear, two for collinear.
+        The orbital and electron counts ``dims`` records come from here; see
+        `header_dims`.
     """
     coeffs = np.asarray(coeffs)
+    nmo, nelec = header_dims(spin_symm, psi0)
+
     warn_if_ill_conditioned(
         (name, block) for name, block
         in zip(('Psi0_alpha', 'Psi0_beta'), psi0))
