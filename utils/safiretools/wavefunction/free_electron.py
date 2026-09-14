@@ -47,18 +47,15 @@ FILLING_STRATEGIES = ('aufbau', 'balanced', 'hund', 'alternating')
 """Recognized ways to fill a partially occupied degenerate shell."""
 
 
-def from_free_electron(source, nelec, twist=None, spin_symm=None, lattice=None,
+def from_free_electron(hamiltonian, nelec, twist=None, spin_symm=None, lattice=None,
                        filling_strategy='aufbau', shell_tol=1e-6):
     """
     Build a free-electron trial wavefunction for a lattice model.
 
     Parameters
     ----------
-    source : safiretools.LatticeHamiltonian or dict or str or pathlib.Path
-        The model to build the wavefunction for. A `safiretools.Hamiltonian` is
-        used directly; a dict (or the path of a TOML file holding one) with
-        ``'lattice'`` and ``'hamiltonian'`` sections is built first; the path of
-        an HDF5 file is read with `safiretools.Hamiltonian.from_hdf5`.
+    hamiltonian : safiretools.LatticeHamiltonian representing the model to build the 
+        wavefunction for.
     nelec : tuple(int, int)
         Number of spin-up and spin-down electrons.
     twist : array-like, optional
@@ -104,8 +101,19 @@ def from_free_electron(source, nelec, twist=None, spin_symm=None, lattice=None,
     they are orthonormal by construction and nothing here orthonormalizes them.
     """
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
+    from safiretools import LatticeHamiltonian, SpinSymm
 
-    hamiltonian = _resolve_hamiltonian(source, twist=twist, lattice=lattice)
+    if isinstance(hamiltonian, LatticeHamiltonian):
+        if twist is not None and np.any(np.asarray(twist) != hamiltonian.twist):
+            warn(
+                "the requested twist angle differs from the Hamiltonian's "
+                f"({twist} vs {hamiltonian.twist}); using the Hamiltonian's"
+            )
+    else:
+        raise ValueError(
+            f"cannot build a free-electron wavefunction from {hamiltonian!r}. "
+            "Please provide a LatticeHamiltonian instance."
+        )
 
     if spin_symm is None:
         spin_symm = hamiltonian.spin_symm
@@ -136,54 +144,6 @@ def from_free_electron(source, nelec, twist=None, spin_symm=None, lattice=None,
         spin_symm=spin_symm,
         nmo=nmo,
     )
-
-
-def _resolve_hamiltonian(source, twist, lattice):
-    """
-    Turn `from_free_electron`'s `source` into a lattice-model Hamiltonian.
-
-    A parameter dict (or TOML file) is built here, with `twist` applied to the
-    lattice; anything already built carries its own twist, and a mismatch with
-    an explicitly requested `twist` is warned about.
-    """
-    from safiretools.hamiltonian.base import Hamiltonian
-    from safiretools.hamiltonian.model.builder import HamiltonianBuilder
-    from safiretools.hamiltonian.model.lattice import Lattice
-
-    if isinstance(source, Hamiltonian):
-        if twist is not None and np.any(np.asarray(twist) != source.twist):
-            warn(
-                "the requested twist angle differs from the Hamiltonian's "
-                f"({twist} vs {source.twist}); using the Hamiltonian's"
-            )
-        return source
-
-    if isinstance(source, (str, Path)):
-        import h5py as h5
-
-        if h5.is_hdf5(source):
-            return Hamiltonian.from_hdf5(source)
-
-        with open(source, 'r') as f:
-            source = toml.loads(f.read())
-
-    if not isinstance(source, dict):
-        raise ValueError(
-            "source must be a Hamiltonian, a parameter dict, or the path of a "
-            f"TOML or HDF5 file, not {type(source).__name__}"
-        )
-
-    if lattice is None:
-        lattice_params = dict(source.get('lattice', {}))
-        lattice_params['twist'] = DEFAULT_TWIST if twist is None \
-            else np.asarray(twist)
-        logger.info("building a free-electron lattice with twist = %s",
-                    lattice_params['twist'])
-        lattice = Lattice.from_dict(params=lattice_params)
-    elif twist is not None:
-        warn("a lattice was supplied, so the requested twist angle is ignored")
-
-    return HamiltonianBuilder.from_input(source, lattice=lattice).get_hamiltonian()
 
 
 # ----------------------------------------------------------------------
