@@ -33,7 +33,6 @@ class FTAFQMCDriver
 public:
   FTAFQMCDriver(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
               std::string& title,
-              int mser,
               int blk0,
               int stp0,
               double eshft_,
@@ -42,7 +41,6 @@ public:
               Propagator<MEM>& prpg_,
               Estimators<MEM>& estim_)
       : mpi(_mpi),
-        m_series(mser),
         project_title(title),
         hdf_write_restart{exec.hdf_write_file},
         nStep{exec.steps},
@@ -75,7 +73,6 @@ public:
 protected:
   std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
 
-  int m_series;
   std::string project_title;
 
   std::string hdf_write_restart;

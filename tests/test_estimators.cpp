@@ -157,9 +157,9 @@ void collect_bins(h5::group const& group, std::string const& path, std::map<std:
   }
 }
 
-/// Every observable of a results file, as the path below "Measurements" that holds its
-/// "bins" dataset mapped to the number of bins in it. Reports a missing "Measurements" group
-/// without throwing, so that a failure cannot unwind root past a later collective.
+/// Every observable of a results file, as the path below "Measurements/Stage0" that holds its
+/// "bins" dataset mapped to the number of bins in it. Reports a missing group without
+/// throwing, so that a failure cannot unwind root past a later collective.
 std::map<std::string, long> collect_bins(std::filesystem::path const& file)
 {
   std::map<std::string, long> bins;
@@ -170,7 +170,12 @@ std::map<std::string, long> collect_bins(std::filesystem::path const& file)
     FAIL_CHECK(std::format("'{}' holds no 'Measurements' group", file.string()));
     return bins;
   }
-  collect_bins(root.open_group("Measurements"), "", bins);
+  h5::group measurements = root.open_group("Measurements");
+  if(!measurements.has_subgroup("Stage0")) {
+    FAIL_CHECK(std::format("'{}' holds no 'Measurements/Stage0' group", file.string()));
+    return bins;
+  }
+  collect_bins(measurements.open_group("Stage0"), "", bins);
 
   return bins;
 }
@@ -191,14 +196,14 @@ void check_bins(std::map<std::string, long> const& got, std::map<std::string, lo
   for(auto const& [path, nbins] : expected) {
     auto const it = got.find(path);
     if(it == got.end()) {
-      FAIL_CHECK(std::format("missing dataset 'Measurements/{}/bins'", path));
+      FAIL_CHECK(std::format("missing dataset 'Measurements/Stage0/{}/bins'", path));
     } else if(it->second != nbins) {
-      FAIL_CHECK(std::format("'Measurements/{}/bins' holds {} bins, expected {}", path, it->second, nbins));
+      FAIL_CHECK(std::format("'Measurements/Stage0/{}/bins' holds {} bins, expected {}", path, it->second, nbins));
     }
   }
   for(auto const& [path, nbins] : got) {
     if(!expected.contains(path)) {
-      FAIL_CHECK(std::format("unexpected dataset 'Measurements/{}/bins' with {} bins", path, nbins));
+      FAIL_CHECK(std::format("unexpected dataset 'Measurements/Stage0/{}/bins' with {} bins", path, nbins));
     }
   }
 }
@@ -406,7 +411,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
         .n_walkers_per_mpi_task = nwalk};
 
     auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-    Estimators<MEM> estimators{mpi, exec, wset, WfnFac, wfn, prop, HamFac};
+    Estimators<MEM> estimators{mpi, 0, exec, wset, WfnFac, wfn, prop, HamFac};
     // the PairCorr constructor was the last read of the temporary directory on every rank but
     // root, which is the one that deletes it
     mpi->comm.barrier();
@@ -452,7 +457,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
         .n_walkers_per_mpi_task = nwalk};
 
     auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-    Estimators<MEM> estimators{mpi, exec, wset, WfnFac, wfn, prop, HamFac};
+    Estimators<MEM> estimators{mpi, 0, exec, wset, WfnFac, wfn, prop, HamFac};
     mpi->comm.barrier();
 
     auto const results = tmpdir / "run_b.results.h5";
@@ -544,7 +549,7 @@ void estimators_local_energy_matches_recomputation(
       .population_control_interval = pop_control_interval,
       .n_walkers_per_mpi_task = nwalk};
 
-  Estimators<MEM> estimators{mpi, exec, wset, WfnFac, wfn, prop, HamFac};
+  Estimators<MEM> estimators{mpi, 0, exec, wset, WfnFac, wfn, prop, HamFac};
   estimators.measure(*mpi, 1, wset);
 
   // the recomputation, averaged the way MeasurementOutput averages: weighted, reduced over the
@@ -589,7 +594,7 @@ void estimators_local_energy_matches_recomputation(
                                               "CoulombEnergy", "Overlap"};
     for(int k = 0; k < int(names.size()); ++k) {
       nda::array<ComplexType,1> bins;
-      h5::read(root, std::format("Measurements/{}/bins", names[k]), bins);
+      h5::read(root, std::format("Measurements/Stage0/{}/bins", names[k]), bins);
       REQUIRE(bins.extent(0) == 1);
       // the two paths evaluate the energy on either side of the walker update, so they agree
       // to roundoff rather than exactly

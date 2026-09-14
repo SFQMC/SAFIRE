@@ -17,6 +17,7 @@
 #pragma once
 
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <vector>
 
@@ -40,12 +41,14 @@ template<MEMORY_SPACE MEM>
 class Estimators {
 public:
   Estimators(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+             int stage,
              ExecuteParameters const& exec,
              WalkerSet<MEM>& wset,
              WavefunctionFactory<MEM>& wfnFac,
              Wavefunction<MEM>& wfn0,
              Propagator<MEM>& prop,
-             HamiltonianFactory& hamFac) {
+             HamiltonianFactory& hamFac)
+      : measurements_{std::format("Stage{}", stage)} {
     app_log(1, section("Initializing Estimators"));
 
     // the driver counts measurement blocks in population control intervals, so every

@@ -31,9 +31,8 @@ template<MEMORY_SPACE MEM>
 class AFQMCDriver
 {
 public:
-  AFQMCDriver(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
+  AFQMCDriver(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
               std::string& title,
-              int mser,
               int blk0,
               int stp0,
               double eshft_,
@@ -41,9 +40,8 @@ public:
               Wavefunction<MEM>& wfn_,
               Propagator<MEM>& prpg_,
               Estimators<MEM>& estim_)
-      : mpi(_mpi),
-        m_series(mser),
-        project_title(title),
+      : mpi_(mpi),
+        project_title_(title),
         hdf_write_restart{exec.hdf_write_file},
         nStep{exec.steps},
         nPopulation{exec.population_control_interval},
@@ -53,8 +51,8 @@ public:
         dt{exec.timestep},
         block0(blk0),
         step0(stp0),
-        wfn0(wfn_),
-        prop0(prpg_),
+        wavefunction_(wfn_),
+        propagator_(prpg_),
         estimators_(estim_),
         dShift{exec.dshift}, // update factor for Eshift
         Eshift(eshft_)
@@ -69,10 +67,9 @@ public:
   bool clear() { return true; };
 
 protected:
-  std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi;
+  std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi_;
 
-  int m_series;
-  std::string project_title;
+  std::string project_title_{};
 
   std::string hdf_write_restart;
 
@@ -85,10 +82,8 @@ protected:
   RealType dt;
   int block0, step0;
 
-  Wavefunction<MEM>& wfn0;
-
-  Propagator<MEM>& prop0;
-
+  Wavefunction<MEM>& wavefunction_;
+  Propagator<MEM>& propagator_;
   Estimators<MEM>& estimators_;
 
   bool writeSamples(WalkerSet<MEM>&);

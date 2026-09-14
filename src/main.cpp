@@ -32,11 +32,6 @@
 #include "AFQMC/AFQMCFactory.h"
 #include "AFQMC/parameter_defaults.hpp"
 
-/*
- * *** execution blocks are processed sequentially, so order is important.
- *     Communication between blocks occurs though appropriate hdf5 I/O. *** 
- */ 
-
 /** @file safire.cpp
  */
 int main_impl(int argc, char** argv)
@@ -129,12 +124,13 @@ int main_impl(int argc, char** argv)
 
   // input files are positional arguments
   int nfile = args.count("filenames");
-  if (nfile < 1)
-  {
+  if(nfile < 1) {
     throw AppAbortException{"no input file given; exiting ..."};
-  } else {
-    inputs = args["filenames"].as<std::vector<std::string>>();
   }
+  if(nfile > 1) {
+    throw AppAbortException{"more than one input file given"};
+  }
+  inputs = args["filenames"].as<std::vector<std::string>>();
 
   // setup output loggers
   setup_loggers(root, output_level, debug_level);
@@ -155,7 +151,6 @@ int main_impl(int argc, char** argv)
 
   sfqmc::arch::init(compute == "gpu");
 
-  // !!!! assume a single input for now
   std::string myinput = inputs[0];
   afqmc::AFQMCParameters params;
   try {
