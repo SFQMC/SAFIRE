@@ -35,14 +35,13 @@ and the Cholesky vectors stay complex, as the format and the executable require.
 The two solver modes differ only in how the k-point pairs are enumerated and how
 the already-visited pivots are indexed; the factorization loop itself is shared.
 
-.. note:: The sparse ``Hamiltonian/Factorized`` format the supercell path used to
-          write has been removed from the AFQMC executable, which is why the
-          supercell path emits the k-point format instead.
+.. note:: The factorization runs serially and is written by
+          `PeriodicHamiltonian.to_hdf5`. **CoQuí is the supported route for
+          production-sized solids**; see DESIGN.md.
 """
 
 import logging
 import math
-import os
 import time
 import warnings
 
@@ -51,7 +50,6 @@ import h5py as h5
 
 from safiretools.hamiltonian.base import (
     Hamiltonian,
-    clear_hamiltonian,
     open_for_hamiltonian,
     write_hamiltonian_format,
 )
@@ -66,120 +64,6 @@ KPOINT_GROUP = 'Hamiltonian/KPFactorized'
 
 _NUM_GRID_SHIFTS = 27
 """Number of reciprocal-lattice shifts searched: all of (-1, 0, 1)^3."""
-
-
-# ----------------------------------------------------------------------
-# work partitioning
-# ----------------------------------------------------------------------
-
-def fair_share(N: int, npr: int, rk: int):
-    """
-    Split `N` items over `npr` ranks and return rank `rk`'s ``[start, end)``.
-
-    The first ``N % npr`` ranks take one extra item each.
-    """
-    npp, nxtra = N // npr, N % npr
-    if rk < nxtra:
-        i0 = rk * (npp + 1)
-        return i0, i0 + npp + 1
-    i0 = rk * npp + nxtra
-    return i0, i0 + npp
-
-
-def bisect(a, x, lo=0, hi=None) -> int:
-    """
-    The index at which `x` would be inserted into the sorted sequence `a`,
-    after any equal entries.
-
-    Equivalent to `bisect.bisect_right`, kept here so the partition logic has no
-    dependency on element type beyond ``<``.
-    """
-    if lo < 0:
-        raise ValueError('lo must be non-negative')
-    if hi is None:
-        hi = len(a)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if x < a[mid]:
-            hi = mid
-        else:
-            lo = mid + 1
-    return lo
-
-
-class Partition:
-    """
-    Distribution of the Cholesky work over MPI ranks.
-
-    Each rank owns a slice of the k-point (or k-point-pair) axis and a slice of
-    the orbital-pair axis. When there are more ranks than k-points, the ranks
-    are grouped ``nproc_pk`` to a k-point and split along orbital pairs instead.
-
-    Parameters
-    ----------
-    comm : mpi4py communicator
-        Communicator the work is spread over.
-    maxvecs : int
-        Multiplier for the Cholesky-vector buffer; see `PeriodicCholesky`.
-    nmo_tot : int
-        Total number of orbitals across all k-points.
-    nmo_max : int
-        Largest per-k-point orbital count.
-    nkpts : int
-        Number of k-points.
-    kp_sym : bool, optional
-        Partition over single k-points (True) rather than k-point pairs
-        (False). Default False.
-
-    Attributes
-    ----------
-    kk0, kkN, nkk : int
-        This rank's slice of the k-point (pair) axis.
-    ij0, ijN, nij : int
-        This rank's slice of the orbital-pair axis.
-    nproc_pk : int
-        Ranks per k-point.
-    n2k1, n2k2 : numpy.ndarray
-        For ``kp_sym=False``, the ``(k1, k2)`` pair each local row stands for.
-    """
-
-    def __init__(self, comm, maxvecs, nmo_tot, nmo_max, nkpts, kp_sym=False) -> None:
-        self.maxvecs = maxvecs * nmo_tot
-        self.rank = comm.rank
-        self.size = comm.size
-
-        if comm.size <= nkpts:
-            work = nkpts if kp_sym else nkpts * nkpts
-            self.kkbounds = np.zeros(comm.size + 1, dtype=np.int32)
-            for i in range(comm.size):
-                self.kkbounds[i], self.kkbounds[i + 1] = fair_share(work, comm.size, i)
-            self.kk0, self.kkN = fair_share(work, comm.size, comm.rank)
-            self.nproc_pk = 1
-        else:
-            if comm.size % nkpts != 0:
-                raise ValueError(
-                    "If nproc > nkpts, nproc must evenly divide the number of "
-                    f"k-points; got nproc={comm.size}, nkpts={nkpts}"
-                )
-            self.nproc_pk = comm.size // nkpts
-            if kp_sym:
-                self.kk0 = comm.rank // self.nproc_pk
-                self.kkN = self.kk0 + 1
-            else:
-                self.mykpt = comm.rank // self.nproc_pk
-                self.kk0 = self.mykpt * nkpts
-                self.kkN = self.kk0 + nkpts
-
-        self.ij0, self.ijN = fair_share(nmo_max * nmo_max, self.nproc_pk,
-                                        comm.rank % self.nproc_pk)
-        self.nij = self.ijN - self.ij0
-        self.nkk = self.kkN - self.kk0
-
-        if not kp_sym:
-            self.n2k1 = np.array([k // nkpts for k in range(self.kk0, self.kkN)],
-                                 dtype=np.int32)
-            self.n2k2 = np.array([k % nkpts for k in range(self.kk0, self.kkN)],
-                                 dtype=np.int32)
 
 
 # ----------------------------------------------------------------------
@@ -387,12 +271,10 @@ def _default_nelec(cell, nkpts):
 class PeriodicCholesky:
     """
     Modified Cholesky factorization of the two-body integrals of a periodic
-    system, in parallel over MPI.
+    system.
 
     Parameters
     ----------
-    comm : mpi4py communicator
-        Communicator the work is spread over.
     cell : pyscf.pbc.gto.Cell
         PySCF cell.
     kpts : numpy.ndarray
@@ -413,13 +295,12 @@ class PeriodicCholesky:
 
     Notes
     -----
-    afqmctools allocated the Cholesky buffer at ``maxvecs * nmo_tot`` in both
-    modes while the k-point-symmetric loop could never exceed
-    ``maxvecs * nmo_max``, over-allocating by a factor of ``nkpts``. The buffer
-    now matches the loop bound; the factorization is unchanged.
+    The Cholesky buffer is bounded by the loop that fills it —
+    ``maxvecs * nmo_max`` per momentum transfer when `kp_sym`, and
+    ``maxvecs * nmo_tot`` otherwise.
     """
 
-    def __init__(self, comm, cell, kpts, nmo_pk, *, kp_sym, maxvecs=20,
+    def __init__(self, cell, kpts, nmo_pk, *, kp_sym, maxvecs=20,
                  gtol_chol=1e-5, verbose=True) -> None:
         from pyscf.pbc import df, tools
 
@@ -435,9 +316,9 @@ class PeriodicCholesky:
 
         self.max_cholesky_vectors = maxvecs * (self.nmo_max if kp_sym else self.nmo_tot)
 
-        self.part = Partition(comm, maxvecs, self.nmo_tot, self.nmo_max,
-                              self.nkpts, kp_sym=kp_sym)
-        logger.info("each kpoint is distributed across %d mpi tasks", self.part.nproc_pk)
+        # the k-point(-pair) axis and the orbital-pair axis of the work arrays
+        self.nkk = self.nkpts if kp_sym else self.nkpts * self.nkpts
+        self.nij = self.nmo_max * self.nmo_max
         logger.info("total number of orbitals: %d", self.nmo_tot)
 
         if kp_sym:
@@ -449,7 +330,6 @@ class PeriodicCholesky:
 
         self.gmap, self.Qi, self.ngs = generate_grid_shifts(cell)
         self.df = df.FFTDF(cell, kpts)
-        self.maxres_buff = np.zeros(5 * comm.size, dtype=np.float64)
 
     # -- mode-dependent bookkeeping ------------------------------------
 
@@ -466,17 +346,14 @@ class PeriodicCholesky:
         return [Q for Q in range(self.nkpts) if Q <= self.kminus[Q]]
 
     def k_pairs(self, block):
-        """This rank's local ``(k1, k2)`` pairs for momentum block `block`."""
+        """The ``(k1, k2)`` pairs of momentum block `block`."""
         if self.kp_sym:
-            return [(k1, self.QKToK2[block][k1])
-                    for k1 in range(self.part.kk0, self.part.kkN)]
-        return list(zip(self.part.n2k1, self.part.n2k2))
+            return [(k1, self.QKToK2[block][k1]) for k1 in range(self.nkpts)]
+        return [(k1, k2) for k1 in range(self.nkpts)
+                for k2 in range(self.nkpts)]
 
-    def _global_row(self, k1, k2) -> int:
-        """
-        Index of the ``(k1, k2)`` pair along the distributed k axis. Local
-        storage is at ``_global_row(...) - part.kk0``.
-        """
+    def _row(self, k1, k2) -> int:
+        """Index of the ``(k1, k2)`` pair along the work arrays' k axis."""
         return k1 if self.kp_sym else k1 * self.nkpts + k2
 
     def _conserves_momentum(self, k1, k2, k3, k4) -> bool:
@@ -505,7 +382,7 @@ class PeriodicCholesky:
 
     def generate_orbital_products(self, pairs, X, Xaoik, Xaolj) -> None:
         r"""
-        Fill the left and right pair densities for this rank's k-point pairs.
+        Fill the left and right pair densities for a set of k-point pairs.
 
         ``Xaolj`` holds :math:`\rho_{lj}(G)`; ``Xaoik`` holds the same products
         multiplied by the Coulomb kernel.
@@ -513,7 +390,7 @@ class PeriodicCholesky:
         Parameters
         ----------
         pairs : list of tuple(int, int)
-            This rank's ``(k1, k2)`` pairs.
+            The ``(k1, k2)`` pairs to fill.
         X : sequence of numpy.ndarray
             Per-k-point transformation into the working basis.
         Xaoik, Xaolj : numpy.ndarray
@@ -521,26 +398,14 @@ class PeriodicCholesky:
         """
         from pyscf.pbc import tools
 
-        part = self.part
         for k, (k1, k2) in enumerate(pairs):
-            if part.ij0 > self.nmo_pk[k1] * self.nmo_pk[k2]:
-                continue
+            npairs = self.nmo_pk[k1] * self.nmo_pk[k2]
 
-            i0 = part.ij0 // self.nmo_pk[k2]
-            iN = part.ijN // self.nmo_pk[k2]
-            if part.ijN % self.nmo_pk[k2] != 0:
-                iN += 1
-            iN = min(iN, self.nmo_pk[k1])
-
-            pij = part.ij0 % self.nmo_pk[k2]
-            n_ = min(part.ijN, self.nmo_pk[k1] * self.nmo_pk[k2]) - part.ij0
-
-            X_t = X[k1][:, i0:iN].copy()
-            Xaoik[k, :, 0:n_] = self.df.get_mo_pairs_G(
-                (X_t, X[k2].copy()),
+            Xaoik[k, :, 0:npairs] = self.df.get_mo_pairs_G(
+                (X[k1].copy(), X[k2].copy()),
                 (self.kpts[k1], self.kpts[k2]),
                 (self.kpts[k2] - self.kpts[k1]),
-                compact=False)[:, pij:pij + n_]
+                compact=False)
 
             Xaolj[k, :, :] = Xaoik[k, :, :]
             coulG = tools.get_coulG(self.cell, self.kpts[k2] - self.kpts[k1],
@@ -550,95 +415,46 @@ class PeriodicCholesky:
     def generate_diagonal(self, pairs, Xaoik, Xaolj):
         """
         The diagonal of the two-body matrix, which is the initial Cholesky
-        residual, together with this rank's largest element.
+        residual, together with its largest element.
 
         Returns
         -------
         residual : numpy.ndarray
             ``(nkk, nij)`` residual.
-        k1max, k2max, i1max, i2max : int
-            Location of the largest element.
-        maxv : float
-            Its magnitude.
+        pivot : tuple(int, int, int, int, float)
+            ``(k1, k2, i1, i2, magnitude)`` of the largest element.
         """
-        part = self.part
-        residual = np.zeros((part.nkk, part.nij), dtype=np.float64)
-        maxv = 0.0
-        k1max = k2max = i1max = i2max = -1
+        residual = np.zeros((self.nkk, self.nij), dtype=np.float64)
 
         for k, (k1, k2) in enumerate(pairs):
-            for ij in range(part.nij):
-                if (ij + part.ij0) >= self.nmo_pk[k1] * self.nmo_pk[k2]:
-                    break
-
+            for ij in range(min(self.nij, self.nmo_pk[k1] * self.nmo_pk[k2])):
                 intg = np.dot(Xaoik[k, :, ij], Xaolj[k, :, ij].conj())
                 if (intg.real < 0) or (abs(intg.imag) > 1e-9):
-                    i = (ij + part.ij0) // self.nmo_pk[k2]
-                    j = (ij + part.ij0) % self.nmo_pk[k2]
                     logger.error("negative or complex diagonal term: "
-                                 "%d %d %d %d %13.8e", k1, i, k2, j, intg)
+                                 "%d %d %d %d %13.8e", k1,
+                                 ij // self.nmo_pk[k2], k2,
+                                 ij % self.nmo_pk[k2], intg)
 
                 residual[k, ij] = intg.real
-                if abs(intg) > maxv:
-                    maxv = abs(intg)
-                    k1max, k2max = k1, k2
-                    i1max = (ij + part.ij0) // self.nmo_pk[k2]
-                    i2max = (ij + part.ij0) % self.nmo_pk[k2]
 
-        return residual, k1max, k2max, i1max, i2max, maxv
+        return residual, self._largest_residual(pairs, residual)
 
     def _largest_residual(self, pairs, residual):
-        """This rank's largest remaining residual and where it sits."""
-        part = self.part
+        """
+        The pivot for the next Cholesky vector: the largest remaining residual,
+        as ``(k1, k2, i1, i2, magnitude)``.
+        """
         maxv = 0.0
-        k1max = k2max = i1max = i2max = -1
+        pivot = (-1, -1, -1, -1)
 
         for k, (k1, k2) in enumerate(pairs):
-            for ij in range(part.nij):
-                if (ij + part.ij0) >= self.nmo_pk[k1] * self.nmo_pk[k2]:
-                    break
+            for ij in range(min(self.nij, self.nmo_pk[k1] * self.nmo_pk[k2])):
                 if abs(residual[k, ij]) > maxv:
                     maxv = abs(residual[k, ij])
-                    k1max, k2max = k1, k2
-                    i1max = (ij + part.ij0) // self.nmo_pk[k2]
-                    i2max = (ij + part.ij0) % self.nmo_pk[k2]
+                    pivot = (k1, k2, ij // self.nmo_pk[k2],
+                             ij % self.nmo_pk[k2])
 
-        return k1max, k2max, i1max, i2max, maxv
-
-    def _pick_pivot(self, comm, k1max, k2max, i1max, i2max, maxv):
-        """
-        Agree on the global pivot: gather every rank's largest residual and take
-        the largest of those.
-        """
-        comm.Allgather(np.array([k1max, k2max, i1max, i2max, maxv], dtype=np.float64),
-                       self.maxres_buff)
-
-        vmax = 0.0
-        pivot = (0, 0, 0, 0)
-        for i in range(comm.size):
-            if self.maxres_buff[i * 5 + 4] > vmax:
-                vmax = self.maxres_buff[i * 5 + 4]
-                pivot = tuple(int(self.maxres_buff[i * 5 + j]) for j in range(4))
-
-        return (*pivot, vmax)
-
-    def _pivot_owner(self, comm, k3, k4, i3, i4) -> int:
-        """The rank holding the pivot column."""
-        part = self.part
-        kkmax = self._global_row(k3, k4)
-
-        if comm.size <= self.nkpts:
-            return bisect(part.kkbounds[1:comm.size + 1], kkmax)
-
-        i34 = i3 * self.nmo_pk[k4] + i4
-        for i in range(part.nproc_pk):
-            _, ijN_ = fair_share(self.nmo_max * self.nmo_max, part.nproc_pk, i)
-            if i34 < ijN_:
-                return k3 * part.nproc_pk + i
-
-        raise RuntimeError(
-            f"could not locate the rank owning pivot ({k3}, {k4}, {i3}, {i4})"
-        )
+        return (*pivot, maxv)
 
     def _shifted_pivot_column(self, k1, k2, k3, k4, Xkl0, Xkl):
         r"""
@@ -659,14 +475,12 @@ class PeriodicCholesky:
 
         raise RuntimeError(f"Could not find the reciprocal lattice shift for Q = {q1}")
 
-    def run(self, comm, X):
+    def run(self, X):
         """
         Factorize the two-body integrals, one momentum block at a time.
 
         Parameters
         ----------
-        comm : mpi4py communicator
-            Communicator the work is spread over.
         X : sequence of numpy.ndarray
             Per-k-point transformation into the working basis.
 
@@ -675,28 +489,21 @@ class PeriodicCholesky:
         block : int or None
             The momentum transfer just factorized, or None in supercell mode.
         cholvecs : numpy.ndarray
-            This rank's Cholesky vectors for the block, ``(nkk, nij, numv)``.
-            The buffer is reused between blocks, so consume each one before
-            asking for the next.
-
-        Notes
-        -----
-        Every rank must iterate this generator to completion in step with the
-        others: the loop is collective.
+            The block's Cholesky vectors, ``(nkk, nij, numv)``. The buffer is
+            reused between blocks, so consume each one before asking for the
+            next.
         """
-        part = self.part
         ngs = self.ngs
         maxvecs = self.max_cholesky_vectors
 
         logger.info("approx total memory for orbital products: %.2e GB",
-                    2 * 16 * part.nkk * ngs * part.nij / 1024**3)
+                    2 * 16 * self.nkk * ngs * self.nij / 1024**3)
 
-        Xaoik = np.zeros((part.nkk, ngs, part.nij), dtype=np.complex128)
-        Xaolj = np.zeros((part.nkk, ngs, part.nij), dtype=np.complex128)
-        cholvecs = np.zeros((part.nkk, part.nij, maxvecs), dtype=np.complex128)
+        Xaoik = np.zeros((self.nkk, ngs, self.nij), dtype=np.complex128)
+        Xaolj = np.zeros((self.nkk, ngs, self.nij), dtype=np.complex128)
+        cholvecs = np.zeros((self.nkk, self.nij, maxvecs), dtype=np.complex128)
         Xkl = np.zeros(ngs, dtype=np.complex128)
-        Xkl0 = np.zeros(ngs + maxvecs, dtype=np.complex128)
-        Vbuff = np.zeros(maxvecs, dtype=np.complex128)
+        Xkl0 = np.zeros(ngs, dtype=np.complex128)
         done = self._new_done()
 
         for block in self.momentum_blocks():
@@ -710,8 +517,8 @@ class PeriodicCholesky:
             self.generate_orbital_products(pairs, X, Xaoik, Xaolj)
             logger.info("time to generate orbital products: %13.8e", time.time() - start)
 
-            residual, *pivot_local = self.generate_diagonal(pairs, Xaoik, Xaolj)
-            k3, k4, i3, i4, vmax = self._pick_pivot(comm, *pivot_local)
+            residual, (k3, k4, i3, i4, vmax) = self.generate_diagonal(
+                pairs, Xaoik, Xaolj)
             done[self._done_index(k3, k4, i3, i4)] = 1
 
             numv = 0
@@ -724,41 +531,31 @@ class PeriodicCholesky:
                     )
                     break
 
-                # broadcast the pivot's pair density and its Cholesky history
-                owner = self._pivot_owner(comm, k3, k4, i3, i4)
-                column = i3 * self.nmo_pk[k4] + i4 - part.ij0
-                if comm.rank == owner:
-                    local_row = self._global_row(k3, k4) - part.kk0
-                    Xkl0[0:ngs] = Xaolj[local_row, 0:ngs, column]
-                    Xkl0[ngs:ngs + numv] = cholvecs[local_row, column, 0:numv]
-                    Vbuff[0:numv] = cholvecs[local_row, column, 0:numv]
-                    comm.Bcast(Xkl0[0:ngs + numv], root=owner)
-                else:
-                    comm.Bcast(Xkl0[0:ngs + numv], root=owner)
-                    Vbuff[0:numv] = Xkl0[ngs:ngs + numv]
+                # the pivot's pair density, and its Cholesky history
+                row = self._row(k3, k4)
+                column = i3 * self.nmo_pk[k4] + i4
+                Xkl0[:] = Xaolj[row, 0:ngs, column]
+                history = cholvecs[row, column, 0:numv].copy()
 
                 # 1. evaluate the new column (ik|i_max k_max)
                 for k, (k1, k2) in enumerate(pairs):
                     if not self._conserves_momentum(k1, k2, k3, k4):
                         continue
-                    if part.ij0 > self.nmo_pk[k1] * self.nmo_pk[k2]:
-                        continue
 
                     pivot_column = self._shifted_pivot_column(k1, k2, k3, k4, Xkl0, Xkl)
-                    n_ = min(self.nmo_pk[k1] * self.nmo_pk[k2], part.ijN) - part.ij0
-                    cholvecs[k, 0:n_, numv] = np.dot(Xaoik[k, :, 0:n_].T,
-                                                     pivot_column.conj())
+                    npairs = self.nmo_pk[k1] * self.nmo_pk[k2]
+                    cholvecs[k, 0:npairs, numv] = np.dot(
+                        Xaoik[k, :, 0:npairs].T, pivot_column.conj())
 
                 # 2. subtract the projection along the previous components
-                cholvecs[:, :, numv] -= np.dot(cholvecs[:, :, 0:numv], Vbuff[0:numv].conj())
+                cholvecs[:, :, numv] -= np.dot(cholvecs[:, :, 0:numv], history.conj())
                 cholvecs[:, :, numv] /= math.sqrt(vmax)
 
                 residual -= (cholvecs[:, :, numv] * cholvecs[:, :, numv].conj()).real
 
-                pivot_local = self._largest_residual(pairs, residual)
-                k3, k4, i3, i4, vmax = self._pick_pivot(comm, *pivot_local)
+                k3, k4, i3, i4, vmax = self._largest_residual(pairs, residual)
 
-                if self.verbose and comm.rank == 0:
+                if self.verbose:
                     logger.info("cholesky iteration %d: max residual %13.8e", numv, vmax)
 
                 numv += 1
@@ -772,72 +569,8 @@ class PeriodicCholesky:
                     )
                 done[self._done_index(k3, k4, i3, i4)] = 1
 
-            comm.barrier()
             yield block, cholvecs[:, :, :numv]
 
-
-# ----------------------------------------------------------------------
-# parallel HDF5 handling
-# ----------------------------------------------------------------------
-
-class FileHandler:
-    """
-    Open an HDF5 file for a parallel Cholesky write.
-
-    With parallel HDF5 (`phdf`) every rank opens the same file collectively.
-    Without it, rank 0 opens the real file and every other rank opens its own
-    ``rank<N>_<filename>``, which rank 0 merges afterwards.
-
-    Parameters
-    ----------
-    comm : mpi4py communicator
-        Communicator.
-    filename : str or pathlib.Path
-        File to open.
-    mode : str, optional
-        h5py file mode for the real output file. Default ``'w'``. The per-rank
-        scratch files are always truncated, since they only ever hold one run's
-        partial Cholesky blocks.
-    phdf : bool, optional
-        Use parallel HDF5. Default False.
-
-    Examples
-    --------
-    >>> with FileHandler(comm, filename) as f:
-    ...     f.create_dataset("test", data=data)
-    """
-
-    def __init__(self, comm, filename, mode="w", phdf=False) -> None:
-        self.phdf = phdf
-        self.comm = comm
-
-        if phdf:
-            self.h5f = h5.File(filename, mode, driver='mpio', comm=comm)
-            self.h5f.atomic = False
-        elif comm.rank == 0:
-            self.h5f = h5.File(filename, mode)
-        else:
-            self.h5f = h5.File(rank_filename(comm.rank, filename), "w")
-
-    def __enter__(self):
-        self.h5f.phdf = self.phdf
-        return self.h5f
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.h5f.close()
-        return False
-
-
-def rank_filename(rank: int, filename):
-    """The per-rank scratch file name used when parallel HDF5 is unavailable."""
-    filename = os.fspath(filename)
-    directory, name = os.path.split(filename)
-    return os.path.join(directory, f"rank{rank}_{name}")
-
-
-# ----------------------------------------------------------------------
-# the Hamiltonian
-# ----------------------------------------------------------------------
 
 class PeriodicHamiltonian(Hamiltonian):
     r"""
@@ -919,21 +652,18 @@ class PeriodicHamiltonian(Hamiltonian):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_pyscf(cls, scf_data, comm=None, kpoint_symmetry=True, chol_cut=1e-5,
+    def from_pyscf(cls, source, kpoint_symmetry=True, chol_cut=1e-5,
                    maxvecs=20, exxdiv='ewald', nelec=None,
                    verbose=False) -> "PeriodicHamiltonian":
         """
-        Generate a periodic Hamiltonian from a PySCF ``pbc`` SCF calculation,
-        holding the result in memory.
+        Generate a periodic Hamiltonian from a PySCF ``pbc`` SCF calculation.
 
         Parameters
         ----------
-        scf_data : dict
-            Unpacked PySCF checkpoint, as produced by
-            ``afqmctools.utils.pyscf_utils.load_from_pyscf_chk``. Uses the keys
+        source : str or pathlib.Path or dict
+            A PySCF checkpoint file, or an already-loaded ``scf_data`` mapping
+            from `safiretools.convert.pyscf.load_pyscf_chk`. Uses the keys
             ``'hcore'``, ``'X'``, ``'cell'``, ``'kpts'`` and ``'nmo_pk'``.
-        comm : mpi4py communicator, optional
-            Must be serial. Use `write_from_pyscf` to run in parallel.
         kpoint_symmetry : bool, optional
             Factorize per momentum transfer (True) rather than as one supercell
             (False). Default True. A supercell result comes back as a Γ-point
@@ -953,139 +683,40 @@ class PeriodicHamiltonian(Hamiltonian):
         -------
         PeriodicHamiltonian
 
-        Raises
-        ------
-        ValueError
-            If `comm` spans more than one rank — a distributed factorization is
-            never assembled in memory; see `write_from_pyscf`.
+        Notes
+        -----
+        The whole factorization is built in memory and written by `to_hdf5`,
+        serially. CoQuí is the supported route for production-sized solids.
         """
-        comm = comm if comm is not None else _SerialComm()
-        if comm.size > 1:
-            raise ValueError(
-                "PeriodicHamiltonian.from_pyscf builds the whole factorization in "
-                "memory and is serial-only; use PeriodicHamiltonian.write_from_pyscf "
-                "to generate and write in parallel."
-            )
+        from safiretools.convert.pyscf import as_scf_data
+
+        scf_data = as_scf_data(source, periodic=True)
 
         cell, kpts, X = scf_data['cell'], scf_data['kpts'], scf_data['X']
         nmo_pk = np.asarray(scf_data['nmo_pk'])
         nelec = nelec if nelec is not None else _default_nelec(cell, len(kpts))
 
-        solver = PeriodicCholesky(comm, cell, kpts, nmo_pk, kp_sym=kpoint_symmetry,
-                                  maxvecs=maxvecs, gtol_chol=chol_cut, verbose=verbose)
+        solver = PeriodicCholesky(cell, kpts, nmo_pk, kp_sym=kpoint_symmetry,
+                                  maxvecs=maxvecs, gtol_chol=chol_cut,
+                                  verbose=verbose)
 
         hcore_pk = _transform_hcore(scf_data['hcore'], X, nmo_pk)
         enuc = _zero_electron_energy(cell, kpts, sum(nelec), exxdiv)
 
         if not kpoint_symmetry:
-            (_, cholvecs), = solver.run(comm, X)
+            (_, cholvecs), = solver.run(X)
             return cls(**_supercell_layout(hcore_pk, cholvecs, solver),
                        enuc=enuc, nelec=nelec)
 
         chol = {}
         nchol_pk = np.zeros(len(kpts), dtype=np.int32)
-        for Q, block in solver.run(comm, X):
+        for Q, block in solver.run(X):
             chol[Q] = _kpoint_block(block, solver)
             nchol_pk[Q] = block.shape[-1]
 
         return cls(hcore=hcore_pk, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
                    qk_to_k2=solver.QKToK2, minus_k=solver.kminus,
                    nchol_pk=nchol_pk, enuc=enuc, nelec=nelec)
-
-    @classmethod
-    def write_from_pyscf(cls, comm, scf_data, path, kpoint_symmetry=True,
-                         chol_cut=1e-5, maxvecs=20, exxdiv='ewald', nelec=None,
-                         phdf=False, verbose=False) -> None:
-        """
-        Generate a periodic Hamiltonian and stream it straight to `path`.
-
-        Equivalent to ``from_pyscf(...).to_hdf5(path)`` but never holds more
-        than one momentum block in memory, and works over an MPI communicator of
-        any size. This is the path to use for production-sized systems.
-
-        Parameters
-        ----------
-        comm : mpi4py communicator
-            Communicator the work is spread over.
-        scf_data : dict
-            Unpacked PySCF checkpoint; see `from_pyscf`.
-        path : str or pathlib.Path
-            HDF5 file to write into. Created if it does not exist; a Hamiltonian
-            already in it is replaced and anything else preserved, as for
-            `to_hdf5`.
-        kpoint_symmetry : bool, optional
-            Factorize per momentum transfer (True) rather than as one supercell
-            (False). Default True.
-        chol_cut, maxvecs, exxdiv, nelec, verbose
-            As for `from_pyscf`.
-        phdf : bool, optional
-            Use parallel HDF5 rather than per-rank scratch files.
-
-        Raises
-        ------
-        NotImplementedError
-            For a distributed supercell factorization. Its Cholesky vectors
-            scatter into the combined basis rather than filling a contiguous
-            slice of it, so the per-rank merge below does not apply.
-        """
-        cell, kpts, X = scf_data['cell'], scf_data['kpts'], scf_data['X']
-        nmo_pk = np.asarray(scf_data['nmo_pk'])
-        nelec = nelec if nelec is not None else _default_nelec(cell, len(kpts))
-
-        if not kpoint_symmetry:
-            if comm.size > 1:
-                raise NotImplementedError(
-                    "Writing a supercell (kpoint_symmetry=False) factorization in "
-                    "parallel is not implemented: each rank's Cholesky vectors "
-                    "scatter across the combined orbital basis instead of filling a "
-                    "contiguous slice, so the per-rank merge used for the k-point "
-                    "path does not apply. Use kpoint_symmetry=True to run in "
-                    "parallel, or generate the supercell Hamiltonian serially."
-                )
-            cls.from_pyscf(scf_data, comm=comm, kpoint_symmetry=False,
-                           chol_cut=chol_cut, maxvecs=maxvecs, exxdiv=exxdiv,
-                           nelec=nelec, verbose=verbose).to_hdf5(path)
-            return
-
-        tstart = time.time()
-        solver = PeriodicCholesky(comm, cell, kpts, nmo_pk, kp_sym=True,
-                                  maxvecs=maxvecs, gtol_chol=chol_cut, verbose=verbose)
-
-        with FileHandler(comm, path, "a", phdf) as h5file:
-            clear_hamiltonian(h5file)
-            group = h5file.create_group("Hamiltonian")
-            kp_group = h5file.create_group(KPOINT_GROUP)
-
-            _write_kpoint_basics(comm, group, cell, kpts, scf_data['hcore'], X,
-                                 nmo_pk, solver.QKToK2, solver.kminus, nelec,
-                                 exxdiv=exxdiv)
-
-            logger.info("time to reach Cholesky: %13.8e s", time.time() - tstart)
-            tstart = time.time()
-
-            num_cholvecs = np.zeros(len(kpts), dtype=np.int32)
-            for Q, cholvecs in solver.run(comm, X):
-                num_cholvecs[Q] = cholvecs.shape[-1]
-                _write_kpoint_block(comm, kp_group, solver, Q, cholvecs,
-                                    phdf=h5file.phdf)
-                comm.barrier()
-
-            group.create_dataset("NCholPerKP", data=num_cholvecs)
-            logger.info("time to perform Cholesky: %13.8e s", time.time() - tstart)
-
-            comm.barrier()
-            if not phdf and comm.rank == 0:
-                _merge_rank_files(comm, kp_group, path, solver.kminus)
-
-        comm.barrier()
-
-        # the format tag is a variable-length string, which parallel HDF5 cannot
-        # write, so it goes in from one rank once every rank has closed the file
-        if comm.rank == 0:
-            with h5.File(path, 'a') as fh5:
-                write_hamiltonian_format(fh5, 'kpoint')
-
-        comm.barrier()
 
     # ------------------------------------------------------------------
     # serialization
@@ -1259,7 +890,7 @@ class PeriodicHamiltonian(Hamiltonian):
                    enuc=enuc, nelec=nelec)
 
 
-def write_rhoG(comm, scf_data, path, gcut, kpoint_symmetry=True, phdf=False,
+def write_rhoG(scf_data, path, gcut, kpoint_symmetry=True,
                verbose=False) -> None:
     r"""
     Write the real-space density :math:`\rho(G)` on the FFT grid.
@@ -1268,8 +899,6 @@ def write_rhoG(comm, scf_data, path, gcut, kpoint_symmetry=True, phdf=False,
 
     Parameters
     ----------
-    comm : mpi4py communicator
-        Communicator the work would be spread over.
     scf_data : dict
         Unpacked PySCF checkpoint; see `PeriodicHamiltonian.from_pyscf`.
     path : str or pathlib.Path
@@ -1278,8 +907,6 @@ def write_rhoG(comm, scf_data, path, gcut, kpoint_symmetry=True, phdf=False,
         Plane-wave cutoff for the density.
     kpoint_symmetry : bool, optional
         Which factorization the density would follow.
-    phdf : bool, optional
-        Use parallel HDF5.
     verbose : bool, optional
         Log progress.
 
@@ -1290,37 +917,10 @@ def write_rhoG(comm, scf_data, path, gcut, kpoint_symmetry=True, phdf=False,
 
     Notes
     -----
-    This replaces afqmctools' ``write_rhoG_kpoints`` and
-    ``write_rhoG_supercell``, neither of which was ever functional:
-    ``write_rhoG_kpoints`` referenced an undefined ``nelec``, and
-    ``write_rhoG_supercell`` called a bare ``quit()`` before touching three more
-    undefined names. The signature is kept so that a working implementation has
-    an obvious place to land.
+    The signature is kept so that a working implementation has an obvious place
+    to land.
     """
-    raise NotImplementedError(
-        "write_rhoG is not implemented. afqmctools' write_rhoG_kpoints and "
-        "write_rhoG_supercell were both non-functional (NameError and a bare "
-        "quit() respectively), so there was nothing to port."
-    )
-
-
-class _SerialComm:
-    """
-    Stand-in communicator for a serial run, so the solver needs no MPI import
-    when there is nothing to distribute.
-    """
-
-    size = 1
-    rank = 0
-
-    def barrier(self):
-        pass
-
-    def Bcast(self, buffer, root=0):
-        pass
-
-    def Allgather(self, sendbuf, recvbuf):
-        recvbuf[:len(sendbuf)] = sendbuf
+    raise NotImplementedError("write_rhoG is not implemented.")
 
 
 # ----------------------------------------------------------------------
@@ -1350,8 +950,7 @@ def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
     cholvecs : numpy.ndarray
         The serial solver's ``(nkk, nij, nchol)`` Cholesky block.
     solver : PeriodicCholesky
-        The solver that produced `cholvecs`, for its partition and orbital
-        counts.
+        The solver that produced `cholvecs`, for its orbital counts.
 
     Returns
     -------
@@ -1369,7 +968,6 @@ def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
     with :math:`N_k` the *original* k-point count rather than the single Γ point
     the result is expressed in.
     """
-    part = solver.part
     nmo_pk = solver.nmo_pk
     nkpts = len(solver.kpts)
     nchol = cholvecs.shape[-1]
@@ -1385,11 +983,8 @@ def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
 
     L = np.zeros((nmo_tot * nmo_tot, nchol), dtype=np.complex128)
     for k, (k1, k2) in enumerate(solver.k_pairs(None)):
-        for ij in range(part.nij):
-            if (ij + part.ij0) >= nmo_pk[k1] * nmo_pk[k2]:
-                break
-            i = (ij + part.ij0) // nmo_pk[k2]
-            j = (ij + part.ij0) % nmo_pk[k2]
+        for ij in range(nmo_pk[k1] * nmo_pk[k2]):
+            i, j = divmod(ij, nmo_pk[k2])
             L[ik2n[i, k1] * nmo_tot + ik2n[j, k2], :] = cholvecs[k, ij, :] * factor
 
     return {
@@ -1405,136 +1000,39 @@ def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
 
 def _kpoint_block(cholvecs, solver):
     r"""
-    Reshape a serial rank's Cholesky block into the ``KPFactorized`` layout,
+    Reshape a Cholesky block into the ``KPFactorized`` layout,
     ``(nkpts, nmo_max**2 * nchol)``.
 
     Carries the same :math:`1/\sqrt{N_k}` normalization the on-disk format
     expects to find already applied.
     """
-    part = solver.part
     nkpts = len(solver.kpts)
     nchol = cholvecs.shape[-1]
     factor = 1.0 / math.sqrt(nkpts)
 
-    L = np.zeros((nkpts, solver.nmo_max**2 * nchol), dtype=np.complex128)
-    for kk in range(part.nkk):
-        L[kk + part.kk0, part.ij0 * nchol:part.ijN * nchol] = (
-            cholvecs[kk, :, :].ravel() * factor)
-    return L
+    return cholvecs.reshape(nkpts, solver.nmo_max**2 * nchol) * factor
 
 
 def _write_kpoint_descriptors(group, kpts, nmo_pk, qk_to_k2, minus_k, nelec,
-                              enuc, fill=True) -> None:
-    """
-    Write the k-point Hamiltonian's descriptor datasets into `group`.
-
-    `fill` False creates the datasets without writing to them, so that under
-    parallel HDF5 every rank can take part in the collective creation while only
-    one actually writes.
-    """
+                              enuc) -> None:
+    """Write the k-point Hamiltonian's descriptor datasets into `group`."""
     nkpts = len(kpts)
 
-    dims = group.create_dataset("dims", (8,), dtype=np.int32)
-    complex_integrals = group.create_dataset("ComplexIntegrals", (1,), dtype=np.int32)
-    energies = group.create_dataset("Energies", (2,), dtype=np.float64)
-    kpoints = group.create_dataset("KPoints", (nkpts, 3), dtype=np.float64)
-    nmo_per_kp = group.create_dataset("NMOPerKP", (nkpts,), dtype=np.int32)
-    qk = group.create_dataset("QKTok2", (nkpts, nkpts), dtype=np.int32)
-    kminus = group.create_dataset("MinusK", (nkpts,), dtype=np.int32)
-
-    if not fill:
-        return
-
-    dims[:] = np.array([0, 0, nkpts, int(np.sum(nmo_pk)), nelec[0], nelec[1], 0, 0])
-    complex_integrals[:] = 1
-    energies[:] = np.array([enuc, 0.])
-    kpoints[:, :] = np.asarray(kpts, dtype=np.float64)
-    nmo_per_kp[:] = np.asarray(nmo_pk, dtype=np.int32)
-    qk[:, :] = np.asarray(qk_to_k2, dtype=np.int32)
-    kminus[:] = np.asarray(minus_k, dtype=np.int32)
+    group.create_dataset(
+        "dims",
+        data=np.array([0, 0, nkpts, int(np.sum(nmo_pk)), nelec[0], nelec[1], 0, 0],
+                      dtype=np.int32))
+    group.create_dataset("ComplexIntegrals", data=np.array([1], dtype=np.int32))
+    group.create_dataset("Energies", data=np.array([enuc, 0.], dtype=np.float64))
+    group.create_dataset("KPoints", data=np.asarray(kpts, dtype=np.float64))
+    group.create_dataset("NMOPerKP", data=np.asarray(nmo_pk, dtype=np.int32))
+    group.create_dataset("QKTok2", data=np.asarray(qk_to_k2, dtype=np.int32))
+    group.create_dataset("MinusK", data=np.asarray(minus_k, dtype=np.int32))
 
 
 def _write_kpoint_h1(group, ki, nmo, h1) -> None:
     """Write the one-body block at k-point `ki`, interleaved complex."""
-    dataset = group.create_dataset(f"H1_kp{ki}", (nmo, nmo, 2), dtype=np.float64)
-    if h1 is None:
-        return
-
     if h1.shape != (nmo, nmo):
         raise ValueError(f"H1 at kpoint {ki} has shape {h1.shape}, expected ({nmo}, {nmo})")
-    dataset[:, :, 0] = np.real(h1)
-    dataset[:, :, 1] = np.imag(h1)
 
-
-def _write_kpoint_basics(comm, group, cell, kpts, hcore, X, nmo_pk, qk_to_k2,
-                         minus_k, nelec, exxdiv='ewald') -> None:
-    """
-    Write the descriptor datasets and the one-body Hamiltonian collectively.
-
-    Every rank has to take part: under parallel HDF5 dataset creation is
-    collective, and without it each rank is writing its own scratch file.
-    """
-    nkpts = len(kpts)
-    enuc = _zero_electron_energy(cell, kpts, sum(nelec), exxdiv) if comm.rank == 0 else 0.0
-    comm.barrier()
-
-    _write_kpoint_descriptors(group, kpts, nmo_pk, qk_to_k2, minus_k, nelec, enuc,
-                              fill=comm.rank == 0)
-    comm.barrier()
-
-    hcore_pk = _transform_hcore(hcore, X, nmo_pk) if comm.rank == 0 else None
-    for ki in range(nkpts):
-        _write_kpoint_h1(group, ki, nmo_pk[ki],
-                         hcore_pk[ki] if comm.rank == 0 else None)
-
-    comm.barrier()
-
-
-def _write_kpoint_block(comm, kp_group, solver, Q, cholvecs, phdf=False) -> None:
-    r"""
-    Write one momentum block's Cholesky vectors.
-
-    With parallel HDF5 (or a single rank) every rank writes into its slice of
-    the full ``L{Q}`` dataset. Otherwise each non-root rank writes its own block
-    plus an ``Ldim{Q}`` descriptor, which `_merge_rank_files` uses to place it.
-    """
-    part = solver.part
-    nkpts = len(solver.kpts)
-    numv = cholvecs.shape[-1]
-    factor = 1.0 / math.sqrt(nkpts)
-
-    if phdf or comm.rank == 0:
-        LQ = kp_group.create_dataset(
-            f"L{Q}", (nkpts, solver.nmo_max * solver.nmo_max * numv, 2),
-            dtype=np.float64)
-        for kk in range(part.nkk):
-            LQ[kk + part.kk0, part.ij0 * numv:part.ijN * numv, :] = (
-                to_complex(cholvecs[kk, :, :].ravel() * factor))
-    else:
-        kp_group.create_dataset(
-            f"Ldim{Q}",
-            data=np.array([part.nkk, part.nij, part.kk0, part.ij0, part.ijN, numv],
-                          dtype=np.int32))
-        LQ = kp_group.create_dataset(f"L{Q}", (part.nkk, part.nij * numv, 2),
-                                     dtype=np.float64)
-        for kk in range(part.nkk):
-            LQ[kk, :, :] = to_complex(cholvecs[kk, :, :].ravel() * factor)
-
-
-def _merge_rank_files(comm, kp_group, path, minus_k) -> None:
-    """
-    Fold every non-root rank's scratch file into the real one and delete it.
-
-    Only used when parallel HDF5 is unavailable; see `FileHandler`.
-    """
-    nkpts = len(minus_k)
-    for rank in range(1, comm.size):
-        scratch = rank_filename(rank, path)
-        with h5.File(scratch, 'r') as fh5:
-            for Q in range(nkpts):
-                if Q > minus_k[Q]:
-                    continue
-                nkk, nij, kk0, ij0, ijN, numv = fh5[f"{KPOINT_GROUP}/Ldim{Q}"][:]
-                LQ = fh5[f"{KPOINT_GROUP}/L{Q}"][:].reshape((nkk, nij * numv, 2))
-                kp_group[f"L{Q}"][kk0:kk0 + nkk, ij0 * numv:ijN * numv, :] = LQ
-        os.remove(scratch)
+    group.create_dataset(f"H1_kp{ki}", data=to_complex(h1))

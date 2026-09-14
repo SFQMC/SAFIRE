@@ -96,10 +96,8 @@ def write_hamiltonian_format(fh5, fmt) -> None:
 
     Notes
     -----
-    `fh5` must be a serially opened file: this writes a variable-length string,
-    as ``spin_type`` does, and parallel HDF5 cannot write variable-length data.
-    The one Hamiltonian written in parallel tags itself afterwards, from one
-    rank — see `~safiretools.PeriodicHamiltonian.write_from_pyscf`.
+    The tag is a variable-length string, as ``spin_type`` is, so the C++ side
+    reads it the way it already reads that.
     """
     fmt = HamiltonianFormat(fmt)
     if not fmt.tag:
