@@ -33,7 +33,6 @@ class AFQMCDriver
 public:
   AFQMCDriver(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
               std::string& title,
-              int blk0,
               int stp0,
               double eshft_,
               const ExecuteParameters& exec,
@@ -49,7 +48,6 @@ public:
         nCheckpoint{exec.checkpoint_interval},        
         nStabilize{exec.walker_ortho_interval},
         dt{exec.timestep},
-        block0(blk0),
         step0(stp0),
         wavefunction_(wfn_),
         propagator_(prpg_),
@@ -80,7 +78,7 @@ protected:
   int nCheckpoint;
   int nStabilize;
   RealType dt;
-  int block0, step0;
+  int step0;
 
   Wavefunction<MEM>& wavefunction_;
   Propagator<MEM>& propagator_;

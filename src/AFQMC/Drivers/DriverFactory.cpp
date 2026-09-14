@@ -126,7 +126,6 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
 
   bool restarted = false;
   int step0      = 0;
-  int block0     = 0;
   double Eshift = exec.initial_Eshift;
 
   utils::SeedType iseed = (exec.seed ? utils::split_seed(*exec.seed, mpi->comm)
@@ -153,7 +152,6 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
       h5::h5_read(dgrp,"DriverReals",Rdata);
 
       Eshift = Rdata[0];
-      block0 = Idata[0];
       step0  = Idata[1];
       restarted = true;
     }
@@ -161,10 +159,9 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
   mpi->comm.broadcast_value(restarted);
   if (restarted)
   {
-    app_log(1," Restarted from file. Block={}, step={}",block0,step0);
+    app_log(1," Restarted from file. step={}",step0);
     app_log(1,"                      Eshift: {}", Eshift);
     mpi->comm.broadcast_value(Eshift);
-    mpi->comm.broadcast_value(block0);
     mpi->comm.broadcast_value(step0);
   }
 
@@ -222,7 +219,7 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
   // estimator setup
   Estimators<MEM> estim0{mpi, m_series, exec, wset, WfnFac, wfn0, prop0, HamFac};
 
-  AFQMCDriver<MEM> driver(mpi, title, block0, step0, Eshift, exec, wfn0, prop0, estim0);
+  AFQMCDriver<MEM> driver(mpi, title, step0, Eshift, exec, wfn0, prop0, estim0);
 
   // free any shared windows that were abandoned during initialization
   mpi->shared_windows.collective_free_unused();
@@ -260,7 +257,6 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
 
   bool restarted = false;
   int step0      = 0;
-  int block0     = 0;
   double Eshift = exec.initial_Eshift;
 
   utils::SeedType iseed = (exec.seed ? utils::split_seed(*exec.seed, mpi->comm)
@@ -298,10 +294,9 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
   mpi->comm.broadcast_value(restarted);
   if (restarted)
   {
-    app_log(1,"Restarted from file. Block={}, step={}",block0,step0);
+    app_log(1,"Restarted from file. step={}",step0);
     app_log(1,"                     Eshift: {}", Eshift);
     mpi->comm.broadcast_value(Eshift);
-    mpi->comm.broadcast_value(block0);
     mpi->comm.broadcast_value(step0);
   }
 
@@ -353,7 +348,7 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
   // estimator setup
   Estimators<MEM> estim0{mpi, m_series, exec, wset, WfnFac, wfn0, prop0, HamFac};
 
-  FTAFQMCDriver<MEM> driver(mpi, title, block0, step0, Eshift, exec, wfn0, prop0, estim0);
+  FTAFQMCDriver<MEM> driver(mpi, title, step0, Eshift, exec, wfn0, prop0, estim0);
 
   if (!driver.run(wset))
   {

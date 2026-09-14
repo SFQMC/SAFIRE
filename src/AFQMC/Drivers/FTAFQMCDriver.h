@@ -33,7 +33,6 @@ class FTAFQMCDriver
 public:
   FTAFQMCDriver(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> _mpi,
               std::string& title,
-              int blk0,
               int stp0,
               double eshft_,
               const ExecuteParameters& exec,
@@ -49,7 +48,6 @@ public:
         nCheckpoint{exec.checkpoint_interval},
         nStabilize{exec.walker_ortho_interval},
         dt{exec.timestep},
-        block0(blk0),
         step0(stp0),
         wfn0(wfn_),
         prop0(prpg_),
@@ -86,7 +84,7 @@ protected:
   RealType dt;
   RealType beta;
 
-  int block0, step0;
+  int step0;
 
   Wavefunction<MEM>& wfn0;
 
