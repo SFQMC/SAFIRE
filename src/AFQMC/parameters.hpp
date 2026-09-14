@@ -236,8 +236,6 @@ struct ExecuteParameters {
   std::optional<utils::BlockRef<PropagatorParameters>> propagator{};
   EstimatorParameters estimators{};
 
-  std::string hdf_read_file{}; // restart from checkpoint
-  std::string hdf_write_file{}; // write checkpoint
   int steps{1};
   int equilibration_steps{};
   int sweeps{1}; // finite temperature sweeps
@@ -248,18 +246,14 @@ struct ExecuteParameters {
   double dshift{1.0};
   bool print_sweep_step{false}; // ftafqmc only
 
-  // fix_bias // CSAFQMC only
-  // filename
-  // ndets_to_read
-
   double timestep{DEFAULT_TIME_STEP};
   int n_walkers_per_mpi_task{10};
   bool set_nwalker_to_target{};
-  double initial_Eshift{}; // make optional
+  std::optional<double> initial_Eshift{}; // make optional
   std::optional<int> seed{};
 };
-SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, hdf_read_file,
-                         hdf_write_file, steps, equilibration_steps, sweeps, population_control_interval, measure_interval_multiplier,
+SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, steps,
+                         equilibration_steps, sweeps, population_control_interval, measure_interval_multiplier,
                          walker_ortho_interval, checkpoint_interval, dshift, print_sweep_step,
                          timestep, n_walkers_per_mpi_task, set_nwalker_to_target, initial_Eshift, seed);
 

@@ -120,13 +120,12 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
 
   std::string hdf_read_restart;
   bool set_nWalker_target;
-  hdf_read_restart = exec.hdf_read_file;
   set_nWalker_target = exec.set_nwalker_to_target;
   int nWalkers = exec.n_walkers_per_mpi_task;
 
   bool restarted = false;
   int step0      = 0;
-  double Eshift = exec.initial_Eshift;
+  std::optional<double> Eshift = exec.initial_Eshift;
 
   utils::SeedType iseed = (exec.seed ? utils::split_seed(*exec.seed, mpi->comm)
                                      : utils::make_seed(mpi->comm));
@@ -160,15 +159,10 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
   if (restarted)
   {
     app_log(1," Restarted from file. step={}",step0);
-    app_log(1,"                      Eshift: {}", Eshift);
-    mpi->comm.broadcast_value(Eshift);
+    app_log(1,"                      Eshift: {}", Eshift.value());
+    mpi->comm.broadcast_value(Eshift.value());
     mpi->comm.broadcast_value(step0);
   }
-
-  /*
-   * to do:
-   *  - add logic for estimators, e.g. whether to evaluate energy, which wfn to use, etc.
-   */
 
   // walker_type is read early from the walker-set input block
   // the WalkerSet is built after the wavefunction
@@ -202,24 +196,31 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
     {
       // Eshift defaults to 0.0 if not provided in input
       //    otherwise, use the value from input with warning
-      if (Eshift != 0.0)
+      if (Eshift)
       {
-        app_warning("user set expert-level parameter, \"initial_Eshift\" : Using user-provided initial Eshift = {}", Eshift);
+        app_warning("user set expert-level parameter, \"initial_Eshift\" : Using user-provided initial Eshift = {}", Eshift.value());
       }
     } else {
-      if (Eshift != 0.0)
+      if (Eshift)
       {
-        app_log(1, "[Warning] : User set initial Eshift {} with local energy importance. This value is ignored.", Eshift);
+        app_log(1, "[Warning] : User set initial Eshift {} with local energy importance. This value is ignored.", Eshift.value());
       }
       Eshift = real(ComplexType(wset[0].energy()));
     }
   }
 
+  if(!Eshift) {
+    Eshift = 0; // TODO fill with energy regardless
+  }
 
   // estimator setup
   Estimators<MEM> estim0{mpi, m_series, exec, wset, WfnFac, wfn0, prop0, HamFac};
 
-  AFQMCDriver<MEM> driver(mpi, title, step0, Eshift, exec, wfn0, prop0, estim0);
+  if(!Eshift) {
+    Eshift = 0; // TODO: use sensible energy
+  }
+  
+  AFQMCDriver<MEM> driver(mpi, title, step0, Eshift.value(), exec, wfn0, prop0, estim0);
 
   // free any shared windows that were abandoned during initialization
   mpi->shared_windows.collective_free_unused();
@@ -251,13 +252,12 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
   // read but unused: finite-T restart is not yet supported, so the walker set is
   // always built fresh from the wavefunction guess (see below).
   [[maybe_unused]] bool set_nWalker_target;
-  hdf_read_restart = exec.hdf_read_file;
   set_nWalker_target = exec.set_nwalker_to_target;
   int nWalkers = exec.n_walkers_per_mpi_task;
 
   bool restarted = false;
   int step0      = 0;
-  double Eshift = exec.initial_Eshift;
+  std::optional<double> Eshift = exec.initial_Eshift;
 
   utils::SeedType iseed = (exec.seed ? utils::split_seed(*exec.seed, mpi->comm)
                                      : utils::make_seed(mpi->comm));
@@ -267,38 +267,7 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
 
   app_log(1, banner("Beginning Driver initialization"));
 
-  if (mpi->comm.root() == 0)
-  {
-    if (hdf_read_restart != std::string(""))
-    {
-      utils::check(false,"Restart not yet implemented for finite-T calculations");
-      /*
-      h5::file file(hdf_read_restart,'r');
-      h5::group grp(file);
-      if (not grp.has_key("AFQMCDriver")) return false;
-      h5::group dgrp = grp.open_group("AFQMCDriver");
-      
-      std::vector<IndexType> Idata(2);
-      std::vector<RealType> Rdata(2);
-
-      h5::h5_read(dgrp,"DriverInts",Idata);
-      h5::h5_read(dgrp,"DriverReals",Rdata);
-
-      Eshift = Rdata[0];
-      block0 = Idata[0];
-      step0  = Idata[1];
-      restarted = true;
-      */
-    }
-  }
   mpi->comm.broadcast_value(restarted);
-  if (restarted)
-  {
-    app_log(1,"Restarted from file. step={}",step0);
-    app_log(1,"                     Eshift: {}", Eshift);
-    mpi->comm.broadcast_value(Eshift);
-    mpi->comm.broadcast_value(step0);
-  }
 
   /*
    * to do:
@@ -333,14 +302,16 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
   {
     // Eshift defaults to 0.0 if not provided in input
     //    otherwise, use the value from input with warning
-    if (Eshift != 0.0)
+    if (Eshift)
     {
-      app_warning("user set expert-level parameter, \"initial_Eshift\" : Using user-provided initial Eshift = {}", Eshift);
+      app_warning("user set expert-level parameter, \"initial_Eshift\" : Using user-provided initial Eshift = {}", Eshift.value());
+    } else {
+      Eshift = 0.0;
     }
   } else {
-    if (Eshift != 0.0)
+    if (Eshift)
     {
-      app_log(1, "[Warning] : User set initial Eshift {} with local energy importance. This value is ignored.", Eshift);
+      app_log(1, "[Warning] : User set initial Eshift {} with local energy importance. This value is ignored.", Eshift.value());
     }
     Eshift = real(ComplexType(wset[0].energy()));
   }
@@ -348,7 +319,7 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
   // estimator setup
   Estimators<MEM> estim0{mpi, m_series, exec, wset, WfnFac, wfn0, prop0, HamFac};
 
-  FTAFQMCDriver<MEM> driver(mpi, title, step0, Eshift, exec, wfn0, prop0, estim0);
+  FTAFQMCDriver<MEM> driver(mpi, title, step0, Eshift.value(), exec, wfn0, prop0, estim0);
 
   if (!driver.run(wset))
   {
