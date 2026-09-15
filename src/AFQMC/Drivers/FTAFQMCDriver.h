@@ -45,7 +45,6 @@ public:
         nStep{exec.steps},
         nSweep{exec.sweeps},
         nPopulation{exec.population_control_interval},
-        nCheckpoint{exec.checkpoint_interval},
         nStabilize{exec.walker_ortho_interval},
         dt{exec.timestep},
         step0(stp0),
@@ -79,7 +78,6 @@ protected:
   int nSweep;
   int nPopulation;
 
-  int nCheckpoint;
   int nStabilize;
   RealType dt;
   RealType beta;

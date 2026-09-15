@@ -74,10 +74,6 @@ public:
     //std::cout<<"OrbMats(0,1,1)"<<std::endl;
 
     utils::check(OrbMats.extent(0) == ci.size(), "Size mismatch");
-    if (params.rediag) {
-      utils::check(false,"finish");
-      //recompute_ci();
-    }
     
     resetLogScale();
 

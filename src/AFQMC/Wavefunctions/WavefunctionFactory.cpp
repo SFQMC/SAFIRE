@@ -66,7 +66,6 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
   const std::string& filename = params.filename;
   utils::check(not name.empty(), "Error in WavefunctionFactory: missing required input: name");
   utils::check(not filename.empty(), "Error in WavefunctionFactory: missing required input: filename");
-  bool recompute_ci  = params.rediag;
   int ndets_to_read  = params.ndets_to_read;
 
   const auto [NMO, nup_in_wfn, ndown_in_wfn] = read_info_from_wfn(filename,"any");
@@ -223,13 +222,6 @@ Wavefunction<MEM> WavefunctionFactory<MEM>::fromHDF5(std::shared_ptr<utils::mpi_
 				NMO, nup, ndown, PsiT_MO, orb_type);
     utils::check(occs.shape() == std::array<long,2>{ndets_to_read, nup + ndown}, "Size mismatch");
     app_log(1,"Finished reading PHMSD wavefunction ");
-    if(recompute_ci) {
-      utils::check(false, "finish");
-      // 2. Compute Variational Energy / update coefficients
-      app_log(1,"Computing variational energy of trial wavefunction.");
-//      computeVariationalEnergyPHMSD(TGwfn, h, occs, coeffs, ndets_to_read, nup, ndown, NMO, recompute_ci);
-      app_log(1,"Finished computing variational energy of trial wavefunction.");
-    }
 
     // build reference MOs (PsiT_MO) if needed...
     utils::check((orb_type == "occ") or (orb_type == "mixed"), "Invalid wavefunction type:{}",orb_type);

@@ -55,7 +55,6 @@ struct WavefunctionParameters {
   std::string name{};
   std::string filename{}; // required
 
-  bool rediag{}; // ??
   int ndets_to_read{-1};
   // the two optionals below depend on the hamiltonian type, so resolve_defaults fills them in
   std::optional<PHMSDEnergyAlgorithm> algorithm{};
@@ -65,7 +64,7 @@ struct WavefunctionParameters {
 
   // system
 };
-SAFIRE_DEFINE_PARAMETERS(WavefunctionParameters, name, filename, rediag, ndets_to_read, algorithm, dense_trial,
+SAFIRE_DEFINE_PARAMETERS(WavefunctionParameters, name, filename, ndets_to_read, algorithm, dense_trial,
                          nwalk_block_size, ndet_block_size);
 
 struct HamiltonianParameters {
@@ -240,20 +239,18 @@ struct ExecuteParameters {
   int population_control_interval{DEFAULT_POPULATION_CONTROL_INTERVAL};
   int measure_interval_multiplier{DEFAULT_MEASURE_INTERVAL_MULTIPLIER};
   int walker_ortho_interval{DEFAULT_WALKER_ORTHO_INTERVAL};
-  int checkpoint_interval{-1};
   double dshift{1.0};
   bool print_sweep_step{false}; // ftafqmc only
 
   double timestep{DEFAULT_TIME_STEP};
   int n_walkers_per_mpi_task{10};
-  bool set_nwalker_to_target{};
   std::optional<double> initial_Eshift{}; // make optional
   std::optional<int> seed{};
 };
 SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, steps,
                          equilibration_steps, sweeps, population_control_interval, measure_interval_multiplier,
-                         walker_ortho_interval, checkpoint_interval, dshift, print_sweep_step,
-                         timestep, n_walkers_per_mpi_task, set_nwalker_to_target, initial_Eshift, seed);
+                         walker_ortho_interval, dshift, print_sweep_step,
+                         timestep, n_walkers_per_mpi_task, initial_Eshift, seed);
 
 
 struct AFQMCParameters {

@@ -44,7 +44,6 @@ public:
         nStep{exec.steps},
         nPopulation{exec.population_control_interval},
         nEquilibration{exec.equilibration_steps},
-        nCheckpoint{exec.checkpoint_interval},        
         nStabilize{exec.walker_ortho_interval},
         dt{exec.timestep},
         step0(stp0),
@@ -74,7 +73,6 @@ protected:
   int nPopulation;
   int nEquilibration{};
 
-  int nCheckpoint;
   int nStabilize;
   RealType dt;
   int step0;
