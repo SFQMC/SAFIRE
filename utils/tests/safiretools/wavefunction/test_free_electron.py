@@ -25,6 +25,7 @@ from safiretools import (
 )
 from safiretools.wavefunction.free_electron import (
     DEFAULT_TWIST,
+    FILLING_STRATEGIES,
     SHELL_TOL,
     fill_shells,
     from_free_electron,
@@ -97,22 +98,13 @@ class TestFillShells:
 
         assert indices == [0, 1, 2, 3]
 
-    def test_balanced_spaces_them_evenly(self, shells):
-        _, indices = fill_shells(shells, 4, strategy='balanced')
-
-        assert indices == [0, 1, 3, 5]
-
     def test_alternating_works_from_the_edges_inward(self, shells):
         _, indices = fill_shells(shells, 4, strategy='alternating')
 
         assert indices == [0, 1, 6, 2]
 
-    def test_hund_matches_aufbau_in_one_spin_channel(self, shells):
-        assert fill_shells(shells, 4, strategy='hund')[1] \
-            == fill_shells(shells, 4, strategy='aufbau')[1]
-
     def test_a_completely_filled_shell_ignores_the_strategy(self, shells):
-        for strategy in ('aufbau', 'balanced', 'alternating', 'hund'):
+        for strategy in FILLING_STRATEGIES:
             assert fill_shells(shells, 7, strategy=strategy)[1] \
                 == list(range(7))
 

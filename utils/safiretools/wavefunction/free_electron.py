@@ -57,7 +57,7 @@ an argument to `from_free_electron`. The AFQMC run itself normally wants the
 It is small enough that the shells it splits stay within ``3e-8``, so it only
 reads as non-degenerate against `SHELL_TOL`; the two are sized together."""
 
-FILLING_STRATEGIES = ('aufbau', 'balanced', 'hund', 'alternating')
+FILLING_STRATEGIES = ('aufbau', 'alternating')
 """Recognized ways to fill a partially occupied degenerate shell."""
 
 
@@ -74,14 +74,10 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
         Number of spin-up and spin-down electrons.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry to build in. Taken from the Hamiltonian when omitted.
-    filling_strategy : {'aufbau', 'balanced', 'hund', 'alternating'}, optional
+    filling_strategy : {'aufbau', 'alternating'}, optional
         How to fill a partially occupied degenerate shell. Default ``'aufbau'``.
 
         - ``'aufbau'``: take the shell's orbitals in order.
-        - ``'balanced'``: take evenly spaced orbitals through the shell, which
-          balances properties such as momentum.
-        - ``'hund'``: maximize spin. Same as ``'aufbau'`` within one spin
-          channel.
         - ``'alternating'``: fill from the shell's edges inward
           (0, -1, 1, -2, ...), which cancels momentum in k-space.
 
@@ -230,26 +226,22 @@ def _shell_selection(degeneracy: int, nelec: int, strategy: str):
             f"{list(FILLING_STRATEGIES)}"
         )
 
-    if nelec == degeneracy or strategy in ('aufbau', 'hund'):
+    if nelec == degeneracy or strategy == 'aufbau':
         return list(range(nelec))
 
-    if strategy == 'balanced':
-        # evenly spaced through the shell, which balances momentum in k-space
-        spacing = degeneracy / nelec
-        return [int(i * spacing) for i in range(nelec)]
-
-    # 'alternating': from the edges inward, 0, -1, 1, -2, ..., which cancels
-    #   momentum in k-space
-    selected = []
-    left, right = 0, degeneracy - 1
-    for step in range(nelec):
-        if step % 2 == 0:
-            selected.append(left)
-            left += 1
-        else:
-            selected.append(right)
-            right -= 1
-    return selected
+    else:
+        # 'alternating': from the edges inward, 0, -1, 1, -2, ..., which cancels
+        #   momentum in k-space
+        selected = []
+        left, right = 0, degeneracy - 1
+        for step in range(nelec):
+            if step % 2 == 0:
+                selected.append(left)
+                left += 1
+            else:
+                selected.append(right)
+                right -= 1
+        return selected
 
 
 def fill_shells(shells, nelec: int, strategy='aufbau'):
@@ -262,7 +254,7 @@ def fill_shells(shells, nelec: int, strategy='aufbau'):
         Shells as `group_by_shell` returns them.
     nelec : int
         Number of electrons to place.
-    strategy : {'aufbau', 'balanced', 'hund', 'alternating'}, optional
+    strategy : {'aufbau', 'alternating'}, optional
         How to fill a partially occupied shell. Default ``'aufbau'``. See
         `from_free_electron` for what each one does.
 
