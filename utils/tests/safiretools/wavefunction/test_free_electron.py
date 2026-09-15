@@ -8,14 +8,13 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-"""`NOMSDWavefunction.from_free_electron`: shell filling and the source forms."""
+"""`NOMSDWavefunction.from_free_electron`: shell filling and degeneracy."""
 
 import warnings
 
 import numpy as np
 import pytest
 import scipy.sparse as sps
-import toml
 
 from safiretools import (
     Lattice,
@@ -26,6 +25,7 @@ from safiretools import (
 )
 from safiretools.wavefunction.free_electron import (
     DEFAULT_TWIST,
+    SHELL_TOL,
     fill_shells,
     from_free_electron,
     group_by_shell,
@@ -41,8 +41,18 @@ def hubbard_params():
 
 
 @pytest.fixture
+def hubbard(hubbard_params):
+    """A 4x4 Hubbard model. Untwisted, so its shells stay degenerate."""
+    return LatticeHamiltonian.from_dict(hubbard_params)
+
+
+@pytest.fixture
 def quiet():
-    """Silence the collinear default-psi0 warning, covered in test_base.py."""
+    """
+    Silence the collinear default-psi0 warning (covered in test_base.py) and
+    the open-shell warning (covered in `TestOpenShell`); 4x4 at half filling
+    fills 3 of a 6-fold degenerate shell.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         yield
@@ -123,10 +133,9 @@ class TestFillShells:
 
 class TestFromFreeElectron:
 
-    def test_it_builds_a_single_collinear_determinant(self, hubbard_params,
-                                                      quiet):
+    def test_it_builds_a_single_collinear_determinant(self, hubbard, quiet):
         wavefunction = NOMSDWavefunction.from_free_electron(
-            hubbard_params, nelec=(8, 8), spin_symm='collinear')
+            hubbard, nelec=(8, 8), spin_symm='collinear')
 
         assert isinstance(wavefunction, NOMSDWavefunction)
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
@@ -136,116 +145,107 @@ class TestFromFreeElectron:
         assert np.allclose(wavefunction.coeffs, [1.0])
 
     def test_a_polarized_system_is_collinear_with_no_beta_electrons(
-            self, hubbard_params, quiet):
+            self, hubbard, quiet):
         wavefunction = NOMSDWavefunction.from_free_electron(
-            hubbard_params, nelec=(5, 0), spin_symm='collinear')
+            hubbard, nelec=(5, 0), spin_symm='collinear')
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (5, 0)
         assert wavefunction.dets.shape == (1, 16, 5)
 
     def test_a_noncollinear_determinant_spans_the_spinor_basis(self, quiet):
-        params = {
+        hamiltonian = LatticeHamiltonian.from_dict({
             'lattice': dict(L1=4, L2=1, boundary1='pbc', boundary2='open'),
             'hamiltonian': dict(t=1.0, U=2.0, nbands=2,
                                 spin_symm='noncollinear'),
-        }
-        wavefunction = NOMSDWavefunction.from_free_electron(params,
+        })
+        wavefunction = NOMSDWavefunction.from_free_electron(hamiltonian,
                                                             nelec=(4, 4))
 
         assert wavefunction.spin_symm is SpinSymm.NONCOLLINEAR
         assert wavefunction.nmo == 8
         assert wavefunction.dets.shape == (1, 16, 8)
 
-    def test_the_result_is_orthonormal(self, hubbard_params, quiet):
+    def test_the_result_is_orthonormal(self, hubbard, quiet):
         wavefunction = NOMSDWavefunction.from_free_electron(
-            hubbard_params, nelec=(8, 8), spin_symm='collinear')
+            hubbard, nelec=(8, 8), spin_symm='collinear')
 
         for block in wavefunction.spin_blocks(0):
             assert np.allclose(block.conj().T @ block, np.eye(block.shape[1]))
 
     def test_closed_shell_is_not_implemented(self, hubbard_params):
         hubbard_params['hamiltonian']['spin_symm'] = 'closed'
+        hamiltonian = LatticeHamiltonian.from_dict(hubbard_params)
 
         with pytest.raises(NotImplementedError, match="closed spin symmetry"):
-            NOMSDWavefunction.from_free_electron(hubbard_params, nelec=(8, 8))
+            NOMSDWavefunction.from_free_electron(hamiltonian, nelec=(8, 8))
 
-    def test_the_spin_symmetry_defaults_to_the_hamiltonian(self,
-                                                           hubbard_params,
+    def test_the_spin_symmetry_defaults_to_the_hamiltonian(self, hubbard,
                                                            quiet):
-        hamiltonian = LatticeHamiltonian.from_dict(hubbard_params)
-        wavefunction = NOMSDWavefunction.from_free_electron(hamiltonian,
+        wavefunction = NOMSDWavefunction.from_free_electron(hubbard,
                                                             nelec=(8, 8))
 
-        assert wavefunction.spin_symm is hamiltonian.spin_symm
+        assert wavefunction.spin_symm is hubbard.spin_symm
 
-    def test_an_unsupported_source_is_rejected(self):
-        with pytest.raises(ValueError, match="source must be a Hamiltonian"):
+    def test_anything_but_a_lattice_hamiltonian_is_rejected(self):
+        with pytest.raises(ValueError, match="LatticeHamiltonian instance"):
             NOMSDWavefunction.from_free_electron(42, nelec=(1, 1))
 
 
-class TestSourceForms:
+class TestOpenShell:
+    """
+    A determinant that stops part-way through a degenerate shell is not
+    uniquely defined. A small irrational twist on the *lattice* lifts the
+    degeneracy; the Hamiltonian the AFQMC run uses normally carries no twist,
+    so the two are built separately.
+    """
 
-    def test_it_does_not_mutate_the_parameter_dict(self, hubbard_params, quiet):
-        before = dict(hubbard_params['lattice'])
+    def test_a_partly_filled_degenerate_shell_warns(self, hubbard):
+        # 4x4 at half filling takes 3 of a 6-fold degenerate shell
+        with pytest.warns(UserWarning, match="6-fold degenerate"):
+            NOMSDWavefunction.from_free_electron(hubbard, nelec=(8, 8),
+                                                 spin_symm='collinear')
 
-        NOMSDWavefunction.from_free_electron(hubbard_params, nelec=(8, 8),
-                                            spin_symm='collinear')
+    @staticmethod
+    def _degeneracy_warnings(hamiltonian, nelec):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            NOMSDWavefunction.from_free_electron(hamiltonian, nelec=nelec,
+                                                 spin_symm='collinear')
+        return [w for w in caught if 'degenerate' in str(w.message)]
 
-        # afqmctools injected the twist into the caller's dict in place
-        assert hubbard_params['lattice'] == before
+    def test_a_closed_shell_is_silent(self, hubbard):
+        # 1 + 4 = 5 exactly closes the second shell
+        assert not self._degeneracy_warnings(hubbard, (5, 5))
 
-    def test_a_toml_file_and_a_dict_agree(self, hubbard_params, tmp_path,
-                                          quiet):
-        path = tmp_path / 'input.toml'
-        path.write_text(toml.dumps(hubbard_params))
-
-        from_file = NOMSDWavefunction.from_free_electron(
-            path, nelec=(8, 8), spin_symm='collinear')
-        from_dict = NOMSDWavefunction.from_free_electron(
-            hubbard_params, nelec=(8, 8), spin_symm='collinear')
-
-        assert np.allclose(from_file.dets, from_dict.dets)
-
-    def test_a_hamiltonian_hdf5_file_reproduces_the_same_determinant(
-            self, hubbard_params, tmp_path, quiet):
-        # the twist has to be spelled out, since only the dict path defaults it
+    def test_a_twisted_lattice_silences_it(self, hubbard_params):
         params = dict(hubbard_params)
         params['lattice'] = dict(hubbard_params['lattice'],
-                                 twist=list(DEFAULT_TWIST))
-        path = tmp_path / 'ham.h5'
-        LatticeHamiltonian.from_dict(params).to_hdf5(path)
+                                 twist=[0.01, 0.02])
+        hamiltonian = LatticeHamiltonian.from_dict(params)
 
-        from_file = NOMSDWavefunction.from_free_electron(path, nelec=(8, 8))
-        from_dict = NOMSDWavefunction.from_free_electron(
-            hubbard_params, nelec=(8, 8), spin_symm='collinear')
+        assert not self._degeneracy_warnings(hamiltonian, (8, 8))
 
-        assert np.allclose(from_file.dets, from_dict.dets, atol=1e-10)
+    @pytest.mark.parametrize('L1,L2,nelec', [(4, 4, (8, 8)), (4, 8, (16, 16)),
+                                             (6, 6, (18, 18))])
+    def test_the_default_twist_clears_the_default_tolerance(self, L1, L2,
+                                                            nelec):
+        """
+        The warning tells callers to reach for `DEFAULT_TWIST`, so the twist
+        has to split shells by more than `SHELL_TOL`. The splitting goes as the
+        square of the twist and shrinks with lattice size, so check a few.
+        """
+        hamiltonian = LatticeHamiltonian.from_dict({
+            'lattice': dict(L1=L1, L2=L2, boundary1='pbc', boundary2='pbc',
+                            twist=list(DEFAULT_TWIST)),
+            'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear'),
+        })
 
-    def test_a_supplied_lattice_is_used_as_given(self, hubbard_params, quiet):
-        lattice = Lattice.from_dict(dict(hubbard_params['lattice'],
-                                         twist=[0.05, 0.05]))
-        wavefunction = NOMSDWavefunction.from_free_electron(
-            hubbard_params, nelec=(8, 8), spin_symm='collinear',
-            lattice=lattice)
+        assert not self._degeneracy_warnings(hamiltonian, nelec)
 
-        assert wavefunction.dets.shape == (1, 16, 16)
-
-    def test_a_twist_that_contradicts_the_hamiltonian_warns(self,
-                                                            hubbard_params):
-        hamiltonian = LatticeHamiltonian.from_dict(hubbard_params)
-
-        with pytest.warns(UserWarning, match="differs from the Hamiltonian"):
-            NOMSDWavefunction.from_free_electron(hamiltonian, nelec=(8, 8),
-                                                 twist=[0.3, 0.3])
-
-    def test_a_twist_alongside_a_lattice_warns(self, hubbard_params):
-        lattice = Lattice.from_dict(hubbard_params['lattice'])
-
-        with pytest.warns(UserWarning, match="twist angle is ignored"):
-            NOMSDWavefunction.from_free_electron(
-                hubbard_params, nelec=(8, 8), spin_symm='collinear',
-                lattice=lattice, twist=[0.3, 0.3])
+    def test_the_tolerance_stays_above_the_eigensolver_noise_floor(self):
+        # a one-body term of bandwidth ~8t resolves eigenvalues to ~1e-13
+        assert SHELL_TOL > 1e-12
 
 
 class TestOneBodyShapes:
@@ -282,10 +282,10 @@ class TestOneBodyShapes:
 
 class TestRoundTrip:
 
-    def test_a_free_electron_wavefunction_round_trips(self, hubbard_params,
+    def test_a_free_electron_wavefunction_round_trips(self, hubbard,
                                                       tmp_path, quiet):
         wavefunction = NOMSDWavefunction.from_free_electron(
-            hubbard_params, nelec=(8, 8), spin_symm='collinear')
+            hubbard, nelec=(8, 8), spin_symm='collinear')
         path = tmp_path / 'wfn.h5'
         wavefunction.to_hdf5(path)
 

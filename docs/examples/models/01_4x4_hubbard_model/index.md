@@ -175,15 +175,19 @@ to unrestricted Hartree-Fock trial wavefunctions.
 
 `safiretools` provides a convenience classmethod, `Wavefunction.from_free_electron()`,
 for calculating free-electron trial wavefunctions.
-A small twist is applied to break k-space degeneracy for open-shell systems; the
-classmethod applies a small default twist, and also accepts a user-supplied one.
 
-We note that, because of the twist angle, the Hamiltonian will typically need to be
-rebuilt. `from_free_electron()` will do that for you if it is handed the lattice and
-Hamiltonian parameters, but here we build the twisted Hamiltonian explicitly, since we
-want to hand the *same* Hamiltonian to the Hartree-Fock solver further down.
+At half filling this 4x4 lattice is open-shell: the highest occupied level is
+six-fold degenerate and holds only three electrons per spin, so *which* three you
+occupy is arbitrary. A small twist on the
+lattice breaks that degeneracy and fixes the choice.
 
-... do we want to have a diagram here of k-space, and the expected one-body
+The twist is a property of the **lattice**, so it has to be applied when the
+Hamiltonian is built. `from_free_electron()` uses whatever Hamiltonian it is given. 
+We therefore build a *second*, Hamiltonian with a twist 
+for the trial wavefunction alone; the untwisted one from step 2. is what AFQMC
+actually runs, and is also what we hand the Hartree-Fock solver further down.
+`from_free_electron()` warns if you hand it a Hamiltonian whose shells are still
+degenerate at the fill level.
 
 ```{code-cell} ipython3
 ---
@@ -194,16 +198,17 @@ outputId: e6000516-1e4f-4ae3-db34-af0b0c4d03f7
 ---
 # First, let's compute the Free-Electron trial wavefunction
 from safiretools import Wavefunction
+from safiretools.wavefunction.free_electron import DEFAULT_TWIST
 
 input_params = dict(
     lattice = lattice_params,                           # from step 1. above
     hamiltonian = hamiltonian_params["hamiltonian"]     # from step 2. above
 )
 
-# a small twist, in radians per axis, breaks the k-space degeneracy
-twist = (4.10803005e-06, 4.58334805e-04)
+# a small irrational twist, in radians per axis, breaks the k-space degeneracy
+twist = DEFAULT_TWIST
 
-fe_lattice = Lattice.from_dict(params=dict(lattice_params, twist=twist))
+fe_lattice = Lattice.from_dict(params=dict(lattice_params, twist=list(twist)))
 fe_hamiltonian = HamiltonianBuilder.from_input(
     source=input_params,
     lattice=fe_lattice

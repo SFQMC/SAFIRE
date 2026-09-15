@@ -423,25 +423,30 @@ class Wavefunction(ABC):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_free_electron(cls, source, nelec, twist=None, spin_symm=None,
-                           lattice=None, filling_strategy='aufbau',
-                           shell_tol=1e-6) -> "Wavefunction":
+    def from_free_electron(cls, source, nelec, spin_symm=None,
+                           filling_strategy='aufbau',
+                           shell_tol=None) -> "Wavefunction":
         """
-        Build a free-electron trial wavefunction from a lattice model. Always a
+        Build a free-electron trial wavefunction from a
+        `safiretools.LatticeHamiltonian`. Always a
         `safiretools.NOMSDWavefunction`.
 
         See `safiretools.wavefunction.free_electron.from_free_electron` for the
-        full parameter documentation.
+        full parameter documentation. `shell_tol` defaults to that module's
+        `SHELL_TOL` rather than being restated here, so the two cannot drift.
         """
-        from safiretools.wavefunction.free_electron import from_free_electron
+        from safiretools.wavefunction.free_electron import (
+            SHELL_TOL,
+            from_free_electron,
+        )
         from safiretools.wavefunction.nomsd import NOMSDWavefunction
 
         _check_representation(cls, NOMSDWavefunction, 'from_free_electron')
 
         return from_free_electron(
-            source, nelec=nelec, twist=twist, spin_symm=spin_symm,
-            lattice=lattice, filling_strategy=filling_strategy,
-            shell_tol=shell_tol,
+            source, nelec=nelec, spin_symm=spin_symm,
+            filling_strategy=filling_strategy,
+            shell_tol=SHELL_TOL if shell_tol is None else shell_tol,
         )
 
     @classmethod

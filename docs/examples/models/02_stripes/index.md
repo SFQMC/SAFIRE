@@ -153,10 +153,14 @@ colab:
   base_uri: https://localhost:8080/
 ---
 # get a trial wavefunction: First, let's try a free-electron (i.e. non-interacting) wavefunction.
-# from_free_electron() reads the Hamiltonian back out of the file we just wrote, and
-# to_hdf5() appends the wavefunction to that same file.
+# from_free_electron() takes the Hamiltonian itself; to_hdf5() then appends the
+# wavefunction to the same file we wrote the Hamiltonian into.
+#
+# No twist is needed here: the open boundary along axis 1 and the pinning field
+# already split the shells, so the determinant is well defined. On a fully
+# periodic, unpinned lattice it would not be. See the 4x4 Hubbard example.
 Wavefunction.from_free_electron(
-    source=scratch_dir / "afqmc.h5",
+    source=builder.get_hamiltonian(),
     nelec=nelec
 ).to_hdf5(scratch_dir / "afqmc.h5")
 ```

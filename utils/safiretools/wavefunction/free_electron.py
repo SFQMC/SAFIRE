@@ -21,16 +21,23 @@ AFQMC run cares about — total momentum above all.
 """
 
 import logging
-from pathlib import Path
 from warnings import warn
 
 import numpy as np
 import scipy.linalg as spl
-import toml
 
 from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
+
+SHELL_TOL = 1e-10
+"""Default degeneracy tolerance for grouping eigenvalues into shells.
+
+Sized against `DEFAULT_TWIST`, which splits shells by ``4e-9`` to ``3e-8`` on
+the lattices we build (the splitting goes as the square of the twist, and
+shrinks with lattice size), and against the eigensolver's noise floor of
+roughly ``1e-13`` for a one-body term of bandwidth ``8t``. ``1e-10`` sits
+between the two."""
 
 # TODO: validate a "good" default small irrational twist angle
 THETA_X = 1 / np.sqrt(592560607)
@@ -40,33 +47,33 @@ THETA_Y = 1 / np.sqrt(47603)
 """Small irrational twist along axis 2; 47603 is prime."""
 
 DEFAULT_TWIST = 0.1 * np.array((THETA_X, THETA_Y))
-"""A small *irrational* twist, which lifts the degeneracies that make a
-free-electron determinant ill-defined on a finite lattice."""
+"""A small *irrational* twist, which lifts the degeneracies in open shell cases.
+
+Give it to the `~safiretools.hamiltonian.model.lattice.Lattice` the trial
+wavefunction's Hamiltonian is built on — it is a property of the lattice, not
+an argument to `from_free_electron`. The AFQMC run itself normally wants the
+*untwisted* Hamiltonian, so the two are built separately.
+
+It is small enough that the shells it splits stay within ``3e-8``, so it only
+reads as non-degenerate against `SHELL_TOL`; the two are sized together."""
 
 FILLING_STRATEGIES = ('aufbau', 'balanced', 'hund', 'alternating')
 """Recognized ways to fill a partially occupied degenerate shell."""
 
 
-def from_free_electron(hamiltonian, nelec, twist=None, spin_symm=None, lattice=None,
-                       filling_strategy='aufbau', shell_tol=1e-6):
+def from_free_electron(hamiltonian, nelec, spin_symm=None,
+                       filling_strategy='aufbau', shell_tol=SHELL_TOL):
     """
     Build a free-electron trial wavefunction for a lattice model.
 
     Parameters
     ----------
-    hamiltonian : safiretools.LatticeHamiltonian representing the model to build the 
-        wavefunction for.
+    hamiltonian : safiretools.LatticeHamiltonian
+        The lattice model to build the wavefunction for.
     nelec : tuple(int, int)
         Number of spin-up and spin-down electrons.
-    twist : array-like, optional
-        Twist angle per axis for the lattice. Defaults to `DEFAULT_TWIST`.
-        Ignored when `source` is an already-built Hamiltonian or `lattice` is
-        given, both of which carry their own twist.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry to build in. Taken from the Hamiltonian when omitted.
-    lattice : ~safiretools.hamiltonian.model.lattice.Lattice, optional
-        Lattice to build `source` on, when `source` is a parameter dict or TOML
-        file. Built from ``source['lattice']`` if omitted.
     filling_strategy : {'aufbau', 'balanced', 'hund', 'alternating'}, optional
         How to fill a partially occupied degenerate shell. Default ``'aufbau'``.
 
@@ -80,7 +87,7 @@ def from_free_electron(hamiltonian, nelec, twist=None, spin_symm=None, lattice=N
 
     shell_tol : float, optional
         Eigenvalues within this of each other belong to the same shell. Default
-        1e-6.
+        `SHELL_TOL = 1e-10`.
 
     Returns
     -------
@@ -92,8 +99,16 @@ def from_free_electron(hamiltonian, nelec, twist=None, spin_symm=None, lattice=N
     NotImplementedError
         For `SpinSymm.CLOSED`, which has no free-electron construction here.
     ValueError
-        If `source` is of no supported type, or the one-body term's shape does
-        not match `spin_symm`.
+        If `hamiltonian` is not a `safiretools.LatticeHamiltonian`, or the
+        one-body term's shape does not match `spin_symm`.
+
+    Warns
+    -----
+    UserWarning
+        If the highest occupied shell is degenerate and only partly filled, so
+        the determinant is not uniquely defined. Build the trial wavefunction
+        from a Hamiltonian on a lattice carrying a small irrational twist (see
+        `DEFAULT_TWIST`), which lifts the degeneracy.
 
     Notes
     -----
@@ -103,13 +118,7 @@ def from_free_electron(hamiltonian, nelec, twist=None, spin_symm=None, lattice=N
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
     from safiretools import LatticeHamiltonian, SpinSymm
 
-    if isinstance(hamiltonian, LatticeHamiltonian):
-        if twist is not None and np.any(np.asarray(twist) != hamiltonian.twist):
-            warn(
-                "the requested twist angle differs from the Hamiltonian's "
-                f"({twist} vs {hamiltonian.twist}); using the Hamiltonian's"
-            )
-    else:
+    if not isinstance(hamiltonian, LatticeHamiltonian):
         raise ValueError(
             f"cannot build a free-electron wavefunction from {hamiltonian!r}. "
             "Please provide a LatticeHamiltonian instance."
@@ -163,7 +172,7 @@ def to_dense(matrix):
     return matrix.toarray() if hasattr(matrix, 'toarray') else np.asarray(matrix)
 
 
-def group_by_shell(eigenvalues, orbitals, tol=1e-6):
+def group_by_shell(eigenvalues, orbitals, tol=SHELL_TOL):
     """
     Group eigenvalues and their orbitals into shells of degenerate states.
 
@@ -177,7 +186,7 @@ def group_by_shell(eigenvalues, orbitals, tol=1e-6):
     orbitals : numpy.ndarray
         Corresponding eigenvectors, as columns.
     tol : float, optional
-        Degeneracy tolerance. Default 1e-6.
+        Degeneracy tolerance. Default `SHELL_TOL`.
 
     Returns
     -------
@@ -268,6 +277,11 @@ def fill_shells(shells, nelec: int, strategy='aufbau'):
     ------
     ValueError
         If `strategy` is unknown, or the shells cannot hold `nelec` electrons.
+
+    Warns
+    -----
+    UserWarning
+        If the fill stops part-way through a degenerate shell, see `from_free_electron`.
     """
     if nelec == 0:
         nrows = shells[0]['orbitals'].shape[0] if shells else 0
@@ -287,6 +301,19 @@ def fill_shells(shells, nelec: int, strategy='aufbau'):
         degeneracy = shell['degeneracy']
         in_shell = min(remaining, degeneracy)
         selected = _shell_selection(degeneracy, in_shell, strategy)
+
+        if in_shell < degeneracy:
+            warn(
+                f"the highest occupied shell (energy {shell['energy']:.6f}) is "
+                f"{degeneracy}-fold degenerate but holds only {in_shell} "
+                f"electron(s), so which of its orbitals the determinant occupies "
+                f"is arbitrary. The '{strategy}' strategy picked "
+                f"{sorted(selected)}. Build the trial "
+                "wavefunction's Hamiltonian on a lattice with a small irrational "
+                "twist (see DEFAULT_TWIST) to break the degeneracy due to" \
+                "translational symmetry. A  degeneracy between bands or spin sectors " 
+                "requires a one-body term that explicitly breaks those symmetries."
+            )
 
         logger.debug("  shell %d: energy=%.6f, degeneracy=%d, filling %d of %d "
                      "at %s", ishell, shell['energy'], degeneracy, in_shell,
@@ -317,7 +344,7 @@ def _occupy(one_body, nelec: int, filling_strategy: str,
 
 
 def _collinear_orbitals(one_body, nelec, nmo: int, filling_strategy='aufbau',
-                        shell_tol=1e-6):
+                        shell_tol=SHELL_TOL):
     """
     Occupied orbitals for a collinear free-electron determinant: the two spin
     channels are diagonalized independently and their columns concatenated.
@@ -362,7 +389,7 @@ def _collinear_blocks(one_body, nmo: int):
 
 
 def _noncollinear_orbitals(one_body, nelec, nmo: int,
-                           filling_strategy='aufbau', shell_tol=1e-6):
+                           filling_strategy='aufbau', shell_tol=SHELL_TOL):
     """
     Occupied orbitals for a noncollinear free-electron determinant: one
     diagonalization over the full ``2*nmo`` spinor basis.
