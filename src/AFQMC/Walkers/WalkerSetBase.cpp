@@ -18,8 +18,6 @@
 #include <cstdlib>
 
 #include "AFQMC/Walkers/WalkerSetBase.h"
-#include "utilities/check_shape.hpp"
-#include "utilities/parser.h"
 
 namespace sfqmc
 {
