@@ -13,18 +13,6 @@
 
 import numpy as np
 
-
-def stddev(values):
-    """
-    Standard deviation, computed as
-    ``1/(N-1) * sum_i |values[i] - mean(values)|**2``.
-
-    A thin wrapper over ``np.std(values, ddof=1)``, kept for callers outside
-    this package. Nothing in safiretools uses it.
-    """
-    return np.std(values, ddof=1)
-
-
 def corr(values: np.ndarray):
     """
     Compute the autocorrelation length of the input values.
