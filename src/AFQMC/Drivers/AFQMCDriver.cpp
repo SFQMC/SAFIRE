@@ -94,15 +94,6 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
       }   
     }
 
-    // checkpoint
-    if (nCheckpoint > 0 && (iStep + 1) % nCheckpoint == 0) {
-      if (!checkpoint(wset, iStep, step_tot))
-      {
-        app_error("Error in AFQMCDriver::checkpoint(). ");
-        app_error_flush();
-        return false;
-      }
-    }
 
     if(iStep % log_interval == 0) {
       const double energy = averageEloc(*mpi_, wset);
@@ -121,12 +112,6 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   }
   app_log(2, hrule());
 
-  // steps left over by an nStep that is not a multiple of the interval
-
-  if (nCheckpoint > 0)
-    checkpoint(wset, step_tot/nPopulation, step_tot);
-
-  // print timers
   if(mpi_->comm.root()) {
     std::string results_filename = std::format("{}.results.h5", output_name_);
     estimators_.write(results_filename);

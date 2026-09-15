@@ -108,8 +108,6 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
   auto [ham_name,wfn_name,wset_name,prop_name] = get_component_ids(exec);
 
   std::string hdf_read_restart;
-  bool set_nWalker_target;
-  set_nWalker_target = exec.set_nwalker_to_target;
   int nWalkers = exec.n_walkers_per_mpi_task;
 
   bool restarted = false;
@@ -168,7 +166,7 @@ bool DriverFactory<MEM>::executeAFQMCDriver(std::string title, int m_series, con
   auto& wset = [&]() -> decltype(auto) {
     if(restarted) {
       h5::file file(hdf_read_restart,'r');
-      return WSetFac.getWalkerSetFromHDF5(mpi, wset_name, rng_wlk, walker_type, file, nWalkers, set_nWalker_target);
+      return WSetFac.getWalkerSetFromHDF5(mpi, wset_name, rng_wlk, walker_type, file, nWalkers, false);
     } else {
       return WSetFac.getWalkerSet(mpi, wset_name, rng_wlk, walker_type, WfnFac.getInitialGuess(wfn_name), nWalkers);
     }
@@ -240,8 +238,6 @@ bool DriverFactory<MEM>::executeFTAFQMCDriver(std::string title, int m_series, c
   std::string hdf_read_restart;
   // read but unused: finite-T restart is not yet supported, so the walker set is
   // always built fresh from the wavefunction guess (see below).
-  [[maybe_unused]] bool set_nWalker_target;
-  set_nWalker_target = exec.set_nwalker_to_target;
   int nWalkers = exec.n_walkers_per_mpi_task;
 
   bool restarted = false;

@@ -67,10 +67,6 @@ public:
         OrbMats(std::move(orbs_))
   {
     utils::check(OrbMats.extent(0) == ci.size(), "Size mismatch");
-    if (params.rediag) {
-      utils::check(false,"finish");
-      //recompute_ci();
-    }
   }
 
   int number_of_cholesky_vectors() const { return HamOp.number_of_cholesky_vectors(); }
