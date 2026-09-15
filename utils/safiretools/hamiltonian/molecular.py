@@ -864,7 +864,7 @@ def freeze_core(h1e, chol, ecore, nc, ncas, verbose=True):
     chol = chol.reshape((-1, nbasis, nbasis))
     psi = np.identity(nbasis)[:, :nc]
     Gcore = gab(psi, psi)
-    efzc = local_energy_generic_cholesky(h1e, chol, [Gcore, Gcore], ecore)
+    efzc = local_energy_generic_cholesky(h1e, chol, [Gcore, Gcore])
     hc_a, hc_b = core_contribution_cholesky(chol, [Gcore, Gcore])
 
     h1e = np.array([h1e + 2 * hc_a, h1e + 2 * hc_b])
@@ -877,15 +877,15 @@ def freeze_core(h1e, chol, ecore, nc, ncas, verbose=True):
         logger.info("number of active orbitals: %d", ncas)
         logger.info("freezing %d core electrons and %d virtuals",
                     2 * nc, nbasis - nc - ncas)
-        logger.info("total frozen core energy: %s", efzc[0])
+        logger.info("total frozen core energy: %s", efzc[0] + ecore)
         logger.info("E0 (input): %13.8e", ecore)
-        logger.info("frozen 1-body contribution: %s", efzc[1] - ecore)
+        logger.info("frozen 1-body contribution: %s", efzc[1])
         logger.info("frozen 2-body contribution: %s", efzc[2])
 
-    return h1e, chol, efzc[0]
+    return h1e, chol, efzc[0] + ecore
 
 
-def local_energy_generic_cholesky(h1e, chol_vecs, G, econstant):
+def local_energy_generic_cholesky(h1e, chol_vecs, G):
     r"""
     Local energy for a generic two-body Hamiltonian, from Cholesky-decomposed
     two-electron integrals.
@@ -898,9 +898,6 @@ def local_energy_generic_cholesky(h1e, chol_vecs, G, econstant):
         Cholesky vectors, ``(nchol, nbasis, nbasis)``.
     G : list of numpy.ndarray
         Up and down Green's functions.
-    econstant : float
-        Constant energy contribution — nuclear repulsion plus any frozen-core
-        or other term that does not depend on `G`.
 
     Returns
     -------
@@ -929,7 +926,7 @@ def local_energy_generic_cholesky(h1e, chol_vecs, G, econstant):
 
     e2b = 0.5 * (ecoul - exx)
 
-    return (e1b + e2b + econstant, e1b + econstant, e2b)
+    return (e1b + e2b, e1b, e2b)
 
 
 def core_contribution_cholesky(chol_vecs, G):
