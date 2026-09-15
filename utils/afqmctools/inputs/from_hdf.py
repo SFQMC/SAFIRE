@@ -106,27 +106,26 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
     Notes
     -----
     For parameters that may be set in both args_namespace and kwargs, the values in
-    args_namespace will take precedence. The parameters to which this applies are:
-    - id
-    - series
+    args_namespace will take precedence. The only parameter to which this applies is
+    output_name, which names the results file. When it is left out, AFQMC names the
+    results after the input file itself.
 
     For input blocks provided in exec_opts, each parameter is appended into the
     corresponding block in the JSON file. For example, if exec_opts contains
     ``{"execute": {"walker_set": {"min_weight": 0.01}}}``, the resulting JSON
     file will contain the following::
-    
+
         {
-            "afqmc": {
-                "execute": {
-                    "walker_set": {
-                        "walker_type": "COLLINEAR",
-                        "min_weight": 0.01
-                    },
-                    ...
-                }
+            "driver": "afqmc",
+            "execute": {
+                "walker_set": {
+                    "walker_type": "COLLINEAR",
+                    "min_weight": 0.01
+                },
+                ...
             }
         }
-    
+
     since COLLINEAR is the default walker type.
     """
     if fham0 is None:
@@ -136,9 +135,9 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
         path = os.path.dirname(fout)
         fwfn = os.path.relpath(fwfn0, path)
         fham = os.path.relpath(fham0, path)
-        inps["afqmc"]["execute"]["wavefunction"]["filename"] = fwfn
+        inps["execute"]["wavefunction"]["filename"] = fwfn
         if fham != fwfn:
-            inps["afqmc"]["execute"]["hamiltonian"] = dict(
+            inps["execute"]["hamiltonian"] = dict(
                 filename = fham
             )
     if args_namespace is not None:
@@ -154,26 +153,23 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
          # we want to append the settings in each known input block to what (may) exist in inps
         input_block_generator = ( (key,exec_opts[key]) for key in JSON_EXECUTE_INPUT_BLOCKS if key in exec_opts )
         for key,input_block in input_block_generator:
-            input_block_dict = inps["afqmc"]["execute"].setdefault(key, {})
+            input_block_dict = inps["execute"].setdefault(key, {})
             for subkey,val in input_block.items():
                 input_block_dict[subkey] = val
             # remove the key from exec_opts so it doesn't get passed to .update(exec_opts)
             exec_opts.pop(key)
 
         # set all other options directly
-        inps["afqmc"]["execute"].update(exec_opts)
+        inps["execute"].update(exec_opts)
 
-    # get project settings. Not every caller's namespace carries them, so they are optional
-    if args_namespace is not None and getattr(args_namespace, 'series', None):
-        inps["afqmc"]["project"]["series"] = getattr(args_namespace, 'series')
-    elif kwargs.get('series'):
-        inps["afqmc"]["project"]["series"] = kwargs['series']
+    # the output name is optional: not every caller's namespace carries it, and AFQMC falls
+    # back to the name of the input file when it is absent
+    if args_namespace is not None and getattr(args_namespace, 'output_name', None):
+        inps["output_name"] = getattr(args_namespace, 'output_name')
+    elif kwargs.get('output_name'):
+        inps["output_name"] = kwargs['output_name']
 
-    if args_namespace is not None and getattr(args_namespace, 'id', None):
-        inps["afqmc"]["project"]["id"] = getattr(args_namespace, 'id')
-    elif kwargs.get('id'):
-        inps["afqmc"]["project"]["id"] = kwargs['id']
-    
+
     with open(fout, 'w') as f:
         json.dump(inps, f, indent=2)
 
@@ -213,26 +209,23 @@ def default_inputs(fwfn0, fham0=None):
         else:
             msg = 'must provide initial walker --fham_exe'
             raise RuntimeError(msg)
-    inps = dict(afqmc={
-        "project": {
-            "id": "qmc",
-            "series": 0,
-        },
+    inps = {
+        "driver": "afqmc",
         "execute": {
             "walker_set": {
                 'walker_type': info['walker_type']
             },
-        "wavefunction": {
-            "filename": fwfn0,
-        },
-        "timestep": 0.01,
-        "steps": 10000,
-        "n_walkers_per_mpi_task": 10,
+            "wavefunction": {
+                "filename": fwfn0,
+            },
+            "timestep": 0.01,
+            "steps": 10000,
+            "n_walkers_per_mpi_task": 10,
         }
-    })
+    }
     use_wfn_ham = fham0 == fwfn0
     if not use_wfn_ham:
-        inps["afqmc"]["execute"]["hamiltonian"] = {
+        inps["execute"]["hamiltonian"] = {
           "name": "ham0",
           "filename": fham0,
         }
