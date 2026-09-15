@@ -903,13 +903,6 @@ def local_energy_generic_cholesky(h1e, chol_vecs, G):
     -------
     (E, T, V) : tuple
         Total, one-body and two-body energies.
-
-    Notes
-    -----
-    The Coulomb term couples the spin channels only through their sum, so the
-    four :math:`\{uu, dd, ud, du\}` contributions factorize into one product
-    over ``G[0] + G[1]``. The exchange term does not, and is summed over the
-    spin channels separately.
     """
     Gtot = G[0] + G[1]
 
