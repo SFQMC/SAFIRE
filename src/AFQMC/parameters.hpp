@@ -17,9 +17,8 @@ namespace sfqmc::afqmc {
 enum class DriverType {
   afqmc,
   ftafqmc,
-  csafqmc,
 };
-SAFIRE_DEFINE_ENUM_NAMES(DriverType, afqmc, ftafqmc, csafqmc);
+SAFIRE_DEFINE_ENUM_NAMES(DriverType, afqmc, ftafqmc);
 
 SAFIRE_DEFINE_ENUM(WALKER_TYPES, {
   {UNDEFINED_WALKER_TYPE, "undefined"},
