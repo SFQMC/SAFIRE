@@ -436,25 +436,32 @@ class TestFactoryDispatch:
         with pytest.raises(ValueError, match=target.__name__):
             getattr(other, factory)(None, None)
 
+    @staticmethod
+    def _hubbard_2x2():
+        return LatticeHamiltonian.from_dict({
+            'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
+            'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear'),
+        })
+
     def test_from_free_electron_dispatches_to_nomsd(self):
-        params = {'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
-                  'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear')}
+        hamiltonian = self._hubbard_2x2()
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            wavefunction = Wavefunction.from_free_electron(params, nelec=(2, 2))
+            wavefunction = Wavefunction.from_free_electron(hamiltonian,
+                                                           nelec=(2, 2))
 
         assert isinstance(wavefunction, NOMSDWavefunction)
         assert wavefunction.nelec == (2, 2)
 
     def test_from_free_electron_matches_the_subclass_alias(self):
-        params = {'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
-                  'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear')}
+        hamiltonian = self._hubbard_2x2()
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            viaBase = Wavefunction.from_free_electron(params, nelec=(2, 2))
-            viaSubclass = NOMSDWavefunction.from_free_electron(params,
+            viaBase = Wavefunction.from_free_electron(hamiltonian,
+                                                      nelec=(2, 2))
+            viaSubclass = NOMSDWavefunction.from_free_electron(hamiltonian,
                                                                nelec=(2, 2))
 
         assert np.allclose(viaBase.dets, viaSubclass.dets)

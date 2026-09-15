@@ -30,22 +30,31 @@ safiretools can be invoked within a Python script as
 
     input_params = toml.load("input.toml")
 
-    # Build and save a lattice model Hamiltonian
+    # Build and save a lattice model Hamiltonian. Its lattice already carries
+    #   the twist set in the [lattice] section of input.toml.
     hamiltonian = HamiltonianBuilder.from_input(source=input_params).get_hamiltonian()
     hamiltonian.to_hdf5("afqmc.h5")
 
-    # compute and save a free-electron trial wfn, into the same file
+    # compute and save a free-electron trial wfn, into the same file. The
+    #   lattice is already twisted, so one Hamiltonian serves both the trial
+    #   wavefunction and the AFQMC run.
     Wavefunction.from_free_electron(
-        source=input_params,
+        source=hamiltonian,
         nelec=hamiltonian.nelec,
-        twist=input_params["lattice"].get("twist", None),
     ).to_hdf5("afqmc.h5")
 
-`Wavefunction.from_free_electron()` accepts a `twist` keyword argument for the
-sake of reproducibility for open-shell systems.
-Unlike many of the other examples, here we explicitly set the twist to that 
-of the lattice.
-By default, i.e. if twist is None, a small incommensurate twist angle is used instead.
+The twist is a property of the **lattice**:
+`Wavefunction.from_free_electron()` uses the Hamiltonian exactly as given and
+applies no twist of its own.
+
+In this example, the lattice we want to
+simulate at the AFQMC level of theory is already twisted.
+When the lattice of interest carries no twist, an open-shell free-electron
+which orbitals of a degenerate shell you occupy is
+arbitrary, and `from_free_electron()` warns when it has to make that choice.
+The fix is to build a **second**, twisted Hamiltonian for the trial
+wavefunction alone, and to hand AFQMC the untwisted one. The block below and
+the other examples in this section all follow that pattern.
 
 Building the trial wavefunction does not measure its energy.
 To evaluate the variational energy of a trial wavefunction with respect to the
@@ -54,7 +63,8 @@ in :ref:`setup_ex_9`.
 
 .. code-block:: python
 
-    from safiretools import HamiltonianBuilder, Wavefunction
+    from safiretools import HamiltonianBuilder, Lattice, Wavefunction
+    from safiretools.wavefunction.free_electron import DEFAULT_TWIST
 
     infile = "input_charge.toml"
 
@@ -62,9 +72,20 @@ in :ref:`setup_ex_9`.
     hamiltonian = HamiltonianBuilder.from_input(infile).get_hamiltonian()
     hamiltonian.to_hdf5("afqmc.h5")
 
+  # The trial wavefunction needs its *own* Hamiltonian, built on a lattice
+    #   carrying a small irrational twist.
+    #   The AFQMC run itself uses the untwisted Hamiltonian above.
+    fe_lattice = Lattice.from_dict(
+        dict(hamiltonian.lattice_params, twist=list(DEFAULT_TWIST))
+    )
+    fe_hamiltonian = HamiltonianBuilder.from_input(
+        infile,
+        lattice=fe_lattice,
+    ).get_hamiltonian()
+
     # compute and save a free-electron trial wfn, into the same file
     Wavefunction.from_free_electron(
-        source=infile,
+        source=fe_hamiltonian,
         nelec=hamiltonian.nelec,
     ).to_hdf5("afqmc.h5")
 

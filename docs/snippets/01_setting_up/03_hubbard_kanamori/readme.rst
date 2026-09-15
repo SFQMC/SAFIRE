@@ -19,7 +19,8 @@ safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from safiretools import HamiltonianBuilder, Wavefunction
+    from safiretools import HamiltonianBuilder, Lattice, Wavefunction
+    from safiretools.wavefunction.free_electron import DEFAULT_TWIST
 
     infile = "input.toml"
 
@@ -27,17 +28,31 @@ safiretools can be invoked within a Python script as
     hamiltonian = HamiltonianBuilder.from_input(infile).get_hamiltonian()
     hamiltonian.to_hdf5("afqmc.h5")
 
+    # The trial wavefunction needs its *own* Hamiltonian, built on a lattice
+    #   carrying a small irrational twist.
+    #   The AFQMC run itself uses the untwisted Hamiltonian above.
+    fe_lattice = Lattice.from_dict(
+        dict(hamiltonian.lattice_params, twist=list(DEFAULT_TWIST))
+    )
+    fe_hamiltonian = HamiltonianBuilder.from_input(
+        infile,
+        lattice=fe_lattice,
+    ).get_hamiltonian()
+
     # compute and save a free-electron trial wfn, into the same file
     Wavefunction.from_free_electron(
-        source=infile,
+        source=fe_hamiltonian,
         nelec=hamiltonian.nelec,
     ).to_hdf5("afqmc.h5")
 
-`Wavefunction.from_free_electron()` accepts a `twist` keyword argument for the
-sake of reproducibility for open-shell systems.
-`twist` should be a 2-d iterable containing :math:`\vec{\theta}=(\theta_1,\theta_2)`
-in radians even if one component is set to 0.0.
-By default, a small incommensurate twist angle is used.
+`Wavefunction.from_free_electron()` uses the Hamiltonian exactly as given and
+applies no twist of its own, so the twist belongs on the lattice you build that
+Hamiltonian from. `twist` should be a 2-d iterable containing
+:math:`\vec{\theta}=(\theta_1,\theta_2)` in radians even if one component is
+set to 0.0.
+For an open-shell filling, an untwisted lattice leads to an abitrary choice 
+of which degenerate orbitals are occupied.
+`from_free_electron()` warns when that happens.
 
 Building the trial wavefunction does not measure its energy.
 To evaluate the variational energy of a trial wavefunction with respect to the

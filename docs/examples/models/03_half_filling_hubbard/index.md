@@ -491,7 +491,7 @@ plt.show()
 * What if we didn't use the correct signs ($M_i = (-1)^i\Delta_i$) for the HF ansatz? Could we construct an even more constrained wave function?
 * What do the local spin/charge observables of the optimized ansatz look like?
 * What happens for $U=8$? Do we need a different wave function?
-* What happens if you start from a free electron state instead of the HF state? (`free_wfn = Wavefunction.from_free_electron(ham_fname, nelec, spin_symm="nc")`)
+* What happens if you start from a free electron state instead of the HF state? (`free_wfn = Wavefunction.from_free_electron(builder.get_hamiltonian(), nelec, spin_symm="nc")`) — at half filling the untwisted lattice is open-shell, so this warns; build the trial's Hamiltonian on a lattice with a small twist to make the determinant well defined.
 
 +++ {"id": "f7eab26a-3624-402e-83de-00ee38daf267"}
 

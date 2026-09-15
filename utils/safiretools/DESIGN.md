@@ -940,11 +940,23 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   layout fallback for untagged files, exactly as the Python side does, and the `format`
   (`"std"`/`"coqui"`) axis is unaffected: a CoQuí file has no `Hamiltonian` group and so no tag.
 
-- **`from_free_electron` should not overwrite a parameter dict's own `lattice.twist`.** It
-  substitutes `DEFAULT_TWIST` unless `twist=` is passed explicitly, so a twist supplied in an input
-  file is silently ignored and every caller has to re-pass it — which is why the explicit `twist=`
-  in `docs/snippets/01_setting_up/06_twist_angle` is load-bearing rather than decorative. Preserved
-  for now because doc and user code is written against it.
+- ~~**`from_free_electron` should not overwrite a parameter dict's own `lattice.twist`.**~~ Resolved.
+  `from_free_electron` now takes only a built `LatticeHamiltonian` and applies no twist at all: the
+  twist is a property of the `Lattice` the Hamiltonian was built on, so there is nothing left to
+  overwrite. The `twist=` and `lattice=` parameters are gone from both the free function and
+  `Wavefunction.from_free_electron`. Callers that want a twisted trial wavefunction build a second
+  Hamiltonian on a twisted lattice and hand AFQMC the untwisted one; the docs under
+  `docs/snippets/01_setting_up` and `docs/examples/models` all follow that pattern.
+
+- **The open-shell warning and `SHELL_TOL` are sized against each other.** `from_free_electron`
+  warns when the fill stops part-way through a degenerate shell, which is exactly the case a twist
+  is meant to fix — so a twisted lattice silences it without the code ever reading a twist
+  attribute. That balance depends on `SHELL_TOL` (`1e-10`) sitting between the splitting
+  `DEFAULT_TWIST` produces (`4e-9`–`3e-8`, falling as the square of the twist and with lattice size)
+  and the eigensolver noise floor (`~1e-13`). Raising `SHELL_TOL` back toward `1e-6`, or shrinking
+  `DEFAULT_TWIST`, makes the warning fire on lattices that are in fact fine. `SHELL_TOL` is defined
+  once and `Wavefunction.from_free_electron` defers to it via `shell_tol=None` rather than
+  restating the number.
 
 - **Port `docs/tutorials/solids/04_computing_observables` off afqmctools.** It is the last doc source
   still calling `afqmctools.hamiltonian.converter.read_hamiltonian`, because its provided `hamil.h5`

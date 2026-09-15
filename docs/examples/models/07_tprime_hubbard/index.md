@@ -122,12 +122,15 @@ input_params = dict(
     hamiltonian = hamiltonian_params["hamiltonian"]     # from step 2. above
 )
 
-# twist from ref 1:
-twist = (0.0,0.0) #(0.01,0.01) # this twist was used for 4x16 with t' = 0.3t
+# twist from ref 1: this twist was used for 4x16 with t' = 0.3t
+twist = (0.01,0.01)
 
 # The trial wavefunction is built from the *un-pinned* Hamiltonian - the pinning
-# field added above is only wanted for the AFQMC run itself. Build it explicitly
-# so that the same Hamiltonian can be handed to the HF solver below.
+# field added above is only wanted for the AFQMC run itself - and on a *twisted*
+# lattice. Without the twist the highest occupied level here is 4-fold
+# degenerate and only partly filled, so the determinant would not be well
+# defined and from_free_electron() would warn. Build it explicitly so that the
+# same Hamiltonian can be handed to the HF solver below.
 fe_lattice = Lattice.from_dict(dict(lattice_params, twist=twist))
 fe_hamiltonian = HamiltonianBuilder.from_input(
     source=input_params,
