@@ -4,7 +4,6 @@
 #include <string_view>
 #include <vector>
 #include <optional>
-#include <fstream>
 #include <filesystem>
 
 #include "AFQMC/config.h"
@@ -259,7 +258,7 @@ SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonia
 
 
 struct AFQMCParameters {
-  // not a member of the object itself: the driver type is the key the object is stored under
+  // selects which driver runs the execute blocks
   DriverType driver{DriverType::afqmc};
 
   // results will be written to `<output_name>.results.h5`. defaults to the name of the input file
@@ -274,35 +273,12 @@ struct AFQMCParameters {
   std::vector<HamiltonianParameters> hamiltonian{};
   std::vector<PropagatorParameters> propagator{};
 };
-SAFIRE_DEFINE_PARAMETERS(AFQMCParameters, output_name, execute, walker_set, wavefunction, hamiltonian,
+SAFIRE_DEFINE_PARAMETERS(AFQMCParameters, driver, output_name, execute, walker_set, wavefunction, hamiltonian,
                          propagator);
 
 
-/// Reads the whole input document. The key of the top level object selects its driver, e.g. {"afqmc": {...}}.
-/// An input that does not name its output is named after the input file itself.
-inline AFQMCParameters parse_input_file(const std::filesystem::path& filename) {
-  std::ifstream input{filename};
-  if(!input) {
-    throw std::runtime_error{std::format("Could not open input file '{}'", filename.string())};
-  }
-
-  const nlohmann::json raw_parameters = nlohmann::json::parse(input);
-
-  utils::check(raw_parameters.is_object(), "Expected a json object at the top level of the input file, but found {}.",
-               raw_parameters.type_name());
-  utils::check(raw_parameters.size() == 1, "The input file needs to contain exactly one simulation block.");
-
-  const auto simulation = raw_parameters.cbegin();
-  AFQMCParameters params;
-  from_json(nlohmann::json(simulation.key()), params.driver);
-  simulation.value().get_to(params);
-
-  if(params.output_name.empty()) {
-    params.output_name = filename.stem().string();
-  }
-  return params;
-}
-
+/// Parses the input json file. An input that does not name its output is named after the input file itself.
+AFQMCParameters parse_input_file(const std::filesystem::path &filename);
 void print_parameters(const AFQMCParameters& params);
 
 }

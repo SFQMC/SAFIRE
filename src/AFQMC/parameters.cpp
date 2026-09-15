@@ -1,6 +1,7 @@
 #include "parameters.hpp"
 
 #include "IO/banner.hpp"
+#include <fstream>
 
 namespace sfqmc::afqmc {
 
@@ -94,10 +95,27 @@ std::string parameter_string(const nlohmann::ordered_json& json, int column) {
 
 } // namespace
 
+AFQMCParameters parse_input_file(const std::filesystem::path& filename) {
+  std::ifstream input{filename};
+  if(!input) {
+    throw std::runtime_error{std::format("Could not open input file '{}'", filename.string())};
+  }
+
+  const nlohmann::json raw_parameters = nlohmann::json::parse(input);
+
+  AFQMCParameters params;
+  raw_parameters.get_to(params);
+
+  if(params.output_name.empty()) {
+    params.output_name = filename.stem().string();
+  }
+  return params;
+}
+
 void print_parameters(const AFQMCParameters& params) {
   app_log(2, banner("Input parameters"));
 
-  app_log(2, parameter_string(nlohmann::ordered_json{{"output_name", params.output_name}}, 2));
+  app_log(2, parameter_string(nlohmann::ordered_json{{"driver", params.driver}, {"output_name", params.output_name}}, 2));
 
   int n{};
   for(const ExecuteParameters& exec : params.execute) {

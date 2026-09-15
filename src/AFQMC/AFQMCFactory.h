@@ -69,7 +69,7 @@ void push_blocks(Factory& fac, const std::vector<Params>& blocks)
   * - DriverFactory DriverFac
 
  *
- * @param params AFQMCParameters The deserialized contents of the simulation block of the input file
+ * @param params AFQMCParameters The deserialized contents of the input file
  */
 template<MEMORY_SPACE MEM>
 class AFQMCFactory

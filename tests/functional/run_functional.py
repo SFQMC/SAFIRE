@@ -83,9 +83,9 @@ class TestType(enum.Enum):
 SIGNIFICANCE_LEVEL = 0.001
 MACHINE_EPS = 1e-9
 
-# AFQMC's own output, named after the project id in write_input. One run writes one file, with
-# the observables of each execute block below a Stage<N> group of its own.
-AFQMC_RESULTS = "qmc.results.h5"
+# AFQMC's own output, named after the stem of the input file write_input writes. One run writes
+# one file, with the observables of each execute block below a Stage<N> group of its own.
+AFQMC_RESULTS = "afqmc.results.h5"
 
 
 @dataclass
@@ -245,10 +245,7 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
     execute["seed"] = 42
 
     document = {
-        "afqmc": {
-            "project": {"id": "qmc", "series": 0},
-            "execute": execute,
-        }
+        "execute": execute,
     }
     with open(path, "w") as f:
         json.dump(document, f, indent=2)
