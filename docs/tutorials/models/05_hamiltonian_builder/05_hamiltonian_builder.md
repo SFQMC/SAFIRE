@@ -19,13 +19,13 @@ The Hamiltonian builder requires a Lattice instance to build the Hamiltonian on
 (see {doc}`../03_setting_up_a_lattice/03_setting_up_a_lattice` for details on the lattice parameters).
 We assume familiarity with the Lattice class in this tutorial.
 
-The Hamiltonian builder (`HamiltonianBuilder` class in afqmctools) is
+The Hamiltonian builder (`HamiltonianBuilder` class in safiretools) is
 responsible for performing "build steps".
 A "build step" consists of constructing a Hamiltonian component (i.e. term),
 and adding it to the `Hamiltonian` that it has.
-As we saw in the Hamiltonian director tutorial ({doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`),
-the Hamiltonian director can be used to build a lattice model Hamiltonian by
-"directing" the Hamiltonian builder to perform build steps.
+As we saw in the previous tutorial ({doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`),
+`HamiltonianBuilder.from_input()` can be used to build a lattice model Hamiltonian by
+automatically running the build steps implied by a set of input Hamiltonian parameters.
 This is the recommended way of building lattice model Hamiltonians;
 however, the Hamiltonian builder may be used directly
 to gain more control over the build steps.
@@ -97,8 +97,8 @@ The terms for which rule 3 do not currently apply are:
 ## Part II: Using the Hamiltonian builder
 
 The Hamiltonian builder must be used in conjunction with a Lattice instance.
-In addition, afqmctools provides a function that can directly write the Hamiltonian
-that is built by the Hamiltonian builder into an HDF5 file that can be used by SAFIRE.
+In addition, the Hamiltonian that the builder produces can write itself directly into
+an HDF5 file that can be used by SAFIRE, via its `.to_hdf5()` method.
 Therefore, a typical use of the `HamiltonianBuilder` class in a Python script will look like the
 code block below.
 
@@ -114,15 +114,13 @@ are included.
 ```{code-cell} ipython3
 :id: fdf7cd0e-b553-4ac1-8f0f-1730a3faf403
 
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-from afqmctools.utils.io import write_model_hamiltonian
+from safiretools import HamiltonianBuilder, Lattice
 from pathlib import Path
 
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params={
         'L1' : 4,
         'L2' : 4,
@@ -141,10 +139,7 @@ builder.onsite_hubbard(4.0)
 builder.finalize()
 
 # save for latter use
-write_model_hamiltonian(
-    hamiltonian=builder.hamiltonian,
-    fname=scratch_dir / 'hamiltonian.h5'
-)
+builder.get_hamiltonian().to_hdf5(scratch_dir / 'hamiltonian.h5')
 ```
 
 +++ {"id": "d95754b7-05ef-40a0-9632-c660f535d095"}
@@ -161,7 +156,7 @@ Now that we understand the role of the Hamiltonian builder, and how it will typi
 we will cover the specific terms that can be built.
 We will also cover any term specific details that have not been covered so far.
 
-**We note that the same input conventions for parameters are used by the HamiltonianDirector since it simply forwards parameters to the HamiltonianBuilder.**
+**We note that the same input conventions for parameters are used by `HamiltonianBuilder.from_input()` since it simply forwards parameters to these build steps.**
 
 Each term is explored in it's own respective subsection.
 A minimal list of sections that should be covered are,
@@ -189,12 +184,12 @@ To cover:
 - hopping with non-trivial sublattice and band degrees of freedom.
 - using no hopping
 
-`afqmctools` can generate nth-order neighbor hopping.
+`safiretools` can generate nth-order neighbor hopping.
 
 ```{code-cell} ipython3
 :id: 8b6da842-a3a2-4a30-a408-b3af7a185ad2
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from safiretools import HamiltonianBuilder
 
 hamiltonian_params = {
     "lattice" : dict(
@@ -209,7 +204,7 @@ hamiltonian_params = {
     )
 }
 
-hamiltonian = HamiltonianDirector(hamiltonian_params).build()
+hamiltonian = HamiltonianBuilder.from_input(hamiltonian_params).get_hamiltonian()
 ```
 
 +++ {"id": "668e3150-2f46-4f71-81c2-16845b15188e"}
@@ -251,7 +246,7 @@ to cover:
 ## How to handle more general Hamiltonians
 
 to cover:
-- taking control of the Builder and returning it to the Director
+- combining `from_input()`-style build steps with fully custom build steps
 
 ```{code-cell} ipython3
 :id: da9c7b01-bc46-448d-b4dd-9d057bfac5b7
@@ -259,30 +254,26 @@ to cover:
 import random
 import scipy.sparse as sps
 import numpy as np
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from safiretools import HamiltonianBuilder, Lattice, SpinSymm
 
-hamiltonian_params = {
-    "lattice" : dict(
+lattice = Lattice.from_dict(
+    params=dict(
         L1 = 4,
         L2 = 4,
         boundary1 = "pbc",
         boundary2 = "pbc"
-    ),
-    "hamiltonian" : dict(
-        t = 1.0,
-        U = 4.0
     )
-}
+)
 
-# alternatively, break into two steps
-hamiltonian_dir = HamiltonianDirector(source=hamiltonian_params)
-
-# take control of the builder
-hamiltonian_builder = hamiltonian_dir.release_builder()
+# equivalent to HamiltonianBuilder.from_input() with hamiltonian=dict(t=1.0, U=4.0),
+# but invoked step-by-step so that we can add a custom term below
+builder = HamiltonianBuilder(lattice=lattice, spin_symm=SpinSymm.COLLINEAR)
+builder.nth_neighbor_hopping(1.0)
+builder.onsite_hubbard(4.0)
 
 # make a custom disorder term
-nsites = hamiltonian_builder.hamiltonian.nsites
-nbands = hamiltonian_builder.hamiltonian.nbands
+nsites = builder.get_hamiltonian().nsites
+nbands = builder.get_hamiltonian().nbands
 nbasis = nsites*nbands
 
 # adding disorder to a random site, uniform across bands
@@ -307,61 +298,22 @@ col = np.arange(nbands) + random_site
 disorder_down = sps.csr_array((data, (row, col)), shape=(nbasis, nbasis))
 
 # add the disorder term to the Hamiltonian
-hamiltonian_builder.custom_one_body(sps.vstack([disorder_up, disorder_down]))
+builder.custom_one_body(sps.vstack([disorder_up, disorder_down]))
 
-# IMPORTANT: return the builder to the director
-hamiltonian_dir.bind_builder(hamiltonian_builder)
+# finalize once, after all build steps (both from_input()-style and custom) have been invoked
+builder.finalize()
 
-# now build the Hamiltonian as defined in 'hamiltonian_params'
-hamiltonian = hamiltonian_dir.build()
+hamiltonian = builder.get_hamiltonian()
 ```
 
 +++ {"id": "31a5cea3"}
 
 ### Some Notes
 
-1. Taking control of the HamiltonianBuilder can be done either before or after calling .build(). For example, both
-
-```python
-hamiltonian_dir = HamiltonianDirector(source="input.toml")
-
-# build before invoking build steps directly
-hamiltonian_dir.build()
-
-hamiltonian_builder = hamiltonian_dir.release_builder()
-
-# ... invoke build steps
-hamiltonian_builder.afm_pinning(h_afm_pin=0.5)
-
-hamiltonian_dir.bind_builder(hamiltonian_builder)
-hamiltonian = hamiltonian_dir.hamiltonian
-```
-
-and
-
-```python
-hamiltonian_dir = HamiltonianDirector(source="input.toml")
-hamiltonian_builder = hamiltonian_dir.release_builder()
-
-# ... invoke build steps
-hamiltonian_builder.afm_pinning(h_afm_pin=0.5)
-
-hamiltonian_dir.bind_builder(hamiltonian_builder)
-# build AFTER directly invoking build steps
-hamiltonian_dir.build()
-hamiltonian = hamiltonian_dir.hamiltonian
-```
-
-will generate the same Hamiltonian.
-The only difference in this case is that the
-
-```{code-cell} ipython3
-:id: ab957838
-
-# Note: calling .build() again will return the Hamiltonian object that was already built AFTER
-#        trying to combine terms where possible
-hamiltonian2 = hamiltonian_dir.build()
-```
+Since custom build steps are just method calls on the same `HamiltonianBuilder` instance as
+`from_input()`-style ones, they can be freely interleaved in any order you like.
+The only rule is to call `.finalize()`
+once, after every build step has been invoked.
 
 ```{code-cell} ipython3
 :id: fead54f6

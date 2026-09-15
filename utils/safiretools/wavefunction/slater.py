@@ -1,0 +1,321 @@
+# This file is distributed under the Apache License, Version 2.0 License.
+# See LICENSE file in top directory for details.
+#
+# Copyright (c) 2021-2025 The Simons Foundation, Inc.
+#
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+
+"""
+Operations on Slater matrices, independent of the domain that produced the
+orbitals.
+
+Every trial wavefunction here reduces to Slater matrices in the column layout
+`safiretools.NOMSDWavefunction` takes — the spin channels as consecutive column
+blocks. This module holds the operations on that layout: building one from
+orbital coefficients and occupied indices, expressing it in another basis,
+forming the one-particle Green's function between two of them, splitting it
+back into its spin blocks, and checking or restoring the orthonormality of its
+columns.
+
+Nothing here reads an external convention, so a domain module (`pyscf.py`,
+`pbc.py`, `free_electron.py`) keeps only the code that decodes its own — which
+orbitals a PySCF ``mo_occ`` vector calls occupied, say.
+"""
+
+from collections.abc import Iterable
+
+import numpy as np
+import scipy.linalg
+
+from safiretools.types import SpinSymm
+
+ORTHONORMAL_TOL = 1e-10
+"""How far an overlap matrix may stray from the identity and still count as
+orthonormal."""
+
+#Largest overlap-matrix condition number a Slater matrix may have before it
+#  is reported as ill conditioned
+CONDITION_MAX = 1.0 / np.sqrt(np.finfo(np.float64).eps)
+
+
+
+# ----------------------------------------------------------------------
+# building a Slater matrix
+# ----------------------------------------------------------------------
+
+def make_slater_closed(mo_coeffs, nocc: Iterable, nelec: int):
+    """
+    One spin channel's Slater matrix: `nelec` columns selecting the orbitals
+    `nocc` out of `mo_coeffs`.
+    """
+    selection = np.zeros((mo_coeffs.shape[1], nelec))
+    selection[nocc, np.arange(nelec)] = 1
+
+    return mo_coeffs @ selection + 0j
+
+
+def make_slater_collinear(mo_coeffs, nocc, nelec):
+    """
+    Both spin channels' Slater matrices, concatenated column-wise. `mo_coeffs`
+    may be one matrix (ROHF) or one per spin (UHF).
+    """
+    if len(nocc) != len(nelec):
+        raise ValueError(
+            f"nocc describes {len(nocc)} spin channels and nelec {len(nelec)}"
+        )
+
+    if mo_coeffs.ndim == 3:
+        blocks = [make_slater_closed(spin_coeffs, spin_nocc, spin_nelec)
+                  for spin_coeffs, spin_nocc, spin_nelec
+                  in zip(mo_coeffs, nocc, nelec)]
+    else:
+        blocks = [make_slater_closed(mo_coeffs, spin_nocc, spin_nelec)
+                  for spin_nocc, spin_nelec in zip(nocc, nelec)]
+
+    return np.concatenate(blocks, axis=1)
+
+
+def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
+    """
+    The Slater matrix for a reference of the given spin symmetry, in the column
+    layout `safiretools.NOMSDWavefunction` takes.
+
+    Parameters
+    ----------
+    spin_symm : SpinSymm
+        Spin symmetry of the reference, which decides how many column blocks
+        the result has.
+    mo_coeffs : array_like
+        Orbital coefficients: one matrix, or — for a collinear reference built
+        from spin-resolved orbitals (UHF) — one per spin channel.
+    nocc : sequence
+        Occupied orbital indices per spin channel. Only the alpha entry is read
+        for the single-channel symmetries.
+    nelec : tuple(int, int)
+        Electron counts ``(nup, ndown)``. A noncollinear reference takes their
+        sum, since both polarizations share one channel.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``complex128`` Slater matrix, ``(npol*nmo, sum(nelec_per_spin))``.
+    """
+    mo_coeffs = np.asarray(mo_coeffs)
+
+    if spin_symm is SpinSymm.CLOSED:
+        return make_slater_closed(mo_coeffs, nocc[0], nelec[0])
+    if spin_symm is SpinSymm.COLLINEAR:
+        return make_slater_collinear(mo_coeffs, nocc, nelec)
+    return make_slater_closed(mo_coeffs, nocc[0], sum(nelec))
+
+
+def transform_slater(orbitals, transform):
+    """
+    Express `orbitals` in the basis `transform` maps into, promoting the
+    transformation to the spinor basis when the orbitals are noncollinear.
+
+    Parameters
+    ----------
+    orbitals : numpy.ndarray
+        Slater matrix, ``(npol*nmo, ncols)``.
+    transform : numpy.ndarray
+        Transformation into the working basis, over *spatial* orbitals. It is
+        promoted with ``kron(eye(2), transform)`` when `orbitals` has twice as
+        many rows.
+
+    Returns
+    -------
+    numpy.ndarray
+        The transformed Slater matrix.
+    """
+    if transform.shape[0] != orbitals.shape[0]:
+        transform = np.kron(np.eye(2), transform)
+    return transform.conj().T @ orbitals
+
+
+# ----------------------------------------------------------------------
+# Green's function
+# ----------------------------------------------------------------------
+
+def gab(A, B):
+    r"""One-particle Green's function.
+
+    This actually returns 1-G since it's more useful, i.e.,
+
+    .. math::
+        \langle \phi_A|c_i^{\dagger}c_j|\phi_B\rangle =
+        [B(A^{\dagger}B)^{-1}A^{\dagger}]_{ji}
+
+    where :math:`A,B` are the matrices representing the Slater determinants
+    :math:`|\psi_{A,B}\rangle`.
+
+    For example, usually A would represent (an element of) the trial wavefunction.
+
+    .. warning::
+        Assumes A and B are not orthogonal.
+
+    Parameters
+    ----------
+    A : numpy.ndarray
+        Matrix representation of the bra used to construct G.
+    B : numpy.ndarray
+        Matrix representation of the ket used to construct G.
+
+    Returns
+    -------
+    GAB : numpy.ndarray
+        (One minus) the Green's function.
+    """
+    inv_O = scipy.linalg.inv((A.conj().T).dot(B))
+    return B.dot(inv_O.dot(A.conj().T))
+
+
+# ----------------------------------------------------------------------
+# spin blocks
+# ----------------------------------------------------------------------
+
+def spin_blocks(orbitals, nelec_per_spin):
+    """
+    Split an orbital matrix into its per-spin column blocks.
+
+    Parameters
+    ----------
+    orbitals : numpy.ndarray
+        Orbital matrix, ``(npol*nmo, sum(nelec_per_spin))``.
+    nelec_per_spin : sequence of int
+        Electron count in each spin channel.
+
+    Yields
+    ------
+    numpy.ndarray
+        One view per spin channel, in order.
+
+    Raises
+    ------
+    ValueError
+        If the matrix has the wrong number of columns.
+    """
+    orbitals = np.asarray(orbitals)
+    expected = sum(nelec_per_spin)
+
+    if orbitals.shape[-1] != expected:
+        raise ValueError(
+            f"orbital matrix has {orbitals.shape[-1]} columns; expected "
+            f"{expected} for electron counts {tuple(nelec_per_spin)}"
+        )
+
+    start = 0
+    for nelec in nelec_per_spin:
+        yield orbitals[..., start:start + nelec]
+        start += nelec
+
+
+# ----------------------------------------------------------------------
+# orthonormality
+# ----------------------------------------------------------------------
+
+def modified_gram_schmidt(matrix, tol=1e-12):
+    """
+    Orthonormalize the columns of `matrix`.
+
+    Parameters
+    ----------
+    matrix : numpy.ndarray
+        Matrix ``(n, m)`` whose columns are orthonormalized in place order.
+    tol : float, optional
+        Smallest diagonal of ``R`` accepted before columns count as linearly
+        dependent. Default 1e-12.
+
+    Returns
+    -------
+    numpy.ndarray
+        A new ``complex128`` matrix with orthonormal columns spanning the same
+        column space.
+
+    Raises
+    ------
+    ValueError
+        If `matrix` is not two-dimensional, or its columns are (near) linearly
+        dependent.
+
+    Notes
+    -----
+    Implemented as a reduced QR decomposition. The sign convention is pinned so that 
+    ``R`` has a non-negative real diagonal, which makes ``Q`` unique and leaves an already
+    orthonormal input unchanged rather than flipped.
+    """
+    matrix = np.asarray(matrix)
+    if matrix.ndim != 2:
+        raise ValueError(f"expected a 2-dimensional array, got {matrix.ndim}D")
+
+    Q, R = np.linalg.qr(matrix.astype(np.complex128, copy=False), mode='reduced')
+
+    diagonal = np.diagonal(R)
+    dependent = np.flatnonzero(np.abs(diagonal) < tol)
+    if dependent.size:
+        raise ValueError(
+            "linearly dependent vectors encountered while orthogonalizing "
+            f"column {dependent[0]}"
+        )
+
+    return Q * (np.abs(diagonal) / diagonal)
+
+
+def is_orthonormal(matrix, tol=ORTHONORMAL_TOL) -> bool:
+    """
+    True when `matrix`'s columns are orthonormal, i.e. when
+    :math:`M^\\dagger M` is the identity to within `tol`.
+
+    A matrix with no columns is orthonormal: its overlap is the empty identity.
+    """
+    matrix = np.asarray(matrix)
+    if matrix.shape[-1] == 0:
+        return True
+
+    overlap = matrix.conj().T @ matrix
+    identity = np.eye(matrix.shape[-1], dtype=overlap.dtype)
+    return bool(np.max(np.abs(overlap - identity)) < tol)
+
+
+def overlap_condition_number(matrix) -> float:
+    r"""
+    The condition number of a Slater matrix's overlap :math:`S = M^\dagger M`.
+
+    This is what decides whether a trial wavefunction is usable: AFQMC needs
+    :math:`S^{-1}` and :math:`\det S`, so a large condition number means the
+    walker overlaps are numerically meaningless however well the columns were
+    normalized.
+
+    Parameters
+    ----------
+    matrix : numpy.ndarray
+        Slater matrix, ``(nrows, ncols)``.
+
+    Returns
+    -------
+    float
+        The 2-norm condition number of :math:`S`, computed from `matrix`'s
+        singular values as :math:`(\sigma_{max}/\sigma_{min})^2`. ``inf`` when
+        `matrix` is rank deficient — an all-zero matrix included — and ``1.0``
+        for a matrix with no columns, whose overlap is the empty identity.
+
+    Examples
+    --------
+    >>> overlap_condition_number(np.eye(4)[:, :2])
+    1.0
+    >>> overlap_condition_number(np.zeros((4, 2)))
+    inf
+    """
+    matrix = np.asarray(matrix)
+
+    if matrix.shape[-1] == 0:
+        return 1.0
+
+    singular = np.linalg.svd(matrix, compute_uv=False)
+    if singular[-1] == 0.0:
+        return np.inf
+
+    return float((singular[0] / singular[-1]) ** 2)

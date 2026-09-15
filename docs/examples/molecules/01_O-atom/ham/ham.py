@@ -8,9 +8,7 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-from afqmctools.wavefunction.mol import write_wfn_mol
+from safiretools import MolecularHamiltonian, Wavefunction
 
 
 def main():
@@ -30,18 +28,12 @@ def main():
     #                                   #
     #####################################
 
-    scf_data = load_from_pyscf_chk_mol(
+    MolecularHamiltonian.from_pyscf(
         orbital_basis_chk,
-        'scf'
-    )
-
-    write_hamil_mol(
-        scf_data=scf_data,
-        hamil_file=fout, 
-        chol_cut=chol_tol, 
-        real_chol=True, 
+        chol_cut=chol_tol,
+        real_chol=True,
         verbose=True
-    )
+    ).to_hdf5(fout)
     
     #####################################
     #                                   #
@@ -49,14 +41,10 @@ def main():
     #                                   #
     #####################################
 
-    write_wfn_mol(
-        scf_data=load_from_pyscf_chk_mol(
-            wavefunction_chk,
-            'scf'
-        ),
-        basis_scf_data=scf_data,
-        filename=fout
-    )
+    Wavefunction.from_pyscf(
+        wavefunction_chk,
+        basis=orbital_basis_chk
+    ).to_hdf5(fout)
 
 
 if __name__ == '__main__':

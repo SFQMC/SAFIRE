@@ -4,6 +4,7 @@ U = 4      # defaults to "discrete_charge" for U > 0
 U1 = -1.5  # normally, defaults to "discrete_spin" for U1 < 0
 U2 = 1.0
 J = 0.5
+nelec = [3,3]
 
 [hamiltonian.hst_types]
 U1 = "discrete_spin"  # choices: "discrete_spin", "discrete_charge", 
@@ -15,6 +16,3 @@ L1 = 3
 L2 = 3
 boundary1 = "PBC"
 boundary2 = "PBC"
-
-[misc_params]
-nelec = [3,3]

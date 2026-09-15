@@ -15,40 +15,25 @@ interaction term regardless of the sign of the interaction strength.
 
 .. literalinclude:: input.toml
 
-afqmctools can be invoked within a Python script as
+safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from afqmctools.wavefunction.free_electron import free_electron
+    from safiretools import HamiltonianBuilder, Wavefunction
 
     infile = "input.toml"
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian = HamiltonianDirector(source=infile).build()
-    input_params = io.read_input_params(infile)
-    nelec = input_params["misc_params"]["nelec"]
-    io.write_model_hamiltion(
-        hamiltonian=hamiltonian,
-        fname="afqmc.h5",
-        nelec=nelec
-    )
+    hamiltonian = HamiltonianBuilder.from_input(source=infile).get_hamiltonian()
+    hamiltonian.to_hdf5("afqmc.h5")
 
-    # compute and save a free-electron trial wfn
-    free_electron(
+    # compute and save a free-electron trial wfn, into the same file
+    Wavefunction.from_free_electron(
         source=infile,
-        nelec=nelec,
-        output="afqmc.h5"
-    )
+        nelec=hamiltonian.nelec,
+    ).to_hdf5("afqmc.h5")
 
-If the sample Python script is run above with the sample input file, the following
-should be present at the end of the output.
-
-.. code-block:: text
-
-    Running in Slater Detemrinant Mode
-    energyCall: Etotal=(-15.444445610046387+0j) with EK=(-18+0j) EU=(2.7777771949768066+0j) EU1=(-0.6666667461395264+0j) EU2=(0.444444477558136+0j) EJ=(5.796812270493889e-33+0j)
-    Reference HF Energy = -15.444445610046387
-
-Internally, the AutoHF Hartree-Fock code is used to evaluate the energy of the free-electron
-trial wavefunction with respect to the interacting Hamiltonian.
-This allows the initial energy to be checked within the AFQMC code.
+Building the trial wavefunction does not measure its energy.
+To evaluate the variational energy of a trial wavefunction with respect to the
+interacting Hamiltonian, run the AutoHF Hartree-Fock solver explicitly, as shown
+in :ref:`setup_ex_9`.

@@ -35,9 +35,7 @@ import h5py as h5
 import numpy as np
 from pyscf import gto,scf,mcscf
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-from afqmctools.wavefunction.mol import write_cas_wfn
+from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
 
 from stats.scalar_dat import analyze_scalar_data
@@ -160,7 +158,7 @@ from pyscf import gto
 
 from pyscf.scf.hf import dip_moment
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
+from safiretools.convert.pyscf import load_pyscf_chk_mol
 
 scratch = Path("./scratch")
 scratch.mkdir(exist_ok=True)
@@ -176,7 +174,7 @@ uhf_results = reference / "uhf_rdm.h5"
 dft_results = reference / "dft_pbe.h5"
 cc_results = reference / "cc.h5"
 
-scf_data_basis = load_from_pyscf_chk_mol(scratch / "rhf.chk")
+scf_data_basis = load_pyscf_chk_mol(scratch / "rhf.chk")
 
 mo_coeff = scf_data_basis["mo_coeff"]
 

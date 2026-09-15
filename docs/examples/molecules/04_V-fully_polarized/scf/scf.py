@@ -12,6 +12,42 @@
 
 from pyscf import gto, scf, mcscf
 
+# The internally stable ROHF solution for the S=3/2 vanadium atom in cc-pVDZ.
+#   An isolated V atom has other ROHF solutions, and the
+#   CASCI and AFQMC reference energies quoted in this example all assume this one.
+ROHF_ENERGY = -942.884909528
+ROHF_ENERGY_TOL = 1e-4
+
+
+def solve_stable_rohf(mol, chkfile, max_rotations=5):
+    """
+    Solve ROHF, re-solving from the lowest instability direction until the
+    solution is internally stable.
+
+    Internal stability asks whether the solution is a genuine ROHF minimum
+    rather than a saddle point; it does not consider the symmetry-breaking
+    (ROHF -> UHF) rotations that external stability would.
+    """
+    mf = scf.ROHF(mol).newton()
+    mf.chkfile = chkfile
+    mf.kernel()
+
+    for _ in range(max_rotations):
+        mo, _, stable, _ = mf.stability(return_status=True)
+        if stable:
+            break
+        # rotate the orbitals along the instability and re-solve from there
+        mf.kernel(mo, mf.mo_occ)
+    else:
+        raise RuntimeError(
+            f"ROHF is still internally unstable after {max_rotations} rotations"
+        )
+
+    if not mf.converged:
+        raise RuntimeError("ROHF reached a stable solution but did not converge")
+
+    return mf
+
 
 def main():
     """
@@ -28,9 +64,7 @@ def main():
     )
 
     # this will be a basis
-    mf = scf.ROHF(single_mol).newton()
-    mf.chkfile = 'rohf.chk'
-    mf.kernel()
+    mf = solve_stable_rohf(single_mol, 'rohf.chk')
 
     # Report ROHF energy decomposition and total energy.
     e_elec, e_coul = mf.energy_elec()
@@ -44,8 +78,14 @@ def main():
     print("ROHF nuclear repulsion energy: ", e_nuc)
     print("ROHF total energy: ", e_tot)
 
-    
-    
+    if abs(e_tot - ROHF_ENERGY) > ROHF_ENERGY_TOL:
+        raise RuntimeError(
+            f"ROHF total energy {e_tot:.9f} Ha differs from the expected stable "
+            f"solution {ROHF_ENERGY:.9f} Ha by more than {ROHF_ENERGY_TOL:g} Ha. "
+            "The CASCI and AFQMC reference energies in this example assume that "
+            "solution, so they will not be reproduced."
+        )
+
     # Getting a reference energy:
     mycas = mcscf.CASCI(mf,32,3)
     E_casci =  mycas.kernel()

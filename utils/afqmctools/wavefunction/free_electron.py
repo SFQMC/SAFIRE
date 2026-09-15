@@ -23,8 +23,9 @@ import scipy.sparse.linalg as spsl
 import scipy.linalg as spl
 import scipy.sparse as sps
 
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.hamiltonian.model.ham_class import Hamiltonian,SpinSymm,get_spin_symm_enum
+from safiretools import LatticeHamiltonian
 from afqmctools.systems.lattice import Lattice
 from afqmctools.hamiltonian.converter import read_hamiltonian
 from afqmctools.systems.lattice import get_lattice
@@ -52,9 +53,11 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
 
     Parameters
     ----------
-    source : str | dict | Hamiltonian
+    source : str | dict | afqmctools.hamiltonian.model.ham_class.Hamiltonian | ~safiretools.hamiltonian.model.lattice_hamiltonian.LatticeHamiltonian
         str - the name of an input file with lattice and hamiltonian blocks defined
         dict - a dict containing lattice and hamiltonian blocks
+        Hamiltonian - an already-built lattice model Hamiltonian, either
+        afqmctools' or safiretools' `LatticeHamiltonian`
     nelec : tuple(int,int)
         number of spin-up and spin-down electrons
     twist : array-like, optional
@@ -63,7 +66,7 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
         spin symmetry to use
     use_dense : bool
         whether to use dense matrix operations (default: True)
-    lattice : Lattice, optional
+    lattice : afqmctools.systems.lattice.Lattice, optional
         pre-constructed lattice object
     return_autohf : bool
         whether to return AutoHF results (default: False)
@@ -119,12 +122,11 @@ def free_electron(source,nelec,twist=None,spin_symm=None,use_dense=True,lattice=
             lattice_params["twist"] = twist
             lattice = get_lattice(params=lattice_params)
 
-            hamiltonian_director = HamiltonianDirector(
+            hamiltonian = HamiltonianBuilder.from_input(
                 source=source,
                 lattice=lattice
-                )
-            hamiltonian = hamiltonian_director.build()
-    elif isinstance(source,Hamiltonian):
+                ).hamiltonian
+    elif isinstance(source,Hamiltonian|LatticeHamiltonian):
 
         hamiltonian = source
 
@@ -186,7 +188,7 @@ def _free_electron(hamiltonian:Hamiltonian,nelec,spin_symm=None,use_dense=True,f
 
     Parameters
     ----------        
-    hamiltonian : Hamiltonian
+    hamiltonian : afqmctools.hamiltonian.model.ham_class.Hamiltonian
         a Lattice Model Hamiltonian instance to build the Hamiltonian for.
     nelec : tuple(int,int)
         an iterable with the number of electrons per spin to use.

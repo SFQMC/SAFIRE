@@ -16,7 +16,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-import afqmctools.hamiltonian.model.director as ham
+from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
 from afqmctools.wavefunction.model import write_free_electron_wfn
 import afqmctools.utils.io as io
 import afqmctools.utils.visualize as vis
@@ -36,13 +36,11 @@ def make_hk_model_infile(
     spin_symm=None
     ):
 
-    hamiltonianDir = ham.HamiltonianDirector(
-        source=fname
-    )
+    builder = HamiltonianBuilder.from_input(source=fname)
 
-    hamiltonian = hamiltonianDir.build()
+    hamiltonian = builder.hamiltonian
 
-    lattice = hamiltonianDir.builder.lattice
+    lattice = builder.lattice
 
     params = io.read_input_params(fname).get('misc_params',{})
 

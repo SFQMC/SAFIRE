@@ -453,7 +453,10 @@ from afqmctools.analysis.transform import hermitize_factory,eval_one_body_obs_fa
 
 from afqmctools.analysis.average import WALKER_TYPE
 
-# read the Hamiltonian
+# read the Hamiltonian. The provided "hamil.h5" is in CoQuí's format, which
+#   safiretools' Hamiltonian.from_hdf5() does not read yet, so we use afqmctools'
+#   reader here. For SAFIRE-native Hamiltonian files, prefer
+#   `Hamiltonian.from_hdf5(path)` from safiretools.
 H = read_hamiltonian(scratch_dir / "hamil.h5")
 M = H["nmo"]
 Econst = H["enuc"]

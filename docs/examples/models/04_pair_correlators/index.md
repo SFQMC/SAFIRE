@@ -76,15 +76,15 @@ We will explore this in more detail below.
 ## Defining the Hamiltonian
 
 ```{code-cell} ipython3
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.utils.visualize import plot_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
+from safiretools import HamiltonianBuilder
 from pathlib import Path
 
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
 
-lattice = get_lattice(
+lattice = Lattice.from_dict(
     params=dict(
         L1 = 4,
         L2 = 4,
@@ -103,21 +103,16 @@ params = dict(
     )
 )
 
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 
-from afqmctools.utils.io import write_model_hamiltonian
-
-write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=scratch_dir/"afqmc.h5"
-)
+hamiltonian.to_hdf5(scratch_dir/"afqmc.h5")
 ```
 
 +++ {"id": "Np-zIkGusNIP"}
 
 ## Saving index offsets in the HDF5 input
 
-The Lattice class from afqmctools can be directly used to find the pairs that we need via the `.get_directed_pairs()` function.
+The Lattice class from safiretools can be directly used to find the pairs that we need via the `.get_directed_pairs()` function.
 `.get_directed_pairs()` needs a list of "directions", and it will return a dictionary where the keys are the requested directions, and the values are a list of index offsets, $\bar{i}_\alpha [i]$, such that $\bar{i}_{\alpha} [i] = i + e_\alpha$.
 
 ```{code-cell} ipython3
@@ -329,7 +324,7 @@ run_afqmc(
 import numpy as np
 from warnings import warn
 
-from afqmctools.systems.lattice import get_lattice
+from safiretools import Lattice
 from afqmctools.utils.visualize import plot_lattice
 from afqmctools.analysis.average import average_pair_correlation
 

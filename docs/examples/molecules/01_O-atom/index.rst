@@ -13,7 +13,12 @@ The workflow includes the following steps:
 
 1. **Generate the trial wavefunction and orbital basis**: Execute ``scf/scf.py`` to run PySCF calculations generating both ROHF and UHF checkpoint files. 
 
-2. **Create AFQMC input files**: Execute ``ham/ham.py`` to generate the Hamiltonian in Cholesky-decomposed form and format the trial wavefunction. Note that we used the ROHF orbitals as a basis, since they are spin-independent. The UHF wavefunction will be used as the trial wavefunction for AFQMC. The `write_wfn_mol ()` function directly handles the change of basis as demonstrated in this example. This produces ``afqmc.h5`` containing the Hamiltonian and trial wavefunction. 
+2. **Create AFQMC input files**: Execute ``ham/ham.py`` to generate the Hamiltonian in 
+   Cholesky-decomposed form and format the trial wavefunction.
+   Note that we used the ROHF orbitals as a basis, since they are spin-independent. 
+   The UHF wavefunction will be used as the trial wavefunction for AFQMC.
+   ``Wavefunction.from_pyscf()`` directly handles the change of basis as demonstrated in
+    this example. This produces ``afqmc.h5`` containing the Hamiltonian and trial wavefunction. 
 
 3. **Run SAFIRE**: Run SAFIRE using the provided json input file (see below):
 
