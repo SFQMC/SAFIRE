@@ -26,7 +26,7 @@ namespace sfqmc
 namespace afqmc
 {
 
-inline HamiltonianTypes peekHamType(h5::group grp, std::string format = "std")
+inline HamiltonianType peekHamType(h5::group grp, std::string format = "std")
 {
   if (format  == "coqui") {
     // only format available, add choices as they are implemented
@@ -35,33 +35,31 @@ inline HamiltonianTypes peekHamType(h5::group grp, std::string format = "std")
     h5::group igrp = grp.open_group("/Interaction");
     std::vector<int> shape;
     if (igrp.has_key("Vq0"))
-      return KPFactorized;
+      return HamiltonianType::kp_factorized;
     if (igrp.has_key("factorized_coulomb_matrix"))
     {
       auto l = h5::array_interface::get_dataset_info(igrp,"factorized_coulomb_matrix");
-      utils::check(l.lengths[0]>0,"  Error: Found Interaction/factorized_coulomb_matrix with dimension=0 "); 
-      return (l.lengths[0]==1?THC:KPTHC);
+      utils::check(l.lengths[0]>0,"  Error: Found Interaction/factorized_coulomb_matrix with dimension=0 ");
+      return (l.lengths[0]==1 ? HamiltonianType::thc : HamiltonianType::kpthc);
     }
   } else if(format == "std") {
     h5::group hgrp = grp.open_group("/Hamiltonian");
     if (hgrp.has_subgroup("KPFactorized"))
     {
-      return KPFactorized;
+      return HamiltonianType::kp_factorized;
     }
     if (hgrp.has_subgroup("DenseFactorized"))
     {
-      return RealDenseFactorized;
+      return HamiltonianType::real_dense_factorized;
     }
     if (hgrp.has_subgroup("ModelHamiltonian"))
     {
-      return ModelHamiltonian;
+      return HamiltonianType::model_hamiltonian;
     }
   } else {
-    utils::check(false, "  Error: Invalid format in peekHamType. ");
-    return UNKNOWN;
+    APP_ABORT("  Error: Invalid format in peekHamType. ");
   }
-  utils::check(false,"  Error: Invalid hdf5 file format in peekHamType(). ");
-  return UNKNOWN;
+  APP_ABORT("  Error: Invalid hdf5 file format in peekHamType(). ");
 }
 
 inline std::string get_hamiltonian_format(h5::group& grp)

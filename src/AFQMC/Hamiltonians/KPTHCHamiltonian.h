@@ -34,7 +34,7 @@ public:
 
   KPTHCHamiltonian(const HamiltonianParameters& params) : fileName(params.filename) {}
 
-  HamiltonianTypes getHamType() const { return KPTHC; }
+  HamiltonianType getHamType() const { return HamiltonianType::kpthc; }
 
   template<MEMORY_SPACE MEM>
   HamiltonianOperations<MEM> getHamiltonianOperations(WALKER_TYPES type,

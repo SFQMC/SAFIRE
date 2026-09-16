@@ -54,7 +54,7 @@ public:
 	return a.template getHamiltonianOperations<MEM>(std::forward<Args>(args)...); }, var);
   }
 
-  HamiltonianTypes getHamType() const
+  HamiltonianType getHamType() const
   {
     return std::visit([&](auto&& a) { return a.getHamType(); }, var);
   }

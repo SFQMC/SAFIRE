@@ -93,7 +93,7 @@ void AFQMCBasePropagator<MEM>::generateP1(double dt, WALKER_TYPES walker_type, b
     auto hamtype(wfn->getHamType());
     // collective call
     wfn->vMF(vt, dt);
-    if(hamtype == ModelHamiltonian) {
+    if(hamtype == HamiltonianType::model_hamiltonian) {
       // depending on charge/spin, you should also set imag/real parts to zero
       // overwrite vMF if needed
       if(discrete_propg) {

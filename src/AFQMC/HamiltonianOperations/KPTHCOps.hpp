@@ -49,8 +49,7 @@ class KPTHCOps
   using csrMat = math::sparse::csr_matrix<T, MEM, int, int>;
 
 public:
-  static constexpr HamiltonianTypes HamOpType = KPTHC;
-  constexpr HamiltonianTypes getHamType() const { return KPTHC; }
+  constexpr HamiltonianType getHamType() const { return HamiltonianType::kpthc; }
 
   /*
    * nup/ndown stands for number of alpha/beta electrons

@@ -41,8 +41,7 @@ class KP3IndexFactorization
   using csrMat = math::sparse::csr_matrix<T, MEM, int, int>;
 
 public:
-  static const HamiltonianTypes HamOpType = KPFactorized;
-  HamiltonianTypes getHamType() const { return HamOpType; }
+  HamiltonianType getHamType() const { return HamiltonianType::kp_factorized; }
 
   // since arrays can be in host, can't assume that types are consistent
   KP3IndexFactorization(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,

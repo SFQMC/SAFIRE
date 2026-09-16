@@ -45,8 +45,7 @@ class ModelHamOps
   using csrMat = math::sparse::csr_matrix<T, MEM, int, int>;
 
 public:
-  static const HamiltonianTypes HamOpType = ModelHamiltonian; 
-  HamiltonianTypes getHamType() const { return ModelHamiltonian; }
+  HamiltonianType getHamType() const { return HamiltonianType::model_hamiltonian; }
 
   ModelHamOps() {};
 

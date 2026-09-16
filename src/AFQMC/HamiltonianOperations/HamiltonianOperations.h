@@ -89,7 +89,7 @@ public:
 
   std::tuple<int,int> vHS_dims() const;
 
-  HamiltonianTypes getHamType() const;
+  HamiltonianType getHamType() const;
 
   nda::array<int,1> getFieldTypes() const;
 

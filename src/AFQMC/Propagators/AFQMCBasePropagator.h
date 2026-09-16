@@ -98,9 +98,9 @@ public:
         utils::check(false,"BasePropagator: free_projection");
       }
     }
-    utils::check(denseP2 or hamtype == ModelHamiltonian, "denseP2=false only allowed with ModelHamiltonian.");
+    utils::check(denseP2 or hamtype == HamiltonianType::model_hamiltonian, "denseP2=false only allowed with ModelHamiltonian.");
 
-    if ((hamtype == KPFactorized || hamtype == KPTHC) && denseP1)
+    if ((hamtype == HamiltonianType::kp_factorized || hamtype == HamiltonianType::kpthc) && denseP1)
     {
       app_error("dense Ham. with kpoints");
       utils::check(false,"BasePropagator: set denseP1 to false");
