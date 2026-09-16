@@ -73,9 +73,6 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
 
   const PropagatorParameters prop_min{.hybrid = true};
 
-  // Fix the seed so the test is reproducible.
-  constexpr int test_seed = 463;
-
   const bool default_walker = (walker_type == UNDEFINED_WALKER_TYPE);
   // the scenarios that take the default walker type are ground state only, the rest follow the
   // walker type of the test files
@@ -86,6 +83,7 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   // scenarios run as consecutive stages of a single simulation.
   AFQMCParameters params{};
   params.driver       = driver;
+  params.seed         = 463; // fix the seed so the test is reproducible
   params.hamiltonian  = {HamiltonianParameters{.name = "ham0", .filename = hamil_file}};
   params.wavefunction = {WavefunctionParameters{.name = "wfn0", .filename = wfn_file}};
   params.propagator   = {PropagatorParameters{.name = "prop0"}};
@@ -101,65 +99,57 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   if(default_walker) {
     // wfn only - this is invalid unless wfn file and hamil file are the same
     if(hamil_file == wfn_file) {
-      add("wfn only (inline)", ExecuteParameters{.wavefunction = wfn_min, .seed = test_seed});
+      add("wfn only (inline)", ExecuteParameters{.wavefunction = wfn_min});
     }
-    add("wfn+ham (inline)",
-        ExecuteParameters{.wavefunction = wfn_min, .hamiltonian = ham_min, .seed = test_seed});
+    add("wfn+ham (inline)", ExecuteParameters{.wavefunction = wfn_min, .hamiltonian = ham_min});
     add("wfn+ham+prop (inline)",
-        ExecuteParameters{
-            .wavefunction = wfn_min, .hamiltonian = ham_min, .propagator = prop_min, .seed = test_seed});
+        ExecuteParameters{.wavefunction = wfn_min, .hamiltonian = ham_min, .propagator = prop_min});
   }
 
   add("wfn+ham+prop+wlk (all inline)",
       ExecuteParameters{.walker_set   = wlk_min,
                         .wavefunction = wfn_min,
                         .hamiltonian  = ham_min,
-                        .propagator   = prop_min,
-                        .seed         = test_seed});
+                        .propagator   = prop_min});
 
   if(default_walker) {
     if(hamil_file == wfn_file) {
-      add("wfn only (external)", ExecuteParameters{.wavefunction = std::string{"wfn0"}, .seed = test_seed});
+      add("wfn only (external)", ExecuteParameters{.wavefunction = std::string{"wfn0"}});
     }
     add("wfn+ham (external)",
-        ExecuteParameters{
-            .wavefunction = std::string{"wfn0"}, .hamiltonian = std::string{"ham0"}, .seed = test_seed});
+        ExecuteParameters{.wavefunction = std::string{"wfn0"}, .hamiltonian = std::string{"ham0"}});
     add("wfn+ham+prop (external)",
         ExecuteParameters{.wavefunction = std::string{"wfn0"},
                           .hamiltonian  = std::string{"ham0"},
-                          .propagator   = std::string{"prop0"},
-                          .seed         = test_seed});
+                          .propagator   = std::string{"prop0"}});
   }
 
   add("wfn+ham+prop+wlk (all external)",
       ExecuteParameters{.walker_set   = std::string{"wlk0"},
                         .wavefunction = std::string{"wfn0"},
                         .hamiltonian  = std::string{"ham0"},
-                        .propagator   = std::string{"prop0"},
-                        .seed         = test_seed});
+                        .propagator   = std::string{"prop0"}});
 
   // mixed external internal
   if(hamil_file == wfn_file) {
     add("wfn(inline)+wlk(external)",
-        ExecuteParameters{.walker_set = std::string{"wlk0"}, .wavefunction = wfn_min, .seed = test_seed});
+        ExecuteParameters{.walker_set = std::string{"wlk0"}, .wavefunction = wfn_min});
   }
 
   if(default_walker) {
     add("wfn(inline)+ham(external)",
-        ExecuteParameters{.wavefunction = wfn_min, .hamiltonian = std::string{"ham0"}, .seed = test_seed});
+        ExecuteParameters{.wavefunction = wfn_min, .hamiltonian = std::string{"ham0"}});
   }
 
   add("wfn(external)+ham(inline)+wlk(external)",
       ExecuteParameters{.walker_set   = std::string{"wlk0"},
                         .wavefunction = std::string{"wfn0"},
-                        .hamiltonian  = ham_min,
-                        .seed         = test_seed});
+                        .hamiltonian  = ham_min});
 
   add("wfn(external)+ham(inline)+wlk(inline)",
       ExecuteParameters{.walker_set   = wlk_min,
                         .wavefunction = std::string{"wfn0"},
-                        .hamiltonian  = ham_min,
-                        .seed         = test_seed});
+                        .hamiltonian  = ham_min});
 
   // many more possibilities (combinatorial...) Add any problematic ones if needed
 

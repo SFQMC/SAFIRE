@@ -16,6 +16,10 @@ import h5py as h5
 
 JSON_EXECUTE_INPUT_BLOCKS = ("walker_set", "wavefunction", "hamiltonian", "propagator", "estimators")
 
+# parameters of the run as a whole rather than of one execute block. They are accepted in
+# exec_opts and hoisted to the top level, because that is where callers used to pass them.
+JSON_TOP_LEVEL_KEYS = ("seed",)
+
 # the default of the execute block's population_control_interval, in steps
 DEFAULT_POPULATION_CONTROL_INTERVAL = 10
 
@@ -95,7 +99,9 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
         If True, use relative path for the wavefunction and Hamiltonian files.
     exec_opts : dict, optional
         Dictionary containing execution options using the same keys as in the
-        JSON file. This will be written into an "execute" node in the JSON file.
+        JSON file. This will be written into an "execute" node in the JSON file,
+        except for the parameters of the run as a whole listed in
+        JSON_TOP_LEVEL_KEYS, which are written next to it.
     args_namespace : argparse.Namespace, optional
         Command line arguments parsed by argparse.
     
@@ -158,6 +164,11 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
                 input_block_dict[subkey] = val
             # remove the key from exec_opts so it doesn't get passed to .update(exec_opts)
             exec_opts.pop(key)
+
+        # a parameter of the whole run goes next to "execute", not inside it
+        for key in JSON_TOP_LEVEL_KEYS:
+            if key in exec_opts:
+                inps[key] = exec_opts.pop(key)
 
         # set all other options directly
         inps["execute"].update(exec_opts)

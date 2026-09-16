@@ -124,6 +124,11 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
   std::map<std::string, WalkerSet<MEM>> walker_sets;
   std::map<std::string, Wavefunction<MEM>> wavefunctions;
 
+  utils::SeedType const seed =
+      params.seed ? utils::split_seed(*params.seed, mpi->comm) : utils::make_seed(mpi->comm);
+  auto walker_rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(seed);
+  auto field_rng  = std::make_shared<utils::RandomGenerator_t<MEM>>(seed);
+
   int stage_index{};
   for(auto const& stage : params.execute) {
     timers.reset_all();
@@ -136,14 +141,6 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
 
     WalkerSetParameters const& walker_set_params = find_block(params.walker_set, walker_set_name, "walker_set");
     int const nwalkers = stage.n_walkers_per_mpi_task;
-
-    // the walkers and the auxiliary fields draw from separate generators. Both are seeded from
-    // the stage's seed, which makes them reproducible but not independent; without one they are
-    // seeded independently.
-    utils::SeedType seed = stage.seed ? utils::split_seed(*stage.seed, mpi->comm) : utils::make_seed(mpi->comm);
-    auto walker_rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(seed);
-    seed = stage.seed ? utils::split_seed(*stage.seed, mpi->comm) : utils::make_seed(mpi->comm);
-    auto field_rng = std::make_shared<utils::RandomGenerator_t<MEM>>(seed);
 
     auto wavefunction_for = [&](std::string const& wfn_name, std::string const& ham_name) -> Wavefunction<MEM>& {
       return construct_wavefunction<MEM>(mpi, wavefunctions, params, wfn_name, ham_name,
