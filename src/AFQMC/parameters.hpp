@@ -240,6 +240,7 @@ struct ExecuteParameters {
 
   int steps{1000};
   int equilibration_steps{100};
+  int binsize{1}; // number of measurements averaged into one bin of the results file
   int sweeps{1}; // finite temperature sweeps
   int population_control_interval{DEFAULT_POPULATION_CONTROL_INTERVAL};
   int measure_interval_multiplier{DEFAULT_MEASURE_INTERVAL_MULTIPLIER};
@@ -249,13 +250,13 @@ struct ExecuteParameters {
   double timestep{DEFAULT_TIME_STEP};
   int n_walkers_per_mpi_task{10};
 
-  std::optional<double> Eshift_relaxation_rate{}; // defaults to decay 10 times over equilibration_steps
+  std::optional<double> Eshift_relaxation_rate{}; // defaults to decay within equilibration_steps/10
   std::optional<double> initial_Eshift{};
 };
 SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, steps,
-                         equilibration_steps, sweeps, population_control_interval, measure_interval_multiplier,
-                         walker_ortho_interval, Eshift_relaxation_rate, print_sweep_step,
-                         timestep, n_walkers_per_mpi_task, initial_Eshift);
+                         equilibration_steps, binsize, sweeps, population_control_interval, measure_interval_multiplier,
+                         walker_ortho_interval, print_sweep_step,
+                         timestep, n_walkers_per_mpi_task, Eshift_relaxation_rate, initial_Eshift);
 
 
 struct AFQMCParameters {

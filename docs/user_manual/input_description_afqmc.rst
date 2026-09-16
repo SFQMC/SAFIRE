@@ -259,6 +259,9 @@ Settings
    * - **measure_interval_multiplier**
      - 1
      - Used to determine the number of projection steps between measurements using the formula below. Measurement is the most expensive operation in AFQMC. A larger "measure_interval_multiplier" will reduce the CPU time necessary to perform AFQMC calculations.
+   * - **binsize**
+     - 1
+     - The number of consecutive measurements averaged into one bin of the results file. Binning reduces the size of the results file and the autocorrelation between neighbouring bins. A trailing partial bin is not written out.
    * - **walker_ortho_interval**
      - 10
      - The number of projection steps between application of the modified Gram-Schmidt (mGS) orthogonalization procedure. The mGS procedure is relatively inexpensive computationally and frequent orthogonalization is recommended.
