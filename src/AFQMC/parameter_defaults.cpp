@@ -15,6 +15,7 @@
 #include <concepts>
 #include <format>
 #include <map>
+#include <random>
 #include <set>
 #include <string>
 #include <string_view>
@@ -196,7 +197,20 @@ void apply_defaults(ExecuteParameters& exec) {
 void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::communicator>& mpi) {
   utils::check(!params.execute.empty(), "The input contains no execute block, so there is nothing to run.");
 
-  // 1. + 2. name every block and hoist the ones declared inside an execute block
+  // 1. draw a seed unless the input gave one, so that print_parameters reports a value that
+  //    reproduces the run
+  if(!params.seed) {
+    int drawn{};
+    if(mpi.comm.root()) {
+      // the top bit goes so that the value stays non-negative and can be pasted back into the
+      // input unchanged
+      drawn = int(std::random_device{}() >> 1);
+    }
+    mpi.comm.broadcast_n(&drawn, 1, 0);
+    params.seed = drawn;
+  }
+
+  // 2. + 3. name every block and hoist the ones declared inside an execute block
   resolve_block_refs("wavefunction", params.wavefunction, params.execute, &ExecuteParameters::wavefunction, true);
   resolve_block_refs("hamiltonian", params.hamiltonian, params.execute, &ExecuteParameters::hamiltonian, false);
   resolve_block_refs("walker_set", params.walker_set, params.execute, &ExecuteParameters::walker_set, false);
@@ -206,7 +220,7 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
     utils::check(!wfn.filename.empty(), "The wavefunction \"{}\" must contain a filename.", wfn.name);
   }
 
-  // 3. resolve what a block inherits from a neighbouring block
+  // 4. resolve what a block inherits from a neighbouring block
   for(auto& exec : params.execute) {
     const std::string& wfn_name = block_name(exec.wavefunction, "wavefunction");
     const std::string& ham_name = block_name(exec.hamiltonian, "hamiltonian");
@@ -220,7 +234,7 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
     apply_defaults(exec);
   }
 
-  // 4. resolve the defaults that depend on the hamiltonian type. Only the hamiltonians that are
+  // 5. resolve the defaults that depend on the hamiltonian type. Only the hamiltonians that are
   //    actually used are peeked, and each of them only once.
   std::map<std::string, HamiltonianType> htypes;
   auto hamiltonian_type = [&](const std::string& name) {
