@@ -242,9 +242,6 @@ protected:
   // OrbMats[ndet][nspin](nel,NMO)
   nda::array<devPsiT,2> OrbMats;
 
-/*
-  void recompute_ci();
-*/
 };
 
 /* 

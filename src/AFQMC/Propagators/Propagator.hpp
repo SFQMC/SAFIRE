@@ -22,7 +22,6 @@
 #include "AFQMC/config.h"
 
 #include "AFQMC/Propagators/AFQMCBasePropagator.h"
-//#include "AFQMC/Propagators/AFQMCModelPropagator.h"
 
 namespace sfqmc
 {
