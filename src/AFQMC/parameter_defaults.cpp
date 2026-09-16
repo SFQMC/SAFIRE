@@ -31,24 +31,6 @@ namespace sfqmc::afqmc {
 
 namespace {
 
-/// The name a resolved execute block refers a component by. Every reference holds a name once
-/// resolve_block_refs has run.
-template<typename Params>
-const std::string& block_name(const std::optional<utils::BlockRef<Params>>& ref, std::string_view key) {
-  utils::check(ref.has_value(), "The execute block has no {}.", key);
-  const auto* name = std::get_if<std::string>(&*ref);
-  utils::check(name != nullptr, "The {} of the execute block was not resolved to a name. Did resolve_defaults run?",
-               key);
-  return *name;
-}
-
-template<typename Params>
-Params& find_block(std::vector<Params>& blocks, const std::string& name, std::string_view key) {
-  const auto block = std::ranges::find_if(blocks, [&](const Params& candidate) { return candidate.name == name; });
-  utils::check(block != blocks.end(), "There is no {} named \"{}\".", key, name);
-  return *block;
-}
-
 /// Names the blocks of one component and hoists the ones declared inside an execute block into
 /// the top level list, so that afterwards every execute block refers to its components by name
 /// and `blocks` is the complete registry.
