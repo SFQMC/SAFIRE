@@ -1,17 +1,11 @@
 add_library(catch_main STATIC catch_main.cpp)
 target_link_libraries(catch_main PUBLIC safire_lib Catch2::Catch2)
 target_include_directories(catch_main PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-if(ENABLE_CPPTRACE)
-  target_link_libraries(safire_lib PUBLIC cpptrace::cpptrace)
-endif()
-if(ENABLE_CUDA)
-  target_link_libraries(catch_main PUBLIC CCCL::CCCL)
-endif()
 
 # Consolidated AFQMC test binary
 add_executable(test_afqmc
   test_allocators.cpp
-  test_driver_factory.cpp
+  test_execute.cpp
   test_estimators.cpp
   test_polarized_consistency.cpp
   test_hamiltonian_factory.cpp
