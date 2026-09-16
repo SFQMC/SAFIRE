@@ -14,98 +14,94 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <format>
-#include <tuple>
-#include <map>
 #include <string>
-#include <iomanip>
+#include <vector>
 
 #include "config.h"
 #include "utilities/check.hpp"
 #include "utilities/memory_utils.hpp"
 
 #include "AFQMC/config.h"
+#include "AFQMC/Drivers/averageEloc.hpp"
+#include "AFQMC/Drivers/run_ftafqmc.hpp"
+#include "AFQMC/Utilities/AFQMCTimer.h"
 #include "IO/app_loggers.h"
 #include "IO/banner.hpp"
-#include "AFQMC/Utilities/AFQMCTimer.h"
-#include "FTAFQMCDriver.h"
-#include "averageEloc.hpp"
-#include "AFQMC/Walkers/WalkerIO.hpp"
 
-namespace sfqmc
-{
-namespace afqmc
-{
+namespace sfqmc::afqmc {
+
 template<MEMORY_SPACE MEM>
-bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
-{
-
+void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+                 std::string const& output_name,
+                 ExecuteParameters const& exec,
+                 RealType Eshift,
+                 WalkerSet<MEM>& wset,
+                 Wavefunction<MEM>& wavefunction,
+                 Propagator<MEM>& propagator,
+                 Estimators<MEM>& estimators) {
   app_log(1, banner("Beginning FT-AFQMC calculation"));
 
   std::vector<ComplexType> curData;
 
   RealType w0   = wset.GlobalWeight();
   int nwalk_ini = wset.GlobalPopulation();
-  int nwalk_ini_per_mpi = nwalk_ini/mpi->comm.size();
+  int nwalk_ini_per_mpi = nwalk_ini / mpi.comm.size();
 
-   int print_interval = std::max(1, nStep / 20);
+  int print_interval = std::max(1, exec.steps / 20);
 
-  app_log(1, "Initial weight and number of walkers: {}, {}", w0 ,nwalk_ini);
+  app_log(1, "Initial weight and number of walkers: {}, {}", w0, nwalk_ini);
   app_log(1, "Initial Eshift: {} ", Eshift);
 
-  // problems with using step_tot to do ortho and load balance
-  double total_time;
   // KE: the concept of a "block" is now implicitly defined by the measure_interval
+  const RealType Eshift0 = Eshift;
+  const RealType beta    = exec.timestep * exec.steps;
 
-  beta = dt*nStep;
+  app_log(1, "Executing {} sweeps, with Beta = {} ", exec.sweeps, beta);
 
-  app_log(1, "Executing {} sweeps, with Beta = {} ", nSweep, beta);
-
-  for(int iSweep = 0; iSweep < nSweep; ++iSweep) {
+  for(int iSweep = 0; iSweep < exec.sweeps; ++iSweep) {
     Eshift = Eshift0; // Eshift set to same value at the beginning of each sweep
-    total_time = 0.0;
-    for (int iStep = 0; iStep < nStep; ++iStep)
-    {
+    double total_time = 0.0;
+    for(int iStep = 0; iStep < exec.steps; ++iStep) {
       auto step_time = timers.step.start();
-      if(iStep % print_interval == 0 and print_sweep_step)
+      if(iStep % print_interval == 0 && exec.print_sweep_step) {
         app_log(1, "sweep {}, step {} ", iSweep, iStep);
+      }
       // reset wset log(ovlp), read initial value
       // from memory after sweep 1, rather than re-computing
-      if(iStep==0 and iSweep>0){
-        auto const& LogPT0 = wfn0.getLogPT0();
+      if(iStep == 0 && iSweep > 0) {
+        auto const& LogPT0 = wavefunction.getLogPT0();
         utils::check(LogPT0.size() == wset.size(),
-                    "LogPT0 size ({}) does not match walker set size ({})",
-                    LogPT0.size(), wset.size());
+                     "LogPT0 size ({}) does not match walker set size ({})",
+                     LogPT0.size(), wset.size());
         wset.setProperty(OVLP, LogPT0);
         wset.setTauStep(0);
       }
 
-      prop0.Propagate(wset, Eshift, dt, iStep+1);
-      total_time += dt;
+      propagator.Propagate(wset, Eshift, exec.timestep, iStep + 1);
+      total_time += exec.timestep;
 
-      if ((iStep + 1) % nStabilize == 0 && iStep != nStep - 1 )
-      {
+      if((iStep + 1) % exec.walker_ortho_interval == 0 && iStep != exec.steps - 1) {
         auto ortho_time = timers.ortho.start();
-        prop0.Orthogonalize(wset);
+        propagator.Orthogonalize(wset);
         ortho_time.stop();
       }
 
-      if (total_time < 1.0)
-      {
+      if(total_time < 1.0) {
         wset.processWalkerData(curData);
-        Eshift = averageEloc(*mpi, wset);
+        Eshift = averageEloc(mpi, wset);
       }
 
       // KE: should there be a check for population control interval here?
-      if ((iStep + 1) % nPopulation == 0 || iStep == 0 || iStep == nStep-1)
-      {
+      if((iStep + 1) % exec.population_control_interval == 0 || iStep == 0 || iStep == exec.steps - 1) {
         auto popcontrol_time = timers.popcontrol.start();
         wset.processWalkerData(curData);
         wset.popControl();
         popcontrol_time.stop();
 
         if(total_time >= 1.0) {
-          Eshift += dShift * (averageEloc(*mpi, wset) - Eshift);
+          Eshift += exec.dshift * (averageEloc(mpi, wset) - Eshift);
         }
       }
 
@@ -115,37 +111,33 @@ bool FTAFQMCDriver<MEM>::run(WalkerSet<MEM>& wset)
 
     // one sweep is one measurement sample. The walker set is still at nt = nStep here,
     // i.e. the full path has been constructed.
-    estimators_.measure(*mpi, iSweep, wset);
-
-    //add finite-T checkpoint?
+    estimators.measure(mpi, iSweep, wset);
 
     wset.clean(); // reset walker buffer
     // reset weights, UR, DR, VR
     wset.reset(nwalk_ini_per_mpi);
     // reset logsclL, probably only necessary if backward sweeps are implemented
-    wfn0.resetLogScale();
-
+    wavefunction.resetLogScale();
   }
 
-
   // print timers
-  if(mpi->comm.root()) {
+  if(mpi.comm.root()) {
     timers.print_all();
-    estimators_.write(std::format("{}.results.h5", output_name_));
+    estimators.write(std::format("{}.results.h5", output_name));
   }
 
   app_log(1, banner("Finished FT-AFQMC calculation"));
-
-  return true;
-
 }
 
-// Instantiate                                        
-template bool FTAFQMCDriver<HOST_MEMORY>::run(WalkerSet<HOST_MEMORY>& wset);
+// Instantiate
+#define __inst__(M)                                                                                  \
+  template void run_ftafqmc<M>(utils::mpi_context_t<boost::mpi3::communicator>&, std::string const&,  \
+                               ExecuteParameters const&, RealType, WalkerSet<M>&, Wavefunction<M>&,   \
+                               Propagator<M>&, Estimators<M>&);
+
+__inst__(HOST_MEMORY)
 #if defined(ENABLE_DEVICE)
-  template bool FTAFQMCDriver<DEVICE_MEMORY>::run(WalkerSet<DEVICE_MEMORY>& wset);
+__inst__(DEVICE_MEMORY)
 #endif
 
-} // namespace afqmc
-
-} // namespace sfqmc
+} // namespace sfqmc::afqmc

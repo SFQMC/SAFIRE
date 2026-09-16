@@ -51,8 +51,8 @@ template<MEMORY_SPACE MEM>
 void WalkerSetBase<MEM>::parse(const WalkerSetParameters& params)
 {
   app_log(1, section(std::format("Initializing Walker Set \"{}\"", params.name)));
-  // The walker type is resolved by the caller and passed to the constructor, so it is
-  // not taken from the parameters here.
+  // walkerType is set from params in the constructor's member-init list, before setup()
+  // needs it, so it is not assigned here.
   min_weight   = params.min_weight;
   max_weight   = params.max_weight;
   load_balance = params.load_balance_type;
@@ -386,7 +386,7 @@ void WalkerSetBase<MEM>::allocate_walkers(int n)
  * is needed.
 */
 template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::populate_from_guess(const std::vector<nda::matrix<ComplexType>>& guess)
+void WalkerSetBase<MEM>::populate_from_guess(WalkerSetInitialGuess::slater_guess guess)
 {
   auto all = nda::range::all;
   utils::check((walkerType == COLLINEAR) == (guess.size() == 2),
@@ -407,7 +407,7 @@ void WalkerSetBase<MEM>::populate_from_guess(const std::vector<nda::matrix<Compl
  * LOGSCL_*, IS_UNITARY) by allocate_walkers, so this only fills U/D/V.
 */
 template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::populate_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV)
+void WalkerSetBase<MEM>::populate_from_guess_ft(WalkerSetInitialGuess::udv_guess UDV)
 {
   auto all = nda::range::all;
   int nspin = (walkerType == COLLINEAR ? 2 : 1);

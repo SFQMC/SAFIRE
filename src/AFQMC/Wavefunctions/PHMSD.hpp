@@ -141,7 +141,7 @@ public:
    */
   memory::const_shared_array<HOST_MEMORY,ComplexType,3> G_MF();
 
-  HamiltonianTypes getHamType() const { return HamOp.getHamType(); }
+  HamiltonianType getHamType() const { return HamOp.getHamType(); }
 
   auto getFieldTypes()
   {

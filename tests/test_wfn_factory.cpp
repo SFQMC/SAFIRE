@@ -41,9 +41,8 @@
 #include "test_utils.hpp"
 #include "AFQMC/Utilities/readWfn.h"
 
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 
 #include "numerics/sparse/sparse.hpp"
@@ -86,7 +85,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   bool compare         = native && reference_data.available && !write_reference;
 
   // Broadcast the electron counts from the native type to the target walker type,
-  // mirroring broadcast_number_of_electrons() in the WavefunctionFactory.
+  // mirroring broadcast_number_of_electrons() in Wavefunction::from_params.
   if(type == NONCOLLINEAR) {
     nup   = nup + ndown;
     ndown = 0;
@@ -105,35 +104,29 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
     ndown = NMO;
   }
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 
   int nwalk = 11; // choose prime number to force non-trivial splits in shared routines
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
-  WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", WavefunctionParameters{.name = "wfn0", .filename = wfn_file, .dense_trial = dense_trial});
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, finiteT, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(
+      mpi, WavefunctionParameters{.name = "wfn0", .filename = wfn_file, .dense_trial = dense_trial}, type, finiteT,
+      ham, nwalk);
 
   //nwalk=nw;
-  auto wset = [&]() {
-    if(!finiteT)
-    {
-      auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
-      REQUIRE(int(initial_guess.size()) == nspin);
-      REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
-      return WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-    }
-    else
-    {
-      auto initial_guess_ft = WfnFac.getInitialGuess_ft("wfn0");
-      REQUIRE(initial_guess_ft.shape() == std::array<long,4>{3,nspin,npol*NMO,NMO});
-      return WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess_ft, nwalk);
-    }
-  }();
+  auto const& guess = wfn.initial_guess();
+  if(!finiteT)
+  {
+    REQUIRE(int(guess.slater().size()) == nspin);
+    REQUIRE(guess.slater()[0].shape() == std::array<long,2>{npol*NMO,nup});
+  }
+  else
+  {
+    REQUIRE(guess.udv().shape() == std::array<long,4>{3,nspin,npol*NMO,NMO});
+  }
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, guess, nwalk);
 
   // Perturb the initial guess by a deterministic non-trivial sequence.
   {
@@ -295,7 +288,7 @@ TEST_CASE("wfn_factory: sdet", "[wfn_factory]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
 
-  app_log(0,"WavefunctionFactory unit testing.");
+  app_log(0,"Wavefunction construction unit testing.");
 
   using namespace utils;
 

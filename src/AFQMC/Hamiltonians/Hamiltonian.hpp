@@ -17,9 +17,12 @@
 #pragma once
 
 #include <fstream>
+#include <memory>
 #include <variant>
 
 #include "AFQMC/config.h"
+#include "AFQMC/parameters.hpp"
+#include "utilities/mpi_context.h"
 
 #include "AFQMC/Hamiltonians/ModelHamOpsGenerator.h"
 #include "AFQMC/Hamiltonians/THCHamiltonian.h"
@@ -33,10 +36,15 @@ namespace sfqmc
 namespace afqmc
 {
 
-class Hamiltonian 
+class Hamiltonian
 {
 
 public:
+
+  /// Reads the integral file named by `params` and builds the Hamiltonian its format and type
+  /// call for. Collective: the type is peeked on the root and broadcast.
+  static Hamiltonian from_params(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
+                                 const HamiltonianParameters& params);
 
   template<typename Ham>
   Hamiltonian(Ham&& other) : var(std::forward<Ham>(other)) {}

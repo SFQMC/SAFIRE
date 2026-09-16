@@ -18,16 +18,17 @@
 
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "AFQMC/parameters.hpp"
 #include "IO/banner.hpp"
 #include "utilities/check.hpp"
 
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Propagators/Propagator.hpp"
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
 
 #include "EstimatorBase.h"
 #include "EnergyEstimator.h"
@@ -37,6 +38,13 @@
 
 namespace sfqmc::afqmc {
 
+/// Resolves the wavefunction an estimator names, building it if it does not exist yet. An
+/// estimator may use a different wavefunction and hamiltonian than the stage around it;
+/// resolve_defaults has set both names to the stage's in the common case.
+template<MEMORY_SPACE MEM>
+using WavefunctionLookup = std::function<Wavefunction<MEM>&(std::string const& wavefunction_name,
+                                                            std::string const& hamiltonian_name)>;
+
 template<MEMORY_SPACE MEM>
 class Estimators {
 public:
@@ -44,10 +52,9 @@ public:
              int stage,
              ExecuteParameters const& exec,
              WalkerSet<MEM>& wset,
-             WavefunctionFactory<MEM>& wfnFac,
              Wavefunction<MEM>& wfn0,
              Propagator<MEM>& prop,
-             HamiltonianFactory& hamFac)
+             WavefunctionLookup<MEM> const& wavefunction_for)
       : measurements_{std::format("Stage{}", stage)} {
     app_log(1, section("Initializing Estimators"));
 
@@ -57,16 +64,9 @@ public:
     // turn a block count into a number of propagation steps.
     int const pop_control_interval = exec.population_control_interval;
 
-    // an estimator may use a different hamiltonian and wavefunction than the driver.
-    // resolve_defaults has set both names to the driver's in the common case.
     auto estimator_wavefunction = [&](auto const& params) -> Wavefunction<MEM>& {
-      std::string const& wfn_name = resolved(params.wavefunction, "wavefunction");
-      Hamiltonian* ham = nullptr;
-      if(!wfnFac.is_constructed(wfn_name)) {
-        ham = std::addressof(hamFac.getHamiltonian(mpi, resolved(params.hamiltonian, "hamiltonian")));
-      }
-      return wfnFac.getWavefunction(mpi, wfn_name, wfn0.getWalkerType(), wfn0.isFiniteTemperature(), ham,
-                                    exec.n_walkers_per_mpi_task);
+      return wavefunction_for(resolved(params.wavefunction, "wavefunction"),
+                              resolved(params.hamiltonian, "hamiltonian"));
     };
 
     // apply_defaults has already rejected the combination of both back propagation estimators

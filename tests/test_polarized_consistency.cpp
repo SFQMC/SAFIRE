@@ -53,10 +53,11 @@
 #include <format>
 
 #include "AFQMC/config.h"
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
+#include "AFQMC/Hamiltonians/Hamiltonian.hpp"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
-#include "AFQMC/Propagators/PropagatorFactory.h"
+#include "AFQMC/Propagators/AFQMCBasePropagator.h"
+#include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Utilities/readWfn.h"
 #include "numerics/sparse/sparse.hpp"
 #include "test_utils.hpp"
@@ -185,26 +186,19 @@ run_result run_polarized(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commu
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
       std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 
   int nwalk = 2;
-  WavefunctionFactory<MEM> WfnFac{};
   WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
   apply_defaults(wfn_params, ham.getHamType());
-  WfnFac.push("wfn0", wfn_params);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(mpi, wfn_params, type, false, ham, nwalk);
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
-  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
-  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nwalk);
 
-  PropagatorFactory<MEM> PropFac;
   PropagatorParameters prop_params{.name = "prop0"};
   apply_defaults(prop_params, ham.getHamType());
-  PropFac.push("prop0", prop_params);
-  auto& prop = PropFac.getPropagator(mpi, "prop0", wfn, rng_dev);
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
 
   wfn.Log_Overlap(wset);
   wfn.runtime_optimization(wset);

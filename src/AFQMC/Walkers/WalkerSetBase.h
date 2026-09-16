@@ -33,6 +33,7 @@
 #include "AFQMC/Walkers/Walkers.hpp"
 #include "AFQMC/Walkers/WalkerControl.hpp"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
+#include "AFQMC/Walkers/WalkerSetInitialGuess.hpp"
 
 namespace sfqmc
 {
@@ -58,20 +59,19 @@ public:
   using reference = walker<MEM,ComplexType>;
   using const_reference = walker<MEM,const ComplexType>;
 
-  /// Constructor: build a set of nWalkers walkers with the given dimensions
-  /// {rows, naea, naeb}. The walker type is parsed by the caller and passed in
-  /// (see parse_walker_type) so it is resolved exactly once. Walkers are
-  /// allocated and initialized to valid default values (unit
-  /// weight/overlap/phase, zero Slater matrices).
-  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                const WalkerSetParameters& params,
+  /// Constructor: build a set of nWalkers walkers of the given dimensions
+  /// {rows, naea, naeb}. Walkers are allocated and initialized to valid default
+  /// values (unit weight/overlap/phase, zero Slater matrices) but carry no
+  /// initial guess; it is for callers that restore walkers from elsewhere, such
+  /// as an HDF5 restart file.
+  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
                 std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
-                WALKER_TYPES walker_type,
+                const WalkerSetParameters& params,
                 std::array<int, 3> dims,
                 int nWalkers,
                 bool finite_temperature_
                )
-      : mpi(_mpi_),
+      : mpi(mpi),
         rng(r),
         walker_size(1),
         walker_memory_usage(0),
@@ -79,7 +79,7 @@ public:
         bp_walker_memory_usage(0),
         tau_step(0),
         history_pos(0),
-        walkerType(walker_type),
+        walkerType(params.walker_type),
         finite_temperature(finite_temperature_),
         tot_num_walkers(0),
         walker_buffer(0, 1),
@@ -91,35 +91,26 @@ public:
     allocate_walkers(nWalkers);
   }
 
-  /// Constructor: build a set of nWalkers walkers from the per-spin initial
-  /// guess matrices. Dimensions are inferred from the guess, so no external
-  /// NMO/nup/ndown is needed. Every walker is initialized to the guess.
-  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                const WalkerSetParameters& params,
-                std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
-                WALKER_TYPES walker_type,
-                const std::vector<nda::matrix<ComplexType>>& guess,
-                int nWalkers
-               )
-      : WalkerSetBase(_mpi_, params, r, walker_type, dims_from_guess(guess), nWalkers, false)
-  {
-    populate_from_guess(guess);
-  }
-
-  /// Constructor: build a set of nWalkers finite-temperature walkers from the
-  /// rank-4 UDV initial guess {3, nspin, rows, naea}. Dimensions are inferred
+  /// Constructor: build a set of nWalkers walkers from the trial wavefunction's
+  /// initial guess. The dimensions and the finite-temperature flag are derived
   /// from the guess, so no external NMO/nup/ndown is needed. Every walker is
   /// initialized to the guess.
-  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                const WalkerSetParameters& params,
+  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
                 std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
-                WALKER_TYPES walker_type,
-                memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV,
+                const WalkerSetParameters& params,
+                const WalkerSetInitialGuess& guess,
                 int nWalkers
                )
-      : WalkerSetBase(_mpi_, params, r, walker_type, dims_from_guess_ft(UDV), nWalkers, true)
+      : WalkerSetBase(mpi, r, params, guess.walker_dims(), nWalkers, guess.isFiniteTemperature())
   {
-    populate_from_guess_ft(UDV);
+    utils::check(guess.walker_type == params.walker_type,
+                 "WalkerSetBase: the initial guess is {} but the walker set is {}.",
+                 walkerTypeToString(guess.walker_type), walkerTypeToString(params.walker_type));
+    if(finite_temperature) {
+      populate_from_guess_ft(guess.udv());
+    } else {
+      populate_from_guess(guess.slater());
+    }
   }
 
   /*
@@ -204,19 +195,6 @@ public:
   void resize(int n);
 
   /*
-   * (Re)populates every walker's Slater matrix from the per-spin guess. The set
-   * must already be sized; each guess matrix is exactly (rows x naea)/(NMO x naeb).
-   */
-  void populate_from_guess(const std::vector<nda::matrix<ComplexType>>& guess);
-
-  /*
-   * (Re)populates every walker's finite-temperature U/D/V matrices from the
-   * rank-4 guess {3, nspin, rows, naea} (D is a full matrix; its diagonal is
-   * used). The set must already be sized.
-   */
-  void populate_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV);
-
-  /*
    * Finite temperature reset walkers at the beginning of each sweep
   */
   void reset(int n);
@@ -237,7 +215,9 @@ public:
   auto get_target_population() const { return targetN_per_rank; }
   auto get_global_target_population() const { return targetN; }
 
-  auto walker_dims() const { return std::pair<int, int>{wlk_desc[0], wlk_desc[1]}; }
+  /// Dimensions {rows, naea, naeb} of the walkers in this set, in the same layout as
+  /// WalkerSetInitialGuess::walker_dims().
+  auto walker_dims() const { return std::array<int, 3>{wlk_desc[0], wlk_desc[1], wlk_desc[2]}; }
 
   auto GlobalPopulation() const
   {
@@ -259,26 +239,18 @@ public:
   }
 
   private:
-  /// Dimensions {rows, naea, naeb} of a walker set holding the given per-spin
-  /// guess matrices (rows = 2*NMO for noncollinear; naeb = 0 unless collinear).
-  static std::array<int, 3> dims_from_guess(const std::vector<nda::matrix<ComplexType>>& guess)
-  {
-    utils::check(guess.size() == 1 or guess.size() == 2, "Invalid initial guess.");
-    return {int(guess[0].extent(0)), int(guess[0].extent(1)),
-            guess.size() > 1 ? int(guess[1].extent(1)) : 0};
-  }
+  /*
+   * Populates every walker's Slater matrix from the per-spin guess. The set must already be
+   * sized; each guess matrix is exactly (rows x naea)/(NMO x naeb).
+   */
+  void populate_from_guess(WalkerSetInitialGuess::slater_guess guess);
 
-  /// Dimensions {rows, naea, naeb} of a finite-temperature walker set holding
-  /// the given rank-4 UDV guess {3, nspin, rows, naea}. nspin == 2 signals
-  /// collinear-ft (naeb == naea); otherwise naeb == 0.
-  static std::array<int, 3> dims_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV)
-  {
-    utils::check(UDV.extent(0) == 3, "Invalid finite-T initial guess.");
-    int rows = int(UDV.extent(2));
-    int naea = int(UDV.extent(3));
-    int naeb = (UDV.extent(1) == 2) ? naea : 0;
-    return {rows, naea, naeb};
-  }
+  /*
+   * Populates every walker's finite-temperature U/D/V matrices from the rank-4 guess
+   * {3, nspin, rows, naea} (D is a full matrix; its diagonal is used). The set must already
+   * be sized.
+   */
+  void populate_from_guess_ft(WalkerSetInitialGuess::udv_guess UDV);
 
   template<walker_data D>
   auto extract_SM( SpinTypes s ) {

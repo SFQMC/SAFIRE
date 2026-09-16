@@ -42,13 +42,14 @@
 #include <memory>
 
 #include "AFQMC/config.h"
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
+#include "AFQMC/Hamiltonians/Hamiltonian.hpp"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Estimators/EstimatorBase.h"
 #include "AFQMC/Estimators/Measurements.hpp"
 #include "AFQMC/Estimators/BackPropEstimator.hpp"
 #include "AFQMC/Estimators/Estimators.hpp"
-#include "AFQMC/Propagators/PropagatorFactory.h"
+#include "AFQMC/Propagators/AFQMCBasePropagator.h"
+#include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Utilities/readWfn.h"
 #include "test_utils.hpp"
 
@@ -219,9 +220,7 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
@@ -229,22 +228,18 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   auto [nspin, npol] = walkerTypeToDims(type);
 
   int nwalk = 2;
-  WavefunctionFactory<MEM> WfnFac{};
   WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
   apply_defaults(wfn_params, ham.getHamType());
-  WfnFac.push("wfn0", wfn_params);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(mpi, wfn_params, type, false, ham, nwalk);
 
-  PropagatorFactory<MEM> PropgFac;
   PropagatorParameters prop_params{.name = "prop0"};
   apply_defaults(prop_params, ham.getHamType());
-  PropgFac.push("prop0", prop_params);
-  auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
 
-  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
-  REQUIRE(int(initial_guess.size()) == nspin);
-  REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
-  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
+  auto const& initial_guess = wfn.initial_guess();
+  REQUIRE(int(initial_guess.slater().size()) == nspin);
+  REQUIRE(initial_guess.slater()[0].shape() == std::array<long,2>{npol*NMO,nup});
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);
 
   // generate P1 with dt=0 so the BP RDM should match the mixed estimate
   // we cannot actually use exactly 0 because that changes the sparsity structure in model hamiltonians
@@ -318,29 +313,23 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
   REQUIRE(type == COLLINEAR);
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
   int const nwalk = 4;
-  WavefunctionFactory<MEM> WfnFac{};
   WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
   apply_defaults(wfn_params, ham.getHamType());
-  WfnFac.push("wfn0", wfn_params);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(mpi, wfn_params, type, false, ham, nwalk);
 
-  PropagatorFactory<MEM> PropgFac;
   PropagatorParameters prop_params{.name = "prop0"};
   apply_defaults(prop_params, ham.getHamType());
-  PropgFac.push("prop0", prop_params);
-  auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
   prop.generateP1(1e-10, type);
 
-  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
+  auto const& initial_guess = wfn.initial_guess();
 
   // the pair correlators are the one observable that needs a file of its own. The identity
   // map is enough to exercise it and the way its output is named after the map.
@@ -410,8 +399,10 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
         .population_control_interval = pop_control_interval,
         .n_walkers_per_mpi_task = nwalk};
 
-    auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-    Estimators<MEM> estimators{mpi, 0, exec, wset, WfnFac, wfn, prop, HamFac};
+    auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);
+    Estimators<MEM> estimators{
+      mpi, 0, exec, wset, wfn, prop,
+      [&](std::string const&, std::string const&) -> Wavefunction<MEM>& { return wfn; }};
     // the PairCorr constructor was the last read of the temporary directory on every rank but
     // root, which is the one that deletes it
     mpi->comm.barrier();
@@ -456,8 +447,10 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
         .population_control_interval = pop_control_interval,
         .n_walkers_per_mpi_task = nwalk};
 
-    auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-    Estimators<MEM> estimators{mpi, 0, exec, wset, WfnFac, wfn, prop, HamFac};
+    auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);
+    Estimators<MEM> estimators{
+      mpi, 0, exec, wset, wfn, prop,
+      [&](std::string const&, std::string const&) -> Wavefunction<MEM>& { return wfn; }};
     mpi->comm.barrier();
 
     auto const results = tmpdir / "run_b.results.h5";
@@ -508,33 +501,26 @@ void estimators_local_energy_matches_recomputation(
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
   int const nwalk = 4;
-  WavefunctionFactory<MEM> WfnFac{};
   WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
   apply_defaults(wfn_params, ham.getHamType());
-  WfnFac.push("wfn0", wfn_params);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(mpi, wfn_params, type, false, ham, nwalk);
 
   // hybrid propagation would leave nothing but the overlap on the walkers, so the shortcut
   // this exercises hangs off hybrid being false
-  PropagatorFactory<MEM> PropgFac;
   PropagatorParameters prop_params{.name = "prop0", .hybrid = false};
   apply_defaults(prop_params, ham.getHamType());
-  PropgFac.push("prop0", prop_params);
-  auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
 
   constexpr double dt                = 0.005;
   constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
 
-  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
-  auto wset                 = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nwalk);
 
   // a single step is enough, and it has to be a real one: the local energy only lands on the
   // walkers when the propagator actually runs its local energy update
@@ -549,7 +535,9 @@ void estimators_local_energy_matches_recomputation(
       .population_control_interval = pop_control_interval,
       .n_walkers_per_mpi_task = nwalk};
 
-  Estimators<MEM> estimators{mpi, 0, exec, wset, WfnFac, wfn, prop, HamFac};
+  Estimators<MEM> estimators{
+      mpi, 0, exec, wset, wfn, prop,
+      [&](std::string const&, std::string const&) -> Wavefunction<MEM>& { return wfn; }};
   estimators.measure(*mpi, 1, wset);
 
   // the recomputation, averaged the way MeasurementOutput averages: weighted, reduced over the

@@ -27,7 +27,6 @@
 #include "IO/app_loggers.h"
 #include "test_common.hpp"
 #include "utilities/mpi_context.h"
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "test_utils.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
@@ -92,9 +91,7 @@ void thc_vs_chol_energy_agreement(
 
   // Build HamiltonianOperations from a file-backed Hamiltonian
   auto make_ham_ops = [&](std::string hamil_file) {
-    HamiltonianFactory HamFac;
-    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-    auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+    Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
     return ham.template getHamiltonianOperations<HOST_MEMORY>(walker_type, mpi, PsiT);
   };
 
@@ -176,9 +173,7 @@ void hamiltonian_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3:
   int NMO = read_nmo_from_hdf(hamil_file);
   CHECK(NMO > 0);
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  [[maybe_unused]] Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 }
 
 TEST_CASE("hamiltonian_factory: build", "[hamiltonian_factory]")
@@ -232,9 +227,7 @@ TEST_CASE("hamiltonian_factory: closed_vs_collinear_energy_offset", "[hamiltonia
     h5::group nomsd_grp = wfn_grp.open_group("Wavefunction").open_group("NOMSD");
     auto PsiT = read_nomsd_wavefunction<HOST_MEMORY>(nomsd_grp, 1, wt, NMO, nup, ndown);
 
-    HamiltonianFactory HamFac;
-    HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = chol_file});
-    auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+    Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = chol_file});
     auto H = ham.template getHamiltonianOperations<HOST_MEMORY>(wt, mpi, PsiT);
 
     nda::array<ComplexType, 2> G(1, nel * npol * NMO);

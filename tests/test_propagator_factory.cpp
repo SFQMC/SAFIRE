@@ -40,10 +40,10 @@
 #include "test_utils.hpp"
 #include "AFQMC/Utilities/readWfn.h" 
 
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
-#include "AFQMC/Propagators/PropagatorFactory.h"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
+#include "AFQMC/Propagators/AFQMCBasePropagator.h"
+#include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 
 using std::cerr;
@@ -75,41 +75,34 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   // finite-T imaginary-time slice count (the wfn "nup" field for a finite-T guess)
   int ntau                  = nup;
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file, .shift_1body = true});
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(
+      mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file, .shift_1body = true});
 
-  int nwalk = 11; 
+  int nwalk = 11;
   std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
-  WavefunctionFactory<MEM> WfnFac{};
-  WfnFac.push("wfn0", WavefunctionParameters{.name = "wfn0", .filename = wfn_file, .dense_trial = dense_trial});
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, finiteT, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(
+      mpi, WavefunctionParameters{.name = "wfn0", .filename = wfn_file, .dense_trial = dense_trial}, type, finiteT,
+      ham, nwalk);
 
-  auto wset = [&]() {
-    if(!finiteT)
-    {
-      auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
-      REQUIRE(int(initial_guess.size()) == nspin);
-      REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
-      return WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-    }
-    else
-    {
-      auto initial_guess_ft = WfnFac.getInitialGuess_ft("wfn0");
-      REQUIRE(initial_guess_ft.shape() == std::array<long,4>{3,nspin,npol*NMO,NMO});
-      return WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess_ft, nwalk);
-    }
-  }();
+  auto const& guess = wfn.initial_guess();
+  if(!finiteT)
+  {
+    REQUIRE(int(guess.slater().size()) == nspin);
+    REQUIRE(guess.slater()[0].shape() == std::array<long,2>{npol*NMO,nup});
+  }
+  else
+  {
+    REQUIRE(guess.udv().shape() == std::array<long,4>{3,nspin,npol*NMO,NMO});
+  }
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, guess, nwalk);
 
-  PropagatorFactory<MEM> PropgFac;
   PropagatorParameters prop_params{.name = "prop0", .denseP2 = true};
   apply_defaults(prop_params, ham.getHamType());
-  PropgFac.push("prop0", prop_params);
-  auto& prop = PropgFac.getPropagator(mpi, "prop0", wfn, rng_dev);
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
 
   std::cout << setprecision(8);
   wfn.Energy(wset);

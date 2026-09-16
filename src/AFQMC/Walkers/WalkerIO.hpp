@@ -36,14 +36,13 @@ namespace afqmc
 
 // Reads a walker restart file and returns a fully constructed, populated walker
 // set sized to this rank's share of the walkers in the file. fh5 opened on all
-// ranks read-only. The set is built from the given parameters/rng/walker_type with
-// dimensions taken from the file, upholding the invariant that a walker set is
-// always born fully populated (no empty intermediate state).
+// ranks read-only. The set is built from the given parameters/rng with dimensions
+// taken from the file, upholding the invariant that a walker set is always born
+// fully populated (no empty intermediate state).
 template<class WalkerSet, class MpiContext, class Rng>
 WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
-                              const WalkerSetParameters& params,
                               std::shared_ptr<Rng> rng,
-                              WALKER_TYPES walker_type,
+                              const WalkerSetParameters& params,
                               h5::file& fh5,
                               int nWalkers,
                               bool set_to_target)
@@ -67,9 +66,9 @@ WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
   int ndn        = Idata[6];
 
   std::array<int, 3> dims;  // {rows, naea, naeb} = wlk_desc[0..2]
-  if (walker_type == NONCOLLINEAR)
+  if (params.walker_type == NONCOLLINEAR)
     dims = {2 * NMO, nup + ndn, 0};
-  else if (walker_type == COLLINEAR)
+  else if (params.walker_type == COLLINEAR)
     dims = {NMO, nup, ndn};
   else
     dims = {NMO, nup, 0};
@@ -92,7 +91,7 @@ WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
   }
   int nw_local = nWN - nW0;
 
-  WalkerSet wset(mpi, params, rng, walker_type, dims, nw_local, false);
+  WalkerSet wset(mpi, rng, params, dims, nw_local, false);
   utils::check(wlk_nterms == wset.walkerSizeIO(),
                " Inconsistent walker restart file: IO size {} != walkerSizeIO {}.",
                wlk_nterms, wset.walkerSizeIO());

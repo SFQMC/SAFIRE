@@ -16,13 +16,8 @@
 
 #pragma once
 
-#include <vector>
-#include <type_traits>
-
 #include "AFQMC/config.h"
 #include "IO/banner.hpp"
-#include "nda/nda.hpp"
-#include "nda/tensor.hpp"
 #include "utilities/check.hpp"
 #include "utilities/freemem.h"
 #include "utilities/memory_utils.hpp"
