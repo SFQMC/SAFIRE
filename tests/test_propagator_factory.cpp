@@ -100,9 +100,11 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   }
   auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, guess, nwalk);
 
+  RealType dt = finiteT ? 0.099 : 0.01;
+
   PropagatorParameters prop_params{.name = "prop0", .denseP2 = true};
   apply_defaults(prop_params, ham.getHamType());
-  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, dt)};
 
   std::cout << setprecision(8);
   wfn.Energy(wset);
@@ -117,12 +119,11 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
     app_log(1," Initial Energy: {}", (eav / ov).real());
   }
   double tot_time = 0;
-  RealType dt     = 0.01;
   RealType Eshift = std::abs(wset[0].get_property(OVLP));
   if(!finiteT){
     for (int i = 0; i < 10; i++)
     {
-      prop.Propagate(wset, Eshift, dt);
+      prop.Propagate(wset, Eshift);
       wfn.Energy(wset);
       ComplexType eav = 0, ov = 0;
       for(int iw = 0; iw < wset.size(); ++iw)
@@ -135,9 +136,11 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
       app_log(1," -- {}  {}  {}",i,tot_time,(eav / ov).real());
       prop.Orthogonalize(wset);
     }
+    // a propagator is built for a single timestep, so the second block needs its own
+    Propagator<MEM> prop2{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, 2 * dt)};
     for (int i = 0; i < 10; i++)
     {
-      prop.Propagate(wset, Eshift, 2 * dt);
+      prop2.Propagate(wset, Eshift);
       wfn.Energy(wset);
       ComplexType eav = 0, ov = 0;
       for(int iw = 0; iw < wset.size(); ++iw)
@@ -153,11 +156,10 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   } 
   else {
 
-    dt = 0.099;
     //int ntau_test = 10;
     for(int i = 0; i < ntau-1; i++)
     {
-      prop.Propagate(wset, Eshift, dt, i+1);
+      prop.Propagate(wset, Eshift, i+1);
       wfn.Energy(wset, i+1);
       ComplexType eav = 0, ov = 0;
       for(int iw = 0; iw < wset.size(); ++iw)

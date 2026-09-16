@@ -79,7 +79,7 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
         wset.setTauStep(0);
       }
 
-      propagator.Propagate(wset, Eshift, exec.timestep, iStep + 1);
+      propagator.Propagate(wset, Eshift, iStep + 1);
       total_time += exec.timestep;
 
       if((iStep + 1) % exec.walker_ortho_interval == 0 && iStep != exec.steps - 1) {

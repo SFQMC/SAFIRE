@@ -53,8 +53,6 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 
   double total_time = 0.0;
 
-  propagator.generateP1(exec.timestep, wset.getWalkerType());
-
   const int log_interval = std::max(1, exec.steps / 100);
   const int step_format_width = int(std::to_string(exec.steps).size());
 
@@ -70,7 +68,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   // KE: need to change the hard-coded 1.0 to an equilibration phase.
   for(int iStep = 0; iStep < exec.steps; ++iStep) {
     auto step_time = timers.step.start();
-    propagator.Propagate(wset, Eshift, exec.timestep);
+    propagator.Propagate(wset, Eshift);
     total_time += exec.timestep;
 
     if((iStep + 1) % exec.walker_ortho_interval == 0) {
