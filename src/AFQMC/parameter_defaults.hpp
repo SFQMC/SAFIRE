@@ -75,15 +75,17 @@ void apply_defaults(ExecuteParameters& exec);
 /// Applies every default that cannot be expressed as a member initializer of the parameter
 /// structs, so that the rest of the code only ever sees resolved values:
 ///
-/// 1. Names every block. A block that an execute block leaves out entirely is materialized as
+/// 1. Draws a seed unless the input gave one, so that the run can be reproduced from the
+///    parameters as they are printed.
+/// 2. Names every block. A block that an execute block leaves out entirely is materialized as
 ///    a default constructed one. Generated names never collide with the names in the input.
-/// 2. Hoists the blocks declared inside an execute block into the top level lists, leaving the
+/// 3. Hoists the blocks declared inside an execute block into the top level lists, leaving the
 ///    execute block referring to them by name. Afterwards every reference in an execute block
 ///    is a name, and the top level lists are the complete registry of blocks.
-/// 3. Resolves the defaults a block inherits from a neighbouring block.
-/// 4. Peeks the type of every Hamiltonian and resolves the defaults that depend on it.
+/// 4. Resolves the defaults a block inherits from a neighbouring block.
+/// 5. Peeks the type of every Hamiltonian and resolves the defaults that depend on it.
 ///
-/// Collective, because of the peek in the last step.
+/// Collective, because of the seed broadcast in the first step and the peek in the last one.
 void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::communicator>& mpi);
 
 } // namespace sfqmc::afqmc

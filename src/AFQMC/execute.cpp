@@ -124,10 +124,11 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
   std::map<std::string, WalkerSet<MEM>> walker_sets;
   std::map<std::string, Wavefunction<MEM>> wavefunctions;
 
-  utils::SeedType const seed =
-      params.seed ? utils::split_seed(*params.seed, mpi->comm) : utils::make_seed(mpi->comm);
-  auto walker_rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(seed);
-  auto field_rng  = std::make_shared<utils::RandomGenerator_t<MEM>>(seed);
+  // the walkers and the auxiliary fields draw from separate streams of the same seed, so that
+  // the run is reproducible and the two sequences are independent
+  int const seed  = resolved(params.seed, "seed");
+  auto walker_rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(seed, mpi->comm, 0));
+  auto field_rng  = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::split_seed(seed, mpi->comm, 1));
 
   int stage_index{};
   for(auto const& stage : params.execute) {

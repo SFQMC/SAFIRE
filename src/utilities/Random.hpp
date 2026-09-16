@@ -13,15 +13,10 @@
 
 #pragma once
 
-#include <ctime>
-#include <vector>
 #include <random>
 #include "configuration.hpp"
 #include "mpi3/communicator.hpp"
-#include "utilities/check.hpp"
-#include "AFQMC/Utilities/type_conversion.hpp"
-#include "nda/nda.hpp"
-#include "numerics/nda_functions.hpp"
+
 #include "numerics/operations/tensor.hpp"
 
 #if defined(ENABLE_DEVICE)
@@ -34,8 +29,10 @@ namespace utils {
 
 using SeedType = unsigned long long;
 
-SeedType make_seed(boost::mpi3::communicator& comm);
-SeedType split_seed(int seed, boost::mpi3::communicator& comm);
+/// The seed of one generator of a run: unique per rank of `comm` and per `stream`, and
+/// reproducible from `seed` alone. Generators that serve different purposes take different
+/// stream indices, so that their sequences do not overlap.
+SeedType split_seed(int seed, boost::mpi3::communicator& comm, unsigned stream = 0);
 
 struct HostRandomGenerator {
   std::mt19937 std_rng; // still used directly in popcontrol

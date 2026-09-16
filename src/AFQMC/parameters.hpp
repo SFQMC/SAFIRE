@@ -260,8 +260,8 @@ struct AFQMCParameters {
   // without its extension, in the current working directory
   std::string output_name{};
 
-  // seeds the random number generators of the whole run, every stage included. Without one they
-  // are seeded from the wall clock, so the run is not reproducible
+  // seeds the random number generators of the whole run, every stage included. Without one
+  // resolve_defaults draws one, so a run can always be reproduced from the printed parameters
   std::optional<int> seed{};
 
   std::vector<ExecuteParameters> execute{};
