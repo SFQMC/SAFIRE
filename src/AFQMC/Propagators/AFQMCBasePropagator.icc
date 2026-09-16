@@ -15,12 +15,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 
-#include <vector>
-#include <map>
-#include <string>
-#include <iostream>
-#include <tuple>
-
 #include "AFQMC/config.h"
 #include "utilities/Random.hpp"
 #include "AFQMC/Utilities/probit.h"
@@ -149,6 +143,11 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
     local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies, MFfactor,
                                lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
   }
+
+  // 7. bound the weights, so that no single walker can dominate the population before the
+  //    next branching
+  bound_walker_weights(wset, weight_bound_floor, weight_bound_fraction, weight_bound_stats);
+
   if(wset.NumBackProp() > 0) {
     wset.advanceHistoryPos();
   }

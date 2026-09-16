@@ -521,6 +521,8 @@ Settings
     "vbias_bound": 50.0,
     "upper_cutoff_scale": 10.0,
     "lower_cutoff_scale": 1.0,
+    "weight_bound_floor": 100.0,
+    "weight_bound_fraction": 0.1,
     "apply_constraint": true,
     "importance_sampling": true,
     "subtractMF": true,
@@ -551,6 +553,17 @@ Settings
    * - **lower_cutoff_scale**
      - 1.0
      - Lower cutoff scaling factor for pseudo local energy updates
+   * - **weight_bound_floor**
+     - 100.0
+     - Lower limit of the walker weight bound. After every propagation step, walker
+       weights are capped at ``max(weight_bound_floor, weight_bound_fraction*N)``, where
+       ``N`` is the global target population, which is the total weight the population is
+       rescaled to at every population control interval. A walker over the bound is
+       rescaled onto it and keeps its phase.
+   * - **weight_bound_fraction**
+     - 0.1
+     - Largest fraction of a normalized population's total weight that a single walker is
+       allowed to carry. See **weight_bound_floor**.
    * - **apply_constraint**
      - true
      - Whether to apply constraints during propagation
@@ -586,6 +599,8 @@ Settings
       "external_field_scale": 1.0,
       "upper_cutoff_scale": 10.0,
       "lower_cutoff_scale": 1.0,
+      "weight_bound_floor": 100.0,
+      "weight_bound_fraction": 0.1,
       "apply_constraint": true,
       "importance_sampling": true,
       "subtractMF": true,
@@ -627,6 +642,17 @@ Settings
     * - **lower_cutoff_scale**
       - 1.0
       - Lower cutoff scaling factor for pseudo local energy updates
+    * - **weight_bound_floor**
+      - 100.0
+      - Lower limit of the walker weight bound. After every propagation step, walker
+        weights are capped at ``max(weight_bound_floor, weight_bound_fraction*N)``, where
+        ``N`` is the global target population, which is the total weight the population is
+        rescaled to at every population control interval. A walker over the bound is
+        rescaled onto it and keeps its phase.
+    * - **weight_bound_fraction**
+      - 0.1
+      - Largest fraction of a normalized population's total weight that a single walker is
+        allowed to carry. See **weight_bound_floor**.
     * - **apply_constraint**
       - true
       - Whether to apply constraints during propagation

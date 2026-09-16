@@ -79,6 +79,8 @@ public:
     symmetric_split    = resolved(params.symmetric_split, "symmetric_split");
 
     order               = params.taylor_n;
+    weight_bound_floor    = params.weight_bound_floor;
+    weight_bound_fraction = params.weight_bound_fraction;
     apply_constraint     = params.apply_constraint;
     importance_sampling = params.importance_sampling;
     subtractMF         = params.subtractMF;
@@ -103,6 +105,11 @@ public:
         utils::check(false,"BasePropagator: free_projection");
       }
     }
+    utils::check(weight_bound_floor > 0.0, "weight_bound_floor must be positive, got {}",
+                 weight_bound_floor);
+    utils::check(weight_bound_fraction > 0.0 && weight_bound_fraction <= 1.0,
+                 "weight_bound_fraction must be in (0,1], got {}", weight_bound_fraction);
+
     utils::check(denseP2 or hamtype == HamiltonianType::model_hamiltonian, "denseP2=false only allowed with ModelHamiltonian.");
 
     if ((hamtype == HamiltonianType::kp_factorized || hamtype == HamiltonianType::kpthc) && denseP1)
@@ -112,6 +119,8 @@ public:
     }
 
     app_log(1,"cutoff scales (upper/lower): {} / {}", upper_cutoff_scale, lower_cutoff_scale);
+    app_log(1,"weight bound: max({}, {} * target population) per walker",
+            weight_bound_floor, weight_bound_fraction);
     if(denseP1)
       app_log(1,"Using dense 1-body propagator");
     else
@@ -210,12 +219,14 @@ public:
   // aggregated across all ranks; only the root prints.
   void printBoundStatistics()
   {
-    long buf[6] = {vbias_bound_stats.total, vbias_bound_stats.upper, vbias_bound_stats.lower,
-                   eloc_bound_stats.total,  eloc_bound_stats.upper,  eloc_bound_stats.lower};
-    mpi->comm.all_reduce_in_place_n(&buf[0], 6, std::plus<>());
+    long buf[9] = {vbias_bound_stats.total,  vbias_bound_stats.upper,  vbias_bound_stats.lower,
+                   eloc_bound_stats.total,   eloc_bound_stats.upper,   eloc_bound_stats.lower,
+                   weight_bound_stats.total, weight_bound_stats.upper, weight_bound_stats.lower};
+    mpi->comm.all_reduce_in_place_n(&buf[0], 9, std::plus<>());
     if (not mpi->comm.root()) return;
     long vb_tot = buf[0], vb_up = buf[1];
     long el_tot = buf[3], el_up = buf[4], el_lo = buf[5];
+    long wb_tot = buf[6], wb_up = buf[7];
     auto pct = [](long h, long t) { return t > 0 ? 100.0 * double(h) / double(t) : 0.0; };
 
     app_log(1, "\n{}", banner("Bounding-box trigger statistics"));
@@ -234,6 +245,13 @@ public:
       app_log(1, "   operations: {}   hits: {} ({:.4f}%)  [upper: {} ({:.4f}%), lower: {} ({:.4f}%)]",
               el_tot, el_up + el_lo, pct(el_up + el_lo, el_tot),
               el_up, pct(el_up, el_tot), el_lo, pct(el_lo, el_tot));
+
+    app_log(1, " Walker-weight clamp  [|w| > max({}, {}*target population)], per walker:",
+            weight_bound_floor, weight_bound_fraction);
+    if (wb_tot == 0)
+      app_log(1, "   not triggered (0 operations counted).");
+    else
+      app_log(1, "   operations: {}   hits: {} ({:.4f}%)", wb_tot, wb_up, pct(wb_up, wb_tot));
     app_log(1, "{}\n", hrule());
   }
 
@@ -295,6 +313,8 @@ private:
   bool apply_constraint = true;
   double upper_cutoff_scale = 10.0;
   double lower_cutoff_scale = 1.0;
+  double weight_bound_floor = 100.0;
+  double weight_bound_fraction = 0.1;
   bool natural_shift = true;
   bool symmetric_split = true;
   bool use_cp_constraint = false;
@@ -308,6 +328,7 @@ private:
   // Diagnostic counters: how often the propagation bounding boxes are triggered over the run.
   BoundStats vbias_bound_stats;  // force-bias (vbias) clamp, counted per (walker,field)
   BoundStats eloc_bound_stats;   // local-energy (eloc) clamp, counted per walker
+  BoundStats weight_bound_stats; // walker-weight clamp, counted per walker
 
   // excited state propagator
   bool excitedState = false;

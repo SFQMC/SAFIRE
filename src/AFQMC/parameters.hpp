@@ -85,6 +85,10 @@ struct PropagatorParameters {
   std::optional<double> vbias_bound{};
   std::optional<double> upper_cutoff_scale{};
   std::optional<double> lower_cutoff_scale{};
+  // No walker may carry more than max(weight_bound_floor, weight_bound_fraction*N), where N
+  // is the global target population, i.e. the total weight the population is rescaled to.
+  double weight_bound_floor{100.0};
+  double weight_bound_fraction{0.1};
   bool apply_constraint{true};
   bool importance_sampling{true};
   bool subtractMF{true};
@@ -100,7 +104,8 @@ struct PropagatorParameters {
   bool project_force_bias{false};
 };
 SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, upper_cutoff_scale,
-                         lower_cutoff_scale, apply_constraint, importance_sampling, subtractMF, hybrid,
+                         lower_cutoff_scale, weight_bound_floor, weight_bound_fraction,
+                         apply_constraint, importance_sampling, subtractMF, hybrid,
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
                          symmetric_split, use_cp_constraint, project_force_bias);
 
