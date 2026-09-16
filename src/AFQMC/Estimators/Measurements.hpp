@@ -50,11 +50,13 @@ using sample_t = typename sample_type<A>::type;
 
 class Measurements {
 public:
-  explicit Measurements(std::string prefix = {}) : prefix_{std::move(prefix)} {}
+  explicit Measurements(std::string prefix = {}, long binsize = 1) : prefix_{std::move(prefix)}, binsize_{binsize} {
+    utils::check(binsize_ > 0, "binsize has to be positive, but it is {}", binsize_);
+  }
 
   void measure(std::string_view name, auto const &sample) {
     using Acc = Accumulator<detail::sample_t<decltype(sample)>>;
-    auto [it, inserted] = observables_.try_emplace(std::string{name}, std::make_unique<Acc>(1));
+    auto [it, inserted] = observables_.try_emplace(std::string{name}, std::make_unique<Acc>(binsize_));
 
     auto* acc = dynamic_cast<Acc*>(it->second.get());
     utils::check(acc != nullptr, "observable '{}' was registered with a different sample type", name);
@@ -76,6 +78,7 @@ public:
 
 private:
   std::string prefix_{};
+  long binsize_{1};
   std::map<std::string, std::unique_ptr<AccumulatorBase>> observables_{};
 };
 

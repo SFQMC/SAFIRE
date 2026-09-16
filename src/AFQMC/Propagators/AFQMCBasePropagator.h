@@ -231,7 +231,7 @@ public:
 
     app_log(1, "\n{}", banner("Bounding-box trigger statistics"));
 
-    app_log(1, " Force-bias (vbias) clamp  [|vbias| > vbias_bound*sqrt(dt)], per (walker,field):");
+    app_log(1, " Force-bias (vbias) clamp  [|vbias| > vbias_bound], per (walker,field):");
     if (vb_tot == 0)
       app_log(1, "   not measured (host-side counting only).");
     else

@@ -49,10 +49,10 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   app_log(1, "Initial weight and number of walkers: {}, {}", w0, nwalk_ini);
   app_log(1, "Initial Eshift: {} ", Eshift);
 
-  double total_time = 0.0;
-
   const int log_interval = std::max(1, exec.steps / 100);
   const int step_format_width = int(std::to_string(exec.steps).size());
+
+  const double Eshift_relaxation_rate = resolved(exec.Eshift_relaxation_rate, "Eshift_relaxation_rate");
 
   // three equal columns tiling the full rule width, shared by the header and the rows
   constexpr int log_col = default_banner_width / 3;
@@ -63,11 +63,9 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   app_log(2, log_row, "Wall clock", log_col, "Step", log_col, "Energy", log_col);
   app_log(2, hrule());
 
-  // KE: need to change the hard-coded 1.0 to an equilibration phase.
   for(int iStep = 0; iStep < exec.steps; ++iStep) {
     auto step_time = timers.step.start();
     propagator.Propagate(wset, Eshift);
-    total_time += exec.timestep;
 
     if((iStep + 1) % exec.walker_ortho_interval == 0) {
       auto ortho_time = timers.ortho.start();
@@ -75,21 +73,16 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       ortho_time.stop();
     }
 
-    if(total_time < 1.0) {
-      wset.rescale_total_weight();
-      Eshift = averageEloc(mpi, wset);
-    }
-
     if((iStep + 1) % exec.population_control_interval == 0 || iStep == 0) {
       auto popcontrol_time = timers.popcontrol.start();
-      wset.popControl(); // make this a call to actual pop control
+      wset.popControl();
       wset.rescale_total_weight();
       popcontrol_time.stop();
 
       if(iStep >= exec.equilibration_steps) {
         estimators.measure(mpi, iStep / exec.population_control_interval, wset);
       } else {
-        Eshift += exec.dshift * (averageEloc(mpi, wset) - Eshift);
+        Eshift += Eshift_relaxation_rate * (averageEloc(mpi, wset) - Eshift);
       }
     }
 

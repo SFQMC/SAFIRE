@@ -191,6 +191,13 @@ void apply_defaults(EstimatorParameters& params, const ExecuteParameters& exec) 
 }
 
 void apply_defaults(ExecuteParameters& exec) {
+  if(!exec.Eshift_relaxation_rate) {
+    if(exec.equilibration_steps > 1) {
+      exec.Eshift_relaxation_rate = 1 - std::exp(-10.0/exec.equilibration_steps);
+    } else {
+      exec.Eshift_relaxation_rate = 1;
+    }
+  }
   apply_defaults(exec.estimators, exec);
 }
 

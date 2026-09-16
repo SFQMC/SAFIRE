@@ -238,22 +238,23 @@ struct ExecuteParameters {
   std::optional<utils::BlockRef<PropagatorParameters>> propagator{};
   EstimatorParameters estimators{};
 
-  int steps{1};
-  int equilibration_steps{};
+  int steps{1000};
+  int equilibration_steps{100};
   int sweeps{1}; // finite temperature sweeps
   int population_control_interval{DEFAULT_POPULATION_CONTROL_INTERVAL};
   int measure_interval_multiplier{DEFAULT_MEASURE_INTERVAL_MULTIPLIER};
   int walker_ortho_interval{DEFAULT_WALKER_ORTHO_INTERVAL};
-  double dshift{1.0};
   bool print_sweep_step{false}; // ftafqmc only
 
   double timestep{DEFAULT_TIME_STEP};
   int n_walkers_per_mpi_task{10};
-  std::optional<double> initial_Eshift{}; // make optional
+
+  std::optional<double> Eshift_relaxation_rate{}; // defaults to decay 10 times over equilibration_steps
+  std::optional<double> initial_Eshift{};
 };
 SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, steps,
                          equilibration_steps, sweeps, population_control_interval, measure_interval_multiplier,
-                         walker_ortho_interval, dshift, print_sweep_step,
+                         walker_ortho_interval, Eshift_relaxation_rate, print_sweep_step,
                          timestep, n_walkers_per_mpi_task, initial_Eshift);
 
 
