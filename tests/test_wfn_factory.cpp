@@ -196,7 +196,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   
   // must initialize discrete propagators for lattice models before calling vMF, vbias, etc.
   // technically, only for discrete propagators, but we don't access to that info here.
-  if (wfn.getHamType() == ModelHamiltonian) { 
+  if (wfn.getHamType() == HamiltonianType::model_hamiltonian) {
       const long ncv = wfn.number_of_cholesky_vectors();
       memory::array<MEM,ComplexType, 1> vMF_discrete(ncv, ComplexType(0.0, 0.0));
       memory::host_array<ComplexType, 1> nMF(2 * NMO, ComplexType(0.0, 0.0));
@@ -272,7 +272,7 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
   }
 
   // Sparse vHS shape + Vsum value check (ModelHamiltonian only)
-  if (wfn.getHamType() == ModelHamiltonian)
+  if (wfn.getHamType() == HamiltonianType::model_hamiltonian)
   {
     auto vHS_sp = wfn.vHS_sparse(X, dt);
     utils::check(vHS_sp.extent(0) == nspin, "Size mismatch");

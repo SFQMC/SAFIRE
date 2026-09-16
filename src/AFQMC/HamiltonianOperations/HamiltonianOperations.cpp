@@ -125,7 +125,7 @@ namespace afqmc
   }
 
   template<MEMORY_SPACE M>
-  HamiltonianTypes HamiltonianOperations<M>::getHamType() const
+  HamiltonianType HamiltonianOperations<M>::getHamType() const
   {
     return std::visit([&](auto&& a) { return a.getHamType(); }, var);
   }

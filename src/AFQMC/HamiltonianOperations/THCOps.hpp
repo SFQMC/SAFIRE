@@ -41,8 +41,7 @@ class THCOps
   using csrMat = math::sparse::csr_matrix<T, MEM, int, int>;
 
 public:
-  static constexpr HamiltonianTypes HamOpType = THC;
-  constexpr HamiltonianTypes getHamType() const { return THC; }
+  constexpr HamiltonianType getHamType() const { return HamiltonianType::thc; }
 
   THCOps() = delete;
 

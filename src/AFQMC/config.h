@@ -172,14 +172,12 @@ using PsiT_Matrix_t = math::sparse::csr_matrix<T, MEM, int, int>;
 template<MEMORY_SPACE MEM>
 using PsiT_Matrix   = PsiT_Matrix_t<ComplexType,MEM>;
 
-enum HamiltonianTypes
-{
-  THC,
-  KPTHC,
-  KPFactorized,
-  RealDenseFactorized,
-  ModelHamiltonian,  
-  UNKNOWN
+enum class HamiltonianType {
+  thc,
+  kpthc,
+  kp_factorized,
+  real_dense_factorized,
+  model_hamiltonian,
 };
 
 } // namespace afqmc

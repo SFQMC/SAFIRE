@@ -136,34 +136,34 @@ void apply_estimator_defaults(auto& params, const ExecuteParameters& exec) {
 
 } // namespace
 
-HamiltonianTypes peek_hamiltonian_type(const HamiltonianParameters& params,
+HamiltonianType peek_hamiltonian_type(const HamiltonianParameters& params,
                                       utils::mpi_context_t<mpi3::communicator>& mpi) {
   utils::check(!params.filename.empty(), "The hamiltonian \"{}\" must contain a filename.", params.name);
 
-  int htype = UNKNOWN;
+  int htype{};
   if(mpi.comm.root()) {
     h5::file file(params.filename, 'r');
     h5::group grp(file);
-    htype = peekHamType(grp, get_hamiltonian_format(grp));
+    htype = int(peekHamType(grp, get_hamiltonian_format(grp)));
   }
   mpi.comm.broadcast_n(&htype, 1, 0);
-  return HamiltonianTypes(htype);
+  return HamiltonianType(htype);
 }
 
-void apply_defaults(WavefunctionParameters& params, HamiltonianTypes htype) {
+void apply_defaults(WavefunctionParameters& params, HamiltonianType htype) {
   // sparse trial wavefunctions are only worth it on k-point runs
   if(!params.dense_trial) {
-    params.dense_trial = htype != KPFactorized && htype != KPTHC;
+    params.dense_trial = htype != HamiltonianType::kp_factorized && htype != HamiltonianType::kpthc;
   }
   if(!params.algorithm) {
-    params.algorithm = (htype == RealDenseFactorized ? PHMSDEnergyAlgorithm::woodbury
-                                                     : PHMSDEnergyAlgorithm::reference);
+    params.algorithm = (htype == HamiltonianType::real_dense_factorized ? PHMSDEnergyAlgorithm::woodbury
+                                                                        : PHMSDEnergyAlgorithm::reference);
   }
 }
 
-void apply_defaults(PropagatorParameters& params, HamiltonianTypes htype) {
+void apply_defaults(PropagatorParameters& params, HamiltonianType htype) {
   // some defaults take legacy values for model hamiltonians
-  const bool model = htype == ModelHamiltonian;
+  const bool model = htype == HamiltonianType::model_hamiltonian;
   if(!params.vbias_bound) {
     params.vbias_bound = model ? 100.0 : 50.0;
   }
@@ -222,7 +222,7 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
 
   // 4. resolve the defaults that depend on the hamiltonian type. Only the hamiltonians that are
   //    actually used are peeked, and each of them only once.
-  std::map<std::string, HamiltonianTypes> htypes;
+  std::map<std::string, HamiltonianType> htypes;
   auto hamiltonian_type = [&](const std::string& name) {
     const auto [entry, inserted] = htypes.try_emplace(name, UNKNOWN);
     if(inserted) {
@@ -232,7 +232,7 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
   };
 
   for(const auto& exec : params.execute) {
-    const HamiltonianTypes htype = hamiltonian_type(block_name(exec.hamiltonian, "hamiltonian"));
+    const HamiltonianType htype = hamiltonian_type(block_name(exec.hamiltonian, "hamiltonian"));
     apply_defaults(find_block(params.wavefunction, block_name(exec.wavefunction, "wavefunction"), "wavefunction"),
                    htype);
     apply_defaults(find_block(params.propagator, block_name(exec.propagator, "propagator"), "propagator"), htype);

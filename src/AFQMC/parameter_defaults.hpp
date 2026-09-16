@@ -55,13 +55,13 @@ const Params& find_block(const std::vector<Params>& blocks, const std::string& n
 
 /// Reads the Hamiltonian type of an integral file without building anything. Collective: the
 /// root opens the file and broadcasts the result.
-HamiltonianTypes peek_hamiltonian_type(const HamiltonianParameters& params,
-                                       utils::mpi_context_t<mpi3::communicator>& mpi);
+HamiltonianType peek_hamiltonian_type(const HamiltonianParameters& params,
+                                      utils::mpi_context_t<mpi3::communicator>& mpi);
 
 /// Fills the defaults that depend on the Hamiltonian type. Members that the input set are
 /// left alone.
-void apply_defaults(WavefunctionParameters& params, HamiltonianTypes htype);
-void apply_defaults(PropagatorParameters& params, HamiltonianTypes htype);
+void apply_defaults(WavefunctionParameters& params, HamiltonianType htype);
+void apply_defaults(PropagatorParameters& params, HamiltonianType htype);
 
 /// Fills the defaults that the estimators inherit from the execute block containing them, and
 /// checks that the set of estimators is consistent. The blocks of `exec` have to be resolved to

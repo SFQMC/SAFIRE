@@ -43,8 +43,7 @@ template<MEMORY_SPACE MEM>
 class Real3IndexFactorization
 {
 public:
-  static const HamiltonianTypes HamOpType = RealDenseFactorized;
-  HamiltonianTypes getHamType() const { return HamOpType; }
+  HamiltonianType getHamType() const { return HamiltonianType::real_dense_factorized; }
 
   Real3IndexFactorization(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> ctxt,
         WALKER_TYPES type,

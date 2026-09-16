@@ -41,7 +41,7 @@ public:
       : fileName(params.filename), buffer_size(params.buffer_size)
   {}
 
-  HamiltonianTypes getHamType() const { return KPFactorized; }
+  HamiltonianType getHamType() const { return HamiltonianType::kp_factorized; }
 
   template<MEMORY_SPACE MEM>
   HamiltonianOperations<MEM> getHamiltonianOperations(WALKER_TYPES type,

@@ -34,7 +34,7 @@ public:
       : fileName(params.filename), shift_1body(params.shift_1body)
   {}
 
-  HamiltonianTypes getHamType() const { return ModelHamiltonian; }
+  HamiltonianType getHamType() const { return HamiltonianType::model_hamiltonian; }
 
   template<MEMORY_SPACE MEM>
   HamiltonianOperations<MEM> getHamiltonianOperations(WALKER_TYPES type,
