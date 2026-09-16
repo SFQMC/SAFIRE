@@ -43,8 +43,6 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                  Estimators<MEM>& estimators) {
   app_log(1, banner("Beginning FT-AFQMC calculation"));
 
-  std::vector<ComplexType> curData;
-
   RealType w0   = wset.GlobalWeight();
   int nwalk_ini = wset.GlobalPopulation();
   int nwalk_ini_per_mpi = nwalk_ini / mpi.comm.size();
@@ -89,14 +87,14 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       }
 
       if(total_time < 1.0) {
-        wset.processWalkerData(curData);
+        wset.rescale_total_weight();
         Eshift = averageEloc(mpi, wset);
       }
 
       // KE: should there be a check for population control interval here?
       if((iStep + 1) % exec.population_control_interval == 0 || iStep == 0 || iStep == exec.steps - 1) {
         auto popcontrol_time = timers.popcontrol.start();
-        wset.processWalkerData(curData);
+        wset.rescale_total_weight();
         wset.popControl();
         popcontrol_time.stop();
 

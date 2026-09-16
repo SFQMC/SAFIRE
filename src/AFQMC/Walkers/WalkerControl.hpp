@@ -30,7 +30,6 @@
 
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
-#include "AFQMC/Walkers/WalkerUtilities.hpp"
 
 #include "mpi3/communicator.hpp"
 #include "mpi3/request.hpp"
@@ -223,10 +222,6 @@ inline void min_branch([[maybe_unused]] std::vector<std::pair<double, int>>& buf
   APP_ABORT(" Error: min_branch not implemented yet. \n\n");
 }
 
-/**
- * Implements Cafarrel's minimum branching algorithm.
- *   - buff: array of walker info (weight,num).
- */
 inline void serial_comb(std::vector<std::pair<double, int>>& buff, utils::HostRandomGenerator& rng)
 {
   std::uniform_real_distribution<double> distribution(0.0,1.0);
@@ -325,58 +320,88 @@ inline void pair_branch(std::vector<std::pair<double, int>>& buff, utils::HostRa
  * Note: For replicated walkers, the weight of the new walkers will be:
  *    - For a walker in position I with bdata[I][:] = {2, Is}, wnew = 0.5*(weight[I] + weight[Is])  
  */
-inline void pair_branch_for_correlated(std::vector<double> const& buff, nda::array<int,2>& bdata, utils::HostRandomGenerator& rng, double max_c, double min_c)
-{ 
-  std::uniform_real_distribution<double> distribution(0.0,1.0);
-  typedef std::tuple<double, int> tp;
-  typedef std::vector<tp>::iterator tp_it;
-  // slow for now, not efficient!!!
-  int nw = buff.size();
-  std::vector<tp> wlks(nw);
-  for (int i = 0; i < nw; i++)
-    wlks[i] = tp{buff[i], i};
+// inline void pair_branch_for_correlated(std::vector<double> const& buff, nda::array<int,2>& bdata, utils::HostRandomGenerator& rng, double max_c, double min_c)
+// { 
+//   std::uniform_real_distribution<double> distribution(0.0,1.0);
+//   typedef std::tuple<double, int> tp;
+//   typedef std::vector<tp>::iterator tp_it;
+//   // slow for now, not efficient!!!
+//   int nw = buff.size();
+//   std::vector<tp> wlks(nw);
+//   for (int i = 0; i < nw; i++)
+//     wlks[i] = tp{buff[i], i};
   
-  std::sort(wlks.begin(), wlks.end(), [](const tp& a, const tp& b) { return std::get<0>(a) < std::get<0>(b); });
+//   std::sort(wlks.begin(), wlks.end(), [](const tp& a, const tp& b) { return std::get<0>(a) < std::get<0>(b); });
   
-  tp_it it_s = wlks.begin();
-  tp_it it_l = wlks.end() - 1;
+//   tp_it it_s = wlks.begin();
+//   tp_it it_l = wlks.end() - 1;
   
-  for( int i=0; i<bdata.extent(0); ++i ) {
-    bdata(i,0) = 1; // by default do nothing
-    bdata(i,1) = -1; // coupled to nothing
-  }
-  while (it_s < it_l)
-  { 
-    if (std::abs(std::get<0>(*it_s)) < min_c || std::abs(std::get<0>(*it_l)) > max_c)
-    { 
-      int i_l = std::get<1>(*it_l);
-      int i_s = std::get<1>(*it_s);
-      double w12 = std::get<0>(*it_s) + std::get<0>(*it_l);
-      if (distribution(rng.std_rng) < std::get<0>(*it_l) / w12)
-      { 
-        bdata(i_l,0) = 2;   // replicate large
-        bdata(i_l,1) = i_s; // coupled to small
-        bdata(i_s,0) = 0;   // kill small
-      }
-      else
-      { 
-        bdata(i_s,0) = 2;   // replicate small
-        bdata(i_s,1) = i_l; // coupled to large
-        bdata(i_l,0) = 0;   // kill large
-      }
-      it_s++;
-      it_l--;
-    }
-    else
-      break;
-  }
+//   for( int i=0; i<bdata.extent(0); ++i ) {
+//     bdata(i,0) = 1; // by default do nothing
+//     bdata(i,1) = -1; // coupled to nothing
+//   }
+//   while (it_s < it_l)
+//   { 
+//     if (std::abs(std::get<0>(*it_s)) < min_c || std::abs(std::get<0>(*it_l)) > max_c)
+//     { 
+//       int i_l = std::get<1>(*it_l);
+//       int i_s = std::get<1>(*it_s);
+//       double w12 = std::get<0>(*it_s) + std::get<0>(*it_l);
+//       if (distribution(rng.std_rng) < std::get<0>(*it_l) / w12)
+//       { 
+//         bdata(i_l,0) = 2;   // replicate large
+//         bdata(i_l,1) = i_s; // coupled to small
+//         bdata(i_s,0) = 0;   // kill small
+//       }
+//       else
+//       { 
+//         bdata(i_s,0) = 2;   // replicate small
+//         bdata(i_s,1) = i_l; // coupled to large
+//         bdata(i_l,0) = 0;   // kill large
+//       }
+//       it_s++;
+//       it_l--;
+//     }
+//     else
+//       break;
+//   }
   
-  // some checks
-  int nnew  = 0;
-  for (int i=0; i<nw; i++)
-    nnew += bdata(i,0);
-  if (nw != nnew)
-    APP_ABORT("Error: Problems with pair_branching_for_correlated.");
+//   // some checks
+//   int nnew  = 0;
+//   for (int i=0; i<nw; i++)
+//     nnew += bdata(i,0);
+//   if (nw != nnew)
+//     APP_ABORT("Error: Problems with pair_branching_for_correlated.");
+// }
+
+/**
+ * Gathers the magnitudes of every walker weight in the population, paired with a
+ * multiplicity of 1, into buffer on all ranks.
+ */
+template<class WlkBucket, class Vec,
+         typename = typename std::enable_if<(WlkBucket::fixed_population)>::type>
+inline void getGlobalListOfWalkerWeights(WlkBucket& wlk,
+                                         Vec&& buffer,
+                                         mpi3::communicator& comm)
+{
+  using Type = std::pair<double, int>;
+  static_assert( std::is_same_v<Type,
+                                typename std::decay_t<Vec>::value_type>,
+                 "Type mismatch.");
+  int target = wlk.get_target_population();
+  int nW     = wlk.size();
+  if (buffer.size() < target * comm.size())
+    APP_ABORT(" Error in getGlobalListOfWalkerWeights(): Array dimensions.");
+  if (nW > target)
+    APP_ABORT(" Error in getGlobalListOfWalkerWeights(): size > target.");
+  std::vector<Type> blocal(target);
+  std::vector<Type>::iterator itv = blocal.begin();
+  nda::array<ComplexType, 1> w_data(nW);
+  wlk.getProperty(WEIGHT, w_data);
+  for (int i = 0; i < nW; ++i, ++itv)
+    *itv = {std::abs(w_data(i)), 1};
+  MPI_Allgather(blocal.data(), blocal.size() * sizeof(Type), MPI_CHAR, buffer.data(), blocal.size() * sizeof(Type),
+                MPI_CHAR, comm.get());
 }
 
 /**
@@ -452,84 +477,84 @@ inline void SerialBranching(WalkerSet& wset,
  * New weights and branching counts, for each system, are calculated and updated in the buffer.
  * comm is a communicator with the roots of all Global communicators. 
  */
-inline void correlatedSerialBranching(BranchingAlgorithm branch_type,
-			    std::string combine_type,		
-                            double min_,
-                            double max_,
-			    nda::array<std::pair<double, int>,2>& buffer,
-                            utils::HostRandomGenerator& rng,
-                            mpi3::communicator& comm)
-{
-  // generate collective weights
-  int n_sys = buffer.extent(0);
-  int nW = buffer.extent(1);
-  std::vector<double> collW(nW,0.0); 
-  for(int s=0; s<n_sys; s++) {
-    if(combine_type == "max" or combine_type == "mod-max") {
-      for (int i = 0; i < nW; ++i)
-        collW[i] = std::max(std::abs(buffer(s,i).first), collW[i]);
-    } else if(combine_type == "mean" or combine_type == "mod-mean") {
-      for (int i = 0; i < nW; ++i)
-        collW[i] += std::abs(buffer(s,i).first)/double(n_sys);
-    } else {
-      APP_ABORT("Error: Unknown combine_type in correlatedSerialBranch.");
-    }
-  }
-  if(combine_type == "max" or combine_type == "mod-max") 
-    comm.reduce_in_place_n(collW.data(), nW, boost::mpi3::max<>());
-  else if(combine_type == "mean" or combine_type == "mod-mean") 
-    comm.reduce_in_place_n(collW.data(), nW, std::plus<>());
+// inline void correlatedSerialBranching(BranchingAlgorithm branch_type,
+// 			    std::string combine_type,		
+//                             double min_,
+//                             double max_,
+// 			    nda::array<std::pair<double, int>,2>& buffer,
+//                             utils::HostRandomGenerator& rng,
+//                             mpi3::communicator& comm)
+// {
+//   // generate collective weights
+//   int n_sys = buffer.extent(0);
+//   int nW = buffer.extent(1);
+//   std::vector<double> collW(nW,0.0); 
+//   for(int s=0; s<n_sys; s++) {
+//     if(combine_type == "max" or combine_type == "mod-max") {
+//       for (int i = 0; i < nW; ++i)
+//         collW[i] = std::max(std::abs(buffer(s,i).first), collW[i]);
+//     } else if(combine_type == "mean" or combine_type == "mod-mean") {
+//       for (int i = 0; i < nW; ++i)
+//         collW[i] += std::abs(buffer(s,i).first)/double(n_sys);
+//     } else {
+//       APP_ABORT("Error: Unknown combine_type in correlatedSerialBranch.");
+//     }
+//   }
+//   if(combine_type == "max" or combine_type == "mod-max") 
+//     comm.reduce_in_place_n(collW.data(), nW, boost::mpi3::max<>());
+//   else if(combine_type == "mean" or combine_type == "mod-mean") 
+//     comm.reduce_in_place_n(collW.data(), nW, std::plus<>());
 
-  // make branching decision based on collective weights
-  nda::array<int,2> branch_data(nW,2);
-  if (comm.root())
-  {
-    if(combine_type == "mean" or combine_type == "mod-mean")
-      for(int i=0; i<nW; i++)
-        collW[i] = collW[i]/double(comm.size());
-    if (branch_type == BranchingAlgorithm::pair) {
-      pair_branch_for_correlated(collW, branch_data, rng, max_, min_);
-    } else {
-      APP_ABORT("Error: Unknown branching type in correlatedSerialBranching. ");
-    }
-  }   
-  comm.broadcast_n(branch_data.data(),branch_data.size());
+//   // make branching decision based on collective weights
+//   nda::array<int,2> branch_data(nW,2);
+//   if (comm.root())
+//   {
+//     if(combine_type == "mean" or combine_type == "mod-mean")
+//       for(int i=0; i<nW; i++)
+//         collW[i] = collW[i]/double(comm.size());
+//     if (branch_type == BranchingAlgorithm::pair) {
+//       pair_branch_for_correlated(collW, branch_data, rng, max_, min_);
+//     } else {
+//       APP_ABORT("Error: Unknown branching type in correlatedSerialBranching. ");
+//     }
+//   }   
+//   comm.broadcast_n(branch_data.data(),branch_data.size());
 
-  // modify original buffer, with new weights and branching counts for each walker
-  // depends on branch_type
-  if(branch_type == BranchingAlgorithm::pair) {     
-    for(int i=0; i<nW; i++) {
-      if(branch_data(i,0)==2) { // branch 
-	int I_coupled = branch_data(i,1);   	
-        for(int s=0; s<n_sys; s++) {
-	  // new weight 
-          if(combine_type == "mod-mean" or combine_type == "mod-max") {
-	    double wnew = 0.5*(buffer(s,i).first + buffer(s,I_coupled).first);
-	    buffer(s,i) = std::make_pair(wnew,2); 
-	  } else if(combine_type == "mean" or combine_type == "max") {
-            double wx = 0.5 * (collW[i] + collW[I_coupled]) / collW[i];
-            buffer(s,i).first *= wx; 
-            buffer(s,i).second = 2;
-          }
-	}
-      } else if(branch_data(i,0)!=0 and branch_data(i,0)!=1) {
-	APP_ABORT("Error in correlatedSerialBranching: Unknown branching count.");
-      }
-    }
-    // now reset kill weights/counts
-    for(int i=0; i<nW; i++) {
-      if(branch_data(i,0)==0) { // kill 
-        for(int s=0; s<n_sys; s++)
-          buffer(s,i) = std::make_pair(0.0,0);
-      } else if(branch_data(i,0)==1) { // set cnt to 1, leave weight unchanged 
-        for(int s=0; s<n_sys; s++)
-          buffer(s,i).second = 1;
-      }
-    }       
-  } else {
-    APP_ABORT("Error: Unknown branching type in correlatedSerialBranching. ");
-  } 
-}
+//   // modify original buffer, with new weights and branching counts for each walker
+//   // depends on branch_type
+//   if(branch_type == BranchingAlgorithm::pair) {     
+//     for(int i=0; i<nW; i++) {
+//       if(branch_data(i,0)==2) { // branch 
+// 	int I_coupled = branch_data(i,1);   	
+//         for(int s=0; s<n_sys; s++) {
+// 	  // new weight 
+//           if(combine_type == "mod-mean" or combine_type == "mod-max") {
+// 	    double wnew = 0.5*(buffer(s,i).first + buffer(s,I_coupled).first);
+// 	    buffer(s,i) = std::make_pair(wnew,2); 
+// 	  } else if(combine_type == "mean" or combine_type == "max") {
+//             double wx = 0.5 * (collW[i] + collW[I_coupled]) / collW[i];
+//             buffer(s,i).first *= wx; 
+//             buffer(s,i).second = 2;
+//           }
+// 	}
+//       } else if(branch_data(i,0)!=0 and branch_data(i,0)!=1) {
+// 	APP_ABORT("Error in correlatedSerialBranching: Unknown branching count.");
+//       }
+//     }
+//     // now reset kill weights/counts
+//     for(int i=0; i<nW; i++) {
+//       if(branch_data(i,0)==0) { // kill 
+//         for(int s=0; s<n_sys; s++)
+//           buffer(s,i) = std::make_pair(0.0,0);
+//       } else if(branch_data(i,0)==1) { // set cnt to 1, leave weight unchanged 
+//         for(int s=0; s<n_sys; s++)
+//           buffer(s,i).second = 1;
+//       }
+//     }       
+//   } else {
+//     APP_ABORT("Error: Unknown branching type in correlatedSerialBranching. ");
+//   } 
+// }
 
 /**
  * Implements the distributed comb branching algorithm.
@@ -558,122 +583,120 @@ inline void CombBranching([[maybe_unused]] WalkerSet& wset,
  *  5: total number of walkers
  *  6: total number of "healthy" walkers (those with weight > 1e-6, ovlp>1e-8, etc)
  */ 
-template<class WalkerSet,
-         typename = typename std::enable_if<(WalkerSet::contiguous_walker)>::type,
-         typename = typename std::enable_if<(WalkerSet::fixed_population)>::type
-	>
-void correlatedPopulationControl(std::vector<std::reference_wrapper<WalkerSet>>& wlks,
-				nda::array<ComplexType,2>& curData,
-				std::string combine_type, 
-				bool skip = false)
-{
-  app_log(0," correlatedPopulationControl probably broken! Fix Fix Fix.");
-  if(wlks.size() == 0)
-    APP_ABORT("Error: Empty walker vector in correlatedPopulationControl.");
-  auto& mpi=wlks[0].get().get_mpi(); 
-  auto rng=wlks[0].get().getRNG();
+// template<class WalkerSet,
+//          typename = typename std::enable_if<(WalkerSet::contiguous_walker)>::type,
+//          typename = typename std::enable_if<(WalkerSet::fixed_population)>::type
+// 	>
+// void correlatedPopulationControl(std::vector<std::reference_wrapper<WalkerSet>>& wlks,
+// 				nda::array<ComplexType,2>& curData,
+// 				std::string combine_type, 
+// 				bool skip = false)
+// {
+//   app_log(0," correlatedPopulationControl probably broken! Fix Fix Fix.");
+//   if(wlks.size() == 0)
+//     APP_ABORT("Error: Empty walker vector in correlatedPopulationControl.");
+//   auto& mpi=wlks[0].get().get_mpi(); 
+//   auto rng=wlks[0].get().getRNG();
 
-  auto branching_time = timers.branching.start();
+//   auto branching_time = timers.branching.start();
 
-  int n_sys = wlks.size();
-  if(curData.extent(0) != n_sys or curData.extent(1) != 7)
-    curData = nda::array<ComplexType,2>(n_sys,7);
-  curData() = ComplexType(0);
+//   int n_sys = wlks.size();
+//   if(curData.extent(0) != n_sys or curData.extent(1) != 7)
+//     curData = nda::array<ComplexType,2>(n_sys,7);
+//   curData() = ComplexType(0);
 
-  auto [pop_control, min_weight, max_weight] = wlks[0].get().population_control_parameters();
-  int tot_num_walkers = wlks[0].get().size();
-  int target = wlks[0].get().get_target_population();
-  int global_target = wlks[0].get().get_global_target_population();
-  if (target != tot_num_walkers)
-    APP_ABORT("Error: tot_num_walkers!=target");
-  if (target*mpi.comm.size() != global_target) 
-    APP_ABORT("Error: Mismatched global populations"); 
+//   auto [pop_control, min_weight, max_weight] = wlks[0].get().population_control_parameters();
+//   int tot_num_walkers = wlks[0].get().size();
+//   int target = wlks[0].get().get_target_population();
+//   int global_target = wlks[0].get().get_global_target_population();
+//   if (target != tot_num_walkers)
+//     APP_ABORT("Error: tot_num_walkers!=target");
+//   if (target*mpi.comm.size() != global_target) 
+//     APP_ABORT("Error: Mismatched global populations"); 
 
-  // safety check
-  for( int s=0; s<n_sys; s++ ) { 
-    if (wlks[s].get().size() != tot_num_walkers)
-      APP_ABORT("Error: Inconsistent number of walkers in cs_systems"); 
-    if (wlks[s].get().get_target_population() != target) 
-      APP_ABORT("Error: Inconsistent target populations in cs_systems"); 
-  }
+//   // safety check
+//   for( int s=0; s<n_sys; s++ ) { 
+//     if (wlks[s].get().size() != tot_num_walkers)
+//       APP_ABORT("Error: Inconsistent number of walkers in cs_systems"); 
+//     if (wlks[s].get().get_target_population() != target) 
+//       APP_ABORT("Error: Inconsistent target populations in cs_systems"); 
+//   }
 
-  // gather data and walker information
-  {
-    for(int s=0; s<n_sys; s++) 
-    {
-      afqmc::BasicWalkerData(wlks[s].get(), curData(s,nda::range::all), mpi.comm);
-      RealType scl = 1.0 / curData(s,0).real();
-      wlks[s].get().scaleWeight(scl, true);
-    }
-  }
-  if (mpi.comm.size() > 1)
-    mpi.broadcast(curData);
-  for(int s=0; s<n_sys; s++) 
-    wlks[s].get().adjustLogOverlapFactor(std::log(std::abs(curData(s,4))));
+//   // gather data and walker information
+//   {
+//     for(int s=0; s<n_sys; s++) 
+//     {
+//       afqmc::BasicWalkerData(wlks[s].get(), curData(s,nda::range::all), mpi.comm);
+//       RealType scl = 1.0 / curData(s,0).real();
+//       wlks[s].get().scaleWeight(scl, true);
+//     }
+//   }
+//   if (mpi.comm.size() > 1)
+//     mpi.broadcast(curData);
+//   for(int s=0; s<n_sys; s++) 
+//     wlks[s].get().adjustLogOverlapFactor(std::log(std::abs(curData(s,4))));
 
-  if(skip) return;
+//   if(skip) return;
 
-  // gather weights 
-  nda::array<std::pair<double, int>,2> buffer(n_sys,global_target);
-  for(int s=0; s<n_sys; s++)
-    getGlobalListOfWalkerWeights(wlks[s].get(), buffer(s,nda::range::all), mpi.comm);
+//   // gather weights 
+//   nda::array<std::pair<double, int>,2> buffer(n_sys,global_target);
+//   for(int s=0; s<n_sys; s++)
+//     getGlobalListOfWalkerWeights(wlks[s].get(), buffer(s,nda::range::all), mpi.comm);
 
-  // make correlated branching decisions
-// MAM: this needs to be done over the "global" communicator, which does not exist yet 
-//      in mpi_context. FIX FIX FIX
-  if( mpi.comm.root() ) { 
-    // population control on master node
-    if (pop_control == BranchingAlgorithm::pair || pop_control == BranchingAlgorithm::serial_comb ||
-        pop_control == BranchingAlgorithm::min_branch) {
-      correlatedSerialBranching(pop_control, combine_type, min_weight, max_weight, buffer, *rng, mpi.comm);
-    } else {
-      APP_ABORT("Error: Unknown population control algorithm.");
-    }
-  }
+//   // make correlated branching decisions
+// // MAM: this needs to be done over the "global" communicator, which does not exist yet 
+// //      in mpi_context. FIX FIX FIX
+//   if( mpi.comm.root() ) { 
+//     // population control on master node
+//     if (pop_control == BranchingAlgorithm::pair || pop_control == BranchingAlgorithm::serial_comb ||
+//         pop_control == BranchingAlgorithm::min_branch) {
+//       correlatedSerialBranching(pop_control, combine_type, min_weight, max_weight, buffer, *rng, mpi.comm);
+//     } else {
+//       APP_ABORT("Error: Unknown population control algorithm.");
+//     }
+//   }
   
-  // bcast branching decisions
-  int n_excess=0;     
-  std::vector<int> nwalk_counts_old, nwalk_counts_new;
-  {
-    nwalk_counts_old.resize(mpi.comm.size());
-    nwalk_counts_new.resize(mpi.comm.size());
-    std::fill(nwalk_counts_new.begin(), nwalk_counts_new.end(), target);
-    mpi.broadcast(buffer);
-    // all systems should have identical branching instructions!
-    for (int i = 0, p = 0; i < mpi.comm.size(); i++)
-    {
-      int cnt = 0;
-      for (int k = 0; k < target; k++, p++)
-        cnt += buffer(0,p).second;
-      nwalk_counts_old[i] = cnt;
-    }   
-    n_excess = std::max(0,nwalk_counts_old[mpi.comm.rank()]-target);
-  }
+//   // bcast branching decisions
+//   int n_excess=0;     
+//   std::vector<int> nwalk_counts_old, nwalk_counts_new;
+//   {
+//     nwalk_counts_old.resize(mpi.comm.size());
+//     nwalk_counts_new.resize(mpi.comm.size());
+//     std::fill(nwalk_counts_new.begin(), nwalk_counts_new.end(), target);
+//     mpi.broadcast(buffer);
+//     // all systems should have identical branching instructions!
+//     for (int i = 0, p = 0; i < mpi.comm.size(); i++)
+//     {
+//       int cnt = 0;
+//       for (int k = 0; k < target; k++, p++)
+//         cnt += buffer(0,p).second;
+//       nwalk_counts_old[i] = cnt;
+//     }   
+//     n_excess = std::max(0,nwalk_counts_old[mpi.comm.rank()]-target);
+//   }
 
-  int walker_size = wlks[0].get().single_walker_size() + wlks[0].get().single_walker_bp_size();
-  nda::array<ComplexType,2> Wexcess(n_excess, walker_size);
-  branching_time.stop();
-  for(int s=0; s<n_sys; s++) {
+//   int walker_size = wlks[0].get().single_walker_size() + wlks[0].get().single_walker_bp_size();
+//   nda::array<ComplexType,2> Wexcess(n_excess, walker_size);
+//   branching_time.stop();
+//   for(int s=0; s<n_sys; s++) {
 
-    if (wlks[s].get().single_walker_size() + wlks[s].get().single_walker_bp_size() != walker_size)
-      APP_ABORT("Error in correlated sampling: Walkers with different size found. FIX");
+//     if (wlks[s].get().single_walker_size() + wlks[s].get().single_walker_bp_size() != walker_size)
+//       APP_ABORT("Error in correlated sampling: Walkers with different size found. FIX");
 
-    // perform local branching
-    // walkers beyond target go in Wexcess
-    auto branch_time = timers.branching.start();
-    auto buff_s = buffer(s,nda::range::all);
-    wlks[s].get().branch(std::span(buff_s.data() + target * mpi.comm.rank(), target), Wexcess);
-    branch_time.stop();
+//     // perform local branching
+//     // walkers beyond target go in Wexcess
+//     auto branch_time = timers.branching.start();
+//     auto buff_s = buffer(s,nda::range::all);
+//     wlks[s].get().branch(std::span(buff_s.data() + target * mpi.comm.rank(), target), Wexcess);
+//     branch_time.stop();
 
-    // load balance after population control events
-    auto load_balance_time = timers.load_balance.start();
-    wlks[s].get().loadBalance(Wexcess,nwalk_counts_old,nwalk_counts_new);
-    load_balance_time.stop();
-  }
+//     // load balance after population control events
+//     auto load_balance_time = timers.load_balance.start();
+//     wlks[s].get().loadBalance(Wexcess,nwalk_counts_old,nwalk_counts_new);
+//     load_balance_time.stop();
+//   }
 
-/*
-*/ 
-}
+// }
 
 } // namespace afqmc
 

@@ -369,7 +369,13 @@ public:
     return extract_SM<SMN>(s);
   }
 
-  void processWalkerData(std::vector<ComplexType>& curData);
+  /*
+   * Rescales every walker weight so that the total weight over the whole population equals
+   * the global target population, leaving the mean weight at 1.
+   *
+   * Collective over the walker set's communicator.
+   */
+  void rescale_total_weight();
 
   void popControl();
 

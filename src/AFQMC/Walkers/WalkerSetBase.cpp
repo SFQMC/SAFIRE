@@ -232,59 +232,20 @@ void WalkerSetBase<MEM>::resize(int n)
            targetN,targetN_per_rank,mpi->comm.size());
 }
 
-/**
- * @brief Processes walker data by gathering, broadcasting, and scaling walker-related information.
- *
- * This function is responsible for:
- * - Resizing and initializing the `curData` vector to store walker-related information.
- * - Performing a safety check to ensure the total number of walkers matches the target number per task group.
- * - Gathering walker data on the root node of the task group.
- * - Broadcasting the gathered data to all nodes in the task group.
- *
- * @param curData A reference to a vector of `ComplexType` that will store walker-related data.
- *                The vector is resized to 7 elements and initialized to zero.
- *
- * curData contains the following information after processing:
- * - `curData[0]`: Factor used to rescale the weights.
- * - `curData[1]`: Sum of unnormalized weights multiplied by local energies (`sum_i w_i * Eloc_i`).
- * - `curData[2]`: Sum of unnormalized weights (`sum_i w_i`).
- * - `curData[3]`: Sum of absolute values of unnormalized weights (`sum_i abs(w_i)`).
- * - `curData[4]`: Sum of absolute values of overlaps (`sum_i abs(<psi_T|phi_i>)`).
- * - `curData[5]`: Total number of walkers.
- * - `curData[6]`: Total number of "healthy" walkers (those meeting specific criteria such as weight > 1e-6).
- *
- * @throws std::runtime_error If the total number of walkers does not match the target number per task group.
- */
 template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::processWalkerData(std::vector<ComplexType>& curData)
-{
-  curData.resize(7);
-  using std::fill;
-  fill(curData.begin(), curData.begin() + 7, ComplexType(0));
-
-  // Safety check
+void WalkerSetBase<MEM>::rescale_total_weight() {
   utils::check(tot_num_walkers == targetN_per_rank, "Error: tot_num_walkers!=targetN_per_rank");
 
-  // Gather data and walker information
-  {
-    afqmc::BasicWalkerData(*this, curData, mpi->comm);
-    RealType scl = 1.0 / curData[0].real();
-    scaleWeight(scl, true);
-  }
+  memory::buffered_array<HOST_MEMORY, ComplexType, 1> weights(tot_num_walkers);
+  getProperty(WEIGHT, weights);
 
-  // Broadcast data to all nodes in the task group
-  if (mpi->comm.size() > 1)
-    mpi->comm.broadcast_n(curData.data(), curData.size());
+  RealType total = nda::fold([](RealType sum, ComplexType w) { return sum + std::abs(w); }, weights, 0.0);
+
+  total = mpi->comm.all_reduce_value(total);
+  utils::check(total > 1e-6, "The total walker weight collapsed to {}. Something went very wrong.", total);
+  scaleWeight(get_global_target_population() / total, true);
 }
 
-//  curData:
-//  0: factor used to rescale the weights
-//  1: sum_i w_i * Eloc_i   (where w_i is the unnormalized weight)
-//  2: sum_i w_i            (where w_i is the unnormalized weight)
-//  3: sum_i abs(w_i)       (where w_i is the unnormalized weight)
-//  4: sum_i abs(<psi_T|phi_i>)
-//  5: total number of walkers
-//  6: total number of "healthy" walkers (those with weight > 1e-6, ovlp>1e-8, etc)
 template<MEMORY_SPACE MEM>
 void WalkerSetBase<MEM>::popControl()
 {
@@ -323,24 +284,6 @@ void WalkerSetBase<MEM>::popControl()
   load_balance_time.stop();
 
   utils::check(tot_num_walkers==targetN_per_rank," Error: tot_num_walkers != targetN_per_rank");
-}
-
-//  curData:
-//  0: factor used to rescale the weights
-//  1: sum_i w_i * Eloc_i   (where w_i is the unnormalized weight)
-//  2: sum_i w_i            (where w_i is the unnormalized weight)
-//  3: sum_i abs(w_i)       (where w_i is the unnormalized weight)
-//  4: sum_i abs(<psi_T|phi_i>)
-//  5: total number of walkers
-//  6: total number of "healthy" walkers (those with weight > 1e-6, ovlp>1e-8, etc)
-template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::popControl(std::vector<ComplexType>& curData, bool skip)
-{
-  app_warning("For Developers: popControl(curData,skip) is deprecated. Use popControl() instead.");
-  processWalkerData(curData);
-  if (skip)
-    return;
-  popControl();
 }
 
 /*

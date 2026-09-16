@@ -236,8 +236,7 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
   tot_weight *= 2.0;
   REQUIRE(wset.GlobalWeight() == tot_weight * Type(mpi->comm.size()));
 
-  std::vector<ComplexType> Wdata;
-  wset.processWalkerData(Wdata);
+  wset.rescale_total_weight();
   wset.popControl();
   REQUIRE_THAT(wset.GlobalWeight(), utils::Approx(static_cast<RealType>(wset.get_global_target_population())));
   REQUIRE(wset.get_target_population() == nwalkers);

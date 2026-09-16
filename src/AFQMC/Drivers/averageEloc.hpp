@@ -28,9 +28,7 @@
 namespace sfqmc::afqmc {
 
 /// Weight-averaged pseudo local energy of the walker population,
-/// Re(sum_i w_i * Eloc_i) / Re(sum_i w_i), summed over all ranks. Walkers that
-/// processWalkerData() found unusable carry zero weight and energy, so they drop out of
-/// both sums.
+/// Re(sum_i w_i * Eloc_i) / Re(sum_i w_i), summed over all ranks.
 template<MEMORY_SPACE MEM>
 RealType averageEloc(utils::mpi_context_t<boost::mpi3::communicator>& mpi, WalkerSet<MEM> const& wset) {
   nda::array<ComplexType, 1> weight(wset.size()), eloc(wset.size());
