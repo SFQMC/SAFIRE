@@ -20,6 +20,7 @@
 #include "AFQMC/config.h"
 #include "AFQMC/Drivers/run_afqmc.hpp"
 #include "AFQMC/Drivers/run_ftafqmc.hpp"
+#include "AFQMC/Drivers/averageEloc.hpp"
 #include "AFQMC/Estimators/Estimators.hpp"
 #include "AFQMC/execute.hpp"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
@@ -86,27 +87,6 @@ Wavefunction<MEM>& construct_wavefunction(std::shared_ptr<utils::mpi_context_t<b
   return entry->second;
 }
 
-/// Eshift as the propagator wants it to start out: hybrid propagation takes what the input asked
-/// for, or zero, while local energy importance sampling ignores the input and starts from the
-/// local energy of the population.
-template<MEMORY_SPACE MEM>
-RealType initial_Eshift(ExecuteParameters const& exec, Propagator<MEM>& propagator, WalkerSet<MEM> const& wset) {
-  if(propagator.hybrid_propagation()) {
-    if(exec.initial_Eshift) {
-      app_warning("user set expert-level parameter, \"initial_Eshift\" : Using user-provided initial Eshift = {}",
-                  *exec.initial_Eshift);
-      return *exec.initial_Eshift;
-    }
-    return 0.0;
-  }
-
-  if(exec.initial_Eshift) {
-    app_log(1, "[Warning] : User set initial Eshift {} with local energy importance. This value is ignored.",
-            *exec.initial_Eshift);
-  }
-  return real(ComplexType(wset[0].energy()));
-}
-
 } // namespace
 
 template<MEMORY_SPACE MEM>
@@ -170,13 +150,19 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
 
     print_initial_energy(walker_set);
 
+    RealType Eshift = averageEloc<MEM>(*mpi, walker_set);
+    if(stage.initial_Eshift) {
+      app_warning("user set expert-level parameter, \"initial_Eshift\": Using user-provided initial Eshift = {} instead of initial local energy {}",
+                  *stage.initial_Eshift, Eshift);
+      Eshift = *stage.initial_Eshift;
+    }
+
     // the propagator builds its 1-body propagator for stage.timestep on construction, so it
     // is built after the wavefunction has seen the walker set
     Propagator<MEM> propagator{AFQMCBasePropagator<MEM>(
         find_block(params.propagator, propagator_name, "propagator"), mpi, wavefunction, field_rng,
         stage.timestep)};
 
-    RealType const Eshift = initial_Eshift(stage, propagator, walker_set);
 
     Estimators<MEM> estimators{mpi, stage_index, stage, walker_set, wavefunction, propagator, wavefunction_for};
 
