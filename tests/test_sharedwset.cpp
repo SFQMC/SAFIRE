@@ -79,7 +79,8 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
     if(wtype == COLLINEAR)
       initA.emplace_back(initA_h(1, nda::range::all, nda::range(ndown)));
 
-    auto ws = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initA, nwalkers);
+    auto ws = WalkerSet<MEM>(mpi, rng, wlk_params,
+                             WalkerSetInitialGuess{.walker_type = wtype, .payload = initA}, nwalkers);
 
     REQUIRE(ws.size() == nwalkers);
     for(int iw = 0; iw < ws.size(); ++iw)
@@ -123,23 +124,25 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
       }
 
     // the guess is always supplied on the host, mirroring the T=0 constructor
-    auto initUDV = initUDV_h();
+    auto initUDV = memory::share_from_root(*mpi, [&] { return initUDV_h; });
 
-    auto ws = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initUDV, nwalkers);
+    auto ws = WalkerSet<MEM>(mpi, rng, wlk_params,
+                             WalkerSetInitialGuess{.walker_type = wtype,
+                                                   .payload = std::move(initUDV)}, nwalkers);
 
     REQUIRE(ws.size() == nwalkers);
     for(int iw = 0; iw < ws.size(); ++iw)
     {
       auto w = ws[iw];
       auto umat = w.UMatrix(Alpha);
-      REQUIRE( umat.extent(0) == initUDV.extent(2) );
+      REQUIRE( umat.extent(0) == initUDV_h.extent(2) );
       REQUIRE( umat.extent(1) == M );
-      REQUIRE(nda::to_host(w.UMatrix(Alpha)) == nda::to_host(initUDV(0,0,nda::ellipsis{})));
+      REQUIRE(nda::to_host(w.UMatrix(Alpha)) == nda::to_host(initUDV_h(0,0,nda::ellipsis{})));
       if( ws.getWalkerType() == COLLINEAR ) {
         auto umatB = w.UMatrix(Beta);
-        REQUIRE( umatB.extent(0) == initUDV.extent(2) );
+        REQUIRE( umatB.extent(0) == initUDV_h.extent(2) );
         REQUIRE( umatB.extent(1) == M );
-        REQUIRE( nda::to_host(w.UMatrix(Beta)) == nda::to_host(initUDV(0,1,nda::range::all,nda::range(M))));
+        REQUIRE( nda::to_host(w.UMatrix(Beta)) == nda::to_host(initUDV_h(0,1,nda::range::all,nda::range(M))));
       }
       w.set_property(WEIGHT,base * 1.0 + 0.5);
       w.set_property(OVLP,base * 1.0 + 0.5);
@@ -334,7 +337,8 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
     initA.emplace_back(initA_h(1, nda::range::all, nda::range(ndown)));
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = wtype};
-  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initA, nwalkers);
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params,
+                             WalkerSetInitialGuess{.walker_type = wtype, .payload = initA}, nwalkers);
 
   REQUIRE(wset.size() == nwalkers);
   int cnt(0);
@@ -370,8 +374,8 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
 
   {
     h5::file fh5(walker_file,'r');
-    auto wset2 = readWalkersFromHDF5<WalkerSet<MEM>>(mpi, wlk_params, rng,
-                                                     wtype, fh5, nwalkers, true);
+    auto wset2 = readWalkersFromHDF5<WalkerSet<MEM>>(mpi, rng, wlk_params,
+                                                     fh5, nwalkers, true);
     std::array<walker_data,5> tags = {WEIGHT,OVLP,E1_,EXX_,EJ_};
     for (int i = 0; i < nwalkers; i++)
     {

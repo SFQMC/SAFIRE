@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <format>
 #include <vector>
 #include <string>
 #include <tuple>
@@ -63,6 +64,8 @@ public:
 #endif
         rng_block_size(wfn->number_of_cholesky_vectors())
   {
+    app_log(1, section(std::format("Initializing Propagator \"{}\"", params.name)));
+
     utils::check(bool(mpi), "Error: Null mpi_context.");
     std::tie(nspins_in_vHS, npol_in_vHS) = wfn->vHS_dims();
     app_log(1,"vHS dimensions: nspins = {}, npol = {}", nspins_in_vHS, npol_in_vHS);

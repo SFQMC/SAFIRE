@@ -20,8 +20,10 @@
 #include <variant>
 #include "AFQMC/config.h"
 #include "AFQMC/Walkers/WalkerSet.hpp"
+#include "AFQMC/Walkers/WalkerSetInitialGuess.hpp"
 
 #include "numerics/shared_array/const_shared_array.hpp"
+#include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
 #include "AFQMC/Wavefunctions/NOMSD_FT.hpp"
@@ -31,22 +33,30 @@ namespace sfqmc
 namespace afqmc
 {
 
+
+
 template<MEMORY_SPACE MEM>
 class Wavefunction 
 {
 public:
-  template<typename Wfn>
-  Wavefunction(Wfn&& other) : var(std::forward<Wfn>(other)) {}
 
-  template<typename Wfn>
-  Wavefunction& operator=(Wfn&& other) {
-    var = std::forward<Wfn>(other);
-    return *this;
-  }
+  static Wavefunction<MEM> from_params(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+    const WavefunctionParameters& params,
+    WALKER_TYPES walker_type,
+    bool finiteT,
+    Hamiltonian& h,
+    int targetNW);
 
-  /*
-   * Returns the memory space.
-   */
+  // The initial guess travels with the orbitals it was read next to, so there is no way to
+  // build a Wavefunction without one.
+  template<typename Wfn>
+  Wavefunction(Wfn&& other, WalkerSetInitialGuess&& guess_)
+      : var(std::forward<Wfn>(other)), guess(std::move(guess_)) {}
+
+  // The trial's initial walker configuration, read alongside the orbitals it belongs to.
+  // The wavefunction does not use it itself; it keeps it for whoever builds the walker set.
+  const WalkerSetInitialGuess& initial_guess() const { return guess; }
+
   MEMORY_SPACE get_memory_space() const;
 
   int number_of_cholesky_vectors() const;
@@ -112,7 +122,7 @@ public:
 
   void getReferences(memory::buffered_array<MEM,ComplexType,3>& Refs);
 
-  HamiltonianTypes getHamType() const;
+  HamiltonianType getHamType() const;
 
   nda::array<int,1> getFieldTypes();
 
@@ -132,13 +142,14 @@ public:
 
   private:
 
-
   std::variant<NOMSD<MEM,PsiT_Matrix<MEM>>,
                NOMSD<MEM,memory::const_shared_array<MEM,ComplexType,2>>,
                NOMSD_FT<MEM,PsiT_Matrix<MEM>>,
                NOMSD_FT<MEM,memory::const_shared_array<MEM,ComplexType,2>>,
                PHMSD<MEM>
               > var;
+
+  WalkerSetInitialGuess guess;
 
 };
 

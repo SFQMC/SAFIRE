@@ -224,9 +224,9 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
   //    actually used are peeked, and each of them only once.
   std::map<std::string, HamiltonianType> htypes;
   auto hamiltonian_type = [&](const std::string& name) {
-    const auto [entry, inserted] = htypes.try_emplace(name, UNKNOWN);
-    if(inserted) {
-      entry->second = peek_hamiltonian_type(find_block(params.hamiltonian, name, "hamiltonian"), mpi);
+    auto entry = htypes.find(name);
+    if(entry == htypes.end()) {
+      entry = htypes.emplace(name, peek_hamiltonian_type(find_block(params.hamiltonian, name, "hamiltonian"), mpi)).first;
     }
     return entry->second;
   };

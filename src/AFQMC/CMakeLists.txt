@@ -2,25 +2,22 @@ target_sources(safire_lib
   PRIVATE
     Utilities/AFQMCTimer.cpp 
     Utilities/readWfn.cpp
-    AFQMCFactory.cpp
     parameters.cpp
     parameter_defaults.cpp
-    Drivers/DriverFactory.cpp
-    Drivers/AFQMCDriver.cpp
-    Drivers/FTAFQMCDriver.cpp
+    execute.cpp
+    Drivers/run_afqmc.cpp
+    Drivers/run_ftafqmc.cpp
     Propagators/AFQMCBasePropagator.cpp
-    Propagators/PropagatorFactory.cpp
     Walkers/WalkerSetBase.cpp
-    Wavefunctions/WavefunctionFactory.cpp
     Wavefunctions/Wavefunction.cpp
     Wavefunctions/NOMSD.cpp
     Wavefunctions/PHMSD.cpp
     Wavefunctions/NOMSD_FT.cpp
     HamiltonianOperations/HamiltonianOperations.cpp
+    Hamiltonians/Hamiltonian.cpp
     Hamiltonians/KPFactorizedHamiltonian.cpp
     Hamiltonians/RealDenseHamiltonian.cpp
     Hamiltonians/ModelHamOpsGenerator.cpp
-    Hamiltonians/HamiltonianFactory.cpp
     Hamiltonians/THCHamiltonian.cpp
     Hamiltonians/KPTHCHamiltonian.cpp
 )

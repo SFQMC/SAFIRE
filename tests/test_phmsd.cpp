@@ -32,8 +32,7 @@
 #include <string>
 #include <algorithm>
 
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "test_utils.hpp"
@@ -155,20 +154,16 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   double dt         = 0.01;
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 
-  WavefunctionFactory<MEM> WfnFac{};
   WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file,
                                     .algorithm = PHMSDEnergyAlgorithm::reference};
   apply_defaults(wfn_params, ham.getHamType());
-  WfnFac.push("wfn0", wfn_params);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(mpi, wfn_params, type, false, ham, nwalk);
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
-  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
+  auto const initial_guess = wfn.initial_guess().slater();
   REQUIRE(int(initial_guess.size()) == nspin);
   REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
 
@@ -187,7 +182,10 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
       nda::blas::gemm(R, initial_guess[is], g);
       rotated_initial_guess.push_back(std::move(g));
     }
-    return WalkerSet<MEM>(mpi, wlk_params, rng, type, rotated_initial_guess, nwalk);
+    return WalkerSet<MEM>(mpi, rng, wlk_params,
+                          WalkerSetInitialGuess{.walker_type = type,
+                                                .payload = std::move(rotated_initial_guess)},
+                          nwalk);
   }();
 
   // 0. Get raw occupancies and coefficients from file.
@@ -248,8 +246,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
 
   WavefunctionParameters nomsd_params{.name = "nomsd", .filename = nomsd_file};
   apply_defaults(nomsd_params, ham.getHamType());
-  WfnFac.push("nomsd", nomsd_params);
-  auto& nomsd = WfnFac.getWavefunction(mpi, "nomsd", type, false, &ham, nwalk);
+  auto nomsd = Wavefunction<MEM>::from_params(mpi, nomsd_params, type, false, ham, nwalk);
 
   // 1. Overlap 
   ComplexType ovlp_sum = ComplexType(0.0);
@@ -358,13 +355,12 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     CHECK_THAT(eloc_ph0, utils::Approx(eloc));
   }
 
-  if(wfn.getHamType() == RealDenseFactorized)  // add THC
+  if(wfn.getHamType() == HamiltonianType::real_dense_factorized)  // add THC
   {
     WavefunctionParameters wfn1_params{.name = "wfn1", .filename = wfn_file,
                                        .algorithm = PHMSDEnergyAlgorithm::woodbury};
     apply_defaults(wfn1_params, ham.getHamType());
-    WfnFac.push("wfn1", wfn1_params);
-    auto& wfn1 = WfnFac.getWavefunction(mpi, "wfn1", type, false, &ham, nwalk);
+    auto wfn1 = Wavefunction<MEM>::from_params(mpi, wfn1_params, type, false, ham, nwalk);
 
     memory::array<MEM,ComplexType,2> eloc(nwalk,3);
     memory::array<MEM,ComplexType,1> ov(nwalk);

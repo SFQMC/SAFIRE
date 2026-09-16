@@ -25,6 +25,7 @@
 #include "utilities/check.hpp"
 
 #include <algorithm>
+#include <format>
 #include <optional>
 #include <ranges>
 #include <set>
@@ -43,12 +44,7 @@
 #include "test_utils.hpp"
 #include "AFQMC/Utilities/readWfn.h"
 
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
-#include "AFQMC/Propagators/PropagatorFactory.h"
-#include "AFQMC/Walkers/WalkerSetFactory.hpp"
-#include "AFQMC/Drivers/DriverFactory.h"
-#include "AFQMC/AFQMCFactory.h"
+#include "AFQMC/execute.hpp"
 
 
 extern std::string UTEST_HAMIL, UTEST_WFN;
@@ -58,7 +54,7 @@ namespace sfqmc
 using namespace afqmc;
 
 template<MEMORY_SPACE MEM>
-void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
              std::string hamil_file, std::string wfn_file,
              WALKER_TYPES walker_type = UNDEFINED_WALKER_TYPE, bool finiteT = false)
 {
@@ -86,17 +82,19 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
   const DriverType driver = finiteT ? DriverType::ftafqmc : DriverType::afqmc;
 
   // The blocks an execute block can refer to by name, together with one execute block per
-  // scenario. This is the shape of a real input, so the whole set is resolved at once.
+  // scenario. This is the shape of a real input, so the whole set is resolved at once, and the
+  // scenarios run as consecutive stages of a single simulation.
   AFQMCParameters params{};
+  params.driver       = driver;
   params.hamiltonian  = {HamiltonianParameters{.name = "ham0", .filename = hamil_file}};
   params.wavefunction = {WavefunctionParameters{.name = "wfn0", .filename = wfn_file}};
   params.propagator   = {PropagatorParameters{.name = "prop0"}};
   params.walker_set   = {wlk_full};
 
-  // label and driver of each execute block, in the order they are added
-  std::vector<std::pair<std::string, DriverType>> scenarios;
-  auto add = [&](std::string label, ExecuteParameters exec, DriverType drv = DriverType::afqmc) {
-    scenarios.emplace_back(std::move(label), drv);
+  // label of each execute block, in the order they are added
+  std::vector<std::string> scenarios;
+  auto add = [&](std::string label, ExecuteParameters exec) {
+    scenarios.push_back(std::move(label));
     params.execute.push_back(std::move(exec));
   };
 
@@ -117,8 +115,7 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
                         .wavefunction = wfn_min,
                         .hamiltonian  = ham_min,
                         .propagator   = prop_min,
-                        .seed         = test_seed},
-      driver);
+                        .seed         = test_seed});
 
   if(default_walker) {
     if(hamil_file == wfn_file) {
@@ -139,14 +136,12 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
                         .wavefunction = std::string{"wfn0"},
                         .hamiltonian  = std::string{"ham0"},
                         .propagator   = std::string{"prop0"},
-                        .seed         = test_seed},
-      driver);
+                        .seed         = test_seed});
 
   // mixed external internal
   if(hamil_file == wfn_file) {
     add("wfn(inline)+wlk(external)",
-        ExecuteParameters{.walker_set = std::string{"wlk0"}, .wavefunction = wfn_min, .seed = test_seed},
-        driver);
+        ExecuteParameters{.walker_set = std::string{"wlk0"}, .wavefunction = wfn_min, .seed = test_seed});
   }
 
   if(default_walker) {
@@ -158,48 +153,47 @@ void driver_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::comm
       ExecuteParameters{.walker_set   = std::string{"wlk0"},
                         .wavefunction = std::string{"wfn0"},
                         .hamiltonian  = ham_min,
-                        .seed         = test_seed},
-      driver);
+                        .seed         = test_seed});
 
   add("wfn(external)+ham(inline)+wlk(inline)",
       ExecuteParameters{.walker_set   = wlk_min,
                         .wavefunction = std::string{"wfn0"},
                         .hamiltonian  = ham_min,
-                        .seed         = test_seed},
-      driver);
+                        .seed         = test_seed});
 
   // many more possibilities (combinatorial...) Add any problematic ones if needed
 
+  utils::TemporaryDirectory tmpdir;
+  params.output_name = (tmpdir / "exec_test").string();
+
   resolve_defaults(params, *mpi);
 
-  HamiltonianFactory HamFac;
-  WalkerSetFactory<MEM> WSetFac;
-  WavefunctionFactory<MEM> WfnFac{};
-  PropagatorFactory<MEM> PropFac;
-  DriverFactory<MEM> DriverFac(mpi, WSetFac, PropFac, WfnFac, HamFac);
-
-  push_blocks(HamFac, params.hamiltonian);
-  push_blocks(WfnFac, params.wavefunction);
-  push_blocks(WSetFac, params.walker_set);
-  push_blocks(PropFac, params.propagator);
-
-  utils::TemporaryDirectory tmpdir;
-
   for(std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& [label, drv] = scenarios[i];
-    app_log(0, "[driver_factory] TEST: {}; walker_type={}", label, walkerTypeToString(walker_type));
-    CHECK(DriverFac.executeDriver(drv, (tmpdir / "drv_test").string(), 0, params.execute[i]));
+    app_log(0, "[execute] stage {}: {}; walker_type={}", i, scenarios[i], walkerTypeToString(walker_type));
   }
+
+  // every stage of the run appends its own Stage<N> group to one results file
+  execute_simulation<MEM>(mpi, params);
+
+  if(mpi->comm.root()) {
+    h5::file results(std::format("{}.results.h5", params.output_name), 'r');
+    h5::group meas = h5::group(results).open_group("Measurements");
+    for(std::size_t i = 0; i < scenarios.size(); ++i) {
+      CHECK(meas.has_subgroup(std::format("Stage{}", i)));
+    }
+    CHECK(!meas.has_subgroup(std::format("Stage{}", scenarios.size())));
+  }
+  mpi->comm.barrier();
 }
 
-TEST_CASE("driver_factory: build", "[driver_factory]")
+TEST_CASE("execute: build", "[execute]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
 
   using namespace utils;
 
   run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES walker_type, bool finiteT) {
-    driver_factory_build<MEM>(mpi, hamil_file, wfn_file, walker_type, finiteT);
+    execute_build<MEM>(mpi, hamil_file, wfn_file, walker_type, finiteT);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
 }
 

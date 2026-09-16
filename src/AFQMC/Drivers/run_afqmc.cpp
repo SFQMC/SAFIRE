@@ -14,27 +14,33 @@
 // and LICENSES/NCSA.txt for details.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <chrono>
 #include <format>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "config.h"
-#include "utilities/check.hpp"
 #include "utilities/memory_utils.hpp"
 
 #include "AFQMC/config.h"
+#include "AFQMC/Drivers/averageEloc.hpp"
+#include "AFQMC/Drivers/run_afqmc.hpp"
+#include "AFQMC/Utilities/AFQMCTimer.h"
 #include "IO/app_loggers.h"
 #include "IO/banner.hpp"
-#include "AFQMC/Utilities/AFQMCTimer.h"
-#include "AFQMCDriver.h"
-#include "averageEloc.hpp"
-#include "AFQMC/Walkers/WalkerIO.hpp"
 
 namespace sfqmc::afqmc {
 
 template<MEMORY_SPACE MEM>
-bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
+void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+               std::string const& output_name,
+               ExecuteParameters const& exec,
+               RealType Eshift,
+               WalkerSet<MEM>& wset,
+               Propagator<MEM>& propagator,
+               Estimators<MEM>& estimators) {
   app_log(1, banner("Beginning AFQMC calculation"));
 
   std::vector<ComplexType> curData;
@@ -42,18 +48,15 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   RealType w0   = wset.GlobalWeight();
   int nwalk_ini = wset.GlobalPopulation();
 
-  app_log(1, "Initial weight and number of walkers: {}, {}", w0 ,nwalk_ini);
+  app_log(1, "Initial weight and number of walkers: {}, {}", w0, nwalk_ini);
   app_log(1, "Initial Eshift: {} ", Eshift);
 
-  // problems with using step_tot to do ortho and load balance
-  double total_time = step0 * dt;
-  int step_tot      = step0;
+  double total_time = 0.0;
 
-  propagator_.generateP1(dt, wset.getWalkerType());
-  
-  const int log_interval = std::max(1, nStep / 100);
-  const int steps_total  = nStep + step0;
-  const int step_format_width   = int(std::to_string(steps_total).size());
+  propagator.generateP1(exec.timestep, wset.getWalkerType());
+
+  const int log_interval = std::max(1, exec.steps / 100);
+  const int step_format_width = int(std::to_string(exec.steps).size());
 
   // three equal columns tiling the full rule width, shared by the header and the rows
   constexpr int log_col = default_banner_width / 3;
@@ -65,45 +68,44 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   app_log(2, hrule());
 
   // KE: need to change the hard-coded 1.0 to an equilibration phase.
-  for (int iStep = 0; iStep < nStep; ++iStep, ++step_tot) {
+  for(int iStep = 0; iStep < exec.steps; ++iStep) {
     auto step_time = timers.step.start();
-    propagator_.Propagate(wset, Eshift, dt);
-    total_time += dt;
+    propagator.Propagate(wset, Eshift, exec.timestep);
+    total_time += exec.timestep;
 
-    if ((step_tot + 1) % nStabilize == 0) {
+    if((iStep + 1) % exec.walker_ortho_interval == 0) {
       auto ortho_time = timers.ortho.start();
-      propagator_.Orthogonalize(wset);
+      propagator.Orthogonalize(wset);
       ortho_time.stop();
     }
 
-    if (total_time < 1.0) {
+    if(total_time < 1.0) {
       wset.processWalkerData(curData);
-      Eshift = averageEloc(*mpi_, wset);
+      Eshift = averageEloc(mpi, wset);
     }
 
-    if ((iStep + 1) % nPopulation == 0 || iStep == 0) {
+    if((iStep + 1) % exec.population_control_interval == 0 || iStep == 0) {
       auto popcontrol_time = timers.popcontrol.start();
       wset.processWalkerData(curData);
       wset.popControl(); // make this a call to actual pop control
       popcontrol_time.stop();
 
-      if(iStep >= nEquilibration) {
-        estimators_.measure(*mpi_, iStep / nPopulation, wset);
+      if(iStep >= exec.equilibration_steps) {
+        estimators.measure(mpi, iStep / exec.population_control_interval, wset);
       } else {
-        Eshift += dShift * (averageEloc(*mpi_, wset) - Eshift);
-      }   
+        Eshift += exec.dshift * (averageEloc(mpi, wset) - Eshift);
+      }
     }
 
-
     if(iStep % log_interval == 0) {
-      const double energy = averageEloc(*mpi_, wset);
+      const double energy = averageEloc(mpi, wset);
       const auto now = std::chrono::current_zone()->to_local(
           std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
 
       // app_log formats through spdlog's bundled fmt, which has no chrono formatter here,
       // so the timestamp is rendered by std::format and passed on as a string
       app_log(2, log_row, std::format("{:%F %T}", now), log_col,
-              std::format("{:>{}}/{}", step_tot + 1, step_format_width, steps_total), log_col,
+              std::format("{:>{}}/{}", iStep + 1, step_format_width, exec.steps), log_col,
               std::format("{:#.8g}", energy), log_col);
     }
 
@@ -112,64 +114,26 @@ bool AFQMCDriver<MEM>::run(WalkerSet<MEM>& wset) {
   }
   app_log(2, hrule());
 
-  if(mpi_->comm.root()) {
-    std::string results_filename = std::format("{}.results.h5", output_name_);
-    estimators_.write(results_filename);
+  if(mpi.comm.root()) {
+    std::string results_filename = std::format("{}.results.h5", output_name);
+    estimators.write(results_filename);
     app_log(1, "Results written to '{}'.", results_filename);
   }
 
-  propagator_.printBoundStatistics();
+  propagator.printBoundStatistics();
 
-  if(mpi_->comm.root()) {
+  if(mpi.comm.root()) {
     timers.print_all();
   }
 
   app_log(1, banner("Finished AFQMC calculation"));
-
-  return true;
-}
-
-// writes checkpoint file
-template<MEMORY_SPACE MEM>
-bool AFQMCDriver<MEM>::checkpoint(WalkerSet<MEM>& wset, int block, int step)
-{
-return true;
-  if (mpi_->comm.rank() == 0)
-  {
-    std::string file;
-    if (hdf_write_restart != std::string(""))
-      file = hdf_write_restart;
-    else
-      file = output_name_ + std::string(".chk.h5");
-
-    std::vector<RealType> Rdata(2);
-    Rdata[0] = Eshift;
-    Rdata[1] = Eshift;
-
-    std::vector<IndexType> Idata(2);
-    Idata[0] = block;
-    Idata[1] = step;
-
-    // always write driver data and walkers
-    h5::file h5f(file,'a');
-    h5::group grp(h5f);
-    h5::group dgrp = ( grp.has_key("AFQMCDriver") ?
-                       grp.open_group("AFQMCDriver") :
-                       grp.create_group("AFQMCDriver") );
-    h5::h5_write(dgrp,"DriverInts",Idata);
-    h5::h5_write(dgrp,"DriverReals",Rdata);
-
-    return dumpToHDF5(wset, h5f);
-  } else {
-    h5::file h5f; 
-    return dumpToHDF5(wset, h5f);
-  }
 }
 
 // Instantiate
-#define __inst__(M)                                            \
-template bool AFQMCDriver<M>::run(WalkerSet<M>& wset);            \
-template bool AFQMCDriver<M>::checkpoint(WalkerSet<M>&,int,int);
+#define __inst__(M)                                                                                \
+  template void run_afqmc<M>(utils::mpi_context_t<boost::mpi3::communicator>&, std::string const&,  \
+                             ExecuteParameters const&, RealType, WalkerSet<M>&, Propagator<M>&,     \
+                             Estimators<M>&);
 
 __inst__(HOST_MEMORY)
 #if defined(ENABLE_DEVICE)
