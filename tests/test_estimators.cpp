@@ -234,16 +234,14 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
 
   PropagatorParameters prop_params{.name = "prop0"};
   apply_defaults(prop_params, ham.getHamType());
-  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
+  // propagate with dt=0 so the BP RDM should match the mixed estimate
+  // we cannot actually use exactly 0 because that changes the sparsity structure in model hamiltonians
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, 1e-10)};
 
   auto const& initial_guess = wfn.initial_guess();
   REQUIRE(int(initial_guess.slater().size()) == nspin);
   REQUIRE(initial_guess.slater()[0].shape() == std::array<long,2>{npol*NMO,nup});
   auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);
-
-  // generate P1 with dt=0 so the BP RDM should match the mixed estimate
-  // we cannot actually use exactly 0 because that changes the sparsity structure in model hamiltonians
-  prop.generateP1(1e-10, wset.getWalkerType());
 
   constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
   constexpr long nblocks = 8;
@@ -326,8 +324,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 
   PropagatorParameters prop_params{.name = "prop0"};
   apply_defaults(prop_params, ham.getHamType());
-  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
-  prop.generateP1(1e-10, type);
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, 1e-10)};
 
   auto const& initial_guess = wfn.initial_guess();
 
@@ -513,19 +510,18 @@ void estimators_local_energy_matches_recomputation(
 
   // hybrid propagation would leave nothing but the overlap on the walkers, so the shortcut
   // this exercises hangs off hybrid being false
-  PropagatorParameters prop_params{.name = "prop0", .hybrid = false};
-  apply_defaults(prop_params, ham.getHamType());
-  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
-
   constexpr double dt                = 0.005;
   constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
+
+  PropagatorParameters prop_params{.name = "prop0", .hybrid = false};
+  apply_defaults(prop_params, ham.getHamType());
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, dt)};
 
   auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nwalk);
 
   // a single step is enough, and it has to be a real one: the local energy only lands on the
   // walkers when the propagator actually runs its local energy update
-  prop.generateP1(dt, type);
-  prop.Propagate(wset, 0.0, dt);
+  prop.Propagate(wset, 0.0);
 
   const ExecuteParameters exec{
       .estimators = EstimatorParameters{

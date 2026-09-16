@@ -41,9 +41,10 @@ namespace afqmc
  */
 template<MEMORY_SPACE MEM>
 template<class WlkSet>
-void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType dt, int nt)
+void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
 {
   auto setup_timer = timers.setup.start();
+  const RealType dt = timestep;
   auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
   int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
@@ -61,9 +62,6 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, RealType
   memory::buffered_array<MEM,ComplexType,2> new_energies(nwalk,3);
   new_energies() = ComplexType(0.0);
 
-  // if timestep changed, recalculate one body propagator and vMF
-  if (std::abs(dt - old_dt) > 1e-6)
-    generateP1(dt, walker_type);
   setup_timer.stop();
 
   // store current time-slice for finite-T walkers
@@ -223,11 +221,11 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
     if(denseP2) {
 
       // 2. Calculate vHS
-      auto vHS = wfn->vHS(X, old_dt);
+      auto vHS = wfn->vHS(X, timestep);
       utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
                  "Size mismatch");
 
-      // MAM: can do all references together in principle, 
+      // MAM: can do all references together in principle,
       //      would consume more memory but be very efficient in GPU! 
       for (int nr = 0; nr < nrefs; ++nr)
       {
@@ -260,7 +258,7 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, WlkSe
     } else {
 
       // 2. Calculate vHS
-      auto vHS = wfn->vHS_sparse(X, old_dt);
+      auto vHS = wfn->vHS_sparse(X, timestep);
       utils::check(vHS.extent(0) == nspin, "Size mismatch");
       utils::check((vHS(0).shape()==std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}) and
                (vHS(nspin-1).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}),
@@ -329,10 +327,8 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset,
   utils::check(nsteps > 0, "Error in PropagateOperators: nsteps:{}",nsteps);
 
   // generate P1x_inv if not yet constructed
-  // NOTE: if time step changes after this point, 
-  // it will be updated with the regular propagator, so only need to create it once here
   if(P1s_inv.size() != nspin)
-    generateP1(old_dt, walker_type, true);
+    generateP1(true);
   
   { 
     memory::buffered_array<MEM,ComplexType,2> Xfield(nwalk, nCV);
@@ -351,7 +347,7 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset,
       if(denseP2) {
 
         // 2. Calculate vHS
-        auto vHS = wfn->vHS(Xfield, old_dt);
+        auto vHS = wfn->vHS(Xfield, timestep);
         utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
                    "Size mismatch");
 
@@ -363,7 +359,7 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WlkSet& wset,
       } else {
 
         // 2. Calculate vHS
-        auto vHS = wfn->vHS_sparse(Xfield, old_dt);
+        auto vHS = wfn->vHS_sparse(Xfield, timestep);
         utils::check(vHS.extent(0) == nspin, "Size mismatch");
         utils::check((vHS(0).shape()==std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}) and
                  (vHS(nspin-1).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}),

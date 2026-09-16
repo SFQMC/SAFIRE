@@ -149,9 +149,6 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
 
     Wavefunction<MEM>& wavefunction = wavefunction_for(wavefunction_name, hamiltonian_name);
 
-    Propagator<MEM> propagator{AFQMCBasePropagator<MEM>(
-        find_block(params.propagator, propagator_name, "propagator"), mpi, wavefunction, field_rng)};
-
     WalkerSet<MEM>& walker_set = walker_sets
                                      .try_emplace(walker_set_name, mpi, walker_rng, walker_set_params,
                                                   wavefunction.initial_guess(), nwalkers)
@@ -171,6 +168,12 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
     }
 
     print_initial_energy(walker_set);
+
+    // the propagator builds its 1-body propagator for stage.timestep on construction, so it
+    // is built after the wavefunction has seen the walker set
+    Propagator<MEM> propagator{AFQMCBasePropagator<MEM>(
+        find_block(params.propagator, propagator_name, "propagator"), mpi, wavefunction, field_rng,
+        stage.timestep)};
 
     RealType const Eshift = initial_Eshift(stage, propagator, walker_set);
 

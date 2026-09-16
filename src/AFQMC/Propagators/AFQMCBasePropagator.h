@@ -52,7 +52,8 @@ public:
   AFQMCBasePropagator(const PropagatorParameters& params,
                       std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi_,
                       Wavefunction<MEM>& wfn_,
-                      std::shared_ptr<utils::RandomGenerator_t<MEM>> r)
+                      std::shared_ptr<utils::RandomGenerator_t<MEM>> r,
+                      double dt)
       : mpi(mpi_),
         wfn(std::addressof(wfn_)),
         P1s(0),
@@ -62,7 +63,8 @@ public:
 #if defined(ENABLE_DEVICE)
         FieldTypes_dev(FieldTypes()),
 #endif
-        rng_block_size(wfn->number_of_cholesky_vectors())
+        rng_block_size(wfn->number_of_cholesky_vectors()),
+        timestep(dt)
   {
     app_log(1, section(std::format("Initializing Propagator \"{}\"", params.name)));
 
@@ -174,15 +176,11 @@ public:
     }
     */
 
+    generateP1();
   }
 
-  AFQMCBasePropagator(AFQMCBasePropagator const& other) = delete;
-  AFQMCBasePropagator& operator=(AFQMCBasePropagator const& other) = delete;
-  AFQMCBasePropagator(AFQMCBasePropagator&& other)                 = default;
-  AFQMCBasePropagator& operator=(AFQMCBasePropagator&& other) = default;
-
   template<class WlkSet>
-  void Propagate(WlkSet& wset, RealType E1, RealType dt, int nt = 0);
+  void Propagate(WlkSet& wset, RealType E1, int nt = 0);
 
   template<class WlkSet>
   void BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset, 
@@ -201,10 +199,6 @@ public:
   bool stores_local_energy() const { return !hybrid && !free_projection; }
 
   int number_of_cholesky_vectors() const { return wfn->number_of_cholesky_vectors(); }
-
-  // constructs the 1-body hamiltonian for propagation and generates the propagator
-  // if Pinv = true, the routine builds the inverse of the propagator and stores it in P_inv
-  void generateP1(double dt, WALKER_TYPES walker_type, bool Pinv = false);
 
   template<class WlkSet>
   void Orthogonalize(WlkSet& wset);
@@ -244,7 +238,12 @@ public:
   }
 
 
-protected:
+private:
+  // constructs the 1-body hamiltonian for the timestep of this propagator and generates the
+  // propagator. If Pinv = true, the routine also builds the inverse of the propagator and
+  // stores it in P1d_inv/P1s_inv.
+  void generateP1(bool Pinv = false);
+
   // mpi_context
   std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi;
 
@@ -282,7 +281,7 @@ protected:
   // vectors in all systems, which is needed to keep the generators synchronized. 
   int rng_block_size = 0;
 
-  RealType old_dt = -123456.789;
+  RealType timestep;
   int order = 6;
   bool printP1eV = false;
 

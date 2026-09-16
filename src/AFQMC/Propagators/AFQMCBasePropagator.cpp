@@ -36,21 +36,19 @@ namespace afqmc
 {
 
 /*
- * Constructs the various 1-body propagators for the given timestep
- * If Pinv is true, only the backward-direction propagators are constructed, P1x_inv.
- * If Pinv is false, forward-direction propagators are constructed.
- * In addition, if Pinv is false and the backward-direction propagators have previously been
- * constructed, they are updated for the current timestep.  
+ * Constructs the various 1-body propagators for the timestep of this propagator.
+ * The forward-direction propagators are always constructed. If Pinv is true, the
+ * backward-direction propagators, P1x_inv, are constructed as well.
  */
 template<MEMORY_SPACE MEM>
-void AFQMCBasePropagator<MEM>::generateP1(double dt, WALKER_TYPES walker_type, bool Pinv)
+void AFQMCBasePropagator<MEM>::generateP1(bool Pinv)
 {
   using nda::range;
   auto all = range::all;
   bool build_inv = Pinv or ( P1s_inv.size() > 0 ? (P1s_inv(0).capacity() > 0) : false );
   const int NMO = wfn->getNMO();
-
-  old_dt = dt;
+  const double dt = timestep;
+  const WALKER_TYPES walker_type = wfn->getWalkerType();
 
   app_log(1, "\n  - Generating a new 1-body propagator with timestep: {}",dt);
 
@@ -177,10 +175,10 @@ void AFQMCBasePropagator<MEM>::generateP1(double dt, WALKER_TYPES walker_type, b
 
 }
 
-template void AFQMCBasePropagator<HOST_MEMORY>::generateP1(double,WALKER_TYPES,bool);
+template void AFQMCBasePropagator<HOST_MEMORY>::generateP1(bool);
 
 #if defined(ENABLE_DEVICE)
-template void AFQMCBasePropagator<DEVICE_MEMORY>::generateP1(double,WALKER_TYPES,bool);
+template void AFQMCBasePropagator<DEVICE_MEMORY>::generateP1(bool);
 #endif
 
 } // namespace afqmc

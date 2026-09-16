@@ -196,19 +196,19 @@ run_result run_polarized(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commu
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
   auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nwalk);
 
-  PropagatorParameters prop_params{.name = "prop0"};
-  apply_defaults(prop_params, ham.getHamType());
-  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev)};
-
   wfn.Log_Overlap(wset);
   wfn.runtime_optimization(wset);
+
+  RealType dt = 0.01;
+  PropagatorParameters prop_params{.name = "prop0"};
+  apply_defaults(prop_params, ham.getHamType());
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, dt)};
 
   // No population control / weight reset: keep the walker mapping fixed so the
   // two representations remain directly comparable walker-by-walker.
   RealType Eshift = 0.0;
-  RealType dt     = 0.01;
   for(int s = 0; s < nsteps; ++s) {
-    prop.Propagate(wset, Eshift, dt);
+    prop.Propagate(wset, Eshift);
     if((s + 1) % nStab == 0) {
       prop.Orthogonalize(wset);
     }

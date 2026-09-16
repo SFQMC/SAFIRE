@@ -56,12 +56,6 @@ public:
   }
 
   template<class... Args>
-  void generateP1(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.generateP1(std::forward<Args>(args)...); }, var);
-  }
-
-  template<class... Args>
   void Orthogonalize(Args&&... args)
   {
     std::visit([&](auto&& a) { a.Orthogonalize(std::forward<Args>(args)...); }, var);
