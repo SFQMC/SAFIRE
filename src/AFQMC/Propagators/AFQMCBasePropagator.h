@@ -337,8 +337,7 @@ private:
   std::pair<int, int> maxOccupExtendedMat;
   std::pair<int, int> numExcitations;
 
-  void assemble_X(RealType sqrtdt,
-                  nda::MemoryArrayOfRank<2> auto&& X,
+  void assemble_X(nda::MemoryArrayOfRank<2> auto&& X,
                   nda::MemoryArrayOfRank<1> auto&& MF,
                   nda::MemoryArrayOfRank<1> auto&& HWs,
                   int nt = 0,
