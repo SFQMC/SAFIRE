@@ -43,8 +43,6 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                Estimators<MEM>& estimators) {
   app_log(1, banner("Beginning AFQMC calculation"));
 
-  std::vector<ComplexType> curData;
-
   RealType w0   = wset.GlobalWeight();
   int nwalk_ini = wset.GlobalPopulation();
 
@@ -78,14 +76,14 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
     }
 
     if(total_time < 1.0) {
-      wset.processWalkerData(curData);
+      wset.rescale_total_weight();
       Eshift = averageEloc(mpi, wset);
     }
 
     if((iStep + 1) % exec.population_control_interval == 0 || iStep == 0) {
       auto popcontrol_time = timers.popcontrol.start();
-      wset.processWalkerData(curData);
       wset.popControl(); // make this a call to actual pop control
+      wset.rescale_total_weight();
       popcontrol_time.stop();
 
       if(iStep >= exec.equilibration_steps) {
