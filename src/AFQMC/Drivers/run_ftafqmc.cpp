@@ -56,11 +56,12 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   const RealType Eshift0 = Eshift;
   const RealType beta    = exec.timestep * exec.steps;
 
+  const double Eshift_relaxation_rate = resolved(exec.Eshift_relaxation_rate, "Eshift_relaxation_rate");
+
   app_log(1, "Executing {} sweeps, with Beta = {} ", exec.sweeps, beta);
 
   for(int iSweep = 0; iSweep < exec.sweeps; ++iSweep) {
     Eshift = Eshift0; // Eshift set to same value at the beginning of each sweep
-    double total_time = 0.0;
     for(int iStep = 0; iStep < exec.steps; ++iStep) {
       auto step_time = timers.step.start();
       if(iStep % print_interval == 0 && exec.print_sweep_step) {
@@ -78,17 +79,11 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       }
 
       propagator.Propagate(wset, Eshift, iStep + 1);
-      total_time += exec.timestep;
 
       if((iStep + 1) % exec.walker_ortho_interval == 0 && iStep != exec.steps - 1) {
         auto ortho_time = timers.ortho.start();
         propagator.Orthogonalize(wset);
         ortho_time.stop();
-      }
-
-      if(total_time < 1.0) {
-        wset.rescale_total_weight();
-        Eshift = averageEloc(mpi, wset);
       }
 
       // KE: should there be a check for population control interval here?
@@ -98,8 +93,8 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
         wset.popControl();
         popcontrol_time.stop();
 
-        if(total_time >= 1.0) {
-          Eshift += exec.dshift * (averageEloc(mpi, wset) - Eshift);
+        if(iStep < exec.equilibration_steps) {
+          Eshift += Eshift_relaxation_rate * (averageEloc(mpi, wset) - Eshift);
         }
       }
 

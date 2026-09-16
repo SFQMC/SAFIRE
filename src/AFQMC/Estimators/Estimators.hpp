@@ -55,7 +55,7 @@ public:
              Wavefunction<MEM>& wfn0,
              Propagator<MEM>& prop,
              WavefunctionLookup<MEM> const& wavefunction_for)
-      : measurements_{std::format("Stage{}", stage)} {
+      : measurements_{std::format("Stage{}", stage), exec.binsize} {
     app_log(1, section("Initializing Estimators"));
 
     // the driver counts measurement blocks in population control intervals, so every
