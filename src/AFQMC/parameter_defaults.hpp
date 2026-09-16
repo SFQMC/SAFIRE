@@ -13,11 +13,45 @@
 
 #pragma once
 
+#include <algorithm>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include "AFQMC/config.h"
 #include "AFQMC/parameters.hpp"
+#include "utilities/check.hpp"
 #include "utilities/mpi_context.h"
 
 namespace sfqmc::afqmc {
+
+/// The name a resolved execute block refers a component by. Every reference holds a name once
+/// resolve_defaults has run.
+template<typename Params>
+const std::string& block_name(const std::optional<utils::BlockRef<Params>>& ref, std::string_view key) {
+  utils::check(ref.has_value(), "The execute block has no {}.", key);
+  const auto* name = std::get_if<std::string>(&*ref);
+  utils::check(name != nullptr, "The {} of the execute block was not resolved to a name. Did resolve_defaults run?",
+               key);
+  return *name;
+}
+
+/// The block of a registry that carries `name`. resolve_defaults has made the top level lists the
+/// complete registry, so a name that is not in one is an error.
+template<typename Params>
+Params& find_block(std::vector<Params>& blocks, const std::string& name, std::string_view key) {
+  const auto block = std::ranges::find_if(blocks, [&](const Params& candidate) { return candidate.name == name; });
+  utils::check(block != blocks.end(), "There is no {} named \"{}\".", key, name);
+  return *block;
+}
+
+template<typename Params>
+const Params& find_block(const std::vector<Params>& blocks, const std::string& name, std::string_view key) {
+  const auto block = std::ranges::find_if(blocks, [&](const Params& candidate) { return candidate.name == name; });
+  utils::check(block != blocks.end(), "There is no {} named \"{}\".", key, name);
+  return *block;
+}
 
 /// Reads the Hamiltonian type of an integral file without building anything. Collective: the
 /// root opens the file and broadcasts the result.
