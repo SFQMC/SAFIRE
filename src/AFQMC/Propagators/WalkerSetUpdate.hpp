@@ -356,6 +356,40 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constraint,
   }
 }
 
+/*
+ * Caps the magnitude of every walker weight at max(floor, fraction*N), where N is the global
+ * target population. A walker over the bound is rescaled onto it and keeps its phase. This
+ * keeps a single blown-up walker from dominating the population between two branching events.
+ *
+ * N is what rescale_total_weight() sets the total weight to once per population control
+ * interval, so fraction*N is the share of a normalized population that one walker may hold.
+ * Taking the target rather than the live total keeps the bound fixed while the whole
+ * population drifts up or down between two rescalings - a uniform drift is not one walker
+ * running away - and keeps this routine local, which matters because it runs every step.
+ */
+template <class Wlk>
+void bound_walker_weights(Wlk &w, double weight_bound_floor,
+                          double weight_bound_fraction,
+                          BoundStats &weight_stats) {
+  int nwalk = w.size();
+  memory::buffered_array<HOST_MEMORY, ComplexType, 1> weight(nwalk);
+  w.getProperty(WEIGHT, weight);
+
+  const RealType max_weight =
+      std::max(weight_bound_floor, weight_bound_fraction * w.get_global_target_population());
+
+  for(int i = 0; i < nwalk; i++) {
+    RealType abs_weight = std::abs(weight(i));
+    ++weight_stats.total;
+    if(abs_weight > max_weight) {
+      ++weight_stats.upper;
+      weight(i) *= max_weight / abs_weight;
+    }
+  }
+
+  w.setProperty(WEIGHT, weight);
+}
+
 } // namespace afqmc
 
 } // namespace sfqmc

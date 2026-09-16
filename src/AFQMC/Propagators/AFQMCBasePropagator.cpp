@@ -15,17 +15,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 
-#include <vector>
-
-#include "nda/tensor.hpp"
-
 #include "config.h"
 #include "AFQMC/config.h"
 #include "IO/app_loggers.h"
 #include "utilities/check.hpp"
 #include "AFQMC/Propagators/AFQMCBasePropagator.h"
-#include "AFQMC/Walkers/WalkerConfig.hpp"
-#include "numerics/nda_functions.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
 #include "numerics/operations/exp.hpp"
 #include "numerics/operations/tensor.hpp"
