@@ -115,7 +115,10 @@ AFQMCParameters parse_input_file(const std::filesystem::path& filename) {
 void print_parameters(const AFQMCParameters& params) {
   app_log(2, banner("Input parameters"));
 
-  app_log(2, parameter_string(nlohmann::ordered_json{{"driver", params.driver}, {"output_name", params.output_name}}, 2));
+  app_log(2, parameter_string(nlohmann::ordered_json{{"driver", params.driver},
+                                                     {"output_name", params.output_name},
+                                                     {"seed", params.seed}},
+                              2));
 
   int n{};
   for(const ExecuteParameters& exec : params.execute) {

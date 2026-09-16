@@ -242,9 +242,9 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
     execute["measure_interval_multiplier"] = 1
     execute["walker_ortho_interval"] = 10
     execute["equilibration_steps"] = equilibration_steps
-    execute["seed"] = 42
 
     document = {
+        "seed": 42,
         "execute": execute,
     }
     with open(path, "w") as f:

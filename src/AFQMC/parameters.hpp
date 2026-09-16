@@ -245,12 +245,11 @@ struct ExecuteParameters {
   double timestep{DEFAULT_TIME_STEP};
   int n_walkers_per_mpi_task{10};
   std::optional<double> initial_Eshift{}; // make optional
-  std::optional<int> seed{};
 };
 SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, steps,
                          equilibration_steps, sweeps, population_control_interval, measure_interval_multiplier,
                          walker_ortho_interval, dshift, print_sweep_step,
-                         timestep, n_walkers_per_mpi_task, initial_Eshift, seed);
+                         timestep, n_walkers_per_mpi_task, initial_Eshift);
 
 
 struct AFQMCParameters {
@@ -261,6 +260,10 @@ struct AFQMCParameters {
   // without its extension, in the current working directory
   std::string output_name{};
 
+  // seeds the random number generators of the whole run, every stage included. Without one they
+  // are seeded from the wall clock, so the run is not reproducible
+  std::optional<int> seed{};
+
   std::vector<ExecuteParameters> execute{};
 
   // blocks declared outside of an execute block have to be named, so that an execute block can refer to them
@@ -269,7 +272,7 @@ struct AFQMCParameters {
   std::vector<HamiltonianParameters> hamiltonian{};
   std::vector<PropagatorParameters> propagator{};
 };
-SAFIRE_DEFINE_PARAMETERS(AFQMCParameters, driver, output_name, execute, walker_set, wavefunction, hamiltonian,
+SAFIRE_DEFINE_PARAMETERS(AFQMCParameters, driver, output_name, seed, execute, walker_set, wavefunction, hamiltonian,
                          propagator);
 
 
