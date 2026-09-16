@@ -22,7 +22,6 @@ struct construct_X_impl
 {
   bool zero;
   bool free_projection;
-  double sqrtdt;
   double vbias_bound;
   V1 FieldTypes;
   V2 vMF;
@@ -45,7 +44,7 @@ struct construct_X_impl
 
     ComplexType im(0.0,1.0);
     auto vmf_0 = vMF(m);
-    auto vmf_t = stdx::abs(vmf_0) > vbias_bound * sqrtdt ? vmf_0 / stdx::abs(vmf_0) * vbias_bound * sqrtdt : vmf_0;
+    auto vmf_t = stdx::abs(vmf_0) > vbias_bound ? vmf_0 / stdx::abs(vmf_0) * vbias_bound : vmf_0;
 
     PropagatorTypes Fp = PropagatorTypes(FieldTypes(m));
     // X[iw,m] = rand[iw,m] + im * ( vbias[iw,m] - vMF[m]  )
@@ -54,7 +53,7 @@ struct construct_X_impl
     //           = sum_m [ im * ( vMF[m] - vbias[iw,m] ) *
     //                     ( X[iw,m] - halfim * ( vbias[iw,m] - vMF[m] ) ) ]
     // MF[iw] = sum_m ( im * X[iw,m] * vMF[m] )
-    auto vb_t = stdx::abs(X(iw, m)) > vbias_bound * sqrtdt ? X(iw, m) / stdx::abs(X(iw, m)) * vbias_bound * sqrtdt : X(iw, m);
+    auto vb_t = stdx::abs(X(iw, m)) > vbias_bound ? X(iw, m) / stdx::abs(X(iw, m)) * vbias_bound : X(iw, m);
 
     if (zero) {
       if (Fp == ContinuousSpinPropagator) {

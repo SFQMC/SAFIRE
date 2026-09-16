@@ -45,7 +45,6 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
   int nspin = walker_type == COLLINEAR ? 2 : 1;
   // Orbital count inferred from the walker Slater matrices (nwalk, npol*NMO, naea).
   const int NMO = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
-  SPRealType sqrtdt  = std::sqrt(SPRealType(dt));
   int nCV     = wfn->number_of_cholesky_vectors();
   bool step0 = false;
   bool ft = wset.isFiniteTemperature();
@@ -78,12 +77,12 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
 
   // 2. Assemble X(nwalk, nCV)
   auto assemble_X_time = timers.assemble_X.start();
-  assemble_X(sqrtdt, X, MFfactor, hybrid_weight);
+  assemble_X(X, MFfactor, hybrid_weight);
   assemble_X_time.stop();
 
   //std::cout<<" X: " <<nda::sum(nda::to_host(X)) <<std::endl;
 
-  // Store sqrtdt*X in wset if back propagating
+  // Store X in wset if back propagating
   if(wset.NumBackProp() > 0) {
     wset.storeFields(wset.getHistoryPos() % wset.NumBackProp(), X);
   }
@@ -582,8 +581,8 @@ void AFQMCBasePropagator<MEM>::Orthogonalize_excited_impl(WlkSet& wset)
 */
 
 template<MEMORY_SPACE MEM>
-void AFQMCBasePropagator<MEM>::assemble_X(RealType sqrtdt, 
-     nda::MemoryArrayOfRank<2> auto&& X, nda::MemoryArrayOfRank<1> auto&& MF, 
+void AFQMCBasePropagator<MEM>::assemble_X(
+     nda::MemoryArrayOfRank<2> auto&& X, nda::MemoryArrayOfRank<1> auto&& MF,
      nda::MemoryArrayOfRank<1> auto&& HWs, int nt, bool addRAND)
 {
   using nda::range;
@@ -596,12 +595,11 @@ void AFQMCBasePropagator<MEM>::assemble_X(RealType sqrtdt,
   // the raw vbias, so re-evaluate the exact magnitude condition construct_X uses to clamp it.
   // Host-only (X is on device for DEVICE_MEMORY); device counting is not supported.
   if constexpr (MEM == HOST_MEMORY) {
-    RealType bnd = vbias_bound * sqrtdt;
     auto Xv = X();
     for (long iw = 0; iw < nwalk; ++iw)
       for (long m = 0; m < nCV; ++m) {
         ++vbias_bound_stats.total;
-        if (std::abs(Xv(iw, m)) > bnd) ++vbias_bound_stats.upper;
+        if (std::abs(Xv(iw, m)) > vbias_bound) ++vbias_bound_stats.upper;
       }
   }
   // generate random numbers
@@ -627,10 +625,10 @@ void AFQMCBasePropagator<MEM>::assemble_X(RealType sqrtdt,
 
   if constexpr (MEM==DEVICE_MEMORY) {
 #if defined(ENABLE_DEVICE)
-    construct_X(use_cp_constraint or project_force_bias,free_projection,sqrtdt, vbias_bound, FieldTypes_dev, vMF, MF, HWs, RNGbuff, X);
+    construct_X(use_cp_constraint or project_force_bias,free_projection, vbias_bound, FieldTypes_dev, vMF, MF, HWs, RNGbuff, X);
 #endif
   } else {
-    detail::construct_X_impl f{use_cp_constraint || project_force_bias, free_projection, sqrtdt, vbias_bound, FieldTypes, vMF(), MF(), HWs(), RNGbuff(), X()};
+    detail::construct_X_impl f{use_cp_constraint || project_force_bias, free_projection, vbias_bound, FieldTypes, vMF(), MF(), HWs(), RNGbuff(), X()};
     for(long iw = 0; iw < nwalk; ++iw) {
       for(long m = 0; m < nCV; ++m) {
         f(iw, m);
