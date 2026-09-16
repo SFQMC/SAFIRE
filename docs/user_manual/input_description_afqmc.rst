@@ -231,9 +231,10 @@ For example, in the input file below, the walker_set is defined outside of the e
 .. note::
 
   Externally defined blocks can be reused in multiple execute blocks.
-  The underlying objects have a persistent state between execute blocks.
-  This allows a walker population to be reused across different simulation runs,
-  picking up where the last projection left off.
+  Walker sets, wavefunctions and hamiltonians are built once per name and keep their state
+  between execute blocks. This allows a walker population to be reused across different
+  simulation runs, picking up where the last projection left off.
+  Propagators carry no state worth keeping and are rebuilt for every execute block.
 
 
 Settings
