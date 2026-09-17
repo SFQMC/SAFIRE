@@ -31,7 +31,7 @@ from warnings import warn
 import numpy as np
 import scipy.sparse as sps
 
-from safiretools.hdf5 import from_complex, to_complex
+from safiretools.hdf5 import read_complex
 from safiretools.types import SpinSymm
 from safiretools.wavefunction.slater import (
     CONDITION_MAX,
@@ -169,10 +169,10 @@ def write_header(group, spin_symm: SpinSymm, coeffs, psi0) -> None:
         data=np.array([nmo, nelec[0], nelec[1], int(spin_symm), coeffs.size],
                       dtype=np.int32)
     )
-    group.create_dataset('ci_coeffs', data=to_complex(coeffs))
+    group.create_dataset('ci_coeffs', data=coeffs)
 
     for name, block in zip(('Psi0_alpha', 'Psi0_beta'), psi0):
-        group.create_dataset(name, data=to_complex(block))
+        group.create_dataset(name, data=block)
 
 
 def read_header(group) -> dict:
@@ -197,11 +197,11 @@ def read_header(group) -> dict:
     spin_symm = SpinSymm.from_input(int(dims[3]))
     ndets = int(dims[4])
 
-    coeffs = from_complex(group['ci_coeffs'][...], real_ndim=1)[:ndets]
+    coeffs = read_complex(group['ci_coeffs'])[:ndets]
 
     names = ('Psi0_alpha', 'Psi0_beta') if spin_symm is SpinSymm.COLLINEAR \
         else ('Psi0_alpha',)
-    psi0 = tuple(from_complex(group[name][...], real_ndim=2) for name in names)
+    psi0 = tuple(read_complex(group[name]) for name in names)
 
     return {
         'nmo': nmo,
@@ -238,7 +238,7 @@ def write_orbitals(group, name: str, orbitals) -> None:
         f'{name}/dims',
         data=np.array([matrix.shape[0], matrix.shape[1], matrix.nnz], dtype=np.int32)
     )
-    group.create_dataset(f'{name}/data_', data=to_complex(matrix.data))
+    group.create_dataset(f'{name}/data_', data=matrix.data)
     group.create_dataset(f'{name}/jdata_',
                          data=matrix.indices.astype(np.int32, copy=False))
     group.create_dataset(f'{name}/pointers_begin_',
@@ -262,8 +262,7 @@ def read_orbitals(group, name: str):
     subgroup = group[name]
 
     nrows, ncols, nnz = (int(value) for value in subgroup['dims'][...])
-    # a CSR `data_` array is flat when stored real, so its interleaved rank is 2
-    data = from_complex(subgroup['data_'][...], real_ndim=1)
+    data = read_complex(subgroup['data_'])
     indices = subgroup['jdata_'][...]
     pointers_begin = subgroup['pointers_begin_'][...]
     pointers_end = subgroup['pointers_end_'][...]

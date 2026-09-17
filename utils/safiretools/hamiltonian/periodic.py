@@ -54,7 +54,7 @@ from safiretools.hamiltonian.base import (
     write_hamiltonian_format,
 )
 from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
-from safiretools.hdf5 import from_complex, to_complex
+from safiretools.hdf5 import read_complex
 from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
@@ -746,7 +746,7 @@ class PeriodicHamiltonian(Hamiltonian):
 
             kp_group = fh5.create_group(KPOINT_GROUP)
             for Q, L in self.chol.items():
-                kp_group.create_dataset(f"L{Q}", data=to_complex(L))
+                kp_group.create_dataset(f"L{Q}", data=L)
 
     def to_fcidump(self, path, tol=1e-8, ctol=1e-12, sym=1, cplx=True,
                    paren=False, use_spinor=False) -> None:
@@ -881,8 +881,8 @@ class PeriodicHamiltonian(Hamiltonian):
             minus_k = group['MinusK'][...]
             nchol_pk = group['NCholPerKP'][...]
 
-            hcore = [from_complex(group[f'H1_kp{ki}'][...]) for ki in range(nkpts)]
-            chol = {Q: from_complex(fh5[f'{KPOINT_GROUP}/L{Q}'][...])
+            hcore = [read_complex(group[f'H1_kp{ki}']) for ki in range(nkpts)]
+            chol = {Q: read_complex(fh5[f'{KPOINT_GROUP}/L{Q}'])
                     for Q in range(nkpts) if f'L{Q}' in fh5[KPOINT_GROUP]}
 
         return cls(hcore=hcore, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
@@ -1031,8 +1031,8 @@ def _write_kpoint_descriptors(group, kpts, nmo_pk, qk_to_k2, minus_k, nelec,
 
 
 def _write_kpoint_h1(group, ki, nmo, h1) -> None:
-    """Write the one-body block at k-point `ki`, interleaved complex."""
+    """Write the one-body block at k-point `ki`."""
     if h1.shape != (nmo, nmo):
         raise ValueError(f"H1 at kpoint {ki} has shape {h1.shape}, expected ({nmo}, {nmo})")
 
-    group.create_dataset(f"H1_kp{ki}", data=to_complex(h1))
+    group.create_dataset(f"H1_kp{ki}", data=h1)

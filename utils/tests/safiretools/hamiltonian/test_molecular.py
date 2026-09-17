@@ -152,7 +152,8 @@ class TestHdf5:
         hamiltonian.to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert fh5['Hamiltonian/hcore'].shape[-1] == 2
+            assert fh5['Hamiltonian/hcore'].dtype == np.complex128
+            assert fh5['Hamiltonian/hcore'].shape == (nmo, nmo)
 
         assert np.allclose(Hamiltonian.from_hdf5(path).hcore, complex_hcore)
 
@@ -412,12 +413,15 @@ class TestFromPyscf:
         assert is_periodic_chk(mf.chkfile) is False
 
 
-class TestRealAndComplexAreToldApartByRank:
+class TestRealAndComplexAreToldApart:
     """
-    `safiretools.hdf5.to_complex` appends a trailing axis of length 2, so the two
-    on-disk layouts differ in *rank*. These cases check that end-to-end through a
-    Hamiltonian round trip; `tests/safiretools/test_hdf5.py` checks the helper
+    Complex integrals are stored as complex datasets and real ones stay real, so the
+    dtype on disk follows the data. These cases check that end-to-end through a
+    Hamiltonian round trip; `tests/safiretools/test_hdf5.py` checks the read helper
     itself.
+
+    The `nmo == 2` and `nchol == 2` shapes are kept because they are the ones an
+    earlier rank-based decoder mistook for interleaved complex data.
     """
 
     @staticmethod
@@ -433,7 +437,7 @@ class TestRealAndComplexAreToldApartByRank:
         return restored
 
     def test_two_orbitals(self, tmp_path):
-        """`nmo == 2` makes a real hcore look interleaved by the old rule."""
+        """A real `(2, 2)` hcore is shaped like an interleaved complex vector."""
         hcore = np.array([[-1.25, 0.0], [0.0, -0.48]])
         chol = np.arange(3 * 4, dtype=float).reshape(3, 4)   # (nchol=3, nmo**2)
 
@@ -443,7 +447,7 @@ class TestRealAndComplexAreToldApartByRank:
         assert not np.iscomplexobj(restored.hcore)
 
     def test_two_cholesky_vectors(self, tmp_path):
-        """`nchol == 2` makes a real Cholesky matrix look interleaved."""
+        """A real Cholesky matrix with two vectors is shaped like interleaved data."""
         hcore = np.diag([-1.0, -0.5, -0.25])
         chol = np.arange(2 * 9, dtype=float).reshape(2, 9)   # (nchol=2, nmo**2)
 
@@ -460,7 +464,7 @@ class TestRealAndComplexAreToldApartByRank:
         assert np.iscomplexobj(restored.hcore)
         assert np.iscomplexobj(restored.chol)
 
-    def test_a_malformed_rank_is_rejected(self, tmp_path):
+    def test_a_malformed_hcore_is_rejected(self, tmp_path):
         path = tmp_path / 'bad.h5'
         MolecularHamiltonian.from_integrals(
             np.diag([-1.0, -0.5]), chol=np.ones((2, 4))).to_hdf5(path)
@@ -469,5 +473,5 @@ class TestRealAndComplexAreToldApartByRank:
             del fh5['Hamiltonian/hcore']
             fh5.create_dataset('Hamiltonian/hcore', data=np.zeros((2, 2, 2, 2)))
 
-        with pytest.raises(ValueError, match="rank 4"):
+        with pytest.raises(ValueError, match="square matrix"):
             Hamiltonian.from_hdf5(path)

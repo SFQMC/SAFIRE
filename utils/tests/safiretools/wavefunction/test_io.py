@@ -74,7 +74,7 @@ class TestHeader:
                         psi0=(np.eye(6, 3) + 0j,
                               np.zeros((6, 0), dtype=complex)))
 
-        assert group['Psi0_beta'].shape == (6, 0, 2)
+        assert group['Psi0_beta'].shape == (6, 0)
         assert io.read_header(group)['psi0'][1].shape == (6, 0)
 
 

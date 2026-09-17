@@ -52,6 +52,19 @@ void read_cast(h5::group& g, std::string name, A_t && A)
 
 }
 
+/// @brief Whether a dataset stores complex values as the `{r, i}` compound datatype, as
+/// written by h5py and Julia's HDF5.jl. Such a dataset carries no `__complex__` attribute
+/// and has the same rank as the values it holds.
+inline bool dataset_is_compound_complex(h5::array_interface::dataset_info const& l) {
+  return h5::hdf5_type_equal(l.ty, h5::hdf5_type<h5::dcplx_t>());
+}
+
+/// @brief Whether a dataset holds complex values: either the `__complex__` attribute nda
+/// writes, or the `{r, i}` compound datatype.
+inline bool dataset_is_complex(h5::array_interface::dataset_info const& l) {
+  return l.has_complex_attribute || dataset_is_compound_complex(l);
+}
+
 // reads and casts if types don't match
 auto h5_read_with_cast(h5::group& g, std::string name, nda::MemoryArray auto && A)
 {
@@ -102,17 +115,8 @@ auto h5_read_with_cast(h5::group& g, std::string name, nda::MemoryArray auto && 
 
 /// @brief Read an HDF5 dataset into an nda MemoryArray.
 ///
-/// Most storage conventions (TRIQS complex attribute, plain real promotion to
-/// complex, type matching) are handled natively by `nda::h5_read` and
-/// delegated to it directly.
-///
-/// The one special case handled here is backwards compatibility with an older
-/// **interleaved real/imag dimension** format: if @p A holds complex values and
-/// `rank(dataset) == rank(A) + 1` (a trailing dimension of size 2 stores
-/// `[real, imag]` pairs), a real-valued view of @p A is constructed with
-/// `memory::to_real_view` and passed to `nda::h5_read`.
-///
-/// Device arrays are staged through a host copy.
+/// This wrapper fixes a missing device guard and handling of `{r, i}` compound complex arrays,
+/// which are broken upstream.
 ///
 /// @param g    HDF5 group containing the dataset.
 /// @param name Name of the dataset within @p g.
@@ -124,15 +128,13 @@ auto h5_read(h5::group& g, std::string name, nda::MemoryArray auto && A)
   if constexpr (nda::mem::on_host<A_t>) {
     if constexpr (nda::is_complex_v<T>) {
       auto l = h5::array_interface::get_dataset_info(g,name);
-      // backwards-compatibility with older format
-      if (!l.has_complex_attribute && nda::get_rank<A_t>+1 == l.rank())
-      {
-        auto Ar = memory::to_real_view(A);
-        nda::h5_read(g,name,Ar);
+      if(dataset_is_compound_complex(l)) {
+        auto v = nda::detail::prepare_h5_array_view(A);
+        h5::array_interface::read(g,name,v);
       } else {
         nda::h5_read(g,name,A);
       }
-    } else { 
+    } else {
       nda::h5_read(g,name,A);
     }
   } else {

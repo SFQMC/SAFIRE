@@ -183,7 +183,7 @@ THCHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
     utils::check(g.has_dataset(name), base_error + "Missing " + name + " dataset");
     auto l = h5::array_interface::get_dataset_info(g,name);
     if constexpr (REAL)
-      utils::check(not l.has_complex_attribute,base_error+"Found complex " + name + " with REAL factory.");
+      utils::check(!utils::dataset_is_complex(l),base_error+"Found complex " + name + " with REAL factory.");
     if (reshape_type==0) {
       utils::h5_read(g,name,A());
     } else if (reshape_type==1) {
@@ -352,16 +352,16 @@ THCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     { // check factorized_coulomb_matrix
       utils::check(igrp.has_dataset("factorized_coulomb_matrix"),"Missing dataset factorized_coulomb_matrix."); 
       auto l = h5::array_interface::get_dataset_info(igrp,"factorized_coulomb_matrix");
-      if(l.has_complex_attribute) Real = false;
       utils::check((l.rank() == 2) or (l.rank() == 4), "Rank mismatch");
-      if(l.has_complex_attribute or (l.rank() == 2)) Real = false;
+      if(utils::dataset_is_complex(l)) {
+        Real = false;
+      }
     }
-    { // check collocation_matrix 
-      utils::check(igrp.has_dataset("collocation_matrix"),"Missing dataset collocation_matrix."); 
+    { // check collocation_matrix
+      utils::check(igrp.has_dataset("collocation_matrix"),"Missing dataset collocation_matrix.");
       auto l = h5::array_interface::get_dataset_info(igrp,"collocation_matrix");
       utils::check((l.rank() == 3) or (l.rank() == 5), "Rank mismatch");
-      utils::check((Real and not (l.has_complex_attribute or (l.rank() == 5))) or 
-                   (not Real and (l.has_complex_attribute or (l.rank() == 5))), "Incompatible datatypes in Interaction.");
+      utils::check(Real != utils::dataset_is_complex(l), "Incompatible datatypes in Interaction.");
     }
     // should I check the other ones???
   }
