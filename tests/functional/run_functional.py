@@ -207,8 +207,6 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
                 n_walkers_per_mpi_task: int, timestep: float, observables: dict,
                 snapshot: bool):
     steps = 10000
-    # the driver damps Eshift over the equilibration phase and measures nothing in it; this
-    # is the old per-estimator equil_multiplier of 200 population control intervals
     equilibration_steps = 2000
     population_control_interval = 10
     bp_measure_interval_multiplier = 40
