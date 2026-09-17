@@ -191,11 +191,14 @@ void apply_defaults(EstimatorParameters& params, const ExecuteParameters& exec) 
 }
 
 void apply_defaults(ExecuteParameters& exec) {
-  if(!exec.Eshift_relaxation_rate) {
-    if(exec.equilibration_steps > 1) {
-      exec.Eshift_relaxation_rate = 1 - std::exp(-10.0/exec.equilibration_steps);
+  if(!exec.Eshift_relaxation_factor) {
+    // Eshift only relaxes once per population control interval, so the factor is set from the
+    // number of updates the equilibration phase performs, not from its number of steps
+    const double updates = double(exec.equilibration_steps) / exec.population_control_interval;
+    if(updates > 1) {
+      exec.Eshift_relaxation_factor = 1 - std::exp(-10.0 / updates);
     } else {
-      exec.Eshift_relaxation_rate = 1;
+      exec.Eshift_relaxation_factor = 1;
     }
   }
   apply_defaults(exec.estimators, exec);

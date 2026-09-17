@@ -19,13 +19,12 @@
 #include <format>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "config.h"
 #include "utilities/memory_utils.hpp"
 
 #include "AFQMC/config.h"
-#include "AFQMC/Drivers/averageEloc.hpp"
+#include "AFQMC/Drivers/average_energy.hpp"
 #include "AFQMC/Drivers/run_afqmc.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "IO/app_loggers.h"
@@ -52,7 +51,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   const int log_interval = std::max(1, exec.steps / 100);
   const int step_format_width = int(std::to_string(exec.steps).size());
 
-  const double Eshift_relaxation_rate = resolved(exec.Eshift_relaxation_rate, "Eshift_relaxation_rate");
+  const double Eshift_relaxation_factor = resolved(exec.Eshift_relaxation_factor, "Eshift_relaxation_factor");
 
   // three equal columns tiling the full rule width, shared by the header and the rows
   constexpr int log_col = default_banner_width / 3;
@@ -82,12 +81,12 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       if(iStep >= exec.equilibration_steps) {
         estimators.measure(mpi, iStep / exec.population_control_interval, wset);
       } else {
-        Eshift += Eshift_relaxation_rate * (averageEloc(mpi, wset) - Eshift);
+        Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset) - Eshift);
       }
     }
 
     if(iStep % log_interval == 0) {
-      const double energy = averageEloc(mpi, wset);
+      const double energy = averagePseudoEnergy(mpi, wset);
       const auto now = std::chrono::current_zone()->to_local(
           std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
 
@@ -95,7 +94,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       // so the timestamp is rendered by std::format and passed on as a string
       app_log(2, log_row, std::format("{:%F %T}", now), log_col,
               std::format("{:>{}}/{}", iStep + 1, step_format_width, exec.steps), log_col,
-              std::format("{:#.8g}", energy), log_col);
+              std::format("{:#.15g}", energy), log_col);
     }
 
     // resize stack pointers to match maximum buffer use
@@ -109,7 +108,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
     app_log(1, "Results written to '{}'.", results_filename);
   }
 
-  propagator.printBoundStatistics();
+  propagator.printBoundStatistics(Eshift);
 
   if(mpi.comm.root()) {
     timers.print_all();
