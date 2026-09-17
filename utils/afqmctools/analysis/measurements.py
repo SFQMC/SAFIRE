@@ -94,7 +94,8 @@ def average_measurements(filename, nequil=0):
     -------
     dict
         {name: (mean, stochastic error)}, keyed as in `read_measurements`. The error is the
-        one the old stats module computed, std / sqrt(N / kappa), with kappa the
-        autocorrelation length of the real part.
+        one the old stats module computed, std / sqrt(N / kappa), with the standard deviation
+        taken separately for the real and the imaginary part and returned as the two parts of
+        a complex error.
     """
     return {name: me2d(bins[nequil:]) for name, bins in _read_bins(filename).items()}
