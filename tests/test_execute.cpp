@@ -263,7 +263,6 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     CHECK(prop.upper_cutoff_scale.has_value());
     CHECK(prop.lower_cutoff_scale.has_value());
     CHECK(prop.denseP2.has_value());
-    CHECK(prop.symmetric_split.has_value());
 
     // the energy is the estimator that is present by default, and it is resolved to the
     // driver's own blocks; nothing else is measured unless the input asks for it
@@ -292,8 +291,7 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
              .propagator   = PropagatorParameters{.vbias_bound        = 12.5,
                                                   .upper_cutoff_scale = 3.5,
                                                   .lower_cutoff_scale = 0.25,
-                                                  .denseP2            = false,
-                                                  .symmetric_split    = false},
+                                                  .denseP2            = false},
              .estimators = EstimatorParameters{
                  .energy = EnergyEstimatorParameters{.measure_interval_multiplier = 5},
                  .mixed  = MixedEstimatorParameters{.wavefunction = "estimator_wfn",
@@ -323,7 +321,6 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     CHECK(prop.upper_cutoff_scale == 3.5);
     CHECK(prop.lower_cutoff_scale == 0.25);
     CHECK(prop.denseP2 == false);
-    CHECK(prop.symmetric_split == false);
 
     // a hamiltonian that names a file keeps it, rather than inheriting the one of the wavefunction
     CHECK(block_named(params.hamiltonian, ham_name).filename == hamil_file);

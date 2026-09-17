@@ -107,8 +107,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                           nda::MemoryVector auto &&MFfactor,
                           nda::MemoryVector auto &&hybrid_weight,
                           double lower_cutoff_scale, double upper_cutoff_scale,
-                          bool symmetric_split,
-                          bool step0, bool debug_verbosity,
+                          bool debug_verbosity,
                           bool use_cp_constraint,
                           BoundStats &eloc_stats) {
   auto all = nda::range::all;
@@ -203,21 +202,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                 << std::endl;
     }
 
-    if (symmetric_split) {
-      if(step0)
-          weight(i) *= ComplexType(
-            scale *
-                std::exp(-dt * (eloc.real() - Eshift)),
-            0.0);
-      else
-        weight(i) *= ComplexType(
-            scale *
-                std::exp(-dt * (0.5 * (eloc.real() + old_eloc.real()) - Eshift)),
-            0.0);
-      }
-    else
-      weight(i) *=
-          ComplexType(scale * std::exp(-dt * (eloc.real() - Eshift)), 0.0);
+    weight(i) *= scale * std::exp(-dt * (eloc.real() - Eshift));
     pseudo_eloc(i) = eloc;
     ovlp(i) = new_ovlp(i);
     if (std::abs(scale) > std::numeric_limits<RealType>::min()) {
