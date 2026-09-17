@@ -284,13 +284,14 @@ class TestRealValued:
             data = fh5['Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/data_']
             assert data.ndim == 1
 
-    def test_a_complex_hamiltonian_writes_interleaved_data(self, tmp_path):
+    def test_a_complex_hamiltonian_writes_complex_data(self, tmp_path):
         path = tmp_path / 'complex.h5'
         LatticeHamiltonian.from_dict(CASES['twisted_honeycomb']).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
             data = fh5['Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/data_']
-            assert data.shape[-1] == 2
+            assert data.ndim == 1
+            assert data.dtype == np.complex128
 
 
 class TestHamiltonianComponent:

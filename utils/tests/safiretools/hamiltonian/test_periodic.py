@@ -286,7 +286,7 @@ class TestGeneration:
             scf_data, kpoint_symmetry=False, chol_cut=1e-3, maxvecs=20).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert fh5['Hamiltonian/KPFactorized/L0'].shape[-1] == 2
+            assert fh5['Hamiltonian/KPFactorized/L0'].dtype == np.complex128
             assert fh5['Hamiltonian/ComplexIntegrals'][0] == 1
 
     def test_the_one_body_hamiltonian_is_block_diagonal_in_k(self, scf_data):

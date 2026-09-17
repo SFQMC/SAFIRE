@@ -390,7 +390,9 @@ ModelHamOpsGenerator::getHamiltonianOperations(WALKER_TYPES type,
       h5::group dn = gn.open_group(dset);
       auto l = h5::array_interface::get_dataset_info(dn,"data_");
       utils::check((l.rank() == 1) or (l.rank() == 2), "Rank mismatch");
-      if(l.has_complex_attribute or (l.rank() == 2)) Real = false;
+      if(utils::dataset_is_complex(l)) {
+        Real = false;
+      }
     } // for(n)
   }
   mpi->comm.broadcast_n(&Real, 1, 0);

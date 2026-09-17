@@ -12,98 +12,113 @@ import numpy as np
 import h5py as h5
 import pytest
 
-from safiretools.hdf5 import (
-    add_dataset,
-    add_group,
-    to_complex,
-    from_complex,
-    h5_as_dict,
-    dict_to_h5,
-)
+from safiretools.hdf5 import replace_dataset, replace_group, read_complex
 
 
-def test_add_dataset_creates_and_overwrites(tmp_path):
-    fname = tmp_path / 'test.h5'
-    with h5.File(fname, 'w') as f:
-        add_dataset(f, 'x', np.array([1, 2, 3]))
-        add_dataset(f, 'x', np.array([4, 5, 6]))
+def nda_complex(group, name, array):
+    """
+    Write `array` the way nda's h5 layer does: the real and imaginary parts as a
+    trailing axis of length 2, plus the ``__complex__`` marker.
+    """
+    array = np.asarray(array)
+    real_dtype = np.float32 if array.dtype == np.complex64 else np.float64
+    interleaved = np.ascontiguousarray(array).view(real_dtype)
+    dataset = group.create_dataset(name, data=interleaved.reshape(array.shape + (2,)))
+    dataset.attrs['__complex__'] = '1'
+    return dataset
+
+
+def test_replace_dataset_creates_and_overwrites(tmp_path):
+    with h5.File(tmp_path / 'test.h5', 'w') as f:
+        replace_dataset(f, 'x', np.array([1, 2, 3]))
+        replace_dataset(f, 'x', np.array([4, 5, 6]))
         np.testing.assert_array_equal(f['x'][...], [4, 5, 6])
 
 
-def test_add_group_replaces_existing(tmp_path):
-    fname = tmp_path / 'test.h5'
-    with h5.File(fname, 'w') as f:
-        g = add_group(f, 'grp')
+def test_replace_group_replaces_existing(tmp_path):
+    with h5.File(tmp_path / 'test.h5', 'w') as f:
+        g = replace_group(f, 'grp')
         g.create_dataset('a', data=1)
-        g2 = add_group(f, 'grp')
+        g2 = replace_group(f, 'grp')
         assert 'a' not in g2
 
 
-def test_to_from_complex_round_trip():
-    array = np.array([1 + 2j, 3 - 4j, 0.5j], dtype=np.complex128)
-    on_disk = to_complex(array)
-    assert on_disk.shape == array.shape + (2,)
-    assert on_disk.dtype == np.float64
-
-    recovered = from_complex(on_disk, real_ndim=1)
-    assert recovered.shape == array.shape
-    np.testing.assert_allclose(recovered, array)
-
-
-@pytest.mark.parametrize("shape", [(3,), (2, 2), (4, 2), (2, 3, 2)])
-def test_to_from_complex_preserves_shape(shape):
-    rng = np.random.default_rng(0)
-    array = rng.random(shape) + 1j * rng.random(shape)
-
-    recovered = from_complex(to_complex(array), real_ndim=len(shape))
-    assert recovered.shape == shape
-    np.testing.assert_allclose(recovered, array)
-
-
-class TestFromComplexTellsTheLayoutsApartByRank:
+class TestReadComplexOnTheMarkedLayout:
     """
-    `to_complex` appends a trailing length-2 axis, so the layouts differ in
-    *rank*. Recognizing the complex one by "the last axis has length 2" instead
-    is ambiguous whenever a real dataset's own last axis happens to be 2.
+    What nda and the C++ estimators write: a trailing axis of length 2 carrying the
+    real and imaginary parts, marked with the ``__complex__`` attribute.
     """
 
-    @pytest.mark.parametrize("array,real_ndim", [
-        (np.zeros(2), 1),               # a flat real array of length 2
-        (np.zeros((2, 2)), 2),          # a real 2x2 matrix
-        (np.zeros((4, 2)), 2),          # a real matrix with two columns
+    @pytest.mark.parametrize("shape", [(), (5,), (3, 2), (4, 3, 3)])
+    def test_the_trailing_axis_is_dropped(self, tmp_path, shape):
+        rng = np.random.default_rng(0)
+        array = (rng.random(shape) + 1j * rng.random(shape)).astype(np.complex128)
+
+        with h5.File(tmp_path / 'marked.h5', 'w') as f:
+            recovered = read_complex(nda_complex(f, 'x', array))
+
+        assert recovered.shape == shape
+        assert recovered.dtype == np.complex128
+        np.testing.assert_array_equal(recovered, array)
+
+    def test_single_precision_stays_single_precision(self, tmp_path):
+        rng = np.random.default_rng(1)
+        array = (rng.random(6) + 1j * rng.random(6)).astype(np.complex64)
+
+        with h5.File(tmp_path / 'marked32.h5', 'w') as f:
+            recovered = read_complex(nda_complex(f, 'x', array))
+
+        assert recovered.dtype == np.complex64
+        np.testing.assert_array_equal(recovered, array)
+
+    def test_a_missing_trailing_axis_is_rejected(self, tmp_path):
+        with h5.File(tmp_path / 'malformed.h5', 'w') as f:
+            dataset = f.create_dataset('x', data=np.zeros((3, 3)))
+            dataset.attrs['__complex__'] = '1'
+
+            with pytest.raises(ValueError, match="trailing axis of length 2"):
+                read_complex(dataset)
+
+
+class TestReadComplexPassesEverythingElseThrough:
+    """
+    The marker attribute, not the shape, is what identifies the interleaved layout. A
+    trailing axis of length 2 is ambiguous on its own -- a real ``(n, 2)`` matrix and a
+    complex scalar observable of ``n`` bins are stored identically -- so an unmarked
+    dataset is handed back exactly as h5py read it.
+
+    That also covers h5py's own complex datasets, which are the ``{r, i}`` compound type
+    on disk and carry no marker: h5py returns them as ``complex128`` already.
+    """
+
+    def test_native_h5py_complex_comes_back_complex(self, tmp_path):
+        rng = np.random.default_rng(2)
+        array = (rng.random((4, 3)) + 1j * rng.random((4, 3))).astype(np.complex128)
+
+        with h5.File(tmp_path / 'native.h5', 'w') as f:
+            recovered = read_complex(f.create_dataset('x', data=array))
+
+        assert recovered.dtype == np.complex128
+        assert recovered.shape == (4, 3)
+        np.testing.assert_array_equal(recovered, array)
+
+    @pytest.mark.parametrize("array", [
+        np.zeros(2),                    # a flat real array of length 2
+        np.zeros((2, 2)),               # a real 2x2 matrix
+        np.zeros((4, 2)),               # a real matrix with two columns
+        np.arange(4),                   # integers
     ])
-    def test_real_data_is_returned_unchanged(self, array, real_ndim):
-        recovered = from_complex(array, real_ndim=real_ndim)
+    def test_real_data_is_returned_unchanged(self, tmp_path, array):
+        with h5.File(tmp_path / 'real.h5', 'w') as f:
+            recovered = read_complex(f.create_dataset('x', data=array))
+
         assert recovered.shape == array.shape
+        assert recovered.dtype == array.dtype
         assert not np.iscomplexobj(recovered)
 
-    @pytest.mark.parametrize("real_ndim", [1, 2, 3])
-    def test_interleaved_data_is_converted(self, real_ndim):
-        rng = np.random.default_rng(1)
-        shape = (2,) * real_ndim
-        array = rng.random(shape) + 1j * rng.random(shape)
+    def test_a_real_scalar_is_returned_unchanged(self, tmp_path):
+        with h5.File(tmp_path / 'scalar.h5', 'w') as f:
+            recovered = read_complex(f.create_dataset('x', data=3.5))
 
-        recovered = from_complex(to_complex(array), real_ndim=real_ndim)
-        assert np.iscomplexobj(recovered)
-        np.testing.assert_allclose(recovered, array)
-
-    def test_a_wrong_rank_is_rejected(self):
-        with pytest.raises(ValueError, match="rank 3"):
-            from_complex(np.zeros((2, 2, 3)), real_ndim=1)
-
-
-def test_dict_to_h5_round_trip_with_nested_groups(tmp_path):
-    fname = tmp_path / 'nested.h5'
-    data = {
-        'a': np.array([1.0, 2.0, 3.0]),
-        'group': {
-            'b': np.array([[1, 2], [3, 4]]),
-            'c': 42,
-        },
-    }
-    dict_to_h5(fname, data)
-    result = h5_as_dict(fname)
-
-    np.testing.assert_array_equal(result['a'], data['a'])
-    np.testing.assert_array_equal(result['group']['b'], data['group']['b'])
-    assert result['group']['c'] == 42
+        assert recovered.shape == ()
+        assert recovered == 3.5

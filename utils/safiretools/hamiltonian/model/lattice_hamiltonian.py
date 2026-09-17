@@ -28,7 +28,7 @@ from safiretools.hamiltonian.base import (
     open_for_hamiltonian,
     write_hamiltonian_format,
 )
-from safiretools.hdf5 import from_complex, to_complex
+from safiretools.hdf5 import read_complex
 from safiretools.types import SpinSymm
 
 HDF5_PREFIX = 'Hamiltonian/ModelHamiltonian'
@@ -692,16 +692,12 @@ def _write_csr(fh5, csr_array, prefix: str) -> None:
     reads: ``dims``, ``data_``, ``jdata_``, ``pointers_begin_``,
     ``pointers_end_``.
     """
-    data = csr_array.data
-    if np.iscomplexobj(data):
-        data = to_complex(data)
-
     fh5.create_dataset(
         name=prefix + '/dims',
         data=np.array([csr_array.shape[0], csr_array.shape[1], csr_array.nnz],
                       dtype=np.int32)
     )
-    fh5.create_dataset(name=prefix + '/data_', data=data)
+    fh5.create_dataset(name=prefix + '/data_', data=csr_array.data)
     fh5.create_dataset(name=prefix + '/jdata_',
                        data=csr_array.indices.astype(np.int32, copy=False))
     fh5.create_dataset(name=prefix + '/pointers_begin_',
@@ -712,8 +708,7 @@ def _write_csr(fh5, csr_array, prefix: str) -> None:
 
 def _read_csr(group):
     """Read back a CSR matrix written by `_write_csr`."""
-    # a CSR `data_` array is flat when stored real, so its interleaved rank is 2
-    data = from_complex(group['data_'][...], real_ndim=1)
+    data = read_complex(group['data_'])
 
     indices = group['jdata_'][...]
     pointers_begin = group['pointers_begin_'][...]

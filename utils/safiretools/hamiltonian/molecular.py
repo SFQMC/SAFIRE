@@ -37,7 +37,7 @@ from safiretools.hamiltonian.base import (
     write_hamiltonian_format,
 )
 from safiretools.hamiltonian.fcidump import read_fcidump, write_fcidump
-from safiretools.hdf5 import from_complex, to_complex
+from safiretools.hdf5 import read_complex
 from safiretools.types import SpinSymm
 from safiretools.wavefunction.slater import gab
 
@@ -517,11 +517,11 @@ def write_dense_hamiltonian(fh5, hcore, chol, nelec, nmo, enuc=0.0,
     write_hamiltonian_format(fh5, 'dense')
 
     _write(fh5, 'Hamiltonian/DenseFactorized/L',
-           to_complex(chol) if complex_chol else np.real(chol))
+           chol if complex_chol else np.real(chol))
 
     complex_hcore = bool(np.any(np.iscomplex(hcore)))
     _write(fh5, 'Hamiltonian/hcore',
-           to_complex(hcore) if complex_hcore else np.real(hcore))
+           hcore if complex_hcore else np.real(hcore))
 
     _write(fh5, 'Hamiltonian/Energies', np.array([enuc, 0.], dtype=np.float64))
     _write(fh5, 'Hamiltonian/dims',
@@ -572,11 +572,10 @@ def read_dense_hamiltonian(path):
 
         nmo = int(dims[3])
         nelec = (int(dims[4]), int(dims[5]))
-        nchol = int(dims[-1])
         enuc = float(fh5['Hamiltonian/Energies'][...][0])
 
-        chol = from_complex(fh5[CHOLESKY_DATASET][...]).reshape(-1, nchol)
-        hcore = from_complex(fh5['Hamiltonian/hcore'][...])
+        chol = read_complex(fh5[CHOLESKY_DATASET])
+        hcore = read_complex(fh5['Hamiltonian/hcore'])
 
     return enuc, hcore, chol, nelec, nmo
 

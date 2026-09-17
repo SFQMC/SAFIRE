@@ -105,7 +105,7 @@ class TestRoundTrip:
             group = fh5['Wavefunction/NOMSD']
             assert list(group['dims'][...]) == [6, 3, 0,
                                                 int(SpinSymm.COLLINEAR), 1]
-            assert group['Psi0_beta'].shape == (6, 0, 2)
+            assert group['Psi0_beta'].shape == (6, 0)
             assert list(group['PsiT_1/dims'][...]) == [0, 6, 0]
 
     def test_an_explicit_psi0_survives(self, make_nomsd, orthonormal, tmp_path):
