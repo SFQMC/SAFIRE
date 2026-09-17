@@ -77,7 +77,6 @@ public:
     upper_cutoff_scale = resolved(params.upper_cutoff_scale, "upper_cutoff_scale");
     lower_cutoff_scale = resolved(params.lower_cutoff_scale, "lower_cutoff_scale");
     denseP2            = resolved(params.denseP2, "denseP2");
-    symmetric_split    = resolved(params.symmetric_split, "symmetric_split");
 
     order               = params.taylor_n;
     weight_bound_floor    = params.weight_bound_floor;
@@ -144,8 +143,6 @@ public:
       app_log(1,"Using local energy method to calculate the weights during the propagation.");
     if(natural_shift)
       app_log(1, "Using natural shifts with discrete propagators. ");
-    if(symmetric_split)
-      app_log(1, "Using symmetric split of walker weight update.");
 
     if (debug_verbosity) {
       app_warning("Using debug verbosity. THIS WILL GENERATE A LOT OF OUTPUT. Intended for debugging purposes with a few walkers only.");
@@ -320,7 +317,6 @@ private:
   double weight_bound_floor = 100.0;
   double weight_bound_fraction = 0.1;
   bool natural_shift = true;
-  bool symmetric_split = true;
   bool use_cp_constraint = false;
   bool project_force_bias = false;
 

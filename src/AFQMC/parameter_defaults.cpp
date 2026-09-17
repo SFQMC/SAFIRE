@@ -177,9 +177,6 @@ void apply_defaults(PropagatorParameters& params, HamiltonianType htype) {
   if(!params.denseP2) {
     params.denseP2 = !model;
   }
-  if(!params.symmetric_split) {
-    params.symmetric_split = !model;
-  }
 }
 
 void apply_defaults(EstimatorParameters& params, const ExecuteParameters& exec) {

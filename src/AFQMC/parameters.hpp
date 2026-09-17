@@ -99,7 +99,6 @@ struct PropagatorParameters {
   std::optional<bool> denseP2{};
   bool debug_verbosity{false};
   bool natural_shift{true};
-  std::optional<bool> symmetric_split{};
   bool use_cp_constraint{false};
   bool project_force_bias{false};
 };
@@ -107,7 +106,7 @@ SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, uppe
                          lower_cutoff_scale, weight_bound_floor, weight_bound_fraction,
                          apply_constraint, importance_sampling, subtractMF, hybrid,
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
-                         symmetric_split, use_cp_constraint, project_force_bias);
+                         use_cp_constraint, project_force_bias);
 
 struct H5PathParameters {
   std::string filename{};

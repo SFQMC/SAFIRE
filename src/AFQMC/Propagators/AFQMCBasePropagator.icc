@@ -46,7 +46,6 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
   // Orbital count inferred from the walker Slater matrices (nwalk, npol*NMO, naea).
   const int NMO = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   int nCV     = wfn->number_of_cholesky_vectors();
-  bool step0 = false;
   bool ft = wset.isFiniteTemperature();
 
   memory::buffered_array<MEM,ComplexType,1> MFfactor(nwalk,ComplexType(0.0));
@@ -132,10 +131,9 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
   }
   else if (hybrid)
   {
-    if(nt==1) step0 = true;
     hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift, new_overlaps, MFfactor,
-                         hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, symmetric_split, step0,
-                         debug_verbosity, use_cp_constraint, eloc_bound_stats);
+                         hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, debug_verbosity,
+                         use_cp_constraint, eloc_bound_stats);
   }
   else
   {
