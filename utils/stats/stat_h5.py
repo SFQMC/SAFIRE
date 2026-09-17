@@ -30,39 +30,59 @@ def read(fname, **kwargs):
   return h5py.File(fname, **kwargs)
 
 
+def _correlation_length(edata, axis=0):
+    """ Calculate the auto-correlation length of each column
+
+    The real and the imaginary part of a column are measured from the same walker
+    ensemble and share a correlation time, but each one only reveals it where it
+    actually fluctuates, so take the longer of the two estimates. A part `corr`
+    considers constant reports an infinite length, which says nothing about the
+    correlation time and is dropped; where neither part fluctuates the length does not
+    matter and 1.0 stands in, which leaves the standard error at zero.
+
+    Args:
+      edata (np.array): array of equilibrated time series data
+      axis (int, optional): axis to average over, default 0 i.e. columns
+
+    Return:
+      np.array: auto-correlation length of each column
+    """
+    from stats.lib.stats import corr
+    kappa = np.stack([np.apply_along_axis(corr, axis, edata.real),
+                      np.apply_along_axis(corr, axis, edata.imag)])
+    return np.where(np.isfinite(kappa), kappa, -np.inf).max(axis=0)
+
+
 def me2d(edata, kappa=None, axis=0):
     """ Calculate mean and error of a table of columns
-  
+
     Args:
       edata (np.array): 2D array of equilibrated time series data
       kappa (float, optional): pre-calculate auto-correlation, default is to
        re-calculate on-the-fly
       axis (int, optional): axis to average over, default 0 i.e. columns
-  
+
     Return:
-      (np.array, np.array): (mean, error) of each column
+      (np.array, np.array): (mean, error) of each column. The error of complex data is
+       complex, its real and imaginary parts being the standard errors of the real and
+       imaginary parts of the data. Both use the one auto-correlation length of the
+       column, so summing their variances recovers the error of the column as a whole.
     """
     # get autocorrelation
     ntrace = edata.shape[axis]
     if kappa is None:
-      from stats.lib.stats import corr
-      kappa = np.apply_along_axis(corr, axis, edata.real)
+      kappa = _correlation_length(edata, axis)
 
-    # kappa may contain inf or NaN if we have constant data ; 
-    #.  It is relatively common in some entries of one-RDMs, for example.
-    #   We will replace the auto-correlation with 1.0 in this case; this 
-    #.   will lead to a standard error of 0.0 instead of NaN when we take 
-    #.   \sigma/\sqrt{N} where \sigma is the standard deviation and N is the
-    #.   number of effective samples
-    if np.isnan(kappa).any() or np.isinf(kappa).any():
-        kappa[np.isinf(kappa)] = np.nan
-        warn('In me2d: auto-correlation length contains NaN!' + 
-             '\n  This may happen if the data is constant. Replacing all NaNs with 1.0 for kappa.')
-        kappa = np.nan_to_num(kappa, nan=1.0)
+    # a column with no auto-correlation length to measure gets the neutral 1.0
+    kappa = np.where(np.isfinite(kappa), kappa, 1.0)
     neffective = ntrace/kappa
     # calculate mean and error
     val_mean = edata.mean(axis=axis)
-    val_std  = edata.std(ddof=1, axis=axis)
+    if np.iscomplexobj(edata):
+        val_std = (edata.real.std(ddof=1, axis=axis)
+                   + 1j*edata.imag.std(ddof=1, axis=axis))
+    else:
+        val_std = edata.std(ddof=1, axis=axis)
     val_err  = val_std/np.sqrt(neffective)
     return val_mean, val_err
 

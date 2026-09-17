@@ -381,8 +381,8 @@ def _compare_measurement(name: str, test, ref) -> bool:
     Any tensor rank, a scalar being the one-component case. A shape mismatch fails; otherwise
     we do a Bonferroni adjusted test on the worst mismatch.
     """
-    A, Aerr = np.atleast_1d(test[0]).astype(np.complex128), np.atleast_1d(test[1]).real
-    B, Berr = np.atleast_1d(ref[0]).astype(np.complex128), np.atleast_1d(ref[1]).real
+    A, Aerr = np.atleast_1d(test[0]).astype(np.complex128), np.abs(np.atleast_1d(test[1]))
+    B, Berr = np.atleast_1d(ref[0]).astype(np.complex128), np.abs(np.atleast_1d(ref[1]))
     if A.shape != B.shape or Aerr.shape != Berr.shape:
         print(f"  [compare] {name} shape mismatch: {A.shape} vs {B.shape}")
         return False
@@ -407,21 +407,18 @@ def _compare_measurement(name: str, test, ref) -> bool:
         print(f"  [compare] {name}: no components with sigma > {MACHINE_EPS}; matched to machine precision")
         return True
     z_crit = scipy.stats.norm.ppf(1 - SIGNIFICANCE_LEVEL / (2 * n_valid))
-    for part in ("real", "imag"):
-        a, b = getattr(A, part), getattr(B, part)
 
-        z = np.zeros_like(sigma)
-        z[valid] = (a[valid] - b[valid]) / sigma[valid]
-        worst = tuple(map(int, np.unravel_index(np.argmax(np.abs(z)), z.shape)))
-        values = (f"{a[worst]:.6f} ± {Aerr[worst]:.6f} vs "
-                  f"{b[worst]:.6f} ± {Berr[worst]:.6f} at idx = {worst}")
+    z = np.zeros_like(sigma)
+    z[valid] = np.abs(A[valid] - B[valid]) / sigma[valid]
+    worst = tuple(map(int, np.unravel_index(np.argmax(z), z.shape)))
+    values = (f"{A[worst]:.6f} ± {Aerr[worst]:.6f} vs "
+              f"{B[worst]:.6f} ± {Berr[worst]:.6f} at idx = {worst}")
 
-        if np.abs(z[worst]) <= z_crit:
-            print(f"  [compare] {name} {part} OK: worst component z = {z[worst]:.2f} <= {z_crit:.2f}, {values}")
-        else:
-            print(f"  [compare] {name} {part} mismatch: worst component z = {z[worst]:.2f} > {z_crit:.2f}, {values}")
-            return False
-    return True
+    if z[worst] <= z_crit:
+        print(f"  [compare] {name} OK: worst component z = {z[worst]:.2f} <= {z_crit:.2f}, {values}")
+        return True
+    print(f"  [compare] {name} mismatch: worst component z = {z[worst]:.2f} > {z_crit:.2f}, {values}")
+    return False
 
 
 def _compare_measurements(ft: h5.File, fr: h5.File) -> bool:
