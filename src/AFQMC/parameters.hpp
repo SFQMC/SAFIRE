@@ -250,13 +250,15 @@ struct ExecuteParameters {
   double timestep{DEFAULT_TIME_STEP};
   int n_walkers_per_mpi_task{10};
 
-  std::optional<double> Eshift_relaxation_rate{}; // defaults to decay within equilibration_steps/10
+  // fraction of the gap to the average energy that Eshift closes, once per population control
+  // interval; defaults to decaying within a tenth of the equilibration phase
+  std::optional<double> Eshift_relaxation_factor{};
   std::optional<double> initial_Eshift{};
 };
 SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, steps,
                          equilibration_steps, binsize, sweeps, population_control_interval, measure_interval_multiplier,
                          walker_ortho_interval, print_sweep_step,
-                         timestep, n_walkers_per_mpi_task, Eshift_relaxation_rate, initial_Eshift);
+                         timestep, n_walkers_per_mpi_task, Eshift_relaxation_factor, initial_Eshift);
 
 
 struct AFQMCParameters {

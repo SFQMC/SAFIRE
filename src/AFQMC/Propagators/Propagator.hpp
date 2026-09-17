@@ -87,9 +87,8 @@ public:
     std::visit([&](auto&& a) { a.set_rng_block_size(std::forward<Args>(args)...); }, var);
   }
 
-  void printBoundStatistics()
-  {
-    std::visit([&](auto&& a) { a.printBoundStatistics(); }, var);
+  void printBoundStatistics(RealType Eshift) {
+    std::visit([&](auto&& a) { a.printBoundStatistics(Eshift); }, var);
   }
 
   private:

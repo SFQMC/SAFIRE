@@ -24,7 +24,7 @@
 #include "utilities/memory_utils.hpp"
 
 #include "AFQMC/config.h"
-#include "AFQMC/Drivers/averageEloc.hpp"
+#include "AFQMC/Drivers/average_energy.hpp"
 #include "AFQMC/Drivers/run_ftafqmc.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
 #include "IO/app_loggers.h"
@@ -56,7 +56,7 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   const RealType Eshift0 = Eshift;
   const RealType beta    = exec.timestep * exec.steps;
 
-  const double Eshift_relaxation_rate = resolved(exec.Eshift_relaxation_rate, "Eshift_relaxation_rate");
+  const double Eshift_relaxation_factor = resolved(exec.Eshift_relaxation_factor, "Eshift_relaxation_factor");
 
   app_log(1, "Executing {} sweeps, with Beta = {} ", exec.sweeps, beta);
 
@@ -94,7 +94,7 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
         popcontrol_time.stop();
 
         if(iStep < exec.equilibration_steps) {
-          Eshift += Eshift_relaxation_rate * (averageEloc(mpi, wset) - Eshift);
+          Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset) - Eshift);
         }
       }
 

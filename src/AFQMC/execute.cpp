@@ -20,7 +20,7 @@
 #include "AFQMC/config.h"
 #include "AFQMC/Drivers/run_afqmc.hpp"
 #include "AFQMC/Drivers/run_ftafqmc.hpp"
-#include "AFQMC/Drivers/averageEloc.hpp"
+#include "AFQMC/Drivers/average_energy.hpp"
 #include "AFQMC/Estimators/Estimators.hpp"
 #include "AFQMC/execute.hpp"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
@@ -150,7 +150,7 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
 
     print_initial_energy(walker_set);
 
-    RealType Eshift = averageEloc<MEM>(*mpi, walker_set);
+    RealType Eshift = averageEnergy<MEM>(*mpi, walker_set);
     if(stage.initial_Eshift) {
       app_warning("user set expert-level parameter, \"initial_Eshift\": Using user-provided initial Eshift = {} instead of initial local energy {}",
                   *stage.initial_Eshift, Eshift);

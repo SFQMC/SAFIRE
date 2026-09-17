@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <format>
 #include <vector>
 #include <string>
@@ -216,9 +217,9 @@ public:
 
   // Report, at the end of the calculation, how often the propagation bounding boxes were
   // triggered: the force-bias (vbias) clamp and the local-energy (eloc) clamp. Counters are
-  // aggregated across all ranks; only the root prints.
-  void printBoundStatistics()
-  {
+  // aggregated across all ranks; only the root prints. `Eshift` is the value the caller ends
+  // the run with, which fixes the eloc clamp window reported here.
+  void printBoundStatistics(RealType Eshift) {
     long buf[9] = {vbias_bound_stats.total,  vbias_bound_stats.upper,  vbias_bound_stats.lower,
                    eloc_bound_stats.total,   eloc_bound_stats.upper,   eloc_bound_stats.lower,
                    weight_bound_stats.total, weight_bound_stats.upper, weight_bound_stats.lower};
@@ -231,14 +232,17 @@ public:
 
     app_log(1, "\n{}", banner("Bounding-box trigger statistics"));
 
-    app_log(1, " Force-bias (vbias) clamp  [|vbias| > vbias_bound], per (walker,field):");
+    app_log(1, " Force-bias clamp  [|vbias| > vbias_bound], per (walker,field):");
     if (vb_tot == 0)
       app_log(1, "   not measured (host-side counting only).");
     else
       app_log(1, "   operations: {}   hits: {} ({:.4f}%)  [upper/magnitude: {} ({:.4f}%)]",
               vb_tot, vb_up, pct(vb_up, vb_tot), vb_up, pct(vb_up, vb_tot));
 
-    app_log(1, " Local-energy (eloc) clamp  [eloc outside Eshift +/- cutoff_scale*sqrt(2/dt)], per walker:");
+    app_log(1, " Local-energy clamp  [outside Eshift ± (upper|lower)_cutoff_scale*sqrt(2/dt)], per walker:");
+    app_log(1, "   final Eshift: {}, clamp window: [{}, {}]", Eshift,
+            Eshift - lower_cutoff_scale * std::sqrt(2.0 / timestep),
+            Eshift + upper_cutoff_scale * std::sqrt(2.0 / timestep));
     if (el_tot == 0)
       app_log(1, "   not triggered (0 operations counted).");
     else
