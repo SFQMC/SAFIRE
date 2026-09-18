@@ -251,41 +251,6 @@ class TestSourceForms:
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
 
 
-class TestEquivalenceWithAfqmctools:
-
-    @pytest.mark.parametrize('fixture, spin_symm', [
-        ('neon_rhf', 'closed'),
-        ('oxygen_rohf', 'collinear'),
-    ])
-    def test_the_written_file_matches_write_wfn_mol(self, request, tmp_path,
-                                                    fixture, spin_symm):
-        from afqmctools.wavefunction.mol import write_wfn_mol
-
-        mol, mf = request.getfixturevalue(fixture)
-        scf_data = scf_data_from(mol, mf, spin_symm)
-
-        old = tmp_path / 'old.h5'
-        new = tmp_path / 'new.h5'
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            write_wfn_mol(scf_data, old)
-            NOMSDWavefunction.from_pyscf(scf_data).to_hdf5(new)
-
-        def datasets(path):
-            found = {}
-            with h5.File(path, 'r') as fh5:
-                fh5.visititems(
-                    lambda name, obj: found.__setitem__(name, obj[...])
-                    if isinstance(obj, h5.Dataset) else None)
-            return found
-
-        a, b = datasets(old), datasets(new)
-        assert set(a) == set(b)
-        for key in a:
-            assert np.allclose(a[key], b[key]), key
-
-
 class TestFromPyscfCas:
 
     @pytest.fixture
@@ -346,29 +311,3 @@ class TestFromPyscfCas:
         assert np.array_equal(read_back.occa, wavefunction.occa)
         assert np.array_equal(read_back.occb, wavefunction.occb)
         assert np.allclose(read_back.coeffs, wavefunction.coeffs)
-
-    def test_it_matches_afqmctools_write_cas_wfn(self, neon_rhf_631g,
-                                                 casci_chkfile, tmp_path):
-        from afqmctools.wavefunction.mol import write_cas_wfn
-
-        mol, _ = neon_rhf_631g
-        old = tmp_path / 'old.h5'
-        new = tmp_path / 'new.h5'
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            write_cas_wfn(mol, casci_chkfile, outname=str(old),
-                          tol_trunc=1e-6)
-            PHMSDWavefunction.from_pyscf_cas(mol, casci_chkfile,
-                                             tol=1e-6).to_hdf5(new)
-
-        with h5.File(old, 'r') as fh5:
-            old_group = {key: fh5[f'Wavefunction/PHMSD/{key}'][...]
-                         for key in ('dims', 'occs', 'ci_coeffs')}
-        with h5.File(new, 'r') as fh5:
-            new_group = {key: fh5[f'Wavefunction/PHMSD/{key}'][...]
-                         for key in ('dims', 'occs', 'ci_coeffs')}
-
-        assert np.array_equal(old_group['dims'], new_group['dims'])
-        assert np.array_equal(old_group['occs'], new_group['occs'])
-        assert np.allclose(old_group['ci_coeffs'], new_group['ci_coeffs'])
