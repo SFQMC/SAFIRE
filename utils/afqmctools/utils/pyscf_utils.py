@@ -22,9 +22,57 @@ from pyscf.pbc.lib.chkfile import load_cell
 
 from afqmctools.utils.linalg import get_ortho_ao_mol
 from afqmctools.utils.slater_types import (
-    _get_slater_type,
     _SlaterType,
     )
+
+
+def _walker_type_from_mo(mo_coeff, mo_occ, nao):
+    """
+    Determine the walker type of a PySCF SCF solution.
+
+    The occupations are used rather than the shape of `mo_coeff` because an
+    RHF and an ROHF coefficient matrix are both `(nao,nmo)` and cannot be
+    told apart by shape alone. `_get_slater_type` must not be used here: it
+    expects a Slater matrix over the occupied orbitals only, whereas
+    `mo_coeff` holds the full set of molecular orbitals.
+
+    Parameters
+    ----------
+    mo_coeff : np.ndarray
+        PySCF molecular orbital coefficients: `(nao,nmo)` for RHF/ROHF,
+        `(2,nao,nmo)` for UHF, `(2*nao,2*nmo)` for GHF.
+    mo_occ : np.ndarray
+        PySCF orbital occupations matching `mo_coeff`.
+    nao : int
+        the number of spatial atomic orbitals.
+
+    Returns
+    -------
+    _SlaterType
+        the walker type implied by the SCF solution.
+    """
+    mo_coeff = numpy.asarray(mo_coeff)
+    mo_occ = numpy.asarray(mo_occ)
+
+    # UHF: spin-resolved coefficients
+    if mo_coeff.ndim == 3:
+        return _SlaterType.COLLINEAR
+
+    # GHF: coefficients span both spin blocks
+    if mo_coeff.ndim == 2 and mo_coeff.shape[0] == 2*nao:
+        return _SlaterType.NONCOLLINEAR
+
+    # spin-resolved occupations without spin-resolved coefficients
+    if mo_occ.ndim == 2:
+        return _SlaterType.COLLINEAR
+
+    # ROHF: singly-occupied orbitals present
+    if numpy.any(numpy.isclose(mo_occ, 1.0)):
+        return _SlaterType.COLLINEAR
+
+    # RHF: every occupied orbital is doubly occupied
+    return _SlaterType.CLOSED
+
 
 def chk_is_pbc(chkfile):
     """
@@ -181,11 +229,7 @@ def load_from_pyscf_chk(chkfile,hcore=None,orthoAO=False):
         'nao': nao,
         'fock': fock,
         'mo_energy': mo_energy,
-        'walker_type' : _get_slater_type(
-            phi=numpy.array(mo_coeff[0]),
-            nelec=cell.nelec,
-            M=nmo_pk[0]
-        )
+        'walker_type' : _SlaterType.COLLINEAR if isUHF else _SlaterType.CLOSED
     }
     return scf_data
 
@@ -208,9 +252,9 @@ def load_from_pyscf_chk_mol(chkfile, base='scf', soc_type=None):
     mo_occ = numpy.array(lib.chkfile.load(chkfile, base+'/mo_occ'))
     mo_coeff = numpy.array(lib.chkfile.load(chkfile, base+'/mo_coeff'))
 
-    walker_type = _get_slater_type(
+    walker_type = _walker_type_from_mo(
         mo_coeff,
-        mol.nelec,
+        mo_occ,
         nmo
     )
 
