@@ -209,7 +209,7 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
     steps = 10000
     equilibration_steps = 2000
     population_control_interval = 10
-    bp_measure_interval_multiplier = 40
+    bp_measure_interval_multiplier = 20
     if snapshot:
         steps = 20
         equilibration_steps = 0
