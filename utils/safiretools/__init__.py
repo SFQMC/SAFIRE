@@ -29,6 +29,7 @@ from safiretools.types import SpinSymm
 from safiretools.wavefunction.base import Wavefunction
 from safiretools.wavefunction.nomsd import NOMSDWavefunction
 from safiretools.wavefunction.phmsd import PHMSDWavefunction
+from safiretools.results.results import Results
 
 __all__ = [
     'Hamiltonian',
@@ -41,4 +42,5 @@ __all__ = [
     'PeriodicHamiltonian',
     'SpinSymm',
     'Wavefunction',
+    'Results',
 ]

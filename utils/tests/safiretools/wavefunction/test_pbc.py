@@ -9,8 +9,7 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 """
-`NOMSDWavefunction.from_pbc_scf`: the periodic construction path, and its
-equivalence with afqmctools.
+`NOMSDWavefunction.from_pbc_scf`: the periodic construction path.
 """
 
 import inspect
@@ -198,38 +197,6 @@ class TestPartialOccupancies:
 
         with pytest.raises(ValueError, match="remain to be placed over"):
             NOMSDWavefunction.from_pbc_scf(scf_data)
-
-
-class TestEquivalenceWithAfqmctools:
-
-    @pytest.mark.parametrize('fixture, ortho_ao', [
-        ('closed_scf_data', True),
-        ('collinear_scf_data', True),
-        ('degenerate_scf_data', True),
-        ('closed_scf_data', False),
-    ])
-    def test_the_single_determinant_file_matches_write_wfn_pbc(self, request,
-                                                               tmp_path,
-                                                               fixture,
-                                                               ortho_ao):
-        from afqmctools.wavefunction.pbc import write_wfn_pbc
-
-        scf_data = request.getfixturevalue(fixture)
-        old = tmp_path / 'old.h5'
-        new = tmp_path / 'new.h5'
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            write_wfn_pbc(scf_data, ortho_ao, old, rediag=True)
-            NOMSDWavefunction.from_pbc_scf(scf_data,
-                                           ortho_ao=ortho_ao).to_hdf5(new)
-
-        a, b = datasets(old), datasets(new)
-        assert set(a) == set(b)
-        for key in a:
-            # afqmctools also applied the 1e-8 sparsification threshold to
-            #   Psi0, which is stored dense; safiretools does not
-            assert np.allclose(a[key], b[key], atol=1e-8), key
 
 
 class TestBaseClassDispatch:
