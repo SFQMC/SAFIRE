@@ -92,6 +92,8 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   // label of each execute block, in the order they are added
   std::vector<std::string> scenarios;
   auto add = [&](std::string label, ExecuteParameters exec) {
+    exec.steps               = 10;
+    exec.equilibration_steps = 0;
     scenarios.push_back(std::move(label));
     params.execute.push_back(std::move(exec));
   };
