@@ -611,8 +611,12 @@ void AFQMCBasePropagator<MEM>::assemble_X(
     }
   }
 
-  // construct X
-  HWs() = ComplexType(0);
+  // The mean-field subtraction splits 0.5*sum_n v_n^2 into 0.5*sum_n (v_n - vMF_n)^2 (applied by
+  // vHS) plus sum_n vMF_n*v_n (folded into the 1-body propagator) minus the c-number
+  // 0.5*sum_n vMF_n^2, which nothing applies. Seeding the hybrid weight with it puts that
+  // constant back into the reconstructed local energy, since eloc subtracts HWs and divides by
+  // dt.
+  HWs() = 0.5 * nda::blas::dot(vMF(), vMF());
 
   if constexpr (MEM==DEVICE_MEMORY) {
 #if defined(ENABLE_DEVICE)
