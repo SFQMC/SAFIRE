@@ -44,6 +44,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
                                    nda::MemoryVector auto &&overlap,
                                    nda::MemoryVector auto &&XvMF,
                                    RealType Eshift,
+                                   RealType energy_offset,
                                    nda::MemoryVector auto &&hybrid_weight,
                                    bool debug_verbosity) {
   auto all = nda::range::all;
@@ -70,7 +71,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
     ComplexType old_eloc = pseudo_eloc(i);
     ComplexType eloc;
     ComplexType ratioOverlaps = ComplexType(1.0, 0.0);
-    eloc = mf_factor(i) / dt;
+    eloc = mf_factor(i) / dt + energy_offset;
     ComplexType factor = std::exp(-dt * (0.5 * (eloc + old_eloc) - Eshift));
 
     if (debug_verbosity) {
@@ -103,6 +104,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
 template <class Wlk>
 void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                           bool imp_sampl, RealType Eshift,
+                          RealType energy_offset,
                           nda::MemoryVector auto &&overlap,
                           nda::MemoryVector auto &&XvMF,
                           nda::MemoryVector auto &&hybrid_weight,
@@ -164,9 +166,9 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
       }
 
       if (imp_sampl) {
-        eloc = (mf_factor(i) - hyb_weight(i) - (new_ovlp(i) - old_ovlp)) / dt;
+        eloc = (mf_factor(i) - hyb_weight(i) - (new_ovlp(i) - old_ovlp)) / dt + energy_offset;
       } else {
-        eloc = mf_factor(i) / dt;
+        eloc = mf_factor(i) / dt + energy_offset;
       }
     }
     ComplexType eloc_ = eloc;

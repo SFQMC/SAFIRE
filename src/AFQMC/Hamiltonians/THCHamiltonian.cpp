@@ -94,7 +94,7 @@ THCHamiltonian::getHamiltonianOperations_impl(WALKER_TYPES type,
   bool have_rot_coul = false;  
     
   // only root reads
-  ComplexType E0(0);
+  RealType E0(0);
   h5::file file;
   std::optional<h5::group> grp, hgrp;
   if (mpi->comm.root())

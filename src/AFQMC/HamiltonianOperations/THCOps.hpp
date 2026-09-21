@@ -63,7 +63,7 @@ public:
          std::optional<memory::const_shared_array<MEM,ComplexType,5>>&& y_rot_,
          std::optional<memory::const_shared_array<MEM,ValueType,2>>&& z_rot_,
          memory::const_shared_array<HOST_MEMORY,ComplexType,3>&& v0_,
-         ComplexType e0_)
+         RealType e0_)
       : mpi(ctxt), 
         walker_type(type),
         NMO(nmo_),
@@ -625,6 +625,7 @@ public:
     else return _Zuv_rot_->extent(0); 
   }
   int number_of_cholesky_vectors() const { return ( REAL ? _Luv_().extent(1) : 2 * _Luv_().extent(1) ); }
+  RealType energy_offset() const { return E0; }
 
   // add nspin_in_basis to allow for a spin independent basis too
   nda::array<ComplexType, 2> getHSPotentials() 
@@ -922,7 +923,7 @@ protected:
   // vexx(i,l) = -0.5 * sum_j <ij|jl>
   memory::const_shared_array<HOST_MEMORY,ComplexType,3> vexx;
 
-  ComplexType E0;
+  RealType E0;
 
   long default_buffer_size_in_MB = 4L * 1024L;
 };

@@ -61,6 +61,9 @@ public:
 
   int number_of_cholesky_vectors() const;
 
+  /// Constant term of the hamiltonian (nuclear + frozen core + madelung).
+  RealType energy_offset() const;
+
   void runtime_optimization(WalkerSet<MEM>& wset);
 
   WALKER_TYPES getWalkerType() const;

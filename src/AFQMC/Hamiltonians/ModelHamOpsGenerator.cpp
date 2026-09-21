@@ -124,7 +124,7 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
 
   std::vector<long> Idata(8);
   h5::read(grp,"dims",Idata);
-  ValueType E0;
+  RealType E0;
   {
     std::vector<RealType> E_(2);
 // MAM: dataset is currently long, fix!!! 

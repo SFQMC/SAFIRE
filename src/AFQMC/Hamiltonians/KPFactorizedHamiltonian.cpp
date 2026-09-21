@@ -97,7 +97,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   nda::array<int,1> nchol;
   nda::array<double,2> qpoints;
 
-  ComplexType E0(0);
+  RealType E0(0);
   h5::file file;
   // Read nbnd, BZ info, etc from h5. Only root reads
   if (mpi->comm.root())

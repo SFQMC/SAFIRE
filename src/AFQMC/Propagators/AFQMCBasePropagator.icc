@@ -119,11 +119,13 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
   auto extra_time = timers.extra.start();
   if (free_projection)
   {
-    free_projection_walker_update(wset, dt, new_overlaps, XvMF, Eshift, hybrid_weight,debug_verbosity);
+    free_projection_walker_update(wset, dt, new_overlaps, XvMF, Eshift, wfn->energy_offset(),
+                                  hybrid_weight,debug_verbosity);
   }
   else if (hybrid)
   {
-    hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift, new_overlaps, XvMF,
+    hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift,
+                         wfn->energy_offset(), new_overlaps, XvMF,
                          hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, debug_verbosity,
                          use_cp_constraint, eloc_bound_stats);
   }

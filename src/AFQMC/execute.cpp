@@ -39,6 +39,19 @@ namespace sfqmc::afqmc {
 
 namespace {
 
+// Seeds PSEUDO_ELOC_ from the components wfn.Energy(wset) just left on the walkers, so the
+// first propagation step does not read a zero old_eloc out of a freshly allocated walker set.
+template<typename WlkSet>
+void seedPseudoEnergy(WlkSet& wset) {
+  nda::array<ComplexType, 1> e1(wset.size()), exx(wset.size()), ej(wset.size());
+  wset.getProperty(E1_, e1);
+  wset.getProperty(EXX_, exx);
+  wset.getProperty(EJ_, ej);
+
+  nda::array<ComplexType, 1> eloc = e1 + exx + ej;
+  wset.setProperty(PSEUDO_ELOC_, eloc);
+}
+
 // assumes wfn.Energy(Wset) has been called
 // Then prints the energy breakdown
 template<typename WlkSet>
@@ -141,6 +154,7 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
     // perform runtime optimization; for finite temperature ntau is implicitly 0 here
     wavefunction.runtime_optimization(walker_set);
     wavefunction.Energy(walker_set);
+    seedPseudoEnergy(walker_set);
 
     if(finiteT) {
       memory::buffered_array<MEM, ComplexType, 1> ovlp0(nwalkers, 0.0);

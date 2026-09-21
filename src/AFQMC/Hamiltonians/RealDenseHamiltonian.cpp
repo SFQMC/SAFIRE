@@ -72,7 +72,7 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   int nact_dn = (type == COLLINEAR ? PsiT(0,1).extent(0) : 0l);
 
   std::vector<long> Idata(8);
-  ComplexType E0;
+  RealType E0;
   h5::file file;
   if (mpi->comm.root()) 
   {
