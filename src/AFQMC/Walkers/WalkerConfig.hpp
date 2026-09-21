@@ -25,8 +25,7 @@ namespace afqmc
 // wlk_descriptor: [ nmo, naea, naeb, nback_prop, nCV, nRefs, nHist]
 using wlk_descriptor = std::array<int, 8>;
 using wlk_indices    = std::array<int, 22>;
-enum walker_data
-{
+enum walker_data {
   SM,
   UR,
   DR,
@@ -51,18 +50,16 @@ enum walker_data
   THETA,
 };
 
-enum class LoadBalanceAlgorithm
-{
+enum class LoadBalanceAlgorithm {
   undefined,
   simple,
   async
 };
-enum class BranchingAlgorithm
-{
+
+enum class BranchingAlgorithm {
   undefined,
   pair,
   comb,
-  min_branch,
   serial_comb
 };
 

@@ -41,7 +41,6 @@ inline std::string_view branching_explanation(BranchingAlgorithm algorithm)
     case BranchingAlgorithm::pair: return "paired walker branching";
     case BranchingAlgorithm::comb:
     case BranchingAlgorithm::serial_comb: return "comb method [Booth, Gubernatis, PRE 2009]";
-    case BranchingAlgorithm::min_branch: return "minimum reconfiguration [Caffarel et al., 2000]";
     default: return "";
   }
 }
@@ -264,8 +263,7 @@ void WalkerSetBase<MEM>::popControl()
   }
 
   // population control on master node
-  if (pop_control == BranchingAlgorithm::pair || pop_control == BranchingAlgorithm::serial_comb ||
-      pop_control == BranchingAlgorithm::min_branch)
+  if (pop_control == BranchingAlgorithm::pair || pop_control == BranchingAlgorithm::serial_comb)
   {
     SerialBranching(*this, pop_control, min_weight, max_weight, nwalk_counts_old, Wexcess, *rng, mpi->comm);
 
