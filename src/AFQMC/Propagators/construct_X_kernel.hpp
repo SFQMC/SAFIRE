@@ -25,12 +25,11 @@ struct construct_X_impl
   double vbias_bound;
   V1 FieldTypes;
   V2 vMF;
-  V3 MF;
   V3 HWs;
   V4 RNs;
   V5 X;
 
-  // m is parallelized over as well, hence the atomics on HWs(iw) and MF(iw) below
+  // m is parallelized over as well, hence the atomic on HWs(iw) below
   __device__
   void operator()(long iw, long m)
   {
@@ -52,7 +51,6 @@ struct construct_X_impl
     //                     ( rand[iw,m] + halfim * ( vbias[iw,m] - vMF[m] ) ) ]
     //           = sum_m [ im * ( vMF[m] - vbias[iw,m] ) *
     //                     ( X[iw,m] - halfim * ( vbias[iw,m] - vMF[m] ) ) ]
-    // MF[iw] = sum_m ( im * X[iw,m] * vMF[m] )
     auto vb_t = stdx::abs(X(iw, m)) > vbias_bound ? X(iw, m) / stdx::abs(X(iw, m)) * vbias_bound : X(iw, m);
 
     if (zero) {
@@ -69,7 +67,6 @@ struct construct_X_impl
           free_projection ? 0 : (im * (vb_t - vmf_t));
       X(iw,m) = probit(RNs(iw,m)) + vdiff;
       arch::atomic_add(&HWs(iw), - vdiff * (X(iw,m) - 0.5 * vdiff));
-      arch::atomic_add(&MF(iw), im * X(iw,m) * vmf_0);
     } else if( Fp == DiscreteSpinPropagator or
            Fp == DiscreteChargePropagator ) {
       ComplexType vdiff =
@@ -79,17 +76,11 @@ struct construct_X_impl
       auto P = wm/(wp+wm);
       if( RNs(iw,m) < P ) {
         X(iw,m) = -1.0;
-        //arch::atomic_add(&HWs(iw), stdx::log(1.0/P));
-        // discrete HS transformation has factor (1/2)^NMO
         arch::atomic_add(&HWs(iw), stdx::log(0.5/P));
       } else {
         X(iw,m) = 1.0;
-        //arch::atomic_add(&HWs(iw), stdx::log(1.0/(1.0-P)));
-        // discrete HS transformation has factor (1/2)^NMO
         arch::atomic_add(&HWs(iw), stdx::log(0.5/(1.0-P)));
       }
-      // W_MSsub = exp(-MF), careful with sign convention
-      arch::atomic_add(&MF(iw), im * X(iw,m) * vmf_0);
     } else {
       assert(false);
     }

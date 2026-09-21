@@ -39,19 +39,14 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
 {
   auto setup_timer = timers.setup.start();
   const RealType dt = timestep;
-  auto walker_type = wset.getWalkerType();
   int nwalk        = wset.size();
-  int npol  = walker_type == NONCOLLINEAR ? 2 : 1;
-  int nspin = walker_type == COLLINEAR ? 2 : 1;
-  // Orbital count inferred from the walker Slater matrices (nwalk, npol*NMO, naea).
-  const int NMO = int(wset.SlaterMatrices(Alpha).extent(1)) / npol;
   int nCV     = wfn->number_of_cholesky_vectors();
   bool ft = wset.isFiniteTemperature();
 
-  memory::buffered_array<MEM,ComplexType,1> MFfactor(nwalk,ComplexType(0.0));
-  memory::buffered_array<MEM,ComplexType,1> hybrid_weight(nwalk,ComplexType(0.0));
-  memory::buffered_array<MEM,ComplexType,1> new_overlaps(nwalk,ComplexType(0.0));
-  memory::buffered_array<MEM,ComplexType,2> new_energies(nwalk,3);
+  memory::buffered_array<MEM,ComplexType,1> XvMF(nwalk);
+  memory::buffered_array<MEM,ComplexType,1> hybrid_weight(nwalk, 0.0);
+  memory::buffered_array<MEM,ComplexType,1> new_overlaps(nwalk, 0.0);
+  memory::buffered_array<MEM,ComplexType,2> new_energies(nwalk, 3);
   new_energies() = ComplexType(0.0);
 
   setup_timer.stop();
@@ -76,7 +71,10 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
 
   // 2. Assemble X(nwalk, nCV)
   auto assemble_X_time = timers.assemble_X.start();
-  assemble_X(X, MFfactor, hybrid_weight);
+  assemble_X(X, hybrid_weight);
+  // XvMF[iw] = sum_m ( im * X[iw,m] * vMF[m] ); W_MSsub = exp(-XvMF), careful with sign convention
+  ComplexType im(0.0,1.0);
+  nda::blas::gemv(im, X(), vMF(), 0.0, XvMF());
   assemble_X_time.stop();
 
   //std::cout<<" X: " <<nda::sum(nda::to_host(X)) <<std::endl;
@@ -90,8 +88,6 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
     // 3. Calculate vHS
     auto vHS_time = timers.vHS.start();
     auto vHS = wfn->vHS(X, dt);
-    utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
-                 "Size mismatch");
     vHS_time.stop();
 
     // 4. Propagate walkers
@@ -102,10 +98,6 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
     // 3. Calculate vHS
     auto vHS_time = timers.vHS.start();
     auto vHS = wfn->vHS_sparse(X, dt);
-    utils::check(vHS.extent(0) == nspin, "Size mismatch");
-    utils::check((vHS(0).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}) and
-                 (vHS(nspin-1).shape() == std::array<long,2>{nwalk*npol*NMO,nwalk*npol*NMO}),
-                 "Size mismatch");
     vHS_time.stop();
 
     // 4. Propagate walkers
@@ -127,17 +119,17 @@ void AFQMCBasePropagator<MEM>::Propagate(WlkSet& wset, RealType Eshift, int nt)
   auto extra_time = timers.extra.start();
   if (free_projection)
   {
-    free_projection_walker_update(wset, dt, new_overlaps, MFfactor, Eshift, hybrid_weight,debug_verbosity);
+    free_projection_walker_update(wset, dt, new_overlaps, XvMF, Eshift, hybrid_weight,debug_verbosity);
   }
   else if (hybrid)
   {
-    hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift, new_overlaps, MFfactor,
+    hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift, new_overlaps, XvMF,
                          hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, debug_verbosity,
                          use_cp_constraint, eloc_bound_stats);
   }
   else
   {
-    local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies, MFfactor,
+    local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies, XvMF,
                                lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
   }
 
@@ -580,7 +572,7 @@ void AFQMCBasePropagator<MEM>::Orthogonalize_excited_impl(WlkSet& wset)
 
 template<MEMORY_SPACE MEM>
 void AFQMCBasePropagator<MEM>::assemble_X(
-     nda::MemoryArrayOfRank<2> auto&& X, nda::MemoryArrayOfRank<1> auto&& MF,
+     nda::MemoryArrayOfRank<2> auto&& X,
      nda::MemoryArrayOfRank<1> auto&& HWs, int nt, bool addRAND)
 {
   using nda::range;
@@ -619,14 +611,13 @@ void AFQMCBasePropagator<MEM>::assemble_X(
 
   // construct X
   HWs() = ComplexType(0);
-  MF() = ComplexType(0);
 
   if constexpr (MEM==DEVICE_MEMORY) {
 #if defined(ENABLE_DEVICE)
-    construct_X(use_cp_constraint or project_force_bias,free_projection, vbias_bound, FieldTypes_dev, vMF, MF, HWs, RNGbuff, X);
+    construct_X(use_cp_constraint or project_force_bias,free_projection, vbias_bound, FieldTypes_dev, vMF, HWs, RNGbuff, X);
 #endif
   } else {
-    detail::construct_X_impl f{use_cp_constraint || project_force_bias, free_projection, vbias_bound, FieldTypes, vMF(), MF(), HWs(), RNGbuff(), X()};
+    detail::construct_X_impl f{use_cp_constraint || project_force_bias, free_projection, vbias_bound, FieldTypes, vMF(), HWs(), RNGbuff(), X()};
     for(long iw = 0; iw < nwalk; ++iw) {
       for(long m = 0; m < nCV; ++m) {
         f(iw, m);
