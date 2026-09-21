@@ -24,7 +24,6 @@
 #include <utility>
 #include <mpi.h>
 #include "AFQMC/config.h"
-#include "utilities/FairDivide.hpp"
 #include "utilities/Random.hpp"
 #include "IO/app_loggers.h"
 
@@ -210,18 +209,6 @@ inline int swapWalkersAsync(WlkBucket& wset,
 }
 
 
-/**
- * Implements Cafarrel's minimum branching algorithm.
- *   - buff: array of walker info (weight,num).
- */
-inline void min_branch([[maybe_unused]] std::vector<std::pair<double, int>>& buff, 
-                       [[maybe_unused]] utils::HostRandomGenerator& rng,
-                       [[maybe_unused]] double max_c,
-                       [[maybe_unused]] double min_c)
-{
-  APP_ABORT(" Error: min_branch not implemented yet. \n\n");
-}
-
 inline void serial_comb(std::vector<std::pair<double, int>>& buff, utils::HostRandomGenerator& rng)
 {
   std::uniform_real_distribution<double> distribution(0.0,1.0);
@@ -371,8 +358,6 @@ inline void SerialBranching(WalkerSet& wset,
   {
     if (type == BranchingAlgorithm::pair)
       pair_branch(buffer, rng, max_, min_);
-    else if (type == BranchingAlgorithm::min_branch)
-      min_branch(buffer, rng, max_, min_);
     else if (type == BranchingAlgorithm::serial_comb)
       serial_comb(buffer, rng);
     else

@@ -379,10 +379,6 @@ public:
 
   void popControl();
 
-  // population control algorithm
-  // Note: the following overload is deprecated
-  void popControl(std::vector<ComplexType>& curData, bool skip = false);
-
   // M holds the incoming walkers packed as {walker_buffer row, bp_buffer row}; it comes
   // from an MPI receive buffer, so it is on the host even when the set lives on a device.
   void push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M);

@@ -28,7 +28,7 @@ SAFIRE_DEFINE_ENUM(WALKER_TYPES, {
 });
 
 SAFIRE_DEFINE_ENUM_NAMES(LoadBalanceAlgorithm, undefined, simple, async);
-SAFIRE_DEFINE_ENUM_NAMES(BranchingAlgorithm, undefined, pair, comb, min_branch, serial_comb);
+SAFIRE_DEFINE_ENUM_NAMES(BranchingAlgorithm, undefined, pair, comb, serial_comb);
 
   
 enum class PHMSDEnergyAlgorithm {
