@@ -197,7 +197,7 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
 
     try:
         from autohf.hamiltonian import AutoHFHamiltonian
-        from autohf.solver import lattice_hf
+        from autohf.solver import solve_hf
     except ImportError as exc:  # pragma: no cover - depends on the install
         raise RuntimeError(
             "the U=0.1 UHF trial needs AutoHF (install utils/AutoHF)"
@@ -218,7 +218,7 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
                                 spin_symm=SpinSymm.COLLINEAR, measure_evar=False)
     initial = free_wfn[1][0]
 
-    results = lattice_hf(
+    results = solve_hf(
         AutoHFHamiltonian(source=hamiltonian),
         settings=dict(
             ansatz="SD_ROT",
