@@ -383,7 +383,7 @@ HamiltonianOperations<MEM> build_real3index(
       detail::to_const_shared<MEM>(mpi, Likn_h),
       std::move(Lnak),
       detail::to_const_shared<HOST_MEMORY>(mpi, vexx_h),
-      ComplexType(0)));
+      0.0));
 }
 
 /// THCOps (REAL=true). The X factor is the identity on each (spin,pol) orbital
@@ -448,7 +448,7 @@ HamiltonianOperations<MEM> build_thc(
       /*Y_rot=*/std::nullopt,
       /*Z_rot=*/std::nullopt,
       detail::to_const_shared<HOST_MEMORY>(mpi, vexx_h),
-      ComplexType(0)));
+      0.0));
 }
 
 /// KP3IndexFactorization, single-kpoint lift (nkpts=1, nbnd=NMO).
@@ -520,7 +520,7 @@ HamiltonianOperations<MEM> build_kp3index(
       detail::to_const_shared<MEM>(mpi, haj_h),
       std::move(LQ), std::move(Lank), std::move(Lbnk),
       detail::to_const_shared<HOST_MEMORY>(mpi, vexx_h),
-      ComplexType(0)));
+      0.0));
 }
 
 /// KPTHCOps, single-kpoint lift (nkpts=1, nbnd=NMO).
@@ -590,7 +590,7 @@ HamiltonianOperations<MEM> build_kpthc(
       /*Y_rot=*/std::nullopt,
       /*Z_rot=*/std::nullopt,
       detail::to_const_shared<HOST_MEMORY>(mpi, vexx_h),
-      ComplexType(0)));
+      0.0));
 }
 
 /// Subclass that promotes the protected helpers needed to assemble a
@@ -732,7 +732,7 @@ HamiltonianOperations<MEM> build_modelhamops(
   utils::check(Hams.size() == 1, "Expected exactly one ModelComponent for onsite Hubbard U.");
 
   auto ET = gen.make_SparseEnergy<MEM, /*REAL=*/true, RealType>(
-      mpi, s.walker_type, hij_walker, Uvec[0], Jvec[0], ComplexType(0));
+      mpi, s.walker_type, hij_walker, Uvec[0], Jvec[0], 0.0);
 
   // PsiC(1, wns, wnp*NMO, walker_nup): per-(spin,block) Slater matrices.
   int wns = s.walker_nspin();
@@ -906,7 +906,7 @@ HamiltonianOperations<MEM> assemble_kp(
       to_const_shared<MEM>(mpi, haj_h),
       std::move(LQ), std::move(Lank), std::move(Lbnk),
       to_const_shared<HOST_MEMORY>(mpi, vexx_h),
-      ComplexType(0)));
+      0.0));
 }
 
 } // namespace detail

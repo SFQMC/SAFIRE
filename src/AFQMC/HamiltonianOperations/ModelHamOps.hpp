@@ -394,6 +394,8 @@ public:
   }
   int number_of_cholesky_vectors() const { return nCV; }
   int number_of_ke_vectors() const { return ET.get_n2IJ().extent(0); }
+  // ET is the only component that applies the offset; the model components do not carry one
+  RealType energy_offset() const { return ET.energy_offset(); }
 
   nda::array<ComplexType, 2> getHSPotentials()
   { return nda::array<ComplexType, 2>{}; }

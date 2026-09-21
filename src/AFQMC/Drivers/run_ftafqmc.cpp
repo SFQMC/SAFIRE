@@ -58,6 +58,12 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 
   const double Eshift_relaxation_factor = resolved(exec.Eshift_relaxation_factor, "Eshift_relaxation_factor");
 
+  // wset.reset() at the end of each sweep zeroes PSEUDO_ELOC_ along with the rest of the walker
+  // row. Every sweep restarts from the same tau=0 trial state, so snapshot the seed here and
+  // restore it, for the same reason LogPT0 is cached rather than recomputed.
+  nda::array<ComplexType, 1> pseudo_eloc0(wset.size());
+  wset.getProperty(PSEUDO_ELOC_, pseudo_eloc0);
+
   app_log(1, "Executing {} sweeps, with Beta = {} ", exec.sweeps, beta);
 
   for(int iSweep = 0; iSweep < exec.sweeps; ++iSweep) {
@@ -75,6 +81,7 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                      "LogPT0 size ({}) does not match walker set size ({})",
                      LogPT0.size(), wset.size());
         wset.setProperty(OVLP, LogPT0);
+        wset.setProperty(PSEUDO_ELOC_, pseudo_eloc0);
         wset.setTauStep(0);
       }
 

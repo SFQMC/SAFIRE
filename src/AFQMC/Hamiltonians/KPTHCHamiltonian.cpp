@@ -110,7 +110,7 @@ KPTHCHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
 
 
   // only root reads
-  ComplexType E0(0);
+  RealType E0(0);
   h5::file file;
   std::optional<h5::group> grp, hgrp;
   if (mpi->comm.root())

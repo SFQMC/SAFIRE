@@ -44,8 +44,8 @@ RealType weightedAverage(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 /// Weight-averaged pseudo local energy of the walker population,
 /// Re(sum_i w_i * Eloc_i) / Re(sum_i w_i), summed over all ranks.
 ///
-/// `PSEUDO_ELOC_` is written by the propagator's walker update, so this is only meaningful after
-/// the first propagation step. Before it, use `averageEnergy`.
+/// `PSEUDO_ELOC_` is written by the propagator's walker update, and seeded from the trial energy
+/// before the first step, so it is always on the same scale as the total energy.
 template<MEMORY_SPACE MEM>
 RealType averagePseudoEnergy(utils::mpi_context_t<boost::mpi3::communicator>& mpi, WalkerSet<MEM> const& wset) {
   nda::array<ComplexType, 1> weight(wset.size()), eloc(wset.size());

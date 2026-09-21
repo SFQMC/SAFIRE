@@ -75,7 +75,7 @@ public:
          std::optional<memory::const_shared_array<MEM,ComplexType,6>>&& y_rot_,
          std::optional<memory::const_shared_array<MEM,ComplexType,3>>&& z_rot_,
          memory::const_shared_array<HOST_MEMORY,ComplexType,4>&& v0_,
-         ComplexType e0_)
+         RealType e0_)
       : mpi(ctxt), 
         walker_type(type),
         NMO(nmo_),
@@ -757,6 +757,7 @@ public:
     else return nkpts*_Zuv_rot_->extent(1); 
   }
   int number_of_cholesky_vectors() const { return 2 * nkpts * _Luv_().extent(2); }
+  RealType energy_offset() const { return E0; }
 
   nda::array<ComplexType, 2> getHSPotentials() 
   { return nda::array<ComplexType, 2>{}; }
@@ -921,7 +922,7 @@ protected:
   // vexx(i,l) = -0.5 * sum_j <ij|jl> : [nspin][nk][npol*nbnd][npol*nbnd]
   memory::const_shared_array<HOST_MEMORY,ComplexType,4> vexx;
 
-  ComplexType E0;
+  RealType E0;
 
 };
 

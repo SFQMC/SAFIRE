@@ -663,6 +663,11 @@ int Wavefunction<MEM>::number_of_cholesky_vectors() const {
 }
 
 template<MEMORY_SPACE MEM>
+RealType Wavefunction<MEM>::energy_offset() const {
+  return std::visit([&](auto&& a) { return a.energy_offset(); }, var);
+}
+
+template<MEMORY_SPACE MEM>
 void Wavefunction<MEM>::runtime_optimization(WalkerSet<MEM>& wset) {
   std::visit([&](auto&& a) { a.runtime_optimization(wset); }, var);
 }

@@ -78,10 +78,10 @@ inline std::string get_hamiltonian_format(h5::group& grp)
 // nup/ndn are the trial-WF occupations of each spin block (ndn == 0 for CLOSED and
 // NONCOLLINEAR), from which the total electron count is derived for the Madelung term.
 // Must be called on the MPI root (the caller broadcasts the result).
-inline ComplexType read_energy_offset(h5::group& grp, std::string const& format,
-                                      WALKER_TYPES type, long nup, long ndn)
+inline RealType read_energy_offset(h5::group& grp, std::string const& format,
+                                   WALKER_TYPES type, long nup, long ndn)
 {
-  ComplexType E0(0);
+  RealType E0(0);
   if(format == "std") {
     h5::group hgrp = grp.open_group("Hamiltonian");
     nda::vector<RealType> energy_offsets;  // resized by the read; [nuclear, frozen_core]

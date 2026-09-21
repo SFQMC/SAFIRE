@@ -118,6 +118,7 @@ public:
       utils::check(false,"BasePropagator: set denseP1 to false");
     }
 
+    app_log(1,"energy offset (E0): {}", wfn->energy_offset());
     app_log(1,"cutoff scales (upper/lower): {} / {}", upper_cutoff_scale, lower_cutoff_scale);
     app_log(1,"weight bound: max({}, {} * target population) per walker",
             weight_bound_floor, weight_bound_fraction);

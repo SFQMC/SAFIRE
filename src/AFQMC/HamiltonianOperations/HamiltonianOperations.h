@@ -87,6 +87,8 @@ public:
 
   int number_of_ke_vectors() const;
 
+  RealType energy_offset() const;
+
   std::tuple<int,int> vHS_dims() const;
 
   HamiltonianType getHamType() const;

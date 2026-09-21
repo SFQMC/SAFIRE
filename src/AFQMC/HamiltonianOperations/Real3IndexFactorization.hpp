@@ -50,7 +50,7 @@ public:
         memory::const_shared_array<MEM,RealType,4>&& vik,
         nda::array<memory::const_shared_array<MEM,ComplexType,5>,1>&& vnak_,
         memory::const_shared_array<HOST_MEMORY,RealType,3>&& v0_,
-        ComplexType e0_,
+        RealType e0_,
         long maxMem = 2000)
       : mpi(ctxt), 
         walker_type(type),
@@ -434,6 +434,7 @@ public:
   }
   int number_of_ke_vectors() const { return nCV; }
   int number_of_cholesky_vectors() const { return nCV; }
+  RealType energy_offset() const { return E0; }
 
   nda::array<ComplexType, 2> getHSPotentials()
   { return nda::array<ComplexType, 2>{}; }
@@ -469,8 +470,8 @@ private:
   // Swia = sum_k G_ref[w][i][k] h[a][k]
   memory::array<MEM,ComplexType,1> Swia_ph; 
 
-  // zero of energy 
-  ComplexType E0;
+  // zero of energy
+  RealType E0;
 
   void energy_impl(int ispin,
               nda::MemoryMatrix auto&& E,

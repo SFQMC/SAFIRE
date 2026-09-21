@@ -117,6 +117,8 @@ public:
 
   int number_of_cholesky_vectors() const { return HamOp.number_of_cholesky_vectors(); }
 
+  RealType energy_offset() const { return HamOp.energy_offset(); }
+
   WALKER_TYPES getWalkerType() const { return walker_type; }
 
   bool isFiniteTemperature() const { return false; }
