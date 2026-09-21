@@ -31,8 +31,8 @@
 #include "AFQMC/config.h"
 
 #include "numerics/shared_array/const_shared_array.hpp"
+#include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
-#include "AFQMC/SlaterDeterminantOperations/propagate.hpp"
 #include "AFQMC/Propagators/WalkerSetUpdate.hpp"
 
 namespace sfqmc
@@ -187,16 +187,16 @@ public:
     generateP1();
   }
 
-  template<class WlkSet>
-  void Propagate(WlkSet& wset, RealType E1, int nt = 0);
+  void Propagate(WalkerSet<MEM>& wset, RealType Eshift, int nt = 0);
 
-  template<class WlkSet>
-  void BackPropagate(int nbpsteps, int nStabalize, WlkSet& wset, 
-        nda::MemoryArrayOfRank<4> auto&& Refs, nda::MemoryArrayOfRank<2> auto&& logdetR);           
-  template<class WlkSet> 
-  void PropagateOperators(int steps, WlkSet& wset,  
-        nda::MemoryArrayOfRank<4> auto&& X, nda::MemoryArrayOfRank<4> auto&& Y,
-        nda::MemoryArrayOfRank<4> auto&& M);       
+  void BackPropagate(int nbpsteps, int nStabalize, WalkerSet<MEM>& wset,
+                     memory::array_view<MEM,ComplexType,4> Refs,
+                     memory::array_view<MEM,ComplexType,2> logdetR);
+
+  void PropagateOperators(int steps, WalkerSet<MEM>& wset,
+                          memory::array_view<MEM,ComplexType,4> X,
+                          memory::array_view<MEM,ComplexType,4> Y,
+                          memory::array_view<MEM,ComplexType,4> M);
 
   bool hybrid_propagation() { return hybrid; }
 
@@ -208,8 +208,7 @@ public:
 
   int number_of_cholesky_vectors() const { return wfn->number_of_cholesky_vectors(); }
 
-  template<class WlkSet>
-  void Orthogonalize(WlkSet& wset);
+  void Orthogonalize(WalkerSet<MEM>& wset);
 
   void set_rng_block_size(int sz) { rng_block_size = sz; }
 
@@ -338,73 +337,21 @@ private:
   std::pair<int, int> maxOccupExtendedMat;
   std::pair<int, int> numExcitations;
 
-  void assemble_X(nda::MemoryArrayOfRank<2> auto&& X,
-                  nda::MemoryArrayOfRank<1> auto&& HWs,
-                  int nt = 0,
+  void assemble_X(memory::array_view<MEM,ComplexType,2> X,
+                  memory::array_view<MEM,ComplexType,1> HWs,
                   bool addRAND = true);
 
-  template<char TA, class WlkSet, typename VHS_t>
-  void apply_propagators(WlkSet& wset, VHS_t const& v, bool P1inv = false)  
-  {
-    if(P1inv) {
-      if(denseP1) {
-        det_ops::Propagate<MEM,TA>(wset,P1d_inv(),v,order);
-      } else {
-        det_ops::Propagate<MEM,TA>(wset,P1s_inv(),v,order);
-      }
-    } else {
-      if(denseP1) {
-        det_ops::Propagate<MEM,TA>(wset,P1d(),v,order);
-      } else {
-        det_ops::Propagate<MEM,TA>(wset,P1s(),v,order);
-      }
-    }
-  }
-
+  // Definitions live in AFQMCBasePropagator.cpp, next to their only callers.
   template<char TA, typename VHS_t>
-  void apply_propagators(WALKER_TYPES wtype, int npol, 
-                         nda::MemoryArrayOfRank<3> auto&& Xa, 
-                         nda::MemoryArrayOfRank<3> auto&& Xb, 
-                         VHS_t const& v, bool P1inv = false)
-  {
-    if(P1inv) {
-      if(denseP1) {
-        if(wtype == COLLINEAR)
-          det_ops::Propagate<MEM,TA>(wtype,npol,Xa,Xb,P1d_inv(),v,order);
-        else
-          det_ops::Propagate<MEM,TA>(wtype,npol,Xa,P1d_inv(),v,order);
-      } else {
-        if(wtype == COLLINEAR)
-          det_ops::Propagate<MEM,TA>(wtype,npol,Xa,Xb,P1s_inv(),v,order);
-        else
-          det_ops::Propagate<MEM,TA>(wtype,npol,Xa,P1s_inv(),v,order);
-      }
-    } else {
-      if(denseP1) {
-        if(wtype == COLLINEAR)
-          det_ops::Propagate<MEM,TA>(wtype,npol,Xa,Xb,P1d(),v,order);
-        else
-          det_ops::Propagate<MEM,TA>(wtype,npol,Xa,P1d(),v,order);
-      } else {
-        if(wtype == COLLINEAR)
-          det_ops::Propagate<MEM,TA>(wtype,npol,Xa,Xb,P1s(),v,order);
-        else
-          det_ops::Propagate<MEM,TA>(wtype,npol,Xa,P1s(),v,order);
-      }
-    }
-  }
+  void apply_propagators(WalkerSet<MEM>& wset, VHS_t const& v, bool P1inv = false);
 
-
-/*
-  template<class WlkSet>
-  void Orthogonalize_excited_impl(WlkSet& wset);
-*/
+  template<char TA, typename VHS_t, nda::MemoryArrayOfRank<3> Mat3>
+  void apply_propagators(WALKER_TYPES wtype, int npol, Mat3&& Xa, Mat3&& Xb,
+                         VHS_t const& v, bool P1inv = false);
 
 };
 
 } // namespace afqmc
 
 } // namespace sfqmc
-
-#include "AFQMCBasePropagator.icc"
 
