@@ -338,7 +338,6 @@ private:
   std::pair<int, int> numExcitations;
 
   void assemble_X(nda::MemoryArrayOfRank<2> auto&& X,
-                  nda::MemoryArrayOfRank<1> auto&& MF,
                   nda::MemoryArrayOfRank<1> auto&& HWs,
                   int nt = 0,
                   bool addRAND = true);

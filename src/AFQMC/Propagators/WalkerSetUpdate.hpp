@@ -42,7 +42,7 @@ struct BoundStats {
 template <class Wlk>
 void free_projection_walker_update(Wlk &w, RealType dt,
                                    nda::MemoryVector auto &&overlap,
-                                   nda::MemoryVector auto &&MFfactor,
+                                   nda::MemoryVector auto &&XvMF,
                                    RealType Eshift,
                                    nda::MemoryVector auto &&hybrid_weight,
                                    bool debug_verbosity) {
@@ -62,7 +62,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
   w.getProperty(PSEUDO_ELOC_, pseudo_eloc);
   w.getProperty(OVLP, ovlp);
   new_ovlp = overlap(rng);
-  mf_factor = MFfactor(rng);
+  mf_factor = XvMF(rng);
   hyb_weight = hybrid_weight(rng);
 
   for (int i = 0; i < nwalk; i++) {
@@ -81,7 +81,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
                 << "    old_eloc:      " << old_eloc << "\n"
                 << "    old_weight:    " << weight(i) << "\n"
                 << "    ratio:         " << ratioOverlaps << "\n"
-                << "    MFfactor:      " << mf_factor(i) << "\n"
+                << "    X·vMF:      " << mf_factor(i) << "\n"
                 << "    hybrid_weight: " << hyb_weight(i) << "\n"
                 << "    Eshift:         " << Eshift << "\n"
                 << "    factor:         " << factor << "\n"
@@ -104,7 +104,7 @@ template <class Wlk>
 void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                           bool imp_sampl, RealType Eshift,
                           nda::MemoryVector auto &&overlap,
-                          nda::MemoryVector auto &&MFfactor,
+                          nda::MemoryVector auto &&XvMF,
                           nda::MemoryVector auto &&hybrid_weight,
                           double lower_cutoff_scale, double upper_cutoff_scale,
                           bool debug_verbosity,
@@ -133,7 +133,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
   w.getProperty(PHASE2, phase2);
   w.getProperty(PHASE3, phase3);
   new_ovlp = overlap(rng);
-  mf_factor = MFfactor(rng);
+  mf_factor = XvMF(rng);
   hyb_weight = hybrid_weight(rng);
 
   for (int i = 0; i < nwalk; i++) {
@@ -194,7 +194,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                 << "    old_eloc:      " << old_eloc << "\n"
                 << "    old_weight:    " << weight(i) << "\n"
                 << "    ratio:         " << ratioOverlaps << "\n"
-                << "    MFfactor:      " << mf_factor(i) << "\n"
+                << "    X·vMF:         " << mf_factor(i) << "\n"
                 << "    hybrid_weight: " << hyb_weight(i) << "\n"
                 << "    scale:         " << scale << "\n"
                 << "    Eshift:         " << Eshift << "\n"
@@ -237,7 +237,7 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                                 RealType Eshift,
                                 nda::MemoryVector auto &&overlap,
                                 nda::MemoryMatrix auto &&energies,
-                                nda::MemoryVector auto &&MFfactor,
+                                nda::MemoryVector auto &&XvMF,
                                 double lower_cutoff_scale,
                                 double upper_cutoff_scale,
                                 BoundStats &eloc_stats) {
@@ -268,7 +268,7 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constraint,
   w.getProperty(EJ_, ej);
   w.getProperty(PHASE, phase);
   new_ovlp = overlap(rng);
-  mf_factor = MFfactor(rng);
+  mf_factor = XvMF(rng);
   new_e1 = energies(rng, 0);
   new_exx = energies(rng, 1);
   new_ej = energies(rng, 2);
@@ -345,12 +345,6 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constraint,
  * Caps the magnitude of every walker weight at max(floor, fraction*N), where N is the global
  * target population. A walker over the bound is rescaled onto it and keeps its phase. This
  * keeps a single blown-up walker from dominating the population between two branching events.
- *
- * N is what rescale_total_weight() sets the total weight to once per population control
- * interval, so fraction*N is the share of a normalized population that one walker may hold.
- * Taking the target rather than the live total keeps the bound fixed while the whole
- * population drifts up or down between two rescalings - a uniform drift is not one walker
- * running away - and keeps this routine local, which matters because it runs every step.
  */
 template <class Wlk>
 void bound_walker_weights(Wlk &w, double weight_bound_floor,
