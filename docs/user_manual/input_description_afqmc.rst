@@ -76,11 +76,6 @@ We will explore the details of this input file in the following sections.
   The sample input file above is just one possible input file layout.
   See the :ref:`input file recipes <run_afqmc_ex_4>` example for other possible layouts.
 
-.. only:: developer
-
-  An experimental driver, called "csafqmc", also exists to perform a (c)orrelated (s)ampling afqmc calculation.
-
-
 .. code-block::json
   :caption: Sample input file for AFQMC.
   :name: Listing 1
