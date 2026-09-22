@@ -242,7 +242,16 @@ void WalkerSetBase<MEM>::rescale_total_weight() {
 
   total = mpi->comm.all_reduce_value(total);
   utils::check(total > 1e-6, "The total walker weight collapsed to {}. Something went very wrong.", total);
-  scaleWeight(get_global_target_population() / total, true);
+
+  ComplexType scale = get_global_target_population() / total;
+  nda::blas::scal(scale, walker_buffer(nda::range(tot_num_walkers), data_displ[WEIGHT]));
+
+  // the weight history entry of the last completed step holds the same weight, so it has to be
+  // rescaled along with it
+  if(wlk_desc[6] > 0) {
+    int his_pos = (history_pos == 0) ? wlk_desc[6] - 1 : history_pos - 1;
+    nda::blas::scal(scale, bp_buffer(nda::range(tot_num_walkers), data_displ[WEIGHT_HISTORY] + his_pos));
+  }
 }
 
 template<MEMORY_SPACE MEM>
