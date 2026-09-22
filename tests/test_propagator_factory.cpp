@@ -177,6 +177,59 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
   if(mpi->comm.root()) timers.print_all();
 }
 
+/*
+ * Free projection drops the constraint and keeps the phase of every step in the walker weight
+ * instead of projecting it out, so the weights turn complex as soon as the propagation starts.
+ */
+template<MEMORY_SPACE MEM>
+void propagator_free_projection(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+             std::string hamil_file, std::string wfn_file)
+{
+  WALKER_TYPES type = getWalkerType(wfn_file);
+  int nwalk = 11;
+  RealType dt = 0.01;
+
+  Hamiltonian ham = Hamiltonian::from_params(
+      mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file, .shift_1body = true});
+
+  std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>();
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
+
+  auto wfn = Wavefunction<MEM>::from_params(
+      mpi, WavefunctionParameters{.name = "wfn0", .filename = wfn_file, .dense_trial = true}, type, false,
+      ham, nwalk);
+  auto wset = WalkerSet<MEM>(mpi, rng, WalkerSetParameters{.name = "wset0", .walker_type = type},
+                             wfn.initial_guess(), nwalk);
+
+  PropagatorParameters prop_params{.name = "prop0", .free_projection = true, .denseP2 = true};
+  apply_defaults(prop_params, ham.getHamType());
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, dt)};
+
+  RealType Eshift = std::abs(wset[0].get_property(OVLP));
+  for(int i = 0; i < 5; i++) {
+    prop.Propagate(wset, Eshift);
+    prop.Orthogonalize(wset);
+  }
+
+  RealType max_relative_imag = 0.0;
+  for(int iw = 0; iw < wset.size(); ++iw) {
+    ComplexType weight = wset[iw].get_property(WEIGHT);
+    REQUIRE(std::isfinite(weight.real()));
+    REQUIRE(std::isfinite(weight.imag()));
+    RealType magnitude = std::abs(weight);
+    if(magnitude > 0.0) {
+      max_relative_imag = std::max(max_relative_imag, std::abs(weight.imag()) / magnitude);
+    }
+  }
+  REQUIRE(max_relative_imag > 1e-8);
+
+  // free projection reconstructs the local energy from the overlap, so it cannot run the
+  // local energy formalism
+  PropagatorParameters bad_params{.name = "prop1", .hybrid = false, .free_projection = true, .denseP2 = true};
+  apply_defaults(bad_params, ham.getHamType());
+  REQUIRE_THROWS(AFQMCBasePropagator<MEM>(bad_params, mpi, wfn, rng_dev, dt));
+}
+
 TEST_CASE("propagator_factory: build", "[propagator_factory]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
@@ -187,6 +240,17 @@ TEST_CASE("propagator_factory: build", "[propagator_factory]")
     propagator_factory_build<MEM>(mpi, hamil_file, wfn_file, true, finiteT);
     propagator_factory_build<MEM>(mpi, hamil_file, wfn_file, false, finiteT);
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
+}
+
+TEST_CASE("propagator_factory: free projection", "[propagator_factory]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+
+  using namespace utils;
+
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool) {
+    propagator_free_projection<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::NOMSD | TestFiles::MOLECULES);
 }
 
 

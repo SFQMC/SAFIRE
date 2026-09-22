@@ -319,21 +319,9 @@ void AFQMCBasePropagator<MEM>::Propagate(WalkerSet<MEM>& wset, RealType Eshift, 
 
   // 6. update weights/energy/etc, apply constrains/bounds/etc
   auto extra_time = timers.extra.start();
-  if (free_projection) {
-    free_projection_walker_update(wset, dt, new_overlaps, meanfield_factor, Eshift,
-                                  wfn->energy_offset(), hybrid_weight,debug_verbosity);
-  } else {
-    if (hybrid) {
-      hybrid_walker_update(wset, dt, apply_constraint, Eshift,
-                           wfn->energy_offset(), new_overlaps, meanfield_factor,
-                           hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, debug_verbosity,
-                           use_cp_constraint, eloc_bound_stats);
-    } else {
-      local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies,
-                                 meanfield_factor,
-                                 lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
-    }
-  }
+  walker_update(wset, hybrid, free_projection, use_cp_constraint, dt, Eshift,
+                wfn->energy_offset(), new_overlaps, new_energies, meanfield_factor, hybrid_weight,
+                lower_cutoff_scale, upper_cutoff_scale, debug_verbosity, eloc_bound_stats);
 
   // 7. bound the weights, so that no single walker can dominate the population before the
   //    next branching

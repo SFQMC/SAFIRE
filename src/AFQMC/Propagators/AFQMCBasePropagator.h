@@ -81,7 +81,6 @@ public:
     order               = params.taylor_n;
     weight_bound_floor    = params.weight_bound_floor;
     weight_bound_fraction = params.weight_bound_fraction;
-    apply_constraint     = params.apply_constraint;
     subtractMF         = params.subtractMF;
     hybrid              = params.hybrid;
     printP1eV           = params.printP1eigval;
@@ -93,14 +92,7 @@ public:
     use_cp_constraint   = params.use_cp_constraint;
     project_force_bias      = params.project_force_bias;
 
-    if(free_projection) {
-      if(!hybrid || apply_constraint) {
-        app_error("Free projection requires:");
-        app_error(" hybrid = yes, currently {}", hybrid);
-        app_error(" apply_constraint = no, currently {}", apply_constraint);
-        utils::check(false,"BasePropagator: free_projection");
-      }
-    }
+    utils::check(!free_projection || hybrid, "BasePropagator: free_projection requires hybrid = true.");
     utils::check(weight_bound_floor > 0.0, "weight_bound_floor must be positive, got {}",
                  weight_bound_floor);
     utils::check(weight_bound_fraction > 0.0 && weight_bound_fraction <= 1.0,
@@ -192,13 +184,9 @@ public:
                           memory::array_view<MEM,ComplexType,4> Y,
                           memory::array_view<MEM,ComplexType,4> M);
 
-  bool hybrid_propagation() { return hybrid; }
-
-  bool free_propagation() { return free_projection; }
-
   /// Whether Propagate leaves the components of the local energy on the walkers. Only the
-  /// local energy update evaluates them; hybrid and free projection do not.
-  bool stores_local_energy() const { return !hybrid && !free_projection; }
+  /// local energy update evaluates them; hybrid propagation does not.
+  bool stores_local_energy() const { return !hybrid; }
 
   int number_of_cholesky_vectors() const { return wfn->number_of_cholesky_vectors(); }
 
@@ -304,7 +292,6 @@ private:
   // type of propagation
   bool free_projection = false;
   bool hybrid = true;
-  bool apply_constraint = true;
   double upper_cutoff_scale = 10.0;
   double lower_cutoff_scale = 1.0;
   double weight_bound_floor = 100.0;
