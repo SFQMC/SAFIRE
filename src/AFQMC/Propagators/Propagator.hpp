@@ -61,16 +61,6 @@ public:
     std::visit([&](auto&& a) { a.Orthogonalize(std::forward<Args>(args)...); }, var);
   }
 
-  bool hybrid_propagation()
-  {
-    return std::visit([&](auto&& a) { return a.hybrid_propagation(); }, var);
-  }
-
-  bool free_propagation()
-  {
-    return std::visit([&](auto&& a) { return a.free_propagation(); }, var);
-  }
-
   bool stores_local_energy() const
   {
     return std::visit([&](auto&& a) { return a.stores_local_energy(); }, var);
