@@ -148,17 +148,17 @@ void walker_update(Wlk &w, bool hybrid, bool free_projection, bool use_cp_constr
       // the hybrid expression is already the log of the exact step factor, while the local
       // energy needs a midpoint rule between the old and the new time slice
       ComplexType eloc_eff = hybrid ? eloc : 0.5 * (eloc + old_eloc);
-      RealType amplitude = std::exp(-dt * (eloc_eff.real() - Eshift));
-      ComplexType step_phase = std::exp(-ComplexType(0.0, dt) * eloc_eff.imag());
+
+      ComplexType w = std::exp(-dt * (eloc_eff - Eshift));
       if(std::abs(scale) > std::numeric_limits<RealType>::min()) {
-        weight_factor(i) = step_phase / scale;
+        weight_factor(i) = w / std::abs(w) / scale;
       } else {
         weight_factor(i) = 0.0;
       }
       // free projection carries the phase of the step in the weight itself; the phaseless
       // constraint drops it from the weight and only records it in PHASE
-      weight(i) *= free_projection ? scale * amplitude * step_phase : scale * amplitude;
-      phase(i) *= weight_factor(i);
+      weight(i) *= free_projection ? scale * w : scale * std::abs(w);
+      phase(i) *= w/std::abs(w);
     }
 
     if(debug_verbosity) {

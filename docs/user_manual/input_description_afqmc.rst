@@ -521,7 +521,6 @@ Settings
     "lower_cutoff_scale": 1.0,
     "weight_bound_floor": 100.0,
     "weight_bound_fraction": 0.1,
-    "apply_constraint": true,
     "subtractMF": true,
     "hybrid": true,
     "printP1eigval": false,
@@ -561,9 +560,6 @@ Settings
      - 0.1
      - Largest fraction of a normalized population's total weight that a single walker is
        allowed to carry. See **weight_bound_floor**.
-   * - **apply_constraint**
-     - true
-     - Whether to apply constraints during propagation
    * - **subtractMF**
      - true
      - Whether to subtract mean field contribution
@@ -595,7 +591,6 @@ Settings
       "lower_cutoff_scale": 1.0,
       "weight_bound_floor": 100.0,
       "weight_bound_fraction": 0.1,
-      "apply_constraint": true,
       "subtractMF": true,
       "hybrid": true,
       "printP1eigval": false,
@@ -646,9 +641,6 @@ Settings
       - 0.1
       - Largest fraction of a normalized population's total weight that a single walker is
         allowed to carry. See **weight_bound_floor**.
-    * - **apply_constraint**
-      - true
-      - Whether to apply constraints during propagation
     * - **subtractMF**
       - true
       - Whether to subtract mean field contribution
@@ -660,7 +652,9 @@ Settings
       - Whether to print P1 eigenvalues for debugging
     * - **free_projection**
       - false
-      - Whether to use free projection or not.
+      - Whether to use free projection or not. Requires **hybrid**. Disables the force bias,
+        the phaseless constraint and the local-energy bound, and leaves the phase of each
+        step in the walker weight, which therefore turns complex.
     * - **denseP1**
       - false
       - Whether to use dense P1 matrix representation
