@@ -21,7 +21,7 @@
 #include "AFQMC/Walkers/WalkerConfig.hpp"
 #include "AFQMC/config.h"
 #include "config.h"
-#include "utilities/check.hpp"
+#include "utilities/check_shape.hpp"
 
 namespace sfqmc {
 namespace afqmc {
@@ -79,38 +79,28 @@ void walker_update(Wlk &w, bool hybrid, bool free_projection, bool use_cp_constr
   auto all = nda::range::all;
   int nwalk = w.size();
   bool BackProp = (w.NumBackProp() > 0);
-  nda::range rng(nwalk);
-  memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(15, nwalk);
-  auto weight = work(0, all);
-  auto phase = work(1, all);
-  auto pseudo_eloc = work(2, all);
-  auto ovlp = work(3, all);
-  auto weight_factor = work(4, all);
-  auto theta = work(5, all);
-  auto new_ovlp = work(6, all);
-  auto mf_factor = work(7, all);
-  auto hyb_weight = work(8, all);
-  auto e1 = work(9, all);
-  auto exx = work(10, all);
-  auto ej = work(11, all);
-  auto new_e1 = work(12, all);
-  auto new_exx = work(13, all);
-  auto new_ej = work(14, all);
-  w.getProperty(WEIGHT, weight);
-  w.getProperty(PHASE, phase);
-  w.getProperty(PSEUDO_ELOC_, pseudo_eloc);
-  w.getProperty(OVLP, ovlp);
-  new_ovlp = overlap(rng);
-  mf_factor = meanfield_factor(rng);
-  hyb_weight = hybrid_weight(rng);
-  if(!hybrid) {
-    w.getProperty(E1_, e1);
-    w.getProperty(EXX_, exx);
-    w.getProperty(EJ_, ej);
-    new_e1 = energies(rng, 0);
-    new_exx = energies(rng, 1);
-    new_ej = energies(rng, 2);
-  }
+  utils::check_shape(overlap, "overlap", nwalk);
+  utils::check_shape(energies, "energies", nwalk, 3);
+  utils::check_shape(meanfield_factor, "meanfield_factor", nwalk);
+  utils::check_shape(hybrid_weight, "hybrid_weight", nwalk);
+
+  using buffered_host_vector = memory::buffered_array<HOST_MEMORY, ComplexType, 1>;
+
+  // the loop below is scalar host code, so the walker properties and the arguments, which may
+  // live in device memory, are staged into host copies first
+  buffered_host_vector weight = w.getProperty(WEIGHT);
+  buffered_host_vector phase = w.getProperty(PHASE);
+  buffered_host_vector pseudo_eloc = w.getProperty(PSEUDO_ELOC_);
+  buffered_host_vector ovlp = w.getProperty(OVLP);
+  buffered_host_vector new_ovlp = overlap();
+  buffered_host_vector mf_factor = meanfield_factor();
+  buffered_host_vector hyb_weight = hybrid_weight();
+  buffered_host_vector new_e1 = energies(all, 0);
+  buffered_host_vector new_exx = energies(all, 1);
+  buffered_host_vector new_ej = energies(all, 2);
+
+  buffered_host_vector theta(nwalk);
+  buffered_host_vector weight_factor(nwalk);
 
   for(int i = 0; i < nwalk; i++) {
     ComplexType old_ovlp = ovlp(i);
@@ -164,7 +154,7 @@ void walker_update(Wlk &w, bool hybrid, bool free_projection, bool use_cp_constr
     if(debug_verbosity) {
       std::cout << " update: iw:       " << i << "\n"
                 << "    eloc:          " << eloc << "\n"
-                << "    eloc_:         " << unbounded_eloc << "\n"
+                << "    uncut_eloc:    " << unbounded_eloc << "\n"
                 << "    ov:            " << new_ovlp(i) << "\n"
                 << "    old_ov:        " << old_ovlp << "\n"
                 << "    old_eloc:      " << old_eloc << "\n"
@@ -179,11 +169,6 @@ void walker_update(Wlk &w, bool hybrid, bool free_projection, bool use_cp_constr
 
     pseudo_eloc(i) = eloc;
     ovlp(i) = new_ovlp(i);
-    if(!hybrid) {
-      e1(i) = new_e1(i);
-      exx(i) = new_exx(i);
-      ej(i) = new_ej(i);
-    }
   }
 
   w.setProperty(WEIGHT, weight);
@@ -192,9 +177,9 @@ void walker_update(Wlk &w, bool hybrid, bool free_projection, bool use_cp_constr
   w.setProperty(OVLP, ovlp);
   w.setProperty(THETA, theta);
   if(!hybrid) {
-    w.setProperty(E1_, e1);
-    w.setProperty(EXX_, exx);
-    w.setProperty(EJ_, ej);
+    w.setProperty(E1_, new_e1);
+    w.setProperty(EXX_, new_exx);
+    w.setProperty(EJ_, new_ej);
   }
   if(BackProp) {
     auto pos = w.getHistoryPos();
@@ -215,8 +200,7 @@ void bound_walker_weights(Wlk &w, double weight_bound_floor,
                           double weight_bound_fraction,
                           BoundStats &weight_stats) {
   int nwalk = w.size();
-  memory::buffered_array<HOST_MEMORY, ComplexType, 1> weight(nwalk);
-  w.getProperty(WEIGHT, weight);
+  memory::buffered_array<HOST_MEMORY, ComplexType, 1> weight = w.getProperty(WEIGHT);
 
   const RealType max_weight =
       std::max(weight_bound_floor, weight_bound_fraction * w.get_global_target_population());
