@@ -103,7 +103,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
 
 template <class Wlk>
 void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
-                          bool imp_sampl, RealType Eshift,
+                          RealType Eshift,
                           RealType energy_offset,
                           nda::MemoryVector auto &&overlap,
                           nda::MemoryVector auto &&XvMF,
@@ -144,12 +144,9 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
     ComplexType eloc;
     RealType delta_theta;
     RealType scale = 1.0;
-    ComplexType ratioOverlaps = ComplexType(1.0, 0.0);
+    ComplexType ratioOverlaps = std::exp(new_ovlp(i) - old_ovlp);
 
-    if (imp_sampl)
-      ratioOverlaps = std::exp(new_ovlp(i) - old_ovlp);
-
-    if (!std::isfinite(ratioOverlaps.real()) && apply_constraint && imp_sampl) {
+    if (!std::isfinite(ratioOverlaps.real()) && apply_constraint) {
       scale = 0.0;
       eloc = old_eloc;
     } else {
@@ -165,11 +162,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
         scale = (apply_constraint ? std::max(0.0, std::cos(delta_theta)) : 1.0);
       }
 
-      if (imp_sampl) {
-        eloc = (mf_factor(i) - hyb_weight(i) - (new_ovlp(i) - old_ovlp)) / dt + energy_offset;
-      } else {
-        eloc = mf_factor(i) / dt + energy_offset;
-      }
+      eloc = (mf_factor(i) - hyb_weight(i) - (new_ovlp(i) - old_ovlp)) / dt + energy_offset;
     }
     ComplexType eloc_ = eloc;
 

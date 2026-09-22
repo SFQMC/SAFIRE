@@ -90,7 +90,6 @@ struct PropagatorParameters {
   double weight_bound_floor{100.0};
   double weight_bound_fraction{0.1};
   bool apply_constraint{true};
-  bool importance_sampling{true};
   bool subtractMF{true};
   bool hybrid{true};
   bool printP1eigval{false};
@@ -104,7 +103,7 @@ struct PropagatorParameters {
 };
 SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, upper_cutoff_scale,
                          lower_cutoff_scale, weight_bound_floor, weight_bound_fraction,
-                         apply_constraint, importance_sampling, subtractMF, hybrid,
+                         apply_constraint, subtractMF, hybrid,
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
                          use_cp_constraint, project_force_bias);
 

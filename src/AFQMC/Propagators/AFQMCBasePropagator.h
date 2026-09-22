@@ -82,7 +82,6 @@ public:
     weight_bound_floor    = params.weight_bound_floor;
     weight_bound_fraction = params.weight_bound_fraction;
     apply_constraint     = params.apply_constraint;
-    importance_sampling = params.importance_sampling;
     subtractMF         = params.subtractMF;
     hybrid              = params.hybrid;
     printP1eV           = params.printP1eigval;
@@ -94,12 +93,9 @@ public:
     use_cp_constraint   = params.use_cp_constraint;
     project_force_bias      = params.project_force_bias;
 
-    if (free_projection)
-    {
-      if (importance_sampling || !hybrid || apply_constraint)
-      {
+    if(free_projection) {
+      if(!hybrid || apply_constraint) {
         app_error("Free projection requires:");
-        app_error(" importance_sampling = no, currently {}", importance_sampling);
         app_error(" hybrid = yes, currently {}", hybrid);
         app_error(" apply_constraint = no, currently {}", apply_constraint);
         utils::check(false,"BasePropagator: free_projection");
@@ -135,8 +131,6 @@ public:
       app_log(1, "Using a spin-dependent vHS.");
     if(npol_in_vHS>1) 
       app_log(1, "Using a polarization-dependent vHS.");
-
-    utils::check(importance_sampling || free_projection, "importance_sampling=false without free projection does not make sense.");
 
     if (hybrid)
       app_log(1,"Using hybrid method to calculate the weights during the propagation.");
@@ -310,7 +304,6 @@ private:
   // type of propagation
   bool free_projection = false;
   bool hybrid = true;
-  bool importance_sampling = true;
   bool apply_constraint = true;
   double upper_cutoff_scale = 10.0;
   double lower_cutoff_scale = 1.0;
