@@ -232,10 +232,6 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
   REQUIRE(wset.NumBackProp() == 0);
   REQUIRE(wset.GlobalWeight() == tot_weight * Type(mpi->comm.size()));
 
-  wset.scaleWeight(2.0);
-  tot_weight *= 2.0;
-  REQUIRE(wset.GlobalWeight() == tot_weight * Type(mpi->comm.size()));
-
   wset.rescale_total_weight();
   wset.popControl();
   REQUIRE_THAT(wset.GlobalWeight(), utils::Approx(static_cast<RealType>(wset.get_global_target_population())));

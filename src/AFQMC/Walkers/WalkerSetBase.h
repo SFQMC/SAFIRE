@@ -392,51 +392,6 @@ public:
   void branch(std::span<std::pair<double, int>> counts,
               memory::array_view<MEM, ComplexType, 2> M);
 
-  template<class T>
-  void scaleWeight(const T& w0, bool scale_last_history = false)
-  {
-    utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
-    nda::blas::scal(ComplexType(w0), walker_buffer(nda::range(tot_num_walkers), data_displ[WEIGHT]));
-    if (scale_last_history)
-    {
-      int his_pos = ((history_pos == 0) ? wlk_desc[6] - 1 : history_pos - 1);
-      if (wlk_desc[6] > 0 && his_pos >= 0 && his_pos < wlk_desc[6])
-      {
-        nda::blas::scal(ComplexType(w0), 
-                bp_buffer(nda::range(tot_num_walkers), data_displ[WEIGHT_HISTORY] + his_pos));
-      }
-    }
-  }
-
-  void scaleWeightsByOverlap()
-  {
-    using nda::tensor::binary_op::PROD;
-    utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
-    nda::range r(tot_num_walkers);
-    nda::array<ComplexType,1> ov(tot_num_walkers);  // on host
-    nda::array<ComplexType,1> buff(tot_num_walkers);  // on host
-    memory::array<MEM,ComplexType,1> buff_d(tot_num_walkers);  // on device
-    getProperty(OVLP, ov);
-    for (int i = 0; i < tot_num_walkers; i++)
-      buff(i) = ComplexType(1.0 / std::abs(ov[i]), 0.0);
-    buff_d() = buff(); // to device
-    // A(i) = A(i) * x(i)
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[WEIGHT]),"i",PROD);
-    for (int i = 0; i < tot_num_walkers; i++)
-      buff[i] = std::exp(ComplexType(0.0, -std::arg(ov[i])));
-    buff_d() = buff();  // to device
-    // A(i) = A(i) * x(i)
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[PHASE]),"i",PROD);
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[PHASE1]),"i",PROD);
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[PHASE2]),"i",PROD);
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[PHASE3]),"i",PROD);
-  }
-
   auto get_mpi() const { return mpi; }
 
   int single_walker_memory_usage() const { return walker_memory_usage; }
