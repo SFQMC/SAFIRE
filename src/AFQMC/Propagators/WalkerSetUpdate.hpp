@@ -42,7 +42,7 @@ struct BoundStats {
 template <class Wlk>
 void free_projection_walker_update(Wlk &w, RealType dt,
                                    nda::MemoryVector auto &&overlap,
-                                   nda::MemoryVector auto &&XvMF,
+                                   nda::MemoryVector auto &&meanfield_factor,
                                    RealType Eshift,
                                    RealType energy_offset,
                                    nda::MemoryVector auto &&hybrid_weight,
@@ -63,7 +63,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
   w.getProperty(PSEUDO_ELOC_, pseudo_eloc);
   w.getProperty(OVLP, ovlp);
   new_ovlp = overlap(rng);
-  mf_factor = XvMF(rng);
+  mf_factor = meanfield_factor(rng);
   hyb_weight = hybrid_weight(rng);
 
   for (int i = 0; i < nwalk; i++) {
@@ -82,7 +82,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
                 << "    old_eloc:      " << old_eloc << "\n"
                 << "    old_weight:    " << weight(i) << "\n"
                 << "    ratio:         " << ratioOverlaps << "\n"
-                << "    X·vMF:      " << mf_factor(i) << "\n"
+                << "    mf_factor:     " << mf_factor(i) << "\n"
                 << "    hybrid_weight: " << hyb_weight(i) << "\n"
                 << "    Eshift:         " << Eshift << "\n"
                 << "    factor:         " << factor << "\n"
@@ -106,7 +106,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                           RealType Eshift,
                           RealType energy_offset,
                           nda::MemoryVector auto &&overlap,
-                          nda::MemoryVector auto &&XvMF,
+                          nda::MemoryVector auto &&meanfield_factor,
                           nda::MemoryVector auto &&hybrid_weight,
                           double lower_cutoff_scale, double upper_cutoff_scale,
                           bool debug_verbosity,
@@ -135,7 +135,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
   w.getProperty(PHASE2, phase2);
   w.getProperty(PHASE3, phase3);
   new_ovlp = overlap(rng);
-  mf_factor = XvMF(rng);
+  mf_factor = meanfield_factor(rng);
   hyb_weight = hybrid_weight(rng);
 
   for (int i = 0; i < nwalk; i++) {
@@ -189,7 +189,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                 << "    old_eloc:      " << old_eloc << "\n"
                 << "    old_weight:    " << weight(i) << "\n"
                 << "    ratio:         " << ratioOverlaps << "\n"
-                << "    X·vMF:         " << mf_factor(i) << "\n"
+                << "    mf_factor:     " << mf_factor(i) << "\n"
                 << "    hybrid_weight: " << hyb_weight(i) << "\n"
                 << "    scale:         " << scale << "\n"
                 << "    Eshift:         " << Eshift << "\n"
@@ -232,7 +232,7 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constraint,
                                 RealType Eshift,
                                 nda::MemoryVector auto &&overlap,
                                 nda::MemoryMatrix auto &&energies,
-                                nda::MemoryVector auto &&XvMF,
+                                nda::MemoryVector auto &&meanfield_factor,
                                 double lower_cutoff_scale,
                                 double upper_cutoff_scale,
                                 BoundStats &eloc_stats) {
@@ -263,7 +263,7 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constraint,
   w.getProperty(EJ_, ej);
   w.getProperty(PHASE, phase);
   new_ovlp = overlap(rng);
-  mf_factor = XvMF(rng);
+  mf_factor = meanfield_factor(rng);
   new_e1 = energies(rng, 0);
   new_exx = energies(rng, 1);
   new_ej = energies(rng, 2);

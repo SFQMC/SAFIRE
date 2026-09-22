@@ -238,7 +238,7 @@ void AFQMCBasePropagator<MEM>::Propagate(WalkerSet<MEM>& wset, RealType Eshift, 
   int nCV     = wfn->number_of_cholesky_vectors();
   bool ft = wset.isFiniteTemperature();
 
-  memory::buffered_array<MEM,ComplexType,1> XvMF(nwalk);
+  memory::buffered_array<MEM,ComplexType,1> meanfield_factor(nwalk);
   memory::buffered_array<MEM,ComplexType,1> hybrid_weight(nwalk, 0.0);
   memory::buffered_array<MEM,ComplexType,1> new_overlaps(nwalk, 0.0);
   memory::buffered_array<MEM,ComplexType,2> new_energies(nwalk, 3);
@@ -265,9 +265,18 @@ void AFQMCBasePropagator<MEM>::Propagate(WalkerSet<MEM>& wset, RealType Eshift, 
   // 2. Assemble X(nwalk, nCV)
   auto assemble_X_time = timers.assemble_X.start();
   assemble_X(X, hybrid_weight);
-  // XvMF[iw] = sum_m ( im * X[iw,m] * vMF[m] ); W_MSsub = exp(-XvMF), careful with sign convention
+  // The mean-field subtraction splits 0.5*sum_n v_n^2 into 0.5*sum_n (v_n - vMF_n)^2 (applied by
+  // vHS) plus sum_n vMF_n*v_n (folded into the 1-body propagator) minus the c-number
+  // 0.5*sum_n vMF_n^2, which nothing else applies. Folding it in here puts that constant back into
+  // the reconstructed local energy. Only its real part is kept: the imaginary part is a global
+  // phase, so it cancels in every estimator ratio, but it must not reach the constraint angle,
+  // where a constant offset inside max(0,cos(theta)) would bias the projection.
+  //
+  // meanfield_factor[iw] = im * sum_m X[iw,m]*vMF[m] - 0.5*Re(sum_m vMF[m]^2);
+  // W_MSsub = exp(-meanfield_factor), careful with sign convention
   ComplexType im(0.0,1.0);
-  nda::blas::gemv(im, X(), vMF(), 0.0, XvMF());
+  meanfield_factor() = -0.5 * nda::blas::dot(vMF(), vMF()).real();
+  nda::blas::gemv(im, X(), vMF(), 1.0, meanfield_factor());
   assemble_X_time.stop();
 
   //std::cout<<" X: " <<nda::sum(nda::to_host(X)) <<std::endl;
@@ -311,16 +320,17 @@ void AFQMCBasePropagator<MEM>::Propagate(WalkerSet<MEM>& wset, RealType Eshift, 
   // 6. update weights/energy/etc, apply constrains/bounds/etc
   auto extra_time = timers.extra.start();
   if (free_projection) {
-    free_projection_walker_update(wset, dt, new_overlaps, XvMF, Eshift, wfn->energy_offset(),
-                                  hybrid_weight,debug_verbosity);
+    free_projection_walker_update(wset, dt, new_overlaps, meanfield_factor, Eshift,
+                                  wfn->energy_offset(), hybrid_weight,debug_verbosity);
   } else {
     if (hybrid) {
       hybrid_walker_update(wset, dt, apply_constraint, Eshift,
-                           wfn->energy_offset(), new_overlaps, XvMF,
+                           wfn->energy_offset(), new_overlaps, meanfield_factor,
                            hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, debug_verbosity,
                            use_cp_constraint, eloc_bound_stats);
     } else {
-      local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies, XvMF,
+      local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies,
+                                 meanfield_factor,
                                  lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
     }
   }
@@ -664,12 +674,7 @@ void AFQMCBasePropagator<MEM>::assemble_X(memory::array_view<MEM,ComplexType,2> 
   }
 
 
-  // The mean-field subtraction splits 0.5*sum_n v_n^2 into 0.5*sum_n (v_n - vMF_n)^2 (applied by
-  // vHS) plus sum_n vMF_n*v_n (folded into the 1-body propagator) minus the c-number
-  // 0.5*sum_n vMF_n^2, which nothing applies. Seeding the hybrid weight with it puts that
-  // constant back into the reconstructed local energy, since eloc subtracts HWs and divides by
-  // dt.
-  HWs() = 0.5 * nda::blas::dot(vMF(), vMF());
+  HWs() = 0.0;
 
   if constexpr (MEM==DEVICE_MEMORY) {
 #if defined(ENABLE_DEVICE)
