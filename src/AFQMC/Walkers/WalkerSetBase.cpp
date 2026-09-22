@@ -127,12 +127,6 @@ void WalkerSetBase<MEM>::setup(std::array<int, 3> dims)
   cnt += 1; // weight
   data_displ[PHASE] = cnt;
   cnt += 1; // phase
-  data_displ[PHASE1] = cnt;
-  cnt += 1; // phase
-  data_displ[PHASE2] = cnt;
-  cnt += 1; // phase
-  data_displ[PHASE3] = cnt;
-  cnt += 1; // phase
   data_displ[PSEUDO_ELOC_] = cnt;
   cnt += 1; // pseudo energy
   data_displ[E1_] = cnt;
@@ -308,9 +302,6 @@ void WalkerSetBase<MEM>::allocate_walkers(int n)
   walker_buffer(r, all) = ComplexType(0.0);
   walker_buffer(r, data_displ[WEIGHT]) = ComplexType(1.0);
   walker_buffer(r, data_displ[PHASE])  = ComplexType(1.0);
-  walker_buffer(r, data_displ[PHASE1]) = ComplexType(1.0);
-  walker_buffer(r, data_displ[PHASE2]) = ComplexType(1.0);
-  walker_buffer(r, data_displ[PHASE3]) = ComplexType(1.0);
   walker_buffer(r, data_displ[THETA])  = ComplexType(0.0);
   if (finite_temperature)
   {
@@ -415,9 +406,6 @@ void WalkerSetBase<MEM>::reset(int n)
   walker_buffer(r,data_displ[WEIGHT]) = ComplexType(1.0);
   walker_buffer(r,data_displ[OVLP]) = ComplexType(0.0); //finite-T keeps log(ovlp), instead of ovlp 
   walker_buffer(r,data_displ[PHASE]) = ComplexType(1.0);
-  walker_buffer(r,data_displ[PHASE1]) = ComplexType(1.0);
-  walker_buffer(r,data_displ[PHASE2]) = ComplexType(1.0);
-  walker_buffer(r,data_displ[PHASE3]) = ComplexType(1.0);
   walker_buffer(r,data_displ[LOGSCL_UP]) = ComplexType(0.0);
   walker_buffer(r,data_displ[LOGSCL_DN]) = ComplexType(0.0);
   walker_buffer(r,data_displ[IS_UNITARY]) = ComplexType(1.0);

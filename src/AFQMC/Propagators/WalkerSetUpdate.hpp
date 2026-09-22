@@ -50,7 +50,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
   auto all = nda::range::all;
   int nwalk = w.size();
   nda::range rng(nwalk);
-  memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(11, nwalk);
+  memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(7, nwalk);
   auto weight = work(0, all);
   auto phase = work(1, all);
   auto pseudo_eloc = work(2, all);
@@ -116,7 +116,7 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
   int nwalk = w.size();
   bool BackProp = (w.NumBackProp() > 0);
   nda::range rng(nwalk);
-  memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(11, nwalk);
+  memory::buffered_array<HOST_MEMORY, ComplexType, 2> work(8, nwalk);
   auto weight = work(0, all);
   auto pseudo_eloc = work(1, all);
   auto ovlp = work(2, all);
@@ -124,16 +124,10 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
   auto new_ovlp = work(4, all);
   auto mf_factor = work(5, all);
   auto hyb_weight = work(6, all);
-  auto phase1 = work(7, all);
-  auto phase2 = work(8, all);
-  auto phase3 = work(9, all);
-  auto theta = work(10, all);
+  auto theta = work(7, all);
   w.getProperty(WEIGHT, weight);
   w.getProperty(PSEUDO_ELOC_, pseudo_eloc);
   w.getProperty(OVLP, ovlp);
-  w.getProperty(PHASE1, phase1);
-  w.getProperty(PHASE2, phase2);
-  w.getProperty(PHASE3, phase3);
   new_ovlp = overlap(rng);
   mf_factor = meanfield_factor(rng);
   hyb_weight = hybrid_weight(rng);
@@ -205,18 +199,10 @@ void hybrid_walker_update(Wlk &w, RealType dt, bool apply_constraint,
     }
     else
       weight_factor(i) = 0.0;
-    phase1(i) *= weight_factor(i);
-    phase2(i) = new_ovlp(i);
-    phase3(i) =
-        scale; // KE: this was originally the cumulative product of "scale"
-               //    changed to just "scale" since this isn't used anywhere
   }
   w.setProperty(WEIGHT, weight);
   w.setProperty(PSEUDO_ELOC_, pseudo_eloc);
   w.setProperty(OVLP, ovlp);
-  w.setProperty(PHASE1, phase1);
-  w.setProperty(PHASE2, phase2);
-  w.setProperty(PHASE3, phase3);
   w.setProperty(THETA, theta);
   if (BackProp) {
     auto pos = w.getHistoryPos();
@@ -277,6 +263,7 @@ void local_energy_walker_update(Wlk &w, RealType dt, bool apply_constraint,
 
     if (!std::isfinite((ratioOverlaps * mf_factor(i)).real()) &&
         apply_constraint) {
+      theta(i) = 0;
       scale = 0.0;
       eloc = old_eloc;
     } else {
