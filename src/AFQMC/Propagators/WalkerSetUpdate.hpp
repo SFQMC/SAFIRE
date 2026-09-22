@@ -71,8 +71,8 @@ void free_projection_walker_update(Wlk &w, RealType dt,
     ComplexType old_eloc = pseudo_eloc(i);
     ComplexType eloc;
     ComplexType ratioOverlaps = ComplexType(1.0, 0.0);
-    eloc = mf_factor(i) / dt + energy_offset;
-    ComplexType factor = std::exp(-dt * (0.5 * (eloc + old_eloc) - Eshift));
+    eloc = (mf_factor(i) - new_ovlp(i) + old_ovlp)/dt + energy_offset;
+    ComplexType factor = std::exp(-dt * (eloc - Eshift));
 
     if (debug_verbosity) {
       std::cout << " update: iw:       " << i << "\n"
@@ -89,7 +89,7 @@ void free_projection_walker_update(Wlk &w, RealType dt,
                 << std::endl;
     }
 
-    weight(i) *= std::abs(factor);
+    weight(i) *= factor;
     phase(i) *= factor / std::abs(factor);
     pseudo_eloc(i) = eloc;
     ovlp(i) = new_ovlp(i);

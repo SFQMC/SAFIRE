@@ -20,7 +20,6 @@
 #include <cassert>
 #include <memory>
 #include <span>
-#include <stack>
 #include <utility>
 #include <mpi.h>
 #include "AFQMC/config.h"

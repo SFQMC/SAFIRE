@@ -21,13 +21,13 @@ namespace sfqmc::afqmc
  * The host path drives construct_X_impl over (iw,m) itself; here the loop is the kernel, so all
  * this does is hand the arrays across the nvcc boundary.
  */
-void construct_X(bool zero, bool fp, double vbias_bound,
+void construct_X(bool project_vbias, bool free_projection, double vbias_bound,
                  nda::MemoryVector auto const& FT, nda::MemoryVector auto const& vMF,
                  nda::MemoryVector auto&& HW,
                  nda::MemoryMatrix auto const& RN, nda::MemoryMatrix auto&& X)
 {
   using kernels::device::to_view;
-  kernels::device::construct_X(zero, fp, vbias_bound, to_view(FT), to_view(vMF),
+  kernels::device::construct_X(project_vbias, free_projection, vbias_bound, to_view(FT), to_view(vMF),
                                to_view(HW), to_view(RN), to_view(X));
 }
 

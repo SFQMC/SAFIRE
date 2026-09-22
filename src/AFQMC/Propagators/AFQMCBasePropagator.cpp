@@ -252,16 +252,14 @@ void AFQMCBasePropagator<MEM>::Propagate(WalkerSet<MEM>& wset, RealType Eshift, 
 
   memory::buffered_array<MEM,ComplexType,2> X(nwalk, nCV);
   // 1. Calculate vbias for initial configuration
-  if (free_projection)
-  {
+  if(free_projection) {
     X() = ComplexType(0.0);
-  }
-  else
-  {
-    if(!ft)
+  } else {
+    if(!ft) {
       wfn->vbias(wset, X, dt);
-    else
+    } else {
       wfn->vbias(wset, X, dt, nt-1);
+    }
   }
 
   // 2. Assemble X(nwalk, nCV)
@@ -312,22 +310,19 @@ void AFQMCBasePropagator<MEM>::Propagate(WalkerSet<MEM>& wset, RealType Eshift, 
 
   // 6. update weights/energy/etc, apply constrains/bounds/etc
   auto extra_time = timers.extra.start();
-  if (free_projection)
-  {
+  if (free_projection) {
     free_projection_walker_update(wset, dt, new_overlaps, XvMF, Eshift, wfn->energy_offset(),
                                   hybrid_weight,debug_verbosity);
-  }
-  else if (hybrid)
-  {
-    hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift,
-                         wfn->energy_offset(), new_overlaps, XvMF,
-                         hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, debug_verbosity,
-                         use_cp_constraint, eloc_bound_stats);
-  }
-  else
-  {
-    local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies, XvMF,
-                               lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
+  } else {
+    if (hybrid) {
+      hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift,
+                           wfn->energy_offset(), new_overlaps, XvMF,
+                           hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, debug_verbosity,
+                           use_cp_constraint, eloc_bound_stats);
+    } else {
+      local_energy_walker_update(wset, dt, apply_constraint, Eshift, new_overlaps, new_energies, XvMF,
+                                 lower_cutoff_scale, upper_cutoff_scale, eloc_bound_stats);
+    }
   }
 
   // 7. bound the weights, so that no single walker can dominate the population before the
@@ -668,11 +663,6 @@ void AFQMCBasePropagator<MEM>::assemble_X(memory::array_view<MEM,ComplexType,2> 
     rng->sampleUniformFields(nda::flatten(RNGbuff));
   }
 
-  if(free_projection) {
-    for(auto fp : FieldTypes) {
-      utils::check(fp != DiscreteChargePropagator && fp != DiscreteSpinPropagator, "Finish FP DiscretePropagator");
-    }
-  }
 
   // The mean-field subtraction splits 0.5*sum_n v_n^2 into 0.5*sum_n (v_n - vMF_n)^2 (applied by
   // vHS) plus sum_n vMF_n*v_n (folded into the 1-body propagator) minus the c-number
@@ -683,7 +673,7 @@ void AFQMCBasePropagator<MEM>::assemble_X(memory::array_view<MEM,ComplexType,2> 
 
   if constexpr (MEM==DEVICE_MEMORY) {
 #if defined(ENABLE_DEVICE)
-    construct_X(use_cp_constraint or project_force_bias,free_projection, vbias_bound, FieldTypes_dev, vMF, HWs, RNGbuff, X);
+    construct_X(use_cp_constraint or project_force_bias, free_projection, vbias_bound, FieldTypes_dev, vMF, HWs, RNGbuff, X);
 #endif
   } else {
     detail::construct_X_impl f{use_cp_constraint || project_force_bias, free_projection, vbias_bound, FieldTypes, vMF(), HWs(), RNGbuff(), X()};
@@ -698,16 +688,8 @@ void AFQMCBasePropagator<MEM>::assemble_X(memory::array_view<MEM,ComplexType,2> 
 template<MEMORY_SPACE MEM>
 void AFQMCBasePropagator<MEM>::Orthogonalize(WalkerSet<MEM>& wset)
 {
-  if(excitedState)
-  {
-    utils::check(false, "finish");
-    utils::check(importance_sampling,"Error: Excited state propagator only implemented with importance sampling. ");
-  }
-  else
-  {
-    memory::buffered_array<MEM,ComplexType,1> ldet(wset.size(),ComplexType(0.));
-    det_ops::orthogonalize(wset,ldet,importance_sampling);
-  }
+  memory::buffered_array<MEM,ComplexType,1> ldet(wset.size(),0.0);
+  det_ops::orthogonalize(wset,ldet);
   wfn->Log_Overlap(wset);
 }
 
