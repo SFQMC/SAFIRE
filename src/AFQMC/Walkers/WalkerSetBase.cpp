@@ -600,24 +600,25 @@ void WalkerSetBase<MEM>::branch(std::span<std::pair<double, int>> counts,
   int cnt = 0;
   // circular buffer
   int his_pos = ((history_pos == 0) ? wlk_desc[6] - 1 : history_pos - 1);
+  // The branching algorithms decide on |w| alone, so they hand back a real weight. Restore the
+  // phase of the walker that survived, which is still in walker_buffer from before the branch;
+  // without it free projection would lose the walker phases at every population control event.
+  memory::buffered_array<HOST_MEMORY, ComplexType, 1> old_weight(tot_num_walkers);
+  getProperty(WEIGHT, old_weight);
   for (; itbegin != itend; ++itbegin, ++pos)
   {
-    if (itbegin->second <= 0)
-    {
-      utils::check(false,"Error in WalkerSetBase::branch(): Problems during branch.");
-    }
-    else if (itbegin->second == 1)
-    {
-      nda::tensor::set(ComplexType(itbegin->first, 0.0),walker_buffer(pos,nda::range(data_displ[WEIGHT],data_displ[WEIGHT]+1)));
-      if (wlk_desc[6] > 0 && his_pos >= 0 && his_pos < wlk_desc[6])
-        nda::tensor::set(ComplexType(itbegin->first, 0.0),bp_buffer(nda::range(pos,pos+1),data_displ[WEIGHT_HISTORY] + his_pos));
-    }
-    else
+    utils::check(itbegin->second > 0, "Error in WalkerSetBase::branch(): Problems during branch.");
+
+    RealType abs_w = std::abs(old_weight(pos));
+    ComplexType w  = (abs_w > 0.0 ? itbegin->first * old_weight(pos) / abs_w
+                                  : ComplexType(itbegin->first, 0.0));
+    nda::tensor::set(w,walker_buffer(pos,nda::range(data_displ[WEIGHT],data_displ[WEIGHT]+1)));
+    if (wlk_desc[6] > 0 && his_pos >= 0 && his_pos < wlk_desc[6])
+      nda::tensor::set(w,bp_buffer(nda::range(pos,pos+1),data_displ[WEIGHT_HISTORY] + his_pos));
+
+    if (itbegin->second > 1)
     {
       int n = std::min(targetN_per_rank - tot_num_walkers, itbegin->second - 1);
-      nda::tensor::set(ComplexType(itbegin->first, 0.0),walker_buffer(pos,nda::range(data_displ[WEIGHT],data_displ[WEIGHT]+1)));
-      if (wlk_desc[6] > 0 && his_pos >= 0 && his_pos < wlk_desc[6])
-        nda::tensor::set(ComplexType(itbegin->first, 0.0),bp_buffer(nda::range(pos,pos+1),data_displ[WEIGHT_HISTORY] + his_pos));
       for (int i = 0; i < n; i++)
       {
         walker_buffer(tot_num_walkers,all) = walker_buffer(pos,all);

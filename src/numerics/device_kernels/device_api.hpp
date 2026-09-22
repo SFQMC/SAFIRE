@@ -159,7 +159,8 @@ void splitDmatrix(view<std::complex<double> const, 2> A, view<std::complex<doubl
                   view<std::complex<double> const, 1> scl);
 
 // construct_fields.cu
-void construct_X(bool zero, bool fp, double vbias_bound, view<int const, 1> FieldTypes,
+void construct_X(bool project_vbias, bool free_projection, double vbias_bound,
+                 view<int const, 1> FieldTypes,
                  view<std::complex<double> const, 1> vMF,
                  view<std::complex<double>, 1> hybrid_weight, view<double const, 2> RN,
                  view<std::complex<double>, 2> X);

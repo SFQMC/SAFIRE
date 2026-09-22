@@ -387,7 +387,8 @@ public:
 
   // given a list of new weights and counts, add/remove walkers and reassign weight accordingly.
   // counts is one {weight, multiplicity} entry per local walker and is reordered in place;
-  // walkers beyond the target population are written to M.
+  // walkers beyond the target population are written to M. The new weights are magnitudes, so
+  // each walker keeps the phase it had before the branch.
   void branch(std::span<std::pair<double, int>> counts,
               memory::array_view<MEM, ComplexType, 2> M);
 
