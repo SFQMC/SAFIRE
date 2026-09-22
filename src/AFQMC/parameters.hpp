@@ -79,8 +79,8 @@ SAFIRE_DEFINE_PARAMETERS(HamiltonianParameters, name, filename, max_memory, shif
 struct PropagatorParameters {
   std::string name{};
 
-  // The optionals below default to 50.0, 10.0, 1.0, true, true, except for a ModelHamiltonian,
-  // where they default to 100.0, 50.0, 50.0, false, false. resolve_defaults fills them in.
+  // The optionals below default to 50.0, 10.0, 1.0, true, except for a ModelHamiltonian,
+  // where they default to 100.0, 50.0, 50.0, false. resolve_defaults fills them in.
   int taylor_n{6};
   std::optional<double> vbias_bound{};
   std::optional<double> upper_cutoff_scale{};
@@ -89,7 +89,6 @@ struct PropagatorParameters {
   // is the global target population, i.e. the total weight the population is rescaled to.
   double weight_bound_floor{100.0};
   double weight_bound_fraction{0.1};
-  bool apply_constraint{true};
   bool subtractMF{true};
   bool hybrid{true};
   bool printP1eigval{false};
@@ -103,7 +102,7 @@ struct PropagatorParameters {
 };
 SAFIRE_DEFINE_PARAMETERS(PropagatorParameters, name, taylor_n, vbias_bound, upper_cutoff_scale,
                          lower_cutoff_scale, weight_bound_floor, weight_bound_fraction,
-                         apply_constraint, subtractMF, hybrid,
+                         subtractMF, hybrid,
                          printP1eigval, free_projection, denseP1, denseP2, debug_verbosity, natural_shift,
                          use_cp_constraint, project_force_bias);
 
