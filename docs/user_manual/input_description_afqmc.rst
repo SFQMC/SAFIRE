@@ -522,7 +522,6 @@ Settings
     "weight_bound_floor": 100.0,
     "weight_bound_fraction": 0.1,
     "apply_constraint": true,
-    "importance_sampling": true,
     "subtractMF": true,
     "hybrid": true,
     "printP1eigval": false,
@@ -565,9 +564,6 @@ Settings
    * - **apply_constraint**
      - true
      - Whether to apply constraints during propagation
-   * - **importance_sampling**
-     - true
-     - Whether to use importance sampling
    * - **subtractMF**
      - true
      - Whether to subtract mean field contribution
@@ -600,7 +596,6 @@ Settings
       "weight_bound_floor": 100.0,
       "weight_bound_fraction": 0.1,
       "apply_constraint": true,
-      "importance_sampling": true,
       "subtractMF": true,
       "hybrid": true,
       "printP1eigval": false,
@@ -654,9 +649,6 @@ Settings
     * - **apply_constraint**
       - true
       - Whether to apply constraints during propagation
-    * - **importance_sampling**
-      - true
-      - Whether to use importance sampling
     * - **subtractMF**
       - true
       - Whether to subtract mean field contribution

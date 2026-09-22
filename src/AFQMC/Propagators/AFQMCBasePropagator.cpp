@@ -315,7 +315,7 @@ void AFQMCBasePropagator<MEM>::Propagate(WalkerSet<MEM>& wset, RealType Eshift, 
                                   hybrid_weight,debug_verbosity);
   } else {
     if (hybrid) {
-      hybrid_walker_update(wset, dt, apply_constraint, importance_sampling, Eshift,
+      hybrid_walker_update(wset, dt, apply_constraint, Eshift,
                            wfn->energy_offset(), new_overlaps, XvMF,
                            hybrid_weight, lower_cutoff_scale, upper_cutoff_scale, debug_verbosity,
                            use_cp_constraint, eloc_bound_stats);
