@@ -437,6 +437,14 @@ public:
     walker_buffer(n,range(walkerSizeIO())) = x(range(walkerSizeIO()));
   }
 
+  /*
+   * Writable view of one scalar property across the population. Properties are columns of
+   * walker_buffer, so the view is strided by the walker size and lives in MEM.
+   */
+  auto getProperty(walker_data id) {
+    return walker_buffer(nda::range(tot_num_walkers), data_displ[id]);
+  }
+
   template<typename Arr>
   void getProperty(walker_data id, Arr&& v) const
   //void getProperty(walker_data id, nda::MemoryArrayOfRank<1> auto&& v) const
