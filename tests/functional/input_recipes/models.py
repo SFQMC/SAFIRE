@@ -29,8 +29,6 @@ import numpy as np
 from . import BuildContext, Recipe
 from ._common import ASSETS, copy_groups
 
-FINITE_T_ASSETS = ASSETS / "finiteT"
-
 # The free-electron trial is written straight from the one-body term, so the
 # twist is what keeps it from being degenerate at a closed shell. afqmctools
 # picks a small irrational twist by default and that is what the committed
@@ -365,49 +363,6 @@ def build_rashba_soc(ctx: BuildContext) -> None:
 
 
 # ============================================================================
-# 2x2 Hubbard at finite temperature (C++ unit tests only)
-# ============================================================================
-
-# On a 2x2 periodic lattice each pair of sites is connected twice (both
-# directions wrap), so the builder sums the two bonds and t = 1 gives the
-# hopping amplitude of -2 stored in the committed file.
-HUBBARD_2X2 = {
-    "hamiltonian": {"t": 1.0, "U": 4.0},
-    "lattice": {"L1": 2, "L2": 2, "boundary1": "PBC", "boundary2": "PBC"},
-    "misc_params": {"nelec": (2, 2)},
-}
-
-
-def build_hubbard_2x2_finite_t(ctx: BuildContext) -> None:
-    """Hamiltonian for the finite-temperature C++ unit test fixture.
-
-    Only the hamiltonian is computed. Two pieces of this directory have no
-    generator anywhere in this repository, so they are checked in under
-    ``assets/finiteT/`` and grafted on here:
-
-    - ``wfn_collinear.h5``, a thermal propagator factorisation
-      (UL/UR, VL/VR, DL/DR blocks) in a format afqmctools does not write.
-    - the ``TEST_RESULTS`` group inside ``ham_collinear.h5``, holding the
-      expected E1/EJ/EXX/VHS/vbias arrays the unit test asserts against.
-
-    Copying ``TEST_RESULTS`` onto a freshly computed hamiltonian is only sound
-    while that hamiltonian still matches the one the numbers were computed
-    from, so run this recipe and read its diff before trusting a rebuild.
-    """
-    from afqmctools.utils.types import SpinSymm
-
-    hamiltonian = ctx.out_dir / "ham_collinear.h5"
-    _write_model_hamiltonian(HUBBARD_2X2, hamiltonian,
-                             spin_symm=SpinSymm.COLLINEAR,
-                             nelec=HUBBARD_2X2["misc_params"]["nelec"],
-                             verbose=ctx.verbose)
-
-    copy_groups(FINITE_T_ASSETS / "test_results.h5", hamiltonian, ["TEST_RESULTS"])
-    shutil.copy(FINITE_T_ASSETS / "wfn_collinear.h5",
-                ctx.out_dir / "wfn_collinear.h5")
-
-
-# ============================================================================
 # Registry
 # ============================================================================
 
@@ -420,7 +375,4 @@ def recipes() -> List[Recipe]:
                build=build_hubbard_kanamori),
         Recipe(key="rashba_soc", data_dir="rashba_soc",
                build=build_rashba_soc),
-        Recipe(key="hubbard_2x2_finite_t",
-               data_dir="square_2x2_hubbard_Beta3_nt100",
-               build=build_hubbard_2x2_finite_t),
     ]
