@@ -32,7 +32,6 @@ import numpy as np
 import h5py as h5
 
 from safiretools.hamiltonian.base import (
-    HAMILTONIAN_GROUP,
     Hamiltonian,
     read_hamiltonian_header,
     write_hamiltonian_header,
@@ -91,13 +90,13 @@ class MolecularHamiltonian(Hamiltonian):
 
     @property
     def nspin(self) -> int:
-        """2 for a collinear Hamiltonian (independent spin sectors), else 1."""
-        return 2 if self.spin_symm is SpinSymm.COLLINEAR else 1
+        """Number of independent spin sectors; see `SpinSymm.nspin`."""
+        return self.spin_symm.nspin
 
     @property
     def npol(self) -> int:
-        """2 for a noncollinear Hamiltonian (spin-orbital basis), else 1."""
-        return 2 if self.spin_symm is SpinSymm.NONCOLLINEAR else 1
+        """2 for a spin-orbital basis; see `SpinSymm.npol`."""
+        return self.spin_symm.npol
 
     @property
     def nmo(self) -> int:
@@ -232,7 +231,7 @@ class MolecularHamiltonian(Hamiltonian):
             `ortho_ao` are combined, or if the Hamiltonian is noncollinear but
             `spin_symm` says otherwise.
         """
-        from safiretools.convert.pyscf import as_scf_data
+        from safiretools.convert.pyscf import as_scf_data, working_basis
 
         scf_data = as_scf_data(source)
 
@@ -244,7 +243,7 @@ class MolecularHamiltonian(Hamiltonian):
         mol = scf_data['mol']
         df_ints = scf_data.get('df_ints', None)
 
-        X, (nfzc, nfzv) = _get_transform_from_scf_data(scf_data, ortho_ao, cas)
+        X, (nfzc, nfzv) = working_basis(scf_data, ortho_ao, cas)
         nbasis = X.shape[-1]
 
         if hcore.shape == (2 * X.shape[0], 2 * X.shape[0]):
@@ -373,7 +372,7 @@ class MolecularHamiltonian(Hamiltonian):
         complex_hcore = bool(np.any(np.iscomplex(self.hcore)))
 
         with h5.File(path, 'a') as fh5:
-            group = replace_group(fh5, HAMILTONIAN_GROUP)
+            group = replace_group(fh5, 'Hamiltonian')
             write_hamiltonian_header(group, 'dense', nmo=self.nmo, enuc=self.enuc,
                                      nchol=self.nchol)
             group.create_dataset('ComplexIntegrals',
@@ -467,7 +466,7 @@ class MolecularHamiltonian(Hamiltonian):
         so nothing has to be guessed here.
         """
         with h5.File(path, 'r') as fh5:
-            group = fh5[HAMILTONIAN_GROUP]
+            group = fh5['Hamiltonian']
             *_, enuc = read_hamiltonian_header(group)
             chol = read_complex(group['DenseFactorized/L'])
             hcore = read_complex(group['hcore'])
@@ -515,8 +514,7 @@ def spin_blocked_hcore(hcore, spin_symm: SpinSymm):
     """
     hcore = np.asarray(hcore)
     given = hcore.shape
-    nspin = 2 if spin_symm is SpinSymm.COLLINEAR else 1
-    npol = 2 if spin_symm is SpinSymm.NONCOLLINEAR else 1
+    nspin, npol = spin_symm.nspin, spin_symm.npol
 
     if hcore.ndim == 2:
         hcore = np.stack([hcore] * nspin)
@@ -734,48 +732,6 @@ def transform_cholesky(chol, C):
         chol_[i * nik:(i + 1) * nik] = np.dot(C.T, half).ravel()
 
     return chol_[:nchol * nik].reshape((nchol, nik))
-
-
-def _get_transform_from_scf_data(scf_data, ortho_ao, cas=None):
-    """
-    Choose the working basis and the frozen-orbital counts from a PySCF
-    checkpoint.
-
-    Returns
-    -------
-    C : numpy.ndarray
-        Transformation into the working basis.
-    (nfzc, nfzv) : tuple(int, int)
-        Numbers of frozen core and virtual orbitals.
-
-    Raises
-    ------
-    ValueError
-        If `cas` is combined with `ortho_ao`, or if the reference is UHF/GHF and
-        `ortho_ao` is not set.
-    """
-    C = scf_data['mo_coeff']
-
-    if ortho_ao:
-        if cas is not None:
-            raise ValueError("cas and ortho_ao cannot be used at the same time")
-        return scf_data['X'], (0, 0)
-
-    if C.ndim == 3 or C.shape[0] == 2 * scf_data["norb"]:
-        raise ValueError(
-            "UHF or GHF molecular orbital bases are not supported. Use ortho_ao."
-        )
-
-    if cas is None:
-        return C, (0, 0)
-
-    nfzc = (sum(scf_data["nelec"]) - cas[0]) // 2
-    ncas = cas[1]
-    nmo = C.shape[-1]
-    if ncas == -1:
-        ncas = nmo - nfzc
-
-    return C, (nfzc, nmo - ncas - nfzc)
 
 
 def freeze_core(h1e, chol, ecore, nc, ncas, verbose=True):

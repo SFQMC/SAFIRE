@@ -27,12 +27,6 @@ import numpy as np
 
 from safiretools.types import HamiltonianFormat, SpinSymm
 
-HAMILTONIAN_GROUP = 'Hamiltonian'
-"""Top-level HDF5 group every Hamiltonian format writes into."""
-
-TYPE_DATASET = f'{HAMILTONIAN_GROUP}/type'
-"""Dataset a writer records its on-disk format in; see `write_hamiltonian_header`."""
-
 
 def write_hamiltonian_header(group, fmt, nmo, enuc=0.0, nkpts=0, nchol=0) -> None:
     """
@@ -96,11 +90,11 @@ def hamiltonian_format(path) -> str:
     inferred from which datasets are present — see `_format_from_layout`.
     """
     with h5.File(path, 'r') as fh5:
-        if TYPE_DATASET not in fh5:
+        if 'Hamiltonian/type' not in fh5:
             return _format_from_layout(fh5, path)
 
         try:
-            return HamiltonianFormat.from_tag(fh5[TYPE_DATASET].asstr()[()])
+            return HamiltonianFormat.from_tag(fh5['Hamiltonian/type'].asstr()[()])
         except ValueError as error:
             raise ValueError(f"'{path}' records an {error}") from None
 
@@ -110,7 +104,7 @@ def _format_from_layout(fh5, path) -> "HamiltonianFormat":
     Infer the format of a file that records none from the datasets it holds.
 
     What `hamiltonian_format` did for every file before writers began recording
-    `TYPE_DATASET`, and still the only way to identify one written back then.
+    ``Hamiltonian/type``, and still the only way to identify one written back then.
     """
     if 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5:
         return HamiltonianFormat.MODEL

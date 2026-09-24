@@ -40,6 +40,7 @@ the already-visited pivots are indexed; the factorization loop itself is shared.
           production-sized solids**; see DESIGN.md.
 """
 
+import itertools
 import logging
 import math
 import time
@@ -49,22 +50,22 @@ import numpy as np
 import h5py as h5
 
 from safiretools.hamiltonian.base import (
-    HAMILTONIAN_GROUP,
     Hamiltonian,
     read_hamiltonian_header,
     write_hamiltonian_header,
 )
+from safiretools.convert.pyscf import canonical_orthogonalization
 from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
 from safiretools.hdf5 import read_complex, replace_group
 from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
 
-KPOINT_GROUP = 'Hamiltonian/KPFactorized'
-"""Group the k-point-symmetric factorization is written under."""
+_GRID_SHIFTS = tuple(itertools.product(range(-1, 2), repeat=3))
+"""The reciprocal-lattice shifts searched, all of (-1, 0, 1)^3, in the order
+`generate_grid_shifts` numbers them."""
 
-_NUM_GRID_SHIFTS = 27
-"""Number of reciprocal-lattice shifts searched: all of (-1, 0, 1)^3."""
+_NUM_GRID_SHIFTS = len(_GRID_SHIFTS)
 
 
 # ----------------------------------------------------------------------
@@ -107,8 +108,7 @@ def construct_qk_maps(cell, kpts):
     kminus = np.zeros((nkpts,), dtype=np.int32) - 1
 
     kvecs = cell.reciprocal_vectors()
-    shifts = [np.dot(np.array([i, j, k]), kvecs)
-              for i in range(-1, 2) for j in range(-1, 2) for k in range(-1, 2)]
+    shifts = [np.dot(shift, kvecs) for shift in _GRID_SHIFTS]
 
     for iq, Q in enumerate(Qpts):
         for ia, ka in enumerate(kpts):
@@ -164,9 +164,7 @@ def generate_grid_shifts(cell):
     Qi = np.zeros((_NUM_GRID_SHIFTS, 3), dtype=np.float64)
 
     kvecs = cell.reciprocal_vectors()
-    for ii, (nx, ny, nz) in enumerate(
-            (nx, ny, nz)
-            for nx in range(-1, 2) for ny in range(-1, 2) for nz in range(-1, 2)):
+    for ii, (nx, ny, nz) in enumerate(_GRID_SHIFTS):
         Qi[ii, :] = np.dot(np.array([nx, ny, nz]), kvecs)
         gmap[ii, :] = np.roll(g1, (-nx, -ny, -nz), axis=(0, 1, 2)).reshape(-1, order='C')
 
@@ -205,10 +203,9 @@ def get_ortho_ao(cell, kpts, lindep_cutoff=0.0):
     nmo_per_kpt = np.zeros(nkpts, dtype=np.int32)
 
     for k in range(nkpts):
-        sdiag, Us = np.linalg.eigh(s1e[k])
-        keep = sdiag > lindep_cutoff
-        nmo_per_kpt[k] = keep.sum()
-        X[k, :, 0:nmo_per_kpt[k]] = Us[:, keep] / np.sqrt(sdiag[keep])
+        Xk = canonical_orthogonalization(s1e[k], lindep_cutoff)
+        nmo_per_kpt[k] = Xk.shape[1]
+        X[k, :, :nmo_per_kpt[k]] = Xk
 
     return X, nmo_per_kpt
 
@@ -735,7 +732,7 @@ class PeriodicHamiltonian(Hamiltonian):
             wavefunction can share one file in either order.
         """
         with h5.File(path, 'a') as fh5:
-            group = replace_group(fh5, HAMILTONIAN_GROUP)
+            group = replace_group(fh5, 'Hamiltonian')
             write_hamiltonian_header(group, 'kpoint', nmo=int(np.sum(self.nmo_pk)),
                                      enuc=self.enuc, nkpts=self.nkpts)
             group.create_dataset("ComplexIntegrals", data=np.array([1], dtype=np.int32))
@@ -748,7 +745,7 @@ class PeriodicHamiltonian(Hamiltonian):
 
             group.create_dataset("NCholPerKP", data=self.nchol_pk)
 
-            kp_group = fh5.create_group(KPOINT_GROUP)
+            kp_group = group.create_group('KPFactorized')
             for Q, L in self.chol.items():
                 kp_group.create_dataset(f"L{Q}", data=L)
 
@@ -877,7 +874,7 @@ class PeriodicHamiltonian(Hamiltonian):
     def _read_hdf5(cls, path, fmt: str) -> "PeriodicHamiltonian":
         """Read a periodic Hamiltonian written by `to_hdf5`."""
         with h5.File(path, 'r') as fh5:
-            group = fh5[HAMILTONIAN_GROUP]
+            group = fh5['Hamiltonian']
             nkpts, _, _, enuc = read_hamiltonian_header(group)
 
             kpts = group['KPoints'][...]
@@ -887,8 +884,9 @@ class PeriodicHamiltonian(Hamiltonian):
             nchol_pk = group['NCholPerKP'][...]
 
             hcore = [read_complex(group[f'H1_kp{ki}']) for ki in range(nkpts)]
-            chol = {Q: read_complex(fh5[f'{KPOINT_GROUP}/L{Q}'])
-                    for Q in range(nkpts) if f'L{Q}' in fh5[KPOINT_GROUP]}
+            kp_group = group['KPFactorized']
+            chol = {Q: read_complex(kp_group[f'L{Q}'])
+                    for Q in range(nkpts) if f'L{Q}' in kp_group}
 
         return cls(hcore=hcore, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
                    qk_to_k2=qk_to_k2, minus_k=minus_k, nchol_pk=nchol_pk,
