@@ -73,14 +73,13 @@ class MolecularHamiltonian(Hamiltonian):
         discards any imaginary part of the Cholesky matrix.
     """
 
-    def __init__(self, hcore, chol, enuc=0.0, nelec=(0, 0),
+    def __init__(self, hcore, chol, enuc=0.0,
                  spin_symm=SpinSymm.CLOSED, ortho=None, real_chol=None) -> None:
         super().__init__(spin_symm=spin_symm)
 
         self.hcore = spin_blocked_hcore(hcore, self.spin_symm)
         self.chol = np.asarray(chol)
         self.enuc = float(np.real(enuc))
-        self.nelec = tuple(nelec)
         self.ortho = ortho
         self.real_chol = real_chol
 
@@ -134,7 +133,7 @@ class MolecularHamiltonian(Hamiltonian):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_integrals(cls, hcore, chol=None, eri=None, enuc=0.0, nelec=(0, 0),
+    def from_integrals(cls, hcore, chol=None, eri=None, enuc=0.0,
                        spin_symm=SpinSymm.CLOSED, cholesky_tol=1e-6,
                        verbose=False) -> "MolecularHamiltonian":
         r"""
@@ -153,8 +152,6 @@ class MolecularHamiltonian(Hamiltonian):
             ``(nmo, nmo, nmo, nmo)``. Decomposed here if given.
         enuc : float, optional
             Constant energy contribution. Default 0.0.
-        nelec : tuple(int, int), optional
-            ``(nup, ndown)``. Default ``(0, 0)``.
         spin_symm : SpinSymm or str or int, optional
             Spin symmetry. Default `SpinSymm.CLOSED`.
         cholesky_tol : float, optional
@@ -192,8 +189,7 @@ class MolecularHamiltonian(Hamiltonian):
             )
 
         # go from L_{gamma,(ij)} to L_{(ij),gamma}
-        return cls(hcore=hcore, chol=chol.T, enuc=enuc, nelec=nelec,
-                   spin_symm=spin_symm)
+        return cls(hcore=hcore, chol=chol.T, enuc=enuc, spin_symm=spin_symm)
 
     @classmethod
     def from_pyscf(cls, source, chol_cut=1e-5, cas=None, ortho_ao=False,
@@ -284,7 +280,6 @@ class MolecularHamiltonian(Hamiltonian):
         logger.info("time to orthogonalise: %s s", time.time() - start)
 
         enuc = mol.energy_nuc()
-        nelec = mol.nelec
 
         if (nfzc, nfzv) != (0, 0):
             h1e, chol_trans, enuc = freeze_core(
@@ -295,7 +290,6 @@ class MolecularHamiltonian(Hamiltonian):
             hcore=h1e,
             chol=chol_trans.T,   # want L_{(ij),gamma}
             enuc=enuc,
-            nelec=nelec,
             spin_symm=spin_symm,
             ortho=X[:, nfzc:nbasis - nfzv],
             real_chol=real_chol,
@@ -311,7 +305,7 @@ class MolecularHamiltonian(Hamiltonian):
         factorized, so they are Cholesky-decomposed here, as
         `from_integrals` does for an `eri` tensor.
 
-        The file's ``NELEC``/``MS2`` header fields supply `nelec`, and the
+        The file's ``MS2`` header field decides the spin symmetry, and the
         integrals are reoriented from FCIDUMP's :math:`(ik|jl)` to the
         :math:`\{(ik), (lj)\}` pair order the decomposition needs.
 
@@ -355,7 +349,7 @@ class MolecularHamiltonian(Hamiltonian):
             spin_symm = (SpinSymm.CLOSED if nelec[0] == nelec[1]
                          else SpinSymm.COLLINEAR)
 
-        return cls.from_integrals(hcore=hcore, eri=eri, enuc=enuc, nelec=nelec,
+        return cls.from_integrals(hcore=hcore, eri=eri, enuc=enuc,
                                   spin_symm=spin_symm, cholesky_tol=cholesky_tol,
                                   verbose=verbose)
 
@@ -381,15 +375,13 @@ class MolecularHamiltonian(Hamiltonian):
                 fh5,
                 hcore=self.hcore,
                 chol=self.chol,
-                nelec=self.nelec,
-                nmo=self.nmo,
                 enuc=self.enuc,
                 complex_chol=self.complex_chol,
                 ortho=self.ortho,
             )
 
-    def to_fcidump(self, path, tol=1e-8, ctol=1e-12, sym=1, cplx=True,
-                   paren=False, use_spinor=False) -> None:
+    def to_fcidump(self, path, nelec=(0, 0), tol=1e-8, ctol=1e-12, sym=1,
+                   cplx=True, paren=False, use_spinor=False) -> None:
         """
         Write this Hamiltonian as a plain-text FCIDUMP file.
 
@@ -401,6 +393,10 @@ class MolecularHamiltonian(Hamiltonian):
         ----------
         path : str or pathlib.Path
             FCIDUMP file to write. Overwritten if it exists.
+        nelec : tuple(int, int), optional
+            ``(nup, ndown)`` for the ``NELEC``/``MS2`` header fields. The
+            Hamiltonian itself does not carry an electron count, so it is
+            supplied here. Default ``(0, 0)``.
         tol : float, optional
             Only write integrals above this magnitude. Default 1e-8.
         ctol : float, optional
@@ -451,7 +447,7 @@ class MolecularHamiltonian(Hamiltonian):
                 "spin-orbital one"
             )
 
-        write_fcidump(path, self.hcore, self.chol, self.enuc, nbasis, self.nelec,
+        write_fcidump(path, hcore, self.chol, self.enuc, nbasis, nelec,
                       tol=tol, ctol=ctol, sym=sym, cplx=cplx, paren=paren,
                       use_spinor=use_spinor)
 
@@ -550,10 +546,6 @@ def write_dense_hamiltonian(fh5, hcore, chol, enuc=0.0,
         One-body Hamiltonian, ``(nspin, npol, nmo, npol, nmo)``.
     chol : numpy.ndarray
         Cholesky matrix :math:`L_{(ij),\gamma}`.
-    nelec : tuple(int, int)
-        ``(nup, ndown)``.
-    nmo : int
-        Number of orbitals.
     enuc : float, optional
         Constant energy. Default 0.0.
     complex_chol : bool, optional
@@ -632,8 +624,6 @@ def read_dense_hamiltonian(path):
                 f"Hamiltonian/dims in {path} has length {len(dims)}, expected 8"
             )
 
-        nmo = int(dims[3])
-        nelec = (int(dims[4]), int(dims[5]))
         enuc = float(fh5['Hamiltonian/Energies'][...][0])
 
         chol = read_complex(fh5[CHOLESKY_DATASET])

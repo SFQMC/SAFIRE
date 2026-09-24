@@ -178,7 +178,7 @@ class TestWritingPreservesTheRestOfTheFile:
     def _hamiltonian(**kwargs):
         return LatticeHamiltonian.from_dict({
             'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
-            'hamiltonian': dict(t=1.0, nelec=(2, 2), **kwargs),
+            'hamiltonian': dict(t=1.0, **kwargs),
         })
 
     def test_a_wavefunction_written_first_survives(self, tmp_path):

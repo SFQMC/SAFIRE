@@ -155,8 +155,6 @@ class LatticeHamiltonian(Hamiltonian):
         Number of bands per site. Default 1.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry of the Hamiltonian. Default `SpinSymm.CLOSED`.
-    nelec : tuple(int, int), optional
-        ``(nup, ndown)``, written into the file's ``dims``. Default ``(0, 0)``.
     twist : optional
         Twist passed through to the lattice when building hopping terms.
     lattice_metadata : dict, optional
@@ -174,7 +172,6 @@ class LatticeHamiltonian(Hamiltonian):
             nsites: int,
             nbands: int = 1,
             spin_symm=SpinSymm.CLOSED,
-            nelec=(0, 0),
             twist=None,
             lattice_metadata=None,
     ) -> None:
@@ -183,7 +180,6 @@ class LatticeHamiltonian(Hamiltonian):
         self.terms = dict()
         self.nsites = nsites
         self.nbands = nbands
-        self.nelec = tuple(nelec)
         self.twist = twist
         self.lattice_metadata = dict(lattice_metadata) if lattice_metadata else {}
 
@@ -327,7 +323,7 @@ class LatticeHamiltonian(Hamiltonian):
         --------
         >>> hamiltonian = LatticeHamiltonian.from_dict({
         ...     'lattice': dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'),
-        ...     'hamiltonian': dict(t=1.0, U=4.0, nelec=(8, 8)),
+        ...     'hamiltonian': dict(t=1.0, U=4.0),
         ... })
         """
         from safiretools.hamiltonian.model.builder import HamiltonianBuilder
@@ -394,17 +390,13 @@ class LatticeHamiltonian(Hamiltonian):
 
         Notes
         -----
-        Set `nelec` and `spin_symm` on the instance before calling; both are
-        recorded in the file. For `SpinSymm.NONCOLLINEAR` the two spin sectors
-        are merged, so ``dims`` records ``(sum(nelec), 0)``.
+        Set `spin_symm` on the instance before calling; it is recorded in the
+        file. The electron-count slots of ``dims`` are written as zero: the
+        AFQMC executable takes the electron count from the wavefunction and
+        reads them from nowhere.
         """
         if self.spin_symm is None:
             raise ValueError("Cannot write a Hamiltonian with no spin symmetry set")
-
-        if self.spin_symm is SpinSymm.NONCOLLINEAR:
-            nup, ndown = sum(self.nelec), 0
-        else:
-            nup, ndown = self.nelec
 
         real_valued = self.real_valued
 
@@ -413,7 +405,7 @@ class LatticeHamiltonian(Hamiltonian):
 
             fh5.create_dataset(
                 'Hamiltonian/dims',
-                data=np.array([0, 0, 0, self.nbasis, nup, ndown, 0, 0], dtype=np.int64)
+                data=np.array([0, 0, 0, self.nbasis, 0, 0, 0, 0], dtype=np.int64)
             )
             fh5.create_dataset(
                 'Hamiltonian/Energies',
@@ -502,7 +494,6 @@ class LatticeHamiltonian(Hamiltonian):
         with h5.File(path, 'r') as fh5:
             dims = fh5['Hamiltonian/dims'][...]
             nbasis = int(dims[3])
-            nup, ndown = int(dims[4]), int(dims[5])
             spin_symm = SpinSymm.from_input(fh5['Hamiltonian/spin_type'].asstr()[()])
 
             group = fh5[HDF5_PREFIX]
@@ -513,7 +504,6 @@ class LatticeHamiltonian(Hamiltonian):
                 nsites=nbasis // nbands,
                 nbands=nbands,
                 spin_symm=spin_symm,
-                nelec=(nup, ndown),
                 lattice_metadata=_read_lattice_metadata(group),
             )
 

@@ -85,11 +85,54 @@ class TestFromIntegrals:
 
 class TestConstruction:
 
-    def test_hcore_must_be_square(self, random_hamiltonian):
+    def test_hcore_must_match_its_spin_symmetry(self, random_hamiltonian):
         nmo, _, chol, _ = random_hamiltonian
 
-        with pytest.raises(ValueError, match="square matrix"):
+        with pytest.raises(ValueError, match=r"expected \(nspin, npol\*nmo"):
             MolecularHamiltonian(hcore=np.zeros((nmo, nmo + 1)), chol=chol.T)
+
+    def test_one_matrix_goes_into_both_collinear_spin_sectors(self,
+                                                              random_hamiltonian):
+        """The core Hamiltonian does not depend on spin; the two-body term does."""
+        nmo, hcore, chol, _ = random_hamiltonian
+        hamiltonian = MolecularHamiltonian(hcore=hcore, chol=chol.T,
+                                           spin_symm=SpinSymm.COLLINEAR)
+
+        assert hamiltonian.hcore.shape == (2, 1, nmo, 1, nmo)
+        assert np.allclose(hamiltonian.hcore[0], hamiltonian.hcore[1])
+
+    def test_a_collinear_hcore_may_give_each_spin_sector(self, random_hamiltonian):
+        """``(nspin, npol*nmo, npol*nmo)``, one one-body matrix per sector."""
+        nmo, hcore, chol, _ = random_hamiltonian
+        beta = hcore + np.diag(np.arange(nmo, dtype=float))
+
+        hamiltonian = MolecularHamiltonian(hcore=np.stack([hcore, beta]),
+                                           chol=chol.T,
+                                           spin_symm=SpinSymm.COLLINEAR)
+
+        assert hamiltonian.hcore.shape == (2, 1, nmo, 1, nmo)
+        assert np.allclose(hamiltonian.hcore[0].reshape(nmo, nmo), hcore)
+        assert np.allclose(hamiltonian.hcore[1].reshape(nmo, nmo), beta)
+
+    def test_the_stacked_collinear_layout_is_rejected(self, random_hamiltonian):
+        """
+        The dense format used to store a collinear ``hcore`` as one
+        ``(2*nmo, nmo)`` matrix with the sectors stacked. The spin axis is its
+        own dimension now, so that shape is no longer a layout anything accepts.
+        """
+        _, hcore, chol, _ = random_hamiltonian
+        stacked = np.concatenate([hcore, hcore], axis=0)
+
+        with pytest.raises(ValueError, match=r"expected \(nspin, npol\*nmo"):
+            MolecularHamiltonian(hcore=stacked, chol=chol.T,
+                                 spin_symm=SpinSymm.COLLINEAR)
+
+    def test_a_blocked_hcore_is_taken_as_given(self, random_hamiltonian):
+        nmo, _, chol, _ = random_hamiltonian
+        blocked = np.zeros((1, 1, nmo, 1, nmo))
+
+        assert MolecularHamiltonian(hcore=blocked, chol=chol.T).hcore.shape \
+            == blocked.shape
 
     def test_cholesky_rows_must_match_the_basis(self, random_hamiltonian):
         nmo, hcore, _, _ = random_hamiltonian
@@ -112,7 +155,7 @@ class TestHdf5:
     def test_round_trip(self, random_hamiltonian, tmp_path):
         _, hcore, chol, _ = random_hamiltonian
         hamiltonian = MolecularHamiltonian.from_integrals(
-            hcore, chol=chol, enuc=1.5, nelec=(3, 2))
+            hcore, chol=chol, enuc=1.5)
 
         path = tmp_path / 'ham.h5'
         hamiltonian.to_hdf5(path)
@@ -258,17 +301,15 @@ class TestFcidump:
                                                    tmp_path, nelec, expected):
         _, hcore, chol, _ = random_hamiltonian
         path = tmp_path / 'FCIDUMP'
-        MolecularHamiltonian(hcore=hcore, chol=chol.T, nelec=nelec).to_fcidump(path)
+        MolecularHamiltonian(hcore=hcore, chol=chol.T).to_fcidump(path, nelec=nelec)
 
-        restored = MolecularHamiltonian.from_fcidump(path)
-        assert restored.nelec == nelec
-        assert restored.spin_symm is expected
+        assert MolecularHamiltonian.from_fcidump(path).spin_symm is expected
 
     def test_an_explicit_spin_symmetry_wins(self, random_hamiltonian, tmp_path):
         """A spinor-basis FCIDUMP is not self-describing, so it has to be named."""
         _, hcore, chol, _ = random_hamiltonian
         path = tmp_path / 'FCIDUMP'
-        MolecularHamiltonian(hcore=hcore, chol=chol.T, nelec=(3, 1)).to_fcidump(path)
+        MolecularHamiltonian(hcore=hcore, chol=chol.T).to_fcidump(path, nelec=(3, 1))
 
         restored = MolecularHamiltonian.from_fcidump(path, spin_symm='closed')
         assert restored.spin_symm is SpinSymm.CLOSED
@@ -460,7 +501,7 @@ class TestRealAndComplexAreToldApart:
     @staticmethod
     def _round_trip(tmp_path, hcore, chol, name):
         hamiltonian = MolecularHamiltonian.from_integrals(
-            hcore, chol=chol, enuc=0.5, nelec=(1, 1))
+            hcore, chol=chol, enuc=0.5)
         path = tmp_path / name
         hamiltonian.to_hdf5(path)
 
