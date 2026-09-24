@@ -9,7 +9,7 @@ afqmc_execution_options = {
     "timestep": 0.01,
     "steps": 10000,
     "population_control_interval" : 10,  # in units of steps
-    "measure_interval_multiplier": 1,   # measurement interval = measure_interval_multiplier * population_control_interval
+    "measure_interval": 10,              # in units of steps
     "walker_ortho_interval" : 10 ,       # in units of steps
     "n_walkers_per_mpi_task": 10,
     "seed" : 42,

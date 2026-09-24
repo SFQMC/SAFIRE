@@ -18,11 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <format>
-#include <ranges>
 #include <vector>
-
-#include "nda/nda.hpp"
-#include "nda/tensor.hpp"
 
 #include "AFQMC/parameters.hpp"
 #include "Measurements.hpp"
@@ -159,37 +155,40 @@ template<MEMORY_SPACE MEM>
 class TimeEvolvedBPEstimator : public EstimatorBase<MEM> {
 
 public:
-  /// The measurement intervals of the input are multiples of population_control_interval.
+  /// Every back propagation length of the input is a number of propagation steps, and so is
+  /// the `step` the estimator is measured at.
   TimeEvolvedBPEstimator(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                              BackPropEstimatorParameters const& params,
-                             int population_control_interval,
                              WalkerSet<MEM>& wset,
                              Wavefunction<MEM>& wfn,
                              Propagator<MEM>& prop)
       : wfn_(wfn),
         prop_(prop),
         observables_(mpi, params, wset.getWalkerType(), wfn.getNMO()),
-        nback_prop_multipliers_{measure_interval_multipliers(params)},
-        steps_per_interval_(population_control_interval),
+        propagation_steps_{resolved(params.propagation_steps, "propagation_steps")},
         path_restoration_(params.path_restoration || params.extra_path_restoration),
         extra_path_restoration_(params.extra_path_restoration) {
 
-    for(int bpsteps : nback_prop_multipliers_) {
+    for(int bpsteps : propagation_steps_) {
       utils::check(bpsteps > 0,
-                   "TimeEvolvedBPEstimator: measure_interval_multiplier values must be positive.");
+                   "TimeEvolvedBPEstimator: propagation_steps values must be positive.");
     }
-    std::ranges::sort(nback_prop_multipliers_);
+    std::ranges::sort(propagation_steps_);
+    // the operators are evolved one segment at a time, so a repeated length would leave an
+    // empty segment behind
+    utils::check(std::ranges::adjacent_find(propagation_steps_) == propagation_steps_.end(),
+                 "TimeEvolvedBPEstimator: propagation_steps values must be distinct, but they "
+                 "are {}.", propagation_steps_);
 
     // no reference is back propagated, so a single slot is enough
-    wset.resize_bp(nback_prop_multipliers_.back() * steps_per_interval_,
-                   prop_.number_of_cholesky_vectors(), 1);
+    wset.resize_bp(propagation_steps_.back(), prop_.number_of_cholesky_vectors(), 1);
 
     auto [nspin, npol] = walkerTypeToDims(wset.getWalkerType());
     int npolNMO = npol * wfn_.getNMO();
     X_.resize(wset.size(), nspin, npolNMO, npolNMO);
     Y_.resize(wset.size(), nspin, npolNMO, npolNMO);
     M_.resize(wset.size(), nspin, npolNMO, npolNMO);
-    setAnchor(-1);
+    setAnchor(0);
 
     app_log(1, "\n  --   Back Propagation with Time Evolved Operators -- \n");
     if(extra_path_restoration_) {
@@ -199,33 +198,34 @@ public:
     } else {
       app_log(1, " Path restoration is not used ");
     }
-    app_log(1, " Measuring at steps (in units of the population control interval): {}",
-            nback_prop_multipliers_);
+    app_log(1, " Back propagating over steps: {}", propagation_steps_);
   }
 
-  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock,
+  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long step,
                Measurements& meas, WalkerSet<MEM>& wset) override {
-    int const bp_step = int(measureBlock - bp_pos_);
+    long const bp_step = step - bp_pos_;
     utils::check(bp_step >= 0, " Error: Found bp_step < 0 in TimeEvolvedBPEstimator::measure. ");
 
     // the operators are evolved one segment at a time, so a measurement needs the index of
-    // the multiplier it belongs to and not just the fact that there is one
-    auto const it = std::ranges::lower_bound(nback_prop_multipliers_, bp_step);
-    if(it != nback_prop_multipliers_.end() && *it == bp_step) {
-      evolveAndMeasure(mpi, bp_step, int(std::distance(nback_prop_multipliers_.begin(), it)),
+    // the back propagation length it belongs to and not just the fact that there is one
+    auto const it = std::ranges::lower_bound(propagation_steps_, bp_step);
+    if(it != propagation_steps_.end() && *it == bp_step) {
+      evolveAndMeasure(mpi, int(bp_step), int(std::distance(propagation_steps_.begin(), it)),
                        meas, wset);
     }
-    // the longest average has been taken over this block, so the next one starts here. A
-    // block that overshoots the longest average without matching it re-anchors as well.
-    if(bp_step >= nback_prop_multipliers_.back()) {
-      setAnchor(measureBlock);
+    // the longest average has been taken over this window, so the next one starts here. A
+    // step that overshoots the longest average without matching it re-anchors as well.
+    if(bp_step >= propagation_steps_.back()) {
+      setAnchor(step);
     }
   }
+
+  void equilibrated(long step, WalkerSet<MEM>& /*wset*/) override { setAnchor(step); }
 
 private:
   /// Evolve the operators over the segment since the previous measurement and measure the
   /// observables on the Green functions they dress. `iav` is the index of `bp_step` in
-  /// nback_prop_multipliers_, which is where the previous segment ended.
+  /// propagation_steps_, which is where the previous segment ended.
   void evolveAndMeasure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, int bp_step,
                         int iav, Measurements& meas, WalkerSet<MEM>& wset) {
     auto all = nda::range::all;
@@ -234,8 +234,8 @@ private:
     auto back_propagate_time = timers.back_propagate.start();
 
     // 1. propagate X and Y forward and accumulate M. They are already propagated
-    //    up to nback_prop_multipliers_[iav-1].
-    int nsteps = (bp_step - ((iav > 0) ? nback_prop_multipliers_[iav - 1] : 0)) * steps_per_interval_;
+    //    up to propagation_steps_[iav-1].
+    int nsteps = bp_step - ((iav > 0) ? propagation_steps_[iav - 1] : 0);
     prop_.PropagateOperators(nsteps, wset, X_, Y_, M_);
 
     // 2. adjust the weights if using path restoration
@@ -245,7 +245,7 @@ private:
       auto factors = nda::to_host(wset.getWeightFactors());
       int hpos(wset.getHistoryPos()); // position where next step goes... go back in history...
       int maxpos(wset.HistoryBufferLength());
-      int nbp = bp_step * steps_per_interval_ * (extra_path_restoration_ ? 2 : 1);
+      int nbp = bp_step * (extra_path_restoration_ ? 2 : 1);
       for(int k = 0; k < nbp; k++) {
         // start going back since position is advanced for next step already
         hpos = ((hpos == 0) ? maxpos - 1 : hpos - 1);
@@ -272,26 +272,24 @@ private:
     back_propagate_time.stop();
   }
 
-  /// Anchor back propagation at `block`, the last block the evolved operators cover, and
-  /// restart them from the identity. The constructor anchors before the first block is
-  /// propagated, which is block -1.
-  void setAnchor(long block) {
+  /// Anchor back propagation at `step`, the number of propagation steps the evolved
+  /// operators start from, and restart them from the identity. The constructor anchors
+  /// before the first step, at 0.
+  void setAnchor(long step) {
     M_() = 0.0;
     math::set_identity(X_);
     math::set_identity(Y_);
-    bp_pos_ = block;
+    bp_pos_ = step;
   }
 
   Wavefunction<MEM>& wfn_;
   Propagator<MEM>& prop_;
   Observables<MEM> observables_;
 
-  int bp_pos_{};
-  std::vector<int> nback_prop_multipliers_;
+  long bp_pos_{};
 
-  // number of propagation steps per measurement block, which sets the units the
-  // propagator and the walker set count back propagation in
-  int steps_per_interval_{1};
+  // the back propagation lengths, in steps, sorted
+  std::vector<int> propagation_steps_;
 
   // Whether to restore cosine projection and real local energy approximation for weights
   // along back propagation path.

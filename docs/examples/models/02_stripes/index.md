@@ -181,7 +181,8 @@ afqmc_params = {
         "population_control_interval": 2,
         "walker_ortho_interval": 2,
         "n_walkers_per_mpi_task": 40,
-        "measure_interval_multiplier": 1,    
+        "measure_interval": 2,
+        "equilibration_steps": 2000,
         "estimator1": {
             "name": "energy",
             "overwrite": True,
@@ -192,8 +193,7 @@ afqmc_params = {
             "path_restoration": True,
             "extra_path_restoration": True,
             "bp_walker_ortho_interval": 2,
-            "measure_interval_multiplier": 250,
-            "equil_multiplier": 1000,
+            "propagation_steps": [500],
             "onerdm" : {
                 "name":"onerdm"
     	    }

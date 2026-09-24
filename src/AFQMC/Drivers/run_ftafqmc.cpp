@@ -52,7 +52,6 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   app_log(1, "Initial weight and number of walkers: {}, {}", w0, nwalk_ini);
   app_log(1, "Initial Eshift: {} ", Eshift);
 
-  // KE: the concept of a "block" is now implicitly defined by the measure_interval
   const RealType Eshift0 = Eshift;
   const RealType beta    = exec.timestep * exec.steps;
 
@@ -99,19 +98,20 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
         wset.rescale_total_weight();
         wset.popControl();
         popcontrol_time.stop();
+      }
 
-        if(iStep < exec.equilibration_steps) {
-          Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset) - Eshift);
-        }
+      if(iStep < exec.equilibration_steps) {
+        Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset) - Eshift);
       }
 
       // resize stack pointers to match maximum buffer use
       utils::resize_nda_static_allocator();
     }
 
-    // one sweep is one measurement sample. The walker set is still at nt = nStep here,
-    // i.e. the full path has been constructed.
-    estimators.measure(mpi, iSweep, wset);
+    // one sweep is one measurement sample, so an estimator's measure_interval counts sweeps
+    // here rather than steps. The walker set is still at nt = nStep, i.e. the full path has
+    // been constructed.
+    estimators.measure(mpi, iSweep + 1, wset);
 
     wset.clean(); // reset walker buffer
     // reset weights, UR, DR, VR

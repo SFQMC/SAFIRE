@@ -154,17 +154,19 @@ struct EnergyEstimatorParameters {
   std::optional<std::string> wavefunction{};
   std::optional<std::string> hamiltonian{};
 
-  // resolve_defaults falls back to the measure_interval_multiplier of the enclosing execute block
-  std::optional<int> measure_interval_multiplier{};
+  // in units of steps. resolve_defaults falls back to the measure_interval of the enclosing
+  // execute block
+  std::optional<int> measure_interval{};
 };
-SAFIRE_DEFINE_PARAMETERS(EnergyEstimatorParameters, wavefunction, hamiltonian, measure_interval_multiplier);
+SAFIRE_DEFINE_PARAMETERS(EnergyEstimatorParameters, wavefunction, hamiltonian, measure_interval);
 
 struct MixedEstimatorParameters {
   std::optional<std::string> wavefunction{};
   std::optional<std::string> hamiltonian{};
 
-  // resolve_defaults falls back to the measure_interval_multiplier of the enclosing execute block
-  std::optional<int> measure_interval_multiplier{};
+  // in units of steps. resolve_defaults falls back to the measure_interval of the enclosing
+  // execute block
+  std::optional<int> measure_interval{};
 
   // observables: an observable is measured if and only if its block is present in the input,
   // so one that takes no parameters is requested by an empty block, e.g. "twordm": {}
@@ -174,18 +176,19 @@ struct MixedEstimatorParameters {
   std::optional<PairCorrParameters> paircorr{};
   std::optional<SpinCorrParameters> spincorr{};
 };
-SAFIRE_DEFINE_PARAMETERS(MixedEstimatorParameters, wavefunction, hamiltonian, measure_interval_multiplier,
+SAFIRE_DEFINE_PARAMETERS(MixedEstimatorParameters, wavefunction, hamiltonian, measure_interval,
                          onerdm, diag_twordm, twordm, paircorr, spincorr);
 
 struct BackPropEstimatorParameters {
   std::optional<std::string> wavefunction{};
   std::optional<std::string> hamiltonian{};
 
-  // resolve_defaults falls back to the measure_interval_multiplier of the enclosing execute block
-  std::optional<std::vector<int>> measure_interval_multiplier{};
+  // the back propagation lengths, in steps. Required.
+  std::optional<std::vector<int>> propagation_steps{};
 
   // in units of steps. if not set fall back to the walker_ortho_interval of the
-  // enclosing execute block, which is the interval the forward propagation orthogonalizes at
+  // enclosing execute block, which is the interval the forward propagation orthogonalizes at.
+  // Only "backprop" retraces the propagation and uses this; "time_evolved_bp" ignores it
   std::optional<int> walker_ortho_interval{};
   bool path_restoration{true};
   bool extra_path_restoration{false};
@@ -198,7 +201,7 @@ struct BackPropEstimatorParameters {
   std::optional<PairCorrParameters> paircorr{};
   std::optional<SpinCorrParameters> spincorr{};
 };
-SAFIRE_DEFINE_PARAMETERS(BackPropEstimatorParameters, wavefunction, hamiltonian, measure_interval_multiplier,
+SAFIRE_DEFINE_PARAMETERS(BackPropEstimatorParameters, wavefunction, hamiltonian, propagation_steps,
                          walker_ortho_interval, path_restoration, extra_path_restoration, onerdm, diag_twordm,
                          twordm, paircorr, spincorr);
 
@@ -220,14 +223,6 @@ const T& resolved(const std::optional<T>& value, std::string_view name) {
   return *value;
 }
 
-/// The measurement intervals of an estimator, in units of the population control interval.
-inline const std::vector<int>& measure_interval_multipliers(const BackPropEstimatorParameters& params) {
-  const std::vector<int>& multipliers = resolved(params.measure_interval_multiplier, "measure_interval_multiplier");
-  utils::check(!multipliers.empty(), "'measure_interval_multiplier' must not be empty.");
-  return multipliers;
-}
-
-
 struct ExecuteParameters {
   std::optional<utils::BlockRef<WalkerSetParameters>> walker_set{};
   std::optional<utils::BlockRef<WavefunctionParameters>> wavefunction{}; // required
@@ -240,21 +235,25 @@ struct ExecuteParameters {
   int binsize{1}; // number of measurements averaged into one bin of the results file
   int sweeps{1}; // finite temperature sweeps
   int population_control_interval{DEFAULT_POPULATION_CONTROL_INTERVAL};
-  int measure_interval_multiplier{DEFAULT_MEASURE_INTERVAL_MULTIPLIER};
   int walker_ortho_interval{DEFAULT_WALKER_ORTHO_INTERVAL};
+
+  // the fallback measurement interval of every estimator that does not bring one of its own.
+  // In steps for the ground state driver, in sweeps for the finite temperature one, where a
+  // sweep is one sample; resolve_defaults picks the default accordingly
+  std::optional<int> measure_interval{};
   bool print_sweep_step{false}; // ftafqmc only
 
   double timestep{DEFAULT_TIME_STEP};
   int n_walkers_per_mpi_task{10};
 
-  // fraction of the gap to the average energy that Eshift closes, once per population control
-  // interval; defaults to decaying within a tenth of the equilibration phase
+  // fraction of the gap to the average energy that Eshift closes, once per step of the
+  // equilibration phase; defaults to decaying within a tenth of that phase
   std::optional<double> Eshift_relaxation_factor{};
   std::optional<double> initial_Eshift{};
 };
 SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, steps,
-                         equilibration_steps, binsize, sweeps, population_control_interval, measure_interval_multiplier,
-                         walker_ortho_interval, print_sweep_step,
+                         equilibration_steps, binsize, sweeps, population_control_interval,
+                         walker_ortho_interval, measure_interval, print_sweep_step,
                          timestep, n_walkers_per_mpi_task, Eshift_relaxation_factor, initial_Eshift);
 
 

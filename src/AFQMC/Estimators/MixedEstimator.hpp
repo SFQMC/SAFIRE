@@ -116,18 +116,16 @@ public:
                  Wavefunction<MEM> &wfn)
       : wfn_{wfn},
         observables_{mpi, params, walker_type, wfn.getNMO()},
-        measure_interval_multiplier_{resolved(
-            params.measure_interval_multiplier, "measure_interval_multiplier")} {
-
+        measure_interval_{resolved(params.measure_interval, "measure_interval")} {
   }
 
-  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock,
+  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long step,
                Measurements& meas, WalkerSet<MEM> &wset) override {
-    auto mixed_estimator_time = timers.mixed_estimator.start();
-
-    if(measureBlock % measure_interval_multiplier_ != 0) {
+    if(step % measure_interval_ != 0) {
       return;
     }
+
+    auto mixed_estimator_time = timers.mixed_estimator.start();
 
     memory::buffered_array<MEM,ComplexType,1> weights(wset.size());
     wset.getProperty(WEIGHT, weights);
@@ -144,7 +142,8 @@ private:
   Wavefunction<MEM>& wfn_;
   Observables<MEM> observables_;
 
-  int measure_interval_multiplier_{};
+  // in units of steps
+  int measure_interval_{};
 };
 
 }

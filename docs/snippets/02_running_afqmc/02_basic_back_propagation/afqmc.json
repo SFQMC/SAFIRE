@@ -16,14 +16,13 @@
       "n_walkers_per_mpi_task": 60,
       "walker_ortho_interval" : 10,
       "population_control_interval": 5,
-      "measure_interval_multiplier": 2,
+      "measure_interval": 10,
       "seed": 42,
       "estimator": {
         "name": "back_propagation",
         "path_restoration": true,
         "bp_walker_ortho_interval": 10,
-        "measure_interval_multiplier": 80,
-        "equil_multiplier": 80,
+        "propagation_steps": [400],
         "onerdm": {
           "name": "one_rdm"
         }

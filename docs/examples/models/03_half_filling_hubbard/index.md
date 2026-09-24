@@ -414,7 +414,7 @@ afqmc_params = {
         "population_control_interval": 2,
         "walker_ortho_interval": 2,
         "n_walkers_per_mpi_task": 40,
-        "measure_interval_multiplier": 1,    
+        "measure_interval": 2,
         "estimator": {
             "name": "energy",
             "overwrite": True,

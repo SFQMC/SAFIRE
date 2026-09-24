@@ -220,7 +220,8 @@ afqmc_params = {
     "n_walkers_per_mpi_task": 30,
     "population_control_interval": 5,
     "walker_ortho_interval": 5,
-    "measure_interval_multiplier": 2,
+    "measure_interval": 10,
+    "equilibration_steps": 2400,
     "seed" : 42,                          # for reproducibility
     "propagator": {
         "use_cp_constraint": True,
@@ -230,8 +231,7 @@ afqmc_params = {
         "name":"back_propagation",
         "path_restoration": True,
         "bp_walker_ortho_interval": 5,
-        "measure_interval_multiplier": [40, 80, 120, 160],
-        "equil_multiplier":480,
+        "propagation_steps": [200, 400, 600, 800],
         "onerdm":{
             "name":"onerdm"
         }

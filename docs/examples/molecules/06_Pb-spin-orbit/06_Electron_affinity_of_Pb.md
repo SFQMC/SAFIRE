@@ -278,7 +278,7 @@ from stats.scalar_dat import analyze_scalar_data
 execute_options = {
     "timestep": 0.005,
     "steps": 7000,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 5,
     "population_control_interval" : 5,
     "walker_ortho_interval" : 10 ,
     "n_walkers_per_mpi_task": 80,
@@ -468,7 +468,7 @@ from stats.scalar_dat import analyze_scalar_data
 execute_options = {
     "timestep": 0.005,
     "steps": 7000,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 5,
     "population_control_interval" : 5,
     "walker_ortho_interval" : 10 ,
     "n_walkers_per_mpi_task": 70,

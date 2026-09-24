@@ -209,12 +209,14 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
     steps = 10000
     equilibration_steps = 2000
     population_control_interval = 10
-    bp_measure_interval_multiplier = 20
+    measure_interval = 10
+    propagation_steps = 200
     if snapshot:
         steps = 20
         equilibration_steps = 0
         population_control_interval = 1
-        bp_measure_interval_multiplier = 2
+        measure_interval = 1
+        propagation_steps = 2
 
     execute = {
         "walker_set": {"walker_type": walker.name},
@@ -227,17 +229,17 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
     if observables:
         execute["estimators"] = {
             "mixed": {
-                "measure_interval_multiplier": bp_measure_interval_multiplier,
+                "measure_interval": propagation_steps,
                 **observables,
             },
             "backprop": {
                 "path_restoration": True,
-                "measure_interval_multiplier": bp_measure_interval_multiplier,
+                "propagation_steps": [propagation_steps],
                 **observables,
             },
         }
     execute["population_control_interval"] = population_control_interval
-    execute["measure_interval_multiplier"] = 1
+    execute["measure_interval"] = measure_interval
     execute["walker_ortho_interval"] = 10
     execute["equilibration_steps"] = equilibration_steps
 
@@ -296,7 +298,7 @@ def _write_message_group(f: h5.File, name: str, messages: set):
 def _average_observables(results: Path) -> dict:
     """(mean, stochastic error) for every observable AFQMC measured, keyed by the full
     '/'-separated path it was measured under, e.g. `Stage0/Energy` or
-    `Stage0/BackPropEstimator/Steps=40/OneRDM`.
+    `Stage0/BackPropEstimator/Steps=200/OneRDM`.
 
     Nothing is discarded here: the driver measures nothing before `equilibration_steps`, so
     every bin in the file is already equilibrated.

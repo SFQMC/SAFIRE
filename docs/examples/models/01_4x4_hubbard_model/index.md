@@ -337,7 +337,7 @@ afqmc_params = {
     "n_walkers_per_mpi_task": 100,
     "population_control_interval": 5,
     "walker_ortho_interval": 5,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 5,
     "seed" : 42,                          # just for reproducibility
     "propagator": {
       "use_cp_constraint": True,
@@ -518,7 +518,7 @@ afqmc_params = {
     "n_walkers_per_mpi_task": 100,
     "population_control_interval": 5,
     "walker_ortho_interval": 5,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 5,
     "seed" : 42,                          # just for reproducibility
     "propagator": {
       "use_cp_constraint": True,
@@ -612,7 +612,7 @@ afqmc_params = {
     "n_walkers_per_mpi_task": 100,
     "population_control_interval": 10,
     "walker_ortho_interval": 10,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 10,
     "seed" : 42,                          # just for reproducibility
     "propagator": {
       "use_cp_constraint": True,
@@ -696,6 +696,7 @@ Here is a sample input file where an ellipsis has been used to hide the rest of 
       /* ... */
 
       "population_control_interval" : 10,
+      "equilibration_steps": 500,
 
       /* ... */
 
@@ -704,8 +705,7 @@ Here is a sample input file where an ellipsis has been used to hide the rest of 
         "path_restoration": true,
         "extra_path_restoration": true,
         "bp_walker_ortho_interval": 5,
-        "measure_interval_multiplier": [10,15,20],
-        "equil_multiplier": 50,
+        "propagation_steps": [100,150,200],
         "onerdm": {
             "name": "one_rdm"
         }
@@ -715,10 +715,11 @@ Here is a sample input file where an ellipsis has been used to hide the rest of 
 }
 ```
 
-For back-propagation (BP), we will need to provide a BP time interval.
+For back-propagation (BP), we will need to provide a BP length.
 We will need to check for convergence in this parameter.
-Notice that, just like the default estimator which measures and prints the energy, the number of steps is determined indirectly using the "measure_interval_multiplier" parameter;
-however, unlike the default estimator, the BP estimator accepts multiple integr values for "measure_interval_multiplier" as shown in the example above.
+Notice that a BP estimator has no "measure_interval": the back-propagation length, in steps, is
+given by "propagation_steps", and it doubles as the measurement interval;
+unlike the default estimator, the BP estimator accepts several values as shown in the example above.
 In this case, BP will be run with each of the BP lengths provided and saved in an output HDF5 file separately.
 This simplifies checking for convergence in the BP length by allowing us to re-use the "forward" propagation run for each BP length.
 
@@ -744,7 +745,8 @@ afqmc_params = {
     "n_walkers_per_mpi_task": 100,
     "population_control_interval": 10,
     "walker_ortho_interval": 10,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 10,
+    "equilibration_steps": 4200,
     "seed" : 42,                          # just for reproducibility
     "propagator": {
       "use_cp_constraint": True,
@@ -755,8 +757,7 @@ afqmc_params = {
           "path_restoration": True,
           "extra_path_restoration": True,
           "bp_walker_ortho_interval": 10,
-          "measure_interval_multiplier": [20,40,60], # 🚧 Under construction 🚧 : Kyle is working on a good set of values here.
-          "equil_multiplier": 420,
+          "propagation_steps": [200,400,600], # 🚧 Under construction 🚧 : Kyle is working on a good set of values here.
           "onerdm": {
               "name": "one_rdm"
         }

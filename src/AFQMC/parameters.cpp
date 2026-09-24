@@ -9,8 +9,9 @@ namespace {
 
 /// The values start in a column that fits the longest key of the input schema, so that the layout of
 /// a block does not depend on which parameters it happens to contain. A key that does not fit is
-/// followed by a single space instead.
-constexpr int key_width = static_cast<int>(std::string_view{"measure_interval_multiplier     "}.size());
+/// followed by a single space instead. The literal is whatever key is currently the longest, not a
+/// parameter this file cares about; renaming that key away reflows every printed input block.
+constexpr int key_width = static_cast<int>(std::string_view{"population_control_interval     "}.size());
 
 /// A value that gets lines of its own: an object, or an array that holds objects or arrays. Anything
 /// else, including an empty object and an array of plain values, is printed after its key.

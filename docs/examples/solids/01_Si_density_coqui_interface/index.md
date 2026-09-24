@@ -369,8 +369,7 @@ back-propagation algorithm.
     "path_restoration":true,
     "extra_path_restoration":true,
     "bp_walker_ortho_interval":10,
-    "measure_interval_multiplier" : [20,40],
-    "equil_multiplier":40,
+    "propagation_steps" : [200,400],
     "onerdm" : {
         "name":"onerdm"
     }
@@ -378,26 +377,12 @@ back-propagation algorithm.
 ```
 
 The "name" parameter tells SAFIRE what kind of estimator to use (`"back_propagation"` in this case).
-The "measure_interval_multiplier" parameter indirectly determines the number of back propagation steps to use.
-The actual number of back propagation steps is determined as $N^{step}_a = \text{measure\_interval\_multiplier}[a] \times \text{population\_control\_interval} $
+The "propagation_steps" parameter is the number of back propagation steps to use, $N^{step}$. It has no default, so a back-propagation estimator has to state it.
 
-To check for convergence in the number of back propagation steps, SAFIRE allows multiple "averages" to be set up which each use a different number of steps.
-This feature is enabled by provided a list of integers for measure_interval_multiplier instead of a single integer.
-The number of steps that will be used in each average is given by,
-$$
-N^{step}_a = \text{measure\_interval\_multiplier}[a] \times \text{population\_control\_interval}
-$$
-So, for the example here, if the population control interval is 10 (as set in the main execute block),
-
-$$
-N^{step}_0= 20 * 10 = 200
-$$
-
-and
-
-$$
-N^{step}_1 = 40 * 10 = 400.
-$$
+To check for convergence in the number of back propagation steps, SAFIRE allows measuring at multiple back propagation depths at the same time.
+This feature is enabled by providing a list of integers for propagation_steps instead of a single one,
+so for the example here $N^{step}_0 = 200$ and $N^{step}_1 = 400$.
+A new back-propagation window starts every time the longest of them has been covered.
 
 Now we can run SAFIRE using this input file.
 We provided a sample Slurm script.

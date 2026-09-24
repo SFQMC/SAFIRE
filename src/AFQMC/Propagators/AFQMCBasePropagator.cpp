@@ -319,6 +319,7 @@ void AFQMCBasePropagator<MEM>::Propagate(WalkerSet<MEM>& wset, RealType Eshift, 
 
   // 6. update weights/energy/etc, apply constrains/bounds/etc
   auto extra_time = timers.extra.start();
+
   walker_update(wset, hybrid, free_projection, use_cp_constraint, dt, Eshift,
                 wfn->energy_offset(), new_overlaps, new_energies, meanfield_factor, hybrid_weight,
                 lower_cutoff_scale, upper_cutoff_scale, debug_verbosity, eloc_bound_stats);
@@ -399,8 +400,6 @@ void AFQMCBasePropagator<MEM>::BackPropagate(int nbpsteps, int nStabalize, Walke
 
       // 2. Calculate vHS
       auto vHS = wfn->vHS(X, timestep);
-      utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
-                 "Size mismatch");
 
       // MAM: can do all references together in principle,
       //      would consume more memory but be very efficient in GPU!
@@ -524,8 +523,6 @@ void AFQMCBasePropagator<MEM>::PropagateOperators(int nsteps, WalkerSet<MEM>& ws
 
         // 2. Calculate vHS
         auto vHS = wfn->vHS(Xfield, timestep);
-        utils::check(vHS.shape() == std::array<long,4>{nspins_in_vHS,nwalk,npol_in_vHS*NMO,NMO},
-                   "Size mismatch");
 
         // 4. Propagate walkers
         apply_propagators<'N'>(walker_type,npol,X(all,0,all,all),X(all,nspin-1,all,all),vHS);

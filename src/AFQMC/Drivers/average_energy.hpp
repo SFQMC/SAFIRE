@@ -48,7 +48,7 @@ RealType weightedAverage(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 /// before the first step, so it is always on the same scale as the total energy.
 template<MEMORY_SPACE MEM>
 RealType averagePseudoEnergy(utils::mpi_context_t<boost::mpi3::communicator>& mpi, WalkerSet<MEM> const& wset) {
-  nda::array<ComplexType, 1> weight(wset.size()), eloc(wset.size());
+  memory::buffered_array<HOST_MEMORY, ComplexType, 1> weight(wset.size()), eloc(wset.size());
   wset.getProperty(WEIGHT, weight);
   wset.getProperty(PSEUDO_ELOC_, eloc);
 
@@ -59,7 +59,7 @@ RealType averagePseudoEnergy(utils::mpi_context_t<boost::mpi3::communicator>& mp
 /// `Wavefunction::Energy` leaves on the walkers, `E1_ + EXX_ + EJ_`.
 template<MEMORY_SPACE MEM>
 RealType averageEnergy(utils::mpi_context_t<boost::mpi3::communicator>& mpi, WalkerSet<MEM> const& wset) {
-  nda::array<ComplexType, 1> weight(wset.size()), e1(wset.size()), exx(wset.size()), ej(wset.size());
+  memory::buffered_array<HOST_MEMORY, ComplexType, 1> weight(wset.size()), e1(wset.size()), exx(wset.size()), ej(wset.size());
   wset.getProperty(WEIGHT, weight);
   wset.getProperty(E1_, e1);
   wset.getProperty(EXX_, exx);

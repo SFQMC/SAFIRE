@@ -25,6 +25,7 @@
 
 #include "AFQMC/parameter_defaults.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
+#include "IO/app_loggers.h"
 #include "nda/h5.hpp"
 #include "utilities/check.hpp"
 
@@ -120,18 +121,21 @@ void apply_estimator_defaults(auto& params, const ExecuteParameters& exec) {
   }
 
   if constexpr(std::same_as<std::remove_reference_t<decltype(params)>, BackPropEstimatorParameters>) {
-    // every back propagation length measures at an interval of its own
-    if(!params.measure_interval_multiplier) {
-      params.measure_interval_multiplier = std::vector{exec.measure_interval_multiplier};
-    }
+    utils::check(params.propagation_steps && !params.propagation_steps->empty(),
+                 "A back-propagation estimator requires a non-empty \"propagation_steps\", the back "
+                 "propagation lengths in steps.");
+
     // back propagation retraces the forward propagation, so it orthogonalizes as often
     if(!params.walker_ortho_interval) {
       params.walker_ortho_interval = exec.walker_ortho_interval;
     }
   } else {
-    if(!params.measure_interval_multiplier) {
-      params.measure_interval_multiplier = exec.measure_interval_multiplier;
+    if(!params.measure_interval) {
+      params.measure_interval = resolved(exec.measure_interval, "measure_interval");
     }
+    // the estimators gate on `step % measure_interval`, so zero is not merely meaningless
+    utils::check(*params.measure_interval > 0,
+                 "'measure_interval' must be positive, but it is {}.", *params.measure_interval);
   }
 }
 
@@ -184,16 +188,29 @@ void apply_defaults(EstimatorParameters& params, const ExecuteParameters& exec) 
                "Only one back propagation estimator may be defined at once, but the input has both "
                "\"backprop\" and \"time_evolved_bp\".");
 
+  // the two back propagation estimators share a parameter struct, but only the retracing one
+  // re-orthogonalizes. Warn before apply_estimator_defaults fills the value in anyway.
+  if(params.time_evolved_bp && params.time_evolved_bp->walker_ortho_interval) {
+    app_warning("A \"time_evolved_bp\" estimator does not re-orthogonalize, so the "
+                "\"walker_ortho_interval\" of {} given for it is ignored.",
+                *params.time_evolved_bp->walker_ortho_interval);
+  }
+
   for_each_estimator(params, [&](auto& estimator) { apply_estimator_defaults(estimator, exec); });
 }
 
-void apply_defaults(ExecuteParameters& exec) {
+void apply_defaults(ExecuteParameters& exec, DriverType driver) {
+  if(!exec.measure_interval) {
+    // the finite temperature driver takes one sample per sweep, so measuring every sweep is
+    // the only default that makes sense there
+    exec.measure_interval = (driver == DriverType::ftafqmc) ? 1 : DEFAULT_MEASURE_INTERVAL;
+  }
   if(!exec.Eshift_relaxation_factor) {
-    // Eshift only relaxes once per population control interval, so the factor is set from the
-    // number of updates the equilibration phase performs, not from its number of steps
-    const double updates = double(exec.equilibration_steps) / exec.population_control_interval;
-    if(updates > 1) {
-      exec.Eshift_relaxation_factor = 1 - std::exp(-10.0 / updates);
+    // Eshift relaxes once per step now, so the factor is set from the number of equilibration
+    // steps: the gap to the average energy decays with a time constant of a tenth of the
+    // equilibration phase, leaving e^-10 of it by the end
+    if(exec.equilibration_steps > 1) {
+      exec.Eshift_relaxation_factor = 1 - std::exp(-10.0 / exec.equilibration_steps);
     } else {
       exec.Eshift_relaxation_factor = 1;
     }
@@ -238,7 +255,7 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
       ham.filename = find_block(params.wavefunction, wfn_name, "wavefunction").filename;
     }
 
-    apply_defaults(exec);
+    apply_defaults(exec, params.driver);
   }
 
   // 5. resolve the defaults that depend on the hamiltonian type. Only the hamiltonians that are
