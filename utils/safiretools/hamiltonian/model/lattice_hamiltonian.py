@@ -24,17 +24,12 @@ import scipy.sparse as sps
 import h5py as h5
 
 from safiretools.hamiltonian.base import (
-    HAMILTONIAN_GROUP,
     Hamiltonian,
     read_hamiltonian_header,
     write_hamiltonian_header,
 )
 from safiretools.hdf5 import read_csr, replace_group, write_csr
 from safiretools.types import SpinSymm
-
-HDF5_PREFIX = 'Hamiltonian/ModelHamiltonian'
-"""Group the model Hamiltonian is written under. The AFQMC executable's
-``ModelHamOpsGenerator`` reads this path, so it is not configurable."""
 
 _MIN_MAX_CONNECTIVITY = 12
 """Floor on the ``maximum_connectivity`` hint written for the C++ allocator."""
@@ -398,36 +393,32 @@ class LatticeHamiltonian(Hamiltonian):
         real_valued = self.real_valued
 
         with h5.File(path, 'a') as fh5:
-            write_hamiltonian_header(replace_group(fh5, HAMILTONIAN_GROUP), 'model',
-                                     nmo=self.nbasis)
-            fh5.create_dataset('Hamiltonian/spin_type', data=self.spin_symm.label)
+            group = replace_group(fh5, 'Hamiltonian')
+            write_hamiltonian_header(group, 'model', nmo=self.nbasis)
+            group.create_dataset('spin_type', data=self.spin_symm.label)
 
-            fh5.create_dataset(f'{HDF5_PREFIX}/number_of_components',
-                               data=self.num_components)
-            fh5.create_dataset(f'{HDF5_PREFIX}/nbands', data=self.nbands)
-            fh5.create_dataset(f'{HDF5_PREFIX}/maximum_connectivity',
-                               data=self._maximum_connectivity())
+            model = group.create_group('ModelHamiltonian')
+            model.create_dataset('number_of_components', data=self.num_components)
+            model.create_dataset('nbands', data=self.nbands)
+            model.create_dataset('maximum_connectivity', data=self._maximum_connectivity())
 
-            self._write_lattice_metadata(fh5)
+            self._write_lattice_metadata(model)
 
-            component_num = 0
-            for key in self.keys():
-                for component in self[key]:
-                    prefix = f'{HDF5_PREFIX}/ModelComponent_{component_num}/'
-                    fh5.create_dataset(prefix + 'model_type', data=component.model_type)
-                    fh5.create_dataset(prefix + 'spin_type',
-                                       data=component.spin_symm.label)
+            for n, (key, component) in enumerate(
+                    (key, component) for key in self.keys() for component in self[key]):
+                component_group = model.create_group(f'ModelComponent_{n}')
+                component_group.create_dataset('model_type', data=component.model_type)
+                component_group.create_dataset('spin_type', data=component.spin_symm.label)
 
-                    for metakey, value in component.metadata.items():
-                        if value is not None:
-                            fh5.create_dataset(prefix + metakey, data=value)
+                for metakey, value in component.metadata.items():
+                    if value is not None:
+                        component_group.create_dataset(metakey, data=value)
 
-                    csr_array = component.csr_array
-                    if not real_valued:
-                        csr_array = csr_array.astype(np.complex128)
+                csr_array = component.csr_array
+                if not real_valued:
+                    csr_array = csr_array.astype(np.complex128)
 
-                    write_csr(fh5, prefix + key, csr_array)
-                    component_num += 1
+                write_csr(component_group, key, csr_array)
 
     def _maximum_connectivity(self) -> int:
         """
@@ -452,13 +443,13 @@ class LatticeHamiltonian(Hamiltonian):
             _MIN_MAX_CONNECTIVITY,
         )
 
-    def _write_lattice_metadata(self, fh5) -> None:
-        """Write `lattice_metadata`, if any, under ``<prefix>/Lattice``."""
+    def _write_lattice_metadata(self, model) -> None:
+        """Write `lattice_metadata`, if any, into the ``Lattice`` subgroup of `model`."""
         metadata = self.lattice_metadata
         if not metadata:
             return
 
-        group = fh5.create_group(f'{HDF5_PREFIX}/Lattice')
+        group = model.create_group('Lattice')
         group.create_dataset('type', data=metadata['type'])
         group.create_dataset('L', data=np.asarray(metadata['L'], dtype=np.int64))
         group.create_dataset('boundaries',
@@ -481,10 +472,10 @@ class LatticeHamiltonian(Hamiltonian):
         `_split_hubbard_u`.
         """
         with h5.File(path, 'r') as fh5:
-            _, nbasis, _, _ = read_hamiltonian_header(fh5[HAMILTONIAN_GROUP])
+            _, nbasis, _, _ = read_hamiltonian_header(fh5['Hamiltonian'])
             spin_symm = SpinSymm.from_input(fh5['Hamiltonian/spin_type'].asstr()[()])
 
-            group = fh5[HDF5_PREFIX]
+            group = fh5['Hamiltonian/ModelHamiltonian']
             num_components = int(group['number_of_components'][()])
             nbands = int(group['nbands'][()]) if 'nbands' in group else 1
 

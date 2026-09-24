@@ -87,8 +87,6 @@ def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
     nmo_tot = int(np.sum(nmo_pk))
 
     fock = scf_data['fock']
-    if fock.ndim == 3:
-        fock = fock.reshape((1,) + fock.shape)
 
     logger.info("generating a %s trial wavefunction over %d k-point(s)",
                 spin_symm.label, len(scf_data['kpts']))
@@ -153,10 +151,6 @@ def _generate_orbitals(fock, X, nmo_pk, rediag, ortho_ao, mo_energy, collinear):
             eigenvalues[ispin].extend(energies)
             orbitals[ispin].append(orbs)
 
-    if not collinear:
-        # the beta channel repeats alpha; `_reoccupy` reads eigenvalues[0] for it
-        eigenvalues[1].extend(eigenvalues[0])
-
     return eigenvalues, orbitals
 
 
@@ -205,7 +199,7 @@ def _supercell_slater(orbitals, occupancies, nmo_pk, nelec, collinear):
 # occupancies
 # ----------------------------------------------------------------------
 
-def _reoccupy(mo_occ, mo_energy, collinear, low=0.1, high=0.95):
+def _reoccupy(mo_occ, mo_energy, collinear, low, high):
     """
     Resolve the per-spin, per-k-point occupancies of the single determinant.
 
@@ -217,7 +211,7 @@ def _reoccupy(mo_occ, mo_energy, collinear, low=0.1, high=0.95):
         Energy-sorted index order, for logging.
     """
     if not collinear:
-        occupancies, partial, order, _ = _determine_occupancies(
+        occupancies, partial, order = _determine_occupancies(
             mo_occ, mo_energy[0], closed=True, low=low, high=high)
 
         if partial:
@@ -232,17 +226,17 @@ def _reoccupy(mo_occ, mo_energy, collinear, low=0.1, high=0.95):
         return [occupancies / 2.0, occupancies / 2.0], order
 
     logger.debug("determining occupancies for the alpha electrons")
-    occ_a, _, order_a, _ = _determine_occupancies(
+    occ_a, _, order_a = _determine_occupancies(
         mo_occ[0], mo_energy[0], closed=False, low=low, high=high)
 
     logger.debug("determining occupancies for the beta electrons")
-    occ_b, _, order_b, _ = _determine_occupancies(
+    occ_b, _, order_b = _determine_occupancies(
         mo_occ[1], mo_energy[1], closed=False, low=low, high=high)
 
     return [occ_a, occ_b], (order_a, order_b)
 
 
-def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95):
+def _determine_occupancies(mo_occ, mo_energy, closed, low, high):
     """
     Split the occupancies into a filled core plus, when bands are partially
     occupied, the leading configuration over them.
@@ -257,8 +251,8 @@ def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95):
         Per-k-point occupancies of the determinant to build.
     partial : bool
         Whether any band was partially occupied.
-    order, inverse_order : numpy.ndarray
-        Energy-sorted index order and its inverse.
+    order : numpy.ndarray
+        Energy-sorted index order.
 
     Raises
     ------
@@ -268,7 +262,6 @@ def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95):
     """
     nelec = sum(sum(occ) for occ in mo_occ)
     order = np.ravel(mo_energy).argsort()
-    inverse_order = order.argsort()
 
     nocc = 0
     nmo_pk = []
@@ -283,7 +276,7 @@ def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95):
     nleft = int(round(nelec - nocc))
     if nleft == 0:
         logger.debug("all occupancies are one or zero")
-        return mo_occ, False, order, inverse_order
+        return mo_occ, False, order
 
     logger.info("found partially occupied bands: occupying the leading "
                 "configuration over them")
@@ -328,7 +321,7 @@ def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95):
     occupied[np.where(degenerate)[0][:nleft]] = 1
 
     # remap to primitive-cell (kpoint, band) indexing
-    reference = occupied[inverse_order]
+    reference = occupied[order.argsort()]
 
     occupancies = []
     start = 0
@@ -336,7 +329,7 @@ def _determine_occupancies(mo_occ, mo_energy, closed, low=0.1, high=0.95):
         occupancies.append(reference[start:start + nmo_pk[k]])
         start += nmo_pk[k]
 
-    return occupancies, True, order, inverse_order
+    return occupancies, True, order
 
 
 def _log_eigenvalues(eigenvalues, order, nelec, collinear) -> None:

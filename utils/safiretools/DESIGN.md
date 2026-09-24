@@ -523,8 +523,8 @@ and formats as its safiretools name — `hamiltonian_format(path) == 'model'` ho
 keyed on plain strings, and nothing that formats a format into a message had to change. That mixin
 needs one guard: Python 3.11 made a mixin `Enum`'s `str()` its *member* name, so the class sets
 `__str__ = str.__str__` to keep `f"{fmt}"` rendering `model` rather than `HamiltonianFormat.MODEL`.
-Keeping the pairing there leaves `TYPE_DATASET` as the only global the tag itself needs in
-`hamiltonian/base.py`, alongside the `_READERS` table that was already there.
+Keeping the pairing there leaves `hamiltonian/base.py` with no global for the tag, only the
+`_READERS` table that was already there.
 
 **`HamiltonianFormat` is deliberately not re-exported.** Nothing in the public API takes or returns
 a format — `hamiltonian_format()` is not public either (see **Future changes**) — so the enum is an

@@ -243,6 +243,48 @@ def load_pyscf_chk_mol(chkfile, base='scf', soc_type=None) -> dict:
     }
 
 
+def working_basis(scf_data, ortho_ao, cas=None):
+    """
+    Choose the working basis and the frozen-orbital counts for a molecular
+    ``scf_data`` mapping.
+
+    Returns
+    -------
+    C : numpy.ndarray
+        Transformation into the working basis.
+    (nfzc, nfzv) : tuple(int, int)
+        Numbers of frozen core and virtual orbitals.
+
+    Raises
+    ------
+    ValueError
+        If `cas` is combined with `ortho_ao`, or if the reference is UHF/GHF and
+        `ortho_ao` is not set.
+    """
+    C = scf_data['mo_coeff']
+
+    if ortho_ao:
+        if cas is not None:
+            raise ValueError("cas and ortho_ao cannot be used at the same time")
+        return scf_data['X'], (0, 0)
+
+    if C.ndim == 3 or C.shape[0] == 2 * scf_data["norb"]:
+        raise ValueError(
+            "UHF or GHF molecular orbital bases are not supported. Use ortho_ao."
+        )
+
+    if cas is None:
+        return C, (0, 0)
+
+    nfzc = (sum(scf_data["nelec"]) - cas[0]) // 2
+    ncas = cas[1]
+    nmo = C.shape[-1]
+    if ncas == -1:
+        ncas = nmo - nfzc
+
+    return C, (nfzc, nmo - ncas - nfzc)
+
+
 def _hcore_with_soc(mol, soc_type):
     """The one-body Hamiltonian for `mol`, with the requested SOC treatment."""
     from pyscf import scf

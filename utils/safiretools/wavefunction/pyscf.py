@@ -26,7 +26,7 @@ import logging
 import numpy as np
 import h5py as h5
 
-from safiretools.hamiltonian.molecular import _get_transform_from_scf_data
+from safiretools.convert.pyscf import as_scf_data, working_basis
 from safiretools.types import SpinSymm
 from safiretools.wavefunction.slater import make_slater, transform_slater
 
@@ -86,7 +86,6 @@ def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
     PySCF's orbitals are orthonormal in the basis they are expressed in, so
     nothing here orthonormalizes them.
     """
-    from safiretools.convert.pyscf import as_scf_data
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
 
     scf_data = as_scf_data(source)
@@ -99,7 +98,7 @@ def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
         spin_symm = scf_data['walker_type']
     spin_symm = SpinSymm.from_input(spin_symm)
 
-    X, (nfzc, nfzv) = _get_transform_from_scf_data(basis_scf_data, ortho_ao, cas)
+    X, (nfzc, nfzv) = working_basis(basis_scf_data, ortho_ao, cas)
 
     nelec = tuple(n - nfzc for n in nelec)
     norb -= (nfzc + nfzv)
@@ -148,12 +147,13 @@ def from_pyscf_cas(mol, cas_chkfile, tol=1e-4, max_det=None):
     """
     from safiretools.wavefunction.phmsd import PHMSDWavefunction
 
-    cas_meta = read_cas_meta(cas_chkfile)
-    ncore = int(cas_meta['ncore'])
-    ncas = int(cas_meta['ncas'])
+    with h5.File(cas_chkfile, 'r') as fh5:
+        ci = fh5['mcscf/ci'][()]
+        ncore = int(fh5['mcscf/ncore'][()])
+        ncas = int(fh5['mcscf/ncas'][()])
     nactive = tuple(n - ncore for n in mol.nelec)
 
-    coeffs, occa, occb = ci_expansion(cas_meta['ci'], ncas, nactive, ncore,
+    coeffs, occa, occb = ci_expansion(ci, ncas, nactive, ncore,
                                       tol=tol, max_det=max_det)
 
     logger.info("read %d determinant(s) from %s", len(coeffs), cas_chkfile)
@@ -182,8 +182,8 @@ def _occupied_indices(mo_occ, spin_symm: SpinSymm, nfzc=0, nfzv=0):
     Returns
     -------
     tuple(numpy.ndarray, numpy.ndarray or None)
-        Alpha and beta indices; the beta entry is None for the single-channel
-        spin symmetries.
+        Alpha and beta indices. A closed-shell reference repeats alpha as beta;
+        a noncollinear one has None for beta.
     """
     mo_occ = np.asarray(mo_occ)
 
@@ -228,7 +228,7 @@ def _check_occupations(occa, occb, nelec, spin_symm: SpinSymm) -> None:
             f"mo_occ defines {len(occa)} alpha occupied orbitals, expected "
             f"{nelec[0]}"
         )
-    if occb is not None and len(occb) != nelec[1]:
+    if len(occb) != nelec[1]:
         raise ValueError(
             f"mo_occ defines {len(occb)} beta occupied orbitals, expected "
             f"{nelec[1]}"
@@ -238,26 +238,6 @@ def _check_occupations(occa, occb, nelec, spin_symm: SpinSymm) -> None:
 # ----------------------------------------------------------------------
 # reading a CI expansion
 # ----------------------------------------------------------------------
-
-def read_cas_meta(chkfile, group='mcscf') -> dict:
-    """
-    Read the ``ci``, ``ncore`` and ``ncas`` fields of a PySCF CAS checkpoint.
-
-    Parameters
-    ----------
-    chkfile : str or pathlib.Path
-        Checkpoint file to read.
-    group : str, optional
-        HDF5 group holding the CAS results. Default ``'mcscf'``.
-
-    Returns
-    -------
-    dict
-        Keys ``ci``, ``ncore`` and ``ncas``.
-    """
-    with h5.File(chkfile, 'r') as fh5:
-        return {key: fh5[group][key][()] for key in ('ci', 'ncore', 'ncas')}
-
 
 def ci_expansion(ciab, norb: int, nelec, ncore: int, tol=1e-4, max_det=None):
     r"""

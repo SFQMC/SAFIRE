@@ -34,9 +34,6 @@ from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
 from safiretools.wavefunction.slater import ORTHONORMAL_TOL
 
-WAVEFUNCTION_GROUP = 'Wavefunction'
-"""Top-level HDF5 group every wavefunction is written into."""
-
 
 def wavefunction_format(path) -> str:
     """
@@ -58,9 +55,9 @@ def wavefunction_format(path) -> str:
         If the file holds no wavefunction.
     """
     with h5.File(path, 'r') as fh5:
-        if f'{WAVEFUNCTION_GROUP}/NOMSD/dims' in fh5:
+        if 'Wavefunction/NOMSD/dims' in fh5:
             return 'nomsd'
-        if f'{WAVEFUNCTION_GROUP}/PHMSD/dims' in fh5:
+        if 'Wavefunction/PHMSD/dims' in fh5:
             return 'phmsd'
 
     raise ValueError(f"'{path}' holds no wavefunction safiretools recognizes")
@@ -266,7 +263,7 @@ class Wavefunction(ABC):
         `safiretools.wavefunction.io.warn_if_ill_conditioned`.
         """
         with h5.File(path, 'a') as fh5:
-            group = replace_group(fh5, WAVEFUNCTION_GROUP).create_group(
+            group = replace_group(fh5, 'Wavefunction').create_group(
                 type(self)._HDF5_GROUP)
 
             io.write_header(
@@ -320,7 +317,7 @@ class Wavefunction(ABC):
             )
 
         with h5.File(path, 'r') as fh5:
-            group = fh5[f'{WAVEFUNCTION_GROUP}/{target._HDF5_GROUP}']
+            group = fh5['Wavefunction'][target._HDF5_GROUP]
             return target._read_payload(group, io.read_header(group))
 
     @abstractmethod
