@@ -64,7 +64,7 @@ def main(argv=None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("recipe", nargs="*", help="recipe key(s), or 'all'")
-    parser.add_argument("--into", type=Path,
+    parser.add_argument("--into", type=Path, required=True,
                         help="directory to build into; intermediate files land "
                              "under <dir>/_scratch")
     parser.add_argument("--list", action="store_true",
@@ -85,9 +85,6 @@ def main(argv=None) -> int:
 
     if not args.recipe:
         parser.error("give one or more recipe keys, 'all', or --list")
-    if args.into is None:
-        parser.error("--into DIR is required: this tool never writes into the "
-                     "committed inputs tree")
 
     if args.recipe == ["all"]:
         selected = list(recipes.values())
@@ -99,12 +96,6 @@ def main(argv=None) -> int:
         selected = [recipes[key] for key in args.recipe]
 
     build_root = args.into.resolve()
-    # The committed tree is what both test suites read, and the C++ unit tests
-    # compile a path to it. Building into it would leave the tests reading files
-    # no reference has been recorded against.
-    if build_root == INPUTS_ROOT or build_root.is_relative_to(INPUTS_ROOT):
-        parser.error(f"--into {build_root} is inside the committed inputs tree; "
-                     "build somewhere else and copy the result in yourself")
     build_root.mkdir(parents=True, exist_ok=True)
 
     scratch_root = build_root / "_scratch"
