@@ -44,11 +44,16 @@ class PHMSDWavefunction(Wavefunction):
     coeffs : array_like
         Determinant coefficients, ``(ndets,)``.
     occa, occb : array_like
-        Occupied-orbital indices per determinant, ``(ndets, nup)`` and
-        ``(ndets, ndown)``. Both index the same orbital basis, ``0`` to
-        ``nmo - 1``; the beta offset the file format uses is applied on write.
+        Occupied-orbital indices per determinant, one array per independent
+        spin channel: ``(ndets, nup)`` and ``(ndets, ndown)`` when collinear,
+        and `occb` of zero width otherwise, since the two polarizations then
+        share a single channel. They index ``0`` to ``npol*nmo - 1``: spatial
+        orbitals, except when noncollinear, where they are spinors and already
+        carry the beta offset. A collinear `occb` does not — that offset is
+        applied on write.
     nmo : int
-        Number of orbitals the occupation numbers index.
+        Number of orbitals the occupation numbers index, spatial unless
+        noncollinear.
     nelec : tuple(int, int), optional
         Physical electron counts. Taken from `occa` and `occb`'s widths when
         omitted, and checked against them when given.
@@ -66,8 +71,8 @@ class PHMSDWavefunction(Wavefunction):
     ------
     ValueError
         If `occa`/`occb` disagree with `nelec`, if an orbital index falls
-        outside the basis, if more than two references are given, or if
-        `spin_symm` is not collinear.
+        outside the basis, or if more than two references are given.
+
     """
 
     _HDF5_GROUP = 'PHMSD'
@@ -104,17 +109,21 @@ class PHMSDWavefunction(Wavefunction):
         self._validate_occupations()
 
     def _validate_occupations(self) -> None:
-        for name, occ, nelec in (('occa', self.occa, self.nelec[0]),
-                                 ('occb', self.occb, self.nelec[1])):
-            if occ.shape != (self.ndets, nelec):
+        # one width per independent spin channel, so the beta array has zero
+        #   width whenever the two polarizations share a single channel
+        widths = self.nelec_per_spin + (0,) * (2 - self.nspin)
+
+        for name, occ, width in (('occa', self.occa, widths[0]),
+                                 ('occb', self.occb, widths[1])):
+            if occ.shape != (self.ndets, width):
                 raise ValueError(
                     f"{name} has shape {occ.shape}, expected "
-                    f"({self.ndets}, {nelec}) for {self.ndets} determinant(s) "
-                    f"with nelec={self.nelec}"
+                    f"({self.ndets}, {width}) for {self.ndets} determinant(s) of a "
+                    f"{self.spin_symm.label} wavefunction with nelec={self.nelec}"
                 )
-            if occ.size and (occ.min() < 0 or occ.max() >= self.nmo):
+            if occ.size and (occ.min() < 0 or occ.max() >= self.nrows):
                 raise ValueError(
-                    f"{name} holds orbital indices outside [0, {self.nmo}): "
+                    f"{name} holds orbital indices outside [0, {self.nrows}): "
                     f"[{occ.min()}, {occ.max()}]"
                 )
 
@@ -129,11 +138,11 @@ class PHMSDWavefunction(Wavefunction):
     def _default_psi0(self) -> tuple:
         """
         The leading determinant, as columns of the identity selected by its own
-        occupation numbers.
+        occupation numbers — one block per independent spin channel.
         """
-        identity = np.eye(self.nmo, dtype=np.complex128)
-        return (identity[:, self.occa[0]].copy(),
-                identity[:, self.occb[0]].copy())
+        identity = np.eye(self.nrows, dtype=np.complex128)
+        return tuple(identity[:, occ[0]].copy()
+                     for occ in (self.occa, self.occb)[:self.nspin])
 
     def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "PHMSDWavefunction":
         """
@@ -151,7 +160,8 @@ class PHMSDWavefunction(Wavefunction):
 
         return type(self)(coeffs=self.coeffs.copy(), occa=self.occa.copy(),
                           occb=self.occb.copy(), nmo=self.nmo, nelec=self.nelec,
-                          orbitals=orbitals, psi0=psi0)
+                          orbitals=orbitals, psi0=psi0,
+                          spin_symm=self.spin_symm)
 
     # ------------------------------------------------------------------
     # serialization
@@ -164,11 +174,13 @@ class PHMSDWavefunction(Wavefunction):
     @classmethod
     def _read_payload(cls, group, header: dict) -> "PHMSDWavefunction":
         occa, occb, orbitals = io.read_phmsd(
-            group, header['ndets'], header['nelec'], header['nmo'])
+            group, header['ndets'], header['nelec'], header['nmo'],
+            spin_symm=header['spin_symm'])
 
         return cls(coeffs=header['coeffs'], occa=occa, occb=occb,
                    nmo=header['nmo'], nelec=header['nelec'],
-                   orbitals=orbitals, psi0=header['psi0'])
+                   orbitals=orbitals, psi0=header['psi0'],
+                   spin_symm=header['spin_symm'])
 
 
 def _occupations(occ, name: str):

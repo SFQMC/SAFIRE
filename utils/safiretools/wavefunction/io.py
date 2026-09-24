@@ -416,19 +416,36 @@ def write_phmsd(group, occa, occb, nmo: int, orbitals=None) -> None:
     group.create_dataset('occs', data=occs.ravel().astype(np.int32, copy=False))
 
 
-def read_phmsd(group, ndets: int, nelec, nmo: int):
+def read_phmsd(group, ndets: int, nelec, nmo: int,
+               spin_symm=SpinSymm.COLLINEAR):
     """
     Read the occupation numbers and orbital references back.
+
+    Parameters
+    ----------
+    group : h5py.Group
+        The ``Wavefunction/PHMSD`` group.
+    ndets : int
+        Number of determinants, as ``dims`` records it.
+    nelec : tuple(int, int)
+        The on-disk electron counts, ``dims[1:3]``.
+    nmo : int
+        Number of orbitals, used to remove the beta offset.
+    spin_symm : SpinSymm, optional
+        Spin symmetry, which decides how wide each channel is. Only a collinear
+        wavefunction stores a beta channel: a closed-shell one repeats alpha
+        rather than storing it twice, and a noncollinear one holds both
+        polarizations in the alpha channel.
 
     Returns
     -------
     occa, occb : numpy.ndarray
-        Occupied-orbital indices, ``(ndets, nup)`` and ``(ndets, ndown)``, with
+        Occupied-orbital indices, one array per independent spin channel, with
         the beta offset removed.
     orbitals : tuple of numpy.ndarray or None
         The orbital references, or None when ``type`` is 0.
     """
-    nup, ndown = nelec
+    nup, ndown = nelec if spin_symm is SpinSymm.COLLINEAR else (nelec[0], 0)
 
     occs = np.asarray(group['occs'][...]).reshape((-1, nup + ndown))[:ndets]
     occa = occs[:, :nup].copy()

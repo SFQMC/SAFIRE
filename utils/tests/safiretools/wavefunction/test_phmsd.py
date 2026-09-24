@@ -22,17 +22,42 @@ class TestConstruction:
     def test_nelec_comes_from_the_occupation_widths(self, make_phmsd):
         assert make_phmsd().nelec == (3, 2)
 
-    def test_it_is_always_collinear(self, make_phmsd):
+    def test_it_defaults_to_collinear(self, make_phmsd):
         assert make_phmsd().spin_symm is SpinSymm.COLLINEAR
         assert make_phmsd().nspin == 2
         assert make_phmsd().npol == 1
 
-    @pytest.mark.parametrize('spin_symm', ['closed', 'noncollinear'])
-    def test_another_spin_symmetry_is_rejected(self, spin_symm):
-        with pytest.raises(ValueError, match="always collinear"):
-            PHMSDWavefunction(coeffs=[1.0], occa=np.array([[0, 1]]),
-                              occb=np.array([[0, 1]]), nmo=4,
-                              spin_symm=spin_symm)
+    def test_a_closed_shell_expansion_stores_alpha_alone(self):
+        """The beta channel repeats alpha, so only one channel is stored."""
+        wavefunction = PHMSDWavefunction(
+            coeffs=[1.0], occa=np.array([[0, 1, 2]]),
+            occb=np.zeros((1, 0), dtype=int), nmo=6, nelec=(3, 3),
+            spin_symm='closed')
+
+        assert wavefunction.nspin == 1
+        assert (wavefunction.occa.shape, wavefunction.occb.shape) == ((1, 3), (1, 0))
+        assert len(wavefunction.psi0) == 1
+
+    def test_a_noncollinear_expansion_indexes_spinors(self):
+        """
+        Both polarizations share one channel, so `occa` is ``nup + ndown`` wide
+        and spans ``2*nmo`` — it already carries the beta offset.
+        """
+        wavefunction = PHMSDWavefunction(
+            coeffs=[1.0], occa=np.array([[0, 1, 6, 7]]),
+            occb=np.zeros((1, 0), dtype=int), nmo=6, nelec=(2, 2),
+            spin_symm='noncollinear')
+
+        assert (wavefunction.nspin, wavefunction.npol) == (1, 2)
+        assert wavefunction.occa.shape == (1, 4)
+        assert wavefunction.nelec_on_disk == (4, 0)
+        assert wavefunction.psi0[0].shape == (12, 4)
+
+    def test_a_spinor_index_outside_the_basis_is_rejected(self):
+        with pytest.raises(ValueError, match=r"outside \[0, 12\)"):
+            PHMSDWavefunction(coeffs=[1.0], occa=np.array([[0, 1, 6, 12]]),
+                              occb=np.zeros((1, 0), dtype=int), nmo=6,
+                              nelec=(2, 2), spin_symm='noncollinear')
 
     def test_an_empty_beta_channel_is_allowed(self):
         wavefunction = PHMSDWavefunction(
