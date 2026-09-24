@@ -32,6 +32,21 @@ def test_a_stage_the_file_does_not_have_is_rejected(results_file):
         Results(results_file, stage=7)
 
 
+def test_the_empty_stage_reads_every_stage(results_file, measured):
+    """``stage=""`` spans the whole file, so the stage is part of each path."""
+    results = Results(results_file, stage='')
+
+    assert results.observable_names() == sorted(
+        [f'Stage0/{name}' for name in measured] + ['Stage1/Energy'])
+
+
+def test_reading_every_stage_finds_the_same_series(results_file, measured):
+    across = Results(results_file, stage='').timeseries('Stage0/Energy')
+    one = Results(results_file, stage=0).timeseries('Energy')
+
+    assert np.array_equal(across, one)
+
+
 def test_a_file_without_measurements_is_rejected(tmp_path):
     path = tmp_path / 'no_measurements.h5'
     with h5.File(path, 'w') as f:

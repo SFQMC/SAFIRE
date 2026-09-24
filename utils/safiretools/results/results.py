@@ -43,7 +43,9 @@ class Results:
         Path to the results.h5 an AFQMC run wrote.
     stage : int or str, optional
         Stage to read, either by index or by group name, so ``0`` and ``"Stage0"`` both
-        select the first one. Defaults to the last stage in the file.
+        select the first one. Defaults to the last stage in the file. Pass ``""`` to read
+        every stage at once, which puts the stage name on the front of each observable
+        path — ``"Stage0/Energy"`` rather than ``"Energy"``.
 
     Raises
     ------
@@ -89,20 +91,22 @@ class Results:
                 stage = stages[-1]
             elif not isinstance(stage, str):
                 stage = f"Stage{stage}"
-            if stage not in stages:
+            # "" is every stage, so there is nothing to look up
+            if stage and stage not in stages:
                 raise ValueError(f"'{filename}' has no {stage}, only {', '.join(stages)}")
 
         self.stage: str = stage
 
     def observable_names(self) -> list[str]:
-        """Every observable this stage measured.
+        """Every observable this stage measured, or every stage's when `stage` is ``""``.
 
         Returns
         -------
         list of str
             The '/'-separated path of each observable below the stage group, sorted. A
             back-propagated observable keeps the estimator and the back-propagation length
-            in its path, as in ``BackPropEstimator/Steps=40/OneRDM``.
+            in its path, as in ``BackPropEstimator/Steps=40/OneRDM``; reading every stage
+            puts the stage on the front as well.
         """
         names = []
         with h5.File(self.filename, "r") as f:
@@ -143,8 +147,8 @@ class Results:
                 return read_complex(dataset)
 
         raise KeyError(
-            f"{self.stage} of '{self.filename}' has no observable '{observable_name}'; "
-            f"it has {', '.join(self.observable_names())}"
+            f"{self.stage or 'Measurements'} of '{self.filename}' has no observable "
+            f"'{observable_name}'; it has {', '.join(self.observable_names())}"
         )
 
     def average(

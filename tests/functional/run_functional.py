@@ -57,9 +57,8 @@ import h5py as h5
 import numpy as np
 import scipy.stats
 
-# Reusing SAFIRE library utilities is fine; only the dev test harness is avoided.
-from afqmctools.utils.types import SpinSymm
-from afqmctools.analysis.measurements import average_measurements
+from safiretools import SpinSymm
+from safiretools.results import Results
 
 from functional_cases import (
     HamiltonianClass,
@@ -344,9 +343,14 @@ def _average_observables(results: Path) -> dict:
 
     Nothing is discarded here: the driver measures nothing before `equilibration_steps`, so
     every bin in the file is already equilibrated.
+
+    ``stage=""`` reads every stage, which is what keeps the stage on the front of each
+    key.
     """
     try:
-        return average_measurements(results)
+        measured = Results(results, stage="")
+        return {name: measured.average(name, skip=0)
+                for name in measured.observable_names()}
     except Exception as e:  # noqa: BLE001
         print(f"  [warn] could not average {results.name}: {e}")
         return {}
