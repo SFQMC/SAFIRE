@@ -60,7 +60,7 @@ class PHMSDWavefunction(Wavefunction):
         Initial Slater determinant for the AFQMC walkers. Built from the leading
         determinant's occupations when omitted.
     spin_symm : SpinSymm or str or int, optional
-        Spin symmetry. Only `SpinSymm.COLLINEAR` is supported — see Notes.
+        Spin symmetry.
 
     Raises
     ------
@@ -68,28 +68,12 @@ class PHMSDWavefunction(Wavefunction):
         If `occa`/`occb` disagree with `nelec`, if an orbital index falls
         outside the basis, if more than two references are given, or if
         `spin_symm` is not collinear.
-
-    Notes
-    -----
-    The AFQMC executable reads particle-hole wavefunctions only with collinear
-    walkers (``read_ph_wavefunction_hdf`` rejects both closed-shell and
-    noncollinear), so `spin_symm` is always `SpinSymm.COLLINEAR`. A fully
-    spin-polarized expansion is therefore collinear with ``ndown == 0``, and its
-    beta blocks go to disk with zero width.
     """
 
     _HDF5_GROUP = 'PHMSD'
 
     def __init__(self, coeffs, occa, occb, nmo: int, nelec=None, orbitals=None,
                  psi0=None, spin_symm=SpinSymm.COLLINEAR) -> None:
-        if SpinSymm.from_input(spin_symm) is not SpinSymm.COLLINEAR:
-            raise ValueError(
-                "a particle-hole wavefunction is always collinear; the AFQMC "
-                "executable reads no other spin symmetry for this "
-                f"representation, and {SpinSymm.from_input(spin_symm).label} "
-                "was requested"
-            )
-
         self.occa = _occupations(occa, 'occa')
         self.occb = _occupations(occb, 'occb')
 
@@ -115,7 +99,7 @@ class PHMSDWavefunction(Wavefunction):
             self.orbitals = None
 
         super().__init__(coeffs=coeffs, nelec=nelec, nmo=nmo,
-                         spin_symm=SpinSymm.COLLINEAR, psi0=psi0)
+                         spin_symm=spin_symm, psi0=psi0)
 
         self._validate_occupations()
 

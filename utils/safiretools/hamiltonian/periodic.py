@@ -596,8 +596,6 @@ class PeriodicHamiltonian(Hamiltonian):
         Number of Cholesky vectors per momentum transfer.
     enuc : float, optional
         Constant energy, including the Madelung correction. Default 0.0.
-    nelec : tuple(int, int), optional
-        ``(nup, ndown)`` for the whole supercell. Default ``(0, 0)``.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry. Default `SpinSymm.CLOSED`.
 
@@ -608,7 +606,7 @@ class PeriodicHamiltonian(Hamiltonian):
     """
 
     def __init__(self, hcore, chol, kpts, nmo_pk, qk_to_k2, minus_k, nchol_pk,
-                 enuc=0.0, nelec=(0, 0), spin_symm=SpinSymm.CLOSED) -> None:
+                 enuc=0.0, spin_symm=SpinSymm.CLOSED) -> None:
         super().__init__(spin_symm=spin_symm)
 
         self.hcore = hcore
@@ -619,7 +617,6 @@ class PeriodicHamiltonian(Hamiltonian):
         self.minus_k = np.asarray(minus_k)
         self.nchol_pk = np.asarray(nchol_pk)
         self.enuc = float(np.real(enuc))
-        self.nelec = tuple(nelec)
 
         nkpts = len(self.kpts)
         for name, array, shape in (('nmo_pk', self.nmo_pk, (nkpts,)),
@@ -675,7 +672,9 @@ class PeriodicHamiltonian(Hamiltonian):
         exxdiv : str, optional
             ``'ewald'`` adds the Madelung correction to the constant energy.
         nelec : tuple(int, int), optional
-            Overrides the electron count taken from the cell.
+            Overrides the electron count taken from the cell. It is only the
+            Madelung correction that depends on it; the Hamiltonian itself
+            carries no electron count.
         verbose : bool, optional
             Log per-iteration Cholesky progress.
 
@@ -706,7 +705,7 @@ class PeriodicHamiltonian(Hamiltonian):
         if not kpoint_symmetry:
             (_, cholvecs), = solver.run(X)
             return cls(**_supercell_layout(hcore_pk, cholvecs, solver),
-                       enuc=enuc, nelec=nelec)
+                       enuc=enuc)
 
         chol = {}
         nchol_pk = np.zeros(len(kpts), dtype=np.int32)
@@ -716,7 +715,7 @@ class PeriodicHamiltonian(Hamiltonian):
 
         return cls(hcore=hcore_pk, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
                    qk_to_k2=solver.QKToK2, minus_k=solver.kminus,
-                   nchol_pk=nchol_pk, enuc=enuc, nelec=nelec)
+                   nchol_pk=nchol_pk, enuc=enuc)
 
     # ------------------------------------------------------------------
     # serialization
@@ -738,7 +737,7 @@ class PeriodicHamiltonian(Hamiltonian):
             write_hamiltonian_format(fh5, 'kpoint')
             group = fh5['Hamiltonian']
             _write_kpoint_descriptors(group, self.kpts, self.nmo_pk, self.qk_to_k2,
-                                      self.minus_k, self.nelec, self.enuc)
+                                      self.minus_k, self.enuc)
             for ki in range(self.nkpts):
                 _write_kpoint_h1(group, ki, self.nmo_pk[ki], self.hcore[ki])
 
@@ -748,8 +747,8 @@ class PeriodicHamiltonian(Hamiltonian):
             for Q, L in self.chol.items():
                 kp_group.create_dataset(f"L{Q}", data=L)
 
-    def to_fcidump(self, path, tol=1e-8, ctol=1e-12, sym=1, cplx=True,
-                   paren=False, use_spinor=False) -> None:
+    def to_fcidump(self, path, nelec=(0, 0), tol=1e-8, ctol=1e-12, sym=1,
+                   cplx=True, paren=False, use_spinor=False) -> None:
         """
         Write this Hamiltonian as a plain-text FCIDUMP file, over the combined
         basis of every k-point.
@@ -762,6 +761,10 @@ class PeriodicHamiltonian(Hamiltonian):
         ----------
         path : str or pathlib.Path
             FCIDUMP file to write. Overwritten if it exists.
+        nelec : tuple(int, int), optional
+            ``(nup, ndown)`` over the whole supercell, for the ``NELEC``/``MS2``
+            header fields. The Hamiltonian itself does not carry an electron
+            count, so it is supplied here. Default ``(0, 0)``.
         tol : float, optional
             Only write integrals above this magnitude. Default 1e-8.
         ctol : float, optional
@@ -805,7 +808,7 @@ class PeriodicHamiltonian(Hamiltonian):
         chol, nchol_pk = self._chol_all_momenta()
 
         write_fcidump_kpoint(path, self.hcore, chol, self.enuc, self.nmo_tot,
-                             self.nelec, self.nmo_pk, nchol_pk, self.qk_to_k2,
+                             nelec, self.nmo_pk, nchol_pk, self.qk_to_k2,
                              tol=tol, sym=sym, paren=paren, cplx=cplx, ctol=ctol,
                              use_spinor=use_spinor)
 
@@ -872,7 +875,6 @@ class PeriodicHamiltonian(Hamiltonian):
             group = fh5['Hamiltonian']
             dims = group['dims'][...]
             nkpts = int(dims[2])
-            nelec = (int(dims[4]), int(dims[5]))
             enuc = float(group['Energies'][...][0])
 
             kpts = group['KPoints'][...]
@@ -887,7 +889,7 @@ class PeriodicHamiltonian(Hamiltonian):
 
         return cls(hcore=hcore, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
                    qk_to_k2=qk_to_k2, minus_k=minus_k, nchol_pk=nchol_pk,
-                   enuc=enuc, nelec=nelec)
+                   enuc=enuc)
 
 
 def write_rhoG(scf_data, path, gcut, kpoint_symmetry=True,
@@ -1013,14 +1015,19 @@ def _kpoint_block(cholvecs, solver):
     return cholvecs.reshape(nkpts, solver.nmo_max**2 * nchol) * factor
 
 
-def _write_kpoint_descriptors(group, kpts, nmo_pk, qk_to_k2, minus_k, nelec,
+def _write_kpoint_descriptors(group, kpts, nmo_pk, qk_to_k2, minus_k,
                               enuc) -> None:
-    """Write the k-point Hamiltonian's descriptor datasets into `group`."""
+    """Write the k-point Hamiltonian's descriptor datasets into `group`.
+
+    The electron-count slots of ``dims`` are written as zero: the AFQMC
+    executable takes the electron count from the wavefunction and reads them
+    from nowhere.
+    """
     nkpts = len(kpts)
 
     group.create_dataset(
         "dims",
-        data=np.array([0, 0, nkpts, int(np.sum(nmo_pk)), nelec[0], nelec[1], 0, 0],
+        data=np.array([0, 0, nkpts, int(np.sum(nmo_pk)), 0, 0, 0, 0],
                       dtype=np.int32))
     group.create_dataset("ComplexIntegrals", data=np.array([1], dtype=np.int32))
     group.create_dataset("Energies", data=np.array([enuc, 0.], dtype=np.float64))

@@ -29,7 +29,7 @@ from safiretools.hamiltonian.model.lattice_hamiltonian import (
 CASES = {
     'hubbard': dict(
         lattice=dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'),
-        hamiltonian=dict(t=1.0, U=4.0, nelec=(8, 8)),
+        hamiltonian=dict(t=1.0, U=4.0),
     ),
     'attractive_hubbard': dict(
         lattice=dict(L1=3, L2=3, boundary1='pbc', boundary2='open'),
@@ -37,7 +37,7 @@ CASES = {
     ),
     'kanamori': dict(
         lattice=dict(L1=6, L2=1, boundary1='pbc', boundary2='open'),
-        hamiltonian=dict(nbands=2, t=1.0, U=4.0, U1=2.0, U2=1.0, J=0.5, nelec=(6, 6)),
+        hamiltonian=dict(nbands=2, t=1.0, U=4.0, U1=2.0, U2=1.0, J=0.5),
     ),
     'heisenberg': dict(
         lattice=dict(L1=4, L2=2, boundary1='pbc', boundary2='pbc'),
@@ -121,7 +121,6 @@ def test_hdf5_round_trip_preserves_the_terms(case, tmp_path):
     assert isinstance(restored, LatticeHamiltonian)
     assert restored.nbands == hamiltonian.nbands
     assert restored.nsites == hamiltonian.nsites
-    assert restored.nelec == hamiltonian.nelec
     assert restored.spin_symm is hamiltonian.spin_symm
 
     _refinalize(restored)
@@ -337,9 +336,9 @@ def test_writing_without_a_spin_symmetry_raises(tmp_path):
         hamiltonian.to_hdf5(tmp_path / 'ham.h5')
 
 
-def test_noncollinear_merges_the_spin_sectors_in_dims(tmp_path):
-    hamiltonian = LatticeHamiltonian(nsites=4, spin_symm=SpinSymm.NONCOLLINEAR,
-                                     nelec=(3, 2))
+def test_the_electron_count_is_not_recorded(tmp_path):
+    """A Hamiltonian carries no electron count; the wavefunction does."""
+    hamiltonian = LatticeHamiltonian(nsites=4, spin_symm=SpinSymm.NONCOLLINEAR)
     hamiltonian.add_term('tij', HamiltonianComponent(
         sps.csr_array(np.eye(8)), 'one_body', spin_symm=SpinSymm.NONCOLLINEAR))
 
@@ -348,4 +347,4 @@ def test_noncollinear_merges_the_spin_sectors_in_dims(tmp_path):
 
     with h5.File(path, 'r') as fh5:
         dims = fh5['Hamiltonian/dims'][...]
-    assert (dims[4], dims[5]) == (5, 0)
+    assert (dims[4], dims[5]) == (0, 0)

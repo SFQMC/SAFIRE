@@ -278,12 +278,12 @@ def test_onsite_interaction_needs_more_than_one_band(square_2x2, step):
 
 def test_accessors_replace_bare_attribute_access(square_4x4):
     builder = HamiltonianBuilder(lattice=square_4x4, nbands=2,
-                                 spin_symm=SpinSymm.COLLINEAR, nelec=(8, 8))
+                                 spin_symm=SpinSymm.COLLINEAR)
 
     assert builder.get_lattice() is square_4x4
     assert isinstance(builder.get_hamiltonian(), LatticeHamiltonian)
     assert builder.get_hamiltonian().nbands == 2
-    assert builder.get_hamiltonian().nelec == (8, 8)
+    assert builder.get_hamiltonian().spin_symm is SpinSymm.COLLINEAR
 
 
 def test_builder_requires_a_lattice():
@@ -298,7 +298,7 @@ def test_unknown_builder_parameter_raises(square_4x4):
 
 def test_from_input_builds_and_finalizes(square_4x4):
     builder = HamiltonianBuilder.from_input(
-        {'hamiltonian': dict(t=1.0, U=4.0, nelec=(8, 8))},
+        {'hamiltonian': dict(t=1.0, U=4.0)},
         lattice=square_4x4,
     )
     hamiltonian = builder.get_hamiltonian()

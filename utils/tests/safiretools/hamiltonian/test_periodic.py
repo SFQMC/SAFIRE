@@ -57,7 +57,7 @@ def _kpoint_hamiltonian(nkpts=2, nmo=3, nchol=4):
         qk_to_k2=np.zeros((nkpts, nkpts), dtype=np.int32),
         minus_k=np.arange(nkpts, dtype=np.int32),
         nchol_pk=np.array([nchol] * nkpts, dtype=np.int32),
-        enuc=-1.25, nelec=(2, 2),
+        enuc=-1.25,
     )
 
 
@@ -129,7 +129,7 @@ def _mirrored_hamiltonian(nmo=2, nchol=2):
         qk_to_k2=np.array([[0, 1, 2], [2, 0, 1], [1, 2, 0]], dtype=np.int32),
         minus_k=np.array([0, 2, 1], dtype=np.int32),
         nchol_pk=np.array([nchol, nchol, 0], dtype=np.int32),
-        enuc=0.5, nelec=(2, 2),
+        enuc=0.5,
     )
 
 
@@ -140,12 +140,13 @@ class TestFcidump:
         hamiltonian = _kpoint_hamiltonian()
         chol = [hamiltonian.chol[Q] for Q in range(hamiltonian.nkpts)]
 
+        nelec = (2, 2)
         from_method = tmp_path / 'method'
-        hamiltonian.to_fcidump(from_method, tol=1e-12)
+        hamiltonian.to_fcidump(from_method, nelec=nelec, tol=1e-12)
 
         direct = tmp_path / 'direct'
         write_fcidump_kpoint(direct, hamiltonian.hcore, chol, hamiltonian.enuc,
-                             hamiltonian.nmo_tot, hamiltonian.nelec,
+                             hamiltonian.nmo_tot, nelec,
                              hamiltonian.nmo_pk, hamiltonian.nchol_pk,
                              hamiltonian.qk_to_k2, tol=1e-12)
 

@@ -336,7 +336,6 @@ def _parse_ham_input(source: dict):
     _known_params = {
         'nbands': 1,
         'twist': None,
-        'nelec': (0, 0),
         'afm_pin_type': "staggered",
         'fm_pin_type': "staggered",
     }
@@ -389,8 +388,6 @@ class HamiltonianBuilder:
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry the Hamiltonian is expressed in. Default
         `SpinSymm.COLLINEAR`.
-    nelec : tuple(int, int), optional
-        ``(nup, ndown)``, recorded on the Hamiltonian for writing.
 
     Raises
     ------
@@ -409,7 +406,6 @@ class HamiltonianBuilder:
             lattice: Lattice,
             nbands: int = 1,
             spin_symm=SpinSymm.COLLINEAR,
-            nelec=(0, 0),
             **kwargs
     ) -> None:
         if lattice is None:
@@ -420,7 +416,6 @@ class HamiltonianBuilder:
             nsites=lattice.N_sites,
             nbands=nbands,
             spin_symm=spin_symm,
-            nelec=nelec,
             lattice_metadata=lattice_metadata_from(lattice),
         )
 
@@ -539,7 +534,6 @@ class HamiltonianBuilder:
             lattice=lattice,
             nbands=ham_params['nbands'],
             spin_symm=ham_input.get('spin_symm', SpinSymm.COLLINEAR),
-            nelec=ham_params['nelec'],
         )
 
         hamiltonian = builder.get_hamiltonian()
