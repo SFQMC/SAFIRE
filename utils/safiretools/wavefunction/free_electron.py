@@ -302,8 +302,8 @@ def fill_shells(shells, nelec: int, strategy='aufbau'):
                 f"is arbitrary. The '{strategy}' strategy picked "
                 f"{sorted(selected)}. Build the trial "
                 "wavefunction's Hamiltonian on a lattice with a small irrational "
-                "twist (see DEFAULT_TWIST) to break the degeneracy due to" \
-                "translational symmetry. A  degeneracy between bands or spin sectors " 
+                "twist (see DEFAULT_TWIST) to break the degeneracy due to "
+                "translational symmetry. A degeneracy between bands or spin sectors "
                 "requires a one-body term that explicitly breaks those symmetries."
             )
 
