@@ -125,7 +125,29 @@ class TestHdf5:
         assert np.allclose(restored.hcore, hamiltonian.hcore)
         assert np.allclose(restored.chol, hamiltonian.chol)
         assert restored.enuc == hamiltonian.enuc
-        assert restored.nelec == (3, 2)
+
+    @pytest.mark.parametrize("spin_symm", list(SpinSymm))
+    def test_the_spin_symmetry_round_trips(self, random_hamiltonian, tmp_path,
+                                           spin_symm):
+        """``hcore``'s blocked shape records the spin symmetry it was written in."""
+        _, hcore, chol, _ = random_hamiltonian
+        if spin_symm is SpinSymm.NONCOLLINEAR:
+            hcore = np.kron(np.eye(2), hcore)
+
+        path = tmp_path / 'ham.h5'
+        MolecularHamiltonian(hcore=hcore, chol=chol.T,
+                             spin_symm=spin_symm).to_hdf5(path)
+
+        assert Hamiltonian.from_hdf5(path).spin_symm is spin_symm
+
+    def test_the_electron_count_is_not_recorded(self, random_hamiltonian, tmp_path):
+        """A Hamiltonian carries no electron count; the wavefunction does."""
+        _, hcore, chol, _ = random_hamiltonian
+        path = tmp_path / 'ham.h5'
+        MolecularHamiltonian.from_integrals(hcore, chol=chol).to_hdf5(path)
+
+        with h5.File(path, 'r') as fh5:
+            assert list(fh5['Hamiltonian/dims'][...][4:6]) == [0, 0]
 
     def test_real_integrals_are_written_real(self, random_hamiltonian, tmp_path):
         _, hcore, chol, _ = random_hamiltonian
@@ -133,7 +155,7 @@ class TestHdf5:
         MolecularHamiltonian.from_integrals(hcore, chol=chol).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert fh5['Hamiltonian/hcore'].ndim == 2
+            assert fh5['Hamiltonian/hcore'].ndim == 5
             assert fh5['Hamiltonian/DenseFactorized/L'].ndim == 2
             assert fh5['Hamiltonian/ComplexIntegrals'][0] == 0
 
@@ -153,9 +175,10 @@ class TestHdf5:
 
         with h5.File(path, 'r') as fh5:
             assert fh5['Hamiltonian/hcore'].dtype == np.complex128
-            assert fh5['Hamiltonian/hcore'].shape == (nmo, nmo)
+            assert fh5['Hamiltonian/hcore'].shape == (1, 1, nmo, 1, nmo)
 
-        assert np.allclose(Hamiltonian.from_hdf5(path).hcore, complex_hcore)
+        assert np.allclose(Hamiltonian.from_hdf5(path).hcore.reshape(nmo, nmo),
+                           complex_hcore)
 
     def test_the_ortho_matrix_is_written_when_given(self, random_hamiltonian, tmp_path):
         nmo, hcore, chol, _ = random_hamiltonian
@@ -186,16 +209,16 @@ class TestFcidump:
     def test_round_trip(self, random_hamiltonian, tmp_path):
         nmo, hcore, chol, _ = random_hamiltonian
         hamiltonian = MolecularHamiltonian.from_integrals(
-            hcore, chol=chol, enuc=1.5, nelec=(3, 2))
+            hcore, chol=chol, enuc=1.5)
 
         path = tmp_path / 'FCIDUMP'
-        hamiltonian.to_fcidump(path, tol=1e-12)
+        hamiltonian.to_fcidump(path, nelec=(3, 2), tol=1e-12)
         restored = MolecularHamiltonian.from_fcidump(path, cholesky_tol=1e-10)
 
         assert restored.nmo == nmo
-        assert restored.nelec == (3, 2)
+        assert restored.spin_symm is SpinSymm.COLLINEAR
         assert np.isclose(restored.enuc, 1.5)
-        assert np.allclose(restored.hcore, hcore)
+        assert np.allclose(restored.hcore[0].reshape(nmo, nmo), hcore)
 
         eris = (hamiltonian.chol @ hamiltonian.chol.conj().T)
         assert np.allclose(restored.chol @ restored.chol.conj().T, eris, atol=1e-6)
@@ -221,11 +244,11 @@ class TestFcidump:
         hcore = hcore + hcore.conj().T
 
         path = tmp_path / 'FCIDUMP'
-        MolecularHamiltonian(hcore=hcore, chol=chol, nelec=(2, 2)).to_fcidump(
-            path, tol=1e-12)
+        MolecularHamiltonian(hcore=hcore, chol=chol).to_fcidump(
+            path, nelec=(2, 2), tol=1e-12)
         restored = MolecularHamiltonian.from_fcidump(path, cholesky_tol=1e-10)
 
-        assert np.allclose(restored.hcore, hcore)
+        assert np.allclose(restored.hcore.reshape(nmo, nmo), hcore)
         assert np.allclose(restored.chol @ restored.chol.conj().T,
                            chol @ chol.conj().T, atol=1e-6)
 
@@ -284,6 +307,16 @@ class TestFcidump:
             spin_symm=SpinSymm.NONCOLLINEAR)
 
         with pytest.raises(ValueError, match="have to be in the same one"):
+            hamiltonian.to_fcidump(tmp_path / 'FCIDUMP')
+
+    def test_a_collinear_hamiltonian_is_rejected(self, random_hamiltonian,
+                                                 tmp_path):
+        """FCIDUMP has room for one one-body matrix, and collinear has two."""
+        _, hcore, chol, _ = random_hamiltonian
+        hamiltonian = MolecularHamiltonian(hcore=hcore, chol=chol.T,
+                                           spin_symm=SpinSymm.COLLINEAR)
+
+        with pytest.raises(ValueError, match="independent spin sectors"):
             hamiltonian.to_fcidump(tmp_path / 'FCIDUMP')
 
 
@@ -443,7 +476,7 @@ class TestRealAndComplexAreToldApart:
 
         restored = self._round_trip(tmp_path, hcore, chol, 'nmo2.h5')
         assert restored.nmo == 2
-        assert restored.hcore.shape == (2, 2)
+        assert restored.hcore.shape == (1, 1, 2, 1, 2)
         assert not np.iscomplexobj(restored.hcore)
 
     def test_two_cholesky_vectors(self, tmp_path):
@@ -473,5 +506,5 @@ class TestRealAndComplexAreToldApart:
             del fh5['Hamiltonian/hcore']
             fh5.create_dataset('Hamiltonian/hcore', data=np.zeros((2, 2, 2, 2)))
 
-        with pytest.raises(ValueError, match="square matrix"):
+        with pytest.raises(ValueError, match="expected .nspin, npol"):
             Hamiltonian.from_hdf5(path)

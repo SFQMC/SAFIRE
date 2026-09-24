@@ -54,16 +54,15 @@ class MolecularHamiltonian(Hamiltonian):
     Parameters
     ----------
     hcore : numpy.ndarray
-        One-body Hamiltonian in the working basis, ``(npol*nmo, npol*nmo)``
-        with ``npol = 2`` for a noncollinear (GHF-like) Hamiltonian and 1
-        otherwise.
+        One-body Hamiltonian in the working basis, ``(nspin, npol, nmo, npol,
+        nmo)``. A single matrix ``(npol*nmo, npol*nmo)`` or one per spin sector
+        ``(nspin, npol*nmo, npol*nmo)`` is accepted too and reshaped into that —
+        see `spin_blocked_hcore`.
     chol : numpy.ndarray
         Cholesky matrix :math:`L_{(ij),\gamma}`, shape ``(npol*nmo*npol*nmo,
         nchol)`` — note the *pair* index comes first.
     enuc : float, optional
         Constant (nuclear repulsion) energy. Default 0.0.
-    nelec : tuple(int, int), optional
-        ``(nup, ndown)``. Default ``(0, 0)``.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry. Default `SpinSymm.CLOSED`.
     ortho : numpy.ndarray, optional
@@ -78,31 +77,26 @@ class MolecularHamiltonian(Hamiltonian):
                  spin_symm=SpinSymm.CLOSED, ortho=None, real_chol=None) -> None:
         super().__init__(spin_symm=spin_symm)
 
-        self.hcore = np.asarray(hcore)
+        self.hcore = spin_blocked_hcore(hcore, self.spin_symm)
         self.chol = np.asarray(chol)
         self.enuc = float(np.real(enuc))
         self.nelec = tuple(nelec)
         self.ortho = ortho
         self.real_chol = real_chol
 
-        if self.hcore.ndim != 2 or self.hcore.shape[0] != self.hcore.shape[1]:
-            raise ValueError(f"hcore must be a square matrix, got shape {self.hcore.shape}")
-
-        if self.hcore.shape[0] % self.npol:
-            raise ValueError(
-                f"hcore has shape {self.hcore.shape}, which is not divisible by the "
-                f"{self.npol} spin polarizations of a {self.spin_symm.label} Hamiltonian"
-            )
-        self._nmo = self.hcore.shape[0] // self.npol
-
         # the Cholesky matrix may be stored in the spatial-orbital basis even when
         #   hcore is in the spin-orbital one
-        valid_rows = {self._nmo**2, (self.npol * self._nmo)**2}
+        valid_rows = {self.nmo**2, (self.npol * self.nmo)**2}
         if self.chol.shape[0] not in valid_rows:
             raise ValueError(
-                f"Cholesky matrix has {self.chol.shape[0]} rows; for nmo={self._nmo} "
+                f"Cholesky matrix has {self.chol.shape[0]} rows; for nmo={self.nmo} "
                 f"and npol={self.npol} expected one of {sorted(valid_rows)}"
             )
+
+    @property
+    def nspin(self) -> int:
+        """2 for a collinear Hamiltonian (independent spin sectors), else 1."""
+        return 2 if self.spin_symm is SpinSymm.COLLINEAR else 1
 
     @property
     def npol(self) -> int:
@@ -112,7 +106,7 @@ class MolecularHamiltonian(Hamiltonian):
     @property
     def nmo(self) -> int:
         """Number of orbitals, i.e. spatial orbitals unless noncollinear."""
-        return self._nmo
+        return self.hcore.shape[2]
 
     @property
     def nchol(self) -> int:
@@ -149,7 +143,8 @@ class MolecularHamiltonian(Hamiltonian):
         Parameters
         ----------
         hcore : numpy.ndarray
-            One-body Hamiltonian, ``(nmo, nmo)``.
+            One-body Hamiltonian, in any of the layouts `spin_blocked_hcore`
+            accepts — usually ``(npol*nmo, npol*nmo)``.
         chol : numpy.ndarray, optional
             Cholesky vectors :math:`L_{\gamma,(ij)}`, shape ``(nchol, nmo**2)``.
             Exactly one of `chol` and `eri` is required.
@@ -426,12 +421,21 @@ class MolecularHamiltonian(Hamiltonian):
         Raises
         ------
         ValueError
-            If the Cholesky matrix is in the spatial-orbital basis while
-            ``hcore`` is in the spin-orbital one, if `use_spinor` is asked of a
-            Hamiltonian that is already in a spin-orbital basis, or if `cplx`
-            is False and the integrals have imaginary parts above `ctol`.
+            If the Hamiltonian is collinear, if the Cholesky matrix is in the
+            spatial-orbital basis while ``hcore`` is in the spin-orbital one, if
+            `use_spinor` is asked of a Hamiltonian that is already in a
+            spin-orbital basis, or if `cplx` is False and the integrals have
+            imaginary parts above `ctol`.
         """
-        nbasis = self.hcore.shape[0]
+        if self.nspin != 1:
+            raise ValueError(
+                "FCIDUMP holds a single one-body matrix, and this "
+                f"{self.spin_symm.label} Hamiltonian has {self.nspin} independent "
+                "spin sectors"
+            )
+
+        nbasis = self.npol * self.nmo
+        hcore = self.hcore.reshape(nbasis, nbasis)
 
         if self.chol.shape[0] != nbasis**2:
             raise ValueError(
@@ -458,26 +462,81 @@ class MolecularHamiltonian(Hamiltonian):
 
         Notes
         -----
-        The dense format records the number of spin polarizations but not
-        whether a single-polarization Hamiltonian is closed- or open-shell — the
-        AFQMC executable takes that from the wavefunction, not the Hamiltonian.
-        `spin_symm` therefore comes back `SpinSymm.NONCOLLINEAR` or
-        `SpinSymm.CLOSED`; set it explicitly if the distinction matters.
+        ``hcore``'s own shape gives back the spin symmetry it was written in,
+        so nothing has to be guessed here.
         """
-        enuc, hcore, chol, nelec, nmo = read_dense_hamiltonian(path)
+        enuc, hcore, chol = read_dense_hamiltonian(path)
 
-        npol = hcore.shape[0] // nmo
-        spin_symm = SpinSymm.NONCOLLINEAR if npol == 2 else SpinSymm.CLOSED
+        nspin, npol = hcore.shape[0], hcore.shape[1]
+        if nspin == 2:
+            spin_symm = SpinSymm.COLLINEAR
+        else:
+            spin_symm = SpinSymm.NONCOLLINEAR if npol == 2 else SpinSymm.CLOSED
 
-        return cls(hcore=hcore, chol=chol, enuc=enuc, nelec=nelec,
-                   spin_symm=spin_symm)
+        return cls(hcore=hcore, chol=chol, enuc=enuc, spin_symm=spin_symm)
 
 
 # ----------------------------------------------------------------------
 # the dense on-disk format, shared with the supercell periodic Hamiltonian
 # ----------------------------------------------------------------------
 
-def write_dense_hamiltonian(fh5, hcore, chol, nelec, nmo, enuc=0.0,
+def spin_blocked_hcore(hcore, spin_symm: SpinSymm):
+    """
+    `hcore` as the ``(nspin, npol, nmo, npol, nmo)`` array the dense format
+    stores, where ``nspin`` is 2 only for a collinear Hamiltonian and ``npol``
+    is 2 only for a noncollinear one.
+
+    Two shorter layouts are accepted and reshaped into it: a single one-body
+    matrix ``(npol*nmo, npol*nmo)``, and one matrix per spin sector
+    ``(nspin, npol*nmo, npol*nmo)``. An array that is already blocked is checked
+    and passed through.
+
+    A single matrix given for a collinear Hamiltonian goes into both spin
+    sectors. That is the usual case rather than a convenience: the core
+    Hamiltonian does not depend on spin, and it is the two-body term that makes
+    the sectors differ.
+
+    Raises
+    ------
+    ValueError
+        If `hcore` has a rank other than 2, 3 or 5, or if its extents do not
+        match `spin_symm`.
+    """
+    hcore = np.asarray(hcore)
+    given = hcore.shape
+    nspin = 2 if spin_symm is SpinSymm.COLLINEAR else 1
+    npol = 2 if spin_symm is SpinSymm.NONCOLLINEAR else 1
+
+    if hcore.ndim == 2:
+        hcore = np.stack([hcore] * nspin)
+
+    if hcore.ndim == 3:
+        nrows, ncols = hcore.shape[1:]
+        if ncols % npol or (hcore.shape[0], nrows) != (nspin, ncols):
+            raise ValueError(
+                f"hcore has shape {given}, expected "
+                f"(nspin, npol*nmo, npol*nmo) with nspin={nspin} and npol={npol} "
+                f"for a {spin_symm.label} Hamiltonian"
+            )
+        nmo = ncols // npol
+        return hcore.reshape(nspin, npol, nmo, npol, nmo)
+
+    if hcore.ndim == 5:
+        nmo = hcore.shape[2]
+        if hcore.shape != (nspin, npol, nmo, npol, nmo):
+            raise ValueError(
+                f"hcore has shape {given}, expected "
+                f"{(nspin, npol, nmo, npol, nmo)} for a {spin_symm.label} Hamiltonian"
+            )
+        return hcore
+
+    raise ValueError(
+        f"hcore has shape {given}, expected (nspin, npol, nmo, npol, nmo) or "
+        "one of the shorter layouts it is built from"
+    )
+
+
+def write_dense_hamiltonian(fh5, hcore, chol, enuc=0.0,
                             complex_chol=None, ortho=None) -> None:
     r"""
     Write a dense Cholesky-factorized Hamiltonian into the open HDF5 file
@@ -488,7 +547,7 @@ def write_dense_hamiltonian(fh5, hcore, chol, nelec, nmo, enuc=0.0,
     fh5 : h5py.File or h5py.Group
         Destination. Existing datasets are replaced.
     hcore : numpy.ndarray
-        One-body Hamiltonian.
+        One-body Hamiltonian, ``(nspin, npol, nmo, npol, nmo)``.
     chol : numpy.ndarray
         Cholesky matrix :math:`L_{(ij),\gamma}`.
     nelec : tuple(int, int)
@@ -511,6 +570,12 @@ def write_dense_hamiltonian(fh5, hcore, chol, nelec, nmo, enuc=0.0,
     a real diagonal, so ``all`` would call any such matrix real and discard its
     imaginary part.
     """
+    hcore = np.asarray(hcore)
+    if hcore.ndim != 5:
+        raise ValueError(
+            f"hcore has shape {hcore.shape}, expected (nspin, npol, nmo, npol, nmo)"
+        )
+
     if complex_chol is None:
         complex_chol = bool(np.any(np.iscomplex(chol)))
 
@@ -525,7 +590,7 @@ def write_dense_hamiltonian(fh5, hcore, chol, nelec, nmo, enuc=0.0,
 
     _write(fh5, 'Hamiltonian/Energies', np.array([enuc, 0.], dtype=np.float64))
     _write(fh5, 'Hamiltonian/dims',
-           np.array([0, 0, 0, nmo, nelec[0], nelec[1], 0, chol.shape[-1]],
+           np.array([0, 0, 0, hcore.shape[2], 0, 0, 0, chol.shape[-1]],
                     dtype=np.int32))
     _write(fh5, 'Hamiltonian/ComplexIntegrals',
            np.array([int(complex_chol)], dtype=np.int32))
@@ -549,18 +614,15 @@ def read_dense_hamiltonian(path):
     enuc : float
         Constant energy contribution.
     hcore : numpy.ndarray
-        One-body Hamiltonian, ``(npol*nmo, npol*nmo)``.
+        One-body Hamiltonian, ``(nspin, npol, nmo, npol, nmo)``.
     chol : numpy.ndarray
         Cholesky matrix :math:`L_{(ij),\gamma}`.
-    nelec : tuple(int, int)
-        ``(nup, ndown)``.
-    nmo : int
-        Number of orbitals, as recorded in ``dims``.
 
     Raises
     ------
     ValueError
-        If the file holds no Cholesky matrix, or if ``dims`` is malformed.
+        If the file holds no Cholesky matrix, if ``dims`` is malformed, or if
+        ``hcore`` is not five-dimensional.
     """
     with h5.File(path, 'r') as fh5:
 
@@ -577,7 +639,13 @@ def read_dense_hamiltonian(path):
         chol = read_complex(fh5[CHOLESKY_DATASET])
         hcore = read_complex(fh5['Hamiltonian/hcore'])
 
-    return enuc, hcore, chol, nelec, nmo
+    if hcore.ndim != 5:
+        raise ValueError(
+            f"Hamiltonian/hcore in {path} has shape {hcore.shape}, expected "
+            "(nspin, npol, nmo, npol, nmo)"
+        )
+
+    return enuc, hcore, chol
 
 
 def _write(fh5, name, data) -> None:
