@@ -30,6 +30,7 @@ from safiretools.wavefunction.base import Wavefunction
 from safiretools.wavefunction.nomsd import NOMSDWavefunction
 from safiretools.wavefunction.phmsd import PHMSDWavefunction
 from safiretools.results.results import Results
+from safiretools.write_jobfile import write_jobfile
 
 __all__ = [
     'Hamiltonian',
@@ -43,4 +44,5 @@ __all__ = [
     'SpinSymm',
     'Wavefunction',
     'Results',
+    'write_jobfile',
 ]
