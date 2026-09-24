@@ -21,7 +21,8 @@ for the full rule.
 
 Lattices are never serialized on their own. They are persisted as embedded
 state inside a ``LatticeHamiltonian``'s HDF5 file, so there is no
-``to_hdf5``/``from_hdf5`` here.
+``to_hdf5``/``from_hdf5`` here. The exception is `DirectedPairs`, which is
+derived from a lattice but written as an estimator's own input file.
 """
 
 import itertools
@@ -31,8 +32,11 @@ from dataclasses import dataclass
 from fractions import Fraction
 from warnings import warn
 
+import h5py as h5
 import numpy as np
 import scipy.spatial as spatial
+
+from safiretools.hdf5 import replace_group
 
 logger = logging.getLogger(__name__)
 
@@ -1101,15 +1105,15 @@ class SquareLattice(Lattice):
     def _unitcell(self):
         return np.array([1., 0.]), np.array([0., 1.]), None
 
-    def get_directed_pairs(self, directions=None):
+    def get_directed_pairs(self, directions=None, nbands: int = 1):
         """
-        Get directed pairs - i.e. for making pair correlators
+        The `DirectedPairs` the ``PairCorrelator`` estimator reads — see
+        `get_directed_pairs`.
 
-        for now, we only have square lattice pair 'directions' implemented
-           i.e. +/-x, +/-y. will need to work out the Triangular lattice
-           possibilities.
+        Only the square lattice has directions defined; the triangular ones
+        still need working out.
         """
-        return get_directed_pairs(self, directions=directions)
+        return get_directed_pairs(self, directions=directions, nbands=nbands)
 
 
 class TriangularLattice(Lattice):
@@ -1265,47 +1269,111 @@ def _boundary_from_str(boundary_type):
     return _BOUNDARY_TYPES[boundary_type.lower()]
 
 
-def get_directed_pairs(lattice: Lattice, directions=None):
+DIRECTION_STEPS = {
+    '0': (0, 0), 's': (0, 0), '': (0, 0),
+    '+x': (1, 0), '-x': (-1, 0),
+    '+y': (0, 1), '-y': (0, -1),
+    '+x+y': (1, 1), '+y+x': (1, 1),
+    '+x-y': (1, -1), '-y+x': (1, -1),
+    '-x+y': (-1, 1), '+y-x': (-1, 1),
+    '-x-y': (-1, -1), '-y-x': (-1, -1),
+}
+"""Unit step along each named direction, in lattice coordinates."""
 
-    _directed_pairs = {}
+
+@dataclass
+class DirectedPairs:
+    """
+    For each direction, the orbital every orbital is paired with — what the
+    ``PairCorrelator`` estimator reads.
+
+    Attributes
+    ----------
+    offsets : dict
+        Direction name to its ``(nbands*nsites,)`` array of orbital indices.
+    """
+
+    offsets: dict
+
+    def to_hdf5(self, path) -> None:
+        """
+        Write the offsets to `path`, replacing any already in the file.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            HDF5 file to write into. Created if it does not exist.
+        """
+        with h5.File(path, 'a') as fh5:
+            group = replace_group(fh5, 'PairCorrelator/orbital_map')
+            for direction, offsets in self.offsets.items():
+                group.create_dataset(
+                    direction, data=np.asarray(offsets, dtype=np.int32)[:, np.newaxis])
+
+
+def get_directed_pairs(lattice: Lattice, directions=None, nbands: int = 1):
+    """
+    Pair every orbital with the one `directions` away from it.
+
+    Parameters
+    ----------
+    lattice : Lattice
+        Lattice to walk. Every direction must lie along periodic axes — see
+        Raises.
+    directions : sequence of str
+        Direction names, as `DIRECTION_STEPS` spells them: ``'s'`` for the site
+        itself, ``'+x'``, ``'-y'``, ``'+x-y'`` and so on.
+    nbands : int, optional
+        Bands per site. Sites are expanded into orbitals as
+        ``site*nbands + band``, matching the Hamiltonian's basis order.
+        Default 1.
+
+    Returns
+    -------
+    DirectedPairs
+
+    Raises
+    ------
+    ValueError
+        If a direction is not a recognized name, or if it steps along an axis
+        with an open boundary. Stepping off an open edge would wrap around to
+        the far side and pair two sites that are not neighbors at all.
+    """
+    periodic = (isinstance(lattice.axis1_boundary, PBCBoundary),
+                isinstance(lattice.axis2_boundary, PBCBoundary))
+
+    steps = {}
     for direction in directions:
-        _directed_pairs[direction] = []
+        if direction not in DIRECTION_STEPS:
+            raise ValueError(
+                f"unknown direction {direction!r}; expected one of "
+                f"{', '.join(sorted(DIRECTION_STEPS))}"
+            )
+        step = DIRECTION_STEPS[direction]
+        for axis, (moves, wraps) in enumerate(zip(step, periodic)):
+            if moves and not wraps:
+                raise ValueError(
+                    f"direction {direction!r} steps along axis {axis + 1}, which "
+                    "has an open boundary; only periodic axes can be paired"
+                )
+        steps[direction] = step
 
+    offsets = {direction: [] for direction in directions}
     for site in lattice.sites:
-        for direction in directions:
+        for direction, step in steps.items():
             coord = site.coord.copy()
-            if direction in ('0', 's', ''):
-                pass  # since we catch unknown directions below!
-            elif direction == "+x":
-                coord[0] += 1
-            elif direction == "-x":
-                coord[0] -= 1
-            elif direction == "+y":
-                coord[1] += 1
-            elif direction == "-y":
-                coord[1] -= 1
-            elif direction in ("+x+y", "+y+x"):
-                coord[0] += 1
-                coord[1] += 1
-            elif direction in ("+x-y", "-y+x"):
-                coord[0] += 1
-                coord[1] -= 1
-            elif direction in ("-x+y", "+y-x"):
-                coord[0] -= 1
-                coord[1] += 1
-            elif direction in ("-x-y", "-y-x"):
-                coord[0] -= 1
-                coord[1] -= 1
-            else:
-                raise ValueError("Unknown 'direction' in 'directions'")
+            coord[0] += step[0]
+            coord[1] += step[1]
 
-            # For now, we assume that both boundaries are periodic, so every
-            #   offset site is reachable and none are encoded as invalid ("-1").
-            if not lattice.is_image(coord):
-                _directed_pairs[direction].append(lattice._index_map(coord))
-            else:
-                coord[0] = coord[0] % lattice.L[0]
-                coord[1] = coord[1] % lattice.L[1]
-                _directed_pairs[direction].append(lattice._index_map(coord))
+            # every axis stepped along is periodic, so the offset site is always
+            #   reachable; none are encoded as invalid ("-1")
+            if lattice.is_image(coord):
+                coord[0] %= lattice.L[0]
+                coord[1] %= lattice.L[1]
 
-    return _directed_pairs
+            index = lattice._index_map(coord)
+            offsets[direction].extend(index * nbands + band
+                                      for band in range(nbands))
+
+    return DirectedPairs({direction: np.array(values, dtype=np.int32)
+                          for direction, values in offsets.items()})
