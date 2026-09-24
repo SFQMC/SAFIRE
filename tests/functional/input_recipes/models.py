@@ -11,9 +11,9 @@
 """
 Recipes for the lattice-model systems.
 
-These are the cheap ones - pure afqmctools, no external codes, seconds rather
-than minutes - and they cover the Hubbard, Hubbard-Kanamori and Rashba
-spin-orbit models.
+These are the cheap ones - safiretools and afqmctools only, no external
+codes, seconds rather than minutes - and they cover the Hubbard,
+Hubbard-Kanamori and Rashba spin-orbit models.
 
 Two of the four directories carry files that only the C++ unit tests read:
 the ``hst_type`` variants under ``square_4x4_hubbard_nup5_ndn5`` and the whole
@@ -50,14 +50,15 @@ def _write_model_hamiltonian(model: Dict, filename, *, spin_symm, nelec=None,
     """
     from copy import deepcopy
 
-    from afqmctools.hamiltonian.model.director import HamiltonianDirector
-    from afqmctools.utils.io import write_model_hamiltonian
+    from safiretools import LatticeHamiltonian
 
     local = deepcopy(model)
     local["hamiltonian"]["spin_symm"] = spin_symm
+    if nelec is not None:
+        local["hamiltonian"]["nelec"] = nelec
 
-    hamiltonian = HamiltonianDirector(local).build()
-    write_model_hamiltonian(hamiltonian=hamiltonian, fname=filename, nelec=nelec)
+    hamiltonian = LatticeHamiltonian.from_dict(local)
+    hamiltonian.to_hdf5(filename)
     return hamiltonian
 
 
@@ -188,10 +189,10 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     within the optimiser's tolerance, which is a cheap way of catching a solve
     that has wandered off.
     """
-    from afqmctools.hamiltonian.model.director import HamiltonianDirector
     from afqmctools.utils.types import SpinSymm
     from afqmctools.wavefunction.common import write_wfn
     from afqmctools.wavefunction.free_electron import free_electron
+    from safiretools import LatticeHamiltonian
 
     try:
         from autohf.hamiltonian import AutoHFHamiltonian
@@ -209,15 +210,24 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     nelec = weak["misc_params"]["nelec"]
     norb = 16
 
-    hamiltonian = HamiltonianDirector(weak).build()
+    hamiltonian = LatticeHamiltonian.from_dict(weak)
 
     # Untwisted, so the starting determinant - and the solution - stays real.
     free_wfn, _ = free_electron(source=hamiltonian, nelec=nelec,
                                 spin_symm=SpinSymm.COLLINEAR, measure_evar=False)
     initial = free_wfn[1][0]
 
+    # AutoHFHamiltonian(source=...) only reads afqmctools hamiltonians, so the
+    # terms are handed over explicitly, as its afqmctools interface would.
+    one_body = hamiltonian.get_one_body().toarray()
+    autohf_hamiltonian = AutoHFHamiltonian(
+        T=[one_body[:norb], one_body[norb:]],
+        U=np.diag(hamiltonian.get_U().toarray().diagonal()),
+        N=norb,
+    )
+
     results = solve_hf(
-        AutoHFHamiltonian(source=hamiltonian),
+        autohf_hamiltonian,
         settings=dict(
             ansatz="SD_ROT",
             steps=2000,
@@ -317,8 +327,8 @@ def build_rashba_soc(ctx: BuildContext) -> None:
     noncollinear code path has a model test at all. Hamiltonian and trial share
     a single file, which is what ``functional_cases.py`` expects.
 
-    Rashba is not one of the director's build steps, so the builder is driven
-    directly here.
+    Rashba is not an input key of ``LatticeHamiltonian.from_dict``, so the
+    builder is driven directly here.
     """
     from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
     from afqmctools.systems.lattice import get_lattice
