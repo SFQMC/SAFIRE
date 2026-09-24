@@ -37,23 +37,15 @@ FREE_ELECTRON_TWIST = 0.1 * np.array((1 / np.sqrt(592560607), 1 / np.sqrt(47603)
 # Helpers
 # ============================================================================
 
-def _write_model_hamiltonian(model: Dict, filename, *, spin_symm, nelec=None,
+def _write_model_hamiltonian(model: Dict, filename, *, spin_symm,
                              verbose: bool = False) -> None:
-    """Build one lattice-model hamiltonian in ``spin_symm`` and write it.
-
-    ``nelec=None`` writes ``(0, 0)`` into ``Hamiltonian/dims``. That is not an
-    oversight: the hamiltonian-only files consumed by the C++ unit tests were
-    written that way, and the electron count for those runs comes from the
-    wavefunction instead.
-    """
+    """Build one lattice-model hamiltonian in ``spin_symm`` and write it."""
     from copy import deepcopy
 
     from safiretools import LatticeHamiltonian
 
     local = deepcopy(model)
     local["hamiltonian"]["spin_symm"] = spin_symm
-    if nelec is not None:
-        local["hamiltonian"]["nelec"] = nelec
 
     hamiltonian = LatticeHamiltonian.from_dict(local)
     hamiltonian.to_hdf5(filename)
@@ -110,7 +102,7 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
 
     for spin_symm in (SpinSymm.CLOSED, SpinSymm.COLLINEAR, SpinSymm.NONCOLLINEAR):
         _write_model_hamiltonian(HUBBARD_4X4, out / f"ham_{name[spin_symm]}.h5",
-                                 spin_symm=spin_symm, nelec=nelec,
+                                 spin_symm=spin_symm,
                                  verbose=ctx.verbose)
 
     for spin_symm in (SpinSymm.COLLINEAR, SpinSymm.NONCOLLINEAR):
@@ -134,7 +126,7 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
         "misc_params": HUBBARD_4X4["misc_params"],
     }
     _write_model_hamiltonian(continuous_spin, out / "ham_collinear_cont_spin.h5",
-                             spin_symm=SpinSymm.COLLINEAR, nelec=None,
+                             spin_symm=SpinSymm.COLLINEAR,
                              verbose=ctx.verbose)
 
     attractive = {
@@ -144,7 +136,7 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
     }
     _write_model_hamiltonian(attractive,
                              out / "ham_collinear_Um4_disc_charge.h5",
-                             spin_symm=SpinSymm.COLLINEAR, nelec=None,
+                             spin_symm=SpinSymm.COLLINEAR,
                              verbose=ctx.verbose)
 
     attractive_continuous = {
@@ -155,7 +147,7 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
     }
     _write_model_hamiltonian(attractive_continuous,
                              out / "ham_collinear_Um4_cont_charge.h5",
-                             spin_symm=SpinSymm.COLLINEAR, nelec=None,
+                             spin_symm=SpinSymm.COLLINEAR,
                              verbose=ctx.verbose)
 
     _build_uhf_trial(ctx, out / "uhf_U0.1_wfn_nup5_ndn5.h5")
@@ -297,7 +289,7 @@ def build_hubbard_kanamori(ctx: BuildContext) -> None:
     for spin_symm, name in ((SpinSymm.COLLINEAR, "collinear"),
                             (SpinSymm.NONCOLLINEAR, "noncollinear")):
         _write_model_hamiltonian(HUBBARD_KANAMORI_6X1, out / f"ham_{name}.h5",
-                                 spin_symm=spin_symm, nelec=nelec,
+                                 spin_symm=spin_symm,
                                  verbose=ctx.verbose)
         _write_free_electron(HUBBARD_KANAMORI_6X1, out / f"wfn_fe_{name}.h5",
                              spin_symm=spin_symm, nelec=nelec)

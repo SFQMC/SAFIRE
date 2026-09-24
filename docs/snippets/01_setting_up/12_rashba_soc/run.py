@@ -24,8 +24,7 @@ hopping = [1.0,0.5]
 
 builder = HamiltonianBuilder(
     lattice=lattice,
-    spin_symm=SpinSymm.NONCOLLINEAR,
-    nelec=nelec
+    spin_symm=SpinSymm.NONCOLLINEAR
 )
 # add standard Hubbard terms
 builder.nth_neighbor_hopping(t=hopping)

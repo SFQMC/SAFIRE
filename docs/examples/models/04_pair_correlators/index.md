@@ -113,7 +113,9 @@ hamiltonian.to_hdf5(scratch_dir/"afqmc.h5")
 ## Saving index offsets in the HDF5 input
 
 The Lattice class from safiretools can be directly used to find the pairs that we need via the `.get_directed_pairs()` function.
-`.get_directed_pairs()` needs a list of "directions", and it will return a dictionary where the keys are the requested directions, and the values are a list of index offsets, $\bar{i}_\alpha [i]$, such that $\bar{i}_{\alpha} [i] = i + e_\alpha$.
+`.get_directed_pairs()` needs a list of "directions", and it returns a `DirectedPairs` whose `.offsets` maps each requested direction to a list of index offsets, $\bar{i}_\alpha [i]$, such that $\bar{i}_{\alpha} [i] = i + e_\alpha$.
+
+Every direction has to run along a periodic axis. Stepping off an open edge would wrap around to the far side and pair sites that are not neighbours at all, so that is rejected rather than quietly measured.
 
 ```{code-cell} ipython3
 ---
@@ -124,22 +126,18 @@ id: VjaOtDOltPAj
 outputId: 30ac79d1-e76e-4b8e-8c2c-6341210f4b4f
 ---
 
-pairs_dict=lattice.get_directed_pairs(
+pairs=lattice.get_directed_pairs(
   directions=["s","+x","-x","+y","-y"]
 )
 
-for key,value in pairs_dict.items():
+for key,value in pairs.offsets.items():
   print(key, value)
 ```
 
-afqmctools also provides a function for saving these pairs to HDF5 in the appropriate format.
+`DirectedPairs` writes itself to HDF5 in the format the estimator reads. It may go in the same file as the Wavefunction and Hamiltonian, or in one of its own.
 
 ```{code-cell} ipython3
-%load_ext autoreload
-%autoreload
-from afqmctools.utils.io import write_pair_correlators
-
-write_pair_correlators(scratch_dir / "afqmc.h5",pairs_dict)
+pairs.to_hdf5(scratch_dir / "afqmc.h5")
 ```
 
 +++ {"id": "lkkZMHMWvFAU"}
@@ -147,13 +145,13 @@ write_pair_correlators(scratch_dir / "afqmc.h5",pairs_dict)
 ### Adding Custom Pairings
 
 We note that custom pairings can be added by simply inserting a list of offsets with a new key.
-For example, we can manually add "+x+y" pairing to the `pairs_dict` dictionary as
+For example, we can manually add "+x+y" pairing to `pairs.offsets` as
 
 ```{code-cell} ipython3
-pairs_dict["xy"] = [ 5, 6 , 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0]
+pairs.offsets["xy"] = [ 5, 6 , 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0]
 
-# update hdf5
-write_pair_correlators(scratch_dir / "afqmc.h5",pairs_dict)
+# update hdf5 - the whole map is rewritten, so every direction is still there
+pairs.to_hdf5(scratch_dir / "afqmc.h5")
 ```
 
 +++ {"id": "iwp3CeLownyV"}

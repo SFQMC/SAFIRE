@@ -17,7 +17,7 @@ lattice = Lattice.from_dict(
 )
 nelec = (2,2)
 
-builder = HamiltonianBuilder(lattice=lattice, nelec=nelec)
+builder = HamiltonianBuilder(lattice=lattice)
 
 # add some terms
 builder.nth_neighbor_hopping(t=[1.0,0.5])

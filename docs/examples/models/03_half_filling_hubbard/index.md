@@ -133,7 +133,6 @@ $$
 builder = HamiltonianBuilder(
           lattice=lattice,
           spin_symm="collinear", # we have no spin-flip terms
-          nelec=nelec
               )
 # add standard Hubbard terms
 builder.nth_neighbor_hopping(1.0)
@@ -148,7 +147,6 @@ builder.finalize()
 builderHF = HamiltonianBuilder(
           lattice=lattice,
           spin_symm="collinear", # we have no spin-flip terms
-          nelec=nelec
               )
 # add standard Hubbard terms
 builderHF.nth_neighbor_hopping(1.0)
