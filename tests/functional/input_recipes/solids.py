@@ -193,7 +193,7 @@ def _run_coqui(ctx: BuildContext, name: str, toml: str, outdir: Path,
 
 
 # ============================================================================
-# afqmctools post-processing
+# Trials derived from the CoQui mean field
 # ============================================================================
 
 def _write_closed_trial(filename: Path, nelec=(4, 4), norb: int = 8) -> None:
@@ -202,16 +202,16 @@ def _write_closed_trial(filename: Path, nelec=(4, 4), norb: int = 8) -> None:
     In the downfolded band basis the mean-field determinant *is* a column
     selection from the identity, so this needs no input from CoQui.
     """
-    from afqmctools.wavefunction.mol import write_wfn
+    from safiretools import NOMSDWavefunction, SpinSymm
 
-    orbitals = np.eye(norb)
-    write_wfn(
-        filename=filename,
-        wfn=(np.array([1.0]), np.array([orbitals[:, :nelec[0]]])),
-        walker_type="rhf",
+    orbitals = np.eye(norb)[:, :nelec[0]]
+    NOMSDWavefunction(
+        coeffs=np.array([1.0]),
+        dets=orbitals[np.newaxis],
         nelec=nelec,
-        norb=norb,
-    )
+        spin_symm=SpinSymm.CLOSED,
+        nmo=norb,
+    ).to_hdf5(filename)
 
 
 def _collinear_to_noncollinear(source: Path, destination: Path) -> None:
@@ -221,28 +221,23 @@ def _collinear_to_noncollinear(source: Path, destination: Path) -> None:
     gives a noncollinear determinant describing the same state - the point being
     to feed the noncollinear code path a wavefunction with a known answer.
     """
-    from afqmctools.utils.types import get_spin_symm_enum
-    from afqmctools.wavefunction.converter import read_wavefunction
-    from afqmctools.wavefunction.mol import write_wfn
+    from safiretools import NOMSDWavefunction, SpinSymm, Wavefunction
 
-    (coeffs, phi), _psi0, nelec, _spin_symm = read_wavefunction(source)
-
-    nmo = phi.shape[1]
-    phi_up = phi[0, :, :nelec[0]]
-    phi_down = phi[0, :, nelec[0]:nelec[0] + nelec[1]]
+    collinear = Wavefunction.from_hdf5(source)
+    phi_up, phi_down = collinear.spin_blocks()
 
     phi_noncollinear = np.block([
         [phi_up, np.zeros_like(phi_up)],
         [np.zeros_like(phi_down), phi_down],
     ])[np.newaxis, :, :]
 
-    write_wfn(
-        destination,
-        [coeffs, phi_noncollinear],
-        walker_type=get_spin_symm_enum("noncollinear"),
-        nelec=nelec,
-        norb=nmo,
-    )
+    NOMSDWavefunction(
+        coeffs=collinear.coeffs,
+        dets=phi_noncollinear,
+        nelec=collinear.nelec,
+        spin_symm=SpinSymm.NONCOLLINEAR,
+        nmo=collinear.nmo,
+    ).to_hdf5(destination)
 
 
 # ============================================================================

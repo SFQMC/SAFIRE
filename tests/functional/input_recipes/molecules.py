@@ -60,134 +60,49 @@ def _pyscf_verbosity(ctx: BuildContext) -> int:
 
 
 def _write_hamiltonian(scf_data, filename: Path, chol_cut: float, *,
-                       spin_symm: str, nelec=None, verbose: bool = False) -> None:
+                       spin_symm: str, verbose: bool = False) -> None:
     """Write a dense generic hamiltonian in the requested spin symmetry.
 
-    ``spin_symm`` is one of ``closed`` / ``collinear`` / ``noncollinear``:
-
-    - closed: the plain ``X^dag h X`` block, ``nelec = (nup, ndn)``.
-    - collinear: the same block stacked twice, giving hcore of shape
-      ``(2 norb, norb)`` - identical alpha and beta sectors, but written in the
-      layout the collinear code path reads.
-    - noncollinear: the spin-blocked hcore of shape ``(2 norb, 2 norb)``, with
-      all electrons reported in the alpha slot.
+    ``spin_symm`` is one of ``closed`` / ``collinear`` / ``noncollinear``. All
+    three share the same ``X^dag h X`` one-body block; what differs is how it is
+    blocked out, which `MolecularHamiltonian` does from `spin_symm` alone - one
+    spin sector closed, two identical ones collinear, and a single sector over a
+    spinor basis noncollinear.
     """
-    from afqmctools.hamiltonian.io import write_dense
-    from afqmctools.hamiltonian.mol import generate_hamiltonian
+    from safiretools import MolecularHamiltonian
 
     if spin_symm == "noncollinear" and scf_data["hcore"].shape[-1] != 2 * scf_data["norb"]:
         # A scalar hcore promoted into the spinor basis: h -> I_2 (x) h.
         scf_data = dict(scf_data)
         scf_data["hcore"] = np.kron(np.eye(2), scf_data["hcore"])
 
-    walker_type = {"closed": "rhf", "collinear": "uhf", "noncollinear": "ghf"}[spin_symm]
-
-    hcore, chol_vecs, mol_nelec, enuc, X = generate_hamiltonian(
+    MolecularHamiltonian.from_pyscf(
         scf_data,
         chol_cut=chol_cut,
+        spin_symm=spin_symm,
         verbose=verbose,
-        walker_type=walker_type,
-    )
-
-    if spin_symm == "collinear":
-        hcore = np.append(hcore, hcore, axis=0)
-
-    if nelec is None:
-        nelec = (sum(mol_nelec), 0) if spin_symm == "noncollinear" else mol_nelec
-
-    write_dense(
-        hcore,
-        chol_vecs.T,  # want L_{(ik),n}
-        nelec,
-        nmo=X.shape[-1],
-        enuc=enuc,
-        real_chol=not np.iscomplexobj(chol_vecs),
-        filename=filename,
-        ortho=X,
-    )
+    ).to_hdf5(filename)
 
 
-def _to_orbital_basis(scf_data):
-    """Projector from the AO basis onto the reference orbital basis.
+def _write_nomsd(source, filename: Path, *, basis, psi0=None) -> None:
+    """Write a single-determinant trial from `source`, in `basis`'s orbitals.
 
-    ``C^dag S`` maps a set of AO-basis orbitals onto the (orthonormal) basis
-    that the hamiltonian was written in, which is what the AFQMC code expects a
-    trial wavefunction to be expressed in.
+    The determinant is rotated by ``C^dag S`` onto the basis the hamiltonian was
+    written in, which is what the AFQMC code expects a trial to be expressed in.
+    `Wavefunction.from_pyscf` does that, and picks the spin symmetry from the
+    SCF solution - including the spinor promotion a GHF reference needs.
     """
-    overlap = scf_data["mol"].intor("int1e_ovlp")
-    basis = scf_data["mo_coeff"]
-    transform = basis.conj().T @ overlap
-    return lambda orbitals: transform @ orbitals
+    from safiretools import Wavefunction
 
-
-def _write_ghf_nomsd(chkfile: Path, filename: Path, basis_scf_data, nelec) -> None:
-    """Write a single-determinant GHF trial, rotated into the reference basis."""
-    from afqmctools.wavefunction.mol import write_wfn
-
-    nmo = basis_scf_data["mo_coeff"].shape[-1]
-    project = _to_orbital_basis(basis_scf_data)
-
-    with h5.File(chkfile, "r") as fh5:
-        mo_coeff = fh5["/scf/mo_coeff"][...]
-
-    nocc = sum(nelec)
-    phi = np.zeros((2 * nmo, nocc), dtype=np.complex128)
-    phi[:nmo, :nocc] = project(mo_coeff[:nmo, :nocc])
-    phi[nmo:, :nocc] = project(mo_coeff[nmo:, :nocc])
-
-    write_wfn(
-        filename=filename,
-        wfn=(np.array([1.0], dtype=np.complex128), np.array([phi])),
-        walker_type="ghf",
-        nelec=(nocc, 0),
-        norb=nmo,
-    )
+    wavefunction = Wavefunction.from_pyscf(source, basis=basis)
+    if psi0 is not None:
+        wavefunction.psi0 = psi0
+    wavefunction.to_hdf5(filename)
 
 
 # ============================================================================
 # BH
 # ============================================================================
-
-def _unsafe_write_phmsd(filename, wfn, walker_type, nelec, norb,
-                        init=None, orbmat=None) -> None:
-    """Write a ph-MSD wavefunction bypassing the writer's consistency checks.
-
-    The BH cases deliberately feed the code determinant expansions that the
-    user-facing writer would reject - an RHF-shaped ph-MSD whose beta sector
-    repeats the alpha one, and a GHF-shaped expansion built from collinear
-    occupations. They exist to exercise code paths, not to describe a physical
-    trial, so they are written by hand.
-    """
-    from afqmctools.utils.io import add_group, to_complex
-    from afqmctools.utils.slater_types import (_SlaterType, _slater2dims,
-                                               _slater_enum_map)
-    from afqmctools.wavefunction.common import write_phmsd
-
-    walker_type = _slater_enum_map(walker_type)
-    coeffs, occa, occb = wfn
-    nalpha, nbeta = nelec
-    npol = 2 if walker_type == _SlaterType.NONCOLLINEAR else 1
-
-    with h5.File(filename, "a") as fh5:
-        wfn_group = add_group(fh5, "Wavefunction/PHMSD")
-        if walker_type == _SlaterType.CLOSED:
-            # (nalpha, 0) so that no beta sector is written
-            write_phmsd(wfn_group, occa, occb, (nalpha, 0), norb,
-                        init=init, orbmat=orbmat)
-        else:
-            write_phmsd(wfn_group, occa, occb, nelec, norb * npol,
-                        init=init, orbmat=orbmat)
-
-        if coeffs.dtype == float:
-            coeffs = np.array(coeffs, dtype=np.complex128)
-        wfn_group["ci_coeffs"] = to_complex(coeffs)
-
-        if walker_type == _SlaterType.NONCOLLINEAR:
-            dims = [norb, nalpha + nbeta, 0, _slater2dims(walker_type), len(coeffs)]
-        else:
-            dims = [norb, nalpha, nbeta, _slater2dims(walker_type), len(coeffs)]
-        wfn_group["dims"] = np.array(dims, dtype=np.int32)
-
 
 def build_bh(ctx: BuildContext) -> None:
     """BH at a stretched bond: one RHF-basis hamiltonian in three symmetries,
@@ -198,10 +113,9 @@ def build_bh(ctx: BuildContext) -> None:
     """
     from pyscf import gto, mcscf, scf
 
-    from afqmctools.utils.pyscf_utils import (ci2chk, ci_wavefunction,
-                                              load_from_pyscf_chk_mol,
-                                              read_cas_meta)
-    from afqmctools.wavefunction.mol import write_wfn, write_wfn_mol
+    from safiretools import NOMSDWavefunction, PHMSDWavefunction, SpinSymm
+    from safiretools.convert.pyscf import load_pyscf_chk_mol
+    from safiretools.wavefunction.pyscf import ci_expansion, read_cas_meta
 
     out, scratch = ctx.out_dir, ctx.scratch
     ci_tol = 0.02
@@ -225,7 +139,7 @@ def build_bh(ctx: BuildContext) -> None:
     mf.chkfile = str(rhf_chk)
     mf.kernel()
 
-    rhf_data = load_from_pyscf_chk_mol(rhf_chk)
+    rhf_data = load_pyscf_chk_mol(rhf_chk)
     _write_hamiltonian(rhf_data, out / "afqmc_H_rhf_closed.h5", chol_tol,
                        spin_symm="closed", verbose=ctx.verbose)
     _write_hamiltonian(rhf_data, out / "afqmc_H_rhf_collinear.h5", chol_tol,
@@ -233,7 +147,7 @@ def build_bh(ctx: BuildContext) -> None:
     _write_hamiltonian(rhf_data, out / "afqmc_H_rhf_noncollinear.h5", chol_tol,
                        spin_symm="noncollinear", verbose=ctx.verbose)
 
-    write_wfn_mol(scf_data=rhf_data, filename=out / "afqmc_rhf_nomsd.h5")
+    _write_nomsd(rhf_data, out / "afqmc_rhf_nomsd.h5", basis=rhf_data)
 
     # --- CASCI in the RHF basis -------------------------------------------
     # CASCI rather than CASSCF so the orbitals stay exactly the RHF ones.
@@ -241,12 +155,15 @@ def build_bh(ctx: BuildContext) -> None:
     mc.chkfile = str(rhf_chk)
     mc.run()
     mcscf.chkfile.dump_mcscf(mc, str(rhf_chk))
-    ci2chk(rhf_chk, mc.ci)
+    with h5.File(rhf_chk, "a") as fh5:
+        if "mcscf/ci" in fh5:
+            del fh5["mcscf/ci"]
+        fh5["mcscf/ci"] = mc.ci
 
     cas_meta = read_cas_meta(rhf_chk)
-    ncas, ncore = cas_meta["ncas"], cas_meta["ncore"]
-    ci, occa, occb = ci_wavefunction(
-        ciab=cas_meta["ci"],
+    ncas, ncore = int(cas_meta["ncas"]), int(cas_meta["ncore"])
+    ci, occa, occb = ci_expansion(
+        cas_meta["ci"],
         norb=ncas,
         nelec=[n - ncore for n in nelec],
         ncore=ncore,
@@ -255,32 +172,40 @@ def build_bh(ctx: BuildContext) -> None:
     print(f"    number of determinants: {len(ci)}", flush=True)
     ci = np.array(ci, dtype=np.complex128)
 
+    def write_phmsd(filename, coeffs, alpha, beta, spin_symm, **kwargs):
+        PHMSDWavefunction(coeffs=coeffs, occa=alpha, occb=beta, nmo=nmo,
+                          nelec=nelec, spin_symm=spin_symm, **kwargs
+                          ).to_hdf5(out / filename)
+
     # ph-MSD, collinear: the honest form of the expansion.
-    write_wfn(out / "afqmc_casci_uhf_phmsd.h5", (ci, occa, occb), "uhf", nelec, nmo)
-    write_wfn(out / "afqmc_casci_uhf_1phmsd.h5",
-              (ci[:1], occa[:1], occb[:1]), "uhf", nelec, nmo)
+    write_phmsd("afqmc_casci_uhf_phmsd.h5", ci, occa, occb, SpinSymm.COLLINEAR)
+    write_phmsd("afqmc_casci_uhf_1phmsd.h5", ci[:1], occa[:1], occb[:1],
+                SpinSymm.COLLINEAR)
 
-    # ph-MSD, noncollinear: beta occupations folded into the spinor index.
-    occ_noco = [np.append(oa, ob + nmo) for oa, ob in zip(occa, occb)]
-    empty = [np.empty_like(occ_noco[0]) for _ in occ_noco]
-    _unsafe_write_phmsd(out / "afqmc_casci_ghf_phmsd.h5",
-                        (ci, occ_noco, empty),
-                        walker_type="ghf", nelec=(sum(nelec), 0), norb=nmo)
-    _unsafe_write_phmsd(out / "afqmc_casci_ghf_1phmsd.h5",
-                        (ci[:1], occ_noco[:1], empty[:1]),
-                        walker_type="ghf", nelec=(sum(nelec), 0), norb=nmo)
+    # ph-MSD, noncollinear: beta occupations folded into the spinor index, so
+    # both polarizations live in the alpha channel and the beta one is empty.
+    occ_noco = np.array([np.append(oa, ob + nmo) for oa, ob in zip(occa, occb)])
+    empty = np.empty((len(occ_noco), 0), dtype=int)
+    write_phmsd("afqmc_casci_ghf_phmsd.h5", ci, occ_noco, empty,
+                SpinSymm.NONCOLLINEAR)
+    write_phmsd("afqmc_casci_ghf_1phmsd.h5", ci[:1], occ_noco[:1], empty[:1],
+                SpinSymm.NONCOLLINEAR)
 
-    # ph-MSD, closed: an RHF-shaped expansion for the closed walker path.
-    _unsafe_write_phmsd(out / "afqmc_casci_rhf_phmsd.h5",
-                        (ci, occa, occb.copy()),
-                        walker_type="rhf", nelec=nelec, norb=nmo)
-    _unsafe_write_phmsd(out / "afqmc_casci_rhf_1phmsd.h5",
-                        (ci[:1], occa[:1], occb.copy()[:1]),
-                        walker_type="rhf", nelec=nelec, norb=nmo)
+    # The same expansion over an explicit RHF reference, which is the only case
+    # that exercises the "mixed" type != 0 path in readWfn.cpp.
+    rhf_reference = [np.eye(nmo)[:, :na]]
+    write_phmsd("afqmc_casci_rhf_phmsd.h5", ci, occa, occb, SpinSymm.COLLINEAR,
+                orbitals=rhf_reference)
+    write_phmsd("afqmc_casci_rhf_1phmsd.h5", ci[:1], occa[:1], occb[:1],
+                SpinSymm.COLLINEAR, orbitals=rhf_reference)
 
     # The same expansion as NOMSD. In the RHF basis every determinant is a
     # column selection from the identity, so the orbital matrices are exact.
     identity = np.eye(nmo)
+
+    def write_nomsd(filename, dets, spin_symm):
+        NOMSDWavefunction(coeffs=ci, dets=np.array(dets), nelec=nelec,
+                          spin_symm=spin_symm, nmo=nmo).to_hdf5(out / filename)
 
     nomsd_collinear = []
     for oa, ob in zip(occa, occb, strict=True):
@@ -288,9 +213,7 @@ def build_bh(ctx: BuildContext) -> None:
         phi[:, :na] = identity[:, oa]
         phi[:, na:] = identity[:, ob]
         nomsd_collinear.append(phi)
-    write_wfn(filename=out / "afqmc_casci_uhf_nomsd.h5",
-              wfn=(ci, np.array(nomsd_collinear)),
-              walker_type="uhf", nelec=nelec, norb=nmo)
+    write_nomsd("afqmc_casci_uhf_nomsd.h5", nomsd_collinear, SpinSymm.COLLINEAR)
 
     nomsd_noncollinear = []
     for oa, ob in zip(occa, occb, strict=True):
@@ -298,18 +221,15 @@ def build_bh(ctx: BuildContext) -> None:
         phi[:nmo, :na] = identity[:, oa]
         phi[nmo:, na:] = identity[:, ob]
         nomsd_noncollinear.append(phi)
-    write_wfn(filename=out / "afqmc_casci_ghf_nomsd.h5",
-              wfn=(ci, np.array(nomsd_noncollinear)),
-              walker_type="ghf", nelec=nelec, norb=nmo)
+    write_nomsd("afqmc_casci_ghf_nomsd.h5", nomsd_noncollinear,
+                SpinSymm.NONCOLLINEAR)
 
     nomsd_closed = []
     for oa in occa:
         phi = np.zeros((nmo, na), dtype=np.complex128)
         phi[:, :na] = identity[:, oa]
         nomsd_closed.append(phi)
-    write_wfn(filename=out / "afqmc_casci_rhf_nomsd.h5",
-              wfn=(ci, np.array(nomsd_closed)),
-              walker_type="rhf", nelec=nelec, norb=nmo)
+    write_nomsd("afqmc_casci_rhf_nomsd.h5", nomsd_closed, SpinSymm.CLOSED)
 
     # --- UHF and GHF trials, expressed in the RHF basis --------------------
     uhf_chk = scratch / "uhf.chk"
@@ -317,18 +237,16 @@ def build_bh(ctx: BuildContext) -> None:
     mf.chkfile = str(uhf_chk)
     mf.kernel()
 
-    write_wfn_mol(scf_data=load_from_pyscf_chk_mol(uhf_chk),
-                  filename=out / "afqmc_uhf_nomsd.h5",
-                  basis_scf_data=rhf_data)
+    _write_nomsd(load_pyscf_chk_mol(uhf_chk), out / "afqmc_uhf_nomsd.h5",
+                 basis=rhf_data)
 
     # Same UHF trial, but started from the RHF determinant: exercises the
     # separate initial-walker path.
     rhf_initial = np.zeros((nmo, na), dtype=np.complex128)
     rhf_initial[:na, :na] = np.eye(na)
-    write_wfn_mol(scf_data=load_from_pyscf_chk_mol(uhf_chk),
-                  filename=out / "afqmc_uhf_nomsd_init_rhf.h5",
-                  basis_scf_data=rhf_data,
-                  init=[rhf_initial, rhf_initial])
+    _write_nomsd(load_pyscf_chk_mol(uhf_chk),
+                 out / "afqmc_uhf_nomsd_init_rhf.h5",
+                 basis=rhf_data, psi0=[rhf_initial, rhf_initial])
 
     ghf_chk = scratch / "ghf.chk"
     mf = mf.to_ghf()
@@ -337,9 +255,8 @@ def build_bh(ctx: BuildContext) -> None:
     mf.chkfile = str(ghf_chk)
     mf.kernel(dm0=dm0)
 
-    write_wfn_mol(scf_data=load_from_pyscf_chk_mol(ghf_chk),
-                  filename=out / "afqmc_ghf_nomsd.h5",
-                  basis_scf_data=rhf_data)
+    _write_nomsd(load_pyscf_chk_mol(ghf_chk), out / "afqmc_ghf_nomsd.h5",
+                 basis=rhf_data)
 
 
 # ============================================================================
@@ -354,9 +271,8 @@ def build_n2(ctx: BuildContext) -> None:
     """
     from pyscf import gto, mcscf, scf
 
-    from afqmctools.hamiltonian.io import write_to_hdf5
-    from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-    from afqmctools.wavefunction.mol import write_cas_wfn
+    from safiretools import Wavefunction
+    from safiretools.convert.pyscf import load_pyscf_chk_mol
 
     out, scratch = ctx.out_dir, ctx.scratch
     delta = 3.0  # Bohr
@@ -376,23 +292,17 @@ def build_n2(ctx: BuildContext) -> None:
 
     mc = mcscf.CASSCF(rhf, 12, 6).run()
 
-    # write_to_hdf5 wants something with a dtype, and mc.ncore / mc.ncas are
-    # plain Python ints.
     with h5.File(casscf_chk, "a") as fh5:
-        write_to_hdf5(fh5, "mcscf/ci", data=np.asarray(mc.ci))
-        write_to_hdf5(fh5, "mcscf/ncore", data=np.asarray(mc.ncore))
-        write_to_hdf5(fh5, "mcscf/ncas", data=np.asarray(mc.ncas))
+        for name, value in (("ci", mc.ci), ("ncore", mc.ncore), ("ncas", mc.ncas)):
+            if f"mcscf/{name}" in fh5:
+                del fh5[f"mcscf/{name}"]
+            fh5[f"mcscf/{name}"] = np.asarray(value)
 
-    write_cas_wfn(
-        mol=mol,
-        cas_chkfile=casscf_chk,
-        tol_trunc=1.0e-4,
-        outname=out / "cas_wfn.h5",
-        max_det=50,
-    )
+    Wavefunction.from_pyscf_cas(
+        mol, casscf_chk, tol=1.0e-4, max_det=50).to_hdf5(out / "cas_wfn.h5")
 
     # The hamiltonian is written in the CASSCF natural orbital basis.
-    basis_scf_data = load_from_pyscf_chk_mol(chkfile=casscf_chk, base="mcscf")
+    basis_scf_data = load_pyscf_chk_mol(chkfile=casscf_chk, base="mcscf")
     _write_hamiltonian(basis_scf_data, out / "cas_basis_hamil.h5", 1e-4,
                        spin_symm="closed", verbose=ctx.verbose)
 
@@ -409,8 +319,7 @@ def build_li(ctx: BuildContext) -> None:
     """
     from pyscf import gto, scf
 
-    from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-    from afqmctools.wavefunction.mol import write_wfn_mol
+    from safiretools.convert.pyscf import load_pyscf_chk_mol
 
     out, scratch = ctx.out_dir, ctx.scratch
 
@@ -424,10 +333,10 @@ def build_li(ctx: BuildContext) -> None:
     mf.chkfile = str(rohf_chk)
     mf.kernel()
 
-    scf_data = load_from_pyscf_chk_mol(rohf_chk, "scf")
+    scf_data = load_pyscf_chk_mol(rohf_chk, "scf")
     _write_hamiltonian(scf_data, out / "hamil_closed.h5", 1e-5,
                        spin_symm="closed", verbose=ctx.verbose)
-    write_wfn_mol(scf_data=scf_data, filename=out / "rohf_nomsd_polarized.h5")
+    _write_nomsd(scf_data, out / "rohf_nomsd_polarized.h5", basis=scf_data)
 
 
 # ============================================================================
@@ -473,8 +382,7 @@ def build_pb(ctx: BuildContext) -> None:
     """
     from pyscf import gto, scf
 
-    from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-    from afqmctools.wavefunction.mol import write_wfn_mol
+    from safiretools.convert.pyscf import load_pyscf_chk_mol
 
     out, scratch = ctx.out_dir, ctx.scratch
     chol_tol = 5e-4
@@ -515,11 +423,10 @@ def build_pb(ctx: BuildContext) -> None:
     mf.with_soc = True
     mf.kernel()
 
-    basis_data = load_from_pyscf_chk_mol(rohf_chk, "scf")
+    basis_data = load_pyscf_chk_mol(rohf_chk, "scf")
 
-    write_wfn_mol(scf_data=load_from_pyscf_chk_mol(uhf_chk),
-                  filename=out / "afqmc_uhf_nomsd.h5",
-                  basis_scf_data=basis_data)
+    _write_nomsd(load_pyscf_chk_mol(uhf_chk), out / "afqmc_uhf_nomsd.h5",
+                 basis=basis_data)
 
     # Spin-free: promote the scalar hcore into the spinor basis.
     _write_hamiltonian(basis_data,
@@ -527,13 +434,15 @@ def build_pb(ctx: BuildContext) -> None:
                        spin_symm="noncollinear", verbose=ctx.verbose)
 
     # Spin-orbit: hcore already comes back as a complex (2 norb, 2 norb) block.
-    soc_data = load_from_pyscf_chk_mol(rohf_chk, "scf", soc_type="ecp")
+    soc_data = load_pyscf_chk_mol(rohf_chk, "scf", soc_type="ecp")
     _write_hamiltonian(soc_data,
                        out / "afqmc_H_rhf_basis_noncollinear_soc.h5", chol_tol,
                        spin_symm="noncollinear", verbose=ctx.verbose)
 
-    _write_ghf_nomsd(ghf_chk, out / "afqmc_ghf_sf_nomsd.h5", basis_data, nelec)
-    _write_ghf_nomsd(ghf_soc_chk, out / "afqmc_ghf_soc_nomsd.h5", basis_data, nelec)
+    _write_nomsd(load_pyscf_chk_mol(ghf_chk), out / "afqmc_ghf_sf_nomsd.h5",
+                 basis=basis_data)
+    _write_nomsd(load_pyscf_chk_mol(ghf_soc_chk),
+                 out / "afqmc_ghf_soc_nomsd.h5", basis=basis_data)
 
 
 # ============================================================================
