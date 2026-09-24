@@ -284,7 +284,6 @@ class MolecularHamiltonian(Hamiltonian):
         if (nfzc, nfzv) != (0, 0):
             h1e, chol_trans, enuc = freeze_core(
                 h1e, chol_trans, enuc, nfzc, nbasis - nfzv - nfzc, verbose=verbose)
-            h1e = h1e[0]
 
         return cls(
             hcore=h1e,
@@ -899,7 +898,7 @@ def freeze_core(h1e, chol, ecore, nc, ncas, verbose=True):
     Returns
     -------
     h1e : numpy.ndarray
-        Active-space one-body Hamiltonian, ``(2, ncas, ncas)`` (up and down).
+        Active-space one-body Hamiltonian, ``(ncas, ncas)``.
     chol : numpy.ndarray
         Active-space Cholesky vectors.
     efzc : float
@@ -922,10 +921,9 @@ def freeze_core(h1e, chol, ecore, nc, ncas, verbose=True):
     psi = np.identity(nbasis)[:, :nc]
     Gcore = gab(psi, psi)
     efzc = local_energy_generic_cholesky(h1e, chol, [Gcore, Gcore])
-    hc_a, hc_b = core_contribution_cholesky(chol, [Gcore, Gcore])
 
-    h1e = np.array([h1e + 2 * hc_a, h1e + 2 * hc_b])
-    h1e = h1e[:, nc:nc + ncas, nc:nc + ncas]
+    h1e = h1e + 2 * core_contribution_cholesky(chol, Gcore)
+    h1e = h1e[nc:nc + ncas, nc:nc + ncas]
 
     nchol = chol.shape[0]
     chol = chol[:, nc:nc + ncas, nc:nc + ncas].reshape((nchol, -1))
@@ -981,26 +979,23 @@ def local_energy_generic_cholesky(h1e, chol_vecs, G):
 
 def core_contribution_cholesky(chol_vecs, G):
     """
-    The frozen-core contribution to the one-body Hamiltonian, per spin sector.
+    One spin sector's frozen-core contribution to the one-body Hamiltonian.
 
     Parameters
     ----------
     chol_vecs : numpy.ndarray
         Cholesky vectors, ``(nchol, nbasis, nbasis)``.
-    G : list of numpy.ndarray
-        Up and down core Green's functions.
+    G : numpy.ndarray
+        Core Green's function of that spin sector.
 
     Returns
     -------
-    tuple(numpy.ndarray, numpy.ndarray)
-        Up and down core contributions.
+    numpy.ndarray
+        The core contribution, ``(nbasis, nbasis)``.
     """
     cv = chol_vecs
 
-    hca_j = np.einsum('l,lij->ij', np.sum(cv * G[0], axis=(1, 2)), cv)
-    hca_k = 0.5 * np.einsum('lrq,lsq->rs', np.einsum('lpr,pq->lrq', cv, G[0]), cv)
+    coulomb = np.einsum('l,lij->ij', np.sum(cv * G, axis=(1, 2)), cv)
+    exchange = 0.5 * np.einsum('lrq,lsq->rs', np.einsum('lpr,pq->lrq', cv, G), cv)
 
-    hcb_j = np.einsum('l,lij->ij', np.sum(cv * G[1], axis=(1, 2)), cv)
-    hcb_k = 0.5 * np.einsum('lrq,lsq->rs', np.einsum('lpr,pq->lrq', cv, G[1]), cv)
-
-    return (hca_j - hca_k, hcb_j - hcb_k)
+    return coulomb - exchange
