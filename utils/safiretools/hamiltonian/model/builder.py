@@ -1018,7 +1018,7 @@ class HamiltonianBuilder:
         available pinning functions:
 
         - staggered: :math:`h(i) = i_1+i_2`
-        - fm: :math:`h(i) = i_2`
+        - same: :math:`h(i)` is the coordinate along the other axis
 
         pinning is applied to an edge,
         with lattice coordinate 0 or L-1, on the given axis.
@@ -1070,8 +1070,8 @@ class HamiltonianBuilder:
         -----
         available functions:
 
-        - staggered: :math:`h(i) = (-1)^{(i_1==0)}`
-        - fm: :math:`h(i) = +0.5`
+        - staggered: :math:`h(i) = (-1)^{(i_\text{axis}==0)}`
+        - same: :math:`h(i) = 1`
 
         pinning is applied to an edge,
         with lattice coordinate 0 or L-1, on the given axis.
@@ -1099,7 +1099,7 @@ class HamiltonianBuilder:
 
         builds a charge pinning term of the type:
         :math:`\sum_{i \sigma} v_{i\sigma} \hat{n}_{i\sigma}`,
-        where :math:`v_{i \downarrow} = v_{i \uparrow} = h_charge_pin`
+        where :math:`v_{i \downarrow} = v_{i \uparrow} = 1/2 h_charge_pin`
         and h_charge_pin is the pinning field strength.
 
         Parameters

@@ -264,7 +264,8 @@ class MolecularHamiltonian(Hamiltonian):
 
         if df_ints is not None and df:
             logger.info("using DF integrals from the checkpoint file")
-            chol_vecs = df_ints
+            # transform_cholesky overwrites its input, and df_ints belongs to scf_data
+            chol_vecs = df_ints.copy()
             if chol_vecs.shape[1] != nbasis * nbasis:
                 raise ValueError(
                     f"DF integrals have shape {chol_vecs.shape}, expected "
@@ -827,7 +828,7 @@ def transform_cholesky(chol, C):
     for i in range(nchol):
         cv = chol[i].reshape(nao, nao)
         half = np.dot(cv, C)
-        # if nao < nmo we overwrite the data
+        # nmo <= nao, so vector i lands at or before where it was read from
         chol_[i * nik:(i + 1) * nik] = np.dot(C.T, half).ravel()
 
     return chol_[:nchol * nik].reshape((nchol, nik))
