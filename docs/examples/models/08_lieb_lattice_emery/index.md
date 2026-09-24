@@ -551,7 +551,7 @@ def make_emery(lattice, show_mats=False):
 
     # 3. save the Hamiltonian. The build steps take care of the spin structure,
     #   so hand them the plain (nsites,nsites) hopping and the per-site U.
-    builder = HamiltonianBuilder(lattice=lattice, nelec=nelec)
+    builder = HamiltonianBuilder(lattice=lattice)
     builder.custom_one_body(hopping, spin_symm=SpinSymm.NONCOLLINEAR)
     builder.onsite_hubbard(U)
     builder.finalize()

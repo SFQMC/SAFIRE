@@ -122,7 +122,6 @@ hamiltonian_params = {
     'hamiltonian' : {
         "t" : 1.0,  # note: we could omit this, nearest-neighbor hoping with t=1 is included by default
         "U" : 4.0,
-        "nelec" : nelec
     }
 }
 

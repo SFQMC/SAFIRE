@@ -130,7 +130,6 @@ colab:
 builder = HamiltonianBuilder(
           lattice=lattice,
           spin_symm="collinear", # we have no spin-flip terms
-          nelec=nelec
 )
 # add standard Hubbard terms
 builder.nth_neighbor_hopping(1.0)
@@ -343,7 +342,6 @@ for Ueff in Ueffs:
     builder_eff = HamiltonianBuilder(
               lattice=lattice,
               spin_symm="collinear",
-              nelec=nelec
                   )
     # add standard Hubbard terms
     builder_eff.nth_neighbor_hopping(1.0)
