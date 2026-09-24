@@ -29,10 +29,8 @@ import numpy as np
 from . import BuildContext, Recipe
 from ._common import ASSETS, copy_groups
 
-# The free-electron trial is written straight from the one-body term, so the
-# twist is what keeps it from being degenerate at a closed shell. afqmctools
-# picks a small irrational twist by default and that is what the committed
-# wavefunctions were built with; nothing here overrides it.
+# chosen for compatibility with old input files
+FREE_ELECTRON_TWIST = 0.1 * np.array((1 / np.sqrt(592560607), 1 / np.sqrt(47603)))
 
 
 # ============================================================================
@@ -62,29 +60,25 @@ def _write_model_hamiltonian(model: Dict, filename, *, spin_symm, nelec=None,
     return hamiltonian
 
 
-def _write_free_electron(model: Dict, filename, *, spin_symm, nelec,
-                         norb: int, verbose: bool = False) -> None:
+def _write_free_electron(model: Dict, filename, *, spin_symm, nelec) -> None:
     """Write a free-electron NOMSD trial for ``model``.
 
-    The model dict is copied first: ``free_electron`` writes its twist back into
-    ``source["lattice"]``, so passing the shared dict would leave a twist behind
-    for whichever recipe step ran next.
+    The trial is built from a *twisted* copy of the hamiltonian - see
+    ``FREE_ELECTRON_TWIST`` - while the file the run reads holds the untwisted
+    one. The model dict is copied so the twist does not leak into whichever
+    recipe step runs next.
     """
     from copy import deepcopy
 
-    from afqmctools.wavefunction.common import write_wfn
-    from afqmctools.wavefunction.free_electron import free_electron
+    from safiretools import LatticeHamiltonian, Wavefunction
 
-    wfn, _ = free_electron(
-        source=deepcopy(model),
-        nelec=nelec,
-        spin_symm=spin_symm,
-        # The variational-energy measurement is a diagnostic that pulls in jax
-        # and does not touch the wavefunction being written.
-        measure_evar=verbose,
-    )
-    write_wfn(wfn=wfn, filename=filename, walker_type=spin_symm,
-              nelec=nelec, norb=norb)
+    twisted = deepcopy(model)
+    twisted["hamiltonian"]["spin_symm"] = spin_symm
+    twisted["lattice"]["twist"] = FREE_ELECTRON_TWIST
+
+    trial = Wavefunction.from_free_electron(
+        LatticeHamiltonian.from_dict(twisted), nelec=nelec, spin_symm=spin_symm)
+    trial.to_hdf5(filename)
 
 
 # ============================================================================
@@ -109,7 +103,6 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
 
     out = ctx.out_dir
     nelec = HUBBARD_4X4["misc_params"]["nelec"]
-    norb = 16
 
     name = {SpinSymm.CLOSED: "closed",
             SpinSymm.COLLINEAR: "collinear",
@@ -122,8 +115,7 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
 
     for spin_symm in (SpinSymm.COLLINEAR, SpinSymm.NONCOLLINEAR):
         _write_free_electron(HUBBARD_4X4, out / f"wfn_fe_{name[spin_symm]}.h5",
-                             spin_symm=spin_symm, nelec=nelec, norb=norb,
-                             verbose=ctx.verbose)
+                             spin_symm=spin_symm, nelec=nelec)
 
     # --- Hubbard-Stratonovich variants (C++ unit tests only) ---------------
     # For U > 0 the builder infers a discrete *spin* decomposition and for
@@ -189,10 +181,8 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     within the optimiser's tolerance, which is a cheap way of catching a solve
     that has wandered off.
     """
-    from afqmctools.utils.types import SpinSymm
-    from afqmctools.wavefunction.common import write_wfn
-    from afqmctools.wavefunction.free_electron import free_electron
-    from safiretools import LatticeHamiltonian
+    from safiretools import (LatticeHamiltonian, NOMSDWavefunction, SpinSymm,
+                             Wavefunction)
 
     try:
         from autohf.hamiltonian import AutoHFHamiltonian
@@ -213,9 +203,8 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     hamiltonian = LatticeHamiltonian.from_dict(weak)
 
     # Untwisted, so the starting determinant - and the solution - stays real.
-    free_wfn, _ = free_electron(source=hamiltonian, nelec=nelec,
-                                spin_symm=SpinSymm.COLLINEAR, measure_evar=False)
-    initial = free_wfn[1][0]
+    initial = Wavefunction.from_free_electron(
+        hamiltonian, nelec=nelec, spin_symm=SpinSymm.COLLINEAR).dets[0]
 
     # AutoHFHamiltonian(source=...) only reads afqmctools hamiltonians, so the
     # terms are handed over explicitly, as its afqmctools interface would.
@@ -243,8 +232,8 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     )
     data = results[0] if isinstance(results, tuple) else results
 
-    # AutoHF hands back (spin, norb, nelec_per_spin); write_wfn wants a single
-    # determinant laid out as (ndet, norb, nup + ndn) with beta after alpha.
+    # AutoHF hands back (spin, norb, nelec_per_spin); a collinear NOMSD wants a
+    # single determinant laid out as (ndet, norb, nup + ndn), beta after alpha.
     alpha, beta = np.asarray(data["orbitals"])
     _check_spans_free_electron(alpha, initial[:, :nelec[0]], "alpha")
     _check_spans_free_electron(beta, initial[:, nelec[0]:], "beta")
@@ -253,13 +242,13 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     phi[0, :, :nelec[0]] = alpha
     phi[0, :, nelec[0]:] = beta
 
-    write_wfn(
-        filename=filename,
-        wfn=(np.array([1.0], dtype=np.complex128), phi),
-        walker_type=SpinSymm.COLLINEAR,
+    NOMSDWavefunction(
+        coeffs=np.array([1.0], dtype=np.complex128),
+        dets=phi,
         nelec=nelec,
-        norb=norb,
-    )
+        spin_symm=SpinSymm.COLLINEAR,
+        nmo=norb,
+    ).to_hdf5(filename)
 
 
 def _check_spans_free_electron(orbitals, reference, label: str,
@@ -304,7 +293,6 @@ def build_hubbard_kanamori(ctx: BuildContext) -> None:
 
     out = ctx.out_dir
     nelec = HUBBARD_KANAMORI_6X1["misc_params"]["nelec"]
-    norb = 12  # 6 sites x 2 bands
 
     for spin_symm, name in ((SpinSymm.COLLINEAR, "collinear"),
                             (SpinSymm.NONCOLLINEAR, "noncollinear")):
@@ -312,8 +300,7 @@ def build_hubbard_kanamori(ctx: BuildContext) -> None:
                                  spin_symm=spin_symm, nelec=nelec,
                                  verbose=ctx.verbose)
         _write_free_electron(HUBBARD_KANAMORI_6X1, out / f"wfn_fe_{name}.h5",
-                             spin_symm=spin_symm, nelec=nelec, norb=norb,
-                             verbose=ctx.verbose)
+                             spin_symm=spin_symm, nelec=nelec)
 
 
 # ============================================================================
