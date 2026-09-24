@@ -43,17 +43,20 @@ def build_recipe(recipe: Recipe, build_root: Path, scratch_root: Path,
                  tools: dict, verbose: bool) -> None:
     """Build one recipe into ``build_root``.
 
-    The recipe always writes into an empty directory. That matters because most
-    of the afqmctools writers append rather than truncate - ``write_dense`` and
-    the ``write_wfn`` family open their files ``'a'`` (which is how the Rashba
-    recipe puts a hamiltonian and a trial in one file); only
-    ``write_model_hamiltonian`` opens ``'w'``. Onto a stale file the appending
-    writers would merge into the old datasets instead of replacing them.
+    Both the output and the scratch directory start empty. The writers add to a
+    file rather than truncating it - which is how the Rashba recipe puts a
+    hamiltonian and a trial in one file - so onto a stale file they would leave
+    whatever they do not themselves overwrite. The scratch directory matters for
+    the same reason: pyscf checkpoints and the plane-wave runs are appended to
+    and read back, so a leftover one is picked up as though this run had written
+    it.
     """
     out_dir = build_root / recipe.data_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+
     scratch = scratch_root / recipe.key
-    scratch.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir(parents=True)
 
     recipe.build(BuildContext(out_dir=out_dir, scratch=scratch,
                               tools=tools, verbose=verbose))
