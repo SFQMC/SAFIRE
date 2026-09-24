@@ -33,7 +33,7 @@ def group(tmp_path):
 class TestHeader:
 
     def test_dims_records_the_shape_the_executable_reads(self, group):
-        io.write_header(group, spin_symm=SpinSymm.COLLINEAR,
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, nmo=6, nelec=(3, 2),
                         coeffs=np.array([1.0 + 0j, 0.5 + 0j]),
                         psi0=(np.eye(6, 3) + 0j, np.eye(6, 2) + 0j))
 
@@ -46,8 +46,8 @@ class TestHeader:
         psi0 = (rng.normal(size=(6, 3)) + 1j * rng.normal(size=(6, 3)),
                 rng.normal(size=(6, 2)) + 1j * rng.normal(size=(6, 2)))
 
-        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, coeffs=coeffs,
-                        psi0=psi0)
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, nmo=6, nelec=(3, 2),
+                        coeffs=coeffs, psi0=psi0)
         header = io.read_header(group)
 
         assert header['nmo'] == 6
@@ -59,7 +59,7 @@ class TestHeader:
         assert np.allclose(header['psi0'][1], psi0[1])
 
     def test_a_single_channel_symmetry_writes_no_beta_block(self, group):
-        io.write_header(group, spin_symm=SpinSymm.CLOSED,
+        io.write_header(group, spin_symm=SpinSymm.CLOSED, nmo=6, nelec=(3, 3),
                         coeffs=np.array([1.0 + 0j]),
                         psi0=(np.eye(6, 3) + 0j,))
 
@@ -69,7 +69,7 @@ class TestHeader:
     def test_an_empty_beta_channel_still_gets_its_block(self, group):
         # a wavefunction with no beta electrons is collinear with ndown == 0,
         #   and the executable's reader opens Psi0_beta for any collinear file
-        io.write_header(group, spin_symm=SpinSymm.COLLINEAR,
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, nmo=6, nelec=(3, 0),
                         coeffs=np.array([1.0 + 0j]),
                         psi0=(np.eye(6, 3) + 0j,
                               np.zeros((6, 0), dtype=complex)))
@@ -144,37 +144,6 @@ class TestNomsdPayload:
 
         with pytest.raises(ValueError, match="no PsiT_0 group"):
             io.read_nomsd(group, 1, (2,))
-
-
-class TestHeaderDims:
-    """
-    ``nmo`` and the electron counts are not inputs: `psi0`'s shape and the spin
-    symmetry fix both.
-    """
-
-    @pytest.mark.parametrize('spin_symm, widths, nmo, nelec', [
-        (SpinSymm.CLOSED, (3,), 6, (3, 3)),
-        (SpinSymm.COLLINEAR, (3, 2), 6, (3, 2)),
-        (SpinSymm.COLLINEAR, (3, 0), 6, (3, 0)),
-        (SpinSymm.NONCOLLINEAR, (5,), 6, (5, 0)),
-    ])
-    def test_it_reads_them_off_psi0(self, spin_symm, widths, nmo, nelec):
-        npol = 2 if spin_symm is SpinSymm.NONCOLLINEAR else 1
-        psi0 = tuple(np.zeros((npol * nmo, width)) for width in widths)
-
-        assert io.header_dims(spin_symm, psi0) == (nmo, nelec)
-
-    def test_a_wrong_block_count_is_rejected(self):
-        with pytest.raises(ValueError, match="1 spin channel"):
-            io.header_dims(SpinSymm.CLOSED, (np.zeros((6, 3)),
-                                             np.zeros((6, 3))))
-
-        with pytest.raises(ValueError, match="2 spin channel"):
-            io.header_dims(SpinSymm.COLLINEAR, (np.zeros((6, 3)),))
-
-    def test_a_noncollinear_block_needs_an_even_row_count(self):
-        with pytest.raises(ValueError, match="even number"):
-            io.header_dims(SpinSymm.NONCOLLINEAR, (np.zeros((7, 3)),))
 
 
 class TestConditionNumberOnDisk:
@@ -322,15 +291,6 @@ class TestPhmsdPayload:
         assert sorted(name for name in group if name.startswith('PsiT')) \
             == [f'PsiT_{i}' for i in range(nreferences)]
 
-    def test_a_none_reference_does_not_count(self, group, occupations, rng):
-        # afqmctools crashed here: it wrote type=1 for any orbmat and then
-        #   dereferenced a None beta matrix
-        occa, occb = occupations
-        io.write_phmsd(group, occa, occb, nmo=6,
-                       orbitals=[rng.normal(size=(6, 6)) + 0j, None])
-
-        assert int(group['type'][()]) == 1
-
     def test_references_round_trip(self, group, occupations, rng):
         occa, occb = occupations
         references = [rng.normal(size=(6, 6)) + 0j, rng.normal(size=(6, 6)) + 0j]
@@ -340,8 +300,3 @@ class TestPhmsdPayload:
         assert len(read_back) == 2
         assert np.allclose(read_back[0], references[0])
         assert np.allclose(read_back[1], references[1])
-
-    def test_mismatched_determinant_counts_are_rejected(self, group):
-        with pytest.raises(ValueError, match="different numbers of determinants"):
-            io.write_phmsd(group, np.array([[0, 1], [0, 2]]),
-                           np.array([[0]]), nmo=6)

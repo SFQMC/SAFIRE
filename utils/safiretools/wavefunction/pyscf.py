@@ -117,13 +117,8 @@ def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
     logger.info("built a %s single-determinant trial wavefunction: "
                 "nelec=%s, nmo=%d", spin_symm.label, nelec, norb)
 
-    return NOMSDWavefunction(
-        coeffs=np.array([1.0 + 0j]),
-        dets=orbitals[np.newaxis, ...],
-        nelec=nelec,
-        spin_symm=spin_symm,
-        nmo=norb,
-    )
+    return NOMSDWavefunction.single_determinant(orbitals, nelec=nelec,
+                                                spin_symm=spin_symm, nmo=norb)
 
 
 def from_pyscf_cas(mol, cas_chkfile, tol=1e-4, max_det=None):

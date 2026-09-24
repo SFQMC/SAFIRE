@@ -17,7 +17,8 @@ import pytest
 from safiretools.hamiltonian.base import (
     Hamiltonian,
     hamiltonian_format,
-    write_hamiltonian_format,
+    read_hamiltonian_header,
+    write_hamiltonian_header,
 )
 from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
 from safiretools.hamiltonian.molecular import MolecularHamiltonian
@@ -95,21 +96,24 @@ class TestTheRecordedFormat:
     def test_writing_an_unknown_format_raises(self, tmp_path):
         with h5.File(tmp_path / 'ham.h5', 'w') as fh5:
             with pytest.raises(ValueError, match="not a valid HamiltonianFormat"):
-                write_hamiltonian_format(fh5, 'sideways')
+                write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'sideways', nmo=1)
 
     def test_writing_an_unrecordable_format_raises(self, tmp_path):
         """A CoQuí file has no ``Hamiltonian`` group to record a type in."""
         with h5.File(tmp_path / 'ham.h5', 'w') as fh5:
             with pytest.raises(ValueError, match="is never recorded"):
-                write_hamiltonian_format(fh5, 'kpoint_coqui')
+                write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'kpoint_coqui',
+                                         nmo=1)
 
-    def test_rewriting_replaces_the_tag(self, tmp_path):
+    def test_the_header_round_trips(self, tmp_path):
         path = tmp_path / 'ham.h5'
         with h5.File(path, 'w') as fh5:
-            write_hamiltonian_format(fh5, 'dense')
-            write_hamiltonian_format(fh5, 'model')
+            write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'dense', nmo=4,
+                                     enuc=1.5, nchol=7)
 
-        assert hamiltonian_format(path) == 'model'
+        assert hamiltonian_format(path) == 'dense'
+        with h5.File(path, 'r') as fh5:
+            assert read_hamiltonian_header(fh5['Hamiltonian']) == (0, 4, 7, 1.5)
 
 
 @pytest.mark.parametrize(

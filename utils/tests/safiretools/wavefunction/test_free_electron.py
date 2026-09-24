@@ -17,7 +17,6 @@ import pytest
 import scipy.sparse as sps
 
 from safiretools import (
-    Lattice,
     LatticeHamiltonian,
     NOMSDWavefunction,
     SpinSymm,

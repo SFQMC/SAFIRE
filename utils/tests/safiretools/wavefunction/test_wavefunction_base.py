@@ -27,7 +27,7 @@ from safiretools import (
     Wavefunction,
 )
 from safiretools.wavefunction.base import wavefunction_format
-from safiretools.wavefunction.slater import is_orthonormal, modified_gram_schmidt
+from safiretools.wavefunction.slater import is_orthonormal, orthonormalize
 
 
 class TestDerivedShape:
@@ -175,7 +175,7 @@ class TestOrthonormality:
         `psi0` is a dense Slater matrix like any other and AFQMC inverts its
         overlap too, so it is checked even when the determinants are clean.
         """
-        dets = modified_gram_schmidt(rng.normal(size=(6, 3)))[np.newaxis]
+        dets = orthonormalize(rng.normal(size=(6, 3)))[np.newaxis]
         wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
                                          spin_symm='closed')
         wavefunction.psi0 = (_nearly_dependent(6, 3),)

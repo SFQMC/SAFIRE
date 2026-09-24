@@ -28,11 +28,7 @@ import numpy as np
 from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
 from safiretools.wavefunction.base import Wavefunction
-from safiretools.wavefunction.slater import (
-    ORTHONORMAL_TOL,
-    is_orthonormal,
-    modified_gram_schmidt,
-)
+from safiretools.wavefunction.slater import ORTHONORMAL_TOL, orthonormalize
 
 
 class PHMSDWavefunction(Wavefunction):
@@ -91,17 +87,14 @@ class PHMSDWavefunction(Wavefunction):
         if nelec is None:
             nelec = (self.occa.shape[1], self.occb.shape[1])
 
-        self.orbitals = None if orbitals is None else tuple(
-            np.asarray(matrix, dtype=np.complex128)
-            for matrix in orbitals if matrix is not None)
-
-        if self.orbitals is not None and len(self.orbitals) > 2:
+        references = tuple(np.asarray(matrix, dtype=np.complex128)
+                           for matrix in orbitals or () if matrix is not None)
+        if len(references) > 2:
             raise ValueError(
                 f"a particle-hole wavefunction takes at most two orbital "
-                f"references, got {len(self.orbitals)}"
+                f"references, got {len(references)}"
             )
-        if self.orbitals is not None and not self.orbitals:
-            self.orbitals = None
+        self.orbitals = references or None
 
         super().__init__(coeffs=coeffs, nelec=nelec, nmo=nmo,
                          spin_symm=spin_symm, psi0=psi0)
@@ -149,14 +142,10 @@ class PHMSDWavefunction(Wavefunction):
         Return a copy whose orbital references — and explicit `psi0`, if any —
         have orthonormal columns. See `Wavefunction.orthonormalize`.
         """
-        def fix(matrix):
-            return matrix if is_orthonormal(matrix, tol=tol) \
-                else modified_gram_schmidt(matrix)
-
         orbitals = None if self.orbitals is None else tuple(
-            fix(matrix) for matrix in self.orbitals)
+            orthonormalize(matrix, tol=tol) for matrix in self.orbitals)
         psi0 = None if self._psi0 is None else tuple(
-            fix(block) for block in self._psi0)
+            orthonormalize(block, tol=tol) for block in self._psi0)
 
         return type(self)(coeffs=self.coeffs.copy(), occa=self.occa.copy(),
                           occb=self.occb.copy(), nmo=self.nmo, nelec=self.nelec,

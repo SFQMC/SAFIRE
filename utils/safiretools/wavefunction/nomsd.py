@@ -31,8 +31,7 @@ from safiretools.wavefunction import io
 from safiretools.wavefunction.base import Wavefunction
 from safiretools.wavefunction.slater import (
     ORTHONORMAL_TOL,
-    is_orthonormal,
-    modified_gram_schmidt,
+    orthonormalize,
     spin_blocks,
 )
 
@@ -85,8 +84,7 @@ class NOMSDWavefunction(Wavefunction):
             )
 
         if nmo is None:
-            npol = 2 if SpinSymm.from_input(spin_symm) is SpinSymm.NONCOLLINEAR else 1
-            nmo = dets.shape[1] // npol
+            nmo = dets.shape[1] // SpinSymm.from_input(spin_symm).npol
 
         self.dets = dets
 
@@ -116,12 +114,34 @@ class NOMSDWavefunction(Wavefunction):
         """The leading determinant's spin blocks."""
         return tuple(block.copy() for block in self.spin_blocks(0))
 
-    def _warn_about_default_psi0(self) -> None:
+    def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "NOMSDWavefunction":
         """
-        Warn when a collinear trial's own determinant is being reused as the
-        initial walker, which equilibrates slowly.
+        Return a copy whose determinants — and explicit `psi0`, if any — have
+        orthonormal columns. See `Wavefunction.orthonormalize`.
         """
-        if self.nspin == 2:
+        dets = self.dets.copy()
+        for det in dets:
+            for block in spin_blocks(det, self.nelec_per_spin):
+                block[...] = orthonormalize(block, tol=tol)
+
+        psi0 = None if self._psi0 is None else tuple(
+            orthonormalize(block, tol=tol) for block in self._psi0)
+
+        return type(self)(coeffs=self.coeffs.copy(), dets=dets, nelec=self.nelec,
+                          spin_symm=self.spin_symm, psi0=psi0, nmo=self.nmo)
+
+    @classmethod
+    def single_determinant(cls, det, nelec, spin_symm, nmo=None) -> "NOMSDWavefunction":
+        """The wavefunction whose only determinant is the Slater matrix `det`."""
+        return cls(coeffs=np.array([1.0 + 0j]), dets=np.asarray(det)[np.newaxis, ...],
+                   nelec=nelec, spin_symm=spin_symm, nmo=nmo)
+
+    # ------------------------------------------------------------------
+    # serialization
+    # ------------------------------------------------------------------
+
+    def _write_payload(self, group) -> None:
+        if self._psi0 is None and self.nspin == 2:
             warn(
                 "Using this wavefunction's own Slater determinant for the "
                 "initial walkers of a collinear trial wavefunction. This can "
@@ -129,33 +149,6 @@ class NOMSDWavefunction(Wavefunction):
                 "Slater determinants are recommended (pass psi0=)."
             )
 
-    def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "NOMSDWavefunction":
-        """
-        Return a copy whose determinants — and explicit `psi0`, if any — have
-        orthonormal columns. See `Wavefunction.orthonormalize`.
-        """
-        dets = self.dets.copy()
-        for idet in range(self.ndets):
-            start = 0
-            for nelec in self.nelec_per_spin:
-                block = dets[idet, :, start:start + nelec]
-                if not is_orthonormal(block, tol=tol):
-                    dets[idet, :, start:start + nelec] = modified_gram_schmidt(block)
-                start += nelec
-
-        psi0 = self._psi0
-        if psi0 is not None:
-            psi0 = tuple(block if is_orthonormal(block, tol=tol)
-                         else modified_gram_schmidt(block) for block in psi0)
-
-        return type(self)(coeffs=self.coeffs.copy(), dets=dets, nelec=self.nelec,
-                          spin_symm=self.spin_symm, psi0=psi0, nmo=self.nmo)
-
-    # ------------------------------------------------------------------
-    # serialization
-    # ------------------------------------------------------------------
-
-    def _write_payload(self, group) -> None:
         io.write_nomsd(group, self.dets, self.nelec_per_spin)
 
     @classmethod
@@ -163,21 +156,8 @@ class NOMSDWavefunction(Wavefunction):
         spin_symm = header['spin_symm']
         nelec = header['nelec']
 
-        nelec_per_spin = _nelec_per_spin(spin_symm, nelec)
-        dets = io.read_nomsd(group, header['ndets'], nelec_per_spin)
+        dets = io.read_nomsd(group, header['ndets'], spin_symm.nelec_per_spin(nelec))
 
         return cls(coeffs=header['coeffs'], dets=dets, nelec=nelec,
                    spin_symm=spin_symm, psi0=header['psi0'],
                    nmo=header['nmo'])
-
-
-def _nelec_per_spin(spin_symm, nelec) -> tuple:
-    """
-    `Wavefunction.nelec_per_spin` for a spin symmetry and electron-count pair,
-    before an instance exists to ask.
-    """
-    if spin_symm is SpinSymm.COLLINEAR:
-        return tuple(nelec)
-    if spin_symm is SpinSymm.NONCOLLINEAR:
-        return (sum(nelec),)
-    return (nelec[0],)

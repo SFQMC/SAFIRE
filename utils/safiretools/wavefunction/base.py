@@ -25,58 +25,17 @@ subclasses supply only the representation-specific payload.
 """
 
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 
 import numpy as np
 import h5py as h5
 
+from safiretools.hdf5 import replace_group
 from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
 from safiretools.wavefunction.slater import ORTHONORMAL_TOL
 
 WAVEFUNCTION_GROUP = 'Wavefunction'
 """Top-level HDF5 group every wavefunction is written into."""
-
-
-def clear_wavefunction(fh5) -> None:
-    """
-    Remove the wavefunction already in the open HDF5 file `fh5`, if there is one.
-
-    A SAFIRE input file holds at most one Hamiltonian and at most one
-    wavefunction, so writing a wavefunction replaces any wavefunction already
-    present while leaving everything else — notably ``Hamiltonian`` — alone.
-    """
-    if WAVEFUNCTION_GROUP in fh5:
-        del fh5[WAVEFUNCTION_GROUP]
-
-
-@contextmanager
-def open_for_wavefunction(path):
-    """
-    Open `path` for writing one wavefunction, creating the file if needed.
-
-    Anything else already in the file is preserved; only a wavefunction already
-    present is replaced. This is what lets a Hamiltonian and a wavefunction
-    share one file in either order.
-
-    Parameters
-    ----------
-    path : str or pathlib.Path
-        HDF5 file to write into.
-
-    Yields
-    ------
-    h5py.File
-        The open file, with no ``Wavefunction`` group in it.
-
-    Notes
-    -----
-    HDF5 unlinks rather than reclaims, so repeatedly rewriting a wavefunction
-    into the same file grows it. Write to a fresh path if that matters.
-    """
-    with h5.File(path, 'a') as fh5:
-        clear_wavefunction(fh5)
-        yield fh5
 
 
 def wavefunction_format(path) -> str:
@@ -109,26 +68,8 @@ def wavefunction_format(path) -> str:
 
 def _check_representation(cls, target, factory: str) -> None:
     """
-    Guard a fixed-representation factory against being called on a subclass it
-    can never return.
-
-    The factories live on `Wavefunction` and reach the subclasses by
-    inheritance, so without this ``PHMSDWavefunction.from_free_electron(...)``
-    would quietly hand back an `NOMSDWavefunction`.
-
-    Parameters
-    ----------
-    cls : type
-        The class the factory was called on.
-    target : type
-        The concrete subclass this factory always builds.
-    factory : str
-        Name of the factory, for the error message.
-
-    Raises
-    ------
-    ValueError
-        If `target` is not a `cls`.
+    Stop ``PHMSDWavefunction.from_free_electron(...)`` from quietly handing back
+    an `NOMSDWavefunction`: the factories reach the subclasses by inheritance.
     """
     if cls is not Wavefunction and not issubclass(target, cls):
         raise ValueError(
@@ -212,28 +153,18 @@ class Wavefunction(ABC):
 
     @property
     def nspin(self) -> int:
-        """Number of independent spin channels: 2 when collinear, else 1."""
-        return 2 if self.spin_symm is SpinSymm.COLLINEAR else 1
+        """Number of independent spin channels; see `SpinSymm.nspin`."""
+        return self.spin_symm.nspin
 
     @property
     def npol(self) -> int:
-        """Spin polarizations per orbital: 2 when noncollinear, else 1."""
-        return 2 if self.spin_symm is SpinSymm.NONCOLLINEAR else 1
+        """Spin polarizations per orbital; see `SpinSymm.npol`."""
+        return self.spin_symm.npol
 
     @property
     def nelec_per_spin(self) -> tuple:
-        """
-        Electron count in each independent spin channel, of length `nspin`.
-
-        ``(nup, ndown)`` when collinear; the alpha count alone when closed
-        (the beta channel repeats it); the total when noncollinear (both
-        polarizations share one channel).
-        """
-        if self.spin_symm is SpinSymm.COLLINEAR:
-            return self.nelec
-        if self.spin_symm is SpinSymm.NONCOLLINEAR:
-            return (sum(self.nelec),)
-        return (self.nelec[0],)
+        """Electron count in each independent spin channel; see `SpinSymm.nelec_per_spin`."""
+        return self.spin_symm.nelec_per_spin(self.nelec)
 
     @property
     def nelec_on_disk(self) -> tuple:
@@ -301,21 +232,13 @@ class Wavefunction(ABC):
         The initial Slater determinant to use when the caller supplied none.
         """
 
-    def _warn_about_default_psi0(self) -> None:
-        """
-        Warn, on write, about a defaulted `psi0` that will make for a poor
-        initial walker. Nothing by default; a representation whose default is a
-        poor choice overrides this.
-        """
-
     @abstractmethod
     def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "Wavefunction":
         """
         Return a copy whose Slater matrices have orthonormal columns.
 
-        Blocks that are already orthonormal to within `tol` are left exactly as
-        they are; the rest are orthonormalized by
-        `safiretools.wavefunction.slater.modified_gram_schmidt`. The
+        Each block goes through `safiretools.wavefunction.slater.orthonormalize`,
+        so one already orthonormal to within `tol` is left exactly as it is. The
         instance this is called on is never modified.
         """
 
@@ -335,24 +258,22 @@ class Wavefunction(ABC):
         -----
         The header (``dims``, ``ci_coeffs``, ``Psi0_alpha``/``Psi0_beta``) is
         the same for every representation and is written here; the subclass adds
-        only its own payload. ``nmo`` and the electron counts follow from `psi0`'s 
-        shape and `spin_symm`.
+        only its own payload.
 
         Nothing is repaired on the way out. Every Slater matrix that reaches
         disk has its overlap's condition number checked, and an ill-conditioned
         one is warned about — see
         `safiretools.wavefunction.io.warn_if_ill_conditioned`.
         """
-        if self._psi0 is None:
-            self._warn_about_default_psi0()
-
-        with open_for_wavefunction(path) as fh5:
-            group = fh5.create_group(
-                f'{WAVEFUNCTION_GROUP}/{type(self)._HDF5_GROUP}')
+        with h5.File(path, 'a') as fh5:
+            group = replace_group(fh5, WAVEFUNCTION_GROUP).create_group(
+                type(self)._HDF5_GROUP)
 
             io.write_header(
                 group,
                 spin_symm=self.spin_symm,
+                nmo=self.nmo,
+                nelec=self.nelec_on_disk,
                 coeffs=self.coeffs,
                 psi0=self.psi0,
             )

@@ -49,12 +49,13 @@ import numpy as np
 import h5py as h5
 
 from safiretools.hamiltonian.base import (
+    HAMILTONIAN_GROUP,
     Hamiltonian,
-    open_for_hamiltonian,
-    write_hamiltonian_format,
+    read_hamiltonian_header,
+    write_hamiltonian_header,
 )
 from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
-from safiretools.hdf5 import read_complex
+from safiretools.hdf5 import read_complex, replace_group
 from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
@@ -733,11 +734,15 @@ class PeriodicHamiltonian(Hamiltonian):
             ``Wavefunction`` — is left alone, so a Hamiltonian and a
             wavefunction can share one file in either order.
         """
-        with open_for_hamiltonian(path) as fh5:
-            write_hamiltonian_format(fh5, 'kpoint')
-            group = fh5['Hamiltonian']
-            _write_kpoint_descriptors(group, self.kpts, self.nmo_pk, self.qk_to_k2,
-                                      self.minus_k, self.enuc)
+        with h5.File(path, 'a') as fh5:
+            group = replace_group(fh5, HAMILTONIAN_GROUP)
+            write_hamiltonian_header(group, 'kpoint', nmo=int(np.sum(self.nmo_pk)),
+                                     enuc=self.enuc, nkpts=self.nkpts)
+            group.create_dataset("ComplexIntegrals", data=np.array([1], dtype=np.int32))
+            group.create_dataset("KPoints", data=np.asarray(self.kpts, dtype=np.float64))
+            group.create_dataset("NMOPerKP", data=np.asarray(self.nmo_pk, dtype=np.int32))
+            group.create_dataset("QKTok2", data=np.asarray(self.qk_to_k2, dtype=np.int32))
+            group.create_dataset("MinusK", data=np.asarray(self.minus_k, dtype=np.int32))
             for ki in range(self.nkpts):
                 _write_kpoint_h1(group, ki, self.nmo_pk[ki], self.hcore[ki])
 
@@ -872,10 +877,8 @@ class PeriodicHamiltonian(Hamiltonian):
     def _read_hdf5(cls, path, fmt: str) -> "PeriodicHamiltonian":
         """Read a periodic Hamiltonian written by `to_hdf5`."""
         with h5.File(path, 'r') as fh5:
-            group = fh5['Hamiltonian']
-            dims = group['dims'][...]
-            nkpts = int(dims[2])
-            enuc = float(group['Energies'][...][0])
+            group = fh5[HAMILTONIAN_GROUP]
+            nkpts, _, _, enuc = read_hamiltonian_header(group)
 
             kpts = group['KPoints'][...]
             nmo_pk = group['NMOPerKP'][...]
@@ -1013,28 +1016,6 @@ def _kpoint_block(cholvecs, solver):
     factor = 1.0 / math.sqrt(nkpts)
 
     return cholvecs.reshape(nkpts, solver.nmo_max**2 * nchol) * factor
-
-
-def _write_kpoint_descriptors(group, kpts, nmo_pk, qk_to_k2, minus_k,
-                              enuc) -> None:
-    """Write the k-point Hamiltonian's descriptor datasets into `group`.
-
-    The electron-count slots of ``dims`` are written as zero: the AFQMC
-    executable takes the electron count from the wavefunction and reads them
-    from nowhere.
-    """
-    nkpts = len(kpts)
-
-    group.create_dataset(
-        "dims",
-        data=np.array([0, 0, nkpts, int(np.sum(nmo_pk)), 0, 0, 0, 0],
-                      dtype=np.int32))
-    group.create_dataset("ComplexIntegrals", data=np.array([1], dtype=np.int32))
-    group.create_dataset("Energies", data=np.array([enuc, 0.], dtype=np.float64))
-    group.create_dataset("KPoints", data=np.asarray(kpts, dtype=np.float64))
-    group.create_dataset("NMOPerKP", data=np.asarray(nmo_pk, dtype=np.int32))
-    group.create_dataset("QKTok2", data=np.asarray(qk_to_k2, dtype=np.int32))
-    group.create_dataset("MinusK", data=np.asarray(minus_k, dtype=np.int32))
 
 
 def _write_kpoint_h1(group, ki, nmo, h1) -> None:

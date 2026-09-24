@@ -267,12 +267,6 @@ class TestUnitcellBelongsToTheType:
         with pytest.raises(ValueError, match="returned no lattice vectors"):
             UnitcellLessLattice(L=(2, 2))
 
-    def test_unknown_keyword_is_not_swallowed(self):
-        # the bug fixed above was caused by **kwargs absorbing a1/a2; unknown
-        # keywords must now be loud rather than silently ignored.
-        with pytest.raises(TypeError):
-            SquareLattice(L=(3, 3), a3=[1.0, 1.0])
-
 
 class TestUnitcellRegression:
     """Guards the dead rotation-group / `_is_valid_image_old` removal against

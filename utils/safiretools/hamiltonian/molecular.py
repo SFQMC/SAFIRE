@@ -32,19 +32,16 @@ import numpy as np
 import h5py as h5
 
 from safiretools.hamiltonian.base import (
+    HAMILTONIAN_GROUP,
     Hamiltonian,
-    open_for_hamiltonian,
-    write_hamiltonian_format,
+    read_hamiltonian_header,
+    write_hamiltonian_header,
 )
 from safiretools.hamiltonian.fcidump import read_fcidump, write_fcidump
-from safiretools.hdf5 import read_complex
+from safiretools.hdf5 import read_complex, replace_group
 from safiretools.types import SpinSymm
-from safiretools.wavefunction.slater import gab
 
 logger = logging.getLogger(__name__)
-
-CHOLESKY_DATASET = 'Hamiltonian/DenseFactorized/L'
-"""Where the dense Cholesky matrix lives; read by ``RealDenseHamiltonian``."""
 
 
 class MolecularHamiltonian(Hamiltonian):
@@ -370,15 +367,23 @@ class MolecularHamiltonian(Hamiltonian):
             ``Wavefunction`` — is left alone, so a Hamiltonian and a
             wavefunction can share one file in either order.
         """
-        with open_for_hamiltonian(path) as fh5:
-            write_dense_hamiltonian(
-                fh5,
-                hcore=self.hcore,
-                chol=self.chol,
-                enuc=self.enuc,
-                complex_chol=self.complex_chol,
-                ortho=self.ortho,
-            )
+        complex_chol = self.complex_chol
+        # decided with any() rather than all(): a Hermitian matrix has a real
+        #   diagonal, so all() would discard the imaginary part of every one
+        complex_hcore = bool(np.any(np.iscomplex(self.hcore)))
+
+        with h5.File(path, 'a') as fh5:
+            group = replace_group(fh5, HAMILTONIAN_GROUP)
+            write_hamiltonian_header(group, 'dense', nmo=self.nmo, enuc=self.enuc,
+                                     nchol=self.nchol)
+            group.create_dataset('ComplexIntegrals',
+                                 data=np.array([int(complex_chol)], dtype=np.int32))
+            group.create_dataset('DenseFactorized/L',
+                                 data=self.chol if complex_chol else np.real(self.chol))
+            group.create_dataset('hcore',
+                                 data=self.hcore if complex_hcore else np.real(self.hcore))
+            if self.ortho is not None:
+                group.create_dataset('X', data=np.asarray(self.ortho))
 
     def to_fcidump(self, path, nelec=(0, 0), tol=1e-8, ctol=1e-12, sym=1,
                    cplx=True, paren=False, use_spinor=False) -> None:
@@ -461,7 +466,17 @@ class MolecularHamiltonian(Hamiltonian):
         ``hcore``'s own shape gives back the spin symmetry it was written in,
         so nothing has to be guessed here.
         """
-        enuc, hcore, chol = read_dense_hamiltonian(path)
+        with h5.File(path, 'r') as fh5:
+            group = fh5[HAMILTONIAN_GROUP]
+            *_, enuc = read_hamiltonian_header(group)
+            chol = read_complex(group['DenseFactorized/L'])
+            hcore = read_complex(group['hcore'])
+
+        if hcore.ndim != 5:
+            raise ValueError(
+                f"Hamiltonian/hcore in {path} has shape {hcore.shape}, expected "
+                "(nspin, npol, nmo, npol, nmo)"
+            )
 
         nspin, npol = hcore.shape[0], hcore.shape[1]
         if nspin == 2:
@@ -473,7 +488,7 @@ class MolecularHamiltonian(Hamiltonian):
 
 
 # ----------------------------------------------------------------------
-# the dense on-disk format, shared with the supercell periodic Hamiltonian
+# the dense on-disk layout
 # ----------------------------------------------------------------------
 
 def spin_blocked_hcore(hcore, spin_symm: SpinSymm):
@@ -530,119 +545,6 @@ def spin_blocked_hcore(hcore, spin_symm: SpinSymm):
         f"hcore has shape {given}, expected (nspin, npol, nmo, npol, nmo) or "
         "one of the shorter layouts it is built from"
     )
-
-
-def write_dense_hamiltonian(fh5, hcore, chol, enuc=0.0,
-                            complex_chol=None, ortho=None) -> None:
-    r"""
-    Write a dense Cholesky-factorized Hamiltonian into the open HDF5 file
-    `fh5`.
-
-    Parameters
-    ----------
-    fh5 : h5py.File or h5py.Group
-        Destination. Existing datasets are replaced.
-    hcore : numpy.ndarray
-        One-body Hamiltonian, ``(nspin, npol, nmo, npol, nmo)``.
-    chol : numpy.ndarray
-        Cholesky matrix :math:`L_{(ij),\gamma}`.
-    enuc : float, optional
-        Constant energy. Default 0.0.
-    complex_chol : bool, optional
-        On-disk dtype of the Cholesky matrix, and the value recorded in
-        ``ComplexIntegrals``. Taken from the data when omitted; when False, only
-        the real part of `chol` is written.
-    ortho : numpy.ndarray, optional
-        Basis transformation, written as ``Hamiltonian/X``.
-
-    Notes
-    -----
-    ``hcore``'s dtype follows its own values rather than `complex_chol`, and is
-    decided with ``numpy.any`` rather than ``numpy.all``: a Hermitian matrix has
-    a real diagonal, so ``all`` would call any such matrix real and discard its
-    imaginary part.
-    """
-    hcore = np.asarray(hcore)
-    if hcore.ndim != 5:
-        raise ValueError(
-            f"hcore has shape {hcore.shape}, expected (nspin, npol, nmo, npol, nmo)"
-        )
-
-    if complex_chol is None:
-        complex_chol = bool(np.any(np.iscomplex(chol)))
-
-    write_hamiltonian_format(fh5, 'dense')
-
-    _write(fh5, 'Hamiltonian/DenseFactorized/L',
-           chol if complex_chol else np.real(chol))
-
-    complex_hcore = bool(np.any(np.iscomplex(hcore)))
-    _write(fh5, 'Hamiltonian/hcore',
-           hcore if complex_hcore else np.real(hcore))
-
-    _write(fh5, 'Hamiltonian/Energies', np.array([enuc, 0.], dtype=np.float64))
-    _write(fh5, 'Hamiltonian/dims',
-           np.array([0, 0, 0, hcore.shape[2], 0, 0, 0, chol.shape[-1]],
-                    dtype=np.int32))
-    _write(fh5, 'Hamiltonian/ComplexIntegrals',
-           np.array([int(complex_chol)], dtype=np.int32))
-
-    if ortho is not None:
-        _write(fh5, 'Hamiltonian/X', np.asarray(ortho))
-
-
-def read_dense_hamiltonian(path):
-    r"""
-    Read a dense Cholesky-factorized Hamiltonian written by
-    `write_dense_hamiltonian`.
-
-    Parameters
-    ----------
-    path : str or pathlib.Path
-        HDF5 file to read.
-
-    Returns
-    -------
-    enuc : float
-        Constant energy contribution.
-    hcore : numpy.ndarray
-        One-body Hamiltonian, ``(nspin, npol, nmo, npol, nmo)``.
-    chol : numpy.ndarray
-        Cholesky matrix :math:`L_{(ij),\gamma}`.
-
-    Raises
-    ------
-    ValueError
-        If the file holds no Cholesky matrix, if ``dims`` is malformed, or if
-        ``hcore`` is not five-dimensional.
-    """
-    with h5.File(path, 'r') as fh5:
-
-        dims = fh5['Hamiltonian/dims'][...]
-        if len(dims) != 8:
-            raise ValueError(
-                f"Hamiltonian/dims in {path} has length {len(dims)}, expected 8"
-            )
-
-        enuc = float(fh5['Hamiltonian/Energies'][...][0])
-
-        chol = read_complex(fh5[CHOLESKY_DATASET])
-        hcore = read_complex(fh5['Hamiltonian/hcore'])
-
-    if hcore.ndim != 5:
-        raise ValueError(
-            f"Hamiltonian/hcore in {path} has shape {hcore.shape}, expected "
-            "(nspin, npol, nmo, npol, nmo)"
-        )
-
-    return enuc, hcore, chol
-
-
-def _write(fh5, name, data) -> None:
-    """Create `name` in `fh5`, replacing it if it already exists."""
-    if name in fh5:
-        del fh5[name]
-    fh5.create_dataset(name, data=data)
 
 
 # ----------------------------------------------------------------------
@@ -920,7 +822,7 @@ def freeze_core(h1e, chol, ecore, nc, ncas, verbose=True):
 
     chol = chol.reshape((-1, nbasis, nbasis))
     psi = np.identity(nbasis)[:, :nc]
-    Gcore = gab(psi, psi)
+    Gcore = psi @ psi.T
     efzc = local_energy_generic_cholesky(h1e, chol, [Gcore, Gcore])
 
     h1e = h1e + 2 * core_contribution_cholesky(chol, Gcore)
