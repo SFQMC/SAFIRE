@@ -101,7 +101,7 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       }
 
       if(iStep < exec.equilibration_steps) {
-        Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset) - Eshift);
+        Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, exec.timestep) - Eshift);
       }
 
       // resize stack pointers to match maximum buffer use

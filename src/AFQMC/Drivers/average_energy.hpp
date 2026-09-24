@@ -29,30 +29,37 @@ namespace sfqmc::afqmc {
 
 namespace detail {
 
-/// Re(sum_i w_i * v_i) / Re(sum_i w_i) over the walkers of all ranks.
-RealType weightedAverage(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+/// sum_i w_i * v_i / sum_i w_i over the walkers of all ranks.
+ComplexType weightedAverage(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                          nda::array<ComplexType, 1> const& weight,
                          auto const& v) {
   std::array<ComplexType, 2> sums{nda::sum(weight * v), nda::sum(weight)};
   mpi.comm.all_reduce_in_place_n(sums.data(), sums.size(), std::plus<>{});
 
-  return sums[0].real() / sums[1].real();
+  return sums[0] / sums[1];
 }
 
 } // namespace detail
 
-/// Weight-averaged pseudo local energy of the walker population,
-/// Re(sum_i w_i * Eloc_i) / Re(sum_i w_i), summed over all ranks.
+/// Growth estimator for the energy based on pseudo local energy of the walker population.
+/// Rather than doing the naive average of Eloc, does the exponential average
+///
+/// log(Σ_i w_i exp(dt * Eloc_i) / Σ w)/dt ~ log(Σ w_old / Σ w)/dt ~ E
+///
+/// which seems to reduce the bias, especially in model systems and free projection.
 ///
 /// `PSEUDO_ELOC_` is written by the propagator's walker update, and seeded from the trial energy
 /// before the first step, so it is always on the same scale as the total energy.
 template<MEMORY_SPACE MEM>
-RealType averagePseudoEnergy(utils::mpi_context_t<boost::mpi3::communicator>& mpi, WalkerSet<MEM> const& wset) {
+RealType averagePseudoEnergy(utils::mpi_context_t<boost::mpi3::communicator>& mpi, WalkerSet<MEM> const& wset, RealType timestep) {
   memory::buffered_array<HOST_MEMORY, ComplexType, 1> weight(wset.size()), eloc(wset.size());
   wset.getProperty(WEIGHT, weight);
   wset.getProperty(PSEUDO_ELOC_, eloc);
+  for(auto& e : eloc) {
+    e = std::exp(timestep*e);
+  }
 
-  return detail::weightedAverage(mpi, weight, eloc);
+  return std::log(detail::weightedAverage(mpi, weight, eloc).real())/timestep;
 }
 
 /// Weight-averaged local energy of the walker population, taken from the components
@@ -65,7 +72,7 @@ RealType averageEnergy(utils::mpi_context_t<boost::mpi3::communicator>& mpi, Wal
   wset.getProperty(EXX_, exx);
   wset.getProperty(EJ_, ej);
 
-  return detail::weightedAverage(mpi, weight, e1 + exx + ej);
+  return detail::weightedAverage(mpi, weight, e1 + exx + ej).real();
 }
 
 } // namespace sfqmc::afqmc

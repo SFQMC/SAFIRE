@@ -89,7 +89,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       // its own; one that skips a step does no work on it
       estimators.measure(mpi, step, wset);
     } else {
-      Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset) - Eshift);
+      Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, exec.timestep) - Eshift);
       // back propagation starts its first window here, rather than at the stale anchor its
       // constructor took before equilibration
       if(step == exec.equilibration_steps) {
@@ -98,7 +98,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
     }
 
     if(iStep % log_interval == 0) {
-      const double energy = averagePseudoEnergy(mpi, wset);
+      const double energy = averagePseudoEnergy(mpi, wset, exec.timestep);
       const auto now = std::chrono::current_zone()->to_local(
           std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
 
