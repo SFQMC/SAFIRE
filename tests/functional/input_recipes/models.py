@@ -21,13 +21,11 @@ the ``hst_type`` variants under ``square_4x4_hubbard_nup5_ndn5`` and the whole
 because the point of this tool is that the inputs tree can be rebuilt in full.
 """
 
-import shutil
 from typing import Dict, List
 
 import numpy as np
 
 from . import BuildContext, Recipe
-from ._common import ASSETS, copy_groups
 
 # chosen for compatibility with old input files
 FREE_ELECTRON_TWIST = 0.1 * np.array((1 / np.sqrt(592560607), 1 / np.sqrt(47603)))
@@ -37,40 +35,29 @@ FREE_ELECTRON_TWIST = 0.1 * np.array((1 / np.sqrt(592560607), 1 / np.sqrt(47603)
 # Helpers
 # ============================================================================
 
-def _write_model_hamiltonian(model: Dict, filename, *, spin_symm,
-                             verbose: bool = False) -> None:
-    """Build one lattice-model hamiltonian in ``spin_symm`` and write it."""
-    from copy import deepcopy
+def _lattices(model: Dict):
+    """The lattice a model is defined on, and a twisted copy of it.
 
+    A free-electron trial is diagonalized straight out of the one-body term, so
+    at a closed shell its highest occupied shell is degenerate and the
+    determinant is not uniquely defined. The twist lifts that, and it belongs to
+    the lattice rather than to the wavefunction builder - hence two lattices,
+    the untwisted one for the Hamiltonian the run reads and the twisted one for
+    the trial built from it.
+    """
+    from safiretools import Lattice
+
+    return (Lattice.from_dict(model["lattice"]),
+            Lattice.from_dict({**model["lattice"], "twist": FREE_ELECTRON_TWIST}))
+
+
+def _hamiltonian(model: Dict, spin_symm, lattice):
+    """`model` built on `lattice` in `spin_symm`."""
     from safiretools import LatticeHamiltonian
 
-    local = deepcopy(model)
-    local["hamiltonian"]["spin_symm"] = spin_symm
-
-    hamiltonian = LatticeHamiltonian.from_dict(local)
-    hamiltonian.to_hdf5(filename)
-    return hamiltonian
-
-
-def _write_free_electron(model: Dict, filename, *, spin_symm, nelec) -> None:
-    """Write a free-electron NOMSD trial for ``model``.
-
-    The trial is built from a *twisted* copy of the hamiltonian - see
-    ``FREE_ELECTRON_TWIST`` - while the file the run reads holds the untwisted
-    one. The model dict is copied so the twist does not leak into whichever
-    recipe step runs next.
-    """
-    from copy import deepcopy
-
-    from safiretools import LatticeHamiltonian, Wavefunction
-
-    twisted = deepcopy(model)
-    twisted["hamiltonian"]["spin_symm"] = spin_symm
-    twisted["lattice"]["twist"] = FREE_ELECTRON_TWIST
-
-    trial = Wavefunction.from_free_electron(
-        LatticeHamiltonian.from_dict(twisted), nelec=nelec, spin_symm=spin_symm)
-    trial.to_hdf5(filename)
+    return LatticeHamiltonian.from_dict(
+        {**model, "hamiltonian": {**model["hamiltonian"], "spin_symm": spin_symm}},
+        lattice=lattice)
 
 
 # ============================================================================
@@ -91,23 +78,28 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
     free-electron trials, plus four files that exist to exercise the
     Hubbard-Stratonovich decompositions in the C++ unit tests.
     """
-    from afqmctools.utils.types import SpinSymm
+    from safiretools import SpinSymm, Wavefunction
 
     out = ctx.out_dir
     nelec = HUBBARD_4X4["misc_params"]["nelec"]
+    lattice, twisted = _lattices(HUBBARD_4X4)
 
     name = {SpinSymm.CLOSED: "closed",
             SpinSymm.COLLINEAR: "collinear",
             SpinSymm.NONCOLLINEAR: "noncollinear"}
 
     for spin_symm in (SpinSymm.CLOSED, SpinSymm.COLLINEAR, SpinSymm.NONCOLLINEAR):
-        _write_model_hamiltonian(HUBBARD_4X4, out / f"ham_{name[spin_symm]}.h5",
-                                 spin_symm=spin_symm,
-                                 verbose=ctx.verbose)
+        _hamiltonian(HUBBARD_4X4, spin_symm, lattice).to_hdf5(
+            out / f"ham_{name[spin_symm]}.h5")
 
     for spin_symm in (SpinSymm.COLLINEAR, SpinSymm.NONCOLLINEAR):
-        _write_free_electron(HUBBARD_4X4, out / f"wfn_fe_{name[spin_symm]}.h5",
-                             spin_symm=spin_symm, nelec=nelec)
+        Wavefunction.from_free_electron(
+            _hamiltonian(HUBBARD_4X4, spin_symm, twisted),
+            nelec=nelec, spin_symm=spin_symm,
+        ).to_hdf5(out / f"wfn_fe_{name[spin_symm]}.h5")
+
+    lattice.get_directed_pairs(
+        directions=["s", "+x", "+y"]).to_hdf5(out / "pair_correlators.h5")
 
     # --- Hubbard-Stratonovich variants (C++ unit tests only) ---------------
     # For U > 0 the builder infers a discrete *spin* decomposition and for
@@ -119,36 +111,17 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
     # The committed ham_collinear_cont_spin.h5 predates this override and
     # stores discrete_spin despite its name, so it duplicated ham_collinear.h5
     # and left continuous_spin exercised by nothing.
-    continuous_spin = {
-        "hamiltonian": {"t": 1.0, "U": 6.0,
-                        "hst_types": {"U": "continuous_spin"}},
-        "lattice": HUBBARD_4X4["lattice"],
-        "misc_params": HUBBARD_4X4["misc_params"],
+    variants = {
+        "ham_collinear_cont_spin.h5":
+            {"t": 1.0, "U": 6.0, "hst_types": {"U": "continuous_spin"}},
+        "ham_collinear_Um4_disc_charge.h5":
+            {"t": 1.0, "U": -4.0},
+        "ham_collinear_Um4_cont_charge.h5":
+            {"t": 1.0, "U": -4.0, "hst_types": {"U": "continuous_charge"}},
     }
-    _write_model_hamiltonian(continuous_spin, out / "ham_collinear_cont_spin.h5",
-                             spin_symm=SpinSymm.COLLINEAR,
-                             verbose=ctx.verbose)
-
-    attractive = {
-        "hamiltonian": {"t": 1.0, "U": -4.0},
-        "lattice": HUBBARD_4X4["lattice"],
-        "misc_params": HUBBARD_4X4["misc_params"],
-    }
-    _write_model_hamiltonian(attractive,
-                             out / "ham_collinear_Um4_disc_charge.h5",
-                             spin_symm=SpinSymm.COLLINEAR,
-                             verbose=ctx.verbose)
-
-    attractive_continuous = {
-        "hamiltonian": {"t": 1.0, "U": -4.0,
-                        "hst_types": {"U": "continuous_charge"}},
-        "lattice": HUBBARD_4X4["lattice"],
-        "misc_params": HUBBARD_4X4["misc_params"],
-    }
-    _write_model_hamiltonian(attractive_continuous,
-                             out / "ham_collinear_Um4_cont_charge.h5",
-                             spin_symm=SpinSymm.COLLINEAR,
-                             verbose=ctx.verbose)
+    for name, terms in variants.items():
+        _hamiltonian({**HUBBARD_4X4, "hamiltonian": terms},
+                     SpinSymm.COLLINEAR, lattice).to_hdf5(out / name)
 
     _build_uhf_trial(ctx, out / "uhf_U0.1_wfn_nup5_ndn5.h5")
 
@@ -281,18 +254,27 @@ def build_hubbard_kanamori(ctx: BuildContext) -> None:
     Only collinear and noncollinear are built - the closed symmetry cannot
     represent the Hund's coupling term.
     """
-    from afqmctools.utils.types import SpinSymm
+    from safiretools import SpinSymm, Wavefunction
 
     out = ctx.out_dir
     nelec = HUBBARD_KANAMORI_6X1["misc_params"]["nelec"]
+    lattice, twisted = _lattices(HUBBARD_KANAMORI_6X1)
 
     for spin_symm, name in ((SpinSymm.COLLINEAR, "collinear"),
                             (SpinSymm.NONCOLLINEAR, "noncollinear")):
-        _write_model_hamiltonian(HUBBARD_KANAMORI_6X1, out / f"ham_{name}.h5",
-                                 spin_symm=spin_symm,
-                                 verbose=ctx.verbose)
-        _write_free_electron(HUBBARD_KANAMORI_6X1, out / f"wfn_fe_{name}.h5",
-                             spin_symm=spin_symm, nelec=nelec)
+        hamiltonian = _hamiltonian(HUBBARD_KANAMORI_6X1, spin_symm, lattice)
+        hamiltonian.to_hdf5(out / f"ham_{name}.h5")
+
+        Wavefunction.from_free_electron(
+            _hamiltonian(HUBBARD_KANAMORI_6X1, spin_symm, twisted),
+            nelec=nelec, spin_symm=spin_symm,
+        ).to_hdf5(out / f"wfn_fe_{name}.h5")
+
+    # nbands is the Hamiltonian's, not the lattice's: the lattice knows how many
+    #   sites a unit cell has, not how many orbitals sit on each site.
+    lattice.get_directed_pairs(
+        directions=["s", "+x"], nbands=hamiltonian.nbands
+    ).to_hdf5(out / "pair_correlators.h5")
 
 
 # ============================================================================
@@ -309,12 +291,7 @@ def build_rashba_soc(ctx: BuildContext) -> None:
     Rashba is not an input key of ``LatticeHamiltonian.from_dict``, so the
     builder is driven directly here.
     """
-    from afqmctools.hamiltonian.model.builder import HamiltonianBuilder
-    from afqmctools.systems.lattice import get_lattice
-    from afqmctools.utils.io import write_model_hamiltonian
-    from afqmctools.utils.types import SpinSymm
-    from afqmctools.wavefunction.common import write_wfn
-    from afqmctools.wavefunction.free_electron import free_electron
+    from safiretools import HamiltonianBuilder, Lattice, SpinSymm, Wavefunction
 
     t = 1.0
     U = 1.0
@@ -323,7 +300,7 @@ def build_rashba_soc(ctx: BuildContext) -> None:
 
     filename = ctx.out_dir / "afqmc_U1.0_lambda0.1sqrt3_free_elec_trial.h5"
 
-    lattice = get_lattice(params={
+    lattice = Lattice.from_dict({
         "type": "honeycomb",
         "L1": 3, "L2": 3,
         "boundary1": "PBC", "boundary2": "PBC",
@@ -336,19 +313,15 @@ def build_rashba_soc(ctx: BuildContext) -> None:
     builder.rashba_soc(rashba_lambda, t=t)
     builder.onsite_hubbard(U)
     builder.finalize()
-    hamiltonian = builder.hamiltonian
+    hamiltonian = builder.get_hamiltonian()
 
-    write_model_hamiltonian(hamiltonian=hamiltonian, fname=filename, nelec=nelec)
+    hamiltonian.to_hdf5(filename)
 
-    norb = hamiltonian.nbands * hamiltonian.nsites
-    wfn, _ = free_electron(
-        source=hamiltonian,
-        nelec=nelec,
-        spin_symm=SpinSymm.NONCOLLINEAR,
-        measure_evar=ctx.verbose,
-    )
-    write_wfn(wfn=wfn, filename=filename, walker_type=SpinSymm.NONCOLLINEAR,
-              nelec=nelec, norb=norb)
+    # No twist here, unlike _write_free_electron: the spin-orbit term already
+    #   splits the shells, so the determinant is well defined without one.
+    Wavefunction.from_free_electron(
+        hamiltonian, nelec=nelec,
+        spin_symm=SpinSymm.NONCOLLINEAR).to_hdf5(filename)
 
 
 # ============================================================================

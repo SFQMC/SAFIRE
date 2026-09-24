@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from afqmctools.utils.types import SpinSymm
+from safiretools import SpinSymm
 
 ROOT = Path(__file__).resolve().parent
 INPUTS_ROOT = ROOT / "afqmc_inputs"
