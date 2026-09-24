@@ -20,10 +20,10 @@ axis.
 """
 
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 from importlib import import_module
 
 import h5py as h5
+import numpy as np
 
 from safiretools.types import HamiltonianFormat, SpinSymm
 
@@ -31,82 +31,41 @@ HAMILTONIAN_GROUP = 'Hamiltonian'
 """Top-level HDF5 group every Hamiltonian format writes into."""
 
 TYPE_DATASET = f'{HAMILTONIAN_GROUP}/type'
-"""Dataset a writer records its on-disk format in; see `write_hamiltonian_format`."""
+"""Dataset a writer records its on-disk format in; see `write_hamiltonian_header`."""
 
 
-def clear_hamiltonian(fh5) -> None:
+def write_hamiltonian_header(group, fmt, nmo, enuc=0.0, nkpts=0, nchol=0) -> None:
     """
-    Remove the Hamiltonian already in the open HDF5 file `fh5`, if there is one.
+    Write the datasets every Hamiltonian format starts with into the (empty)
+    ``Hamiltonian`` `group`: the ``type`` tag naming `fmt`, ``dims`` and
+    ``Energies``.
 
-    A SAFIRE input file holds at most one Hamiltonian and at most one
-    wavefunction, so writing a Hamiltonian replaces any Hamiltonian already
-    present while leaving everything else — notably ``Wavefunction`` — alone.
-    """
-    if HAMILTONIAN_GROUP in fh5:
-        del fh5[HAMILTONIAN_GROUP]
-
-
-@contextmanager
-def open_for_hamiltonian(path):
-    """
-    Open `path` for writing one Hamiltonian, creating the file if needed.
-
-    Anything else already in the file is preserved; only a Hamiltonian already
-    present is replaced. This is what lets a Hamiltonian and a wavefunction
-    share one file in either order.
-
-    Parameters
-    ----------
-    path : str or pathlib.Path
-        HDF5 file to write into.
-
-    Yields
-    ------
-    h5py.File
-        The open file, with no ``Hamiltonian`` group in it.
-
-    Notes
-    -----
-    HDF5 unlinks rather than reclaims, so repeatedly rewriting a Hamiltonian
-    into the same file grows it. Write to a fresh path if that matters.
-    """
-    with h5.File(path, 'a') as fh5:
-        clear_hamiltonian(fh5)
-        yield fh5
-
-
-def write_hamiltonian_format(fh5, fmt) -> None:
-    """
-    Record `fmt` as the on-disk format of the Hamiltonian being written into
-    `fh5`, so that a reader does not have to infer it from the layout.
-
-    Parameters
-    ----------
-    fh5 : h5py.File
-        Destination, open for writing. The ``Hamiltonian`` group is created if
-        it does not exist yet, so this can be called before or after the rest of
-        the Hamiltonian is written.
-    fmt : HamiltonianFormat or str
-        The format being written, or its safiretools name.
+    The ``dims`` slots not given here, the electron counts among them, stay
+    zero: the AFQMC executable takes the electron count from the wavefunction.
+    The ``type`` tag is a variable-length string, as ``spin_type`` is, so the
+    C++ side reads it the way it already reads that.
 
     Raises
     ------
     ValueError
         If `fmt` names no known format, or names one that is never recorded.
-
-    Notes
-    -----
-    The tag is a variable-length string, as ``spin_type`` is, so the C++ side
-    reads it the way it already reads that.
     """
     fmt = HamiltonianFormat(fmt)
     if not fmt.tag:
         raise ValueError(f"the '{fmt}' format is never recorded in a file")
 
-    if TYPE_DATASET in fh5:
-        del fh5[TYPE_DATASET]
+    group.create_dataset('type', data=fmt.tag)
+    group.create_dataset(
+        'dims', data=np.array([0, 0, nkpts, nmo, 0, 0, 0, nchol], dtype=np.int32))
+    group.create_dataset('Energies', data=np.array([enuc, 0.], dtype=np.float64))
 
-    fh5.create_dataset(TYPE_DATASET, data=fmt.tag)
+
+def read_hamiltonian_header(group):
+    """The ``(nkpts, nmo, nchol, enuc)`` `write_hamiltonian_header` recorded in `group`."""
+    dims = group['dims'][...]
+    if len(dims) != 8:
+        raise ValueError(f"'{group.name}/dims' has length {len(dims)}, expected 8")
+    return int(dims[2]), int(dims[3]), int(dims[7]), float(group['Energies'][0])
 
 
 def hamiltonian_format(path) -> str:
@@ -132,7 +91,7 @@ def hamiltonian_format(path) -> str:
 
     Notes
     -----
-    A file written by `write_hamiltonian_format` says outright which format it
+    A file written by `write_hamiltonian_header` says outright which format it
     holds. Files written before that key existed do not, so their format is
     inferred from which datasets are present — see `_format_from_layout`.
     """

@@ -69,6 +69,29 @@ class SpinSymm(IntEnum):
         """
         return self.name.lower()
 
+    @property
+    def nspin(self) -> int:
+        """Number of independent spin channels: 2 when collinear, else 1."""
+        return 2 if self is SpinSymm.COLLINEAR else 1
+
+    @property
+    def npol(self) -> int:
+        """Spin polarizations per orbital: 2 when noncollinear, else 1."""
+        return 2 if self is SpinSymm.NONCOLLINEAR else 1
+
+    def nelec_per_spin(self, nelec) -> tuple:
+        """
+        The electron count in each independent spin channel, of length `nspin`:
+        ``(nup, ndown)`` when collinear, ``(nup,)`` when closed (the beta channel
+        repeats it), and the total when noncollinear (both polarizations share
+        one channel).
+        """
+        if self is SpinSymm.COLLINEAR:
+            return tuple(nelec)
+        if self is SpinSymm.NONCOLLINEAR:
+            return (sum(nelec),)
+        return (nelec[0],)
+
 
 _SPIN_SYMM_ALIASES = {
     'closed': SpinSymm.CLOSED,
@@ -93,7 +116,7 @@ class HamiltonianFormat(str, Enum):
     safiretools name (``'model'``, ``'dense'``, ...) anywhere one of those is
     expected. `tag` is the executable's own ``HamiltonianTypes`` spelling, which
     is what a Hamiltonian file records — see
-    `safiretools.hamiltonian.base.write_hamiltonian_format`.
+    `safiretools.hamiltonian.base.write_hamiltonian_header`.
     """
 
     # Python 3.11 made a mixin Enum's str() its member name; this keeps both

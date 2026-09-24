@@ -16,9 +16,8 @@ Every trial wavefunction here reduces to Slater matrices in the column layout
 `safiretools.NOMSDWavefunction` takes — the spin channels as consecutive column
 blocks. This module holds the operations on that layout: building one from
 orbital coefficients and occupied indices, expressing it in another basis,
-forming the one-particle Green's function between two of them, splitting it
-back into its spin blocks, and checking or restoring the orthonormality of its
-columns.
+splitting it back into its spin blocks, and checking or restoring the
+orthonormality of its columns.
 
 Nothing here reads an external convention, so a domain module (`pyscf.py`,
 `pbc.py`, `free_electron.py`) keeps only the code that decodes its own — which
@@ -28,13 +27,16 @@ orbitals a PySCF ``mo_occ`` vector calls occupied, say.
 from collections.abc import Iterable
 
 import numpy as np
-import scipy.linalg
 
 from safiretools.types import SpinSymm
 
 ORTHONORMAL_TOL = 1e-10
 """How far an overlap matrix may stray from the identity and still count as
 orthonormal."""
+
+LINDEP_TOL = 1e-12
+"""Smallest diagonal element of ``R`` that `orthonormalize` accepts before it
+calls the columns linearly dependent."""
 
 #Largest overlap-matrix condition number a Slater matrix may have before it
 #  is reported as ill conditioned
@@ -46,36 +48,12 @@ CONDITION_MAX = 1.0 / np.sqrt(np.finfo(np.float64).eps)
 # building a Slater matrix
 # ----------------------------------------------------------------------
 
-def make_slater_closed(mo_coeffs, nocc: Iterable, nelec: int):
-    """
-    One spin channel's Slater matrix: `nelec` columns selecting the orbitals
-    `nocc` out of `mo_coeffs`.
-    """
+def _select_orbitals(mo_coeffs, nocc: Iterable, nelec: int):
+    """One spin channel's Slater matrix: the orbitals `nocc` out of `mo_coeffs`."""
     selection = np.zeros((mo_coeffs.shape[1], nelec))
     selection[nocc, np.arange(nelec)] = 1
 
     return mo_coeffs @ selection + 0j
-
-
-def make_slater_collinear(mo_coeffs, nocc, nelec):
-    """
-    Both spin channels' Slater matrices, concatenated column-wise. `mo_coeffs`
-    may be one matrix (ROHF) or one per spin (UHF).
-    """
-    if len(nocc) != len(nelec):
-        raise ValueError(
-            f"nocc describes {len(nocc)} spin channels and nelec {len(nelec)}"
-        )
-
-    if mo_coeffs.ndim == 3:
-        blocks = [make_slater_closed(spin_coeffs, spin_nocc, spin_nelec)
-                  for spin_coeffs, spin_nocc, spin_nelec
-                  in zip(mo_coeffs, nocc, nelec)]
-    else:
-        blocks = [make_slater_closed(mo_coeffs, spin_nocc, spin_nelec)
-                  for spin_nocc, spin_nelec in zip(nocc, nelec)]
-
-    return np.concatenate(blocks, axis=1)
 
 
 def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
@@ -106,10 +84,20 @@ def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
     mo_coeffs = np.asarray(mo_coeffs)
 
     if spin_symm is SpinSymm.CLOSED:
-        return make_slater_closed(mo_coeffs, nocc[0], nelec[0])
-    if spin_symm is SpinSymm.COLLINEAR:
-        return make_slater_collinear(mo_coeffs, nocc, nelec)
-    return make_slater_closed(mo_coeffs, nocc[0], sum(nelec))
+        return _select_orbitals(mo_coeffs, nocc[0], nelec[0])
+    if spin_symm is SpinSymm.NONCOLLINEAR:
+        return _select_orbitals(mo_coeffs, nocc[0], sum(nelec))
+
+    if len(nocc) != len(nelec):
+        raise ValueError(
+            f"nocc describes {len(nocc)} spin channels and nelec {len(nelec)}"
+        )
+
+    # one matrix (ROHF) or one per spin (UHF)
+    per_spin = mo_coeffs if mo_coeffs.ndim == 3 else [mo_coeffs] * len(nocc)
+    return np.concatenate([_select_orbitals(coeffs, spin_nocc, spin_nelec)
+                           for coeffs, spin_nocc, spin_nelec
+                           in zip(per_spin, nocc, nelec)], axis=1)
 
 
 def transform_slater(orbitals, transform):
@@ -134,43 +122,6 @@ def transform_slater(orbitals, transform):
     if transform.shape[0] != orbitals.shape[0]:
         transform = np.kron(np.eye(2), transform)
     return transform.conj().T @ orbitals
-
-
-# ----------------------------------------------------------------------
-# Green's function
-# ----------------------------------------------------------------------
-
-def gab(A, B):
-    r"""One-particle Green's function.
-
-    This actually returns 1-G since it's more useful, i.e.,
-
-    .. math::
-        \langle \phi_A|c_i^{\dagger}c_j|\phi_B\rangle =
-        [B(A^{\dagger}B)^{-1}A^{\dagger}]_{ji}
-
-    where :math:`A,B` are the matrices representing the Slater determinants
-    :math:`|\psi_{A,B}\rangle`.
-
-    For example, usually A would represent (an element of) the trial wavefunction.
-
-    .. warning::
-        Assumes A and B are not orthogonal.
-
-    Parameters
-    ----------
-    A : numpy.ndarray
-        Matrix representation of the bra used to construct G.
-    B : numpy.ndarray
-        Matrix representation of the ket used to construct G.
-
-    Returns
-    -------
-    GAB : numpy.ndarray
-        (One minus) the Green's function.
-    """
-    inv_O = scipy.linalg.inv((A.conj().T).dot(B))
-    return B.dot(inv_O.dot(A.conj().T))
 
 
 # ----------------------------------------------------------------------
@@ -217,44 +168,32 @@ def spin_blocks(orbitals, nelec_per_spin):
 # orthonormality
 # ----------------------------------------------------------------------
 
-def modified_gram_schmidt(matrix, tol=1e-12):
+def orthonormalize(matrix, tol=ORTHONORMAL_TOL):
     """
-    Orthonormalize the columns of `matrix`.
+    `matrix` with orthonormal columns spanning the same space.
 
-    Parameters
-    ----------
-    matrix : numpy.ndarray
-        Matrix ``(n, m)`` whose columns are orthonormalized in place order.
-    tol : float, optional
-        Smallest diagonal of ``R`` accepted before columns count as linearly
-        dependent. Default 1e-12.
-
-    Returns
-    -------
-    numpy.ndarray
-        A new ``complex128`` matrix with orthonormal columns spanning the same
-        column space.
+    A matrix that `is_orthonormal` to within `tol` is returned as it is.
+    Otherwise it is replaced by the ``Q`` of its reduced QR decomposition, as a
+    new ``complex128`` array. The sign convention is pinned so that ``R`` has a
+    non-negative real diagonal, which makes ``Q`` unique.
 
     Raises
     ------
     ValueError
         If `matrix` is not two-dimensional, or its columns are (near) linearly
-        dependent.
-
-    Notes
-    -----
-    Implemented as a reduced QR decomposition. The sign convention is pinned so that 
-    ``R`` has a non-negative real diagonal, which makes ``Q`` unique and leaves an already
-    orthonormal input unchanged rather than flipped.
+        dependent: a diagonal element of ``R`` below `LINDEP_TOL`.
     """
     matrix = np.asarray(matrix)
     if matrix.ndim != 2:
         raise ValueError(f"expected a 2-dimensional array, got {matrix.ndim}D")
 
+    if is_orthonormal(matrix, tol=tol):
+        return matrix
+
     Q, R = np.linalg.qr(matrix.astype(np.complex128, copy=False), mode='reduced')
 
     diagonal = np.diagonal(R)
-    dependent = np.flatnonzero(np.abs(diagonal) < tol)
+    dependent = np.flatnonzero(np.abs(diagonal) < LINDEP_TOL)
     if dependent.size:
         raise ValueError(
             "linearly dependent vectors encountered while orthogonalizing "

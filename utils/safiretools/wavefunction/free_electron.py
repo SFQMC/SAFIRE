@@ -112,7 +112,7 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
     they are orthonormal by construction and nothing here orthonormalizes them.
     """
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
-    from safiretools import LatticeHamiltonian, SpinSymm
+    from safiretools import LatticeHamiltonian
 
     if not isinstance(hamiltonian, LatticeHamiltonian):
         raise ValueError(
@@ -142,13 +142,8 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
             one_body, nelec=nelec, nmo=nmo,
             filling_strategy=filling_strategy, shell_tol=shell_tol)
 
-    return NOMSDWavefunction(
-        coeffs=np.array([1.0 + 0j]),
-        dets=orbitals[np.newaxis, ...],
-        nelec=nelec,
-        spin_symm=spin_symm,
-        nmo=nmo,
-    )
+    return NOMSDWavefunction.single_determinant(orbitals, nelec=nelec,
+                                                spin_symm=spin_symm, nmo=nmo)
 
 
 # ----------------------------------------------------------------------

@@ -109,14 +109,9 @@ def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
 
     _log_eigenvalues(eigenvalues, order, nelec, collinear=collinear)
 
-    return NOMSDWavefunction(
-        coeffs=np.array([1.0 + 0j]),
-        dets=_supercell_slater(orbitals, occupancies, nmo_pk, nelec,
-                               collinear=collinear)[np.newaxis, ...],
-        nelec=nelec,
-        spin_symm=spin_symm,
-        nmo=nmo_tot,
-    )
+    return NOMSDWavefunction.single_determinant(
+        _supercell_slater(orbitals, occupancies, nmo_pk, nelec, collinear=collinear),
+        nelec=nelec, spin_symm=spin_symm, nmo=nmo_tot)
 
 
 # ----------------------------------------------------------------------

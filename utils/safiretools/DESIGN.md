@@ -189,7 +189,7 @@ safiretools/
 │   ├── pbc.py                  # from_pbc_scf() implementation
 │   ├── dice.py                 # from_dice() implementation, split out of wavefunction/converter.py
 │   ├── slater.py               # domain-independent Slater-matrix operations: make_slater(),
-│   │                            #   transform_slater(), spin_blocks(), modified_gram_schmidt(),
+│   │                            #   transform_slater(), spin_blocks(), orthonormalize(),
 │   │                            #   is_orthonormal()
 │   └── io.py                  # native SAFIRE HDF5 schema read/write (uses top-level hdf5.py),
 │                               #   shared by both NOMSDWavefunction and PHMSDWavefunction
@@ -282,10 +282,9 @@ collinear determinant's alpha and beta columns describe different spin sectors a
 orthogonal to each other, while a noncollinear determinant is a single `(2*nmo, nup + ndown)` block
 and is checked whole. `Wavefunction.nelec_per_spin` supplies the split, as everywhere else.
 
-`modified_gram_schmidt` is a reduced QR decomposition rather than an explicit Gram-Schmidt loop —
-more accurate, faster, and the same path LAPACK uses. The sign convention is pinned so
-`R`'s diagonal is real and non-negative, which makes `Q` unique and keeps the function idempotent on
-an already orthonormal input instead of flipping column signs.
+`slater.orthonormalize` returns a block that is already orthonormal to within the tolerance
+untouched, and otherwise takes the `Q` of a reduced QR decomposition. The sign convention is pinned
+so `R`'s diagonal is real and non-negative, which makes `Q` unique.
 
 **`Lattice`** follows the same shape too: an ABC with concrete subclasses per lattice type
 (`SquareLattice`/`TriangularLattice`/`HoneycombLattice`/`KagomeLattice`, plus `CustomLattice`), a
@@ -501,7 +500,8 @@ stays in one place. Those format names are `HamiltonianFormat` members, which ar
 they read and compare as the bare names throughout.
 
 **A file says which format it is; the layout heuristic is the fallback.** Every writer records its
-format in `Hamiltonian/type` via `write_hamiltonian_format`, and `hamiltonian_format` reads that key
+format in `Hamiltonian/type` via `write_hamiltonian_header` (which also writes the `dims` and
+`Energies` every format shares), and `hamiltonian_format` reads that key
 in preference to guessing. Guessing is what it did for every file originally — `model` if
 `ModelHamiltonian/number_of_components` is there, `dense` if `DenseFactorized/L` is, and so on — and
 that path stays, because files written before the key existed are still perfectly good input. A tag
@@ -530,7 +530,7 @@ Keeping the pairing there leaves `TYPE_DATASET` as the only global the tag itsel
 a format — `hamiltonian_format()` is not public either (see **Future changes**) — so the enum is an
 implementation detail that `types.py` happens to be the right home for, next to `SpinSymm`, rather
 than a second public enum. That is also what lets its docstring name
-`hamiltonian.base.write_hamiltonian_format` by its real path.
+`hamiltonian.base.write_hamiltonian_header` by its real path.
 
 **Lattice metadata is recorded, the `Lattice` object is not.** A `LatticeHamiltonian`'s file carries
 the *shape* of the lattice it was built on under `Hamiltonian/ModelHamiltonian/Lattice`, written in
@@ -766,7 +766,7 @@ writer could be reintroduced without touching the solver.
 - **The default-`psi0` warning is NOMSD-specific.** A NOMSD's default `psi0` is the leading
   determinant's spin blocks, which for a UHF-shaped determinant is worth warning about; a PHMSD's is
   identity columns at the leading occupations — the recommended ROHF-like choice — so warning there
-  would be noise. It hangs off an overridable `_warn_about_default_psi0` hook.
+  would be noise. `NOMSDWavefunction._write_payload` issues it.
 - **`to_hdf5()` replaces the Hamiltonian in its target file, not the whole file.** It opens the file
   in append mode (creating it if absent) and deletes an existing `Hamiltonian` group before writing.
   A SAFIRE input file holds **at most one Hamiltonian and at most one wavefunction**, so replacing
@@ -907,9 +907,8 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   argument and `.nelec` attribute; `MolecularHamiltonian.from_integrals`/`from_pyscf`;
   `LatticeHamiltonian`'s `nelec` key in the `hamiltonian` input block (`_parse_ham_input`'s
   `_known_params`) and `HamiltonianBuilder(nelec=)`; `PeriodicHamiltonian.from_pyscf` /
-  `write_from_pyscf` and `_default_nelec`; the `dims` writes in `write_dense_hamiltonian`,
-  `LatticeHamiltonian.to_hdf5` and `_write_kpoint_descriptors`; and the reads in
-  `read_dense_hamiltonian` and each `_read_hdf5`.
+  `write_from_pyscf` and `_default_nelec`; the `dims` write, now `write_hamiltonian_header`; and
+  the reads in each `_read_hdf5`.
 
   Two things this does **not** touch:
 

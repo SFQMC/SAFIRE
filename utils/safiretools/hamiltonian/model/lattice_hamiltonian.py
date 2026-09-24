@@ -24,11 +24,12 @@ import scipy.sparse as sps
 import h5py as h5
 
 from safiretools.hamiltonian.base import (
+    HAMILTONIAN_GROUP,
     Hamiltonian,
-    open_for_hamiltonian,
-    write_hamiltonian_format,
+    read_hamiltonian_header,
+    write_hamiltonian_header,
 )
-from safiretools.hdf5 import read_complex
+from safiretools.hdf5 import read_csr, replace_group, write_csr
 from safiretools.types import SpinSymm
 
 HDF5_PREFIX = 'Hamiltonian/ModelHamiltonian'
@@ -37,10 +38,6 @@ HDF5_PREFIX = 'Hamiltonian/ModelHamiltonian'
 
 _MIN_MAX_CONNECTIVITY = 12
 """Floor on the ``maximum_connectivity`` hint written for the C++ allocator."""
-
-_ONSITE_KEY = 'Uij'
-_DENSITY_DENSITY_KEY = 'U1ij'
-_SPIN_SPIN_KEY = 'U2ij'
 
 
 class HamiltonianComponent:
@@ -262,7 +259,7 @@ class LatticeHamiltonian(Hamiltonian):
 
         density_density = []
         spin_spin = []
-        for term in self.get(_ONSITE_KEY, []):
+        for term in self.get('Uij', []):
             if term.shape == (M, M):
                 density_density.append(term.csr_array)
             elif term.shape == (2 * M, M):
@@ -400,17 +397,9 @@ class LatticeHamiltonian(Hamiltonian):
 
         real_valued = self.real_valued
 
-        with open_for_hamiltonian(path) as fh5:
-            write_hamiltonian_format(fh5, 'model')
-
-            fh5.create_dataset(
-                'Hamiltonian/dims',
-                data=np.array([0, 0, 0, self.nbasis, 0, 0, 0, 0], dtype=np.int64)
-            )
-            fh5.create_dataset(
-                'Hamiltonian/Energies',
-                data=np.array([0., 0.], dtype=np.float64)
-            )
+        with h5.File(path, 'a') as fh5:
+            write_hamiltonian_header(replace_group(fh5, HAMILTONIAN_GROUP), 'model',
+                                     nmo=self.nbasis)
             fh5.create_dataset('Hamiltonian/spin_type', data=self.spin_symm.label)
 
             fh5.create_dataset(f'{HDF5_PREFIX}/number_of_components',
@@ -437,7 +426,7 @@ class LatticeHamiltonian(Hamiltonian):
                     if not real_valued:
                         csr_array = csr_array.astype(np.complex128)
 
-                    _write_csr(fh5, csr_array, prefix + key)
+                    write_csr(fh5, prefix + key, csr_array)
                     component_num += 1
 
     def _maximum_connectivity(self) -> int:
@@ -492,8 +481,7 @@ class LatticeHamiltonian(Hamiltonian):
         `_split_hubbard_u`.
         """
         with h5.File(path, 'r') as fh5:
-            dims = fh5['Hamiltonian/dims'][...]
-            nbasis = int(dims[3])
+            _, nbasis, _, _ = read_hamiltonian_header(fh5[HAMILTONIAN_GROUP])
             spin_symm = SpinSymm.from_input(fh5['Hamiltonian/spin_type'].asstr()[()])
 
             group = fh5[HDF5_PREFIX]
@@ -515,14 +503,14 @@ class LatticeHamiltonian(Hamiltonian):
                     for name in ('hst_type',) if name in component_group
                 }
                 component = HamiltonianComponent(
-                    csr_array=_read_csr(component_group[key]),
+                    csr_array=read_csr(component_group[key]),
                     model_type=component_group['model_type'].asstr()[()],
                     spin_symm=SpinSymm.from_input(
                         component_group['spin_type'].asstr()[()]),
                     **metadata
                 )
 
-                if key == _ONSITE_KEY:
+                if key == 'Uij':
                     for split_key, split in _split_hubbard_u(component, nbasis):
                         hamiltonian.add_term(split_key, split)
                 else:
@@ -669,44 +657,8 @@ def _split_hubbard_u(component: HamiltonianComponent, nbasis: int):
     interaction = density_density - onsite
 
     if onsite.nnz:
-        yield _ONSITE_KEY, part(onsite)
+        yield 'Uij', part(onsite)
     if interaction.nnz:
-        yield _DENSITY_DENSITY_KEY, part(interaction)
+        yield 'U1ij', part(interaction)
     if spin_spin is not None:
-        yield _SPIN_SPIN_KEY, part(spin_spin)
-
-
-def _write_csr(fh5, csr_array, prefix: str) -> None:
-    """
-    Write `csr_array` under `prefix` in the CSR layout the AFQMC executable
-    reads: ``dims``, ``data_``, ``jdata_``, ``pointers_begin_``,
-    ``pointers_end_``.
-    """
-    fh5.create_dataset(
-        name=prefix + '/dims',
-        data=np.array([csr_array.shape[0], csr_array.shape[1], csr_array.nnz],
-                      dtype=np.int32)
-    )
-    fh5.create_dataset(name=prefix + '/data_', data=csr_array.data)
-    fh5.create_dataset(name=prefix + '/jdata_',
-                       data=csr_array.indices.astype(np.int32, copy=False))
-    fh5.create_dataset(name=prefix + '/pointers_begin_',
-                       data=csr_array.indptr[:-1].astype(np.int32, copy=False))
-    fh5.create_dataset(name=prefix + '/pointers_end_',
-                       data=csr_array.indptr[1:].astype(np.int32, copy=False))
-
-
-def _read_csr(group):
-    """Read back a CSR matrix written by `_write_csr`."""
-    data = read_complex(group['data_'])
-
-    indices = group['jdata_'][...]
-    pointers_begin = group['pointers_begin_'][...]
-    pointers_end = group['pointers_end_'][...]
-
-    indptr = np.empty(pointers_begin.size + 1, dtype=np.int64)
-    indptr[:-1] = pointers_begin
-    indptr[-1] = pointers_end[-1]
-
-    nrows, ncols, _ = group['dims'][...]
-    return sps.csr_array((data, indices, indptr), shape=(int(nrows), int(ncols)))
+        yield 'U2ij', part(spin_spin)

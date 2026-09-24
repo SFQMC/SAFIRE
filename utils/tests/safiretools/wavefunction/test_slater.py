@@ -17,7 +17,7 @@ from safiretools import SpinSymm
 from safiretools.wavefunction.slater import (
     is_orthonormal,
     make_slater,
-    modified_gram_schmidt,
+    orthonormalize,
     spin_blocks,
     transform_slater,
 )
@@ -99,23 +99,27 @@ class TestSpinBlocks:
 
 class TestOrthonormality:
 
-    def test_gram_schmidt_orthonormalizes(self, rng):
+    def test_orthonormalize_orthonormalizes(self, rng):
         matrix = rng.normal(size=(6, 3)) + 1j * rng.normal(size=(6, 3))
-        orthonormalized = modified_gram_schmidt(matrix)
+        orthonormalized = orthonormalize(matrix)
 
         assert is_orthonormal(orthonormalized)
         # the column space is preserved
         assert np.linalg.matrix_rank(np.hstack([matrix, orthonormalized])) == 3
 
-    def test_gram_schmidt_rejects_linearly_dependent_columns(self):
+    def test_an_orthonormal_matrix_is_returned_as_it_is(self):
+        matrix = np.eye(6, 3)
+        assert orthonormalize(matrix) is matrix
+
+    def test_orthonormalize_rejects_linearly_dependent_columns(self):
         matrix = np.ones((4, 2))
 
         with pytest.raises(ValueError, match="linearly dependent"):
-            modified_gram_schmidt(matrix)
+            orthonormalize(matrix)
 
-    def test_gram_schmidt_rejects_a_non_matrix(self):
+    def test_orthonormalize_rejects_a_non_matrix(self):
         with pytest.raises(ValueError, match="2-dimensional"):
-            modified_gram_schmidt(np.zeros(4))
+            orthonormalize(np.zeros(4))
 
     def test_an_empty_block_counts_as_orthonormal(self):
         assert is_orthonormal(np.zeros((6, 0), dtype=complex))

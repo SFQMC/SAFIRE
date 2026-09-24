@@ -29,9 +29,8 @@ configurable.
 from warnings import warn
 
 import numpy as np
-import scipy.sparse as sps
 
-from safiretools.hdf5 import read_complex
+from safiretools.hdf5 import read_complex, read_csr, write_csr
 from safiretools.types import SpinSymm
 from safiretools.wavefunction.slater import (
     CONDITION_MAX,
@@ -82,64 +81,7 @@ def warn_if_ill_conditioned(named_matrices, condition_max=CONDITION_MAX) -> None
 # the shared header
 # ----------------------------------------------------------------------
 
-def header_dims(spin_symm: SpinSymm, psi0):
-    """
-    The ``nmo`` and on-disk ``(nup, ndown)`` that a spin symmetry and an initial
-    Slater determinant imply.
-
-    Both are fixed by `psi0`'s shape, so neither is a separate input: a block is
-    ``(npol*nmo, nelec_of_that_spin)``, and the number of blocks is the number of
-    independent spin channels.
-
-    Parameters
-    ----------
-    spin_symm : SpinSymm
-        Spin symmetry, which fixes ``npol`` and how many blocks to expect.
-    psi0 : sequence of numpy.ndarray
-        Initial Slater determinant, one block per spin channel.
-
-    Returns
-    -------
-    nmo : int
-        Number of *spatial* orbitals, even when noncollinear.
-    nelec : tuple(int, int)
-        Electron counts as ``dims[1:3]`` records them — ``(nup + ndown, 0)`` for
-        a noncollinear wavefunction, since both polarizations share one channel.
-
-    Raises
-    ------
-    ValueError
-        If the block count contradicts `spin_symm`, or a noncollinear block has
-        an odd number of rows.
-    """
-    expected_blocks = 2 if spin_symm is SpinSymm.COLLINEAR else 1
-    if len(psi0) != expected_blocks:
-        raise ValueError(
-            f"a {spin_symm.label} wavefunction has {expected_blocks} spin "
-            f"channel(s), but psi0 has {len(psi0)} block(s)"
-        )
-
-    nrows, nalpha = np.shape(psi0[0])
-
-    npol = 2 if spin_symm is SpinSymm.NONCOLLINEAR else 1
-    if nrows % npol:
-        raise ValueError(
-            f"a noncollinear psi0 spans both polarizations, so its {nrows} rows "
-            "must be an even number"
-        )
-
-    if spin_symm is SpinSymm.COLLINEAR:
-        nelec = (nalpha, np.shape(psi0[1])[1])
-    elif spin_symm is SpinSymm.CLOSED:
-        # the beta channel repeats alpha, and dims records both
-        nelec = (nalpha, nalpha)
-    else:
-        nelec = (nalpha, 0)
-
-    return nrows // npol, nelec
-
-
-def write_header(group, spin_symm: SpinSymm, coeffs, psi0) -> None:
+def write_header(group, spin_symm: SpinSymm, nmo: int, nelec, coeffs, psi0) -> None:
     """
     Write the header both representations share.
 
@@ -149,16 +91,18 @@ def write_header(group, spin_symm: SpinSymm, coeffs, psi0) -> None:
         The ``Wavefunction/NOMSD`` or ``Wavefunction/PHMSD`` group.
     spin_symm : SpinSymm
         Spin symmetry; its integer value is what ``dims[3]`` records.
+    nmo : int
+        Number of *spatial* orbitals, even when noncollinear.
+    nelec : tuple(int, int)
+        Electron counts as ``dims[1:3]`` records them; see
+        `Wavefunction.nelec_on_disk`.
     coeffs : array_like
         Determinant coefficients, ``(ndets,)``.
     psi0 : sequence of numpy.ndarray
         Initial Slater determinant, one ``(npol*nmo, nelec_of_that_spin)`` block
         per spin channel — one block for closed/noncollinear, two for collinear.
-        The orbital and electron counts ``dims`` records come from here; see
-        `header_dims`.
     """
     coeffs = np.asarray(coeffs)
-    nmo, nelec = header_dims(spin_symm, psi0)
 
     warn_if_ill_conditioned(
         (name, block) for name, block
@@ -232,19 +176,7 @@ def write_orbitals(group, name: str, orbitals) -> None:
         Orbital matrix :math:`\Psi`, ``(npol*nmo, nelec)``. Stored conjugate
         transposed, so the subgroup holds an ``(nelec, npol*nmo)`` CSR matrix.
     """
-    matrix = sps.csr_array(np.asarray(orbitals).conj().T)
-
-    group.create_dataset(
-        f'{name}/dims',
-        data=np.array([matrix.shape[0], matrix.shape[1], matrix.nnz], dtype=np.int32)
-    )
-    group.create_dataset(f'{name}/data_', data=matrix.data)
-    group.create_dataset(f'{name}/jdata_',
-                         data=matrix.indices.astype(np.int32, copy=False))
-    group.create_dataset(f'{name}/pointers_begin_',
-                         data=matrix.indptr[:-1].astype(np.int32, copy=False))
-    group.create_dataset(f'{name}/pointers_end_',
-                         data=matrix.indptr[1:].astype(np.int32, copy=False))
+    write_csr(group, name, np.asarray(orbitals).conj().T)
 
 
 def read_orbitals(group, name: str):
@@ -259,22 +191,7 @@ def read_orbitals(group, name: str):
     numpy.ndarray
         Dense orbital matrix, ``(npol*nmo, nelec)`` complex.
     """
-    subgroup = group[name]
-
-    nrows, ncols, nnz = (int(value) for value in subgroup['dims'][...])
-    data = read_complex(subgroup['data_'])
-    indices = subgroup['jdata_'][...]
-    pointers_begin = subgroup['pointers_begin_'][...]
-    pointers_end = subgroup['pointers_end_'][...]
-
-    indptr = np.zeros(nrows + 1, dtype=np.int64)
-    indptr[:-1] = pointers_begin
-    if nrows:
-        indptr[-1] = pointers_end[-1]
-
-    matrix = sps.csr_array((data[:nnz], indices[:nnz], indptr),
-                           shape=(nrows, ncols))
-    return matrix.toarray().conj().T
+    return read_csr(group[name]).toarray().conj().T
 
 
 # ----------------------------------------------------------------------
@@ -282,17 +199,11 @@ def read_orbitals(group, name: str):
 # ----------------------------------------------------------------------
 
 def nomsd_orbital_index(idet: int, ispin: int, nspin: int) -> int:
-    """
-    The ``PsiT_k`` index holding determinant `idet`'s spin-`ispin` block.
-
-    Collinear wavefunctions interleave the two spin channels
-    (``PsiT_0``/``PsiT_1`` are determinant 0's alpha/beta); the single-channel
-    symmetries number their determinants directly.
-    """
+    """The ``PsiT_k`` index of determinant `idet`'s spin-`ispin` block; spin is interleaved."""
     return nspin * idet + ispin
 
 
-def write_nomsd(group, dets, nelec_per_spin, threshold=DEFAULT_THRESHOLD) -> None:
+def write_nomsd(group, dets, nelec_per_spin) -> None:
     """
     Write the per-determinant orbital matrices of a NOMSD wavefunction.
 
@@ -306,14 +217,12 @@ def write_nomsd(group, dets, nelec_per_spin, threshold=DEFAULT_THRESHOLD) -> Non
     nelec_per_spin : sequence of int
         Electron count in each spin channel; its length is the number of
         channels (1 or 2).
-    threshold : float, optional
-        Coefficients with magnitude below this are zeroed before sparsifying.
-        Default `DEFAULT_THRESHOLD`.
 
     Notes
     -----
-    Each block's overlap is checked *after* screening small values. A block that
-    fails is warned about and written as it stands.
+    Coefficients with magnitude below `DEFAULT_THRESHOLD` are zeroed before
+    sparsifying, and each block's overlap is checked *after* that screening. A
+    block that fails is warned about and written as it stands.
     """
     dets = np.asarray(dets)
     nspin = len(nelec_per_spin)
@@ -322,7 +231,7 @@ def write_nomsd(group, dets, nelec_per_spin, threshold=DEFAULT_THRESHOLD) -> Non
     for idet, det in enumerate(dets):
         for ispin, block in enumerate(spin_blocks(det, nelec_per_spin)):
             block = block.copy()
-            block[abs(block) < threshold] = 0.0
+            block[abs(block) < DEFAULT_THRESHOLD] = 0.0
             name = f'PsiT_{nomsd_orbital_index(idet, ispin, nspin)}'
             write_orbitals(group, name, block)
             written.append((name, block))
@@ -376,7 +285,7 @@ def write_phmsd(group, occa, occb, nmo: int, orbitals=None) -> None:
     ----------
     group : h5py.Group
         The ``Wavefunction/PHMSD`` group.
-    occa, occb : array_like
+    occa, occb : numpy.ndarray
         Occupied-orbital indices per determinant, ``(ndets, nup)`` and
         ``(ndets, ndown)``. Beta indices are offset by `nmo` on disk, which is
         how the executable tells the spin channels apart.
@@ -391,19 +300,9 @@ def write_phmsd(group, occa, occb, nmo: int, orbitals=None) -> None:
     Notes
     -----
     ``type`` records how many references follow: 0 for none, 1 for one, 2 for
-    two.
+    two. The arguments are taken as `PHMSDWavefunction` validated them.
     """
-    occa = np.atleast_2d(np.asarray(occa, dtype=np.int32))
-    occb = np.atleast_2d(np.asarray(occb, dtype=np.int32))
-
-    if occa.shape[0] != occb.shape[0]:
-        raise ValueError(
-            f"occa and occb describe different numbers of determinants "
-            f"({occa.shape[0]} and {occb.shape[0]})"
-        )
-
-    references = [] if orbitals is None else [
-        matrix for matrix in orbitals if matrix is not None]
+    references = orbitals or ()
 
     group.create_dataset('type', data=len(references))
     for index, matrix in enumerate(references):

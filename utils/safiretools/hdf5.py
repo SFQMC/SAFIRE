@@ -10,12 +10,12 @@
 
 """HDF5 read/write primitives shared by the Hamiltonian, Wavefunction and
 analysis layers. Nothing here knows about any particular on-disk *schema*, but
-`read_complex` does implement the file-level convention for storing complex
-arrays, which every schema builds on.
+`read_complex` and `write_csr`/`read_csr` implement the file-level conventions
+for complex arrays and sparse matrices that the schemas build on.
 """
 
 import numpy as np
-import h5py as h5
+import scipy.sparse as sps
 
 
 def replace_dataset(parent, name, value):
@@ -58,3 +58,33 @@ def read_complex(dataset):
 
     complex_dtype = np.result_type(data.dtype, np.complex64)
     return np.ascontiguousarray(data).view(complex_dtype).reshape(data.shape[:-1])
+
+
+def write_csr(parent, name, matrix):
+    """
+    Write the sparse `matrix` as group ``parent[name]`` in the CSR layout the AFQMC
+    executable reads: ``dims``, ``data_``, ``jdata_``, ``pointers_begin_``,
+    ``pointers_end_``.
+    """
+    matrix = sps.csr_array(matrix)
+    group = parent.create_group(name)
+    group.create_dataset(
+        'dims', data=np.array([matrix.shape[0], matrix.shape[1], matrix.nnz], dtype=np.int32))
+    group.create_dataset('data_', data=matrix.data)
+    group.create_dataset('jdata_', data=matrix.indices.astype(np.int32, copy=False))
+    group.create_dataset('pointers_begin_', data=matrix.indptr[:-1].astype(np.int32, copy=False))
+    group.create_dataset('pointers_end_', data=matrix.indptr[1:].astype(np.int32, copy=False))
+
+
+def read_csr(group):
+    """Read back a ``scipy.sparse.csr_array`` written by `write_csr`."""
+    nrows, ncols, nnz = (int(value) for value in group['dims'][...])
+    data = read_complex(group['data_'])
+    indices = group['jdata_'][...]
+
+    indptr = np.zeros(nrows + 1, dtype=np.int64)
+    indptr[:-1] = group['pointers_begin_'][...]
+    if nrows:
+        indptr[-1] = group['pointers_end_'][-1]
+
+    return sps.csr_array((data[:nnz], indices[:nnz], indptr), shape=(nrows, ncols))
