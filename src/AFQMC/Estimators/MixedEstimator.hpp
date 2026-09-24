@@ -121,7 +121,9 @@ public:
 
   void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long step,
                Measurements& meas, WalkerSet<MEM> &wset) override {
-    if(step % measure_interval_ != 0) {
+    // the grid is anchored at the first step, so a measurement lands at the start of every
+    // interval rather than at its end
+    if((step - 1) % measure_interval_ != 0) {
       return;
     }
 
