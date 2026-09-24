@@ -240,7 +240,7 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
         "timestep": 0.01,
         "steps": 6000,
         "population_control_interval" : 10,
-        "measure_interval_multiplier": 1,
+        "measure_interval": 10,
         "walker_ortho_interval" : 10,
         "n_walkers_per_mpi_task": 20,
         "seed" : 42,

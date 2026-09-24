@@ -154,7 +154,7 @@ for this case.
       "timestep": 0.01,
       "steps": 10000,
       "n_walkers_per_mpi_task": 20,
-      "measure_interval_multiplier": 1,
+      "measure_interval": 10,
       "population_control_interval": 10,
       "walker_ortho_interval": 10,
       "seed": 42

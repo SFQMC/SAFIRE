@@ -34,8 +34,7 @@ Settings
   
   "estimator": {
     "name": "mixed",
-    "equil_multiplier" : 0,
-    "measure_interval_multiplier" : 1,
+    "measure_interval" : 10,
     "onerdm": {
       "name": "one_rdm",
     }
@@ -49,14 +48,9 @@ Settings
    * - **Parameter**
      - **Default**
      - **Description**
-   * - **equil_multiplier**
-     - 0
-     - Used to determine the number of projection steps in the equilibration phase using the formula below. Measurement is the most expensive operation in AFQMC.
-   * - **measure_interval_multiplier**
-     - Inherited from execute block (default: 1)
-     - Used to determine the number of projection steps between measurements using the formula below. Measurement is the most expensive operation in AFQMC. A larger "measure_interval_multiplier" will reduce the CPU time necessary to perform AFQMC calculations.
-
-.. include:: ../_include/measure_interval_admonition.rst
+   * - **measure_interval**
+     - Inherited from execute block (default: 10)
+     - Number of projection steps between measurements. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will reduce the CPU time necessary to perform AFQMC calculations.
 
 Energy Estimator
 ----------------
@@ -80,7 +74,7 @@ Settings
   
   "estimator": {
     "name": "energy",
-    "measure_interval_multiplier": 1,
+    "measure_interval": 10,
     "print_components": true
   }
 
@@ -92,9 +86,9 @@ Settings
    * - **Parameter**
      - **Default**
      - **Description**
-   * - **measure_interval_multiplier**
-     - Inherited from execute block (default: 1)
-     - Used to determine the number of projection steps between measurements using the formula below. Measurement is the most expensive operation in AFQMC. A larger "measure_interval_multiplier" will reduce the CPU time necessary to perform AFQMC calculations.
+   * - **measure_interval**
+     - Inherited from execute block (default: 10)
+     - Number of projection steps between measurements. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will reduce the CPU time necessary to perform AFQMC calculations.
    * - **print_components**
      - false
      - if true, print the one-body and two-body direct, and two-body exchange components of the energy separately (in addition to the total energy). Note: the one-body energy also includes any constant energy contributions.
@@ -152,8 +146,7 @@ Sample Input File
         "name": "back_propagation",
         "path_restoration": true,
         "bp_walker_ortho_interval": 10,
-        "measure_interval_multiplier": 80,
-        "equil_multiplier": 80,
+        "propagation_steps": [800],
         "onerdm": {
             "name": "one_rdm"
         }
@@ -163,38 +156,37 @@ Sample Input File
 Configuration
 ~~~~~~~~~~~~~
 
-BP is invoked in SAFIRE by including a "back_propagation" estimator in the input file. 
+BP is invoked in SAFIRE by including a "back_propagation" estimator in the input file.
 Observables are added to the BP block in the same way as for mixed estimators.
 
-Measurement Intervals
-~~~~~~~~~~~~~~~~~~~~~
+Back-Propagation Lengths
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-Since BP involves an additional projection, the measurement interval controls the number of back-propagated steps. 
-Just as in the execute block or a mixed estimator block, the input file includes a measurement interval "multiplier",
-and the actual measurement interval, :math:`m`, is determined as:
+Since BP involves an additional projection, a BP estimator has no ``measure_interval``: what it
+is given instead is ``propagation_steps``, the number of steps to project back over. That
+length doubles as the measurement interval, because a new BP window starts as soon as the
+previous one has been covered.
 
-.. math::
-
-    m = \text{measure\_interval\_multiplier} \times \text{population\_control\_interval}
+``propagation_steps`` has no default -- a back-propagation length is a property of the estimate
+and is never inherited from the execute block -- so a BP estimator has to state it.
 
 Multiple BP Lengths
 ~~~~~~~~~~~~~~~~~~~
 
 SAFIRE implements the capability of running BP with multiple BP measurement lengths within the same calculation.
-We call each measurement with a different BP length an "average". 
+We call each measurement with a different BP length an "average".
 This allows the forward projection to be reused while checking for convergence in the BP length.
-To define multiple BP lengths/averages, simply provide a JSON array for measure_interval_multiplier corresponding to all of the BP lengths
-that you would like to use:
+To define multiple BP lengths/averages, simply list all of the BP lengths that you would like
+to use, in steps. The longest one is how often a new window starts:
 
 .. code-block:: json
     :caption: Sample input block for Back-Propagation (BP) Estimator with multiple BP lengths.
-    
+
     "estimator": {
         "name": "back_propagation",
         "path_restoration": true,
         "bp_walker_ortho_interval": 10,
-        "measure_interval_multiplier": [60, 70, 80],
-        "equil_multiplier": 80,
+        "propagation_steps": [600, 700, 800],
         "onerdm": {
             "name": "one_rdm"
         }
@@ -204,15 +196,11 @@ that you would like to use:
 Equilibration
 ~~~~~~~~~~~~~
 
-The BP estimator implements an equilibration phase at the beginning of the AFQMC calculation where no BP is performed. 
-This is recommended since computing observables is typically expensive and since AFQMC needs to equilibrate before 
-samples can meaningfully contribute to the average. 
-Similarly to the measure_interval_multiplier, the equilibration time is specified as an equilibration multiplier 
-(``"equil_multiplier"``) and the actual equilibration time is given by:
-
-.. math::
-
-    \text{equil\_time} = \text{equil\_multiplier} \times \text{population\_control\_interval}
+No observable is measured during the equilibration phase at the beginning of an AFQMC
+calculation, back-propagated ones included. This is recommended since computing observables is
+typically expensive and since AFQMC needs to equilibrate before samples can meaningfully
+contribute to the average. The length of that phase is the execute block's
+``equilibration_steps``, in steps; back propagation anchors its first window at the end of it.
 
 
 Settings
@@ -232,12 +220,9 @@ Settings
    * - **bp_walker_ortho_interval**
      - 10
      - Interval for walker orthogonalization during back-propagation.
-   * - **measure_interval_multiplier**
-     - Inherited from execute block (default: 1)
-     - Either a single integer or an array of integers. Used to determine the number of back-propagation steps between measurements using the formula below. A larger value will use longer back-propagation lengths. If an array is provided, multiple back-propagation lengths will be used within the same calculation.
-   * - **equil_multiplier**
-     - 0
-     - Used to determine the number of projection steps in the equilibration phase before back-propagation measurements begin.
+   * - **propagation_steps**
+     - required
+     - An array of back-propagation lengths, in steps. Each one is measured on its own, and the longest one is how often a new back-propagation window starts.
 
 .. only:: developer
 

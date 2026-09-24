@@ -58,12 +58,6 @@ public:
       : measurements_{std::format("Stage{}", stage), exec.binsize} {
     app_log(1, section("Initializing Estimators"));
 
-    // the driver counts measurement blocks in population control intervals, so every
-    // estimator's measure_interval_multiplier is a multiple of that block count rather than
-    // a number of steps. Only the back propagation estimators need the interval itself, to
-    // turn a block count into a number of propagation steps.
-    int const pop_control_interval = exec.population_control_interval;
-
     auto estimator_wavefunction = [&](auto const& params) -> Wavefunction<MEM>& {
       return wavefunction_for(resolved(params.wavefunction, "wavefunction"),
                               resolved(params.hamiltonian, "hamiltonian"));
@@ -91,23 +85,30 @@ public:
 
     if(estimators.backprop) {
       estimators_.emplace_back(std::make_unique<BackPropEstimator<MEM>>(
-          *mpi, *estimators.backprop, pop_control_interval, wset,
+          *mpi, *estimators.backprop, wset,
           estimator_wavefunction(*estimators.backprop), prop));
       app_log(1, "Back-propagation estimator initialized");
     }
 
     if(estimators.time_evolved_bp) {
       estimators_.emplace_back(std::make_unique<TimeEvolvedBPEstimator<MEM>>(
-          *mpi, *estimators.time_evolved_bp, pop_control_interval, wset,
+          *mpi, *estimators.time_evolved_bp, wset,
           estimator_wavefunction(*estimators.time_evolved_bp), prop));
       app_log(1, "Time-evolved back-propagation estimator initialized");
     }
   }
 
-  // call this once per measure block (= population control interval)
-  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock, WalkerSet<MEM> &wset) {
+  // call this once per propagation step; each estimator measures at an interval of its own
+  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long step, WalkerSet<MEM> &wset) {
     for(auto const& estimator : estimators_) {
-      estimator->measure(mpi, measureBlock, measurements_, wset);
+      estimator->measure(mpi, step, measurements_, wset);
+    }
+  }
+
+  // call this once, at the last equilibration step
+  void equilibrated(long step, WalkerSet<MEM>& wset) {
+    for(auto const& estimator : estimators_) {
+      estimator->equilibrated(step, wset);
     }
   }
 

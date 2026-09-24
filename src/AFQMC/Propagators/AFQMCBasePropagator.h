@@ -19,8 +19,6 @@
 #include <cmath>
 #include <format>
 #include <vector>
-#include <string>
-#include <tuple>
 
 #include "IO/app_loggers.h"
 #include "IO/banner.hpp"
@@ -70,7 +68,7 @@ public:
     app_log(1, section(std::format("Initializing Propagator \"{}\"", params.name)));
 
     utils::check(bool(mpi), "Error: Null mpi_context.");
-    std::tie(nspins_in_vHS, npol_in_vHS) = wfn->vHS_dims();
+    auto [nspins_in_vHS, npol_in_vHS] = wfn->vHS_dims();
     app_log(1,"vHS dimensions: nspins = {}, npol = {}", nspins_in_vHS, npol_in_vHS);
     auto hamtype(wfn->getHamType());
     vbias_bound        = resolved(params.vbias_bound, "vbias_bound");
@@ -299,9 +297,6 @@ private:
   bool natural_shift = true;
   bool use_cp_constraint = false;
   bool project_force_bias = false;
-
-  int nspins_in_vHS = 1;
-  int npol_in_vHS   = 1;
 
   bool debug_verbosity = false;
 

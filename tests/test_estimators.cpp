@@ -104,34 +104,29 @@ void verify_bp_matches_mixed(Measurements& meas, std::string const& obs_path, in
   CHECK_THAT(G, utils::Approx(BPRDM));
 }
 
-/// Runs the estimator over nblocks measurement blocks. The walkers are never propagated, so
-/// only the back propagation history position advances.
+/// Runs the estimator over nsteps propagation steps, the way the driver does. The walkers are
+/// never propagated, so only the back propagation history position advances.
 template<MEMORY_SPACE MEM>
-void run_measurement_blocks(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
-                            EstimatorBase<MEM>& estimator, Measurements& meas,
-                            WalkerSet<MEM>& wset, int pop_control_interval, long nblocks)
+void run_measurement_steps(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+                           EstimatorBase<MEM>& estimator, Measurements& meas,
+                           WalkerSet<MEM>& wset, long nsteps)
 {
-  for(long measureBlock = 1; measureBlock <= nblocks; ++measureBlock) {
-    // one measurement block worth of propagation steps
-    for(int k = 0; k < pop_control_interval; ++k) {
-      wset.advanceHistoryPos();
-    }
-    estimator.measure(mpi, measureBlock, meas, wset);
+  for(long step = 1; step <= nsteps; ++step) {
+    wset.advanceHistoryPos();
+    estimator.measure(mpi, step, meas, wset);
   }
 }
 
-/// Runs every estimator of the set over the measurement blocks [first, last]. The walkers are
-/// never propagated, so only the back propagation history position advances.
+/// Runs every estimator of the set over the steps [first, last]. The walkers are never
+/// propagated, so only the back propagation history position advances.
 template<MEMORY_SPACE MEM>
-void run_measurement_blocks(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
-                            Estimators<MEM>& estimators, WalkerSet<MEM>& wset,
-                            int pop_control_interval, long first, long last)
+void run_measurement_steps(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+                           Estimators<MEM>& estimators, WalkerSet<MEM>& wset,
+                           long first, long last)
 {
-  for(long measureBlock = first; measureBlock <= last; ++measureBlock) {
-    for(int k = 0; k < pop_control_interval; ++k) {
-      wset.advanceHistoryPos();
-    }
-    estimators.measure(mpi, measureBlock, wset);
+  for(long step = first; step <= last; ++step) {
+    wset.advanceHistoryPos();
+    estimators.measure(mpi, step, wset);
   }
 }
 
@@ -243,40 +238,39 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
   REQUIRE(initial_guess.slater()[0].shape() == std::array<long,2>{npol*NMO,nup});
   auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);
 
-  constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
-  constexpr long nblocks = 8;
+  constexpr long nsteps = 8;
 
-  // ---- Run 1: single measure_interval_multiplier ----
+  // ---- Run 1: single back propagation length ----
   {
     const BackPropEstimatorParameters est_params{
-        .measure_interval_multiplier = std::vector<int>{2},
-        .walker_ortho_interval       = afqmc::DEFAULT_WALKER_ORTHO_INTERVAL,
-        .onerdm                      = OneRDMParameters{}};
+        .propagation_steps     = std::vector<int>{2},
+        .walker_ortho_interval = afqmc::DEFAULT_WALKER_ORTHO_INTERVAL,
+        .onerdm                = OneRDMParameters{}};
 
     std::unique_ptr<EstimatorBase<MEM>> estimator = std::make_unique<BackPropEstimator<MEM>>(
-        *mpi, est_params, pop_control_interval, wset, wfn, prop);
+        *mpi, est_params, wset, wfn, prop);
 
-    // the anchor starts at block -1 and resets after 2 blocks, so measurements land on the
-    // odd blocks 1, 3, 5, 7
+    // the anchor starts at step 0 and resets after 2 steps, so measurements land on the even
+    // steps 2, 4, 6, 8
     Measurements meas{};
-    run_measurement_blocks(*mpi, *estimator, meas, wset, pop_control_interval, nblocks);
+    run_measurement_steps(*mpi, *estimator, meas, wset, nsteps);
     verify_bp_matches_mixed<MEM>(meas, "BackPropEstimator/Steps=2/OneRDM", 0,
                                  type, NMO, nup, ndown, wfn, wset);
   }
 
-  // ---- Run 2: multiple measure_interval_multipliers ----
+  // ---- Run 2: multiple back propagation lengths ----
   {
     const BackPropEstimatorParameters est_params{
-        .measure_interval_multiplier = std::vector<int>{1, 2, 3},
-        .walker_ortho_interval       = afqmc::DEFAULT_WALKER_ORTHO_INTERVAL,
-        .onerdm                      = OneRDMParameters{}};
+        .propagation_steps     = std::vector<int>{1, 2, 3},
+        .walker_ortho_interval = afqmc::DEFAULT_WALKER_ORTHO_INTERVAL,
+        .onerdm                = OneRDMParameters{}};
 
     std::unique_ptr<EstimatorBase<MEM>> estimator = std::make_unique<BackPropEstimator<MEM>>(
-        *mpi, est_params, pop_control_interval, wset, wfn, prop);
+        *mpi, est_params, wset, wfn, prop);
 
-    // the anchor resets after 3 blocks, so Steps=2 is measured on blocks 1, 4 and 7
+    // the anchor resets after 3 steps, so Steps=2 is measured on steps 2, 5 and 8
     Measurements meas{};
-    run_measurement_blocks(*mpi, *estimator, meas, wset, pop_control_interval, nblocks);
+    run_measurement_steps(*mpi, *estimator, meas, wset, nsteps);
     verify_bp_matches_mixed<MEM>(meas, "BackPropEstimator/Steps=2/OneRDM", 0,
                                  type, NMO, nup, ndown, wfn, wset);
   }
@@ -357,43 +351,46 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     return params;
   };
 
-  auto back_propagated = [&](std::vector<int> multipliers) {
-    return with_observables(BackPropEstimatorParameters{
-        .wavefunction                = "wfn0",
-        .hamiltonian                 = "ham0",
-        .measure_interval_multiplier = std::move(multipliers),
-        .walker_ortho_interval       = afqmc::DEFAULT_WALKER_ORTHO_INTERVAL});
+  // the windows here are one and two steps long, so the walkers have to be orthogonalized
+  // every step: the time evolved operators are regularized with the walker Slater matrix
+  auto back_propagated = [&](std::vector<int> steps) {
+    return with_observables(BackPropEstimatorParameters{.wavefunction          = "wfn0",
+                                                        .hamiltonian           = "ham0",
+                                                        .propagation_steps     = std::move(steps),
+                                                        .walker_ortho_interval = 1});
   };
 
   constexpr int pop_control_interval = afqmc::DEFAULT_POPULATION_CONTROL_INTERVAL;
 
   // the two writes have to see different bin counts for the append to mean anything, which
-  // 4 blocks followed by 2 more gives for every estimator below
-  constexpr long nblocks_first = 4;
-  constexpr long nblocks_total = 6;
+  // 4 steps followed by 2 more gives for every estimator below
+  constexpr long nsteps_first = 4;
+  constexpr long nsteps_total = 6;
 
-  // A back propagation estimator anchors at block -1 and re-anchors once bp_step reaches its
-  // largest multiplier, so with {1, 2} the first block already measures Steps=2 and the
-  // blocks after it alternate: Steps=2 on the odd ones, Steps=1 on the even ones.
+  // A back propagation estimator anchors at step 0 and re-anchors once bp_step reaches its
+  // longest window, so with {1, 2} it measures Steps=1 on the odd steps and Steps=2 on the
+  // even ones.
   auto expect_back_propagated = [](std::map<std::string, long>& expected, std::string_view prefix,
-                                   long nblocks) {
-    expect_observables(expected, std::format("{}/Steps=1", prefix), nblocks / 2);
-    expect_observables(expected, std::format("{}/Steps=2", prefix), (nblocks + 1) / 2);
+                                   long nsteps) {
+    expect_observables(expected, std::format("{}/Steps=1", prefix), (nsteps + 1) / 2);
+    expect_observables(expected, std::format("{}/Steps=2", prefix), nsteps / 2);
   };
 
   // ---- energy, mixed and back propagation, sharing one walker set and one results file ----
   {
     const ExecuteParameters exec{
         .estimators = EstimatorParameters{
-            .energy   = EnergyEstimatorParameters{.wavefunction                = "wfn0",
-                                                  .hamiltonian                 = "ham0",
-                                                  .measure_interval_multiplier = 1},
+            .energy   = EnergyEstimatorParameters{.wavefunction     = "wfn0",
+                                                  .hamiltonian      = "ham0",
+                                                  .measure_interval = 1},
             .mixed    = with_observables(
-                MixedEstimatorParameters{.wavefunction                = "wfn0",
-                                         .hamiltonian                 = "ham0",
-                                         .measure_interval_multiplier = 2}),
+                MixedEstimatorParameters{.wavefunction     = "wfn0",
+                                         .hamiltonian      = "ham0",
+                                         .measure_interval = 2}),
             .backprop = back_propagated({1, 2})},
-        .population_control_interval = pop_control_interval,
+        // deliberately not the default and no divisor of any interval above: no measurement
+        // schedule may depend on the population control interval any more
+        .population_control_interval = 3,
         .n_walkers_per_mpi_task = nwalk};
 
     auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);
@@ -406,29 +403,32 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 
     auto const results = tmpdir / "run_a.results.h5";
 
-    auto expected_bins = [&](long nblocks) {
+    auto expected_bins = [&](long nsteps) {
       std::map<std::string, long> expected;
-      for(auto const* name : {"Energy", "OnebodyEnergy", "ExchangeEnergy", "CoulombEnergy", "Overlap"}) {
-        expected[name] = nblocks;
+      // the last three are the sampling diagnostics the energy estimator records alongside
+      // the averages they describe
+      for(auto const* name : {"Energy", "OnebodyEnergy", "ExchangeEnergy", "CoulombEnergy", "Overlap",
+                              "EffectiveWalkers", "PhaseCoherence", "EffectiveSamples"}) {
+        expected[name] = nsteps;
       }
-      expect_observables(expected, "MixedEstimator", nblocks / 2);
-      expect_back_propagated(expected, "BackPropEstimator", nblocks);
+      expect_observables(expected, "MixedEstimator", nsteps / 2);
+      expect_back_propagated(expected, "BackPropEstimator", nsteps);
       return expected;
     };
 
     // only root records any bin, and Estimators::write is not guarded, so root alone writes
-    run_measurement_blocks(*mpi, estimators, wset, pop_control_interval, 1, nblocks_first);
+    run_measurement_steps(*mpi, estimators, wset, 1, nsteps_first);
     if(mpi->comm.root()) {
       estimators.write(results);
-      check_bins(collect_bins(results), expected_bins(nblocks_first));
+      check_bins(collect_bins(results), expected_bins(nsteps_first));
     }
 
     // a write flushes the complete bins and drops them, so the second one has to grow the
     // datasets the first one created rather than start over
-    run_measurement_blocks(*mpi, estimators, wset, pop_control_interval, nblocks_first + 1, nblocks_total);
+    run_measurement_steps(*mpi, estimators, wset, nsteps_first + 1, nsteps_total);
     if(mpi->comm.root()) {
       estimators.write(results);
-      check_bins(collect_bins(results), expected_bins(nblocks_total));
+      check_bins(collect_bins(results), expected_bins(nsteps_total));
     }
   }
 
@@ -452,22 +452,22 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 
     auto const results = tmpdir / "run_b.results.h5";
 
-    auto expected_bins = [&](long nblocks) {
+    auto expected_bins = [&](long nsteps) {
       std::map<std::string, long> expected;
-      expect_back_propagated(expected, "TimeEvolvedBP", nblocks);
+      expect_back_propagated(expected, "TimeEvolvedBP", nsteps);
       return expected;
     };
 
-    run_measurement_blocks(*mpi, estimators, wset, pop_control_interval, 1, nblocks_first);
+    run_measurement_steps(*mpi, estimators, wset, 1, nsteps_first);
     if(mpi->comm.root()) {
       estimators.write(results);
-      check_bins(collect_bins(results), expected_bins(nblocks_first));
+      check_bins(collect_bins(results), expected_bins(nsteps_first));
     }
 
-    run_measurement_blocks(*mpi, estimators, wset, pop_control_interval, nblocks_first + 1, nblocks_total);
+    run_measurement_steps(*mpi, estimators, wset, nsteps_first + 1, nsteps_total);
     if(mpi->comm.root()) {
       estimators.write(results);
-      check_bins(collect_bins(results), expected_bins(nblocks_total));
+      check_bins(collect_bins(results), expected_bins(nsteps_total));
     }
   }
 }
@@ -525,9 +525,9 @@ void estimators_local_energy_matches_recomputation(
 
   const ExecuteParameters exec{
       .estimators = EstimatorParameters{
-          .energy = EnergyEstimatorParameters{.wavefunction                = "wfn0",
-                                              .hamiltonian                 = "ham0",
-                                              .measure_interval_multiplier = 1}},
+          .energy = EnergyEstimatorParameters{.wavefunction     = "wfn0",
+                                              .hamiltonian      = "ham0",
+                                              .measure_interval = 1}},
       .population_control_interval = pop_control_interval,
       .n_walkers_per_mpi_task = nwalk};
 

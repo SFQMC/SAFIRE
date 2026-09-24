@@ -244,22 +244,10 @@ td, th {
 |<b>setting</b>|<b>default</b>|<b>description</b>|
 |--:|:-:|:--|
 | <b>        print_components</b> |  False |  If True, print the one-body, two-body coulomb, and two-body exchange contributions to the energy in the `*.scalar.dat` file  |
-| <b> equil_multiplier </b> | 0 |  The multiplier that determines the length of the equilibration phase. The equilibration phase length is computed as $(equilibration\_length) = (equil\_multiplier) * (population\_control\_inveral)$ where the population control interval is defined in the execute block. During the equilibration phase, observables are not computed. |
+| <b> measure_interval </b> | inherited from the execute block (10) | The number of projection steps between measurements. During the equilibration phase, whose length is the execute block's `equilibration_steps`, observables are not computed. |
 | <b>        overwrite</b> | False |   If True, overwrite the default energy estimator with the explicitly defined energy estimator |
 
-### Less Common Settings
-
-<style>
-td, th {
-   border: none!important;
-}
-</style>
-  
-|<b>setting</b>|<b>default</b>|<b>description</b>|
-|--:|:-:|:--|
-| <b>        print_sign</b> | False |  If True, print various quantities related to the sign/phase of random walkers in the `*.scalar.dat` file  |
-| <b>        remove</b> |  False |   If True, remove the default energy estimator. **Note that the explicitly defined energy estimator will not be used in the calculation!** |
-| <b>        truncate</b> |  False |   If True, truncate the energy such that data that fall outside of the range $[-3 var, 3 var]$, with $var$ being the variance, are set to either $-3 var$ or $3 var$, whichever is closer |
++++
 
 ```{code-cell} ipython3
 :id: wOOIRUtfCIfh
@@ -274,7 +262,7 @@ execute_options = {
     "timestep": 0.01,
     "steps": 10000,
     "population_control_interval" : 10,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 10,
     "walker_ortho_interval" : 10 ,
     "n_walkers_per_mpi_task": 200,
     "seed" : 42,
@@ -477,7 +465,7 @@ execute_options = {
     "timestep": 0.01,
     "steps": 10000,
     "population_control_interval" : 10,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 10,
     "walker_ortho_interval" : 10 ,
     "n_walkers_per_mpi_task": 200,
     "seed" : 42,
@@ -773,8 +761,7 @@ BP is invoked in SAFIRE by including a "back_propagation" estimator in the input
     "name": "back_propagation",
     "path_restoration": true,
     "bp_walker_ortho_interval": 5,
-    "measure_interval_multiplier": 20,
-    "equil_multiplier": 100,
+    "propagation_steps": [200],
     "onerdm": {
       "name": "one_rdm"
     }
@@ -784,19 +771,22 @@ BP is invoked in SAFIRE by including a "back_propagation" estimator in the input
 
 Observables are added to the BP block in the same way as for mixed estimators.
 
-### Measurement Intervals
+### Back-Propagation Lengths
 
-Since BP involves an additional projection, the measurement interval controls the number of back-propagated steps.
-Just as in the execute block or a mixed estimator block, the input file includes a measurement interval "multiplier", and the actual measurement interval, $m$, is determined as:
+Since BP involves an additional projection, a BP estimator has no `measure_interval`: what it is
+given instead is `propagation_steps`, the number of steps to project back over, in steps. That
+length doubles as the measurement interval, because a new BP window starts as soon as the
+previous one has been covered.
 
-$$m = (\text{measure\_interval\_multiplier}) \times (\text{population\_control\_interval})$$
+`propagation_steps` has no default -- a back-propagation length is a property of the estimate and
+is never inherited from the execute block -- so a BP estimator has to state it.
 
 ### Multiple BP Lengths
 
 SAFIRE implements the capability of running BP with multiple BP measurement lengths.
 We call each measurement with a different BP length an "average".
 This allows the forward projection to be reused while checking for convergence in the BP length.
-To define multiple BP lengths/averages, simply provide a JSON array for measure_interval_multiplier corresponding to all of the BP lengths that you would like to use:
+To define multiple BP lengths/averages, simply list all of the BP lengths that you would like to use, in steps:
 
 ```json
 {
@@ -804,8 +794,7 @@ To define multiple BP lengths/averages, simply provide a JSON array for measure_
     "name": "back_propagation",
     "path_restoration": true,
     "bp_walker_ortho_interval": 10,
-    "measure_interval_multiplier": [60, 70, 80],
-    "equil_multiplier": 80,
+    "propagation_steps": [600, 700, 800],
     "onerdm": {
       "name": "one_rdm"
     }
@@ -815,11 +804,10 @@ To define multiple BP lengths/averages, simply provide a JSON array for measure_
 
 ### Equilibration Phase
 
-The BP estimator implements an equilibration phase at the beginning of the AFQMC calculation where no BP is performed.
+No observable is measured during the equilibration phase at the beginning of an AFQMC calculation,
+back-propagated ones included.
 This is recommended since computing observables is expensive and since AFQMC needs to equilibrate before samples can meaningfully contribute to the average.
-Similarly to the measure_interval_multiplier, the equilibration time is specified as an equilibration multiplier (`"equil_multiplier"`) and the actual equilibration time is given by:
-
-$$\text{equil\_time} = (\text{equil\_multiplier}) \times (\text{population\_control\_interval})$$
+The length of that phase is the execute block's `equilibration_steps`, in steps; back propagation anchors its first window at the end of it.
 
 ### All Settings
 
@@ -831,8 +819,7 @@ td, th {
   
 |<b>setting</b>|<b>default</b>|<b>description</b>|
 |--:|:-:|:--|
-| <b>        measure_interval_multiplier</b> |   1  |  controls the number of back propagation steps which are determined as $$(\text{number of BP steps}) = (\text{measure\_interval\_multiplier}) \times (\text{population\_control\_interval})$$. Can be either a single value or multiple values. If multiple values are provided, BP will be performed with each corresponding number of BP steps and observables are accumulated and saved for each distinct BP length.  |
-| <b> equil_multiplier </b> | 0 |  The multiplier that determines the length of the equilibration phase. The equilibration phase length is computed as $$(equilibration\_length) = (equil\_multiplier) * (population\_control\_inveral)$$ where the population control interval is defined in the execute block. During the equilibration phase, observables are not computed. |
+| <b>        propagation_steps</b> |   required  |  The back propagation lengths, in steps. If several values are provided, BP is performed with each of them and observables are accumulated and saved for each distinct BP length; the longest one is how often a new BP window starts.  |
 | <b>        bp_walker_ortho_interval</b> |   1  |   interval for performing walker orthonormalization during back-propagation (i.e. for the left-hand side Walkers)  |
 | <b>        path_restoration</b> |   false  |  If true, perform path restoration.  |
 | <b>        extra_path_restoration</b> |   false  |   If true, perform an extra path restoration.  |
@@ -864,7 +851,8 @@ execute_options_bp = {
     },
     "timestep": 0.01,
     "steps": 10000,
-    "measure_interval_multiplier": 5,
+    "measure_interval": 50,
+    "equilibration_steps": 400,
     "population_control_interval": 10,
     "walker_ortho_interval": 10,
     "n_walkers_per_mpi_task": 200,
@@ -873,8 +861,7 @@ execute_options_bp = {
         "name": "back_propagation",
         "path_restoration": True,
         "bp_walker_ortho_interval": 10,
-        "measure_interval_multiplier": [5, 8, 10],  # Multiple BP lengths
-        "equil_multiplier": 40,  # Equilibration phase
+        "propagation_steps": [50, 80, 100],  # Multiple BP lengths, in steps
         "onerdm": {
             "name": "one_rdm"
         }
@@ -891,11 +878,9 @@ write_json(
 )
 
 print("Back-propagation input file created with the following BP parameters:")
-print(f"- Multiple BP lengths: {execute_options_bp['estimator']['measure_interval_multiplier']}")
-print(f"- Equilibration multiplier: {execute_options_bp['estimator']['equil_multiplier']}")
+print(f"- BP lengths (steps): {execute_options_bp['estimator']['propagation_steps']}")
 print(f"- Population control interval: {execute_options_bp['population_control_interval']}")
-print(f"- Actual BP lengths: {[m * execute_options_bp['population_control_interval'] for m in execute_options_bp['estimator']['measure_interval_multiplier']]}")
-print(f"- Equilibration time: {execute_options_bp['estimator']['equil_multiplier'] * execute_options_bp['population_control_interval']}")
+print(f"- Equilibration steps: {execute_options_bp['equilibration_steps']}")
 ```
 
 ```{code-cell} ipython3
@@ -941,12 +926,11 @@ hermitize = hermitize_factory(
 # Extract one-RDM data from all BP averages
 print("\nExtracting one-RDM data from back-propagation averages...")
 
-# We specified 3 BP lengths: [5, 8, 10] * population_control_interval
-bp_lengths = [50, 80, 100]
+bp_lengths = execute_options_bp['estimator']['propagation_steps']
 bp_onerdm_data = {}
 
 for iav, bp_length in enumerate(bp_lengths):
-    print(f"Extracting average {iav} (BP length = {bp_length} * {execute_options_bp['population_control_interval']} = {bp_length * execute_options_bp['population_control_interval']} steps)")
+    print(f"Extracting average {iav} (BP length = {bp_length} steps)")
 
     # Extract the one-RDM for this average
     onerdm_bp = extract_observable(
@@ -984,13 +968,12 @@ onerdm_mixed = extract_observable(
     batch_size=1
 )
 
-pop_control =  execute_options['population_control_interval']
-measure_interval_multiplier = execute_options['measure_interval_multiplier']
+measure_interval = execute_options['measure_interval']
 tau = execute_options['timestep']
 nsamples = onerdm_mixed.shape[0]
-beta = tau * nsamples * measure_interval_multiplier * pop_control
+beta = tau * nsamples * measure_interval
 
-measure_time = pop_control*measure_interval_multiplier*tau
+measure_time = measure_interval*tau
 # Compute one-body energies for all BP averages
 bp_energies = {}
 for iav, bp_length in enumerate(bp_lengths):
@@ -1034,7 +1017,7 @@ for iav, bp_length in enumerate(bp_lengths):
     bp_std = np.std(bp_energies[iav][skip_samples:]) / np.sqrt(len(bp_energies[iav][skip_samples:]))
     means.append(bp_mean)
     stds.append(bp_std)
-    bp_length_values.append(bp_length * execute_options_bp['population_control_interval'])
+    bp_length_values.append(bp_length)
 
 # Plot convergence
 ax2.errorbar(bp_length_values, means, yerr=stds, marker='o', capsize=5, capthick=2, label='BP Estimator')
@@ -1072,7 +1055,7 @@ print(f"\nDifference between longest BP and mixed estimator: {abs(means[-1] - mi
 
 **Important BP Configuration Points:**
 
-- **Equilibration**: Always include an equilibration phase (`equil_multiplier`) to allow AFQMC to reach equilibrium before BP measurements begin.
+- **Equilibration**: Always include an equilibration phase (`equilibration_steps`) to allow AFQMC to reach equilibrium before BP measurements begin.
 
 - **Multiple BP Lengths**: Use multiple BP lengths to check convergence. Longer BP lengths generally provide more accurate results up to a point. BP is unstable for excessively large BP length. This manifests as a sharp increase in stochastic uncertainty.
 

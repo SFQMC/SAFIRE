@@ -292,7 +292,7 @@ Note: This might take some time. You might want to run this on a computing clust
 execute_options = {
     "timestep": 0.01,
     "steps": 10000,
-    "measure_interval_multiplier": 1,
+    "measure_interval": 10,
     "population_control_interval" : 10,
     "walker_ortho_interval" : 10 ,
     "n_walkers_per_mpi_task": 20,
@@ -439,7 +439,7 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
     afqmc_execution_options = {
         "timestep": 0.01,
         "steps": 3200,
-        "measure_interval_multiplier": 1,
+        "measure_interval": 10,
         "population_control_interval" : 10,
         "walker_ortho_interval" : 10 ,
         "n_walkers_per_mpi_task": 20,

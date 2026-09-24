@@ -17,6 +17,7 @@
 #pragma once
 
 #include "AFQMC/config.h"
+#include <algorithm>
 #include <vector>
 
 #include "AFQMC/parameters.hpp"
@@ -128,51 +129,56 @@ template<MEMORY_SPACE MEM>
 class BackPropEstimator : public EstimatorBase<MEM> {
 
 public:
-  /// The measurement and equilibration intervals of the input are multiples of
-  /// population_control_interval, which is given in steps.
+  /// Every back propagation length of the input is a number of propagation steps, and so is
+  /// the `step` the estimator is measured at.
   BackPropEstimator(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                           const BackPropEstimatorParameters& params,
-                          int population_control_interval,
                           WalkerSet<MEM>& wset,
                           Wavefunction<MEM>& wfn,
                           Propagator<MEM>& prop)
       : wfn_(wfn),
         prop_(prop),
         observables_(mpi, params, wset.getWalkerType(), wfn.getNMO()),
-        nback_prop_multipliers_{measure_interval_multipliers(params)},
+        propagation_steps_{resolved(params.propagation_steps, "propagation_steps")},
         walker_ortho_interval_(resolved(params.walker_ortho_interval, "walker_ortho_interval")), // units of steps
-        steps_per_interval_(population_control_interval),
         path_restoration(params.path_restoration),
         extra_path_restoration(params.extra_path_restoration) {
 
-    for (int bpsteps : nback_prop_multipliers_) {
-      utils::check(bpsteps > 0,"BackPropEstimator: measure_interval_multiplier values must be positive.");
+    for (int bpsteps : propagation_steps_) {
+      utils::check(bpsteps > 0,"BackPropEstimator: propagation_steps values must be positive.");
     }
-    std::sort(nback_prop_multipliers_.begin(), nback_prop_multipliers_.end());
+    std::ranges::sort(propagation_steps_);
+    // a repeated length would measure the same window twice and leave the propagator with an
+    // empty segment to cover
+    utils::check(std::ranges::adjacent_find(propagation_steps_) == propagation_steps_.end(),
+                 "BackPropEstimator: propagation_steps values must be distinct, but they are {}.",
+                 propagation_steps_);
 
     int ncv(prop_.number_of_cholesky_vectors());
     int number_of_references = wfn_.total_number_of_references();
-    wset.resize_bp(nback_prop_multipliers_.back() * steps_per_interval_, ncv, number_of_references);
-    setAnchor(wset, -1);
+    wset.resize_bp(propagation_steps_.back(), ncv, number_of_references);
+    setAnchor(wset, 0);
   }
 
 
-  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock, Measurements& meas, WalkerSet<MEM> &wset) override {
-    int const bp_step = measureBlock - bp_pos_;
+  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long step, Measurements& meas, WalkerSet<MEM> &wset) override {
+    long const bp_step = step - bp_pos_;
     utils::check(bp_step >= 0, " Error: Found bp_step < 0 in BackPropEstimator::measure. ");
 
-    if(std::ranges::binary_search(nback_prop_multipliers_, bp_step)) {
-      backPropagate(mpi, bp_step, meas, wset);
+    if(std::ranges::binary_search(propagation_steps_, bp_step)) {
+      backPropagate(mpi, int(bp_step), meas, wset);
     }
-    // the longest average has been taken over this block, so the next one starts here. A
-    // block that overshoots the longest average without matching it re-anchors as well.
-    if(bp_step >= nback_prop_multipliers_.back()) {
-      setAnchor(wset, measureBlock);
+    // the longest average has been taken over this window, so the next one starts here. A
+    // step that overshoots the longest average without matching it re-anchors as well.
+    if(bp_step >= propagation_steps_.back()) {
+      setAnchor(wset, step);
     }
   }
 
+  void equilibrated(long step, WalkerSet<MEM>& wset) override { setAnchor(wset, step); }
+
 private:
-  /// Back propagate the references over `bp_step` blocks and measure the observables on them.
+  /// Back propagate the references over `bp_step` steps and measure the observables on them.
   void backPropagate(utils::mpi_context_t<boost::mpi3::communicator>& mpi, int bp_step,
                      Measurements& meas, WalkerSet<MEM>& wset) {
     auto all = nda::range::all;
@@ -192,8 +198,7 @@ private:
     mpi.node_comm.barrier();
 
     //3. propagate backwards the references
-    int nbpsteps = bp_step * steps_per_interval_;
-    prop_.BackPropagate(nbpsteps, walker_ortho_interval_, wset, Refs, logdetR);
+    prop_.BackPropagate(bp_step, walker_ortho_interval_, wset, Refs, logdetR);
 
     // logdetR_shift[w] = (1/Nd) * sum_d logdetR[w][d]
     // apply shift: logdetR[w][d] = logdetR[w][d] - logdetR_shift[w]
@@ -212,7 +217,10 @@ private:
       auto factors = nda::to_host(wset.getWeightFactors());
       int hpos(wset.getHistoryPos()); // position where next step goes... go bach in history...
       int maxpos(wset.HistoryBufferLength());
-      int nbp(nbpsteps);
+      // the weight history is three times as long as the field ring, so the extra segment
+      // still fits; before the run has produced that many steps the tail it reads is the
+      // 1.0 resize_bp initialized it to
+      int nbp(bp_step);
       if(extra_path_restoration) {
         nbp *= 2;
       }
@@ -234,30 +242,28 @@ private:
     back_propagate_time.stop();
   }
 
-  /// Anchor back propagation at `block`, the last block it will propagate back over. The
-  /// constructor anchors before the first block is propagated, which is block -1.
-  void setAnchor(WalkerSet<MEM>& wset, long block) {
+  /// Anchor back propagation at `step`, the number of propagation steps completed so far.
+  /// The constructor anchors before the first step, at 0.
+  void setAnchor(WalkerSet<MEM>& wset, long step) {
     for(int iw = 0; iw < wset.size(); ++iw) {
       wset[iw].setSlaterMatrixN();
     }
-    bp_pos_ = block;
+    bp_pos_ = step;
   }
 
   Wavefunction<MEM>& wfn_;
   Propagator<MEM>& prop_;
   Observables<MEM> observables_;
 
-  // block the anchor sits at, see setAnchor: at block b, b - bp_pos_ blocks have been
-  // propagated over since it
-  int bp_pos_{};
-  std::vector<int> nback_prop_multipliers_;
+  // completed step count the anchor sits at, see setAnchor: at step s, s - bp_pos_ steps
+  // have been propagated over since it
+  long bp_pos_{};
+
+  // the back propagation lengths, in steps, sorted
+  std::vector<int> propagation_steps_;
 
   // Frequency of reorthogonalisation, in units of steps.
   int walker_ortho_interval_{1};
-
-  // number of propagation steps per measurement block, which sets the units the
-  // propagator and the walker set count back propagation in
-  int steps_per_interval_{1};
 
   // Whether to restore cosine projection and real local energy approximation for weights
   // along back propagation path.

@@ -384,7 +384,7 @@ it could never run.
 *configured BP-depth levels*). The correct value is `taus.max()` (`= max_nback_prop * dt`), since
 `iblock` increments once per full `max_nback_prop`-step cycle, uniformly across BP-depth levels
 (confirmed in `src/AFQMC/Estimators/BackPropagatedEstimator.hpp`). Also: the C++ side already
-discards equilibration blocks via `equil_multiplier` before anything reaches `stat.h5`, but the
+discards equilibration steps via `equilibration_steps` before anything reaches `stat.h5`, but the
 Python-side `Teq`/`nequil` knob is still a wanted feature, for cases where unequilibrated samples
 slip through despite the C++-side trim. `check_1rdm_convergence`'s quadrature-sum indexing bug (uses
 only one of two BP-average endpoints' errors) gets fixed at the same time.

@@ -62,7 +62,7 @@ We will explore the details of this input file in the following sections.
         },
         "timestep": 0.01,
         "steps": 10000,
-        "measure_interval_multiplier": 1,
+        "measure_interval": 10,
         "population_control_interval" : 10,
         "walker_ortho_interval" : 10 ,
         "n_walkers_per_mpi_task": 10
@@ -167,7 +167,7 @@ which are used in AFQMC such as the Hamiltonian and the trial wavefunction.
         "timestep": 0.01,
         "steps": 10000,
         "population_control_interval" : 10,
-        "measure_interval_multiplier": 1,
+        "measure_interval": 10,
         "walker_ortho_interval" : 10 ,
         "n_walkers_per_mpi_task": 10 ,
         "seed" : 42,
@@ -209,7 +209,7 @@ For example, in the input file below, the walker_set is defined outside of the e
         "timestep": 0.01,
         "steps": 10000,
         "population_control_interval" : 10,
-        "measure_interval_multiplier": 1,
+        "measure_interval": 10,
         "walker_ortho_interval": 10,
         "n_walkers_per_mpi_task": 10,
         "seed" : 42,
@@ -251,9 +251,9 @@ Settings
    * - **population_control_interval**
      - 10
      - The number of projection steps between population control operations. Population control is relatively inexpensive, and it is typically okay to allow this interval to remain small.
-   * - **measure_interval_multiplier**
-     - 1
-     - Used to determine the number of projection steps between measurements using the formula below. Measurement is the most expensive operation in AFQMC. A larger "measure_interval_multiplier" will reduce the CPU time necessary to perform AFQMC calculations.
+   * - **measure_interval**
+     - 10
+     - The number of projection steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will reduce the CPU time necessary to perform AFQMC calculations.
    * - **binsize**
      - 1
      - The number of consecutive measurements averaged into one bin of the results file. Binning reduces the size of the results file and the autocorrelation between neighbouring bins. A trailing partial bin is not written out.
@@ -266,8 +266,6 @@ Settings
    * - **seed**
      - 
      - The seed for the random number generator. This value only needs to be set when strict reproducibility is necessary.
-
-.. include:: ../_include/measure_interval_admonition.rst
 
 .. _wavefunction_block:
 

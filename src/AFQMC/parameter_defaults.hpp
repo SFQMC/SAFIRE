@@ -69,8 +69,10 @@ void apply_defaults(PropagatorParameters& params, HamiltonianType htype);
 void apply_defaults(EstimatorParameters& params, const ExecuteParameters& exec);
 
 /// Fills the defaults of every estimator the execute block requests. The component blocks of
-/// `exec` have to be resolved to names already.
-void apply_defaults(ExecuteParameters& exec);
+/// `exec` have to be resolved to names already. `driver` selects the unit of
+/// `measure_interval`, which counts steps for the ground state driver and sweeps for the
+/// finite temperature one.
+void apply_defaults(ExecuteParameters& exec, DriverType driver);
 
 /// Applies every default that cannot be expressed as a member initializer of the parameter
 /// structs, so that the rest of the code only ever sees resolved values:

@@ -108,7 +108,7 @@ This input block will be explored in more detail in later tutorials.
         "timestep": "0.01",
         "steps": "1",
         "population_control_interval": "10",
-        "measure_interval_multiplier": "1",
+        "measure_interval": "10",
         "walker_ortho_interval": "10",
         "n_walkers_per_mpi_task": "10",
         "seed": "42",
@@ -226,7 +226,7 @@ Here is a sample execute block with options exposed and default values where app
   "timestep": "0.01",
   "steps": "1",
   "n_walkers_per_mpi_task": "10",
-  "measure_interval_multiplier": "1",
+  "measure_interval": "10",
   "population_control_interval": "10",
   "walker_ortho_interval": "10",
   "seed": "42",
@@ -250,13 +250,9 @@ td, th {
 | <b>timestep</b> |  0.01  |  The trotter step size in units of inverse energy (depending on the Hamiltonian's units)  |
 | <b>steps</b> |  1  |   The number of imaginary time steps to take  |
 | <b>n_walkers_per_mpi_task</b> |  10  |   number of Slater determinant random walkers to use per MPI task  |
-| <b>measure_interval_multiplier</b> |  20  |  Used to determine the number of projection steps between measurements using the formula below. Measurement is the most expensive operation in AFQMC. A larger "measure_interval_multiplier" will reduce the CPU time necessary to perform AFQMC calculations.  |
+| <b>measure_interval</b> |  10  |  The number of projection steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will reduce the CPU time necessary to perform AFQMC calculations.  |
 | <b>population_control_interval</b> |  10  |  Interval to perform population control at in units of steps.  |
 | <b>walker_ortho_interval</b> | 10  |  Interval to stabilize walkers at via a modified Gram-Schmidt procedure in units of steps |
-
-$$
-\text{measure\_interval} = \text{measure\_interval\_multiplier} \times \text{population\_control\_interval}
-$$
 
 ### Less Common Settings
 

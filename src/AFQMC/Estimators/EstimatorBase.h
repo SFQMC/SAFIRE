@@ -19,7 +19,6 @@
 #include "AFQMC/config.h"
 
 #include <nda/h5.hpp>
-#include "AFQMC/parameters.hpp"
 
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "Measurements.hpp"
@@ -31,7 +30,16 @@ class EstimatorBase
 {
 public:
   virtual ~EstimatorBase() {}
-  virtual void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock, Measurements& meas, WalkerSet<MEM> &wset) = 0;
+
+  /// Called once per propagation step, with `step` the number of steps completed so far. An
+  /// estimator that does not measure at this step has to return before doing anything at all
+  /// -- no timer, no allocation, no collective -- because this runs on every step of the run.
+  virtual void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long step, Measurements& meas, WalkerSet<MEM> &wset) = 0;
+
+  /// Called once, at the last equilibration step, before the first measure(). A back
+  /// propagation estimator anchors here, because the anchor its constructor took describes
+  /// the walkers before equilibration.
+  virtual void equilibrated(long /*step*/, WalkerSet<MEM>& /*wset*/) {}
 };
 
 } // namespace sfqmc::afqmc

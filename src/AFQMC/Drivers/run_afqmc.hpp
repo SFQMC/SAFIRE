@@ -30,9 +30,10 @@ namespace sfqmc::afqmc {
 /// Projects the walker population for `exec.steps` steps and writes the measurements to
 /// `<output_name>.results.h5`.
 ///
-/// A measure block is one population control interval. Nothing is measured during the first
-/// `exec.equilibration_steps` steps; `Eshift` is damped towards the population average instead,
-/// and stops moving once the measurements begin.
+/// The estimators are offered every step and each one measures at an interval of its own, in
+/// steps. Nothing is measured during the first `exec.equilibration_steps` steps; `Eshift` is
+/// damped towards the population average once per step instead, and stops moving once the
+/// measurements begin.
 template<MEMORY_SPACE MEM>
 void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                std::string const& output_name,

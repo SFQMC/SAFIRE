@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <array>
+#include <cmath>
 #include <format>
 #include <map>
 #include <memory>
@@ -24,6 +26,7 @@
 
 #include "AFQMC/config.h"
 #include <nda/nda.hpp>
+#include <nda/tensor.hpp>
 #include "utilities/mpi_context.h"
 #include "utilities/h5_utils.hpp"
 #include "Accumulator.hpp"

@@ -82,7 +82,7 @@ While not functionally necessary, defining the "wavefunction"and "hamiltonian" b
           "timestep": 0.05,
           "steps": 20,
           "n_walkers_per_mpi_task": 200,
-          "measure_interval_multiplier": 1,
+          "measure_interval": 1,
           "population_control_interval": 1,
           "walker_ortho_interval": 1,
           "seed": 42
@@ -94,7 +94,7 @@ While not functionally necessary, defining the "wavefunction"and "hamiltonian" b
           "timestep": 0.01,
           "steps": 10000,
           "n_walkers_per_mpi_task": 200,
-          "measure_interval_multiplier": 1,
+          "measure_interval": 10,
           "population_control_interval": 10,
           "walker_ortho_interval": 10,
           "seed": 43
@@ -151,7 +151,7 @@ We use ellipses ( `...`)  in some of the advanced input blocks within some input
         "timestep": "0.01",
         "steps": "1",
         "population_control_interval": "10",
-        "measure_interval_multiplier": "2",
+        "measure_interval": "20",
         "walker_ortho_interval": "10",
         "checkpoint_interval": "-1",
         "hdf_write_file": "",

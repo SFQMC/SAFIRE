@@ -20,31 +20,26 @@ JSON_EXECUTE_INPUT_BLOCKS = ("walker_set", "wavefunction", "hamiltonian", "propa
 # exec_opts and hoisted to the top level, because that is where callers used to pass them.
 JSON_TOP_LEVEL_KEYS = ("seed",)
 
-# the default of the execute block's population_control_interval, in steps
-DEFAULT_POPULATION_CONTROL_INTERVAL = 10
-
-
-def bp_measure_interval_multipliers(tbp, timestep, population_control_interval, num_bp,
-                                    verbose=False):
-    """The back propagation lengths that reach `tbp`, in units of the population control
-    interval: `num_bp` evenly spaced averages, the longest of them the requested time.
+def back_propagation_steps(tbp, timestep, num_bp, verbose=False):
+    """The back propagation lengths that reach `tbp`, in steps: `num_bp` evenly spaced
+    averages, the longest of them the requested time.
 
     The spacing is what gets rounded, so that every average is a whole multiple of the
     shortest one, as it was when the input took a step count and a number of averages.
     """
-    spacing = max(1, round(tbp / (timestep * population_control_interval * num_bp)))
-    multipliers = [spacing * k for k in range(1, num_bp + 1)]
+    spacing = max(1, round(tbp / (timestep * num_bp)))
+    steps = [spacing * k for k in range(1, num_bp + 1)]
 
-    realized = multipliers[-1] * population_control_interval * timestep
+    realized = steps[-1] * timestep
     msg = f"tbp = {realized} (requested {tbp})"
     if verbose:
         print(msg)
     if abs((realized - tbp) / tbp) > 0.1:
         raise RuntimeError(msg)
-    return multipliers
+    return steps
 
 
-def get_estimator_settings(args, population_control_interval=DEFAULT_POPULATION_CONTROL_INTERVAL):
+def get_estimator_settings(args):
     """The "estimators" block the given arguments ask for, empty if they ask for none.
 
     The energy estimator is not in it: it is measured unless the input removes it with
@@ -64,8 +59,8 @@ def get_estimator_settings(args, population_control_interval=DEFAULT_POPULATION_
 
     if args.time_bp is not None:
         est = dict(observables)
-        est['measure_interval_multiplier'] = bp_measure_interval_multipliers(
-            args.time_bp, args.timestep, population_control_interval, args.num_bp, args.verbose)
+        est['propagation_steps'] = back_propagation_steps(
+            args.time_bp, args.timestep, args.num_bp, args.verbose)
         pr = args.path_restoration
         if pr == '0':
             est['path_restoration'] = False
@@ -149,8 +144,7 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
     if args_namespace is not None:
         # a block exec_opts names itself is more specific than one the arguments imply
         estimators = exec_opts.setdefault("estimators", {})
-        for name, block in get_estimator_settings(args_namespace, exec_opts.get(
-                "population_control_interval", DEFAULT_POPULATION_CONTROL_INTERVAL)).items():
+        for name, block in get_estimator_settings(args_namespace).items():
             estimators.setdefault(name, block)
         if not estimators:
             exec_opts.pop("estimators")

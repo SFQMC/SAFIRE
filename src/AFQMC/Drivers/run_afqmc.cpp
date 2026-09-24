@@ -72,16 +72,28 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       ortho_time.stop();
     }
 
-    if((iStep + 1) % exec.population_control_interval == 0 || iStep == 0) {
+    // the number of completed propagation steps, which is the unit every measurement
+    // interval and every back propagation length is given in
+    long const step = iStep + 1;
+
+    if(step % exec.population_control_interval == 0 || iStep == 0) {
       auto popcontrol_time = timers.popcontrol.start();
+      wset.rescale_total_weight();
       wset.popControl();
       wset.rescale_total_weight();
       popcontrol_time.stop();
+    }
 
-      if(iStep >= exec.equilibration_steps) {
-        estimators.measure(mpi, iStep / exec.population_control_interval, wset);
-      } else {
-        Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset) - Eshift);
+    if(step > exec.equilibration_steps) {
+      // every estimator is offered every step and decides for itself whether this is one of
+      // its own; one that skips a step does no work on it
+      estimators.measure(mpi, step, wset);
+    } else {
+      Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset) - Eshift);
+      // back propagation starts its first window here, rather than at the stale anchor its
+      // constructor took before equilibration
+      if(step == exec.equilibration_steps) {
+        estimators.equilibrated(step, wset);
       }
     }
 

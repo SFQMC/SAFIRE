@@ -282,7 +282,7 @@ def setup_benchmark(key:str, case:dict):
     execute_options = {
         "timestep": 0.005,
         "steps": 7000,
-        "measure_interval_multiplier": 1,
+        "measure_interval": 10,
         "population_control_interval" : 10,
         "walker_ortho_interval" : 10 ,
         "n_walkers_per_mpi_task": 50,

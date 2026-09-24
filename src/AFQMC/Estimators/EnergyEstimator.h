@@ -17,7 +17,6 @@
 #pragma once
 
 #include "AFQMC/config.h"
-#include <vector>
 
 #include "AFQMC/Utilities/AFQMCTimer.h"
 
@@ -42,14 +41,13 @@ public:
   /// to recompute here.
   EnergyEstimator(EnergyEstimatorParameters const& params, bool walkers_carry_energy, Wavefunction<MEM>& wfn)
       : wfn_{wfn},
-        measure_interval_multiplier_{resolved(params.measure_interval_multiplier,
-                                              "measure_interval_multiplier")},
+        measure_interval_{resolved(params.measure_interval, "measure_interval")},
         walkers_carry_energy_{walkers_carry_energy}
   {
   }
 
-  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long measureBlock, Measurements& meas, WalkerSet<MEM> &wset) override {
-    if(measureBlock % measure_interval_multiplier_ != 0) {
+  void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long step, Measurements& meas, WalkerSet<MEM> &wset) override {
+    if(step % measure_interval_ != 0) {
       return;
     }
 
@@ -88,7 +86,9 @@ public:
 
 private:
   Wavefunction<MEM>& wfn_;
-  int measure_interval_multiplier_{};
+
+  // in units of steps
+  int measure_interval_{};
   bool walkers_carry_energy_{};
 };
 } // namespace afqmc

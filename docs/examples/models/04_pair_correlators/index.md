@@ -221,7 +221,7 @@ instead of the above.
       "timestep": 0.01,
       "steps": 12000,
       "n_walkers_per_mpi_task": 80,
-      "measure_interval_multiplier": 1,
+      "measure_interval": 10,
       "population_control_interval": 10,
       "walker_ortho_interval": 10,
       "seed": 42,
@@ -229,6 +229,7 @@ instead of the above.
         "name": "back_propagation",
         "path_restoration": true,
         "bp_walker_ortho_interval": 10,
+        "propagation_steps": [100],
         "equil": 200,
         "pair_correlators" : {
             "name" : "my_pair_correlators",
@@ -279,11 +280,12 @@ afqmc_params = {
     "population_control_interval": 2,
     "walker_ortho_interval": 2,
     "n_walkers_per_mpi_task": 40,
-    "measure_interval_multiplier": 1,    
+    "measure_interval": 2,
     "estimator": {
         "name": "back_propagation",
         "path_restoration": True,
         "bp_walker_ortho_interval": 10,
+        "propagation_steps": [100],
         "equil": 200,
         "pair_correlators" : {
             "name" : "my_pair_correlators",

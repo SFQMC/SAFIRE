@@ -40,7 +40,7 @@ namespace afqmc
 {
 
 // Global Constant Definitions
-const int DEFAULT_MEASURE_INTERVAL_MULTIPLIER = 1; // in units of population control interval
+const int DEFAULT_MEASURE_INTERVAL = 10; // in units of steps
 const int DEFAULT_POPULATION_CONTROL_INTERVAL = 10; // in units of steps
 const int DEFAULT_WALKER_ORTHO_INTERVAL = 10; // in units of steps
 const float DEFAULT_TIME_STEP = 0.01f; // in units of inverse energy (depending on Hamiltonian units)

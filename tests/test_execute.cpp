@@ -272,7 +272,8 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     REQUIRE(estimators.energy.has_value());
     CHECK(estimators.energy->wavefunction == wfn_name);
     CHECK(estimators.energy->hamiltonian == ham_name);
-    CHECK(estimators.energy->measure_interval_multiplier == exec.measure_interval_multiplier);
+    CHECK(estimators.energy->measure_interval == exec.measure_interval);
+    CHECK(exec.measure_interval == afqmc::DEFAULT_MEASURE_INTERVAL);
     CHECK(!estimators.mixed.has_value());
     CHECK(!estimators.backprop.has_value());
     CHECK(!estimators.time_evolved_bp.has_value());
@@ -295,12 +296,12 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
                                                   .lower_cutoff_scale = 0.25,
                                                   .denseP2            = false},
              .estimators = EstimatorParameters{
-                 .energy = EnergyEstimatorParameters{.measure_interval_multiplier = 5},
+                 .energy = EnergyEstimatorParameters{.measure_interval = 5},
                  .mixed  = MixedEstimatorParameters{.wavefunction = "estimator_wfn",
                                                     .hamiltonian  = "estimator_ham"},
                  .backprop =
-                     BackPropEstimatorParameters{.measure_interval_multiplier = std::vector<int>{3}}},
-             .measure_interval_multiplier = 7,
+                     BackPropEstimatorParameters{.propagation_steps = std::vector<int>{3}}},
+             .measure_interval = 7,
     }};
     resolve_defaults(params, *mpi);
 
@@ -331,15 +332,15 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     // it leaves out from the execute block around it
     const EstimatorParameters& estimators = exec.estimators;
     REQUIRE(estimators.energy.has_value());
-    CHECK(estimators.energy->measure_interval_multiplier == 5);
+    CHECK(estimators.energy->measure_interval == 5);
 
     REQUIRE(estimators.mixed.has_value());
     CHECK(estimators.mixed->wavefunction == "estimator_wfn");
     CHECK(estimators.mixed->hamiltonian == "estimator_ham");
-    CHECK(estimators.mixed->measure_interval_multiplier == exec.measure_interval_multiplier);
+    CHECK(estimators.mixed->measure_interval == exec.measure_interval);
 
     REQUIRE(estimators.backprop.has_value());
-    CHECK(measure_interval_multipliers(*estimators.backprop) == std::vector<int>{3});
+    CHECK(estimators.backprop->propagation_steps == std::vector<int>{3});
     CHECK(estimators.backprop->walker_ortho_interval == exec.walker_ortho_interval);
     CHECK(estimators.backprop->wavefunction == wfn_name);
     CHECK(estimators.backprop->hamiltonian == ham_name);
@@ -352,6 +353,27 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         .wavefunction = WavefunctionParameters{.filename = hamil_file},
         .estimators   = EstimatorParameters{.backprop        = BackPropEstimatorParameters{},
                                             .time_evolved_bp = BackPropEstimatorParameters{}},
+    }};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
+  }
+
+  // a back propagation length is never inherited, so the estimator has to bring one
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{
+        .wavefunction = WavefunctionParameters{.filename = hamil_file},
+        .estimators   = EstimatorParameters{.backprop = BackPropEstimatorParameters{}},
+    }};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
+  }
+
+  // an empty list of back propagation lengths is rejected here rather than at construction
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{
+        .wavefunction = WavefunctionParameters{.filename = hamil_file},
+        .estimators   = EstimatorParameters{.time_evolved_bp = BackPropEstimatorParameters{
+                                                .propagation_steps = std::vector<int>{}}},
     }};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
