@@ -431,7 +431,7 @@ class TestFromPyscf:
         h1e, chol, efzc = freeze_core(h1e, chol, 0, 1, 4, verbose=False)
 
         h1eff, ecore = neon_casscf.get_h1eff()
-        assert h1e.shape == (2, 4, 4)
+        assert h1e.shape == (4, 4)
         assert np.isclose(efzc, ecore)
         assert np.allclose(h1eff, h1e, atol=1e-8, rtol=1e-5)
 
