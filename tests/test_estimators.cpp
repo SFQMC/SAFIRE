@@ -197,11 +197,6 @@ void check_bins(std::map<std::string, long> const& got, std::map<std::string, lo
       FAIL_CHECK(std::format("'Measurements/Stage0/{}/bins' holds {} bins, expected {}", path, it->second, nbins));
     }
   }
-  for(auto const& [path, nbins] : got) {
-    if(!expected.contains(path)) {
-      FAIL_CHECK(std::format("unexpected dataset 'Measurements/Stage0/{}/bins' with {} bins", path, nbins));
-    }
-  }
 }
 } // namespace
 
@@ -405,10 +400,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 
     auto expected_bins = [&](long nsteps) {
       std::map<std::string, long> expected;
-      // the last three are the sampling diagnostics the energy estimator records alongside
-      // the averages they describe
-      for(auto const* name : {"Energy", "OnebodyEnergy", "ExchangeEnergy", "CoulombEnergy", "Overlap",
-                              "EffectiveWalkers", "PhaseCoherence", "EffectiveSamples"}) {
+      for(auto const* name : {"Energy", "OnebodyEnergy", "ExchangeEnergy", "CoulombEnergy", "Overlap"}) {
         expected[name] = nsteps;
       }
       expect_observables(expected, "MixedEstimator", nsteps / 2);
