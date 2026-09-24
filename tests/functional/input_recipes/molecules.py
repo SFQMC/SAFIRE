@@ -23,20 +23,23 @@ hamiltonians here therefore go through ``generate_hamiltonian`` +
 to write the ``(nup + ndn, 0)`` electron count the noncollinear convention
 wants.
 
-A note on reproducibility. These recipes reproduce the *physics* of the
-committed files but not their bytes. Every system here has degenerate orbitals
-- the pi shells of BH and N2, the p/d/f shells of the Pb atom - and an SCF is
-free to return any rotation within a degenerate shell, with any sign. So the
-orbital basis ``Hamiltonian/X``, and everything expressed in it, comes out
-rotated relative to what is committed. Basis-independent quantities do agree:
-the eigenvalues of ``hcore`` match to ~1e-14, the Cholesky rank is identical,
-and the Pb SCF energies reproduce the original 2024 run to twelve digits.
+A note on reproducibility. Every system here has degenerate orbitals - the pi
+shells of BH and N2, the p/d/f shells of the Pb atom - and without symmetry an
+SCF is free to return any rotation within a degenerate shell. The truncated CI
+expansions (BH's CASCI, N2's CASSCF) then keep a run-dependent set of
+determinants: for N2 the 50-determinant trial energy moved by up to 20 mHa
+between runs. BH, N2 and Pb are therefore built with ``symmetry=True``, which
+puts each member of a degenerate shell in its own irrep and pins the basis.
+Repeated runs then give identical hamiltonians and identical trial energies.
+What remains free is the sign of individual orbitals and determinants, the
+order of equal-weight determinants, and the global spin orientation of a GHF
+solution; none of it changes any energy.
 
-The consequence worth knowing is that the CI expansions (BH's CASCI, N2's
-CASSCF) redistribute weight among degenerate configurations, so a truncated
-expansion keeps a slightly different set of determinants. That changes the
-trial wavefunction quality by a small amount, which means the reference results
-have to be regenerated alongside the inputs.
+Li is the exception: its ROHF quartet breaks the point-group symmetry, so it is
+built without it and its orbital basis is only reproducible up to rotation.
+The inputs committed before this change were built without symmetry, so
+regenerating them changes the trials, and the reference results have to be
+regenerated alongside the inputs.
 """
 
 from pathlib import Path
@@ -209,6 +212,7 @@ def build_bh(ctx: BuildContext) -> None:
         atom=f"B {delta / 2} 0.0 0.0\nH {-delta / 2} 0.0 0.0",
         basis="ccpvdz",
         spin=0,
+        symmetry=True,
         verbose=_pyscf_verbosity(ctx),
     )
     nelec = mol.nelec
@@ -361,6 +365,7 @@ def build_n2(ctx: BuildContext) -> None:
         atom=f"N 0. 0. {delta / 2}\nN 0. 0. -{delta / 2}",
         basis="ccpvdz",
         unit="Bohr",
+        symmetry=True,
         verbose=_pyscf_verbosity(ctx),
     )
 
@@ -409,6 +414,8 @@ def build_li(ctx: BuildContext) -> None:
 
     out, scratch = ctx.out_dir, ctx.scratch
 
+    # No point-group symmetry here: the lowest ROHF quartet breaks it, and the
+    # symmetry-constrained solve lands 2.1 mHa higher.
     mol = gto.M(atom="Li 0. 0. 0.", basis="ccpvdz", spin=3,
                 verbose=_pyscf_verbosity(ctx))
 
@@ -478,6 +485,7 @@ def build_pb(ctx: BuildContext) -> None:
         ecp=PB_ECP_SOC,
         charge=-1,
         spin=3,
+        symmetry=True,
         verbose=_pyscf_verbosity(ctx),
     )
     nelec = mol.nelec
@@ -500,7 +508,9 @@ def build_pb(ctx: BuildContext) -> None:
     mf.chkfile = str(ghf_chk)
     mf.kernel()
 
-    mf = scf.GHF(mol)
+    # Spin-orbit coupling mixes the spatial irreps, so this solve drops the
+    # point-group symmetry the others use.
+    mf = scf.GHF(mol.copy().build(symmetry=False))
     mf.chkfile = str(ghf_soc_chk)
     mf.with_soc = True
     mf.kernel()
