@@ -292,7 +292,7 @@ def test_builder_requires_a_lattice():
 
 
 def test_unknown_builder_parameter_raises(square_4x4):
-    with pytest.raises(ValueError, match="Unknown HamiltonianBuilder parameters"):
+    with pytest.raises(TypeError, match="nbandz"):
         HamiltonianBuilder(lattice=square_4x4, nbandz=2)
 
 

@@ -664,12 +664,12 @@ def test_triangular_rejects_a_basis():
 def test_square_directed_pairs():
     lattice = Lattice.from_dict(_params('square', L1=3, L2=3))
 
-    pairs = lattice.get_directed_pairs(directions=['+x', '-y', '0'])
+    offsets = lattice.get_directed_pairs(directions=['+x', '-y', '0']).offsets
 
     # site index = x*L2 + y for a single-site basis
-    assert pairs['+x'] == [((i // 3 + 1) % 3) * 3 + i % 3 for i in range(9)]
-    assert pairs['-y'] == [(i // 3) * 3 + (i % 3 - 1) % 3 for i in range(9)]
-    assert pairs['0'] == list(range(9))
+    assert offsets['+x'].tolist() == [((i // 3 + 1) % 3) * 3 + i % 3 for i in range(9)]
+    assert offsets['-y'].tolist() == [(i // 3) * 3 + (i % 3 - 1) % 3 for i in range(9)]
+    assert offsets['0'].tolist() == list(range(9))
 
-    with pytest.raises(ValueError, match="Unknown 'direction'"):
+    with pytest.raises(ValueError, match="unknown direction"):
         lattice.get_directed_pairs(directions=['+z'])

@@ -398,7 +398,7 @@ class TestFromPyscf:
 
         C = mf.mo_coeff
         expected_hcore = C.conj().T @ mf.get_hcore() @ C
-        assert np.allclose(hamiltonian.hcore, expected_hcore)
+        assert np.allclose(hamiltonian.hcore[0, 0, :, 0, :], expected_hcore)
         assert np.isclose(hamiltonian.enuc, neon_atom.energy_nuc())
         assert hamiltonian.nmo == C.shape[-1]
 
