@@ -56,17 +56,18 @@ class TestTheHeader:
     def test_writing_an_unknown_format_raises(self, tmp_path):
         with h5.File(tmp_path / 'ham.h5', 'w') as fh5:
             with pytest.raises(ValueError, match="not a valid HamiltonianFormat"):
-                write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'sideways', nmo=1)
+                write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'sideways')
 
     def test_the_header_round_trips(self, tmp_path):
         path = tmp_path / 'ham.h5'
         with h5.File(path, 'w') as fh5:
-            write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'dense', nmo=4,
-                                     enuc=1.5, nchol=7)
+            write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'dense', enuc=1.5)
 
         with h5.File(path, 'r') as fh5:
-            assert fh5['Hamiltonian'].attrs['type'] == 'dense'
-            assert read_hamiltonian_header(fh5['Hamiltonian']) == (0, 4, 7, 1.5)
+            group = fh5['Hamiltonian']
+            assert dict(group.attrs) == {'type': 'dense'}
+            assert list(group) == ['Energies']
+            assert read_hamiltonian_header(group) == 1.5
 
 
 @pytest.mark.parametrize(

@@ -57,7 +57,6 @@ void phmsd_read(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>
   std::string test_wfn = base_name.substr(0, base_name.find_last_of("."));
   auto file_data       = read_test_results_from_hdf<ComplexType>(hamil_file, test_wfn);
   auto [NMO,nup,ndown] = read_info_from_wfn(wfn_file, "PHMSD");
-  utils::check(NMO == file_data.NMO, "Incompatible NMO.");
 
   WALKER_TYPES type    = afqmc::getWalkerType(wfn_file, "PHMSD");
 
@@ -144,7 +143,6 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   test_wfn = test_wfn.substr(test_wfn.find('_') + 1);
   auto file_data       = read_test_results_from_hdf<ComplexType>(hamil_file, test_wfn);
   auto [NMO,nup,ndown] = read_info_from_wfn(wfn_file, "PHMSD");
-  utils::check(NMO == file_data.NMO, "Incompatible NMO.");
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "PHMSD");
   int nspin         = (type == COLLINEAR) ? 2 : 1;
@@ -217,8 +215,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     h5::group wg = g_.create_group("Wavefunction");
     h5::group ng = wg.create_group("NOMSD");
  
-    nda::vector<int> dims = {NMO,nup,ndown,int(type),int(coeffs.size())};
-    nda::h5_write(ng,"dims",dims);
+    h5::h5_write_attribute(ng,"spin_type",walkerTypeToString(type));
     nda::h5_write(ng,"ci_coeffs",coeffs);
 
     {

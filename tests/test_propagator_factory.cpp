@@ -66,9 +66,7 @@ void propagator_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::
 {
   using nda::range;
 
-  int NMO = read_nmo_from_hdf(hamil_file);
-  auto[wfn_NMO,nup, ndown] = read_info_from_wfn(wfn_file,"any");
-  utils::check(NMO == wfn_NMO, "Error: NMO != wfn_NMO.");
+  auto[NMO, nup, ndown] = read_info_from_wfn(wfn_file,"any");
   WALKER_TYPES type         = getWalkerType(wfn_file);
   int nspin                 = type == COLLINEAR ? 2 : 1;
   int npol                  = type == NONCOLLINEAR ? 2 : 1;

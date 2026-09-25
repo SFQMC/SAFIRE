@@ -54,7 +54,6 @@ format is given as follows:
       FILE_CONTENTS {
           group      /
           group      /Hamiltonian
-          dataset    /Hamiltonian/dims
           dataset    /Hamiltonian/Energies
           dataset    /Hamiltonian/hcore
           group      /Hamiltonian/DenseFactorized
@@ -62,9 +61,11 @@ format is given as follows:
       }
   }
 
-**Required datasets:**
+The number of basis functions :math:`M` and of Cholesky vectors :math:`N_\mathrm{chol}` are read
+from the shapes of ``hcore`` and ``L``. The Hamiltonian records no electron count; it is taken
+from the trial wavefunction.
 
--  ``/Hamiltonian/dims`` Descriptor array of length 8 containing :math:`[0,0,0,M,N_\alpha,N_\beta,0,N_\mathrm{chol}]`. :math:`M` is the number of basis functions, :math:`N_\alpha` and :math:`N_\beta` are the numbers of spin-up and spin-down electrons, and :math:`N_\mathrm{chol}` is the number of Cholesky vectors.
+**Required datasets:**
 
 -  ``/Hamiltonian/Energies`` Array containing :math:`[E_{II}, E_{\mathrm{core}}]`. :math:`E_{II}` should contain ion-ion repulsion energy and any additional constant terms which have to be added to the total energy. :math:`E_{\mathrm{core}}` is deprecated and not used.
 
@@ -160,7 +161,6 @@ fewer symmetry inequivalent momentum transfer vectors than there are
           dataset    /Hamiltonian/H1_kp7
           dataset    /Hamiltonian/ComplexIntegrals
           dataset    /Hamiltonian/KPoints
-          dataset    /Hamiltonian/dims
           dataset    /Hamiltonian/Energies
       }
   }
@@ -187,9 +187,6 @@ fewer symmetry inequivalent momentum transfer vectors than there are
    ``QKtok2[i,j]`` yields the :math:`k` point index satisfying
    :math:`\mathbf{k}=\mathbf{Q}_i-\mathbf{k}_j+\mathbf{G}`.
 
--  ``/Hamiltonian/dims``: Descriptor array of length 8 containing
-   :math:`[0,0,0,M,N_\alpha,N_\beta,0,0]`.
-
 -  ``/Hamiltonian/H1_kp[n]`` Contains the :math:`[m_{\mathbf{k}_n},m_{\mathbf{k}_n}]`
    dimensional one-body Hamiltonian matrix elements
    :math:`h_{(\mathbf{k}_{n}p)(\mathbf{k}_{n}q)}`.
@@ -200,11 +197,9 @@ fewer symmetry inequivalent momentum transfer vectors than there are
 -  ``/Hamiltonian/KPoints`` :math:`[N_k,3]` Dimensional array containing :math:`k`-points used to
    sample Brillouin zone.
 
--  ``/Hamiltonian/dims`` Descriptor array of length 8 containing
-   :math:`[0,0,N_k,M,N_\alpha,N_\beta,0,N_\mathrm{nchol}]`. Note that
-   :math:`M` is the total number of basis functions, i.e.
-   :math:`M=\sum_\mathbf{k} m_\mathbf{k}`, and likewise for the number
-   of electrons.
+The number of :math:`k`-points :math:`N_k` is the length of ``NMOPerKP``, and the total number
+of basis functions is :math:`M=\sum_\mathbf{k} m_\mathbf{k}`. The electron count is taken from
+the trial wavefunction.
 
 -  ``/Hamiltonian/Energies`` Array containing :math:`[E_{II}, E_{\mathrm{core}}]`.
    :math:`E_{II}` should contain ion-ion repulsion energy and any
@@ -302,8 +297,9 @@ Model Hamiltonians are saved in HDF5 using the following format.
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/model_type
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/spin_type
           dataset    /Hamiltonian/ModelHamiltonian/maximum_connectivity
+          dataset    /Hamiltonian/ModelHamiltonian/nbands
+          dataset    /Hamiltonian/ModelHamiltonian/nsites
           dataset    /Hamiltonian/ModelHamiltonian/number_of_components
-          dataset    /Hamiltonian/dims
           dataset    /Hamiltonian/spin_type
     }
   }
@@ -316,9 +312,10 @@ Model Hamiltonians are saved in HDF5 using the following format.
    and not used. In the context of lattice models, both :math:`E_{II}` and 
    :math:`E_{\mathrm{core}}` while generally be set to 0.0.
 
--  ``/Hamiltonian/dims``: Descriptor array of length 8 containing
-   :math:`[0,0,0,M,M,0,0,0]`. Note that
-   :math:`M` is the total number of basis functions, i.e. number of sites * number of bands
+-  ``/Hamiltonian/ModelHamiltonian/nsites`` and ``/Hamiltonian/ModelHamiltonian/nbands``: scalar
+   integers giving the number of lattice sites and of bands per site. The number of basis
+   functions is :math:`M = n_\mathrm{sites} n_\mathrm{bands}`. The electron count is taken from
+   the trial wavefunction.
 
 -  ``/Hamiltonian/spin_type``: Is a string containing the spin symmetry type of the Hamiltonian.
    possible values are "collinear", or "noncollinear".

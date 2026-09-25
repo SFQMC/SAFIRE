@@ -84,16 +84,13 @@ auto to_dense_shared(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 }
 
 /// The walker type the initial guess in `grp` was written for, checked against the walkers it
-/// is about to fill, together with the dimensions recorded next to it.
-std::pair<WALKER_TYPES, nda::array<int,1>> peek_guess_type(h5::group grp, WALKER_TYPES walker_type) {
-  nda::array<int,1> dims(5);
-  nda::h5_read(grp, "dims", dims);
-
-  WALKER_TYPES wtype(initWALKER_TYPES(dims[3]));
+/// is about to fill.
+WALKER_TYPES peek_guess_type(h5::group grp, WALKER_TYPES walker_type) {
+  WALKER_TYPES const wtype = read_spin_type(grp);
   utils::check(walkerTypeIsConvertible(wtype, walker_type),
                "Initial guess ({}) not convertible to walker_type {}",
                walkerTypeToString(wtype), walkerTypeToString(walker_type));
-  return {wtype, std::move(dims)};
+  return wtype;
 }
 
 /// Reads the initial walker Slater matrices, resized to the walkers that will hold them.
@@ -102,9 +99,20 @@ WalkerSetInitialGuess read_initial_guess(h5::group grp, WALKER_TYPES walker_type
   using nda::range;
   auto all = range::all;
 
-  auto const [wtype, dims] = peek_guess_type(grp, walker_type);
-  auto nel_in_guess = std::to_array({dims[1], dims[2]});
+  WALKER_TYPES const wtype = peek_guess_type(grp, walker_type);
   auto [nspin_in_guess, npol_in_guess] = walkerTypeToDims(wtype);
+
+  // a closed guess stands for both spins, a noncollinear one holds every electron in alpha
+  auto guess_width = [&](std::string const& name) {
+    return int(h5::array_interface::get_dataset_info(grp, name).lengths[1]);
+  };
+  std::array<int,2> nel_in_guess{};
+  nel_in_guess[0] = guess_width("Psi0_alpha");
+  if(wtype == COLLINEAR) {
+    nel_in_guess[1] = guess_width("Psi0_beta");
+  } else if(wtype == CLOSED) {
+    nel_in_guess[1] = nel_in_guess[0];
+  }
 
   // Read the trial's per-spin orbital matrices at their true (in-file) widths.
   std::array<std::string,2> dataset_names{{"Psi0_alpha", "Psi0_beta"}};
@@ -156,7 +164,7 @@ WalkerSetInitialGuess read_initial_guess(h5::group grp, WALKER_TYPES walker_type
 WalkerSetInitialGuess read_initial_guess_ft(h5::group grp,
                                             utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                                             WALKER_TYPES walker_type, int NMO) {
-  auto const [wtype, dims] = peek_guess_type(grp, walker_type);
+  WALKER_TYPES const wtype = peek_guess_type(grp, walker_type);
   auto [nspin, npol] = walkerTypeToDims(walker_type);
 
   return {.walker_type = walker_type,

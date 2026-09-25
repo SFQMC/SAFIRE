@@ -196,7 +196,9 @@ class TestHdf5:
         MolecularHamiltonian.from_integrals(hcore, chol=chol).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert list(fh5['Hamiltonian/dims'][...][4:6]) == [0, 0]
+            group = fh5['Hamiltonian']
+            assert 'dims' not in group
+            assert set(group.attrs) == {'type'}
 
     def test_real_integrals_are_written_real(self, random_hamiltonian, tmp_path):
         _, hcore, chol, _ = random_hamiltonian
@@ -301,7 +303,6 @@ class TestHdf5:
         path = tmp_path / 'ham.h5'
         with h5.File(path, 'w') as fh5:
             fh5.create_dataset('Hamiltonian/DenseFactorized/L', data=np.zeros((4, 2)))
-            fh5.create_dataset('Hamiltonian/dims', data=np.zeros(8, dtype=np.int32))
 
         with h5.File(path, 'a') as fh5:
             del fh5['Hamiltonian/DenseFactorized/L']

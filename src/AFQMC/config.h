@@ -53,23 +53,6 @@ enum WALKER_TYPES
   NONCOLLINEAR
 };
 
-inline WALKER_TYPES initWALKER_TYPES(int i)
-{
-  if (i == 0)
-    return UNDEFINED_WALKER_TYPE;
-  else if (i == 1)
-    return CLOSED;
-  else if (i == 2)
-    return COLLINEAR;
-  else if (i == 3)
-    return NONCOLLINEAR;
-  else if (i == 4)
-    utils::check(false, "This wavefunction was generated with the removed FULLYPOLARIZED "
-                        "walker type (dims[3]==4). Regenerate it as COLLINEAR (dims[3]==2) "
-                        "with ndown=0.");
-  return UNDEFINED_WALKER_TYPE;
-}
-
 inline auto walkerTypeToDims(WALKER_TYPES type) {
   int nspin = type == COLLINEAR ? 2 : 1;
   int npol = type == NONCOLLINEAR ? 2 : 1;

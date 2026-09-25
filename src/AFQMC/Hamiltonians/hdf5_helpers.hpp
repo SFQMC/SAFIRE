@@ -112,25 +112,6 @@ inline RealType read_energy_offset(h5::group& grp, std::string const& format,
   return E0;
 }
 
-inline std::tuple<int, int, int> read_info_from_wfn(std::string fileName, std::string type)
-{
-  h5::file file(fileName,'r');
-  h5::group grp(file);
-  h5::group wgrp = grp.open_group("Wavefunction");
-  if(type == "any") {
-    if( wgrp.has_key("NOMSD") )
-      type = "NOMSD";
-    else if( wgrp.has_key("PHMSD") )
-      type = "PHMSD";
-    else
-      utils::check(false,"Missing NOMSD/PHMSD datasets in Wavefunction.");
-  }
-  h5::group mgrp = wgrp.open_group(type);
-  std::vector<int> Idata(5);
-  h5::h5_read(mgrp,"dims",Idata);
-  return std::make_tuple(Idata[0], Idata[1], Idata[2]);
-}
-
 } // namespace afqmc
 
 } // namespace sfqmc

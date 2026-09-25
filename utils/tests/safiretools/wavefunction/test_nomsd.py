@@ -125,8 +125,7 @@ class TestRoundTrip:
 
         with h5.File(path, 'r') as fh5:
             group = fh5['Wavefunction/NOMSD']
-            assert list(group['dims'][...]) == [6, 3, 0,
-                                                int(SpinSymm.COLLINEAR), 1]
+            assert group.attrs['spin_type'] == 'collinear'
             assert group['Psi0_beta'].shape == (6, 0)
             assert list(group['PsiT_1/dims'][...]) == [0, 6, 0]
 

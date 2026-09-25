@@ -205,7 +205,6 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
              std::string hamil_file, std::string wfn_file)
 {
   auto [NMO, nup, ndown] = read_info_from_wfn(wfn_file, "any");
-  utils::check(NMO == read_nmo_from_hdf(hamil_file), "NMO differ between hamil and wfn files.");
 
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
@@ -295,7 +294,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
   std::string const hamil_file = inputs + "afqmc_H_rhf_collinear.h5";
   std::string const wfn_file   = inputs + "afqmc_uhf_nomsd.h5";
 
-  int const NMO = read_nmo_from_hdf(hamil_file);
+  int const NMO = std::get<0>(read_info_from_wfn(wfn_file, "any"));
 
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);

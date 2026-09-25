@@ -32,34 +32,42 @@ def group(tmp_path):
 
 class TestHeader:
 
-    def test_dims_records_the_shape_the_executable_reads(self, group):
-        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, nmo=6, nelec=(3, 2),
+    def test_only_the_spin_type_is_recorded(self, group):
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR,
                         coeffs=np.array([1.0 + 0j, 0.5 + 0j]),
                         psi0=(np.eye(6, 3) + 0j, np.eye(6, 2) + 0j))
 
-        dims = group['dims'][...]
-        assert list(dims) == [6, 3, 2, int(SpinSymm.COLLINEAR), 2]
-        assert dims.dtype == np.int32
+        assert dict(group.attrs) == {'spin_type': 'collinear'}
+        assert 'dims' not in group
 
     def test_it_round_trips(self, group, rng):
         coeffs = rng.normal(size=3) + 1j * rng.normal(size=3)
         psi0 = (rng.normal(size=(6, 3)) + 1j * rng.normal(size=(6, 3)),
                 rng.normal(size=(6, 2)) + 1j * rng.normal(size=(6, 2)))
 
-        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, nmo=6, nelec=(3, 2),
-                        coeffs=coeffs, psi0=psi0)
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, coeffs=coeffs, psi0=psi0)
         header = io.read_header(group)
 
         assert header['nmo'] == 6
-        assert header['nelec'] == (3, 2)
         assert header['spin_symm'] is SpinSymm.COLLINEAR
         assert header['ndets'] == 3
         assert np.allclose(header['coeffs'], coeffs)
         assert np.allclose(header['psi0'][0], psi0[0])
         assert np.allclose(header['psi0'][1], psi0[1])
 
+    def test_a_coqui_file_without_spin_type_falls_back_to_dims(self, group):
+        io.write_header(group, spin_symm=SpinSymm.CLOSED,
+                        coeffs=np.array([1.0 + 0j]),
+                        psi0=(np.eye(8, 4) + 0j,))
+        del group.attrs['spin_type']
+        group['dims'] = np.array([8, 4, 4, int(SpinSymm.CLOSED), 1], dtype=np.int32)
+
+        header = io.read_header(group)
+        assert header['spin_symm'] is SpinSymm.CLOSED
+        assert header['nmo'] == 8
+
     def test_a_single_channel_symmetry_writes_no_beta_block(self, group):
-        io.write_header(group, spin_symm=SpinSymm.CLOSED, nmo=6, nelec=(3, 3),
+        io.write_header(group, spin_symm=SpinSymm.CLOSED,
                         coeffs=np.array([1.0 + 0j]),
                         psi0=(np.eye(6, 3) + 0j,))
 
@@ -69,7 +77,7 @@ class TestHeader:
     def test_an_empty_beta_channel_still_gets_its_block(self, group):
         # a wavefunction with no beta electrons is collinear with ndown == 0,
         #   and the executable's reader opens Psi0_beta for any collinear file
-        io.write_header(group, spin_symm=SpinSymm.COLLINEAR, nmo=6, nelec=(3, 0),
+        io.write_header(group, spin_symm=SpinSymm.COLLINEAR,
                         coeffs=np.array([1.0 + 0j]),
                         psi0=(np.eye(6, 3) + 0j,
                               np.zeros((6, 0), dtype=complex)))
@@ -253,7 +261,7 @@ class TestConditionNumberOnDisk:
 
         with pytest.warns(UserWarning,
                           match=r"ill-conditioned overlap matrix: PsiT_0"):
-            io.write_phmsd(group, occa, occb, nmo=6, orbitals=[reference])
+            io.write_phmsd(group, occa, occb, orbitals=[reference])
 
 
 class TestPhmsdPayload:
@@ -262,20 +270,20 @@ class TestPhmsdPayload:
     def occupations(self):
         return (np.array([[0, 1, 2], [0, 1, 3]]), np.array([[0, 1], [0, 2]]))
 
-    def test_beta_indices_are_offset_by_nmo_on_disk(self, group, occupations):
+    def test_each_channel_is_stored_unshifted_at_its_own_width(self, group,
+                                                               occupations):
         occa, occb = occupations
-        io.write_phmsd(group, occa, occb, nmo=6)
+        io.write_phmsd(group, occa, occb)
 
-        occs = group['occs'][...].reshape(2, 5)
-        assert np.array_equal(occs[:, :3], occa)
-        assert np.array_equal(occs[:, 3:], occb + 6)
-        assert group['occs'].dtype == np.int32
+        assert np.array_equal(group['occa'][...], occa)
+        assert np.array_equal(group['occb'][...], occb)
+        assert group['occa'].dtype == group['occb'].dtype == np.int32
 
     def test_it_round_trips(self, group, occupations):
         occa, occb = occupations
-        io.write_phmsd(group, occa, occb, nmo=6)
+        io.write_phmsd(group, occa, occb)
 
-        read_a, read_b, orbitals = io.read_phmsd(group, 2, (3, 2), 6)
+        read_a, read_b, orbitals = io.read_phmsd(group)
         assert np.array_equal(read_a, occa)
         assert np.array_equal(read_b, occb)
         assert orbitals is None
@@ -288,7 +296,7 @@ class TestPhmsdPayload:
         references = [rng.normal(size=(6, 6)) + 0j
                       for _ in range(nreferences)] or None
 
-        io.write_phmsd(group, occa, occb, nmo=6, orbitals=references)
+        io.write_phmsd(group, occa, occb, orbitals=references)
 
         assert int(group['type'][()]) == nreferences
         assert sorted(name for name in group if name.startswith('PsiT')) \
@@ -297,9 +305,9 @@ class TestPhmsdPayload:
     def test_references_round_trip(self, group, occupations, rng):
         occa, occb = occupations
         references = [rng.normal(size=(6, 6)) + 0j, rng.normal(size=(6, 6)) + 0j]
-        io.write_phmsd(group, occa, occb, nmo=6, orbitals=references)
+        io.write_phmsd(group, occa, occb, orbitals=references)
 
-        _, _, read_back = io.read_phmsd(group, 2, (3, 2), 6)
+        _, _, read_back = io.read_phmsd(group)
         assert len(read_back) == 2
         assert np.allclose(read_back[0], references[0])
         assert np.allclose(read_back[1], references[1])

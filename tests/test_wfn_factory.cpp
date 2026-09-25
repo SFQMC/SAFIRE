@@ -74,7 +74,6 @@ void wfn_factory_sdet(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communic
 
   auto reference_data = read_test_results_from_hdf<ComplexType>(hamil_file, test_wfn);
   auto [NMO,nup,ndown] = read_info_from_wfn(wfn_file, "any");
-  utils::check(NMO == reference_data.NMO, "Incompatible NMO.");
 
   // 'type' is the *target* walker type. The wavefunction file has its own native type,
   // which the factory may convert to any compatible target.

@@ -53,10 +53,15 @@ class TestDerivedShape:
         ('collinear', (3, 0), (3, 0)),
         ('noncollinear', (3, 2), (5, 0)),
     ])
-    def test_noncollinear_merges_the_spin_channels_on_disk(self, make_nomsd,
-                                                           spin_symm, nelec,
-                                                           expected):
-        assert make_nomsd(spin_symm, nelec=nelec).nelec_on_disk == expected
+    def test_the_electron_count_is_recovered_from_the_arrays(self, make_nomsd,
+                                                             spin_symm, nelec,
+                                                             expected, tmp_path):
+        path = tmp_path / 'wfn.h5'
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            make_nomsd(spin_symm, nelec=nelec).to_hdf5(path)
+
+        assert Wavefunction.from_hdf5(path).nelec == expected
 
     def test_a_closed_shell_wavefunction_needs_equal_populations(self):
         # a NOMSD layout cannot even express this; the occupation numbers can
@@ -304,7 +309,7 @@ class TestFileSemantics:
 
         with h5.File(path, 'r') as fh5:
             assert 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5
-            assert 'Wavefunction/NOMSD/dims' in fh5
+            assert 'Wavefunction/NOMSD/ci_coeffs' in fh5
 
     def test_a_hamiltonian_written_second_survives(self, hamiltonian,
                                                   make_nomsd, tmp_path):
@@ -314,7 +319,7 @@ class TestFileSemantics:
 
         with h5.File(path, 'r') as fh5:
             assert 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5
-            assert 'Wavefunction/NOMSD/dims' in fh5
+            assert 'Wavefunction/NOMSD/ci_coeffs' in fh5
 
     def test_rewriting_replaces_the_wavefunction(self, make_nomsd, tmp_path):
         path = tmp_path / 'replace.h5'
@@ -415,7 +420,6 @@ class TestSpinSymmCoercion:
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec_per_spin == (3, 0)
-        assert wavefunction.nelec_on_disk == (3, 0)
         assert wavefunction.psi0[1].shape == (6, 0)
 
 
