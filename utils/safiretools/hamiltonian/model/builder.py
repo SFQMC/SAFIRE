@@ -60,44 +60,6 @@ def is_hermitian(M, tol=1e-10) -> bool:
     return np.allclose(M, M.conj().T, atol=tol)
 
 
-def force_hermitian(M, method='upper_triangular'):
-    r"""
-    Force a matrix to be Hermitian.
-
-    Parameters
-    ----------
-    M : numpy.ndarray or scipy.sparse matrix
-        Matrix to symmetrize.
-    method : {'upper_triangular', 'average'}, optional
-        How to symmetrize. Default ``'upper_triangular'``.
-
-    Returns
-    -------
-    numpy.ndarray or scipy.sparse matrix
-        A Hermitian matrix.
-
-    Notes
-    -----
-    ``'upper_triangular'`` discards the lower triangle and mirrors the upper
-    one, keeping the diagonal:
-    :math:`M \rightarrow \mathrm{triu}(M, 0) + \mathrm{triu}(M, 1)^\dagger`.
-
-    ``'average'`` takes :math:`\frac{1}{2}(M + M^\dagger)`.
-    """
-    if method == 'upper_triangular':
-        logger.info("forcing Hermiticity from the upper triangle; "
-                    "the lower triangle is ignored")
-        if sps.issparse(M):
-            return sps.triu(M, 0) + sps.triu(M, 1).conj().T
-        return np.triu(M, 0) + np.triu(M, 1).conj().T
-
-    if method == 'average':
-        logger.info("forcing Hermiticity by averaging M and its conjugate transpose")
-        return 0.5 * (M + M.conj().T)
-
-    raise ValueError(f"Unknown force_hermitian method: {method}")
-
-
 def onsite_band_matrix(value, nbands: int):
     r"""
     Build the ``(nbands, nbands)`` band matrix carrying a single *onsite*
@@ -121,9 +83,6 @@ def onsite_band_matrix(value, nbands: int):
 
     Notes
     -----
-    **This convention is not `force_hermitian`, and the two must not be
-    merged.**
-
     The AFQMC executable has no notion of sites versus bands: it reads a
     *triangle of the whole interaction matrix*, indexed by the combined
     ``mu = site * nbands + band``. Per ``ModelHamOpsGenerator``, the
@@ -550,7 +509,7 @@ class HamiltonianBuilder:
         nbands = self._hamiltonian.nbands
         return input.shape == (nbands, nbands)
 
-    def _band_matrix(self, amplitude, name: str, force_herm: bool = False):
+    def _band_matrix(self, amplitude, name: str):
         """
         Interpret a one-body amplitude as an ``(nbands, nbands)`` band matrix.
 
@@ -563,25 +522,17 @@ class HamiltonianBuilder:
             Scalar or band-matrix amplitude.
         name : str
             Term name, used in error messages.
-        force_herm : bool, optional
-            Symmetrize a non-Hermitian band matrix instead of raising.
 
         Raises
         ------
         ValueError
             If `amplitude` is neither a scalar nor a band matrix, or if it is a
-            non-Hermitian band matrix and `force_herm` is False.
+            non-Hermitian band matrix.
         """
         if self._is_valid_band_matrix(amplitude):
-            if is_hermitian(amplitude):
-                return amplitude
-            if not force_herm:
-                raise ValueError(
-                    f"{name} is not hermitian, and force_herm is False. "
-                    "Rerun with force_herm=True to continue."
-                )
-            logger.warning("%s is not hermitian; forcing Hermiticity", name)
-            return force_hermitian(amplitude, method='upper_triangular')
+            if not is_hermitian(amplitude):
+                raise ValueError(f"{name} is not hermitian: {amplitude}")
+            return amplitude
 
         if amplitude.shape == ():
             return amplitude * np.eye(self._hamiltonian.nbands)
@@ -627,7 +578,7 @@ class HamiltonianBuilder:
     @iterate_nth_order(1)
     @skip_empty_params
     def nth_neighbor_hopping(self, t=1.0, nth_neighbor: int = 1, spin_symm=None,
-                             opposite_twists=False, force_herm=False):
+                             opposite_twists=False):
         r"""adds an nth-order neighbor hopping term to the Hamiltonian
 
         .. math:: \sum_{\langle ij\rangle^n} (-t) \hat{c}^\dagger_i \hat{c}_j
@@ -651,14 +602,12 @@ class HamiltonianBuilder:
             if True, the hopping matrix is constructed using opposite twists, for the up and down
             spins (i.e. twist_down = -twist_up ). If False, the hopping matrix is constructed
             using the same twist for both spins.
-        force_herm : bool, optional, default: False
-            symmetrize a non-Hermitian band-hopping matrix rather than raising. See
-            `force_hermitian`.
 
         Raises
         ------
         ValueError
-            when the hopping matrix can't be constructed for the combination of `t` and `nth_neighbor`
+            when the hopping matrix can't be constructed for the combination of `t` and `nth_neighbor`,
+            or when a band-dependent `t` is not Hermitian
 
         Examples
         --------
@@ -688,8 +637,7 @@ class HamiltonianBuilder:
             shape=(self._lattice.N_sites, self._lattice.N_sites)
         )
 
-        tband = self._band_matrix(t, f"{nth_neighbor}th-neighbor band hopping",
-                                  force_herm=force_herm)
+        tband = self._band_matrix(t, f"{nth_neighbor}th-neighbor band hopping")
 
         Hhop = sps.kron(A=neighbor_graph, B=tband, format='csr')
 
@@ -775,7 +723,7 @@ class HamiltonianBuilder:
         ))
 
     @skip_empty_params
-    def onebody_onsite(self, epsilon, spin_symm=None, force_herm=False):
+    def onebody_onsite(self, epsilon, spin_symm=None):
         r"""
         Adds an onsite one-body term to the Hamiltonian (for example, a chemical potential,
             band energies, interband hopping, etc.)
@@ -795,15 +743,17 @@ class HamiltonianBuilder:
             onsite energy. In all cases, epsilon is applied uniformly to all sites.
         spin_symm : SpinSymm, optional
             an override for the default spin symmetry of the term.
-        force_herm : bool, optional, default: False
-            symmetrize a non-Hermitian `epsilon` rather than raising. See `force_hermitian`.
+
+        Raises
+        ------
+        ValueError
+            when a band-dependent `epsilon` is not Hermitian
         """
         if spin_symm is None:
             spin_symm = self._hamiltonian.spin_symm
 
         epsilon = np.array(epsilon)
-        epsilon_band = self._band_matrix(epsilon, "onsite one-body epsilon",
-                                         force_herm=force_herm)
+        epsilon_band = self._band_matrix(epsilon, "onsite one-body epsilon")
 
         epsilon_up = sps.kron(
             A=sps.eye(self._lattice.N_sites),
