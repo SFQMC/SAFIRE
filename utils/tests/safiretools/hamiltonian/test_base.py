@@ -44,10 +44,6 @@ def _make(tmp_path, name, datasets):
     ],
 )
 def test_format_detection(tmp_path, datasets, expected):
-    """
-    The layout fallback, which is for files written before
-    ``Hamiltonian/type`` existed. See `TestTheRecordedFormat`.
-    """
     assert hamiltonian_format(_make(tmp_path, 'ham.h5', datasets)) == expected
 
 
@@ -56,54 +52,11 @@ def test_unknown_format_raises(tmp_path):
         hamiltonian_format(_make(tmp_path, 'ham.h5', {'RandomName': 0}))
 
 
-class TestTheRecordedFormat:
-    """
-    A writer records its format in ``Hamiltonian/type``, and
-    `hamiltonian_format` reads that in preference to guessing from the layout.
-    """
-
-    def test_the_tag_is_read_in_preference_to_the_layout(self, tmp_path):
-        """
-        A tag that contradicts the layout still wins: it is what the writer
-        said, and the layout heuristic is only a fallback for files that predate
-        it. Nothing writes such a file — this pins which of the two is trusted.
-        """
-        path = _make(tmp_path, 'ham.h5', {
-            'Hamiltonian/DenseFactorized/L': np.zeros((4, 2)),
-            'Hamiltonian/type': 'ModelHamiltonian',
-        })
-
-        assert hamiltonian_format(path) == 'model'
-
-    @pytest.mark.parametrize('tag,expected', [
-        ('ModelHamiltonian', 'model'),
-        ('RealDenseFactorized', 'dense'),
-        ('KPFactorized', 'kpoint'),
-        ('THC', 'thc'),
-    ])
-    def test_every_tag_maps_to_a_format(self, tmp_path, tag, expected):
-        """The stored value is the executable's ``HamiltonianTypes`` name."""
-        path = _make(tmp_path, 'ham.h5', {'Hamiltonian/type': tag})
-
-        assert hamiltonian_format(path) == expected
-
-    def test_an_unrecognized_tag_raises(self, tmp_path):
-        path = _make(tmp_path, 'ham.h5', {'Hamiltonian/type': 'Sideways'})
-
-        with pytest.raises(ValueError, match="unknown Hamiltonian type 'Sideways'"):
-            hamiltonian_format(path)
-
+class TestTheHeader:
     def test_writing_an_unknown_format_raises(self, tmp_path):
         with h5.File(tmp_path / 'ham.h5', 'w') as fh5:
             with pytest.raises(ValueError, match="not a valid HamiltonianFormat"):
                 write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'sideways', nmo=1)
-
-    def test_writing_an_unrecordable_format_raises(self, tmp_path):
-        """A CoQuí file has no ``Hamiltonian`` group to record a type in."""
-        with h5.File(tmp_path / 'ham.h5', 'w') as fh5:
-            with pytest.raises(ValueError, match="is never recorded"):
-                write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'kpoint_coqui',
-                                         nmo=1)
 
     def test_the_header_round_trips(self, tmp_path):
         path = tmp_path / 'ham.h5'
@@ -111,8 +64,8 @@ class TestTheRecordedFormat:
             write_hamiltonian_header(fh5.create_group('Hamiltonian'), 'dense', nmo=4,
                                      enuc=1.5, nchol=7)
 
-        assert hamiltonian_format(path) == 'dense'
         with h5.File(path, 'r') as fh5:
+            assert fh5['Hamiltonian'].attrs['type'] == 'dense'
             assert read_hamiltonian_header(fh5['Hamiltonian']) == (0, 4, 7, 1.5)
 
 
@@ -208,7 +161,7 @@ class TestWritingPreservesTheRestOfTheFile:
         self._hamiltonian(U=4.0).to_hdf5(path)
         assert hamiltonian_format(path) == 'model'
         with h5.File(path, 'r') as fh5:
-            assert fh5['Hamiltonian/type'].asstr()[()] == 'ModelHamiltonian'
+            assert fh5['Hamiltonian'].attrs['type'] == 'model'
 
     def test_rewriting_replaces_the_hamiltonian_without_leaving_stale_terms(self, tmp_path):
         path = tmp_path / 'afqmc.h5'
