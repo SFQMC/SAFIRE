@@ -68,16 +68,15 @@ format is given as follows:
 
 -  ``/Hamiltonian/Energies`` Array containing :math:`[E_{II}, E_{\mathrm{core}}]`. :math:`E_{II}` should contain ion-ion repulsion energy and any additional constant terms which have to be added to the total energy. :math:`E_{\mathrm{core}}` is deprecated and not used.
 
--  ``/Hamiltonian/hcore`` One-body Hamiltonian matrix elements. For **real integrals**, dimensions are :math:`[M_{spin}, M]` where :math:`M_{spin}` depends on the spin symmetry: :math:`M` for closed-shell, :math:`2M` for collinear, or :math:`2M` for noncollinear systems. For **complex integrals**, an additional dimension of size 2 is added to store real and imaginary parts separately.
+-  ``/Hamiltonian/hcore`` One-body Hamiltonian matrix elements :math:`h^{s}_{\sigma p,\tau r}`, with dimensions :math:`[N_s, N_p, M, N_p, M]`. :math:`N_s = 2` for collinear systems (spin up first) and 1 otherwise, and :math:`N_p = 2` for noncollinear systems and 1 otherwise. For **complex integrals**, an additional dimension of size 2 is added to store real and imaginary parts separately.
 
--  ``/Hamiltonian/DenseFactorized/L`` The Cholesky decomposition tensor :math:`L_{pr,n}`. Dimensions are :math:`[M \times M, N_\mathrm{chol}]` where the first dimension represents the flattened orbital pair indices :math:`(p,r)` and the second dimension represents the Cholesky vector index :math:`n`. Only real-valued Cholesky vectors are supported for the Dense Cholesky format.
+-  ``/Hamiltonian/DenseFactorized/L`` The Cholesky decomposition tensor :math:`L^{s,n}_{\sigma p,\tau r}`, with dimensions :math:`[N_s, N_p, M, N_p, M, N_\mathrm{chol}]`. :math:`N_s` is either 1, for vectors shared by every spin sector, or that of ``hcore``, for one set per spin sector. Only :math:`N_p = 1` is supported, including for noncollinear systems, whose Cholesky vectors are spin independent.
 
 **Storage conventions:**
 
 - The Dense Cholesky format only supports real-valued Cholesky vectors.
 - Complex one-body Hamiltonians should be stored with an additional dimension of size 2, where ``array[..., 0]`` contains real parts and ``array[..., 1]`` contains imaginary parts.
-- The Cholesky tensor :math:`L` is stored in column-major order with orbital pairs :math:`(p,r)` flattened into a single index.
-- For collinear systems, the one-body Hamiltonian should have the spin-up block in the upper half and spin-down block in the lower half.
+- All arrays are stored in row-major order, the last index running fastest.
 
 .. seealso::
 

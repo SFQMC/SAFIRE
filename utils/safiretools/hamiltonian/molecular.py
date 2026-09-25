@@ -14,8 +14,8 @@ r"""
 .. math:: \hat{H} = E_0 + \sum_{ij} h_{ij}\, c^\dagger_i c_j
           + \frac{1}{2}\sum_{\gamma} \Big(\sum_{ij} L^\gamma_{ij} c^\dagger_i c_j\Big)^2
 
-stored densely as ``hcore`` plus the Cholesky matrix ``chol`` with elements
-:math:`L_{(ij),\gamma}`, and written in the dense format the AFQMC executable's
+stored densely as ``hcore`` plus the Cholesky vectors ``chol``,
+:math:`L^\gamma_{ij}`, and written in the dense format the AFQMC executable's
 ``RealDenseHamiltonian`` reads.
 
 The Cholesky decomposition itself is generated either from a PySCF SCF object
@@ -56,8 +56,10 @@ class MolecularHamiltonian(Hamiltonian):
         ``(nspin, npol*nmo, npol*nmo)`` is accepted too and reshaped into that —
         see `spin_blocked_hcore`.
     chol : numpy.ndarray
-        Cholesky matrix :math:`L_{(ij),\gamma}`, shape ``(npol*nmo*npol*nmo,
-        nchol)`` — note the *pair* index comes first.
+        Cholesky vectors :math:`L^\gamma_{ij}`, ``(nspin, npol, nmo, npol, nmo,
+        nchol)``. The flat Cholesky matrix ``(nmo*nmo, nchol)`` or
+        ``(npol*nmo*npol*nmo, nchol)`` — *pair* index first — is accepted too and
+        reshaped into that; see `spin_blocked_chol`.
     enuc : float, optional
         Constant (nuclear repulsion) energy. Default 0.0.
     spin_symm : SpinSymm or str or int, optional
@@ -72,18 +74,9 @@ class MolecularHamiltonian(Hamiltonian):
         super().__init__(spin_symm=spin_symm)
 
         self.hcore = spin_blocked_hcore(hcore, self.spin_symm)
-        self.chol = np.asarray(chol)
+        self.chol = spin_blocked_chol(chol, self.spin_symm, self.nmo)
         self.enuc = float(np.real(enuc))
         self.ortho = ortho
-
-        # the Cholesky matrix may be stored in the spatial-orbital basis even when
-        #   hcore is in the spin-orbital one
-        valid_rows = {self.nmo**2, (self.npol * self.nmo)**2}
-        if self.chol.shape[0] not in valid_rows:
-            raise ValueError(
-                f"Cholesky matrix has {self.chol.shape[0]} rows; for nmo={self.nmo} "
-                f"and npol={self.npol} expected one of {sorted(valid_rows)}"
-            )
 
     @property
     def nspin(self) -> int:
@@ -422,10 +415,11 @@ class MolecularHamiltonian(Hamiltonian):
 
         nbasis = self.npol * self.nmo
         hcore = self.hcore.reshape(nbasis, nbasis)
+        chol = self.chol.reshape(-1, self.nchol)
 
-        if self.chol.shape[0] != nbasis**2:
+        if chol.shape[0] != nbasis**2:
             raise ValueError(
-                f"the Cholesky matrix spans {self.chol.shape[0]} orbital pairs but "
+                f"the Cholesky matrix spans {chol.shape[0]} orbital pairs but "
                 f"hcore spans {nbasis**2}; FCIDUMP holds one basis, so both have "
                 "to be in the same one"
             )
@@ -437,7 +431,7 @@ class MolecularHamiltonian(Hamiltonian):
                 "spin-orbital one"
             )
 
-        write_fcidump(path, hcore, self.chol, self.enuc, nbasis, nelec,
+        write_fcidump(path, hcore, chol, self.enuc, nbasis, nelec,
                       tol=tol, ctol=ctol, sym=sym, cplx=cplx, paren=paren,
                       use_spinor=use_spinor)
 
@@ -461,6 +455,11 @@ class MolecularHamiltonian(Hamiltonian):
             raise ValueError(
                 f"Hamiltonian/hcore in {path} has shape {hcore.shape}, expected "
                 "(nspin, npol, nmo, npol, nmo)"
+            )
+        if chol.ndim != 6:
+            raise ValueError(
+                f"Hamiltonian/DenseFactorized/L in {path} has shape {chol.shape}, "
+                "expected (nspin, npol, nmo, npol, nmo, nchol)"
             )
 
         nspin, npol = hcore.shape[0], hcore.shape[1]
@@ -528,6 +527,62 @@ def spin_blocked_hcore(hcore, spin_symm: SpinSymm):
     raise ValueError(
         f"hcore has shape {given}, expected (nspin, npol, nmo, npol, nmo) or "
         "one of the shorter layouts it is built from"
+    )
+
+
+def spin_blocked_chol(chol, spin_symm: SpinSymm, nmo: int):
+    """
+    `chol` as the ``(nspin, npol, nmo, npol, nmo, nchol)`` array the dense
+    format stores.
+
+    ``nspin`` is 1 for vectors shared by every spin sector and that of the
+    Hamiltonian for one set per sector; ``npol`` is 1 for vectors in the
+    spatial-orbital basis, which a noncollinear Hamiltonian may use too, and 2
+    for spinor ones.
+
+    The flat Cholesky matrix ``(nmo*nmo, nchol)`` or
+    ``(npol*nmo*npol*nmo, nchol)`` is accepted and reshaped into a shared set of
+    spatial or spinor vectors. An array that is already blocked is checked and
+    passed through.
+
+    Raises
+    ------
+    ValueError
+        If `chol` has a rank other than 2 or 6, or if its extents do not match
+        `spin_symm` and `nmo`.
+    """
+    chol = np.asarray(chol)
+    given = chol.shape
+
+    if chol.ndim == 2:
+        nrows = chol.shape[0]
+        if nrows == nmo**2:
+            npol = 1
+        elif spin_symm.npol == 2 and nrows == (2 * nmo)**2:
+            npol = 2
+        else:
+            valid_rows = sorted({nmo**2, (spin_symm.npol * nmo)**2})
+            raise ValueError(
+                f"Cholesky matrix has {nrows} rows; for nmo={nmo} and "
+                f"npol={spin_symm.npol} expected one of {valid_rows}"
+            )
+        return chol.reshape(1, npol, nmo, npol, nmo, chol.shape[1])
+
+    if chol.ndim == 6:
+        nspin, npol = chol.shape[:2]
+        if (nspin not in {1, spin_symm.nspin} or npol not in {1, spin_symm.npol}
+                or chol.shape[2:5] != (nmo, npol, nmo)):
+            raise ValueError(
+                f"chol has shape {given}, expected (nspin, npol, {nmo}, npol, "
+                f"{nmo}, nchol) with nspin in {sorted({1, spin_symm.nspin})} and "
+                f"npol in {sorted({1, spin_symm.npol})} for a {spin_symm.label} "
+                "Hamiltonian"
+            )
+        return chol
+
+    raise ValueError(
+        f"chol has shape {given}, expected (nspin, npol, nmo, npol, nmo, nchol) "
+        "or the flat (npairs, nchol) Cholesky matrix"
     )
 
 
