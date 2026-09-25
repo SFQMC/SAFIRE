@@ -49,9 +49,9 @@ decision.
 - `Hamiltonian` subclasses each implement the pair; `Wavefunction` implements it once, in the base.
 - `from_hdf5` dispatches on the file's own contents, via `hamiltonian_format` /
   `wavefunction_format`.
-- A Hamiltonian file records its own format in `Hamiltonian/type`; the layout heuristic is the
-  fallback for files written before that key existed.
-- `HamiltonianFormat` pairs each format's safiretools name with its on-disk tag, and is not public.
+- The Hamiltonian format is inferred from the layout. Writers also stamp the format name as the
+  `type` attribute of the `Hamiltonian` group, which nothing reads yet.
+- `HamiltonianFormat` enumerates the format names, and is not public.
 - `to_hdf5` replaces its own group in the target file, so a Hamiltonian and a wavefunction can
   share one file in either order.
 - A complex array goes to disk as an interleaved trailing length-2 axis, defined once in `hdf5.py`.
@@ -531,32 +531,19 @@ those. Subclasses implement `_read_hdf5(path, fmt)` rather than overriding `from
 stays in one place. Those format names are `HamiltonianFormat` members, which are strings too, so
 they read and compare as the bare names throughout.
 
-**A file says which format it is; the layout heuristic is the fallback.** Every writer records its
-format in `Hamiltonian/type` via `write_hamiltonian_header` (which also writes the `dims` and
-`Energies` every format shares), and `hamiltonian_format` reads that key
-in preference to guessing. Guessing is what it did for every file originally — `model` if
-`ModelHamiltonian/number_of_components` is there, `dense` if `DenseFactorized/L` is, and so on — and
-that path stays, because files written before the key existed are still perfectly good input. A tag
-that contradicts the layout wins: it is what the writer said. The value stored is the executable's
-own `HamiltonianTypes` spelling (`ModelHamiltonian`, `RealDenseFactorized`, `KPFactorized`, `THC`)
-rather than safiretools' shorter name, so that the C++ side can eventually read this key instead of
-running the same heuristic in `peekHamType`. `kpoint_coqui` has no tag — a CoQuí file has no
-`Hamiltonian` group to put one in — and neither do the hand-rolled writers in `afqmctools`/`cli`,
-which is exactly what the fallback is for. 
-It is desirable to update CoQuí to write a tag as well.
-The dataset is a variable-length string, the same as
-`spin_type`, so the C++ side reads it the way it already reads that.
+**The layout decides the format.** `hamiltonian_format` goes by which datasets are present —
+`model` if `ModelHamiltonian/number_of_components` is there, `dense` if `DenseFactorized/L` is, and
+so on — which is the only thing that works for every file: older ones, CoQuí files (no
+`Hamiltonian` group) and those from the hand-rolled writers in `afqmctools`/`cli`. The
+`write_hamiltonian_header` shared by the safiretools writers (which also writes the `dims` and
+`Energies` every format shares) stamps the format name as the `type` attribute of the
+`Hamiltonian` group, but nothing reads it yet.
 
-**The two names for a format live together in `HamiltonianFormat`.** Each format has a safiretools
-name and, usually, an on-disk tag, and `types.HamiltonianFormat` (beside `SpinSymm`) is the single
-place that pairs them: `MODEL = 'model', 'ModelHamiltonian'`, with `.tag` reading the second and
-`.from_tag()` going back the other way. Members subclass `str`, so a format still compares, hashes
-and formats as its safiretools name — `hamiltonian_format(path) == 'model'` holds, `_READERS` stays
-keyed on plain strings, and nothing that formats a format into a message had to change. That mixin
-needs one guard: Python 3.11 made a mixin `Enum`'s `str()` its *member* name, so the class sets
-`__str__ = str.__str__` to keep `f"{fmt}"` rendering `model` rather than `HamiltonianFormat.MODEL`.
-Keeping the pairing there leaves `hamiltonian/base.py` with no global for the tag, only the
-`_READERS` table that was already there.
+**`HamiltonianFormat` members are strings.** They subclass `str`, so a format compares, hashes and
+formats as its safiretools name — `hamiltonian_format(path) == 'model'` holds and `_READERS` stays
+keyed on plain strings. That mixin needs one guard: Python 3.11 made a mixin `Enum`'s `str()` its
+*member* name, so the class sets `__str__ = str.__str__` to keep `f"{fmt}"` rendering `model`
+rather than `HamiltonianFormat.MODEL`.
 
 **`HamiltonianFormat` is deliberately not re-exported.** Nothing in the public API takes or returns
 a format — `hamiltonian_format()` is not public either (see **Future changes**) — so the enum is an
@@ -961,15 +948,6 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   Phase 3b precisely because `to_hdf5` records it (see **Public API patterns**), so that bullet
   changes too.
 
-- **Read `Hamiltonian/type` on the C++ side instead of guessing from the layout.** `peekHamType`
-  ([hdf5_helpers.hpp](../../src/AFQMC/Hamiltonians/hdf5_helpers.hpp)) runs the same subgroup-name
-  heuristic safiretools now only falls back to, so the two implementations have to stay in step.
-  Writing the key is the half that had to come first: the executable cannot rely on it until enough
-  files carry it. The stored value is already the `HamiltonianTypes` spelling precisely so this step
-  is a lookup rather than a translation table, and `h5::h5_read(grp, "type", std::string&)` reads
-  the variable-length string as-is — the same call that already reads `spin_type`. It must keep the
-  layout fallback for untagged files, exactly as the Python side does, and the `format`
-  (`"std"`/`"coqui"`) axis is unaffected: a CoQuí file has no `Hamiltonian` group and so no tag.
 
 - ~~**`from_free_electron` should not overwrite a parameter dict's own `lattice.twist`.**~~ Resolved.
   `from_free_electron` now takes only a built `LatticeHamiltonian` and applies no twist at all: the

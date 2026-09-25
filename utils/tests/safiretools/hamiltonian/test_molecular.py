@@ -161,7 +161,7 @@ class TestHdf5:
         hamiltonian.to_hdf5(path)
         assert hamiltonian_format(path) == 'dense'
         with h5.File(path, 'r') as fh5:
-            assert fh5['Hamiltonian/type'].asstr()[()] == 'RealDenseFactorized'
+            assert fh5['Hamiltonian'].attrs['type'] == 'dense'
 
         restored = Hamiltonian.from_hdf5(path)
         assert isinstance(restored, MolecularHamiltonian)

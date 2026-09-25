@@ -30,25 +30,20 @@ from safiretools.types import HamiltonianFormat, SpinSymm
 
 def write_hamiltonian_header(group, fmt, nmo, enuc=0.0, nkpts=0, nchol=0) -> None:
     """
-    Write the datasets every Hamiltonian format starts with into the (empty)
-    ``Hamiltonian`` `group`: the ``type`` tag naming `fmt`, ``dims`` and
-    ``Energies``.
+    Write what every Hamiltonian format starts with into the (empty)
+    ``Hamiltonian`` `group`: a ``type`` attribute naming `fmt`, and the ``dims``
+    and ``Energies`` datasets.
 
     The ``dims`` slots not given here, the electron counts among them, stay
     zero: the AFQMC executable takes the electron count from the wavefunction.
-    The ``type`` tag is a variable-length string, as ``spin_type`` is, so the
-    C++ side reads it the way it already reads that.
+    Nothing reads ``type`` yet; `hamiltonian_format` goes by the layout.
 
     Raises
     ------
     ValueError
-        If `fmt` names no known format, or names one that is never recorded.
+        If `fmt` names no known format.
     """
-    fmt = HamiltonianFormat(fmt)
-    if not fmt.tag:
-        raise ValueError(f"the '{fmt}' format is never recorded in a file")
-
-    group.create_dataset('type', data=fmt.tag)
+    group.attrs['type'] = HamiltonianFormat(fmt).value
     group.create_dataset(
         'dims', data=np.array([0, 0, nkpts, nmo, 0, 0, 0, nchol], dtype=np.int32))
     group.create_dataset('Energies', data=np.array([enuc, 0.], dtype=np.float64))
@@ -80,42 +75,19 @@ def hamiltonian_format(path) -> str:
     Raises
     ------
     ValueError
-        If the file records a format safiretools does not know, or records none
-        and matches none of the known layouts.
-
-    Notes
-    -----
-    A file written by `write_hamiltonian_header` says outright which format it
-    holds. Files written before that key existed do not, so their format is
-    inferred from which datasets are present — see `_format_from_layout`.
+        If the file matches none of the known formats.
     """
     with h5.File(path, 'r') as fh5:
-        if 'Hamiltonian/type' not in fh5:
-            return _format_from_layout(fh5, path)
-
-        try:
-            return HamiltonianFormat.from_tag(fh5['Hamiltonian/type'].asstr()[()])
-        except ValueError as error:
-            raise ValueError(f"'{path}' records an {error}") from None
-
-
-def _format_from_layout(fh5, path) -> "HamiltonianFormat":
-    """
-    Infer the format of a file that records none from the datasets it holds.
-
-    What `hamiltonian_format` did for every file before writers began recording
-    ``Hamiltonian/type``, and still the only way to identify one written back then.
-    """
-    if 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5:
-        return HamiltonianFormat.MODEL
-    if 'Hamiltonian/DenseFactorized/L' in fh5:
-        return HamiltonianFormat.DENSE
-    if 'Hamiltonian/KPFactorized/L0' in fh5:
-        return HamiltonianFormat.KPOINT
-    if 'Hamiltonian/THC/Luv' in fh5:
-        return HamiltonianFormat.THC
-    if 'Interaction/Vq0' in fh5:
-        return HamiltonianFormat.KPOINT_COQUI
+        if 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5:
+            return HamiltonianFormat.MODEL
+        if 'Hamiltonian/DenseFactorized/L' in fh5:
+            return HamiltonianFormat.DENSE
+        if 'Hamiltonian/KPFactorized/L0' in fh5:
+            return HamiltonianFormat.KPOINT
+        if 'Hamiltonian/THC/Luv' in fh5:
+            return HamiltonianFormat.THC
+        if 'Interaction/Vq0' in fh5:
+            return HamiltonianFormat.KPOINT_COQUI
 
     raise ValueError(f"'{path}' holds no Hamiltonian in a format safiretools recognizes")
 

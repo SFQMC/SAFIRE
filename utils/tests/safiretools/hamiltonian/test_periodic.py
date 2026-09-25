@@ -87,7 +87,7 @@ class TestKpointFormat:
 
         assert hamiltonian_format(path) == 'kpoint'
         with h5.File(path, 'r') as fh5:
-            assert fh5['Hamiltonian/type'].asstr()[()] == 'KPFactorized'
+            assert fh5['Hamiltonian'].attrs['type'] == 'kpoint'
 
         restored = Hamiltonian.from_hdf5(path)
         assert isinstance(restored, PeriodicHamiltonian)
