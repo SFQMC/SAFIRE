@@ -195,18 +195,19 @@ class PHMSDWavefunction(Wavefunction):
     # ------------------------------------------------------------------
 
     def _write_payload(self, group) -> None:
-        io.write_phmsd(group, self.occa, self.occb, nmo=self.nmo,
-                       orbitals=self._orbitals)
+        io.write_phmsd(group, self.occa, self.occb, orbitals=self._orbitals)
 
     @classmethod
     def _read_payload(cls, group, header: dict) -> "PHMSDWavefunction":
         spin_symm = header['spin_symm']
-        occa, occb, orbitals = io.read_phmsd(
-            group, header['ndets'], header['nelec'], header['nmo'],
-            spin_symm=spin_symm)
+        occa, occb, orbitals = io.read_phmsd(group)
+
+        # a closed-shell occb has zero width, since beta repeats alpha
+        nup = occa.shape[1]
+        nelec = (nup, nup) if spin_symm is SpinSymm.CLOSED else (nup, occb.shape[1])
 
         return cls(coeffs=header['coeffs'], occa=occa, occb=occb,
-                   nmo=header['nmo'], nelec=header['nelec'],
+                   nmo=header['nmo'], nelec=nelec,
                    orbitals=_format_references(orbitals, spin_symm),
                    psi0=format_spin_layout(header['psi0'], spin_symm),
                    spin_symm=spin_symm)

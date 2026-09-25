@@ -54,17 +54,30 @@ ph_excitations<int, ComplexType, MEM> build_ph_struct(nda::array<ComplexType,1> 
                                                  int nup,
                                                  int ndown);
 
-int get_number_of_determinants(std::vector<int> const& dims, int requested);
+int get_number_of_determinants(int ndets_in_file, int requested);
 
 void getCommonInput(h5::group& g,
                     int& ndets_to_read,
                     nda::array<ComplexType,1>& ci,
                     WALKER_TYPES& walker_type);
 
+/// The `spin_type` attribute of a Wavefunction/NOMSD or Wavefunction/PHMSD group.
+WALKER_TYPES read_spin_type(h5::group grp);
+
+/// The sizes of the wavefunction in a Wavefunction/NOMSD or Wavefunction/PHMSD group, read off
+/// the shapes of its arrays. At finite temperature, `nup` is the number of time slices.
+struct WavefunctionInfo {
+  WALKER_TYPES walker_type;
+  int NMO, nup, ndown, ndets;
+};
+WavefunctionInfo read_wavefunction_info(h5::group ngrp);
+
+/// (NMO, nup, ndown) of the wavefunction of representation `type` ("NOMSD", "PHMSD" or "any").
+std::tuple<int, int, int> read_info_from_wfn(std::string fileName, std::string type);
+
 WALKER_TYPES getWalkerType(std::string filename, std::string type = "any");
 
 WAVEFUNCTION_TYPES getWavefunctionType(std::string filename);
-std::tuple<int,int,int,int> getWavefunctionDims(std::string filename);
 
 
 template<MEMORY_SPACE MEM>
@@ -75,13 +88,12 @@ auto read_nomsd_wavefunction(h5::group& grp,int requested_ndets,
   long nspin = (walker_type == COLLINEAR ? 2 : 1);
   long npol = (walker_type == NONCOLLINEAR ? 2 : 1);
 
-  std::vector<int> dims(5);
-  h5::h5_read(grp,"dims",dims);
-  int ndets = get_number_of_determinants(dims, requested_ndets);
+  auto const info = read_wavefunction_info(grp);
+  int ndets = get_number_of_determinants(info.ndets, requested_ndets);
 
   // keep in on host at first
   nda::array<csr, 2> psi(ndets,nspin);
-  WALKER_TYPES wfn_type = afqmc::initWALKER_TYPES(dims[3]);
+  WALKER_TYPES wfn_type = info.walker_type;
 
   utils::check(walkerTypeIsConvertible(wfn_type, walker_type), "{} trial wavefunction is not compatible with {} walkers", walkerTypeToString(wfn_type), walkerTypeToString(walker_type));
 
@@ -144,18 +156,17 @@ auto read_nomsd_wavefunction(h5::group& grp,int ndets,
   using csr = PsiT_Matrix<MEM>;
   long nspin = walker_type == COLLINEAR ? 2 : 1;
 
-  std::vector<int> dims(5);
-  h5::read(grp,"dims",dims);
-  utils::check(NMO==dims[0], "Inconsistent NMO.");
-  utils::check(ntau == dims[1], "Inconsistent  ntau.");
-  utils::check(int(walker_type) >= dims[3],
+  auto const info = read_wavefunction_info(grp);
+  utils::check(NMO == info.NMO, "Inconsistent NMO.");
+  utils::check(ntau == info.nup, "Inconsistent  ntau.");
+  utils::check(int(walker_type) >= int(info.walker_type),
                "Inconsistent walker_type.");
-  utils::check(ndets <= dims[4], "Inconsistent  ndets_to_read.");
+  utils::check(ndets <= info.ndets, "Inconsistent  ndets_to_read.");
 
   // keep in on host at first
   nda::array<csr, 3> psi(ndets,nspin,3);
 
-  WALKER_TYPES wfn_type = afqmc::initWALKER_TYPES(dims[3]);
+  WALKER_TYPES wfn_type = info.walker_type;
 
   if(wfn_type == walker_type) {
     for(int id=0, k=0; id<ndets; ++id) {

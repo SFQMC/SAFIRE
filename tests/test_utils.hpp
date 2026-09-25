@@ -33,90 +33,17 @@ namespace afqmc
 template<typename T>
 struct TEST_DATA
 {
-  int NMO, nup, ndown;
   nda::array<T, 1> E1, EJ, EXX;
   nda::array<T, 2> vbias;
   nda::array<T, 4> VHS;
   bool available;
 };
 
-inline int read_nmo_from_hdf(std::string fileName)
-{
-  int NMO(0);
-  h5::file file(fileName,'r');
-  h5::group grp(file);
-  auto format = get_hamiltonian_format(grp);
-  app_log(1, "Reading NMO from hamil file: {} of format {} ", fileName, format);
-  if (format == "std")
-  {
-    utils::check(grp.has_subgroup("Hamiltonian"), "Missing Hamiltonian dataset.");
-    h5::group hgrp = grp.open_group("Hamiltonian");
-    std::vector<long> Idata(8);
-    h5::h5_read(hgrp,"dims",Idata);
-    NMO = Idata[3];
-  } else if (format == "coqui") {
-    int nkpts, nbnd;
-    utils::check(grp.has_subgroup("System"), "Missing Hamiltonian dataset.");
-    h5::group hgrp = grp.open_group("System");
-    h5::group bgrp = hgrp.open_group("BZ");
-    h5::h5_read_attribute(hgrp,"number_of_bands",nbnd);
-    h5::h5_read_attribute(bgrp,"number_of_kpoints",nkpts);
-    NMO = nbnd*nkpts;
-  }
-  return NMO;
-}
-
 template<typename T>
 TEST_DATA<T> read_test_results_from_hdf(std::string fileName, std::string wfn_type = "")
 {
   h5::file file(fileName,'r');
   h5::group grp(file);
-  int nmo = 0, nup = 0, ndn = 0;
-  if (grp.has_key("Hamiltonian"))
-  {
-    h5::group hgrp = grp.open_group("Hamiltonian");
-    std::vector<long> Idata(8);
-    h5::h5_read(hgrp,"dims",Idata);
-    nmo = Idata[3];
-    nup = Idata[4];
-    ndn = Idata[5];
-  } else if(grp.has_key("System")) {
-    h5::group sgrp = grp.open_group("System");
-    h5::group bgrp = sgrp.open_group("BZ");
-    int nkpts, nbnd;
-    double nel;
-    h5::h5_read_attribute(bgrp,"number_of_kpoints",nkpts);
-    h5::h5_read_attribute(sgrp,"number_of_bands",nbnd);
-    h5::h5_read_attribute(sgrp,"number_of_elec",nel);
-    std::vector<int> dims(5);
-    // values based on System.
-// this can only be set correctly by integrating occ!!!
-
-    nup = int(nel/2.0)*nkpts;
-    ndn = nup;
-    nmo = nbnd*nkpts;
-    // If Wavefunction is present, overwrite from data there
-    if(grp.has_key("Wavefunction")) {
-      h5::group wgrp = grp.open_group("Wavefunction");
-      if(wgrp.has_key("NOMSD")) {
-        h5::group ngrp = wgrp.open_group("NOMSD");
-        std::vector<int> Idata(5);
-        h5::h5_read(ngrp,"dims",Idata);
-        nmo = Idata[0];
-        nup = Idata[1];
-        ndn = Idata[2];
-      } else if(wgrp.has_key("PHMSD")) {
-        h5::group ngrp = wgrp.open_group("PHMSD");
-        std::vector<int> Idata(5);
-        h5::h5_read(ngrp,"dims",Idata);
-        nmo = Idata[0];
-        nup = Idata[1];
-        ndn = Idata[2];
-      }
-    }
-  } else {
-    utils::check(false," Error in read_test_results_from_hdf(): Invalid h5 format. ");
-  }
   nda::array<T, 1> E1, EJ, EXX;
   nda::array<T, 2> vbias;
   nda::array<T, 4> VHS;
@@ -137,7 +64,7 @@ TEST_DATA<T> read_test_results_from_hdf(std::string fileName, std::string wfn_ty
     }
   }
 
-  return TEST_DATA<T>{nmo, nup, ndn, std::move(E1), std::move(EJ), std::move(EXX), vbias, VHS, available};
+  return TEST_DATA<T>{std::move(E1), std::move(EJ), std::move(EXX), vbias, VHS, available};
 }
 
 template<typename T>

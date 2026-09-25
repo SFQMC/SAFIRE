@@ -696,8 +696,7 @@ class PeriodicHamiltonian(Hamiltonian):
         """
         with h5.File(path, 'a') as fh5:
             group = replace_group(fh5, 'Hamiltonian')
-            write_hamiltonian_header(group, 'kpoint', nmo=int(np.sum(self.nmo_pk)),
-                                     enuc=self.enuc, nkpts=self.nkpts)
+            write_hamiltonian_header(group, 'kpoint', enuc=self.enuc)
             group.create_dataset("ComplexIntegrals", data=np.array([1], dtype=np.int32))
             group.create_dataset("KPoints", data=np.asarray(self.kpts, dtype=np.float64))
             group.create_dataset("NMOPerKP", data=np.asarray(self.nmo_pk, dtype=np.int32))
@@ -837,10 +836,11 @@ class PeriodicHamiltonian(Hamiltonian):
         """Read a periodic Hamiltonian written by `to_hdf5`."""
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
-            nkpts, _, _, enuc = read_hamiltonian_header(group)
+            enuc = read_hamiltonian_header(group)
 
             kpts = group['KPoints'][...]
             nmo_pk = group['NMOPerKP'][...]
+            nkpts = len(nmo_pk)
             qk_to_k2 = group['QKTok2'][...]
             minus_k = group['MinusK'][...]
             nchol_pk = group['NCholPerKP'][...]

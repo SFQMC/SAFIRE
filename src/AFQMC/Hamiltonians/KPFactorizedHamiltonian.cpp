@@ -180,17 +180,12 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       nspin_in_H1 = 1;
       npol_in_H1  = 1;
       h5::group hgrp = grp.open_group("Hamiltonian");
-      std::vector<int> Idata(8);
-      h5::h5_read(hgrp,"dims",Idata);
-      nkpts = Idata[2];
-      nkpts_ibz = Idata[2];
-      nqpts_ibz = Idata[2];
-      utils::check(Idata[3] == NMO, " Error: NMO differs from value in integral file. ");
-
-      Idata.resize(nkpts);
-      std::vector<double> Ddata(nkpts);  
+      std::vector<int> Idata;
       h5::h5_read(hgrp,"NMOPerKP",Idata);
-      utils::check(Idata.size() == nkpts, "size(NMOPerKP):{} != nkpts",Idata.size());
+      nkpts = Idata.size();
+      utils::check(nkpts > 0, " Error: NMOPerKP is empty.");
+      nkpts_ibz = nkpts;
+      nqpts_ibz = nkpts;
       nbnd = Idata[0];
       for(int i=1; i<nkpts; ++i)
         utils::check(Idata[i] == nbnd, "Inconsistent number of bands per kpoint. We now require all kpoints to have a consistent number of bands (NMOPerKP)."); 

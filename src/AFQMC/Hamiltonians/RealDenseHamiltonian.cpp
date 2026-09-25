@@ -71,7 +71,8 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
 
   int nact_dn = (type == COLLINEAR ? PsiT(0,1).extent(0) : 0l);
 
-  std::vector<long> Idata(8);
+  // number of cholesky vectors
+  int ncv = 0;
   RealType E0;
   h5::file file;
   if (mpi->comm.root()) 
@@ -79,8 +80,6 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     file = h5::file(fileName,'r');
     h5::group root = h5::group(file);
     h5::group g = root.open_group("Hamiltonian");
-
-    h5::h5_read(g,"dims",Idata);
 
     E0 = read_energy_offset(root, "std", type, nact_up, nact_dn);
 
@@ -102,22 +101,20 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       auto l = h5::array_interface::get_dataset_info(vgrp,"L");
       utils::check(l.rank() >= 6, base_error + "DenseFactorized/L has rank {}", l.rank());
       nspin_in_H2 = l.lengths[0];
+      ncv = l.lengths[5];
       utils::check(l.lengths[1] == 1, base_error + "spinor Cholesky vectors (npol: {}) are not supported", l.lengths[1]);
       utils::check(nspin_in_H2 == 1 || nspin_in_H2 == nspin_in_H1,
                    base_error + "DenseFactorized/L has nspin: {}, expected 1 or the nspin: {} of hcore", nspin_in_H2, nspin_in_H1);
-      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2, 1, NMO, 1, NMO, Idata[7]);
+      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2, 1, NMO, 1, NMO, ncv);
     }
   }
-  mpi->comm.broadcast_n(Idata.begin(), 8, 0);
+  mpi->comm.broadcast_n(&ncv, 1, 0);
   mpi->comm.broadcast_n(&E0, 1, 0);
   mpi->comm.broadcast_n(&nspin_in_H1, 1, 0);
   mpi->comm.broadcast_n(&npol_in_H1, 1, 0);
   mpi->comm.broadcast_n(&nspin_in_H2, 1, 0);
   mpi->comm.broadcast_n(&npol_in_H2, 1, 0);
 
-  // number of cholesky vectors
-  int ncv = Idata[7];
-  
   // allocate shared arrays
 
   auto H1 = memory::share_from_root(*mpi, [&]() {

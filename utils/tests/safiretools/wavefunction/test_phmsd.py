@@ -50,7 +50,6 @@ class TestConstruction:
 
         assert (wavefunction.nspin, wavefunction.npol) == (1, 2)
         assert wavefunction.occa.shape == (1, 4)
-        assert wavefunction.nelec_on_disk == (4, 0)
         assert wavefunction.psi0.shape == (2, 6, 4)
 
     def test_a_spinor_index_outside_the_basis_is_rejected(self):

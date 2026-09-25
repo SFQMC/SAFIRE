@@ -170,9 +170,6 @@ void hamiltonian_factory_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3:
   utils::check(utils::file_exists(hamil_file), 
                " Hamiltonian file not found: {}. \n Run unit test with --hamil /path/to/hamil.h5 ", hamil_file);
 
-  int NMO = read_nmo_from_hdf(hamil_file);
-  CHECK(NMO > 0);
-
   Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 }
 

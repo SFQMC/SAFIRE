@@ -266,8 +266,8 @@ array*, such as PySCF's UHF `mo_coeff[:, :, :nocc]`, is read as noncollinear. Th
 `from_single_determinant` docstring says so.
 
 A noncollinear value records only its total electron count, so such a wavefunction reports
-`nelec == (nelec, 0)` — the same as the file format's `dims`, and the executable does not use the
-split either.
+`nelec == (nelec, 0)` — the same as the file gives back, since its single `PsiT_0` block holds
+every electron, and the executable does not use the split either.
 
 ### Internally, one matrix per spin channel
 
@@ -433,7 +433,8 @@ only one of two BP-average endpoints' errors) gets fixed at the same time.
   of increasing generality: `CLOSED < COLLINEAR < NONCOLLINEAR`. Matches `WALKER_TYPES` in
   `src/AFQMC/config.h`.
 - `_SlaterType`/`_slater_enum_map`/`_slater2dims` (`afqmctools/utils/slater_types.py`) are
-  dropped entirely — `SpinSymm`'s int values already are the C++ wire format, so no translation
+  dropped entirely. On disk the spin symmetry is the `spin_type` string attribute, spelled as
+  `SpinSymm.label` and read by the C++ through the `WALKER_TYPES` json names, so no translation
   function is needed.
 - The dead `SlaterDeterminant`/`MultiSlater`/`NonorthMSD`/`ParticleHoleMSD` stub classes are
   dropped — every method unconditionally raised `NotImplementedError`.
@@ -441,8 +442,10 @@ only one of two BP-average endpoints' errors) gets fixed at the same time.
   import it downward rather than `observables` reaching up into `hamiltonian` for it (today's
   layering inversion).
 - **A wavefunction with no beta electrons is `COLLINEAR` with `ndown == 0`** (user call). There is no
-  separate value for that case: `dims[3]` is 2, and the beta blocks go to disk with zero width (`Psi0_beta` of shape `(nmo, 0, 2)`, a `PsiT_1` whose `dims` is
-  `[0, nmo, 0]`), because the executable's readers open them for any collinear file.
+  separate value for that case: `spin_type` is `"collinear"`, and the beta blocks go to disk with
+  zero width (`Psi0_beta` of shape `(nmo, 0, 2)`, a `PsiT_1` whose CSR `dims` is `[0, nmo, 0]`),
+  because the executable's readers open them for any collinear file and take `ndown` from
+  `PsiT_1`'s row count.
 
   > **On the C++ side:**` WALKER_TYPES` is exactly
   > `CLOSED`/`COLLINEAR`/`NONCOLLINEAR` ([config.h:48](../../src/AFQMC/config.h#L48)), and a
@@ -451,7 +454,7 @@ only one of two BP-average endpoints' errors) gets fixed at the same time.
   > would trap on GPU, and
   > [tests/test_polarized_consistency.cpp](../../tests/test_polarized_consistency.cpp) pins a
   > `ndown == 0` collinear run against an up-only noncollinear reference. Its
-  > `derive_polarized_wfn` writes exactly the layout above — `dims = [nmo, nup, 0, 2, ndets]`,
+  > `derive_polarized_wfn` writes exactly the layout above — `spin_type = "collinear"`,
   > `Psi0_beta` of shape `(nmo, 0)`, `PsiT_1` a `(0, nmo)` CSR — so the format here is the one the
   > executable's own test data uses.
 - Two members carry the coercion that `get_spin_symm_enum` used to: `SpinSymm.from_input(value)`
@@ -539,9 +542,15 @@ they read and compare as the bare names throughout.
 `model` if `ModelHamiltonian/number_of_components` is there, `dense` if `DenseFactorized/L` is, and
 so on — which is the only thing that works for every file: older ones, CoQuí files (no
 `Hamiltonian` group) and those from the hand-rolled writers in `afqmctools`/`cli`. The
-`write_hamiltonian_header` shared by the safiretools writers (which also writes the `dims` and
-`Energies` every format shares) stamps the format name as the `type` attribute of the
-`Hamiltonian` group, but nothing reads it yet.
+`write_hamiltonian_header` shared by the safiretools writers (which also writes the `Energies`
+dataset every format shares) stamps the format name as the `type` attribute of the `Hamiltonian`
+group, but nothing reads it yet.
+
+**Sizes are not recorded separately.** The file used to carry an 8-slot `dims` array duplicating
+the orbital, k-point and Cholesky counts. Now each is read off the arrays that hold the data —
+`hcore` and `DenseFactorized/L` for dense, `NMOPerKP` for k-point — so the two cannot disagree.
+The one exception is the lattice model, whose matrix shapes don't give the basis size
+unambiguously; it writes `nsites` next to `nbands` under `ModelHamiltonian`.
 
 **`HamiltonianFormat` members are strings.** They subclass `str`, so a format compares, hashes and
 formats as its safiretools name — `hamiltonian_format(path) == 'model'` holds and `_READERS` stays
@@ -559,8 +568,7 @@ than a second public enum. That is also what lets its docstring name
 the *shape* of the lattice it was built on under `Hamiltonian/ModelHamiltonian/Lattice`, written in
 the dimension-agnostic form a future N-dimensional `Lattice` will need — `L` and `boundaries` and
 `twist` as per-axis sequences, the unit cell as a `lattice_vectors` matrix — rather than as
-`L1`/`L2`/`a1`/`a2` pairs. Today `ndim` is always 2. `nbands` is written alongside, since `dims[3]`
-records only `nsites * nbands`. `LatticeHamiltonian.lattice_params` flattens the metadata back into
+`L1`/`L2`/`a1`/`a2` pairs. Today `ndim` is always 2. `LatticeHamiltonian.lattice_params` flattens the metadata back into
 the keys `Lattice.from_dict` takes, so a lattice can be rebuilt from a Hamiltonian file. All of this
 is additive — the executable ignores groups it does not read.
 
@@ -918,25 +926,19 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
 - **Remove `nelec` from Hamiltonians entirely — C++ and Python.** The electron count is a property
   of the *problem*, not of the Hamiltonian; it sits on `Hamiltonian` today only because the on-disk
   formats record it. The end state is that **nothing writes `nelec` to a Hamiltonian and nothing
-  reads `nelec` from one**; `dims[4]`/`dims[5]` become unused.
+  reads `nelec` from one**.
     - a Blocking item for this is computing the exchange divergence correction energy from the madelung
     constant (found in the CoQuí Hamiltonian format) and electron number (from the Wavefunction) instead of 
     reading the energy directly from HDF5. **Would require adding the madelung constant in the periodice PySCF**
     **to SAFIRE route as well**.
-  **The C++ side is already there.** Every Hamiltonian reader loads the 8-element `dims`
-  (`HamiltonianFactory.cpp`, `RealDenseHamiltonian.cpp`, `KPFactorizedHamiltonian.cpp`,
-  `ModelHamOpsGenerator.cpp`) but uses only `Idata[2]` (nkpts) and `Idata[3]` (NMO) — no reader
-  touches `Idata[4]`/`Idata[5]`. Electron counts reach the executable from the wavefunction. Note
-  the readers still declare `Idata(8)`, so **the two slots go unused rather than disappearing**: the
-  array keeps its length and the fields are written as zero (or dropped from the writer while the
-  readers keep skipping them). Changing the array length would be a format break, and is not part
-  of this.
+  **The file format is already there.** The old 8-slot `dims` header is gone, and with it the
+  electron-count slots. The C++ readers take electron counts from the wavefunction and ignore
+  a leftover `dims` in older files.
   **The Python side is what there is to do.** On all three subclasses: the `nelec` constructor
   argument and `.nelec` attribute; `MolecularHamiltonian.from_integrals`/`from_pyscf`;
   `LatticeHamiltonian`'s `nelec` key in the `hamiltonian` input block (`_parse_ham_input`'s
   `_known_params`) and `HamiltonianBuilder(nelec=)`; `PeriodicHamiltonian.from_pyscf` /
-  `write_from_pyscf` and `_default_nelec`; the `dims` write, now `write_hamiltonian_header`; and
-  the reads in each `_read_hdf5`.
+  `write_from_pyscf` and `_default_nelec`; and the reads in each `_read_hdf5`.
 
   Two things this does **not** touch:
 

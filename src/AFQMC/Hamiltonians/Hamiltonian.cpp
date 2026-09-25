@@ -45,32 +45,13 @@ Hamiltonian Hamiltonian::from_params(std::shared_ptr<utils::mpi_context_t<mpi3::
   const HamiltonianType htype = peek_hamiltonian_type(params, *mpi);
 
   h5::file file;
-  std::optional<h5::group> grp, hgrp;
+  std::optional<h5::group> grp;
   if(mpi->comm.root()) {
     file = h5::file(filename, 'r');
     grp  = std::make_optional(h5::group(file));
     format = get_hamiltonian_format(*grp);
     app_log(1, "Found hamiltonian with format: {}", format);
-    // open subgroup
-    if(format == "coqui") {
-      hgrp = std::make_optional(grp->open_group("System"));
-    } else {
-      hgrp = std::make_optional(grp->open_group("Hamiltonian"));
-    }
   }
-
-  std::vector<int> Idata(8);
-  if(mpi->comm.root()) {
-    if(format == "coqui") { // coqui always complex for now!
-      h5::h5_read_attribute(*hgrp, "number_of_bands", Idata[3]); // per kpoint
-      h5::group bz = hgrp->open_group("BZ");
-      h5::h5_read_attribute(bz, "number_of_kpoints", Idata[2]);
-      Idata[3] *= Idata[2];
-    } else { // assuming only coqui or std
-      h5::h5_read(*hgrp, "dims", Idata);
-    }
-  }
-  mpi->comm.broadcast(Idata.begin(), Idata.end());
 
   mpi->comm.barrier();
 

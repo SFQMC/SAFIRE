@@ -97,15 +97,17 @@ class TestKpointFormat:
         for Q, L in hamiltonian.chol.items():
             assert np.allclose(restored.chol[Q], L)
 
-    def test_dims_records_the_kpoint_count(self, tmp_path):
+    def test_nmo_per_kp_carries_the_sizes(self, tmp_path):
+        """The executable takes the k-point and orbital counts from ``NMOPerKP``."""
         hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
         path = tmp_path / 'ham.h5'
         hamiltonian.to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            dims = fh5['Hamiltonian/dims'][...]
-        assert dims[2] == 2
-        assert dims[3] == hamiltonian.nmo_tot
+            assert set(fh5['Hamiltonian'].attrs) == {'type'}
+            nmo_pk = fh5['Hamiltonian/NMOPerKP'][...]
+        assert len(nmo_pk) == 2
+        assert np.sum(nmo_pk) == hamiltonian.nmo_tot
 
 
 def _mirrored_hamiltonian(nmo=2, nchol=2):

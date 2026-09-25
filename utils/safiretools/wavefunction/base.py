@@ -61,9 +61,9 @@ def wavefunction_format(path) -> str:
         If the file holds no wavefunction.
     """
     with h5.File(path, 'r') as fh5:
-        if 'Wavefunction/NOMSD/dims' in fh5:
+        if 'Wavefunction/NOMSD' in fh5:
             return 'nomsd'
-        if 'Wavefunction/PHMSD/dims' in fh5:
+        if 'Wavefunction/PHMSD' in fh5:
             return 'phmsd'
 
     raise ValueError(f"'{path}' holds no wavefunction safiretools recognizes")
@@ -171,19 +171,6 @@ class Wavefunction(ABC):
         return self.spin_symm.nelec_per_spin(self.nelec)
 
     @property
-    def nelec_on_disk(self) -> tuple:
-        """
-        The ``(nup, ndown)`` pair ``dims[1:3]`` records.
-
-        A noncollinear wavefunction reports ``(nup + ndown, 0)``: both
-        polarizations live in one channel, so the split is not part of the
-        format.
-        """
-        if self.spin_symm is SpinSymm.NONCOLLINEAR:
-            return (sum(self.nelec), 0)
-        return self.nelec
-
-    @property
     def nrows(self) -> int:
         """Rows of an orbital matrix, ``npol * nmo``."""
         return self.npol * self.nmo
@@ -258,7 +245,7 @@ class Wavefunction(ABC):
 
         Notes
         -----
-        The header (``dims``, ``ci_coeffs``, ``Psi0_alpha``/``Psi0_beta``) is
+        The header (``spin_type``, ``ci_coeffs``, ``Psi0_alpha``/``Psi0_beta``) is
         the same for every representation and is written here; the subclass adds
         only its own payload.
 
@@ -274,8 +261,6 @@ class Wavefunction(ABC):
             io.write_header(
                 group,
                 spin_symm=self.spin_symm,
-                nmo=self.nmo,
-                nelec=self.nelec_on_disk,
                 coeffs=self.coeffs,
                 psi0=self._psi0_blocks(),
             )

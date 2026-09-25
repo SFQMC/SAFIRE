@@ -122,8 +122,6 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
   h5::file file = h5::file(fileName,'r'); 
   h5::group grp = h5::group(file).open_group("Hamiltonian");
 
-  std::vector<long> Idata(8);
-  h5::read(grp,"dims",Idata);
   RealType E0;
   {
     std::vector<RealType> E_(2);

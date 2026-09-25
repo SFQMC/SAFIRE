@@ -12,11 +12,12 @@
 The native SAFIRE wavefunction HDF5 schema, read and written here and nowhere
 else.
 
-Both representations share a header — ``dims``, ``ci_coeffs`` and the initial
-Slater determinant ``Psi0_alpha``/``Psi0_beta`` — and differ only in the payload
-that follows it: a `NOMSDWavefunction` writes one CSR ``PsiT_k`` group per
-determinant and spin, while a `PHMSDWavefunction` writes flat occupation numbers
-plus an optional orbital reference. `Wavefunction.to_hdf5` and
+Both representations share a header — the ``spin_type`` attribute, ``ci_coeffs``
+and the initial Slater determinant ``Psi0_alpha``/``Psi0_beta`` — and differ only
+in the payload that follows it: a `NOMSDWavefunction` writes one CSR ``PsiT_k``
+group per determinant and spin, while a `PHMSDWavefunction` writes ``occa``/``occb``
+occupation numbers plus an optional orbital reference. No sizes are stored; they
+are all read off the shapes of these arrays. `Wavefunction.to_hdf5` and
 `Wavefunction.from_hdf5` drive both from the shared header, so this module is
 the only place the layout is spelled out.
 
@@ -77,21 +78,19 @@ def warn_if_ill_conditioned(named_matrices, condition_max=CONDITION_MAX) -> None
 # the shared header
 # ----------------------------------------------------------------------
 
-def write_header(group, spin_symm: SpinSymm, nmo: int, nelec, coeffs, psi0) -> None:
+def write_header(group, spin_symm: SpinSymm, coeffs, psi0) -> None:
     """
     Write the header both representations share.
+
+    No sizes are recorded: the number of determinants, orbitals and electrons
+    are all read off the shapes of the arrays.
 
     Parameters
     ----------
     group : h5py.Group
         The ``Wavefunction/NOMSD`` or ``Wavefunction/PHMSD`` group.
     spin_symm : SpinSymm
-        Spin symmetry; its integer value is what ``dims[3]`` records.
-    nmo : int
-        Number of *spatial* orbitals, even when noncollinear.
-    nelec : tuple(int, int)
-        Electron counts as ``dims[1:3]`` records them; see
-        `Wavefunction.nelec_on_disk`.
+        Spin symmetry, recorded as the ``spin_type`` attribute.
     coeffs : array_like
         Determinant coefficients, ``(ndets,)``.
     psi0 : sequence of numpy.ndarray
@@ -104,11 +103,7 @@ def write_header(group, spin_symm: SpinSymm, nmo: int, nelec, coeffs, psi0) -> N
         (name, block) for name, block
         in zip(('Psi0_alpha', 'Psi0_beta'), psi0))
 
-    group.create_dataset(
-        'dims',
-        data=np.array([nmo, nelec[0], nelec[1], int(spin_symm), coeffs.size],
-                      dtype=np.int32)
-    )
+    group.attrs['spin_type'] = spin_symm.label
     group.create_dataset('ci_coeffs', data=coeffs)
 
     for name, block in zip(('Psi0_alpha', 'Psi0_beta'), psi0):
@@ -122,32 +117,26 @@ def read_header(group) -> dict:
     Returns
     -------
     dict
-        Keys ``nmo``, ``nelec``, ``spin_symm``, ``ndets``, ``coeffs`` and
-        ``psi0`` (a tuple with one block per spin channel).
-
-    Notes
-    -----
-    ``nelec`` comes back exactly as the file records it, so a noncollinear
-    wavefunction reports ``(nup + ndown, 0)`` — the split into spin channels is
-    not recoverable, and the AFQMC executable does not use it either.
+        Keys ``nmo``, ``spin_symm``, ``ndets``, ``coeffs`` and ``psi0`` (a
+        tuple with one block per spin channel). The electron count is not part
+        of the header; each payload reader takes it from its own arrays.
     """
-    dims = group['dims'][...]
-    nmo = int(dims[0])
-    nelec = (int(dims[1]), int(dims[2]))
-    spin_symm = SpinSymm.from_input(int(dims[3]))
-    ndets = int(dims[4])
-
-    coeffs = read_complex(group['ci_coeffs'])[:ndets]
+    if 'spin_type' in group.attrs:
+        spin_symm = SpinSymm.from_input(group.attrs['spin_type'])
+    else:
+        # CoQuí writes no spin_type attribute, only the walker type in slot 3
+        #   of a 'dims' array
+        spin_symm = SpinSymm.from_input(int(group['dims'][3]))
+    coeffs = read_complex(group['ci_coeffs'])
 
     names = ('Psi0_alpha', 'Psi0_beta') if spin_symm is SpinSymm.COLLINEAR \
         else ('Psi0_alpha',)
     psi0 = tuple(read_complex(group[name]) for name in names)
 
     return {
-        'nmo': nmo,
-        'nelec': nelec,
+        'nmo': psi0[0].shape[0] // spin_symm.npol,
         'spin_symm': spin_symm,
-        'ndets': ndets,
+        'ndets': coeffs.size,
         'coeffs': coeffs,
         'psi0': psi0,
     }
@@ -264,7 +253,7 @@ def read_nomsd(group, ndets: int, nspin: int):
 # the PHMSD payload
 # ----------------------------------------------------------------------
 
-def write_phmsd(group, occa, occb, nmo: int, orbitals=None) -> None:
+def write_phmsd(group, occa, occb, orbitals=None) -> None:
     """
     Write the occupation numbers, and the optional orbital reference, of a PHMSD
     wavefunction.
@@ -275,10 +264,8 @@ def write_phmsd(group, occa, occb, nmo: int, orbitals=None) -> None:
         The ``Wavefunction/PHMSD`` group.
     occa, occb : numpy.ndarray
         Occupied-orbital indices per determinant, ``(ndets, nup)`` and
-        ``(ndets, ndown)``. Beta indices are offset by `nmo` on disk, which is
-        how the executable tells the spin channels apart.
-    nmo : int
-        Number of orbitals.
+        ``(ndets, ndown)``, written as the ``occa`` and ``occb`` datasets. Their
+        widths are how the file records the electron count.
     orbitals : sequence of numpy.ndarray, optional
         Orbital matrices the occupation numbers refer to, one per reference
         (one for a closed-shell-like reference, two for a spin-resolved one).
@@ -299,44 +286,23 @@ def write_phmsd(group, occa, occb, nmo: int, orbitals=None) -> None:
     warn_if_ill_conditioned(
         (f'PsiT_{index}', matrix) for index, matrix in enumerate(references))
 
-    occs = np.concatenate([occa, occb + nmo], axis=1)
-    group.create_dataset('occs', data=occs.ravel().astype(np.int32, copy=False))
+    for name, occ in (('occa', occa), ('occb', occb)):
+        group.create_dataset(name, data=np.asarray(occ, dtype=np.int32))
 
 
-def read_phmsd(group, ndets: int, nelec, nmo: int,
-               spin_symm=SpinSymm.COLLINEAR):
+def read_phmsd(group):
     """
     Read the occupation numbers and orbital references back.
-
-    Parameters
-    ----------
-    group : h5py.Group
-        The ``Wavefunction/PHMSD`` group.
-    ndets : int
-        Number of determinants, as ``dims`` records it.
-    nelec : tuple(int, int)
-        The on-disk electron counts, ``dims[1:3]``.
-    nmo : int
-        Number of orbitals, used to remove the beta offset.
-    spin_symm : SpinSymm, optional
-        Spin symmetry, which decides how wide each channel is. Only a collinear
-        wavefunction stores a beta channel: a closed-shell one repeats alpha
-        rather than storing it twice, and a noncollinear one holds both
-        polarizations in the alpha channel.
 
     Returns
     -------
     occa, occb : numpy.ndarray
-        Occupied-orbital indices, one array per independent spin channel, with
-        the beta offset removed.
+        Occupied-orbital indices, one array per independent spin channel.
     orbitals : tuple of numpy.ndarray or None
         The orbital references, or None when ``type`` is 0.
     """
-    nup, ndown = nelec if spin_symm is SpinSymm.COLLINEAR else (nelec[0], 0)
-
-    occs = np.asarray(group['occs'][...]).reshape((-1, nup + ndown))[:ndets]
-    occa = occs[:, :nup].copy()
-    occb = occs[:, nup:] - nmo
+    occa = np.asarray(group['occa'][...])
+    occb = np.asarray(group['occb'][...])
 
     ntype = int(group['type'][()])
     orbitals = None

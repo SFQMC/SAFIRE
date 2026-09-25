@@ -108,13 +108,12 @@ inline void derive_polarized_wfn(std::string const& src_file, WALKER_TYPES targe
   h5::file fin(src_file, 'r');
   h5::group nin = h5::group(fin).open_group("Wavefunction").open_group("NOMSD");
 
-  std::vector<int> dims(5);
-  h5::h5_read(nin, "dims", dims);
-  int NMO = dims[0];
-  int nup = dims[1];
-  utils::check(initWALKER_TYPES(dims[3]) == COLLINEAR,
+  auto const info = read_wavefunction_info(nin);
+  int NMO = info.NMO;
+  int nup = info.nup;
+  utils::check(info.walker_type == COLLINEAR,
                "derive_polarized_wfn expects a COLLINEAR source, got {}",
-               walkerTypeToString(initWALKER_TYPES(dims[3])));
+               walkerTypeToString(info.walker_type));
 
   auto up = math::sparse::HDF2CSR<ComplexType, HOST_MEMORY, int, int>(nin.open_group("PsiT_0"));
   utils::check(up.extent(0) == nup && up.extent(1) == NMO,
@@ -131,8 +130,7 @@ inline void derive_polarized_wfn(std::string const& src_file, WALKER_TYPES targe
   nda::array<ComplexType, 1> ci(1);
   ci(0) = ComplexType(1.0);
 
-  nda::vector<int> d = {NMO, nup, 0, int(target), 1};
-  nda::h5_write(nout, "dims", d);
+  h5::h5_write_attribute(nout, "spin_type", walkerTypeToString(target));
   nda::h5_write(nout, "ci_coeffs", ci);
 
   if(target == NONCOLLINEAR) {

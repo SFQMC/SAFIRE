@@ -352,8 +352,7 @@ class MolecularHamiltonian(Hamiltonian):
 
         with h5.File(path, 'a') as fh5:
             group = replace_group(fh5, 'Hamiltonian')
-            write_hamiltonian_header(group, 'dense', nmo=self.nmo, enuc=self.enuc,
-                                     nchol=self.nchol)
+            write_hamiltonian_header(group, 'dense', enuc=self.enuc)
             group.create_dataset('ComplexIntegrals',
                                  data=np.array([int(complex_chol)], dtype=np.int32))
             group.create_dataset('DenseFactorized/L',
@@ -447,7 +446,7 @@ class MolecularHamiltonian(Hamiltonian):
         """
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
-            *_, enuc = read_hamiltonian_header(group)
+            enuc = read_hamiltonian_header(group)
             chol = read_complex(group['DenseFactorized/L'])
             hcore = read_complex(group['hcore'])
 

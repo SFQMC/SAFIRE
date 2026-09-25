@@ -28,14 +28,14 @@ import numpy as np
 from safiretools.types import HamiltonianFormat, SpinSymm
 
 
-def write_hamiltonian_header(group, fmt, nmo, enuc=0.0, nkpts=0, nchol=0) -> None:
+def write_hamiltonian_header(group, fmt, enuc=0.0) -> None:
     """
     Write what every Hamiltonian format starts with into the (empty)
-    ``Hamiltonian`` `group`: a ``type`` attribute naming `fmt`, and the ``dims``
-    and ``Energies`` datasets.
+    ``Hamiltonian`` `group`: a ``type`` attribute naming `fmt` and the
+    ``Energies`` dataset.
 
-    The ``dims`` slots not given here, the electron counts among them, stay
-    zero: the AFQMC executable takes the electron count from the wavefunction.
+    No sizes are recorded; each format's arrays carry their own. Nor is an
+    electron count: the AFQMC executable takes it from the wavefunction.
     Nothing reads ``type`` yet; `hamiltonian_format` goes by the layout.
 
     Raises
@@ -44,17 +44,12 @@ def write_hamiltonian_header(group, fmt, nmo, enuc=0.0, nkpts=0, nchol=0) -> Non
         If `fmt` names no known format.
     """
     group.attrs['type'] = HamiltonianFormat(fmt).value
-    group.create_dataset(
-        'dims', data=np.array([0, 0, nkpts, nmo, 0, 0, 0, nchol], dtype=np.int32))
     group.create_dataset('Energies', data=np.array([enuc, 0.], dtype=np.float64))
 
 
-def read_hamiltonian_header(group):
-    """The ``(nkpts, nmo, nchol, enuc)`` `write_hamiltonian_header` recorded in `group`."""
-    dims = group['dims'][...]
-    if len(dims) != 8:
-        raise ValueError(f"'{group.name}/dims' has length {len(dims)}, expected 8")
-    return int(dims[2]), int(dims[3]), int(dims[7]), float(group['Energies'][0])
+def read_hamiltonian_header(group) -> float:
+    """The nuclear energy `write_hamiltonian_header` recorded in `group`."""
+    return float(group['Energies'][0])
 
 
 def hamiltonian_format(path) -> str:

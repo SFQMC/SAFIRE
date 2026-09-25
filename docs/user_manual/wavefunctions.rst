@@ -76,7 +76,6 @@ NOMSD
             dataset    /Wavefunction/NOMSD/PsiT_1/pointers_begin_
             dataset    /Wavefunction/NOMSD/PsiT_1/pointers_end_
             dataset    /Wavefunction/NOMSD/ci_coeffs
-            dataset    /Wavefunction/NOMSD/dims
         }
     }
 
@@ -98,8 +97,12 @@ Note that the :math:`\alpha` components of the trial wavefunction are stored und
 -  ``/Wavefunction/NOMSD/PsiT_{2n}/pointers_end_`` CSR format end index pointer array.
 -  ``/Wavefunction/NOMSD/ci_coeffs`` :math:`N_D` length array of ci coefficients. Stored
    as complex numbers.
--  ``/Wavefunction/NOMSD/dims`` Integer array of length 5 containing
-   :math:`[M,N_\alpha,N_\beta,` walker_type :math:`,N_D]`
+-  ``spin_type`` attribute of ``/Wavefunction/NOMSD``: ``"closed"``, ``"collinear"`` or
+   ``"noncollinear"``.
+
+No sizes are stored separately. :math:`N_D` is the length of ``ci_coeffs``, :math:`M` and
+:math:`N_\alpha` are the columns and rows of ``PsiT_0``, and :math:`N_\beta` the rows of
+``PsiT_1``.
 
 
 .. _phmsd_wavefunction:
@@ -119,8 +122,8 @@ PHMSD
             dataset    /Wavefunction/PHMSD/Psi0_alpha
             dataset    /Wavefunction/PHMSD/Psi0_beta
             dataset    /Wavefunction/PHMSD/ci_coeffs
-            dataset    /Wavefunction/PHMSD/dims
-            dataset    /Wavefunction/PHMSD/occs
+            dataset    /Wavefunction/PHMSD/occa
+            dataset    /Wavefunction/PHMSD/occb
             dataset    /Wavefunction/PHMSD/type
         }
     }
@@ -131,13 +134,16 @@ PHMSD
    initial walker wavefunction.
 -  ``/Wavefunction/PHMSD/ci_coeffs`` :math:`N_D` length array of ci coefficients. Stored
    as complex numbers.
--  ``/Wavefunction/PHMSD/dims`` Integer array of length 5 containing
-   :math:`[M,N_\alpha,N_\beta,` walker_type :math:`,N_D]`
--  ``/Wavefunction/PHMSD/occs`` Integer array of length :math:`(N_\alpha+N_\beta)*N_D`
-   describing the determinant occupancies. For example if :math:`(N_\alpha=N_\beta=2)` and
-   :math:`N_D=2`, :math:`M=4`, and if :math:`|\Psi_\mathrm{T}\rangle = |0,1\rangle|0,1\rangle + |0,1\rangle|0,2\rangle>` then
-   occs = :math:`[0, 1, 4, 5, 0, 1, 4, 6]`. Note that :math:`\beta` occupancies are
-   displaced by :math:`M`.
+-  ``spin_type`` attribute of ``/Wavefunction/PHMSD``: ``"collinear"``.
+-  ``/Wavefunction/PHMSD/occa``, ``/Wavefunction/PHMSD/occb`` Integer arrays of shape
+   :math:`[N_D,N_\alpha]` and :math:`[N_D,N_\beta]` describing the determinant occupancies.
+   For example if :math:`(N_\alpha=N_\beta=2)`, :math:`N_D=2`, :math:`M=4`, and
+   :math:`|\Psi_\mathrm{T}\rangle = |0,1\rangle|0,1\rangle + |0,1\rangle|0,2\rangle` then
+   occa = :math:`[[0, 1], [0, 1]]` and occb = :math:`[[0, 1], [0, 2]]`.
+
+No sizes are stored separately. :math:`N_D` is the length of ``ci_coeffs``, :math:`N_\alpha`
+and :math:`N_\beta` the widths of ``occa`` and ``occb``, and :math:`M` the rows of
+``Psi0_alpha``.
 -  ``/Wavefunction/PHMSD/type`` integer 0/1. 1 implies trial wavefunction is written in
    different basis than the underlying basis used for the integrals. If so a matrix of
    orbital coefficients is required to be written in the NOMSD format. If 0 then assume

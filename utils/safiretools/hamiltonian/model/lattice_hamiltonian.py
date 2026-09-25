@@ -25,7 +25,6 @@ import h5py as h5
 
 from safiretools.hamiltonian.base import (
     Hamiltonian,
-    read_hamiltonian_header,
     write_hamiltonian_header,
 )
 from safiretools.hdf5 import read_csr, replace_group, write_csr
@@ -374,9 +373,8 @@ class LatticeHamiltonian(Hamiltonian):
         Notes
         -----
         Set `spin_symm` on the instance before calling; it is recorded in the
-        file. The electron-count slots of ``dims`` are written as zero: the
-        AFQMC executable takes the electron count from the wavefunction and
-        reads them from nowhere.
+        file. No electron count is recorded: the AFQMC executable takes it
+        from the wavefunction.
         """
         if self.spin_symm is None:
             raise ValueError("Cannot write a Hamiltonian with no spin symmetry set")
@@ -385,11 +383,12 @@ class LatticeHamiltonian(Hamiltonian):
 
         with h5.File(path, 'a') as fh5:
             group = replace_group(fh5, 'Hamiltonian')
-            write_hamiltonian_header(group, 'model', nmo=self.nbasis)
+            write_hamiltonian_header(group, 'model')
             group.create_dataset('spin_type', data=self.spin_symm.label)
 
             model = group.create_group('ModelHamiltonian')
             model.create_dataset('number_of_components', data=self.num_components)
+            model.create_dataset('nsites', data=self.nsites)
             model.create_dataset('nbands', data=self.nbands)
             model.create_dataset('maximum_connectivity', data=self._maximum_connectivity())
 
@@ -463,15 +462,15 @@ class LatticeHamiltonian(Hamiltonian):
         `_split_hubbard_u`.
         """
         with h5.File(path, 'r') as fh5:
-            _, nbasis, _, _ = read_hamiltonian_header(fh5['Hamiltonian'])
             spin_symm = SpinSymm.from_input(fh5['Hamiltonian/spin_type'].asstr()[()])
 
             group = fh5['Hamiltonian/ModelHamiltonian']
             num_components = int(group['number_of_components'][()])
+            nsites = int(group['nsites'][()])
             nbands = int(group['nbands'][()]) if 'nbands' in group else 1
 
             hamiltonian = cls(
-                nsites=nbasis // nbands,
+                nsites=nsites,
                 nbands=nbands,
                 spin_symm=spin_symm,
                 lattice_metadata=_read_lattice_metadata(group),
@@ -490,7 +489,8 @@ class LatticeHamiltonian(Hamiltonian):
                 )
 
                 if key == 'Uij':
-                    for split_key, split in _split_hubbard_u(component, nbasis):
+                    for split_key, split in _split_hubbard_u(component,
+                                                             hamiltonian.nbasis):
                         hamiltonian.add_term(split_key, split)
                 else:
                     hamiltonian.add_term(key, component)
