@@ -74,7 +74,6 @@ import h5py as h5
 import matplotlib.pyplot as plt
 from pyscf import gto, scf, lo
 
-from safiretools.convert.pyscf import load_pyscf_chk_mol
 from safiretools import MolecularHamiltonian, NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
 from stats.scalar_dat import analyze_scalar_data
@@ -95,7 +94,6 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
 
     local_scratch = scratch_dir / f"h={h:5.5f}"
     local_scratch.mkdir(parents=True, exist_ok=True)
-    atom_chkfile = local_scratch / f"rhf_h={h:5.5f}.chk"
 
     def get_atomic_positions(h):
         """
@@ -133,7 +131,6 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
 
     # run HF
     mf = scf.RHF(mol).newton()
-    mf.chkfile = atom_chkfile
     # it turns out to be helpful to initialize each HF calculation from the final solution of the
     # previous geometry
     dm0 = rhf_guess_rdm if rhf_guess_rdm is not None else None
@@ -203,18 +200,11 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
 
     afqmc_hamil_file = local_scratch / "local_embedding_H.h5"
 
-    # loaded explicitly so the orbitals can be replaced below; with no such
-    #   edit, from_pyscf() takes the checkpoint path directly
-    scf_data = load_pyscf_chk_mol(
-        chkfile = atom_chkfile
-    )
-
-    # edit the orbitals!
-    scf_data["mo_coeff"] = local_basis
-
+    # the localized orbitals are the basis, rather than the RHF ones
     MolecularHamiltonian.from_pyscf(
-        scf_data,
-        cas=(2*(N_active_occ),ncas),
+        mf,
+        basis=local_basis,
+        active_space=(2*(N_active_occ),ncas),
         chol_cut = 1e-5,
         verbose=False
     ).to_hdf5(afqmc_hamil_file)

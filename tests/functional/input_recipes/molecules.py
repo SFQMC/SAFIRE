@@ -11,17 +11,15 @@
 """
 Recipes for the molecular systems: BH, N2, Li and Pb.
 
-All four run pyscf and then hand the checkpoint to afqmctools. The pyscf
-checkpoints land in ``ctx.scratch`` so a rerun is self-contained; only the
+All four run pyscf and then hand the SCF objects to safiretools; only the
 declared HDF5 inputs are written into the inputs tree.
 
-A note on spin symmetry. ``write_hamil_mol`` no longer takes a ``walker_type``
-argument: it infers the symmetry from the shape of ``scf_data['hcore']`` and
-writes ``nelec`` straight from ``mol.nelec``. The collinear and noncollinear
-hamiltonians here therefore go through ``generate_hamiltonian`` +
-``write_dense`` directly, which is the only way to stack the one-body term and
-to write the ``(nup + ndn, 0)`` electron count the noncollinear convention
-wants.
+A note on spin symmetry. ``MolecularHamiltonian.from_pyscf`` reads it off the
+source object's hcore: a spatial one gives a closed hamiltonian, and a GHF
+source (``to_ghf()``, or ``with_soc = True`` for the spin-orbit ECP) a
+noncollinear one. The collinear hamiltonian carries no more information than
+the closed one, so it is built with the raw constructor from the closed one's
+arrays.
 
 A note on reproducibility. Every system here has degenerate orbitals - the pi
 shells of BH and N2, the p/d/f shells of the Pb atom - and without symmetry an
@@ -42,10 +40,10 @@ regenerating them changes the trials, and the reference results have to be
 regenerated alongside the inputs.
 """
 
+import warnings
 from pathlib import Path
 from typing import List
 
-import h5py as h5
 import numpy as np
 
 from . import BuildContext, Recipe
@@ -59,29 +57,23 @@ def _pyscf_verbosity(ctx: BuildContext) -> int:
     return 5 if ctx.verbose else 3
 
 
-def _write_hamiltonian(scf_data, filename: Path, chol_cut: float, *,
-                       spin_symm: str, verbose: bool = False) -> None:
-    """Write a dense generic hamiltonian in the requested spin symmetry.
+def _write_hamiltonian(mf, filename: Path, chol_cut: float, *, basis=None,
+                       verbose: bool = False):
+    """Write a dense hamiltonian with `mf`'s one-body term, in `basis`'s orbitals.
 
-    ``spin_symm`` is one of ``closed`` / ``collinear`` / ``noncollinear``. All
-    three share the same ``X^dag h X`` one-body block; what differs is how it is
-    blocked out, which `MolecularHamiltonian` does from `spin_symm` alone - one
-    spin sector closed, two identical ones collinear, and a single sector over a
-    spinor basis noncollinear.
+    The spin symmetry follows from ``mf.get_hcore()``: closed for a spatial
+    hcore, noncollinear for the spinor one a GHF source gives.
     """
     from safiretools import MolecularHamiltonian
 
-    if spin_symm == "noncollinear" and scf_data["hcore"].shape[-1] != 2 * scf_data["norb"]:
-        # A scalar hcore promoted into the spinor basis: h -> I_2 (x) h.
-        scf_data = dict(scf_data)
-        scf_data["hcore"] = np.kron(np.eye(2), scf_data["hcore"])
-
-    MolecularHamiltonian.from_pyscf(
-        scf_data,
+    hamiltonian = MolecularHamiltonian.from_pyscf(
+        mf,
+        basis=basis,
         chol_cut=chol_cut,
-        spin_symm=spin_symm,
         verbose=verbose,
-    ).to_hdf5(filename)
+    )
+    hamiltonian.to_hdf5(filename)
+    return hamiltonian
 
 
 def _write_nomsd(source, filename: Path, *, basis, psi0=None) -> None:
@@ -113,11 +105,14 @@ def build_bh(ctx: BuildContext) -> None:
     """
     from pyscf import gto, mcscf, scf
 
-    from safiretools import NOMSDWavefunction, PHMSDWavefunction, SpinSymm
-    from safiretools.convert.pyscf import load_pyscf_chk_mol
-    from safiretools.wavefunction.pyscf import ci_expansion, read_cas_meta
+    from safiretools import (
+        MolecularHamiltonian,
+        NOMSDWavefunction,
+        PHMSDWavefunction,
+        SpinSymm,
+    )
 
-    out, scratch = ctx.out_dir, ctx.scratch
+    out = ctx.out_dir
     ci_tol = 0.02
     chol_tol = 5.0e-4
     delta = 1.5 * 1.2344  # Angstrom; 1.5x the equilibrium bond length
@@ -134,43 +129,32 @@ def build_bh(ctx: BuildContext) -> None:
     nmo = mol.nao_nr()
 
     # --- RHF: the orbital basis everything else is expressed in ------------
-    rhf_chk = scratch / "rhf.chk"
-    mf = scf.RHF(mol)
-    mf.chkfile = str(rhf_chk)
-    mf.kernel()
+    rhf = scf.RHF(mol)
+    rhf.kernel()
 
-    rhf_data = load_pyscf_chk_mol(rhf_chk)
-    _write_hamiltonian(rhf_data, out / "afqmc_H_rhf_closed.h5", chol_tol,
-                       spin_symm="closed", verbose=ctx.verbose)
-    _write_hamiltonian(rhf_data, out / "afqmc_H_rhf_collinear.h5", chol_tol,
-                       spin_symm="collinear", verbose=ctx.verbose)
-    _write_hamiltonian(rhf_data, out / "afqmc_H_rhf_noncollinear.h5", chol_tol,
-                       spin_symm="noncollinear", verbose=ctx.verbose)
+    closed = _write_hamiltonian(rhf, out / "afqmc_H_rhf_closed.h5", chol_tol,
+                                verbose=ctx.verbose)
+    MolecularHamiltonian(
+        hcore=closed.hcore[0, 0, :, 0, :],
+        chol=closed.chol,
+        enuc=closed.enuc,
+        spin_symm=SpinSymm.COLLINEAR,
+        ortho=closed.ortho,
+    ).to_hdf5(out / "afqmc_H_rhf_collinear.h5")
+    _write_hamiltonian(rhf.to_ghf(), out / "afqmc_H_rhf_noncollinear.h5",
+                       chol_tol, basis=rhf, verbose=ctx.verbose)
 
-    _write_nomsd(rhf_data, out / "afqmc_rhf_nomsd.h5", basis=rhf_data)
+    _write_nomsd(rhf, out / "afqmc_rhf_nomsd.h5", basis=rhf)
 
     # --- CASCI in the RHF basis -------------------------------------------
     # CASCI rather than CASSCF so the orbitals stay exactly the RHF ones.
-    mc = mcscf.CASCI(mf, 8, 4)
-    mc.chkfile = str(rhf_chk)
+    mc = mcscf.CASCI(rhf, 8, 4)
     mc.run()
-    mcscf.chkfile.dump_mcscf(mc, str(rhf_chk))
-    with h5.File(rhf_chk, "a") as fh5:
-        if "mcscf/ci" in fh5:
-            del fh5["mcscf/ci"]
-        fh5["mcscf/ci"] = mc.ci
 
-    cas_meta = read_cas_meta(rhf_chk)
-    ncas, ncore = int(cas_meta["ncas"]), int(cas_meta["ncore"])
-    ci, occa, occb = ci_expansion(
-        cas_meta["ci"],
-        norb=ncas,
-        nelec=[n - ncore for n in nelec],
-        ncore=ncore,
-        tol=ci_tol,
-    )
+    # the expansion's determinants, reassembled below into every variant
+    expansion = PHMSDWavefunction.from_pyscf_cas(mc, tol=ci_tol)
+    ci, occa, occb = expansion.coeffs, expansion.occa, expansion.occb
     print(f"    number of determinants: {len(ci)}", flush=True)
-    ci = np.array(ci, dtype=np.complex128)
 
     def write_phmsd(filename, coeffs, alpha, beta, spin_symm, **kwargs):
         PHMSDWavefunction(coeffs=coeffs, occa=alpha, occb=beta, nmo=nmo,
@@ -232,31 +216,24 @@ def build_bh(ctx: BuildContext) -> None:
     write_nomsd("afqmc_casci_rhf_nomsd.h5", nomsd_closed, SpinSymm.CLOSED)
 
     # --- UHF and GHF trials, expressed in the RHF basis --------------------
-    uhf_chk = scratch / "uhf.chk"
-    mf = scf.UHF(mol=mol).newton()
-    mf.chkfile = str(uhf_chk)
-    mf.kernel()
+    uhf = scf.UHF(mol=mol).newton()
+    uhf.kernel()
 
-    _write_nomsd(load_pyscf_chk_mol(uhf_chk), out / "afqmc_uhf_nomsd.h5",
-                 basis=rhf_data)
+    _write_nomsd(uhf, out / "afqmc_uhf_nomsd.h5", basis=rhf)
 
     # Same UHF trial, but started from the RHF determinant: exercises the
     # separate initial-walker path.
     rhf_initial = np.zeros((nmo, na), dtype=np.complex128)
     rhf_initial[:na, :na] = np.eye(na)
-    _write_nomsd(load_pyscf_chk_mol(uhf_chk),
-                 out / "afqmc_uhf_nomsd_init_rhf.h5",
-                 basis=rhf_data, psi0=[rhf_initial, rhf_initial])
+    _write_nomsd(uhf, out / "afqmc_uhf_nomsd_init_rhf.h5",
+                 basis=rhf, psi0=[rhf_initial, rhf_initial])
 
-    ghf_chk = scratch / "ghf.chk"
-    mf = mf.to_ghf()
-    dm0 = mf.make_rdm1()
-    mf = mf.newton()
-    mf.chkfile = str(ghf_chk)
-    mf.kernel(dm0=dm0)
+    ghf = uhf.to_ghf()
+    dm0 = ghf.make_rdm1()
+    ghf = ghf.newton()
+    ghf.kernel(dm0=dm0)
 
-    _write_nomsd(load_pyscf_chk_mol(ghf_chk), out / "afqmc_ghf_nomsd.h5",
-                 basis=rhf_data)
+    _write_nomsd(ghf, out / "afqmc_ghf_nomsd.h5", basis=rhf)
 
 
 # ============================================================================
@@ -272,9 +249,8 @@ def build_n2(ctx: BuildContext) -> None:
     from pyscf import gto, mcscf, scf
 
     from safiretools import Wavefunction
-    from safiretools.convert.pyscf import load_pyscf_chk_mol
 
-    out, scratch = ctx.out_dir, ctx.scratch
+    out = ctx.out_dir
     delta = 3.0  # Bohr
 
     mol = gto.M(
@@ -285,26 +261,17 @@ def build_n2(ctx: BuildContext) -> None:
         verbose=_pyscf_verbosity(ctx),
     )
 
-    casscf_chk = scratch / "rhf_casscf_chkfile.h5"
     rhf = scf.RHF(mol)
-    rhf.chkfile = str(casscf_chk)
     rhf.run()
 
     mc = mcscf.CASSCF(rhf, 12, 6).run()
 
-    with h5.File(casscf_chk, "a") as fh5:
-        for name, value in (("ci", mc.ci), ("ncore", mc.ncore), ("ncas", mc.ncas)):
-            if f"mcscf/{name}" in fh5:
-                del fh5[f"mcscf/{name}"]
-            fh5[f"mcscf/{name}"] = np.asarray(value)
-
     Wavefunction.from_pyscf_cas(
-        mol, casscf_chk, tol=1.0e-4, max_det=50).to_hdf5(out / "cas_wfn.h5")
+        mc, tol=1.0e-4, max_det=50).to_hdf5(out / "cas_wfn.h5")
 
     # The hamiltonian is written in the CASSCF natural orbital basis.
-    basis_scf_data = load_pyscf_chk_mol(chkfile=casscf_chk, base="mcscf")
-    _write_hamiltonian(basis_scf_data, out / "cas_basis_hamil.h5", 1e-4,
-                       spin_symm="closed", verbose=ctx.verbose)
+    _write_hamiltonian(rhf, out / "cas_basis_hamil.h5", 1e-4, basis=mc,
+                       verbose=ctx.verbose)
 
 
 # ============================================================================
@@ -319,24 +286,18 @@ def build_li(ctx: BuildContext) -> None:
     """
     from pyscf import gto, scf
 
-    from safiretools.convert.pyscf import load_pyscf_chk_mol
-
-    out, scratch = ctx.out_dir, ctx.scratch
+    out = ctx.out_dir
 
     # No point-group symmetry here: the lowest ROHF quartet breaks it, and the
     # symmetry-constrained solve lands 2.1 mHa higher.
     mol = gto.M(atom="Li 0. 0. 0.", basis="ccpvdz", spin=3,
                 verbose=_pyscf_verbosity(ctx))
 
-    rohf_chk = scratch / "rohf.chk"
-    mf = scf.ROHF(mol).newton()
-    mf.chkfile = str(rohf_chk)
-    mf.kernel()
+    rohf = scf.ROHF(mol).newton()
+    rohf.kernel()
 
-    scf_data = load_pyscf_chk_mol(rohf_chk, "scf")
-    _write_hamiltonian(scf_data, out / "hamil_closed.h5", 1e-5,
-                       spin_symm="closed", verbose=ctx.verbose)
-    _write_nomsd(scf_data, out / "rohf_nomsd_polarized.h5", basis=scf_data)
+    _write_hamiltonian(rohf, out / "hamil_closed.h5", 1e-5, verbose=ctx.verbose)
+    _write_nomsd(rohf, out / "rohf_nomsd_polarized.h5", basis=rohf)
 
 
 # ============================================================================
@@ -382,9 +343,7 @@ def build_pb(ctx: BuildContext) -> None:
     """
     from pyscf import gto, scf
 
-    from safiretools.convert.pyscf import load_pyscf_chk_mol
-
-    out, scratch = ctx.out_dir, ctx.scratch
+    out = ctx.out_dir
     chol_tol = 5e-4
 
     mol = gto.M(
@@ -396,53 +355,37 @@ def build_pb(ctx: BuildContext) -> None:
         symmetry=True,
         verbose=_pyscf_verbosity(ctx),
     )
-    nelec = mol.nelec
-
-    rohf_chk = scratch / "rohf.chk"
-    uhf_chk = scratch / "uhf.chk"
-    ghf_chk = scratch / "ghf.chk"
-    ghf_soc_chk = scratch / "ghf_soc.chk"
-
     # ROHF supplies the orbital basis for everything below.
-    mf = scf.ROHF(mol)
-    mf.chkfile = str(rohf_chk)
-    mf.kernel()
+    rohf = scf.ROHF(mol)
+    rohf.kernel()
 
-    mf = scf.UHF(mol)
-    mf.chkfile = str(uhf_chk)
-    mf.kernel()
+    uhf = scf.UHF(mol)
+    uhf.kernel()
 
-    mf = scf.GHF(mol)
-    mf.chkfile = str(ghf_chk)
-    mf.kernel()
+    ghf = scf.GHF(mol)
+    ghf.kernel()
 
     # Spin-orbit coupling mixes the spatial irreps, so this solve drops the
     # point-group symmetry the others use.
-    mf = scf.GHF(mol.copy().build(symmetry=False))
-    mf.chkfile = str(ghf_soc_chk)
-    mf.with_soc = True
-    mf.kernel()
+    ghf_soc = scf.GHF(mol.copy().build(symmetry=False))
+    ghf_soc.with_soc = True
+    ghf_soc.kernel()
 
-    basis_data = load_pyscf_chk_mol(rohf_chk, "scf")
+    _write_nomsd(uhf, out / "afqmc_uhf_nomsd.h5", basis=rohf)
 
-    _write_nomsd(load_pyscf_chk_mol(uhf_chk), out / "afqmc_uhf_nomsd.h5",
-                 basis=basis_data)
+    # Spin-free: a GHF without with_soc has the scalar hcore on both spins,
+    # which is deliberate here, so its warning is silenced.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*spin-orbit ECP")
+        _write_hamiltonian(ghf, out / "afqmc_H_rhf_basis_noncollinear_sf.h5",
+                           chol_tol, basis=rohf, verbose=ctx.verbose)
 
-    # Spin-free: promote the scalar hcore into the spinor basis.
-    _write_hamiltonian(basis_data,
-                       out / "afqmc_H_rhf_basis_noncollinear_sf.h5", chol_tol,
-                       spin_symm="noncollinear", verbose=ctx.verbose)
+    # Spin-orbit: with_soc folds the ECP spin-orbit term into hcore.
+    _write_hamiltonian(ghf_soc, out / "afqmc_H_rhf_basis_noncollinear_soc.h5",
+                       chol_tol, basis=rohf, verbose=ctx.verbose)
 
-    # Spin-orbit: hcore already comes back as a complex (2 norb, 2 norb) block.
-    soc_data = load_pyscf_chk_mol(rohf_chk, "scf", soc_type="ecp")
-    _write_hamiltonian(soc_data,
-                       out / "afqmc_H_rhf_basis_noncollinear_soc.h5", chol_tol,
-                       spin_symm="noncollinear", verbose=ctx.verbose)
-
-    _write_nomsd(load_pyscf_chk_mol(ghf_chk), out / "afqmc_ghf_sf_nomsd.h5",
-                 basis=basis_data)
-    _write_nomsd(load_pyscf_chk_mol(ghf_soc_chk),
-                 out / "afqmc_ghf_soc_nomsd.h5", basis=basis_data)
+    _write_nomsd(ghf, out / "afqmc_ghf_sf_nomsd.h5", basis=rohf)
+    _write_nomsd(ghf_soc, out / "afqmc_ghf_soc_nomsd.h5", basis=rohf)
 
 
 # ============================================================================

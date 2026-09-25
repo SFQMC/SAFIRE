@@ -12,6 +12,7 @@
 `NOMSDWavefunction.from_pbc_scf`: the periodic construction path.
 """
 
+import copy
 import inspect
 
 import h5py as h5
@@ -48,57 +49,16 @@ def diamond_krks():
 
 
 @pytest.fixture
-def closed_scf_data(diamond_krks):
-    cell, mf, kpts = diamond_krks
-    hcore = mf.get_hcore()
-
-    return {
-        'cell': cell,
-        'mo_coeff': mf.mo_coeff,
-        'Xocc': mf.mo_occ,
-        'X': mf.mo_coeff,
-        'fock': hcore + mf.get_veff(),
-        'walker_type': 'closed',
-        'hcore': hcore,
-        'nmo_pk': np.array([C.shape[-1] for C in mf.mo_coeff]),
-        'mo_energy': mf.mo_energy,
-        'kpts': kpts,
-    }
-
-
-@pytest.fixture
-def collinear_scf_data(diamond_krks):
-    """
-    The same calculation presented as a collinear reference, by duplicating the
-    closed-shell data across the two spin channels.
-    """
-    cell, mf, kpts = diamond_krks
-    hcore = mf.get_hcore()
-    fock = hcore + mf.get_veff()
-    occ = np.array([np.array(o) / 2.0 for o in mf.mo_occ])
-
-    return {
-        'cell': cell,
-        'mo_coeff': mf.mo_coeff,
-        'Xocc': np.array([occ, occ]),
-        'X': mf.mo_coeff,
-        'fock': np.array([fock, fock]),
-        'walker_type': 'collinear',
-        'hcore': hcore,
-        'nmo_pk': np.array([C.shape[-1] for C in mf.mo_coeff]),
-        'mo_energy': np.array([mf.mo_energy, mf.mo_energy]),
-        'kpts': kpts,
-    }
-
-
-@pytest.fixture
-def degenerate_scf_data(collinear_scf_data):
+def degenerate_kmf(diamond_krks):
     """A collinear reference with two partially occupied bands at one k-point."""
-    occ = np.array(collinear_scf_data['Xocc'])
+    _, mf, _ = diamond_krks
+    degenerate = copy.copy(mf.to_uhf())
+    occ = np.array(degenerate.mo_occ, dtype=float)
     occ[:, 0, 3] = 0.5
     occ[:, 0, 4] = 0.5
+    degenerate.mo_occ = occ
 
-    return dict(collinear_scf_data, Xocc=occ)
+    return degenerate
 
 
 def datasets(path):
@@ -111,8 +71,10 @@ def datasets(path):
 
 class TestSingleDeterminant:
 
-    def test_a_closed_shell_reference(self, closed_scf_data):
-        wavefunction = NOMSDWavefunction.from_pbc_scf(closed_scf_data)
+    @pytest.mark.parametrize('basis', [None, 'ortho_ao'])
+    def test_a_closed_shell_reference(self, diamond_krks, basis):
+        _, mf, _ = diamond_krks
+        wavefunction = NOMSDWavefunction.from_pbc_scf(mf, basis=basis)
 
         assert isinstance(wavefunction, NOMSDWavefunction)
         assert wavefunction.spin_symm is SpinSymm.CLOSED
@@ -121,27 +83,32 @@ class TestSingleDeterminant:
         # a closed-shell determinant carries one spin block
         assert wavefunction.dets.shape == (1, 16, 8)
 
-    def test_a_collinear_reference(self, collinear_scf_data):
-        wavefunction = NOMSDWavefunction.from_pbc_scf(collinear_scf_data)
+    def test_a_collinear_reference(self, diamond_krks):
+        _, mf, _ = diamond_krks
+        wavefunction = NOMSDWavefunction.from_pbc_scf(mf.to_uhf(),
+                                                      basis='ortho_ao')
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (8, 8)
         assert spin_layout_shape(wavefunction.dets) == ((1, 16, 8), (1, 16, 8))
 
     def test_partial_occupancies_still_give_one_determinant(self,
-                                                            degenerate_scf_data):
-        wavefunction = NOMSDWavefunction.from_pbc_scf(degenerate_scf_data)
+                                                            degenerate_kmf):
+        wavefunction = NOMSDWavefunction.from_pbc_scf(degenerate_kmf,
+                                                      basis='ortho_ao')
 
         assert isinstance(wavefunction, NOMSDWavefunction)
         assert wavefunction.ndets == 1
 
     def test_a_collinear_reference_requires_the_orthogonalized_basis(
-            self, collinear_scf_data):
+            self, diamond_krks):
+        _, mf, _ = diamond_krks
         with pytest.raises(ValueError, match="orthogonalized AO basis"):
-            NOMSDWavefunction.from_pbc_scf(collinear_scf_data, ortho_ao=False)
+            NOMSDWavefunction.from_pbc_scf(mf.to_uhf())
 
-    def test_it_round_trips(self, closed_scf_data, tmp_path):
-        wavefunction = NOMSDWavefunction.from_pbc_scf(closed_scf_data)
+    def test_it_round_trips(self, diamond_krks, tmp_path):
+        _, mf, _ = diamond_krks
+        wavefunction = NOMSDWavefunction.from_pbc_scf(mf)
         path = tmp_path / 'wfn.h5'
         wavefunction.to_hdf5(path)
 
@@ -160,8 +127,9 @@ class TestPartialOccupancies:
     the leading configuration of its partially occupied bands.
     """
 
-    def test_the_leading_configuration_is_occupied(self, degenerate_scf_data):
-        wavefunction = NOMSDWavefunction.from_pbc_scf(degenerate_scf_data)
+    def test_the_leading_configuration_is_occupied(self, degenerate_kmf):
+        wavefunction = NOMSDWavefunction.from_pbc_scf(degenerate_kmf,
+                                                      basis='ortho_ao')
 
         assert isinstance(wavefunction, NOMSDWavefunction)
         assert wavefunction.ndets == 1
@@ -177,26 +145,28 @@ class TestPartialOccupancies:
         assert 'ndet_max' not in inspect.signature(pbc.from_pbc_scf).parameters
 
     def test_a_partially_occupied_closed_shell_reference_is_rejected(
-            self, closed_scf_data):
-        occ = np.full_like(np.array(closed_scf_data['Xocc'], dtype=float), 0.9)
-        scf_data = dict(closed_scf_data, Xocc=occ)
+            self, diamond_krks):
+        _, mf, _ = diamond_krks
+        smeared = copy.copy(mf)
+        smeared.mo_occ = np.full_like(np.array(mf.mo_occ, dtype=float), 0.9)
 
         with pytest.raises(ValueError, match="closed-shell reference are"):
-            NOMSDWavefunction.from_pbc_scf(scf_data)
+            NOMSDWavefunction.from_pbc_scf(smeared)
 
-    def test_too_few_degenerate_bands_is_reported(self, collinear_scf_data):
+    def test_too_few_degenerate_bands_is_reported(self, diamond_krks):
         """
         Electrons sitting in bands below `low` still count toward the total but
         are not candidates to occupy, so a heavily smeared reference can leave
         more electrons to place than there are bands to place them in.
         """
-        occ = np.full_like(np.array(collinear_scf_data['Xocc'], dtype=float),
-                           0.09)
+        _, mf, _ = diamond_krks
+        smeared = copy.copy(mf.to_uhf())
+        occ = np.full_like(np.array(smeared.mo_occ, dtype=float), 0.09)
         occ[:, :, 0] = 0.9
-        scf_data = dict(collinear_scf_data, Xocc=occ)
+        smeared.mo_occ = occ
 
         with pytest.raises(ValueError, match="remain to be placed over"):
-            NOMSDWavefunction.from_pbc_scf(scf_data)
+            NOMSDWavefunction.from_pbc_scf(smeared, basis='ortho_ao')
 
 
 class TestBaseClassDispatch:
@@ -206,16 +176,21 @@ class TestBaseClassDispatch:
     dispatches from the base class".
     """
 
-    def test_the_base_factory_gives_an_nomsd(self, collinear_scf_data):
-        assert isinstance(Wavefunction.from_pbc_scf(collinear_scf_data),
+    def test_the_base_factory_gives_an_nomsd(self, diamond_krks):
+        _, mf, _ = diamond_krks
+        assert isinstance(Wavefunction.from_pbc_scf(mf.to_uhf(),
+                                                    basis='ortho_ao'),
                           NOMSDWavefunction)
 
-    def test_the_subclass_alias_agrees(self, collinear_scf_data, layouts_close):
-        through_base = Wavefunction.from_pbc_scf(collinear_scf_data)
-        through_subclass = NOMSDWavefunction.from_pbc_scf(collinear_scf_data)
+    def test_the_subclass_alias_agrees(self, diamond_krks, layouts_close):
+        _, mf, _ = diamond_krks
+        kuhf = mf.to_uhf()
+        through_base = Wavefunction.from_pbc_scf(kuhf, basis='ortho_ao')
+        through_subclass = NOMSDWavefunction.from_pbc_scf(kuhf, basis='ortho_ao')
 
         assert layouts_close(through_base.dets, through_subclass.dets)
 
-    def test_the_wrong_representation_is_refused(self, collinear_scf_data):
+    def test_the_wrong_representation_is_refused(self, diamond_krks):
+        _, mf, _ = diamond_krks
         with pytest.raises(ValueError, match='from_pbc_scf'):
-            PHMSDWavefunction.from_pbc_scf(collinear_scf_data)
+            PHMSDWavefunction.from_pbc_scf(mf.to_uhf(), basis='ortho_ao')

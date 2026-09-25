@@ -9,98 +9,38 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 """
-Reading a PySCF checkpoint file into the ``scf_data`` mapping the Hamiltonian
-and wavefunction factories consume.
+Reading PySCF SCF objects for the Hamiltonian and wavefunction factories.
 
-`load_pyscf_chk_mol` reads a molecular calculation and `load_pyscf_chk` a
-periodic one. Both return a plain mapping, and every ``from_pyscf`` factory
-accepts either a checkpoint path — which it loads through here — or an
-already-loaded mapping, so that one load can serve several factories. That
-matters when the basis and the wavefunction come from *different* SCF
-calculations, which is the common case for a spin-orbit or
-multi-reference workflow: the Hamiltonian is expressed in one solution's
-orbitals while the trial wavefunction comes from another.
+Every ``from_pyscf`` factory takes PySCF objects — an ``mf`` from ``scf``, an
+``mc`` from ``mcscf``, a ``kmf`` from ``pbc.scf`` — and reads them by duck
+typing: only their methods and attributes are used, so nothing here imports
+PySCF.
 
-The spin symmetry is *determined here*, from what the checkpoint says about the
-calculation, rather than inferred later from the shape of whatever was built.
-See `determine_spin_symm`.
+Two roles are kept apart. The *source* object says what the physics is: its
+``get_hcore()`` is the one-body Hamiltonian, so the relativistic or spin-orbit
+treatment is chosen by how that object was set up (``sfx2c1e()``,
+``x2c1e()``, a GHF with ``with_soc = True``). The *basis* says which orbitals
+everything is expressed in; see `working_basis`. Pass the same basis to the
+Hamiltonian and the wavefunction factory.
+
+The spin symmetry is *determined here*, from the data, rather than passed in.
+See `hamiltonian_spin_symm` and `determine_spin_symm`.
 """
 
-import json
 import logging
-from pathlib import Path
 from warnings import warn
 
 import numpy as np
-import h5py as h5
 
 from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
 
-SOC_TYPES = (None, 'sfx2c', 'x2c', 'ecp')
-"""Ways of including spin-orbit coupling in the one-body Hamiltonian."""
+ORTHO_AO = 'ortho_ao'
+"""The `basis` value selecting the canonically orthogonalized AO basis."""
 
 
-def as_scf_data(source, periodic=False):
-    """
-    Resolve a factory's `source` argument into an ``scf_data`` mapping.
-
-    Parameters
-    ----------
-    source : str or pathlib.Path or dict
-        A PySCF checkpoint file to load, or an already-loaded mapping to use as
-        it stands.
-    periodic : bool, optional
-        Load a periodic calculation rather than a molecular one. Default False.
-        Ignored when `source` is already a mapping.
-
-    Returns
-    -------
-    dict
-        The ``scf_data`` mapping.
-
-    Raises
-    ------
-    ValueError
-        If `source` is neither a path nor a mapping, or names a checkpoint of
-        the wrong kind.
-    """
-    from collections.abc import Mapping
-
-    if isinstance(source, Mapping):
-        return source
-
-    if not isinstance(source, (str, Path)):
-        raise ValueError(
-            "source must be a PySCF checkpoint path or an scf_data mapping, "
-            f"not {type(source).__name__}"
-        )
-
-    if is_periodic_chk(source) != periodic:
-        kind = 'periodic' if periodic else 'molecular'
-        raise ValueError(
-            f"'{source}' holds a {'molecular' if periodic else 'periodic'} "
-            f"PySCF calculation, but a {kind} one is needed here"
-        )
-
-    return load_pyscf_chk(source) if periodic else load_pyscf_chk_mol(source)
-
-
-def is_periodic_chk(chkfile) -> bool:
-    """
-    Whether the PySCF checkpoint at `chkfile` holds a periodic calculation.
-
-    Decided by whether its serialized molecule carries lattice vectors, which
-    PySCF stores under the key ``'a'`` for a ``Cell`` and not at all for a
-    ``Mole``.
-    """
-    with h5.File(chkfile, 'r') as fh5:
-        return 'a' in json.loads(fh5['mol'][()]).keys()
-
-
-def determine_spin_symm(mo_coeff, mo_occ, soc_type=None, hcore=None,
-                        nmo=None) -> SpinSymm:
+def determine_spin_symm(mo_coeff, mo_occ, nao) -> SpinSymm:
     """
     Determine the spin symmetry of a PySCF SCF solution from the solution
     itself.
@@ -112,13 +52,9 @@ def determine_spin_symm(mo_coeff, mo_occ, soc_type=None, hcore=None,
         solution.
     mo_occ : array_like
         Orbital occupancies.
-    soc_type : {None, 'sfx2c', 'x2c', 'ecp'}, optional
-        Spin-orbit treatment requested. ``'x2c'`` and ``'ecp'`` produce a
-        spinor one-body Hamiltonian and so force a noncollinear symmetry.
-    hcore : array_like, optional
-        One-body Hamiltonian, checked for a spinor basis when given.
-    nmo : int, optional
-        Number of spatial orbitals, needed to recognize a spinor `hcore`.
+    nao : int
+        Number of spatial basis functions, needed to recognize a spinor
+        (GHF) solution.
 
     Returns
     -------
@@ -126,8 +62,7 @@ def determine_spin_symm(mo_coeff, mo_occ, soc_type=None, hcore=None,
 
     Notes
     -----
-    This reads the *calculation*, not the shape of a Slater matrix built from
-    it: a spinor basis is noncollinear, spin-resolved orbitals are collinear,
+    A spinor basis is noncollinear, spin-resolved orbitals are collinear,
     fractional or singly occupied orbitals are collinear, and a solution whose
     occupancies are all 0 or 2 is closed shell. That ordering matters — a GHF
     solution has one ``mo_coeff`` matrix like an RHF one, and only the basis
@@ -136,14 +71,7 @@ def determine_spin_symm(mo_coeff, mo_occ, soc_type=None, hcore=None,
     mo_coeff = np.asarray(mo_coeff)
     mo_occ = np.asarray(mo_occ)
 
-    if soc_type in ('x2c', 'ecp'):
-        return SpinSymm.NONCOLLINEAR
-
-    if nmo is not None and hcore is not None \
-            and np.shape(hcore)[-1] == 2 * nmo:
-        return SpinSymm.NONCOLLINEAR
-
-    if nmo is not None and mo_coeff.ndim == 2 and mo_coeff.shape[0] == 2 * nmo:
+    if mo_coeff.ndim == 2 and mo_coeff.shape[0] == 2 * nao:
         return SpinSymm.NONCOLLINEAR
 
     if mo_coeff.ndim == 3 or mo_occ.ndim == 2:
@@ -157,159 +85,81 @@ def determine_spin_symm(mo_coeff, mo_occ, soc_type=None, hcore=None,
     return SpinSymm.CLOSED
 
 
-# ----------------------------------------------------------------------
-# molecular
-# ----------------------------------------------------------------------
-
-def load_pyscf_chk_mol(chkfile, base='scf', soc_type=None) -> dict:
+def hamiltonian_spin_symm(hcore, nao) -> SpinSymm:
     """
-    Read a molecular PySCF checkpoint file.
+    The spin symmetry of a molecular one-body Hamiltonian, from its shape.
 
-    Parameters
-    ----------
-    chkfile : str or pathlib.Path
-        Checkpoint file to read.
-    base : str, optional
-        HDF5 group holding the solution. Default ``'scf'``; pass ``'mcscf'`` to
-        read a CASSCF one.
-    soc_type : {None, 'sfx2c', 'x2c', 'ecp'}, optional
-        Include spin-orbit coupling in the one-body Hamiltonian, either
-        spin-free exact two-component (``'sfx2c'``), full exact two-component
-        (``'x2c'``), or through the ECP (``'ecp'``). The latter two make
-        ``hcore`` a spinor matrix, which requires a noncollinear spin symmetry
-        and the orthogonalized-AO basis.
-
-    Returns
-    -------
-    dict
-        Keys ``mol``, ``nelec``, ``mo_occ``, ``mo_coeff``, ``hcore``, ``norb``,
-        ``X``, ``df_ints``, ``walker_type`` and ``soc_type``.
+    A spinor ``(2 nao, 2 nao)`` matrix is noncollinear and a spatial
+    ``(nao, nao)`` one closed: a spin-independent operator gains nothing from
+    two identical spin sectors, whatever the reference state is.
 
     Raises
     ------
     ValueError
-        If `soc_type` is not recognized.
+        If `hcore` has neither shape.
     """
-    from pyscf import lib
-    from pyscf.lib.chkfile import load_mol
-
-    if soc_type not in SOC_TYPES:
-        raise ValueError(
-            f"unknown soc_type '{soc_type}': supported values are "
-            f"{list(SOC_TYPES)}"
-        )
-
-    mol = load_mol(chkfile)
-    nmo = mol.nao_nr()
-    mo_occ = np.array(lib.chkfile.load(chkfile, f'{base}/mo_occ'))
-    mo_coeff = np.array(lib.chkfile.load(chkfile, f'{base}/mo_coeff'))
-
-    with h5.File(chkfile, 'r') as fh5:
-        if '/scf/hcore' in fh5:
-            if soc_type is not None:
-                warn(
-                    "reading hcore from the checkpoint file, so it is unclear "
-                    f"whether the requested soc_type '{soc_type}' is included"
-                )
-            hcore = fh5['/scf/hcore'][:]
-        else:
-            hcore = _hcore_with_soc(mol, soc_type)
-
-        if '/scf/orthoAORot' in fh5:
-            X = fh5['/scf/orthoAORot'][:]
-            # orbitals may have been dropped for linear dependence
-            nmo = X.shape[-1]
-        else:
-            X = canonical_orthogonalization(mol.intor('int1e_ovlp_sph'))
-
-        df_ints = fh5['j3c'][:] if 'j3c' in fh5 else None
-
-    spin_symm = determine_spin_symm(mo_coeff, mo_occ, soc_type=soc_type,
-                                    hcore=hcore, nmo=nmo)
-    logger.info("read a %s molecular solution from %s: nelec=%s, norb=%d",
-                spin_symm.label, chkfile, mol.nelec, nmo)
-
-    return {
-        'mol': mol,
-        'nelec': mol.nelec,
-        'mo_occ': mo_occ,
-        'hcore': hcore,
-        'norb': nmo,
-        'X': X,
-        'mo_coeff': mo_coeff,
-        'df_ints': df_ints,
-        'walker_type': spin_symm,
-        'soc_type': soc_type,
-    }
+    shape = np.shape(hcore)
+    if shape == (nao, nao):
+        return SpinSymm.CLOSED
+    if shape == (2 * nao, 2 * nao):
+        return SpinSymm.NONCOLLINEAR
+    raise ValueError(
+        f"hcore has shape {shape}, which is neither ({nao}, {nao}) nor the "
+        f"spinor ({2 * nao}, {2 * nao}) for a molecule with {nao} basis functions"
+    )
 
 
-def working_basis(scf_data, ortho_ao, cas=None):
+def one_body(mf):
     """
-    Choose the working basis and the frozen-orbital counts for a molecular
-    ``scf_data`` mapping.
+    The one-body Hamiltonian of the source object `mf`, with its spin symmetry.
+
+    Warns when the molecule carries a spin-orbit ECP that the Hamiltonian does
+    not include, which is what a GHF object without ``with_soc = True`` gives.
 
     Returns
     -------
-    C : numpy.ndarray
-        Transformation into the working basis.
-    (nfzc, nfzv) : tuple(int, int)
-        Numbers of frozen core and virtual orbitals.
+    hcore : numpy.ndarray
+        ``mf.get_hcore()`` in the AO (or spin-orbital AO) basis.
+    spin_symm : SpinSymm
+        See `hamiltonian_spin_symm`.
+    """
+    mol = mf.mol
+    nao = mol.nao_nr()
+    hcore = np.asarray(mf.get_hcore())
+    spin_symm = hamiltonian_spin_symm(hcore, nao)
+
+    if mol.has_ecp_soc() and _is_spin_free(hcore, nao):
+        warn(
+            "the molecule carries a spin-orbit ECP, but hcore has no spin-orbit "
+            "term; if that is not intended, pass a GHF object with "
+            "with_soc = True"
+        )
+
+    return hcore, spin_symm
+
+
+def _is_spin_free(hcore, nao) -> bool:
+    """Whether `hcore` acts identically on both spins and never flips one."""
+    if hcore.shape == (nao, nao):
+        return True
+    return (np.array_equal(hcore[:nao, :nao], hcore[nao:, nao:])
+            and not np.any(hcore[:nao, nao:]) and not np.any(hcore[nao:, :nao]))
+
+
+def orbitals(mf):
+    """
+    ``(mo_coeff, mo_occ)`` of a converged SCF object.
 
     Raises
     ------
     ValueError
-        If `cas` is combined with `ortho_ao`, or if the reference is UHF/GHF and
-        `ortho_ao` is not set.
+        If `mf` holds no orbitals, i.e. was never run.
     """
-    C = scf_data['mo_coeff']
-
-    if ortho_ao:
-        if cas is not None:
-            raise ValueError("cas and ortho_ao cannot be used at the same time")
-        return scf_data['X'], (0, 0)
-
-    if C.ndim == 3 or C.shape[0] == 2 * scf_data["norb"]:
+    if getattr(mf, 'mo_coeff', None) is None or getattr(mf, 'mo_occ', None) is None:
         raise ValueError(
-            "UHF or GHF molecular orbital bases are not supported. Use ortho_ao."
+            f"{type(mf).__name__} holds no orbitals; run the calculation first"
         )
-
-    if cas is None:
-        return C, (0, 0)
-
-    nfzc = (sum(scf_data["nelec"]) - cas[0]) // 2
-    ncas = cas[1]
-    nmo = C.shape[-1]
-    if ncas == -1:
-        ncas = nmo - nfzc
-
-    return C, (nfzc, nmo - ncas - nfzc)
-
-
-def _hcore_with_soc(mol, soc_type):
-    """The one-body Hamiltonian for `mol`, with the requested SOC treatment."""
-    from pyscf import scf
-
-    if soc_type is None:
-        return scf.hf.get_hcore(mol)
-    if soc_type == 'sfx2c':
-        return mol.RHF().sfx2c1e().get_hcore()
-    if soc_type == 'x2c':
-        return mol.GHF().x2c1e().get_hcore()
-    return scf.GHF(mol).get_hcore() + ecp_soc(mol)
-
-
-def ecp_soc(mol):
-    """
-    The ECP spin-orbit term for `mol`, as a spinor matrix.
-
-    See PySCF's ``examples/gto/20-soc_ecp.py``.
-    """
-    from pyscf import lib
-
-    spin = 0.5 * lib.PauliMatrices
-    soc = -1j * lib.einsum('sxy,spq->xpyq', spin, mol.intor('ECPso'))
-    return soc.reshape(soc.shape[0] * soc.shape[1],
-                       soc.shape[2] * soc.shape[3])
+    return np.asarray(mf.mo_coeff), np.asarray(mf.mo_occ)
 
 
 def canonical_orthogonalization(overlap, lindep_cutoff=0.0):
@@ -336,23 +186,141 @@ def canonical_orthogonalization(overlap, lindep_cutoff=0.0):
 
 
 # ----------------------------------------------------------------------
-# periodic
+# molecular
 # ----------------------------------------------------------------------
 
-def load_pyscf_chk(chkfile, hcore=None, ortho_ao=False) -> dict:
+def working_basis(mf, basis=None, active_space=None):
     """
-    Read a periodic PySCF checkpoint file.
+    Resolve a factory's `basis` argument into the transformation into the
+    working basis, and the frozen-orbital counts.
 
     Parameters
     ----------
-    chkfile : str or pathlib.Path
-        Checkpoint file to read.
-    hcore : array_like, optional
-        One-body Hamiltonian to use instead of the checkpoint's.
-    ortho_ao : bool, optional
-        Work in the orthogonalized AO basis, reading ``scf/orthoAORot`` and
-        ``scf/nmo_per_kpt`` from the checkpoint. Default False, which uses the
-        MO basis and requires a closed-shell solution.
+    mf
+        The source SCF object; its ``mol`` gives the AO overlap and the
+        electron count.
+    basis : None or 'ortho_ao' or object or numpy.ndarray, optional
+        ``None`` uses `mf`'s own orbitals, ``'ortho_ao'`` the canonically
+        orthogonalized AO basis, an object its ``mo_coeff`` (an ROHF or CASSCF
+        solution, say), and an array is used as the ``(nao, nmo)``
+        transformation itself.
+    active_space : tuple(int, int), optional
+        ``(nelecas, ncas)`` active space. ``ncas == -1`` takes every orbital
+        above the frozen core.
+
+    Returns
+    -------
+    C : numpy.ndarray
+        Transformation into the working basis, ``(nao, nmo)``.
+    (nfzc, nfzv) : tuple(int, int)
+        Numbers of frozen core and virtual orbitals.
+
+    Raises
+    ------
+    ValueError
+        If `basis` is an unknown string, if `active_space` is combined with
+        ``'ortho_ao'``, if the basis orbitals are spin resolved (UHF/GHF), or if
+        they do not span `mf`'s AO basis.
+    """
+    mol = mf.mol
+    nao = mol.nao_nr()
+
+    if isinstance(basis, str):
+        if basis != ORTHO_AO:
+            raise ValueError(
+                f"unknown basis '{basis}': pass '{ORTHO_AO}', an object with "
+                "mo_coeff, or an (nao, nmo) array"
+            )
+        if active_space is not None:
+            raise ValueError(
+                f"active_space and basis='{ORTHO_AO}' cannot be combined")
+        return canonical_orthogonalization(mol.intor('int1e_ovlp')), (0, 0)
+
+    if isinstance(basis, np.ndarray):
+        C = basis
+    else:
+        source = mf if basis is None else basis
+        if getattr(source, 'mo_coeff', None) is None:
+            raise ValueError(
+                f"{type(source).__name__} holds no orbitals to use as the basis; "
+                "run the calculation first"
+            )
+        C = np.asarray(source.mo_coeff)
+
+    if C.ndim == 3 or C.shape[0] == 2 * nao:
+        raise ValueError(
+            "UHF or GHF orbital bases are not supported; use "
+            f"basis='{ORTHO_AO}'"
+        )
+    if C.shape[0] != nao:
+        raise ValueError(
+            f"the basis orbitals have {C.shape[0]} rows, but the molecule has "
+            f"{nao} basis functions"
+        )
+
+    if active_space is None:
+        return C, (0, 0)
+
+    nelecas, ncas = active_space
+    nfzc = (sum(mol.nelec) - nelecas) // 2
+    nmo = C.shape[-1]
+    if ncas == -1:
+        ncas = nmo - nfzc
+
+    return C, (nfzc, nmo - ncas - nfzc)
+
+
+def cholesky_df(mf):
+    """
+    The density-fitting vectors of a density-fitted SCF object, in the AO basis.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(naux, nao*nao)``, unpacked from PySCF's lower-triangular storage.
+
+    Raises
+    ------
+    ValueError
+        If `mf` is not density fitted.
+    """
+    if getattr(mf, 'with_df', None) is None:
+        raise ValueError(
+            "df=True needs a density-fitted SCF object, e.g. mf.density_fit()"
+        )
+
+    nao = mf.mol.nao_nr()
+    lower = np.tril_indices(nao)
+    blocks = []
+    for packed in mf.with_df.loop():
+        block = np.zeros((packed.shape[0], nao, nao), dtype=packed.dtype)
+        block[:, lower[0], lower[1]] = packed
+        block[:, lower[1], lower[0]] = packed
+        blocks.append(block.reshape(packed.shape[0], nao * nao))
+
+    return np.concatenate(blocks)
+
+
+# ----------------------------------------------------------------------
+# periodic
+# ----------------------------------------------------------------------
+
+def periodic_solution(kmf, basis=None, lindep_cutoff=0.0) -> dict:
+    """
+    Read a periodic PySCF SCF object.
+
+    Parameters
+    ----------
+    kmf
+        A ``pbc.scf`` object, at one k-point or on a mesh, restricted or
+        unrestricted.
+    basis : None or 'ortho_ao', optional
+        ``None`` works in the solution's own orbitals, which requires a
+        closed-shell solution; ``'ortho_ao'`` in the canonically orthogonalized
+        AO basis at each k-point.
+    lindep_cutoff : float, optional
+        Overlap eigenvalue below which an orthogonalized orbital is dropped;
+        see `canonical_orthogonalization`. Default 0.0.
 
     Returns
     -------
@@ -363,40 +331,34 @@ def load_pyscf_chk(chkfile, hcore=None, ortho_ao=False) -> dict:
     Raises
     ------
     ValueError
-        If the checkpoint holds a spin-resolved solution and `ortho_ao` is not
-        set, if the cell is spin polarized without one, if a stored quantity
-        matches no layout PySCF writes (see `_per_kpoint`), or if the stored
-        quantities disagree about whether the solution is spin resolved.
+        If `basis` is anything else, if the solution is spin resolved and the
+        basis is not ``'ortho_ao'``, if the cell is spin polarized without a
+        spin-resolved solution, or if a per-k-point quantity matches no layout
+        PySCF uses.
     """
-    from pyscf import lib
-    from pyscf.pbc.lib.chkfile import load_cell
+    if basis is not None and not (isinstance(basis, str) and basis == ORTHO_AO):
+        raise ValueError(
+            f"a periodic basis is either None or '{ORTHO_AO}', not {basis!r}"
+        )
+    ortho_ao = basis is not None
 
-    cell = load_cell(chkfile)
+    cell = kmf.cell
     nao = cell.nao_nr()
-
-    # a single-k-point calculation records 'scf/kpt', a k-point mesh 'scf/kpts'
-    kpt = lib.chkfile.load(chkfile, 'scf/kpt')
-    kpts = np.reshape(
-        lib.chkfile.load(chkfile, 'scf/kpts') if kpt is None else kpt, (-1, 3))
+    kpts = np.reshape(kmf.kpts, (-1, 3))
     nkpts = len(kpts)
 
-    def per_kpoint(name, entry_ndim):
-        return _per_kpoint(lib.chkfile.load(chkfile, f'scf/{name}'), nkpts,
-                           entry_ndim, name)
-
-    mo_occ, spin_resolved = per_kpoint('mo_occ', 1)
-    mo_energy, energy_spin = per_kpoint('mo_energy', 1)
-    mo_coeff, coeff_spin = per_kpoint('mo_coeff', 2)
-    fock, fock_spin = per_kpoint('fock', 2)
-
-    if {energy_spin, coeff_spin, fock_spin} != {spin_resolved}:
+    if getattr(kmf, 'mo_coeff', None) is None:
         raise ValueError(
-            "the checkpoint disagrees with itself about whether the solution "
-            f"is spin resolved: mo_occ says {spin_resolved}, mo_energy "
-            f"{energy_spin}, mo_coeff {coeff_spin}, fock {fock_spin}. "
-            "'scf/fock' is usually written by hand after the SCF, so check "
-            "that it carries the same spin structure as the solution"
+            f"{type(kmf).__name__} holds no orbitals; run the calculation first"
         )
+
+    def per_kpoint(values, name, entry_ndim):
+        return _per_kpoint(values, nkpts, entry_ndim, name)
+
+    mo_occ, spin_resolved = per_kpoint(kmf.mo_occ, 'mo_occ', 1)
+    mo_energy, _ = per_kpoint(kmf.mo_energy, 'mo_energy', 1)
+    mo_coeff, _ = per_kpoint(kmf.mo_coeff, 'mo_coeff', 2)
+    fock, _ = per_kpoint(kmf.get_fock(), 'fock', 2)
 
     # the Fock matrix is indexed [spin][kpt] downstream, with a spin axis of
     #   length one for a closed-shell solution
@@ -404,9 +366,7 @@ def load_pyscf_chk(chkfile, hcore=None, ortho_ao=False) -> dict:
     if not spin_resolved:
         fock = fock[np.newaxis]
 
-    if hcore is None:
-        hcore = np.asarray(lib.chkfile.load(chkfile, 'scf/hcore'))
-    hcore = np.reshape(hcore, (-1, nao, nao))
+    hcore = np.reshape(kmf.get_hcore(), (-1, nao, nao))
 
     if cell.spin != 0 and not spin_resolved:
         raise ValueError(
@@ -415,23 +375,20 @@ def load_pyscf_chk(chkfile, hcore=None, ortho_ao=False) -> dict:
     if spin_resolved and not ortho_ao:
         raise ValueError(
             "a spin-resolved (UHF) solution requires the orthogonalized AO "
-            "basis; pass ortho_ao=True"
+            f"basis; pass basis='{ORTHO_AO}'"
         )
 
     if ortho_ao:
-        rotation = np.asarray(
-            lib.chkfile.load(chkfile, 'scf/orthoAORot')).reshape(nkpts, nao, -1)
-        nmo_pk = np.atleast_1d(
-            np.asarray(lib.chkfile.load(chkfile, 'scf/nmo_per_kpt')))
-        X = [rotation[k][:, :nmo_pk[k]] for k in range(nkpts)]
+        overlaps = np.reshape(kmf.get_ovlp(), (-1, nao, nao))
+        X = [canonical_orthogonalization(s1e, lindep_cutoff) for s1e in overlaps]
     else:
         # a closed-shell solution's own orbitals are the working basis
         X = [np.asarray(block) for block in mo_coeff]
-        nmo_pk = np.array([Xk.shape[1] for Xk in X], dtype=np.int32)
+    nmo_pk = np.array([Xk.shape[1] for Xk in X], dtype=np.int32)
 
     spin_symm = SpinSymm.COLLINEAR if spin_resolved else SpinSymm.CLOSED
-    logger.info("read a %s periodic solution from %s: %d k-point(s), nao=%d",
-                spin_symm.label, chkfile, nkpts, nao)
+    logger.info("read a %s periodic solution: %d k-point(s), nao=%d",
+                spin_symm.label, nkpts, nao)
 
     return {
         'cell': cell,
@@ -470,14 +427,14 @@ def _per_kpoint(values, nkpts: int, entry_ndim: int, name: str):
     Parameters
     ----------
     values : array_like
-        What ``pyscf.lib.chkfile.load`` returned.
+        The quantity as the SCF object holds it.
     nkpts : int
-        Number of k-points, taken from the checkpoint's k-point array.
+        Number of k-points.
     entry_ndim : int
         Rank of a single k-point's entry: 1 for occupancies and orbital
         energies, 2 for orbital coefficients and Fock matrices.
     name : str
-        Dataset name, for the error messages.
+        Quantity name, for the error messages.
 
     Returns
     -------
@@ -489,16 +446,16 @@ def _per_kpoint(values, nkpts: int, entry_ndim: int, name: str):
     Raises
     ------
     ValueError
-        If the shape matches no layout PySCF writes.
+        If the shape matches no layout PySCF uses.
 
     Notes
     -----
     PySCF's layout depends on how the calculation was set up: a single-k-point
-    solution stores one entry with no k-point axis, a k-point mesh stores a
-    sequence of them, and a spin-resolved solution prefixes a spin axis. The
-    container varies independently — k-points sharing an orbital count come back
-    as one array, ragged ones as a list of arrays — so what is tested here is
-    the **nesting depth**, not whether the result happens to be a ``list``.
+    solution holds one entry with no k-point axis, a k-point mesh a sequence of
+    them, and a spin-resolved solution prefixes a spin axis. The container
+    varies independently — k-points sharing an orbital count come back as one
+    array, ragged ones as a list of arrays — so what is tested here is the
+    **nesting depth**, not whether the result happens to be a ``list``.
 
     The spin axis and the k-point axis are both length 2 for a two-k-point
     collinear solution, which is why the depth is what separates them; where a
@@ -510,7 +467,7 @@ def _per_kpoint(values, nkpts: int, entry_ndim: int, name: str):
         if nkpts != 1:
             raise ValueError(
                 f"'{name}' holds one entry with no k-point axis, but the "
-                f"checkpoint has {nkpts} k-points"
+                f"solution has {nkpts} k-points"
             )
         return [values], False
 

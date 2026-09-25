@@ -33,11 +33,10 @@ from pathlib import Path
 
 import h5py as h5
 import numpy as np
-from pyscf import gto,scf,mcscf,lib
+from pyscf import gto,scf,mcscf
 
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
-from safiretools.convert.pyscf import load_pyscf_chk_mol
 from afqmctools.inputs.from_hdf import write_json
 
 from stats.scalar_dat import analyze_scalar_data
@@ -167,20 +166,13 @@ mol = gto.M(
 )
 
 # run CASSCF to get an orbital basis AND a CAS wavefunction
-casscf_chkfile = scratch_dir / 'rhf_chkfile.h5'
-casscf_chkfile.unlink(missing_ok=True) # delete if already exists
-
 rhf = scf.RHF(mol)
-rhf.chkfile = casscf_chkfile
 rhf.run()
 mc = mcscf.CASSCF(rhf, 12, 6).run() # (12o,6e)
-# save the ci to the chkfile too
-lib.chkfile.save(mc.chkfile, 'mcscf/ci', mc.ci)
 
 # write the CAS wavefunction to a file
 Wavefunction.from_pyscf_cas(
-    mol=mol,
-    cas_chkfile= casscf_chkfile,
+    mc,
     tol=1.0e-3, # use a small value to save *many* determinants.
     max_det=2000
 ).to_hdf5(scratch_dir / 'afqmc.h5')
@@ -193,7 +185,7 @@ Wavefunction.from_pyscf_cas(
 At this point, you should have a CASSCF trial wavefunction saved in an SAFIRE HDF5 file (we used "afqmc.h5" as our filename, but you are free to use whatever name you would like).
 
 You will also need the CASSCF orbitals in order to represent the Hamiltonian in that basis.
-In PySCF, these are simply saved within the Checkpoint (*.chk) file.
+They are held by the `mc` object itself.
 
 +++ {"id": "90fQdnFHHAWP"}
 
@@ -202,26 +194,21 @@ In PySCF, these are simply saved within the Checkpoint (*.chk) file.
 We have already chosen the set of CASSCF orbitals as a trial wavefunction.
 We will now build the Hamiltonian in the basis of CASSCF orbitals, and save it to an SAFIRE HDF5 Hamiltonian file.
 
-`MolecularHamiltonian.from_pyscf()` reads a PySCF checkpoint file directly, and `.to_hdf5()`
-writes the result out.
+`MolecularHamiltonian.from_pyscf()` takes the SCF object whose one-body Hamiltonian it uses, and
+`basis=` the object whose orbitals it is expressed in; `.to_hdf5()` writes the result out.
 `.to_hdf5()` replaces only the Hamiltonian in the file it is given, so it can be added to the
 file that already holds the trial wavefunction.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
-    Handed a checkpoint path, from_pyscf() reads the "scf" group. To build the Hamiltonian in the CASSCF orbital basis instead, load the checkpoint yourself with load_pyscf_chk_mol(base='mcscf') and pass the result.
+    Without basis=mc, from_pyscf() would use the RHF orbitals, while the CAS determinants are occupations of the CASSCF ones. The Hamiltonian and the trial wavefunction must share a basis.
 </div>
 
 ```{code-cell} ipython3
 # Save the Hamiltonian, in the basis of the CASSCF orbitals
-basis_scf_data = load_pyscf_chk_mol(
-    chkfile = casscf_chkfile,
-    base = 'mcscf'
-)
-
-# write Hamiltonian
 MolecularHamiltonian.from_pyscf(
-    basis_scf_data,
+    rhf,
+    basis = mc,
     chol_cut = 1e-5,
     verbose=True
 ).to_hdf5(scratch_dir / 'afqmc.h5')
@@ -406,31 +393,28 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
     )
 
 
-    casscf_chkfile = 'rhf_chkfile.h5'
-
     rhf = scf.RHF(mol)
-    rhf.chkfile = scratch_dir / casscf_chkfile
     rhf.run()
 
     mc = mcscf.CASSCF(rhf, 12, 6).run() # (12o,6e)
-    lib.chkfile.save(mc.chkfile, 'mcscf/ci', mc.ci)
 
     # write the CAS wavefunction to a file
     fout = scratch_dir / 'afqmc.h5'
 
     Wavefunction.from_pyscf_cas(
-        mol=mol,
-        cas_chkfile=scratch_dir / casscf_chkfile,
+        mc,
         tol= 1.0e-4,
         max_det=10000
     ).to_hdf5(fout)
 
-    # 2. write the Hamiltonian, into the same file as the wavefunction
+    # 2. write the Hamiltonian, into the same file as the wavefunction,
+    #    in the CASSCF orbital basis the determinants are expressed in
     chol_tol = 1e-5
 
     # write Hamiltonian
     MolecularHamiltonian.from_pyscf(
-        scratch_dir / casscf_chkfile,
+        rhf,
+        basis=mc,
         chol_cut=chol_tol,
         verbose=True
     ).to_hdf5(fout)

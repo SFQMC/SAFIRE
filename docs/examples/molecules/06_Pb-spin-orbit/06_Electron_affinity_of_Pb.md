@@ -151,56 +151,54 @@ mol = gto.M(
 )
 
 # 1. Compute ROHF orbitals to use as a basis. NOTE: SOC will be ignored!
-mf = scf.ROHF(mol)
-mf.chkfile = neutral_scratch_dir/'rohf.chk'
-mf.kernel()
+rohf = scf.ROHF(mol)
+rohf.kernel()
 
 # perform stability analysis - see PySCF example:
 # https://github.com/pyscf/pyscf.github.io/blob/master/examples/scf/17-stability.py
-mo1 = mf.stability()[0]
-dm1 = mf.make_rdm1(mo1, mf.mo_occ)
-mf = mf.run(dm1)
-mf.stability()
-mf.kernel()
+mo1 = rohf.stability()[0]
+dm1 = rohf.make_rdm1(mo1, rohf.mo_occ)
+rohf = rohf.run(dm1)
+rohf.stability()
+rohf.kernel()
 
-print(f"ROHF electronic energy: {mf.energy_elec()}")
+print(f"ROHF electronic energy: {rohf.energy_elec()}")
 
 # 2.a. compute a "No SOC" trial wavefunction
-mf = scf.GHF(mol=mol)
-mf.chkfile = neutral_scratch_dir/'ghf.chk'
-mf.kernel()
+ghf = scf.GHF(mol=mol)
+ghf.kernel()
 
-mo1 = mf.stability()
-dm1 = mf.make_rdm1(mo1, mf.mo_occ)
-mf = mf.run(dm1)
-mf.stability()
-mf.kernel()
+mo1 = ghf.stability()
+dm1 = ghf.make_rdm1(mo1, ghf.mo_occ)
+ghf = ghf.run(dm1)
+ghf.stability()
+ghf.kernel()
 
-print(f"GHF electronic energy: {mf.energy_elec()}")
+print(f"GHF electronic energy: {ghf.energy_elec()}")
 
 # 2.b. compute a "SOC" trial wavefunction
-mf = scf.GHF(mol=mol)
-mf.chkfile = neutral_scratch_dir/'ghf_soc.chk'
-mf.with_soc = True
-mf.kernel()
+ghf_soc = scf.GHF(mol=mol)
+ghf_soc.with_soc = True
+ghf_soc.kernel()
 
-mo1 = mf.stability()
-dm1 = mf.make_rdm1(mo1, mf.mo_occ)
-mf = mf.run(dm1)
-mf.stability()
-mf.kernel()
+mo1 = ghf_soc.stability()
+dm1 = ghf_soc.make_rdm1(mo1, ghf_soc.mo_occ)
+ghf_soc = ghf_soc.run(dm1)
+ghf_soc.stability()
+ghf_soc.kernel()
 
-print(f"SOC-GHF electronic energy: {mf.energy_elec()}")
+print(f"SOC-GHF electronic energy: {ghf_soc.energy_elec()}")
 ```
 
 +++ {"id": "H-m_KAsri2Xc"}
 
 ### ▶️ Generate and Write Hamiltonian and Trial wavefunction for Neutral Atom
 
-We generate the Hamiltonian and trial wavefunction in the usual way
-with the exception that `load_pyscf_chk_mol()` must be explicitly
-told to load ECP type spin-orbit coupling integrals via the `soc_type="ecp"`
-keyword argument.
+We generate the Hamiltonian and trial wavefunction in the usual way. The spin-orbit
+coupling enters through the SCF object the Hamiltonian is built from: the SOC-GHF
+object, set up with `with_soc = True`, has the ECP spin-orbit term in its one-body
+Hamiltonian, which makes the Hamiltonian noncollinear. The ROHF object supplies the
+orbital basis, for the Hamiltonian and the trial wavefunction alike.
 
 For the initial wavefunction, we use the ground state of the non-interacting Hamiltonian
 as this was found in [1] to lead to significantly faster equilibration than using
@@ -215,13 +213,9 @@ import numpy as np
 
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
-from safiretools.convert.pyscf import load_pyscf_chk_mol
 
 # inputs
 local_scratch_dir = neutral_scratch_dir
-basis_chk = local_scratch_dir / 'rohf.chk'
-ghf_chkfile = local_scratch_dir / 'ghf.chk'
-ghf_soc_chkfile = local_scratch_dir / 'ghf_soc.chk'
 chol_tol = 1e-5
 
 # output
@@ -234,21 +228,12 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 #                                   #
 #####################################
 
-# Save the Hamiltonian
-basis_scf_data = load_pyscf_chk_mol(
-    chkfile = basis_chk,
-    soc_type = "ecp",
-)
-
-# The SOC integrals come from load_pyscf_chk_mol(soc_type='ecp') above, which
-#   makes hcore a spin-orbital matrix. That requires a noncollinear spin symmetry
-#   and the orthogonalized-AO basis.
+# The SOC-GHF object's hcore carries the ECP spin-orbit term, which makes the
+#   Hamiltonian noncollinear
 MolecularHamiltonian.from_pyscf(
-    basis_scf_data,
+    ghf_soc,
+    basis=rohf,
     chol_cut=chol_tol,
-    real_chol=True,
-    spin_symm='noncollinear',
-    ortho_ao=True,
 ).to_hdf5(fout_soc)
 
 #####################################
@@ -258,8 +243,8 @@ MolecularHamiltonian.from_pyscf(
 #####################################
 
 Wavefunction.from_pyscf(
-    ghf_soc_chkfile,
-    basis=basis_scf_data
+    ghf_soc,
+    basis=rohf
 ).to_hdf5(fout_soc)
 ```
 
@@ -339,46 +324,43 @@ mol = gto.M(
 )
 
 # 1. Compute ROHF orbitals to use as a basis.
-mf = scf.ROHF(mol)
-mf.chkfile = charged_scratch_dir/'rohf.chk'
-mf.kernel()
+rohf = scf.ROHF(mol)
+rohf.kernel()
 
 # perform stability analysis - see PySCF example:
 # https://github.com/pyscf/pyscf.github.io/blob/master/examples/scf/17-stability.py
-mo1 = mf.stability()[0]
-dm1 = mf.make_rdm1(mo1, mf.mo_occ)
-mf = mf.run(dm1)
-mf.stability()
-mf.kernel()
+mo1 = rohf.stability()[0]
+dm1 = rohf.make_rdm1(mo1, rohf.mo_occ)
+rohf = rohf.run(dm1)
+rohf.stability()
+rohf.kernel()
 
-print(f"ROHF electronic energy: {mf.energy_elec()}")
+print(f"ROHF electronic energy: {rohf.energy_elec()}")
 
 # 2.a. compute a "No SOC" trial wavefunction
-mf = scf.GHF(mol=mol)
-mf.chkfile = charged_scratch_dir/'ghf.chk'
-mf.kernel()
+ghf = scf.GHF(mol=mol)
+ghf.kernel()
 
-mo1 = mf.stability()
-dm1 = mf.make_rdm1(mo1, mf.mo_occ)
-mf = mf.run(dm1)
-mf.stability()
-mf.kernel()
+mo1 = ghf.stability()
+dm1 = ghf.make_rdm1(mo1, ghf.mo_occ)
+ghf = ghf.run(dm1)
+ghf.stability()
+ghf.kernel()
 
-print(f"GHF electronic energy: {mf.energy_elec()}")
+print(f"GHF electronic energy: {ghf.energy_elec()}")
 
 # 2.b. compute a "SOC" trial wavefunction
-mf = scf.GHF(mol=mol)
-mf.chkfile = charged_scratch_dir/'ghf_soc.chk'
-mf.with_soc = True
-mf.kernel()
+ghf_soc = scf.GHF(mol=mol)
+ghf_soc.with_soc = True
+ghf_soc.kernel()
 
-mo1 = mf.stability()
-dm1 = mf.make_rdm1(mo1, mf.mo_occ)
-mf = mf.run(dm1)
-mf.stability()
-mf.kernel()
+mo1 = ghf_soc.stability()
+dm1 = ghf_soc.make_rdm1(mo1, ghf_soc.mo_occ)
+ghf_soc = ghf_soc.run(dm1)
+ghf_soc.stability()
+ghf_soc.kernel()
 
-print(f"SOC-GHF electronic energy: {mf.energy_elec()}")
+print(f"SOC-GHF electronic energy: {ghf_soc.energy_elec()}")
 ```
 
 +++ {"id": "ivaijztJi2Xe"}
@@ -396,14 +378,10 @@ import numpy as np
 
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
-from safiretools.convert.pyscf import load_pyscf_chk_mol
 
 
 # inputs
 local_scratch_dir = charged_scratch_dir
-basis_chk = local_scratch_dir / 'rohf.chk'
-ghf_chkfile = local_scratch_dir / 'ghf.chk'
-ghf_soc_chkfile = local_scratch_dir / 'ghf_soc.chk'
 chol_tol = 1e-5
 
 # output
@@ -416,21 +394,12 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 #                                   #
 #####################################
 
-# Save the Hamiltonian
-basis_scf_data = load_pyscf_chk_mol(
-    chkfile = basis_chk,
-    soc_type = "ecp",
-)
-
-# The SOC integrals come from load_pyscf_chk_mol(soc_type='ecp') above, which
-#   makes hcore a spin-orbital matrix. That requires a noncollinear spin symmetry
-#   and the orthogonalized-AO basis.
+# The SOC-GHF object's hcore carries the ECP spin-orbit term, which makes the
+#   Hamiltonian noncollinear
 MolecularHamiltonian.from_pyscf(
-    basis_scf_data,
+    ghf_soc,
+    basis=rohf,
     chol_cut=chol_tol,
-    real_chol=True,
-    spin_symm='noncollinear',
-    ortho_ao=True,
 ).to_hdf5(fout_soc)
 
 #####################################
@@ -440,8 +409,8 @@ MolecularHamiltonian.from_pyscf(
 #####################################
 
 Wavefunction.from_pyscf(
-    ghf_soc_chkfile,
-    basis=basis_scf_data
+    ghf_soc,
+    basis=rohf
 ).to_hdf5(fout_soc)
 ```
 

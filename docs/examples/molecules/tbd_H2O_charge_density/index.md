@@ -154,11 +154,9 @@ from pyscf.tools import cubegen
 import numpy as np
 import h5py as h5
 import matplotlib.pyplot as plt
-from pyscf import gto
+from pyscf import gto, lib
 
 from pyscf.scf.hf import dip_moment
-
-from safiretools.convert.pyscf import load_pyscf_chk_mol
 
 scratch = Path("./scratch")
 scratch.mkdir(exist_ok=True)
@@ -174,9 +172,7 @@ uhf_results = reference / "uhf_rdm.h5"
 dft_results = reference / "dft_pbe.h5"
 cc_results = reference / "cc.h5"
 
-scf_data_basis = load_pyscf_chk_mol(scratch / "rhf.chk")
-
-mo_coeff = scf_data_basis["mo_coeff"]
+mo_coeff = lib.chkfile.load(scratch / "rhf.chk", "scf/mo_coeff")
 
 a0 = 0.9572
 theta = 104.52

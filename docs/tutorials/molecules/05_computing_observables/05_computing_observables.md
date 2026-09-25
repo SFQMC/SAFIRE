@@ -143,10 +143,7 @@ mol = gto.M(
     verbose = 5,
 )
 
-rhf_chkfile = 'rhf_chkfile.h5'
-
 rhf = scf.RHF(mol)
-rhf.chkfile = scratch_dir / rhf_chkfile
 rhf.run()
 
 
@@ -161,7 +158,7 @@ print("Number of orbitals = ", number_of_orbitals)
 # Save the Hamiltonian. .to_hdf5() replaces only the Hamiltonian in the file,
 #   so the Hamiltonian and the wavefunction can be written in either order.
 MolecularHamiltonian.from_pyscf(
-    scratch_dir / rhf_chkfile,
+    rhf,
     chol_cut = 1e-5,
     verbose=True
 ).to_hdf5(scratch_dir / "afqmc.h5")

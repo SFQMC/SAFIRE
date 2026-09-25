@@ -13,9 +13,9 @@
 molecular construction paths.
 """
 
+import copy
 import warnings
 
-import h5py as h5
 import numpy as np
 import pytest
 
@@ -27,61 +27,36 @@ pyscf = pytest.importorskip("pyscf")
 pytestmark = pytest.mark.pyscf
 
 
-def scf_data_from(mol, mf, spin_symm):
-    """The subset of a PySCF checkpoint the wavefunction construction reads."""
-    return {
-        'mol': mol,
-        'mo_coeff': mf.mo_coeff,
-        'mo_occ': mf.mo_occ,
-        'nelec': mol.nelec,
-        'X': mf.mo_coeff,
-        'norb': np.asarray(mf.mo_coeff).shape[-1],
-        'walker_type': spin_symm,
-        'mo_energy': mf.mo_energy,
-    }
-
-
 @pytest.fixture(scope='module')
 def neon_rhf():
     from pyscf import gto, scf
 
     mol = gto.M(atom='Ne 0 0 0', basis='sto-3g', verbose=0)
-    mf = scf.RHF(mol)
-    mf.kernel()
-    return mol, mf
+    return scf.RHF(mol).run()
 
 
 @pytest.fixture(scope='module')
-def rhf_chk(tmp_path_factory):
+def oxygen_rhf():
     from pyscf import gto, scf
 
     mol = gto.M(atom='O 0 0 0', basis='sto-3g', verbose=0)
-    mf = scf.RHF(mol)
-    mf.chkfile = str(tmp_path_factory.mktemp('wfn_rhf') / 'rhf.chk')
-    mf.kernel()
-    return mf.chkfile
+    return scf.RHF(mol).run()
 
 
 @pytest.fixture(scope='module')
-def rohf_chk(tmp_path_factory):
+def oxygen_rohf():
     from pyscf import gto, scf
 
     mol = gto.M(atom='O 0 0 0', basis='sto-3g', spin=2, verbose=0)
-    mf = scf.ROHF(mol)
-    mf.chkfile = str(tmp_path_factory.mktemp('wfn_rohf') / 'rohf.chk')
-    mf.kernel()
-    return mf.chkfile
+    return scf.ROHF(mol).run()
 
 
 @pytest.fixture(scope='module')
-def uhf_chk(tmp_path_factory):
+def oxygen_uhf():
     from pyscf import gto, scf
 
     mol = gto.M(atom='O 0 0 0', basis='sto-3g', spin=2, verbose=0)
-    mf = scf.UHF(mol)
-    mf.chkfile = str(tmp_path_factory.mktemp('wfn_uhf') / 'uhf.chk')
-    mf.kernel()
-    return mf.chkfile
+    return scf.UHF(mol).run()
 
 
 @pytest.fixture(scope='module')
@@ -91,19 +66,7 @@ def neon_rhf_631g():
     # a basis with room for both a frozen core and virtual orbitals, so that a
     #   CAS expansion is non-trivial
     mol = gto.M(atom='Ne 0 0 0', basis='6-31g', verbose=0)
-    mf = scf.RHF(mol)
-    mf.kernel()
-    return mol, mf
-
-
-@pytest.fixture(scope='module')
-def oxygen_rohf():
-    from pyscf import gto, scf
-
-    mol = gto.M(atom='O 0 0 0', basis='sto-3g', spin=2, verbose=0)
-    mf = scf.ROHF(mol)
-    mf.kernel()
-    return mol, mf
+    return scf.RHF(mol).run()
 
 
 @pytest.fixture(scope='module')
@@ -111,17 +74,13 @@ def lithium_rohf():
     from pyscf import gto, scf
 
     mol = gto.M(atom='Li 0 0 0', basis='sto-3g', spin=1, verbose=0)
-    mf = scf.ROHF(mol)
-    mf.kernel()
-    return mol, mf
+    return scf.ROHF(mol).run()
 
 
 class TestFromPyscf:
 
     def test_a_closed_shell_reference(self, neon_rhf):
-        mol, mf = neon_rhf
-        wavefunction = NOMSDWavefunction.from_pyscf(
-            scf_data_from(mol, mf, 'closed'))
+        wavefunction = NOMSDWavefunction.from_pyscf(neon_rhf)
 
         assert wavefunction.spin_symm is SpinSymm.CLOSED
         assert wavefunction.nelec == (5, 5)
@@ -129,19 +88,24 @@ class TestFromPyscf:
         assert wavefunction.dets.shape == (1, 5, 5)
 
     def test_an_open_shell_reference_is_collinear(self, oxygen_rohf):
-        mol, mf = oxygen_rohf
-        wavefunction = NOMSDWavefunction.from_pyscf(
-            scf_data_from(mol, mf, 'collinear'))
+        wavefunction = NOMSDWavefunction.from_pyscf(oxygen_rohf)
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (5, 3)
         assert spin_layout_shape(wavefunction.dets) == ((1, 5, 5), (1, 5, 3))
 
+    def test_a_ghf_reference_is_noncollinear(self, oxygen_rohf):
+        wavefunction = NOMSDWavefunction.from_pyscf(oxygen_rohf.to_ghf(),
+                                                    basis=oxygen_rohf)
+
+        assert wavefunction.spin_symm is SpinSymm.NONCOLLINEAR
+        # (ndets, npol, nmo, nelec): both polarizations over the 5 spatial orbitals
+        assert wavefunction.dets.shape == (1, 2, 5, 8)
+
     def test_an_active_space_trims_and_reindexes_the_orbitals(self,
                                                               oxygen_rohf):
-        mol, mf = oxygen_rohf
-        wavefunction = NOMSDWavefunction.from_pyscf(
-            scf_data_from(mol, mf, 'collinear'), cas=(4, 3))
+        wavefunction = NOMSDWavefunction.from_pyscf(oxygen_rohf,
+                                                    active_space=(4, 3))
 
         # (8 - 4) // 2 = 2 frozen core orbitals, leaving 3 active ones
         assert wavefunction.nelec == (3, 1)
@@ -149,48 +113,40 @@ class TestFromPyscf:
 
     def test_a_frozen_core_can_empty_the_beta_channel(self, lithium_rohf):
         # a reference with no beta electrons is collinear with ndown == 0
-        mol, mf = lithium_rohf
-        wavefunction = NOMSDWavefunction.from_pyscf(
-            scf_data_from(mol, mf, 'collinear'), cas=(1, 4))
+        wavefunction = NOMSDWavefunction.from_pyscf(lithium_rohf,
+                                                    active_space=(1, 4))
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (1, 0)
         assert spin_layout_shape(wavefunction.dets) == ((1, 4, 1), (1, 4, 0))
 
-    def test_the_spin_symmetry_can_be_overridden(self, neon_rhf):
-        mol, mf = neon_rhf
-        wavefunction = NOMSDWavefunction.from_pyscf(
-            scf_data_from(mol, mf, 'closed'), spin_symm='closed')
-
-        assert wavefunction.spin_symm is SpinSymm.CLOSED
-
     def test_a_wrong_occupancy_count_is_reported(self, neon_rhf):
-        mol, mf = neon_rhf
-        scf_data = scf_data_from(mol, mf, 'closed')
-        scf_data['mo_occ'] = np.zeros_like(np.asarray(mf.mo_occ))
+        emptied = copy.copy(neon_rhf)
+        emptied.mo_occ = np.zeros_like(np.asarray(neon_rhf.mo_occ))
 
         with pytest.raises(ValueError, match="alpha occupied orbitals"):
-            NOMSDWavefunction.from_pyscf(scf_data)
+            NOMSDWavefunction.from_pyscf(emptied)
 
-    def test_cas_and_ortho_ao_cannot_be_combined(self, neon_rhf):
-        mol, mf = neon_rhf
+    def test_an_unconverged_reference_is_rejected(self, neon_rhf):
+        from pyscf import scf
 
-        with pytest.raises(ValueError, match="cas and ortho_ao"):
-            NOMSDWavefunction.from_pyscf(scf_data_from(mol, mf, 'closed'),
-                                         ortho_ao=True, cas=(4, 2))
+        with pytest.raises(ValueError, match="run the calculation"):
+            NOMSDWavefunction.from_pyscf(scf.RHF(neon_rhf.mol))
+
+    def test_an_active_space_and_ortho_ao_cannot_be_combined(self, neon_rhf):
+        with pytest.raises(ValueError,
+                           match="active_space and basis='ortho_ao'"):
+            NOMSDWavefunction.from_pyscf(neon_rhf, basis='ortho_ao',
+                                         active_space=(4, 2))
 
     def test_the_result_is_orthonormal(self, oxygen_rohf):
-        mol, mf = oxygen_rohf
-        wavefunction = NOMSDWavefunction.from_pyscf(
-            scf_data_from(mol, mf, 'collinear'))
+        wavefunction = NOMSDWavefunction.from_pyscf(oxygen_rohf)
 
         for block in wavefunction.determinant(0):
             assert np.allclose(block.conj().T @ block, np.eye(block.shape[1]))
 
     def test_it_round_trips(self, oxygen_rohf, layouts_close, tmp_path):
-        mol, mf = oxygen_rohf
-        wavefunction = NOMSDWavefunction.from_pyscf(
-            scf_data_from(mol, mf, 'collinear'))
+        wavefunction = NOMSDWavefunction.from_pyscf(oxygen_rohf)
         path = tmp_path / 'wfn.h5'
 
         with warnings.catch_warnings():
@@ -204,38 +160,37 @@ class TestFromPyscf:
         assert layouts_close(read_back.dets, wavefunction.dets)
 
 
-class TestSourceForms:
+class TestBasisForms:
     """
-    `from_pyscf` takes a checkpoint path or an already-loaded mapping, and takes
-    the *basis* separately from the solution the wavefunction is built from.
+    The *basis* is given separately from the solution the wavefunction is built
+    from, as another SCF object, an orbital array or ``'ortho_ao'``.
     """
 
-    def test_a_path_and_a_loaded_mapping_agree(self, rohf_chk, layouts_close):
-        from safiretools.convert.pyscf import load_pyscf_chk_mol
-
-        by_path = NOMSDWavefunction.from_pyscf(rohf_chk)
-        by_mapping = NOMSDWavefunction.from_pyscf(load_pyscf_chk_mol(rohf_chk))
-
-        assert layouts_close(by_path.dets, by_mapping.dets)
-        assert by_path.spin_symm is by_mapping.spin_symm
-
-    def test_the_basis_defaults_to_the_solution_itself(self, rohf_chk,
+    def test_the_basis_defaults_to_the_solution_itself(self, oxygen_rohf,
                                                         layouts_close):
-        explicit = NOMSDWavefunction.from_pyscf(rohf_chk, basis=rohf_chk)
-        implicit = NOMSDWavefunction.from_pyscf(rohf_chk)
+        explicit = NOMSDWavefunction.from_pyscf(oxygen_rohf, basis=oxygen_rohf)
+        implicit = NOMSDWavefunction.from_pyscf(oxygen_rohf)
 
         assert layouts_close(explicit.dets, implicit.dets)
 
-    def test_the_basis_can_come_from_a_different_solution(self, rohf_chk,
-                                                          rhf_chk,
+    def test_an_orbital_array_is_a_basis(self, oxygen_rohf, oxygen_rhf,
+                                         layouts_close):
+        by_object = NOMSDWavefunction.from_pyscf(oxygen_rohf, basis=oxygen_rhf)
+        by_array = NOMSDWavefunction.from_pyscf(oxygen_rohf,
+                                                basis=oxygen_rhf.mo_coeff)
+
+        assert layouts_close(by_object.dets, by_array.dets)
+
+    def test_the_basis_can_come_from_a_different_solution(self, oxygen_rohf,
+                                                          oxygen_rhf,
                                                           layouts_close):
         """
         The Hamiltonian's basis and the trial wavefunction need not come from
         one calculation: here an open-shell solution is expressed in a
         closed-shell solution's molecular orbitals.
         """
-        own_basis = NOMSDWavefunction.from_pyscf(rohf_chk)
-        rhf_basis = NOMSDWavefunction.from_pyscf(rohf_chk, basis=rhf_chk)
+        own_basis = NOMSDWavefunction.from_pyscf(oxygen_rohf)
+        rhf_basis = NOMSDWavefunction.from_pyscf(oxygen_rohf, basis=oxygen_rhf)
 
         assert own_basis.nmo == rhf_basis.nmo
         assert own_basis.nelec == rhf_basis.nelec
@@ -243,40 +198,27 @@ class TestSourceForms:
         assert not layouts_close(own_basis.dets, rhf_basis.dets)
 
     def test_the_spin_symmetry_comes_from_the_solution_not_the_basis(
-            self, rhf_chk, uhf_chk):
+            self, oxygen_uhf):
         """
-        A closed-shell basis does not make a spin-resolved wavefunction closed
-        shell: the symmetry is determined when the *solution* is read.
+        The orthogonalized AO basis says nothing about spin: the symmetry is
+        that of the *solution*.
         """
-        wavefunction = NOMSDWavefunction.from_pyscf(uhf_chk, basis=rhf_chk,
-                                                    ortho_ao=True)
+        wavefunction = NOMSDWavefunction.from_pyscf(oxygen_uhf, basis='ortho_ao')
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
 
 
 class TestFromPyscfCas:
 
-    @pytest.fixture
-    def casci_chkfile(self, neon_rhf_631g, tmp_path):
+    @pytest.fixture(scope='class')
+    def casscf(self, neon_rhf_631g):
         from pyscf import mcscf
 
-        mol, mf = neon_rhf_631g
-        mc = mcscf.CASSCF(mf, 4, 4)
-        mc.chkfile = str(tmp_path / 'cas.chk')
-        mc.kernel()
+        return mcscf.CASSCF(neon_rhf_631g, 4, 4).run()
 
-        # pyscf dumps ncore/ncas but not the CI vector itself
-        with h5.File(mc.chkfile, 'a') as fh5:
-            if 'mcscf/ci' in fh5:
-                del fh5['mcscf/ci']
-            fh5['mcscf/ci'] = mc.ci
-
-        return mc.chkfile
-
-    def test_it_reads_the_expansion(self, neon_rhf_631g, casci_chkfile):
-        mol, _ = neon_rhf_631g
-        wavefunction = PHMSDWavefunction.from_pyscf_cas(mol, casci_chkfile,
-                                                        tol=1e-6)
+    def test_it_reads_the_expansion(self, casscf):
+        mol = casscf.mol
+        wavefunction = PHMSDWavefunction.from_pyscf_cas(casscf, tol=1e-6)
 
         assert isinstance(wavefunction, PHMSDWavefunction)
         assert wavefunction.nelec == mol.nelec
@@ -285,26 +227,20 @@ class TestFromPyscfCas:
         # the frozen core is reinserted into every determinant
         assert np.all(wavefunction.occa[:, :3] == np.arange(3))
 
-    def test_the_coefficients_are_sorted_by_magnitude(self, neon_rhf_631g,
-                                                      casci_chkfile):
-        mol, _ = neon_rhf_631g
-        coeffs = PHMSDWavefunction.from_pyscf_cas(mol, casci_chkfile,
-                                                  tol=1e-6).coeffs
+    def test_the_coefficients_are_sorted_by_magnitude(self, casscf):
+        coeffs = PHMSDWavefunction.from_pyscf_cas(casscf, tol=1e-6).coeffs
         magnitudes = np.abs(coeffs)
 
         assert np.all(np.diff(magnitudes) <= 1e-15)
 
-    def test_max_det_truncates(self, neon_rhf_631g, casci_chkfile):
-        mol, _ = neon_rhf_631g
-        wavefunction = PHMSDWavefunction.from_pyscf_cas(mol, casci_chkfile,
-                                                        tol=1e-8, max_det=3)
+    def test_max_det_truncates(self, casscf):
+        wavefunction = PHMSDWavefunction.from_pyscf_cas(casscf, tol=1e-8,
+                                                        max_det=3)
 
         assert wavefunction.ndets == 3
 
-    def test_it_round_trips(self, neon_rhf_631g, casci_chkfile, tmp_path):
-        mol, _ = neon_rhf_631g
-        wavefunction = PHMSDWavefunction.from_pyscf_cas(mol, casci_chkfile,
-                                                        tol=1e-6)
+    def test_it_round_trips(self, casscf, tmp_path):
+        wavefunction = PHMSDWavefunction.from_pyscf_cas(casscf, tol=1e-6)
         path = tmp_path / 'wfn.h5'
         wavefunction.to_hdf5(path)
 

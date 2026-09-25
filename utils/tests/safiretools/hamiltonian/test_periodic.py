@@ -21,7 +21,6 @@ from safiretools.hamiltonian.periodic import (
     PeriodicHamiltonian,
     construct_qk_maps,
     generate_grid_shifts,
-    get_ortho_ao,
     setup_basis_map,
 )
 
@@ -201,13 +200,6 @@ class TestFcidump:
 @pytest.mark.pyscf
 class TestGeneration:
 
-    @pytest.fixture(scope='class')
-    def scf_data(self, diamond, diamond_lda):
-        mf, kpts = diamond_lda
-        X, nmo_pk = get_ortho_ao(diamond, kpts)
-        return {'cell': diamond, 'kpts': kpts, 'hcore': mf.get_hcore(),
-                'X': X, 'nmo_pk': nmo_pk}
-
     def test_grid_shifts_cover_every_reciprocal_lattice_offset(self, diamond):
         gmap, Qi, ngs = generate_grid_shifts(diamond)
 
@@ -230,9 +222,11 @@ class TestGeneration:
         assert qk[0, 1] == 1
         assert km[1] == 1
 
-    def test_kpoint_hamiltonian_round_trips(self, scf_data, tmp_path):
+    def test_kpoint_hamiltonian_round_trips(self, diamond_lda, tmp_path):
+        kmf, _ = diamond_lda
         hamiltonian = PeriodicHamiltonian.from_pyscf(
-            scf_data, kpoint_symmetry=True, chol_cut=1e-3, maxvecs=20)
+            kmf, basis='ortho_ao', kpoint_symmetry=True, chol_cut=1e-3,
+            maxvecs=20)
 
         assert hamiltonian.nkpts == 2
         assert set(hamiltonian.chol) == {0, 1}
@@ -245,18 +239,21 @@ class TestGeneration:
         restored = Hamiltonian.from_hdf5(path)
         assert np.allclose(restored.chol[0], hamiltonian.chol[0])
 
-    def test_supercell_hamiltonian_is_a_gamma_point_kpoint_hamiltonian(self, scf_data,
-                                                                       tmp_path):
+    def test_supercell_hamiltonian_is_a_gamma_point_kpoint_hamiltonian(
+            self, diamond_lda, tmp_path):
         """
         A supercell Hamiltonian is the Γ point of the supercell, so it comes back
         in the ordinary k-point representation with a single k-point.
         """
+        kmf, kpts = diamond_lda
         supercell = PeriodicHamiltonian.from_pyscf(
-            scf_data, kpoint_symmetry=False, chol_cut=1e-3, maxvecs=20)
-        original_nkpts = len(scf_data['kpts'])
+            kmf, basis='ortho_ao', kpoint_symmetry=False, chol_cut=1e-3,
+            maxvecs=20)
+        original_nkpts = len(kpts)
+        nao = kmf.cell.nao_nr()
 
         assert supercell.nkpts == 1
-        assert list(supercell.nmo_pk) == [int(np.sum(scf_data['nmo_pk']))]
+        assert list(supercell.nmo_pk) == [original_nkpts * nao]
         assert np.allclose(supercell.kpts, 0.0)
         assert supercell.qk_to_k2.tolist() == [[0]]
         assert supercell.minus_k.tolist() == [0]
@@ -267,7 +264,7 @@ class TestGeneration:
         assert supercell.hcore[0].shape == (nmo_tot, nmo_tot)
         assert supercell.chol[0].shape == (1, nmo_tot * nmo_tot * nchol)
         # the combined basis really did absorb the original k-points
-        assert nmo_tot == original_nkpts * int(scf_data['nmo_pk'][0])
+        assert nmo_tot == original_nkpts * nao
 
         path = tmp_path / 'sc.h5'
         supercell.to_hdf5(path)
@@ -277,43 +274,51 @@ class TestGeneration:
         assert restored.nkpts == 1
         assert np.allclose(restored.chol[0], supercell.chol[0])
 
-    def test_supercell_cholesky_vectors_stay_complex(self, scf_data, tmp_path):
+    def test_supercell_cholesky_vectors_stay_complex(self, diamond_lda, tmp_path):
         """
         The k-point format is complex throughout, which is what the executable's
         ``KPFactorizedHamiltonian`` reads — no real-valued special case.
         """
+        kmf, _ = diamond_lda
         path = tmp_path / 'sc.h5'
         PeriodicHamiltonian.from_pyscf(
-            scf_data, kpoint_symmetry=False, chol_cut=1e-3, maxvecs=20).to_hdf5(path)
+            kmf, basis='ortho_ao', kpoint_symmetry=False, chol_cut=1e-3,
+            maxvecs=20).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
             assert fh5['Hamiltonian/KPFactorized/L0'].dtype == np.complex128
             assert fh5['Hamiltonian/ComplexIntegrals'][0] == 1
 
-    def test_the_one_body_hamiltonian_is_block_diagonal_in_k(self, scf_data):
+    def test_the_one_body_hamiltonian_is_block_diagonal_in_k(self, diamond_lda):
         """
         The one-body operator conserves crystal momentum, so the combined
         supercell hcore couples no two different original k-points.
         """
+        kmf, _ = diamond_lda
         supercell = PeriodicHamiltonian.from_pyscf(
-            scf_data, kpoint_symmetry=False, chol_cut=1e-2, maxvecs=20)
+            kmf, basis='ortho_ao', kpoint_symmetry=False, chol_cut=1e-2,
+            maxvecs=20)
 
         hcore = supercell.hcore[0]
-        offset = int(scf_data['nmo_pk'][0])
+        offset = kmf.cell.nao_nr()
         assert np.allclose(hcore[:offset, offset:], 0.0)
         assert np.allclose(hcore[offset:, :offset], 0.0)
 
-    def test_the_two_representations_agree_on_the_two_body_energy(self, scf_data):
+    def test_the_two_representations_agree_on_the_two_body_energy(self,
+                                                                  diamond_lda):
         r"""
         Both factorizations reconstruct the same two-body integrals, so
         :math:`\sum_\gamma |L^\gamma_{ii}|^2` — the diagonal Coulomb weight —
         must match between them, to the Cholesky tolerance.
         """
+        kmf, _ = diamond_lda
         chol_cut = 1e-4
         supercell = PeriodicHamiltonian.from_pyscf(
-            scf_data, kpoint_symmetry=False, chol_cut=chol_cut, maxvecs=20)
+            kmf, basis='ortho_ao', kpoint_symmetry=False, chol_cut=chol_cut,
+            maxvecs=20)
         kpoint = PeriodicHamiltonian.from_pyscf(
-            scf_data, kpoint_symmetry=True, chol_cut=chol_cut, maxvecs=20)
+            kmf, basis='ortho_ao', kpoint_symmetry=True, chol_cut=chol_cut,
+            maxvecs=20)
 
         nmo_tot = supercell.nmo_tot
         nchol_sc = int(supercell.nchol_pk[0])

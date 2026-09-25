@@ -455,7 +455,7 @@ MolecularHamiltonian.from_fcidump(
 ## Generate and write the Hamiltonian using PySCF and safiretools
 
 Instead of defining the Hamiltonian and the wavefunction from scratch, one can also utilize `PySCF` to obtain the Hamiltonian in a given basis (in this case, the molecular orbital basis) and the trial wavefunction.
-Here, we use `PySCF` to run RHF for the hydrogen dimer and export to a chkfile `h2_rhf.h5`, then use `safiretools` to obtain the Hamiltonian and the trial wavefunction from the chkfile.
+Here, we use `PySCF` to run RHF for the hydrogen dimer, then hand the SCF object to `safiretools` to obtain the Hamiltonian and the trial wavefunction.
 After this, you may follow the same steps as above to run AFQMC.
 
 ```{code-cell} ipython3
@@ -474,27 +474,22 @@ mol.build()
 
 # run RHF
 mf = scf.RHF(mol)
-mf.chkfile = f"{scratch_dir}/h2_rhf.h5"
 mf.kernel()
 
 from safiretools import Wavefunction
 from safiretools import MolecularHamiltonian
 
-# both factories read the PySCF checkpoint themselves
-mf_chk = f"{scratch_dir}/h2_rhf.h5"
-
 # dump the Hamiltonian and the wavefunction to the same h5df
 fout = f"{scratch_dir}/h2_from_pyscf.h5"
 MolecularHamiltonian.from_pyscf(
-    mf_chk,
+    mf,
     chol_cut=1e-6,
-    real_chol=True,
     verbose=True
 ).to_hdf5(fout)
 
-# `basis` defaults to `source`, i.e. the wavefunction is expressed in the
-#   orbitals of the same SCF solution it is built from
-Wavefunction.from_pyscf(mf_chk).to_hdf5(fout)
+# `basis` defaults to `mf`'s own orbitals, for the Hamiltonian and the
+#   wavefunction alike
+Wavefunction.from_pyscf(mf).to_hdf5(fout)
 ```
 
 +++ {"id": "ZX0-iQdzyCNg"}

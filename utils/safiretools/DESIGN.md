@@ -39,9 +39,10 @@ decision.
 - Writing never repairs: every Slater matrix reaching disk has its overlap's condition number
   checked, and an ill-conditioned one is warned about. `orthonormalize()` is explicit, and the
   domain factories do not call it.
-- `from_pyscf` takes a checkpoint path or a loaded `scf_data`; the loaders live in
-  `convert/pyscf.py`, and determine the spin symmetry at load time.
-- The wavefunction's basis and the solution it is built from are separate arguments.
+- `from_pyscf` takes PySCF objects and reads them by duck typing; the molecular path imports no
+  PySCF. The helpers live in `convert/pyscf.py`.
+- The source object (the physics, including any spin-orbit term) and the basis are separate
+  arguments; the spin symmetry is deduced, never passed.
 
 **On-disk formats**
 
@@ -88,14 +89,14 @@ decision.
 - Execution-input (AFQMC run-config JSON) generation — redesigned, not just ported.
 - `scalar_stats` — the only CLI entry point kept (`energy_stats`, a duplicate alias, is dropped).
 - QE interop — bugs fixed, behavior preserved.
-- CAS/CI wavefunction import from a PySCF checkpoint (`write_cas_wfn`) — kept as
+- CAS/CI wavefunction import from PySCF (`write_cas_wfn`) — kept as
   `PHMSDWavefunction.from_pyscf_cas`; `ci_wavefunction` came with it, as `ci_expansion`.
 - AutoHF interop — kept, fragile unguarded import gets hardened.
 - Dice-SHCI wavefunction import — kept, split into its own module, proper exceptions.
 - `rhonk.py` (real-space observables) — kept for external callers; its vendored duplicate HDF5
   helpers get deduplicated onto the shared Core Library HDF5 utility.
 - `write_rhoG_kpoints`/`write_rhoG_supercell` — kept only as a **raising stub**, the single
-  `periodic.write_rhoG(comm, scf_data, path, gcut, ...)`, which explains why in its
+  `periodic.write_rhoG(kmf, path, gcut, ...)`, which explains why in its
   `NotImplementedError` (user call). Neither original could run, so there is no behavior to
   preserve; the stub gives a working implementation an obvious place to land.
 
@@ -197,8 +198,8 @@ safiretools/
 ├── execution.py              # redesigned AFQMC JSON execution-parameter generator
 │                              #   (from inputs/from_hdf.py) — naming/location still open
 ├── convert/
-│   ├── pyscf.py                # PySCF checkpoint -> scf_data: load_pyscf_chk_mol,
-│   │                            #   load_pyscf_chk, as_scf_data, determine_spin_symm.
+│   ├── pyscf.py                # duck-typed reading of PySCF objects: working_basis,
+│   │                            #   one_body, periodic_solution, determine_spin_symm.
 │   │                            #   Shared by hamiltonian/{molecular,periodic} and
 │   │                            #   wavefunction/{pyscf,pbc}, so it can live in neither.
 │   └── autohf.py                # hardened AutoHF interop
@@ -618,8 +619,8 @@ so it is not new behavior, only relocated to the one place that needs the full s
 
 **Uneven per-k-point orbital counts are rejected rather than written wrongly.** The FCIDUMP orbital
 index is the combined `k * nmo_pk + i`, and `write_fcidump_kpoint` walks it as though every k-point
-carried `nmo_max` orbitals, so a mesh with different counts per k-point (a nonzero `lindep_cutoff`
-in `get_ortho_ao`) silently produced garbage. `PeriodicHamiltonian.to_fcidump` raises `ValueError`
+carried `nmo_max` orbitals, so a mesh with different counts per k-point (linear dependencies
+removed per k-point) silently produced garbage. `PeriodicHamiltonian.to_fcidump` raises `ValueError`
 instead. The underlying free function is left as it is.
 
 **A spinor-basis FCIDUMP is still not available for a k-point Hamiltonian**, and `to_fcidump` keeps
@@ -641,59 +642,64 @@ silently double the basis a second time.
 > documentation still says only "chemists' notation `(ij|kl)`", which is the ambiguous half of the
 > story; it is left as it is for now.
 
-## Reading a PySCF checkpoint: `convert/pyscf.py`
+## Reading PySCF objects: `convert/pyscf.py`
 
-The loaders that produce the `scf_data` mapping (`load_pyscf_chk_mol` for a molecule and
-`load_pyscf_chk` for a cell) live in `convert/pyscf.py`.
- They are shared by `hamiltonian/molecular.py`, `hamiltonian/periodic.py`, `wavefunction/pyscf.py` and
-`wavefunction/pbc.py`, so they cannot live in any one of those, and `convert/` is the subpackage for
-interop with an external tool.
+**Every `from_pyscf` factory takes PySCF objects, not checkpoint files**, and reads them by duck
+typing: only methods and attributes of the `mf`/`mc`/`kmf` it is handed are used (`get_hcore()`,
+`mo_coeff`, `mol.intor`, `fcisolver.large_ci`, ...), so the molecular path never imports PySCF.
+The periodic Cholesky solver still imports `pyscf.pbc` lazily for `FFTDF`, `get_coulG` and
+`madelung`; reimplementing those buys nothing, since whoever holds a `Cell` has PySCF, and CoQuí is
+the supported route for solids. The extraction helpers live in `convert/pyscf.py` because four
+modules share them.
 
-**The loaders are not re-exported, and a PySCF-interop example may name the deep path** (user call).
-This is the one acknowledged exception to "user-facing documentation shows only top-level imports":
-a handful of doc blocks need the mapping form rather than a path — a `base='mcscf'` orbital basis,
-`soc_type='ecp'` integrals, hand-edited `mo_coeff` — and every one of them already imports PySCF
-itself, so `from safiretools.convert.pyscf import load_pyscf_chk_mol` is in keeping with the code
-around it. Promoting the loader to buy a short path in four PySCF-specific examples would put a
-function on the public surface that nothing in the API takes or returns.
+The checkpoint format pushed work onto users — hand-written `scf/hcore`, `scf/fock`,
+`scf/orthoAORot` and `scf/nmo_per_kpt` for a solid, a `j3c` key for density fitting,
+`base='mcscf'` for a CASSCF basis — that the objects answer directly. Someone holding only a
+checkpoint rebuilds the object with PySCF's own `scf.chkfile.load_scf`.
 
-**Every `from_pyscf` factory takes a checkpoint path or an already-loaded mapping**, resolved by
-`as_scf_data`. The path form is the common case and makes the simple workflow one call; the mapping
-form is what lets one load serve several factories, which matters because **the basis and the
-wavefunction need not come from the same SCF calculation**:
+**Two roles, two arguments.** The source object says what the physics is: its `get_hcore()` is the
+one-body Hamiltonian and its `mol` supplies the two-electron integrals. `basis` says which orbitals
+everything is expressed in — `None` for the source's own, `'ortho_ao'`, another SCF or CASSCF
+object, or an `(nao, nmo)` array — and has to be the same for the Hamiltonian and the wavefunction:
 
 ```python
-# simple: the factory loads the checkpoint itself
-MolecularHamiltonian.from_pyscf("rohf.chk", chol_cut=1e-5).to_hdf5("afqmc.h5")
-Wavefunction.from_pyscf("ghf.chk", basis="rohf.chk").to_hdf5("afqmc.h5")
+rohf = scf.ROHF(mol).run()
+ghf_soc = scf.GHF(mol); ghf_soc.with_soc = True; ghf_soc.kernel()
 
-# one basis load, reused, when it needs non-default options
-basis = load_pyscf_chk_mol("rohf.chk", soc_type="ecp")
-MolecularHamiltonian.from_pyscf(basis, ortho_ao=True).to_hdf5("afqmc_soc.h5")
-Wavefunction.from_pyscf("ghf_soc.chk", basis=basis, ortho_ao=True).to_hdf5("afqmc_soc.h5")
+MolecularHamiltonian.from_pyscf(ghf_soc, basis=rohf).to_hdf5("afqmc_soc.h5")
+Wavefunction.from_pyscf(ghf_soc, basis=rohf).to_hdf5("afqmc_soc.h5")
 ```
 
-`Wavefunction.from_pyscf`'s two arguments say which is which: `source` is the solution the
-wavefunction is *built from* and `basis` is the solution whose orbitals it is *expressed in*, which
-has to be the one the Hamiltonian was built in. `basis` defaults to `source`.
+**Spin-orbit coupling is a property of the source, not of the basis.** It used to be a `soc_type`
+option on *loading the basis*, which attached a one-body term the ROHF calculation never used to
+the ROHF orbitals. PySCF already builds every variant as some object's `get_hcore()`:
 
-**A checkpoint's kind is told apart by its serialized molecule, not by type.**
-`pyscf.pbc.gto.Cell` is a *subclass* of `gto.Mole`, so an `isinstance` test would report a periodic
-cell as molecular. `is_periodic_chk` looks for lattice vectors instead — PySCF stores them under the
-key `'a'` for a `Cell` and not at all for a `Mole` — and `as_scf_data` raises when a factory is
-handed the wrong kind.
+| treatment | source object | `get_hcore()` |
+|---|---|---|
+| none | `scf.RHF/ROHF/UHF(mol)` | `(nao, nao)` |
+| spin-free X2C | `mol.RHF().sfx2c1e()` | `(nao, nao)` |
+| spin-free, spinor basis | `scf.GHF(mol)`, `rhf.to_ghf()` | `(2 nao, 2 nao)`, block diagonal |
+| ECP spin-orbit | GHF with `with_soc = True` | `(2 nao, 2 nao)` |
+| X2C | `mol.GHF().x2c1e()` | `(2 nao, 2 nao)` |
 
-### The spin symmetry is determined, not inferred
+The source need not be converged when it only supplies the hcore. A molecule carrying a spin-orbit
+ECP whose hcore has no spin-orbit term warns, since a forgotten `with_soc` is otherwise silent.
 
-`determine_spin_symm` reads it off the *calculation*, at load time, and stores it in the mapping:
-a spin-orbit treatment (`'x2c'`/`'ecp'`) or a spinor basis is noncollinear; spin-resolved orbitals
-or a fractionally/singly occupied orbital are collinear; occupancies that are all 0 or 2 are closed
-shell. The order matters — a GHF solution has one `mo_coeff` matrix like an RHF one, and only the
-basis size separates them.
+**Nothing the data already says is an argument.** `ortho_ao` became `basis='ortho_ao'`,
+`real_chol` went (the Cholesky dtype follows the data), and so did `spin_symm` (user call):
 
-This replaces inferring the symmetry from the *shape of the Slater matrix built later*, which was
-circular: the construction is driven by the reference's symmetry, so the shape could only ever
-report back what it was told. The explicit `spin_symm=` override on every factory is unaffected.
+- A molecular Hamiltonian's spin symmetry is read off the hcore: noncollinear for a spinor matrix,
+  closed otherwise. It describes the operator, not the reference state — a spin-independent
+  one-body term gains nothing from two identical spin sectors, and the executable pairs a closed
+  Hamiltonian with a collinear trial. A collinear molecular Hamiltonian is still reachable through
+  the raw constructor.
+- A wavefunction's spin symmetry is read off the solution by `determine_spin_symm`: a spinor
+  `mo_coeff` is noncollinear; spin-resolved orbitals or a fractionally/singly occupied orbital are
+  collinear; occupancies that are all 0 or 2 are closed shell. The order matters — a GHF solution
+  has one `mo_coeff` matrix like an RHF one, and only the basis size separates them.
+
+The constructors, `from_integrals`, `from_fcidump` and the model builders keep `spin_symm`: raw
+arrays cannot say whether they are closed or collinear.
 
 ## Periodic Cholesky: one solver, one flag, serially
 
@@ -826,13 +832,13 @@ that differently** (user call):
 from safiretools import Hamiltonian, MolecularHamiltonian, Wavefunction
 
 hamiltonian = Hamiltonian.from_hdf5("hamiltonian.h5")     # shared: dispatches on the file
-hamiltonian = MolecularHamiltonian.from_pyscf(scf_data)   # domain factory: name the class
+hamiltonian = MolecularHamiltonian.from_pyscf(mf)         # domain factory: name the class
 wavefunction = Wavefunction.from_hdf5("wavefunction.h5")  # or any other Wavefunction factory
 ```
 
 **Why the two differ: what the subclass axis means** (see **Class hierarchies**). A `Hamiltonian`
 subclass is the *source domain* — lattice, molecular, periodic — which the caller always knows,
-because they are holding the `scf_data` or the parameter dict that only one domain can consume.
+because they are holding the SCF object or the parameter dict that only one domain can consume.
 Dispatch there would resolve a question nobody was asking. A `Wavefunction` subclass is the
 *mathematical representation*, which often falls out of the **data**: `from_pbc_scf` cannot know
 whether it will produce a particle-hole expansion until it sees whether bands came out partially
@@ -878,8 +884,8 @@ base method is the only wrapper and spells out **real parameters**; the subclass
 `Hamiltonian` domain factory *is* the subclass classmethod, so it spells out its own real parameters
 and documents them in the one place they apply with no `**kwargs` forwarding layer in between.
 That is the practical payoff of pushing them down: the two `from_pyscf` signatures share only
-`scf_data`, `chol_cut` and `verbose`, and everything else is domain-specific
-(`cas`/`ortho_ao`/`df`/`real_chol` molecular; `comm`/`kpoint_symmetry`/`maxvecs`/`exxdiv` periodic),
+the SCF object, `basis`, `chol_cut` and `verbose`, and everything else is domain-specific
+(`active_space`/`df` molecular; `kpoint_symmetry`/`maxvecs`/`exxdiv`/`nelec` periodic),
 so `inspect.signature` is exact and a keyword aimed at the wrong domain is a plain `TypeError` from
 the method the caller actually named.
 
@@ -979,7 +985,7 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
 - **Drop PySCF support for periodic systems entirely.** `PeriodicHamiltonian.from_pyscf` and
   `NOMSDWavefunction.from_pbc_scf` are the only two things left that build a solid from a PySCF
   mean-field reference, and **CoQuí is the supported route for solids**. If that stays true, both
-  can go, along with `convert/pyscf.py`'s `load_pyscf_chk`, and `PeriodicHamiltonian` reduces to
+  can go, along with `convert/pyscf.py`'s `periodic_solution`, and `PeriodicHamiltonian` reduces to
   reading CoQuí's k-point format. The serial-only Cholesky factorization is sized for the same
   judgment: it is fine for a test case and not meant for a production mesh.
 - **Direct use of NOMSDWavefunction and PHMSDWavefunction in tutorials is potentially confusing.**

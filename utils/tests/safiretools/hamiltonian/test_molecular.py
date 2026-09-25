@@ -393,8 +393,7 @@ class TestFromPyscf:
                                                         tmp_path):
         mf, _ = neon_rhf
 
-        # the checkpoint path is loaded by the factory itself
-        hamiltonian = MolecularHamiltonian.from_pyscf(mf.chkfile, chol_cut=1e-5)
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf, chol_cut=1e-5)
 
         C = mf.mo_coeff
         expected_hcore = C.conj().T @ mf.get_hcore() @ C
@@ -435,6 +434,62 @@ class TestFromPyscf:
         assert np.isclose(efzc, ecore)
         assert np.allclose(h1eff, h1e, atol=1e-8, rtol=1e-5)
 
+    @pytest.fixture
+    def phased(self, neon_rhf):
+        """The RHF orbitals, each multiplied by an arbitrary phase: a complex basis."""
+        mf, _ = neon_rhf
+        nmo = mf.mo_coeff.shape[1]
+        phases = np.exp(1j * np.linspace(0.3, 2.9, nmo))
+        return mf.mo_coeff * phases, phases
+
+    def test_a_complex_basis_reproduces_the_eri_tensor(self, neon_atom, neon_rhf,
+                                                       phased):
+        r"""
+        In a complex basis the vectors are :math:`C^\dagger L^\gamma C`, which
+        stay hermitian in the orbital pair, and :math:`\sum_\gamma L_{ij} L_{kl}`
+        is the MO-basis :math:`(ij|kl)`.
+        """
+        mf, _ = neon_rhf
+        C, _ = phased
+
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf, basis=C, chol_cut=1e-6)
+
+        nmo = hamiltonian.nmo
+        L = hamiltonian.chol.T.reshape(-1, nmo, nmo)
+        assert hamiltonian.complex_chol
+        assert np.allclose(L, L.conj().transpose(0, 2, 1))
+
+        eri_mo = np.einsum('pi,qj,pqrs,rk,sl->ijkl', C.conj(), C,
+                           neon_atom.intor('int2e', aosym='s1'), C.conj(), C)
+        reconstructed = np.einsum('gij,gkl->ijkl', L, L)
+        assert np.allclose(reconstructed, eri_mo, atol=1e-5)
+
+    def test_a_complex_basis_freezes_the_same_core(self, neon_rhf, phased):
+        """
+        Phases change no physics: the frozen-core constant is the same, and the
+        active one-body term only picks up the phases of its orbitals.
+        """
+        mf, _ = neon_rhf
+        C, phases = phased
+
+        real = MolecularHamiltonian.from_pyscf(mf, active_space=(8, -1))
+        complex_ = MolecularHamiltonian.from_pyscf(mf, basis=C,
+                                                   active_space=(8, -1))
+
+        active = phases[1:]
+        expected = active.conj()[:, None] * real.hcore[0, 0, :, 0, :] * active
+        assert np.isclose(complex_.enuc, real.enuc)
+        assert np.allclose(complex_.hcore[0, 0, :, 0, :], expected)
+
+    def test_complex_cholesky_vectors_warn_on_write(self, neon_rhf, phased,
+                                                    tmp_path):
+        mf, _ = neon_rhf
+        C, _ = phased
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf, basis=C)
+
+        with pytest.warns(UserWarning, match="RealDenseHamiltonian"):
+            hamiltonian.to_hdf5(tmp_path / 'complex.h5')
+
     def test_freezing_more_orbitals_than_exist_is_rejected(self, neon_atom, neon_rhf):
         mf, _ = neon_rhf
         C = mf.mo_coeff
@@ -445,46 +500,62 @@ class TestFromPyscf:
         with pytest.raises(ValueError, match="Can't freeze more orbitals"):
             freeze_core(h1e, chol, 0, 3, 4, verbose=False)
 
-    def test_a_uhf_reference_needs_ortho_ao(self, neon_rhf):
-        from safiretools.convert.pyscf import load_pyscf_chk_mol
-
-        mf, _ = neon_rhf
-        scf_data = load_pyscf_chk_mol(mf.chkfile)
-        scf_data['mo_coeff'] = np.array([mf.mo_coeff, mf.mo_coeff])
-
-        with pytest.raises(ValueError, match="Use ortho_ao"):
-            MolecularHamiltonian.from_pyscf(scf_data)
-
-    def test_cas_and_ortho_ao_are_mutually_exclusive(self, neon_rhf):
+    def test_a_uhf_basis_needs_ortho_ao(self, neon_rhf):
         mf, _ = neon_rhf
 
-        with pytest.raises(ValueError, match="cannot be used at the same time"):
-            MolecularHamiltonian.from_pyscf(mf.chkfile, cas=(4, 4),
-                                            ortho_ao=True)
+        with pytest.raises(ValueError, match="basis='ortho_ao'"):
+            MolecularHamiltonian.from_pyscf(mf.to_uhf())
 
-    def test_a_checkpoint_path_and_a_loaded_mapping_agree(self, neon_rhf,
-                                                          tmp_path):
-        from safiretools.convert.pyscf import load_pyscf_chk_mol
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf.to_uhf(),
+                                                      basis='ortho_ao')
+        assert hamiltonian.spin_symm is SpinSymm.CLOSED
 
+    def test_an_active_space_and_ortho_ao_are_mutually_exclusive(self, neon_rhf):
         mf, _ = neon_rhf
 
-        by_path = MolecularHamiltonian.from_pyscf(mf.chkfile, chol_cut=1e-5)
-        by_mapping = MolecularHamiltonian.from_pyscf(
-            load_pyscf_chk_mol(mf.chkfile), chol_cut=1e-5)
+        with pytest.raises(ValueError, match="cannot be combined"):
+            MolecularHamiltonian.from_pyscf(mf, active_space=(4, 4),
+                                            basis='ortho_ao')
 
-        assert np.allclose(by_path.hcore, by_mapping.hcore)
-        assert np.allclose(by_path.chol, by_mapping.chol)
-
-    def test_a_periodic_checkpoint_is_refused(self, neon_rhf, tmp_path):
+    def test_a_ghf_source_gives_the_spin_free_noncollinear_hamiltonian(
+            self, neon_rhf):
         """
-        The two checkpoint kinds are told apart by whether the serialized
-        molecule carries lattice vectors, so passing the wrong one is caught
-        before anything is read out of it.
+        A GHF object's hcore is the scalar one on both spins, so the result is
+        the closed Hamiltonian's one-body term promoted to the spinor basis.
         """
-        from safiretools.convert.pyscf import is_periodic_chk
-
         mf, _ = neon_rhf
-        assert is_periodic_chk(mf.chkfile) is False
+
+        closed = MolecularHamiltonian.from_pyscf(mf, chol_cut=1e-5)
+        noncollinear = MolecularHamiltonian.from_pyscf(mf.to_ghf(), basis=mf,
+                                                       chol_cut=1e-5)
+
+        nmo = closed.nmo
+        assert noncollinear.spin_symm is SpinSymm.NONCOLLINEAR
+        assert np.array_equal(
+            noncollinear.hcore.reshape(2 * nmo, 2 * nmo),
+            np.kron(np.eye(2), closed.hcore.reshape(nmo, nmo)))
+        assert np.array_equal(noncollinear.chol, closed.chol)
+
+    def test_density_fitting_vectors_are_used_when_asked(self, neon_atom):
+        from pyscf import scf
+
+        mf = scf.RHF(neon_atom).density_fit().run()
+
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf, df=True)
+
+        C = mf.mo_coeff
+        assert hamiltonian.nchol == mf.with_df.get_naoaux()
+        eri_mo = np.einsum('pi,qj,pqrs,rk,sl->ijkl', C, C,
+                           neon_atom.intor('int2e', aosym='s1'), C, C)
+        reconstructed = hamiltonian.chol @ hamiltonian.chol.conj().T
+        assert np.allclose(reconstructed.reshape((hamiltonian.nmo,) * 4),
+                           eri_mo, atol=1e-2)
+
+    def test_df_needs_a_density_fitted_object(self, neon_rhf):
+        mf, _ = neon_rhf
+
+        with pytest.raises(ValueError, match="density-fitted"):
+            MolecularHamiltonian.from_pyscf(mf, df=True)
 
 
 class TestRealAndComplexAreToldApart:
@@ -534,7 +605,8 @@ class TestRealAndComplexAreToldApart:
         hcore = np.array([[-1.25 + 0.0j, 0.3j], [-0.3j, -0.48 + 0.0j]])
         chol = np.arange(3 * 4, dtype=complex).reshape(3, 4) + 1j
 
-        restored = self._round_trip(tmp_path, hcore, chol, 'cplx.h5')
+        with pytest.warns(UserWarning, match="cannot run this file"):
+            restored = self._round_trip(tmp_path, hcore, chol, 'cplx.h5')
         assert np.iscomplexobj(restored.hcore)
         assert np.iscomplexobj(restored.chol)
 
