@@ -221,30 +221,14 @@ def _read_hdf5(path, ndets: int, state: int):
 def has_real_coefficients(fields) -> bool:
     """
     Whether a split determinant line from Dice's text log carries a real
-    coefficient.
-
-    Dice prints one column for a real coefficient and two for a complex one, so
-    the third field is either the first occupation character or the imaginary
-    part::
+    coefficient. Dice prints one column for a real coefficient and two for a
+    complex one, so the third field is either the first occupation character or
+    the imaginary part::
 
         0    -0.5032009288     2 2 2 2 0   0 0 0 0 0   0     # real
         0    -0.5032009288     0.7487247473 2 2 2 2 0  ...   # complex
-
-    Parameters
-    ----------
-    fields : list of str
-        One determinant line, split on whitespace.
-
-    Returns
-    -------
-    bool
-
-    Raises
-    ------
-    ValueError
-        If the third field is neither an occupation character nor a number.
     """
-    if re.match(r'^[0ab2]$', fields[2]):
+    if fields[2] in _OCCUPATION_CHARACTERS:
         return True
     if re.match(r'^[-+]?[0-9]+\.[0-9]+$', fields[2]):
         return False

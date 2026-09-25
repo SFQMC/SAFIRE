@@ -152,13 +152,8 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
 
 def to_dense(matrix):
     """
-    `matrix` as a dense array.
-
-    A lattice model's one-body term is sparse, but for simplicity, we 
-    convert to dense before passing to ``scipy.linalg.eigh``. 
-    A sparse eigensolver only pays off when a few
-    eigenpairs are needed, and ``eigsh`` does not handle complex matrices
-    correctly, which a twisted lattice always produces.
+    `matrix` as a dense array, for ``scipy.linalg.eigh``: ``eigsh`` mishandles
+    the complex matrices a twisted lattice produces.
     """
     return matrix.toarray() if hasattr(matrix, 'toarray') else np.asarray(matrix)
 
@@ -215,28 +210,21 @@ def _shell_selection(degeneracy: int, nelec: int, strategy: str):
     A completely filled shell takes all of them whatever the strategy says; the
     strategies differ only in which orbitals a partial fill picks.
     """
-    if strategy not in FILLING_STRATEGIES:
-        raise ValueError(
-            f"unknown filling strategy '{strategy}': supported strategies are "
-            f"{list(FILLING_STRATEGIES)}"
-        )
-
     if nelec == degeneracy or strategy == 'aufbau':
         return list(range(nelec))
 
-    else:
-        # 'alternating': from the edges inward, 0, -1, 1, -2, ..., which cancels
-        #   momentum in k-space
-        selected = []
-        left, right = 0, degeneracy - 1
-        for step in range(nelec):
-            if step % 2 == 0:
-                selected.append(left)
-                left += 1
-            else:
-                selected.append(right)
-                right -= 1
-        return selected
+    # 'alternating': from the edges inward, 0, -1, 1, -2, ..., which cancels
+    #   momentum in k-space
+    selected = []
+    left, right = 0, degeneracy - 1
+    for step in range(nelec):
+        if step % 2 == 0:
+            selected.append(left)
+            left += 1
+        else:
+            selected.append(right)
+            right -= 1
+    return selected
 
 
 def fill_shells(shells, nelec: int, strategy='aufbau'):
@@ -270,6 +258,12 @@ def fill_shells(shells, nelec: int, strategy='aufbau'):
     UserWarning
         If the fill stops part-way through a degenerate shell, see `from_free_electron`.
     """
+    if strategy not in FILLING_STRATEGIES:
+        raise ValueError(
+            f"unknown filling strategy '{strategy}': supported strategies are "
+            f"{list(FILLING_STRATEGIES)}"
+        )
+
     if nelec == 0:
         nrows = shells[0]['orbitals'].shape[0] if shells else 0
         return np.zeros((nrows, 0), dtype=complex), []
