@@ -118,13 +118,16 @@ class TestNomsdPayload:
     ])
     def test_collinear_determinants_interleave_the_spin_channels(
             self, group, rng, nelec_per_spin, expected):
-        ncols = sum(nelec_per_spin)
-        dets = rng.normal(size=(2, 6, ncols)) + 0j
-        io.write_nomsd(group, dets, nelec_per_spin)
+        dets = tuple(rng.normal(size=(2, 6, nelec)) + 0j
+                     for nelec in nelec_per_spin)
+        io.write_nomsd(group, dets)
 
         assert sorted(name for name in group if name.startswith('PsiT')) \
             == expected
-        assert np.allclose(io.read_nomsd(group, 2, nelec_per_spin), dets)
+        read_back = io.read_nomsd(group, 2, len(nelec_per_spin))
+        assert len(read_back) == len(dets)
+        for read, written in zip(read_back, dets):
+            assert np.allclose(read, written)
 
     def test_the_orbital_index_is_determinant_major(self):
         assert io.nomsd_orbital_index(0, 0, 2) == 0
@@ -135,7 +138,7 @@ class TestNomsdPayload:
     def test_small_coefficients_are_thresholded(self, group):
         dets = np.ones((1, 4, 2), dtype=complex)
         dets[0, 0, 0] = 1e-12
-        io.write_nomsd(group, dets, (2,))
+        io.write_nomsd(group, (dets,))
 
         assert int(group['PsiT_0/dims'][2]) == 7
 
@@ -143,7 +146,7 @@ class TestNomsdPayload:
         group['UL_0/dims'] = np.array([1, 1, 1], dtype=np.int32)
 
         with pytest.raises(ValueError, match="no PsiT_0 group"):
-            io.read_nomsd(group, 1, (2,))
+            io.read_nomsd(group, 1, 1)
 
 
 class TestConditionNumberOnDisk:
@@ -160,7 +163,7 @@ class TestConditionNumberOnDisk:
 
         with warnings.catch_warnings():
             warnings.simplefilter('error')
-            io.write_nomsd(group, block[np.newaxis], (2,))
+            io.write_nomsd(group, (block[np.newaxis],))
 
     def test_an_ill_conditioned_block_is_reported(self, group):
         block = np.eye(8, 2)
@@ -168,7 +171,7 @@ class TestConditionNumberOnDisk:
 
         with pytest.warns(UserWarning,
                           match=r"ill-conditioned overlap matrix: PsiT_0"):
-            io.write_nomsd(group, block[np.newaxis], (2,))
+            io.write_nomsd(group, (block[np.newaxis],))
 
     def test_an_all_zero_block_is_reported(self, group):
         """
@@ -178,7 +181,7 @@ class TestConditionNumberOnDisk:
         assert overlap_condition_number(np.zeros((8, 2))) == np.inf
 
         with pytest.warns(UserWarning, match="cond inf"):
-            io.write_nomsd(group, np.zeros((1, 8, 2)), (2,))
+            io.write_nomsd(group, (np.zeros((1, 8, 2)),))
 
     def test_an_empty_block_is_fine(self, group):
         """
@@ -191,7 +194,7 @@ class TestConditionNumberOnDisk:
         det[0, 0] = det[1, 1] = 1.0
         with warnings.catch_warnings():
             warnings.simplefilter('error')
-            io.write_nomsd(group, det[np.newaxis], (2, 0))
+            io.write_nomsd(group, (det[np.newaxis], np.zeros((1, 8, 0))))
 
     def test_sparsifying_can_be_what_breaks_it(self, group):
         """
@@ -204,10 +207,10 @@ class TestConditionNumberOnDisk:
         assert np.min(np.abs(block[block != 0])) < io.DEFAULT_THRESHOLD
 
         with pytest.warns(UserWarning, match="cond inf"):
-            io.write_nomsd(group, block[np.newaxis], (2,))
+            io.write_nomsd(group, (block[np.newaxis],))
 
         # the screened column is gone entirely, leaving a rank-1 block
-        written = io.read_nomsd(group, 1, (2,))[0]
+        written = io.read_nomsd(group, 1, 1)[0][0]
         assert np.count_nonzero(written) == 1
         assert written[0, 0] == 1.0
 
@@ -216,9 +219,9 @@ class TestConditionNumberOnDisk:
         block[:, 1] = block[:, 0] + 1e-12 * block[:, 1]
 
         with pytest.warns(UserWarning):
-            io.write_nomsd(group, block[np.newaxis], (2,))
+            io.write_nomsd(group, (block[np.newaxis],))
 
-        assert np.allclose(io.read_nomsd(group, 1, (2,))[0], block)
+        assert np.allclose(io.read_nomsd(group, 1, 1)[0][0], block)
 
     def test_the_spin_channels_are_checked_separately(self, group):
         """
@@ -226,19 +229,19 @@ class TestConditionNumberOnDisk:
         columns *within* a channel matter. Identical alpha and beta orbitals are
         a perfectly ordinary collinear determinant.
         """
-        det = np.zeros((8, 2))
-        det[0, 0] = 1.0
-        det[0, 1] = 1.0
+        alpha = np.zeros((1, 8, 1))
+        alpha[0, 0, 0] = 1.0
 
         with warnings.catch_warnings():
             warnings.simplefilter('error')
-            io.write_nomsd(group, det[np.newaxis], (1, 1))
+            io.write_nomsd(group, (alpha, alpha.copy()))
 
     def test_every_offending_block_is_named(self, group):
-        dets = np.zeros((2, 8, 4))      # every block singular
+        # every block singular
+        dets = (np.zeros((2, 8, 2)), np.zeros((2, 8, 2)))
 
         with pytest.warns(UserWarning) as record:
-            io.write_nomsd(group, dets, (2, 2))
+            io.write_nomsd(group, dets)
 
         message = str(record[0].message)
         for name in ('PsiT_0', 'PsiT_1', 'PsiT_2', 'PsiT_3'):

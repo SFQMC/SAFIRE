@@ -28,7 +28,11 @@ import h5py as h5
 
 from safiretools.convert.pyscf import as_scf_data, working_basis
 from safiretools.types import SpinSymm
-from safiretools.wavefunction.slater import make_slater, transform_slater
+from safiretools.wavefunction.slater import (
+    format_spin_layout,
+    make_slater,
+    transform_slater,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +80,8 @@ def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
     Notes
     -----
     Set ``wavefunction.psi0`` afterwards to choose the AFQMC initial walker;
-    construct `safiretools.NOMSDWavefunction` directly to supply a Slater
-    matrix of your own.
+    use `safiretools.Wavefunction.from_single_determinant` to supply a
+    determinant of your own.
 
     A reference with no beta electrons — which a large enough frozen core can
     produce from an open-shell one — is `SpinSymm.COLLINEAR` with
@@ -107,17 +111,17 @@ def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
                                    nfzc=nfzc, nfzv=nfzv)
     _check_occupations(occa, occb, nelec, spin_symm)
 
-    orbitals = make_slater(spin_symm, scf_data['mo_coeff'], (occa, occb), nelec)
-
     overlap = scf_data['mol'].intor('int1e_ovlp')
-    orbitals = transform_slater(
-        orbitals, overlap @ X[:, nfzc:X.shape[-1] - nfzv]) + 0j
+    transform = overlap @ X[:, nfzc:X.shape[-1] - nfzv]
+    channels = tuple(transform_slater(orbitals, transform) + 0j for orbitals
+                     in make_slater(spin_symm, scf_data['mo_coeff'],
+                                    (occa, occb), nelec))
 
     logger.info("built a %s single-determinant trial wavefunction: "
                 "nelec=%s, nmo=%d", spin_symm.label, nelec, norb)
 
-    return NOMSDWavefunction.from_single_determinant(orbitals, nelec=nelec,
-                                                     spin_symm=spin_symm, nmo=norb)
+    return NOMSDWavefunction.from_single_determinant(
+        format_spin_layout(channels, spin_symm))
 
 
 def from_pyscf_cas(mol, cas_chkfile, tol=1e-4, max_det=None):

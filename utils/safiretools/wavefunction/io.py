@@ -32,11 +32,7 @@ import numpy as np
 
 from safiretools.hdf5 import read_complex, read_csr, write_csr
 from safiretools.types import SpinSymm
-from safiretools.wavefunction.slater import (
-    CONDITION_MAX,
-    overlap_condition_number,
-    spin_blocks,
-)
+from safiretools.wavefunction.slater import CONDITION_MAX, overlap_condition_number
 
 DEFAULT_THRESHOLD = 1e-8
 """Orbital coefficients smaller than this are dropped before sparsifying."""
@@ -203,7 +199,7 @@ def nomsd_orbital_index(idet: int, ispin: int, nspin: int) -> int:
     return nspin * idet + ispin
 
 
-def write_nomsd(group, dets, nelec_per_spin) -> None:
+def write_nomsd(group, dets) -> None:
     """
     Write the per-determinant orbital matrices of a NOMSD wavefunction.
 
@@ -211,12 +207,9 @@ def write_nomsd(group, dets, nelec_per_spin) -> None:
     ----------
     group : h5py.Group
         The ``Wavefunction/NOMSD`` group.
-    dets : numpy.ndarray
-        Orbital matrices, ``(ndets, npol*nmo, sum(nelec_per_spin))``. The spin
-        channels occupy consecutive column blocks.
-    nelec_per_spin : sequence of int
-        Electron count in each spin channel; its length is the number of
-        channels (1 or 2).
+    dets : sequence of numpy.ndarray
+        One ``(ndets, npol*nmo, nelec_of_that_spin)`` stack per spin channel
+        (1 or 2).
 
     Notes
     -----
@@ -224,13 +217,12 @@ def write_nomsd(group, dets, nelec_per_spin) -> None:
     sparsifying, and each block's overlap is checked *after* that screening. A
     block that fails is warned about and written as it stands.
     """
-    dets = np.asarray(dets)
-    nspin = len(nelec_per_spin)
+    nspin = len(dets)
     written = []
 
-    for idet, det in enumerate(dets):
-        for ispin, block in enumerate(spin_blocks(det, nelec_per_spin)):
-            block = block.copy()
+    for idet in range(len(dets[0])):
+        for ispin, channel in enumerate(dets):
+            block = np.array(channel[idet])
             block[abs(block) < DEFAULT_THRESHOLD] = 0.0
             name = f'PsiT_{nomsd_orbital_index(idet, ispin, nspin)}'
             write_orbitals(group, name, block)
@@ -239,14 +231,14 @@ def write_nomsd(group, dets, nelec_per_spin) -> None:
     warn_if_ill_conditioned(written)
 
 
-def read_nomsd(group, ndets: int, nelec_per_spin):
+def read_nomsd(group, ndets: int, nspin: int):
     """
     Read the per-determinant orbital matrices back.
 
     Returns
     -------
-    numpy.ndarray
-        Orbital matrices, ``(ndets, npol*nmo, sum(nelec_per_spin))``.
+    tuple of numpy.ndarray
+        One ``(ndets, npol*nmo, nelec_of_that_spin)`` stack per spin channel.
 
     Raises
     ------
@@ -254,22 +246,18 @@ def read_nomsd(group, ndets: int, nelec_per_spin):
         If the file holds no ``PsiT_0`` group — which is what a finite-
         temperature NOMSD (``UL_``/``DL_``/``VL_`` blocks) looks like from here.
     """
-    nspin = len(nelec_per_spin)
-
     if 'PsiT_0' not in group:
         raise ValueError(
             f"'{group.name}' holds no PsiT_0 group; safiretools reads only "
             "zero-temperature NOMSD wavefunctions"
         )
 
-    blocks = [
-        [read_orbitals(group, f'PsiT_{nomsd_orbital_index(idet, ispin, nspin)}')
-         for ispin in range(nspin)]
-        for idet in range(ndets)
-    ]
-
-    return np.array([np.concatenate(det, axis=1) for det in blocks],
-                    dtype=np.complex128)
+    return tuple(
+        np.array([read_orbitals(group,
+                                f'PsiT_{nomsd_orbital_index(idet, ispin, nspin)}')
+                  for idet in range(ndets)], dtype=np.complex128)
+        for ispin in range(nspin)
+    )
 
 
 # ----------------------------------------------------------------------

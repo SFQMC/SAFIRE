@@ -58,83 +58,110 @@ class TestDerivedShape:
                                                            expected):
         assert make_nomsd(spin_symm, nelec=nelec).nelec_on_disk == expected
 
-    def test_a_closed_shell_wavefunction_needs_equal_populations(self,
-                                                                 orthonormal):
+    def test_a_closed_shell_wavefunction_needs_equal_populations(self):
+        # a NOMSD layout cannot even express this; the occupation numbers can
         with pytest.raises(ValueError, match="equal spin populations"):
-            NOMSDWavefunction(coeffs=[1.0], dets=orthonormal(6, 3)[np.newaxis],
+            PHMSDWavefunction(coeffs=[1.0], occa=[[0, 1, 2]],
+                              occb=np.zeros((1, 0), dtype=int), nmo=6,
                               nelec=(3, 2), spin_symm='closed')
 
     def test_coeffs_must_be_one_dimensional(self, orthonormal):
         with pytest.raises(ValueError, match="one-dimensional"):
             NOMSDWavefunction(coeffs=[[1.0]],
-                              dets=orthonormal(6, 3)[np.newaxis],
-                              nelec=(3, 3), spin_symm='closed')
+                              dets=orthonormal(6, 3)[np.newaxis])
 
-    def test_nelec_must_be_a_pair(self, orthonormal):
+    def test_nelec_must_be_a_pair(self):
         with pytest.raises(ValueError, match=r"\(nup, ndown\) pair"):
-            NOMSDWavefunction(coeffs=[1.0], dets=orthonormal(6, 3)[np.newaxis],
-                              nelec=(3,), spin_symm='closed')
+            PHMSDWavefunction(coeffs=[1.0], occa=[[0, 1, 2]], occb=[[0, 1]],
+                              nmo=6, nelec=(3,))
 
 
 class TestPsi0:
 
-    def test_it_defaults_to_the_leading_determinant(self, make_nomsd):
+    def test_it_defaults_to_the_leading_determinant(self, make_nomsd,
+                                                    layouts_close):
         wavefunction = make_nomsd('collinear', nelec=(3, 2), ndets=2)
-        alpha, beta = wavefunction.psi0
 
-        assert np.allclose(alpha, wavefunction.dets[0][:, :3])
-        assert np.allclose(beta, wavefunction.dets[0][:, 3:])
+        assert layouts_close(wavefunction.psi0, wavefunction.determinant(0))
 
     def test_the_default_is_a_copy(self, make_nomsd):
         wavefunction = make_nomsd('collinear')
         wavefunction.psi0[0][0, 0] = 1234.0
 
-        assert wavefunction.dets[0][0, 0] != 1234.0
+        assert wavefunction.dets[0][0, 0, 0] != 1234.0
 
-    def test_an_explicit_psi0_is_kept(self, make_nomsd, orthonormal):
+    @pytest.mark.parametrize('spin_symm, nelec, shape', [
+        ('closed', (3, 3), (6, 3)),
+        ('collinear', (3, 2), ((6, 3), (6, 2))),
+        ('noncollinear', (3, 2), (2, 6, 5)),
+    ])
+    def test_it_takes_the_layout_of_the_spin_symmetry(self, make_nomsd,
+                                                      spin_symm, nelec, shape):
+        wavefunction = make_nomsd(spin_symm, nelec=nelec, nmo=6)
+        psi0 = wavefunction.psi0
+
+        actual = tuple(block.shape for block in psi0) \
+            if isinstance(psi0, tuple) else psi0.shape
+        assert actual == shape
+
+    def test_an_explicit_psi0_is_kept(self, make_nomsd, orthonormal,
+                                      layouts_close):
         wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
         psi0 = (orthonormal(6, 3), orthonormal(6, 2))
         wavefunction.psi0 = psi0
 
-        assert np.allclose(wavefunction.psi0[0], psi0[0])
-        assert np.allclose(wavefunction.psi0[1], psi0[1])
+        assert layouts_close(wavefunction.psi0, psi0)
 
-    def test_it_must_have_one_block_per_spin_channel(self, make_nomsd,
-                                                     orthonormal):
+    def test_an_explicit_noncollinear_psi0_is_kept(self, make_nomsd,
+                                                   orthonormal):
+        wavefunction = make_nomsd('noncollinear', nelec=(3, 2), nmo=6)
+        psi0 = orthonormal(12, 5).reshape(2, 6, 5)
+        wavefunction.psi0 = psi0
+
+        assert np.allclose(wavefunction.psi0, psi0)
+
+    def test_it_must_be_in_the_layout_of_the_spin_symmetry(self, make_nomsd,
+                                                           orthonormal):
         wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
 
-        with pytest.raises(ValueError, match="one block per spin channel"):
-            wavefunction.psi0 = (orthonormal(6, 3),)
+        with pytest.raises(ValueError, match="psi0 must be in the collinear"):
+            wavefunction.psi0 = orthonormal(6, 3)
 
-    def test_each_block_must_have_the_right_shape(self, make_nomsd,
-                                                  orthonormal):
+    def test_a_list_is_not_read_as_collinear(self, make_nomsd, orthonormal):
         wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
 
-        with pytest.raises(ValueError, match="psi0 block 1 has shape"):
+        with pytest.raises(TypeError, match="psi0 must be"):
+            wavefunction.psi0 = [orthonormal(6, 3), orthonormal(6, 2)]
+
+    def test_it_must_have_the_right_shape(self, make_nomsd, orthonormal):
+        wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
+
+        with pytest.raises(ValueError, match="psi0 has shape"):
             wavefunction.psi0 = (orthonormal(6, 3), orthonormal(6, 3))
 
 
 class TestOrthonormality:
 
     def test_orthonormalize_does_not_touch_the_original(self, rng):
-        dets = (rng.normal(size=(1, 6, 5))
-                + 1j * rng.normal(size=(1, 6, 5)))
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 2),
-                                         spin_symm='collinear')
-        before = wavefunction.dets.copy()
+        dets = tuple(rng.normal(size=(1, 6, n)) + 1j * rng.normal(size=(1, 6, n))
+                     for n in (3, 2))
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
 
         fixed = wavefunction.orthonormalize()
 
-        assert np.array_equal(wavefunction.dets, before)
-        assert is_orthonormal(fixed.dets[0][:, :3])
-        assert is_orthonormal(fixed.dets[0][:, 3:])
+        for kept, original in zip(wavefunction.dets, dets):
+            assert np.array_equal(kept, original)
+        alpha, beta = fixed.determinant(0)
+        assert is_orthonormal(alpha)
+        assert is_orthonormal(beta)
 
     def test_orthonormalize_leaves_orthonormal_blocks_exactly_alone(self,
                                                                     make_nomsd):
         wavefunction = make_nomsd('collinear', ndets=2)
 
-        assert np.array_equal(wavefunction.orthonormalize().dets,
-                              wavefunction.dets)
+        for fixed, original in zip(wavefunction.orthonormalize().dets,
+                                   wavefunction.dets):
+            assert np.array_equal(fixed, original)
 
     def test_a_well_conditioned_determinant_writes_silently(self, rng,
                                                              tmp_path, recwarn):
@@ -143,8 +170,7 @@ class TestOrthonormality:
         Slater matrix is not orthonormal but is perfectly usable.
         """
         dets = rng.normal(size=(1, 6, 3)) + 0j
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
-                                         spin_symm='closed')
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
 
         wavefunction.to_hdf5(tmp_path / 'wfn.h5')
 
@@ -152,16 +178,14 @@ class TestOrthonormality:
 
     def test_an_ill_conditioned_determinant_is_reported(self, tmp_path):
         dets = _nearly_dependent(6, 3)[np.newaxis]
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
-                                         spin_symm='closed')
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
 
         with pytest.warns(UserWarning, match="ill-conditioned overlap"):
             wavefunction.to_hdf5(tmp_path / 'wfn.h5')
 
     def test_writing_does_not_repair(self, tmp_path):
         dets = _nearly_dependent(6, 3)[np.newaxis]
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
-                                         spin_symm='closed')
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
         path = tmp_path / 'wfn.h5'
 
         with pytest.warns(UserWarning):
@@ -176,9 +200,8 @@ class TestOrthonormality:
         overlap too, so it is checked even when the determinants are clean.
         """
         dets = orthonormalize(rng.normal(size=(6, 3)))[np.newaxis]
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
-                                         spin_symm='closed')
-        wavefunction.psi0 = (_nearly_dependent(6, 3),)
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
+        wavefunction.psi0 = _nearly_dependent(6, 3)
 
         with pytest.warns(UserWarning, match=r"ill-conditioned overlap matrix: "
                                              r"Psi0_alpha"):
@@ -190,8 +213,7 @@ class TestOrthonormality:
         and the determinant are named.
         """
         dets = _nearly_dependent(6, 3)[np.newaxis]
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets, nelec=(3, 3),
-                                         spin_symm='closed')
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
 
         with pytest.warns(UserWarning) as record:
             wavefunction.to_hdf5(tmp_path / 'wfn.h5')
@@ -334,11 +356,10 @@ class TestNoLengthBasedDispatch:
 
     def test_a_single_determinant_still_needs_its_leading_axis(self,
                                                               orthonormal):
-        # nothing sniffs a shape to guess what it was handed: a determinant
-        #   array is always (ndets, nrows, ncols), and a bare matrix is an error
-        with pytest.raises(ValueError, match="dets must have shape"):
-            NOMSDWavefunction(coeffs=[1.0], dets=orthonormal(6, 3),
-                              nelec=(3, 3), spin_symm='closed')
+        # a bare matrix is not read as a single determinant: dets always
+        #   carries its ndets axis
+        with pytest.raises(TypeError, match=r"\(ndets, nmo, nup\)"):
+            NOMSDWavefunction(coeffs=[1.0], dets=orthonormal(6, 3))
 
     def test_occupation_numbers_are_not_accepted_as_determinants(self):
         # afqmctools distinguished (coeffs, dets) from (coeffs, occa, occb) by
@@ -346,9 +367,8 @@ class TestNoLengthBasedDispatch:
         occa = np.array([[0, 1, 2]])
         occb = np.array([[0, 1]])
 
-        with pytest.raises(ValueError, match="dets must have shape"):
-            NOMSDWavefunction(coeffs=[1.0], dets=occa, nelec=(3, 2),
-                              spin_symm='collinear')
+        with pytest.raises(TypeError, match="dets must be"):
+            NOMSDWavefunction(coeffs=[1.0], dets=occa)
 
         wavefunction = PHMSDWavefunction(coeffs=[1.0], occa=occa, occb=occb,
                                          nmo=6)
@@ -374,13 +394,17 @@ class TestSpinSymmCoercion:
         (2, SpinSymm.COLLINEAR),
         (SpinSymm.CLOSED, SpinSymm.CLOSED),
     ])
-    def test_the_constructor_coerces_its_spin_symmetry(self, orthonormal, value,
-                                                       expected):
-        npol = 2 if expected is SpinSymm.NONCOLLINEAR else 1
-        ncols = 3 if expected is SpinSymm.CLOSED else 6
-        wavefunction = NOMSDWavefunction(
-            coeffs=[1.0], dets=orthonormal(npol * 6, ncols)[np.newaxis],
-            nelec=(3, 3), spin_symm=value, nmo=6)
+    def test_the_constructor_coerces_its_spin_symmetry(self, value, expected):
+        # PHMSD takes its spin symmetry as an argument; NOMSD reads it off the
+        #   layout of its determinants
+        no_beta = np.zeros((1, 0), dtype=int)
+        occa, occb = {
+            SpinSymm.CLOSED: ([[0, 1, 2]], no_beta),
+            SpinSymm.COLLINEAR: ([[0, 1, 2]], [[0, 1, 2]]),
+            SpinSymm.NONCOLLINEAR: ([[0, 1, 2, 6, 7, 8]], no_beta),
+        }[expected]
+        wavefunction = PHMSDWavefunction(coeffs=[1.0], occa=occa, occb=occb,
+                                         nmo=6, nelec=(3, 3), spin_symm=value)
 
         assert wavefunction.spin_symm is expected
 
@@ -430,12 +454,20 @@ class TestFactoryDispatch:
     @pytest.mark.parametrize('factory', sorted(FIXED))
     def test_a_fixed_representation_factory_refuses_the_wrong_subclass(self,
                                                                        factory):
+        import inspect
+
         target = self.FIXED[factory]
         other = (PHMSDWavefunction if target is NOMSDWavefunction
                  else NOMSDWavefunction)
 
+        # the refusal comes before any argument is looked at
+        method = getattr(other, factory)
+        required = [parameter for parameter
+                    in inspect.signature(method).parameters.values()
+                    if parameter.default is inspect.Parameter.empty]
+
         with pytest.raises(ValueError, match=target.__name__):
-            getattr(other, factory)(None, None, None)
+            method(*[None] * len(required))
 
     @staticmethod
     def _hubbard_2x2():
@@ -455,7 +487,7 @@ class TestFactoryDispatch:
         assert isinstance(wavefunction, NOMSDWavefunction)
         assert wavefunction.nelec == (2, 2)
 
-    def test_from_free_electron_matches_the_subclass_alias(self):
+    def test_from_free_electron_matches_the_subclass_alias(self, layouts_close):
         hamiltonian = self._hubbard_2x2()
 
         with warnings.catch_warnings():
@@ -465,7 +497,7 @@ class TestFactoryDispatch:
             viaSubclass = NOMSDWavefunction.from_free_electron(hamiltonian,
                                                                nelec=(2, 2))
 
-        assert np.allclose(viaBase.dets, viaSubclass.dets)
+        assert layouts_close(viaBase.dets, viaSubclass.dets)
         assert np.allclose(viaBase.coeffs, viaSubclass.coeffs)
 
     def test_the_base_factories_keep_their_real_signatures(self):

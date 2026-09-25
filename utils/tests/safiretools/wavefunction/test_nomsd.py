@@ -21,45 +21,67 @@ from safiretools import NOMSDWavefunction, SpinSymm, Wavefunction
 
 class TestConstruction:
 
-    @pytest.mark.parametrize('spin_symm, nelec, ncols', [
-        ('closed', (3, 3), 3),
-        ('collinear', (3, 2), 5),
-        ('collinear', (3, 0), 3),
-        ('noncollinear', (3, 2), 5),
+    @pytest.mark.parametrize('spin_symm, nelec, expected_nelec', [
+        ('closed', (3, 3), (3, 3)),
+        ('collinear', (3, 2), (3, 2)),
+        ('collinear', (3, 0), (3, 0)),
+        ('noncollinear', (3, 2), (5, 0)),
     ])
-    def test_the_column_layout_follows_the_spin_symmetry(self, make_nomsd,
-                                                         spin_symm, nelec,
-                                                         ncols):
+    def test_the_layout_decides_the_spin_symmetry_and_electron_counts(
+            self, make_nomsd, spin_symm, nelec, expected_nelec):
         wavefunction = make_nomsd(spin_symm, nelec=nelec, nmo=6)
 
-        assert wavefunction.dets.shape == (1, wavefunction.nrows, ncols)
-
-    def test_nmo_is_inferred_from_the_determinants(self, orthonormal):
-        wavefunction = NOMSDWavefunction(
-            coeffs=[1.0], dets=orthonormal(12, 5)[np.newaxis], nelec=(3, 2),
-            spin_symm='noncollinear')
-
+        assert wavefunction.spin_symm is SpinSymm.from_input(spin_symm)
+        assert wavefunction.nelec == expected_nelec
         assert wavefunction.nmo == 6
-        assert wavefunction.nrows == 12
 
-    def test_a_wrong_column_count_is_rejected(self, orthonormal):
-        with pytest.raises(ValueError, match="dets has shape"):
-            NOMSDWavefunction(coeffs=[1.0], dets=orthonormal(6, 4)[np.newaxis],
-                              nelec=(3, 2), spin_symm='collinear', nmo=6)
+    @pytest.mark.parametrize('spin_symm', ['closed', 'collinear', 'noncollinear'])
+    def test_dets_comes_back_in_the_layout_it_was_given(self, orthonormal,
+                                                        layouts_close,
+                                                        spin_symm):
+        dets = {
+            'closed': orthonormal(6, 3)[np.newaxis],
+            'collinear': (orthonormal(6, 3)[np.newaxis],
+                          orthonormal(6, 2)[np.newaxis]),
+            'noncollinear': orthonormal(12, 5).reshape(1, 2, 6, 5),
+        }[spin_symm]
+
+        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
+
+        assert layouts_close(wavefunction.dets, dets)
+
+    def test_a_list_is_not_read_as_collinear(self, orthonormal):
+        dets = [orthonormal(6, 3)[np.newaxis], orthonormal(6, 3)[np.newaxis]]
+
+        with pytest.raises(TypeError, match="got a list"):
+            NOMSDWavefunction(coeffs=[1.0], dets=dets)
 
     def test_a_wrong_determinant_count_is_rejected(self, orthonormal):
         dets = np.array([orthonormal(6, 3)])
 
-        with pytest.raises(ValueError, match="dets has shape"):
-            NOMSDWavefunction(coeffs=[1.0, 0.5], dets=dets, nelec=(3, 3),
-                              spin_symm='closed', nmo=6)
+        with pytest.raises(ValueError, match="dets holds 1 determinant"):
+            NOMSDWavefunction(coeffs=[1.0, 0.5], dets=dets)
 
-    def test_spin_blocks_views_the_channels(self, make_nomsd):
-        wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
-        alpha, beta = wavefunction.spin_blocks(0)
+    def test_collinear_channels_over_different_orbitals_are_rejected(
+            self, orthonormal):
+        dets = (orthonormal(6, 3)[np.newaxis], orthonormal(5, 2)[np.newaxis])
+
+        with pytest.raises(ValueError, match="collinear channels"):
+            NOMSDWavefunction(coeffs=[1.0], dets=dets)
+
+    def test_determinant_uses_the_single_determinant_layout(self, make_nomsd):
+        wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6, ndets=2)
+        alpha, beta = wavefunction.determinant(1)
 
         assert alpha.shape == (6, 3)
         assert beta.shape == (6, 2)
+        assert np.allclose(alpha, wavefunction.dets[0][1])
+
+    def test_a_noncollinear_determinant_is_split_by_polarization(self,
+                                                                 make_nomsd):
+        wavefunction = make_nomsd('noncollinear', nelec=(3, 2), nmo=6)
+
+        assert wavefunction.determinant(0).shape == (2, 6, 5)
 
 
 class TestRoundTrip:
@@ -73,7 +95,8 @@ class TestRoundTrip:
         ('noncollinear', (3, 2), 1),
         ('noncollinear', (4, 4), 2),
     ])
-    def test_it_round_trips(self, make_nomsd, tmp_path, spin_symm, nelec, ndets):
+    def test_it_round_trips(self, make_nomsd, layouts_close, tmp_path,
+                            spin_symm, nelec, ndets):
         wavefunction = make_nomsd(spin_symm, nelec=nelec, nmo=6, ndets=ndets)
         path = tmp_path / 'wfn.h5'
 
@@ -86,12 +109,11 @@ class TestRoundTrip:
         assert isinstance(read_back, NOMSDWavefunction)
         assert read_back.nmo == wavefunction.nmo
         assert read_back.spin_symm is wavefunction.spin_symm
-        assert read_back.nelec == wavefunction.nelec_on_disk
+        assert read_back.nelec == wavefunction.nelec
         assert read_back.ndets == ndets
         assert np.allclose(read_back.coeffs, wavefunction.coeffs)
-        assert np.allclose(read_back.dets, wavefunction.dets)
-        for read, original in zip(read_back.psi0, wavefunction.psi0):
-            assert np.allclose(read, original)
+        assert layouts_close(read_back.dets, wavefunction.dets)
+        assert layouts_close(read_back.psi0, wavefunction.psi0)
 
     def test_a_polarized_wavefunction_writes_zero_width_beta_blocks(
             self, make_nomsd, tmp_path):
@@ -108,7 +130,8 @@ class TestRoundTrip:
             assert group['Psi0_beta'].shape == (6, 0)
             assert list(group['PsiT_1/dims'][...]) == [0, 6, 0]
 
-    def test_an_explicit_psi0_survives(self, make_nomsd, orthonormal, tmp_path):
+    def test_an_explicit_psi0_survives(self, make_nomsd, orthonormal,
+                                       layouts_close, tmp_path):
         wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
         wavefunction.psi0 = (orthonormal(6, 3), orthonormal(6, 2))
         path = tmp_path / 'wfn.h5'
@@ -116,8 +139,7 @@ class TestRoundTrip:
         wavefunction.to_hdf5(path)
         read_back = Wavefunction.from_hdf5(path)
 
-        assert np.allclose(read_back.psi0[0], wavefunction.psi0[0])
-        assert np.allclose(read_back.psi0[1], wavefunction.psi0[1])
+        assert layouts_close(read_back.psi0, wavefunction.psi0)
 
     def test_only_the_requested_determinants_come_back(self, make_nomsd,
                                                        tmp_path):

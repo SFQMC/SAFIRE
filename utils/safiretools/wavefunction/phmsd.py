@@ -28,7 +28,13 @@ import numpy as np
 from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
 from safiretools.wavefunction.base import Wavefunction
-from safiretools.wavefunction.slater import ORTHONORMAL_TOL, orthonormalize
+from safiretools.wavefunction.slater import (
+    ORTHONORMAL_TOL,
+    format_spin_layout,
+    orthonormalize,
+    parse_spin_layout,
+    spin_layout_shape,
+)
 
 
 class PHMSDWavefunction(Wavefunction):
@@ -53,21 +59,28 @@ class PHMSDWavefunction(Wavefunction):
     nelec : tuple(int, int), optional
         Physical electron counts. Taken from `occa` and `occb`'s widths when
         omitted, and checked against them when given.
-    orbitals : sequence of numpy.ndarray, optional
-        Orbital matrices the occupation numbers refer to — one for a
-        closed-shell-like reference, two for a spin-resolved one. Omitted, the
-        occupation numbers index the Hamiltonian's own basis.
-    psi0 : sequence of numpy.ndarray, optional
-        Initial Slater determinant for the AFQMC walkers. Built from the leading
-        determinant's occupations when omitted.
+    orbitals : numpy.ndarray or tuple of numpy.ndarray, optional
+        The orbital reference the occupation numbers index, its orbitals as
+        columns. One reference shared by both spins is an array ``(nmo, norb)``,
+        or ``(2, nmo, norb)`` of spinor orbitals when noncollinear. A
+        spin-resolved reference, collinear only, is a *tuple* of two
+        ``(nmo, norb)`` arrays. Omitted, the occupation numbers index the
+        Hamiltonian's own basis.
+    psi0 : numpy.ndarray or tuple of numpy.ndarray, optional
+        Initial Slater determinant for the AFQMC walkers, in the spin layout of
+        `spin_symm` (see `Wavefunction`). Built from the leading determinant's
+        occupations when omitted.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry.
 
     Raises
     ------
+    TypeError
+        If `orbitals` or `psi0` is none of the layouts.
     ValueError
         If `occa`/`occb` disagree with `nelec`, if an orbital index falls
-        outside the basis, or if more than two references are given.
+        outside the basis, or if `orbitals` does not fit the spin symmetry or
+        the basis.
 
     """
 
@@ -87,17 +100,11 @@ class PHMSDWavefunction(Wavefunction):
         if nelec is None:
             nelec = (self.occa.shape[1], self.occb.shape[1])
 
-        references = tuple(np.asarray(matrix, dtype=np.complex128)
-                           for matrix in orbitals or () if matrix is not None)
-        if len(references) > 2:
-            raise ValueError(
-                f"a particle-hole wavefunction takes at most two orbital "
-                f"references, got {len(references)}"
-            )
-        self.orbitals = references or None
-
         super().__init__(coeffs=coeffs, nelec=nelec, nmo=nmo,
                          spin_symm=spin_symm, psi0=psi0)
+
+        self._orbitals = None if orbitals is None \
+            else self._parse_references(orbitals)
 
         self._validate_occupations()
 
@@ -120,13 +127,42 @@ class PHMSDWavefunction(Wavefunction):
                     f"[{occ.min()}, {occ.max()}]"
                 )
 
+    def _parse_references(self, orbitals) -> tuple:
+        """`orbitals` as one ``(npol*nmo, norb)`` matrix per reference."""
+        layout, references = parse_spin_layout(orbitals, name='orbitals')
+
+        if layout is SpinSymm.COLLINEAR and self.spin_symm is not SpinSymm.COLLINEAR:
+            raise ValueError(
+                "a spin-resolved orbital reference needs a collinear "
+                f"wavefunction, this one is {self.spin_symm.label}"
+            )
+        if (layout is SpinSymm.NONCOLLINEAR) != (self.spin_symm is SpinSymm.NONCOLLINEAR):
+            raise ValueError(
+                f"a {self.spin_symm.label} wavefunction cannot take a "
+                f"{layout.label} orbital reference"
+            )
+
+        for matrix in references:
+            if matrix.shape[0] != self.nrows:
+                raise ValueError(
+                    f"orbitals has shape {spin_layout_shape(orbitals)}, which "
+                    f"does not span the {self.nmo} orbitals of the basis"
+                )
+
+        return references
+
+    @property
+    def orbitals(self):
+        """The orbital references, in the layout the constructor takes, or None."""
+        return _format_references(self._orbitals, self.spin_symm)
+
     @property
     def nreferences(self) -> int:
         """
         Number of explicit orbital references, which ``type`` records on disk:
         0 when the occupation numbers index the Hamiltonian's basis directly.
         """
-        return 0 if self.orbitals is None else len(self.orbitals)
+        return 0 if self._orbitals is None else len(self._orbitals)
 
     def _default_psi0(self) -> tuple:
         """
@@ -142,10 +178,12 @@ class PHMSDWavefunction(Wavefunction):
         Return a copy whose orbital references — and explicit `psi0`, if any —
         have orthonormal columns. See `Wavefunction.orthonormalize`.
         """
-        orbitals = None if self.orbitals is None else tuple(
-            orthonormalize(matrix, tol=tol) for matrix in self.orbitals)
-        psi0 = None if self._psi0 is None else tuple(
-            orthonormalize(block, tol=tol) for block in self._psi0)
+        orbitals = None if self._orbitals is None else _format_references(
+            tuple(orthonormalize(matrix, tol=tol) for matrix in self._orbitals),
+            self.spin_symm)
+        psi0 = None if self._psi0 is None else format_spin_layout(
+            tuple(orthonormalize(block, tol=tol) for block in self._psi0),
+            self.spin_symm)
 
         return type(self)(coeffs=self.coeffs.copy(), occa=self.occa.copy(),
                           occb=self.occb.copy(), nmo=self.nmo, nelec=self.nelec,
@@ -158,18 +196,35 @@ class PHMSDWavefunction(Wavefunction):
 
     def _write_payload(self, group) -> None:
         io.write_phmsd(group, self.occa, self.occb, nmo=self.nmo,
-                       orbitals=self.orbitals)
+                       orbitals=self._orbitals)
 
     @classmethod
     def _read_payload(cls, group, header: dict) -> "PHMSDWavefunction":
+        spin_symm = header['spin_symm']
         occa, occb, orbitals = io.read_phmsd(
             group, header['ndets'], header['nelec'], header['nmo'],
-            spin_symm=header['spin_symm'])
+            spin_symm=spin_symm)
 
         return cls(coeffs=header['coeffs'], occa=occa, occb=occb,
                    nmo=header['nmo'], nelec=header['nelec'],
-                   orbitals=orbitals, psi0=header['psi0'],
-                   spin_symm=header['spin_symm'])
+                   orbitals=_format_references(orbitals, spin_symm),
+                   psi0=format_spin_layout(header['psi0'], spin_symm),
+                   spin_symm=spin_symm)
+
+
+def _format_references(references, spin_symm):
+    """
+    Orbital references — one ``(npol*nmo, norb)`` matrix each — in the layout
+    the constructor takes: a tuple when spin-resolved, else one array.
+    """
+    if references is None:
+        return None
+    if len(references) == 2:
+        return tuple(references)
+    return format_spin_layout(
+        references,
+        SpinSymm.NONCOLLINEAR if spin_symm is SpinSymm.NONCOLLINEAR
+        else SpinSymm.CLOSED)
 
 
 def _occupations(occ, name: str):

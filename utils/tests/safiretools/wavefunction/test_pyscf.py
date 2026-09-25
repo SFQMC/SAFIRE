@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from safiretools import NOMSDWavefunction, PHMSDWavefunction, SpinSymm, Wavefunction
+from safiretools.wavefunction.slater import spin_layout_shape
 
 pyscf = pytest.importorskip("pyscf")
 
@@ -134,7 +135,7 @@ class TestFromPyscf:
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (5, 3)
-        assert wavefunction.dets.shape == (1, 5, 8)
+        assert spin_layout_shape(wavefunction.dets) == ((1, 5, 5), (1, 5, 3))
 
     def test_an_active_space_trims_and_reindexes_the_orbitals(self,
                                                               oxygen_rohf):
@@ -154,7 +155,7 @@ class TestFromPyscf:
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (1, 0)
-        assert wavefunction.dets.shape == (1, 4, 1)
+        assert spin_layout_shape(wavefunction.dets) == ((1, 4, 1), (1, 4, 0))
 
     def test_the_spin_symmetry_can_be_overridden(self, neon_rhf):
         mol, mf = neon_rhf
@@ -183,10 +184,10 @@ class TestFromPyscf:
         wavefunction = NOMSDWavefunction.from_pyscf(
             scf_data_from(mol, mf, 'collinear'))
 
-        for block in wavefunction.spin_blocks(0):
+        for block in wavefunction.determinant(0):
             assert np.allclose(block.conj().T @ block, np.eye(block.shape[1]))
 
-    def test_it_round_trips(self, oxygen_rohf, tmp_path):
+    def test_it_round_trips(self, oxygen_rohf, layouts_close, tmp_path):
         mol, mf = oxygen_rohf
         wavefunction = NOMSDWavefunction.from_pyscf(
             scf_data_from(mol, mf, 'collinear'))
@@ -200,7 +201,7 @@ class TestFromPyscf:
         assert isinstance(read_back, NOMSDWavefunction)
         assert read_back.nelec == (5, 3)
         assert read_back.spin_symm is SpinSymm.COLLINEAR
-        assert np.allclose(read_back.dets, wavefunction.dets)
+        assert layouts_close(read_back.dets, wavefunction.dets)
 
 
 class TestSourceForms:
@@ -209,23 +210,25 @@ class TestSourceForms:
     the *basis* separately from the solution the wavefunction is built from.
     """
 
-    def test_a_path_and_a_loaded_mapping_agree(self, rohf_chk):
+    def test_a_path_and_a_loaded_mapping_agree(self, rohf_chk, layouts_close):
         from safiretools.convert.pyscf import load_pyscf_chk_mol
 
         by_path = NOMSDWavefunction.from_pyscf(rohf_chk)
         by_mapping = NOMSDWavefunction.from_pyscf(load_pyscf_chk_mol(rohf_chk))
 
-        assert np.allclose(by_path.dets, by_mapping.dets)
+        assert layouts_close(by_path.dets, by_mapping.dets)
         assert by_path.spin_symm is by_mapping.spin_symm
 
-    def test_the_basis_defaults_to_the_solution_itself(self, rohf_chk):
+    def test_the_basis_defaults_to_the_solution_itself(self, rohf_chk,
+                                                        layouts_close):
         explicit = NOMSDWavefunction.from_pyscf(rohf_chk, basis=rohf_chk)
         implicit = NOMSDWavefunction.from_pyscf(rohf_chk)
 
-        assert np.allclose(explicit.dets, implicit.dets)
+        assert layouts_close(explicit.dets, implicit.dets)
 
     def test_the_basis_can_come_from_a_different_solution(self, rohf_chk,
-                                                          rhf_chk):
+                                                          rhf_chk,
+                                                          layouts_close):
         """
         The Hamiltonian's basis and the trial wavefunction need not come from
         one calculation: here an open-shell solution is expressed in a
@@ -237,7 +240,7 @@ class TestSourceForms:
         assert own_basis.nmo == rhf_basis.nmo
         assert own_basis.nelec == rhf_basis.nelec
         # a different basis is a different Slater matrix
-        assert not np.allclose(own_basis.dets, rhf_basis.dets)
+        assert not layouts_close(own_basis.dets, rhf_basis.dets)
 
     def test_the_spin_symmetry_comes_from_the_solution_not_the_basis(
             self, rhf_chk, uhf_chk):

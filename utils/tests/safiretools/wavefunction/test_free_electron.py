@@ -30,6 +30,7 @@ from safiretools.wavefunction.free_electron import (
     from_free_electron,
     group_by_shell,
 )
+from safiretools.wavefunction.slater import spin_layout_shape
 
 
 @pytest.fixture
@@ -132,7 +133,7 @@ class TestFromFreeElectron:
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.ndets == 1
         assert wavefunction.nelec == (8, 8)
-        assert wavefunction.dets.shape == (1, 16, 16)
+        assert spin_layout_shape(wavefunction.dets) == ((1, 16, 8), (1, 16, 8))
         assert np.allclose(wavefunction.coeffs, [1.0])
 
     def test_a_polarized_system_is_collinear_with_no_beta_electrons(
@@ -142,7 +143,7 @@ class TestFromFreeElectron:
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (5, 0)
-        assert wavefunction.dets.shape == (1, 16, 5)
+        assert spin_layout_shape(wavefunction.dets) == ((1, 16, 5), (1, 16, 0))
 
     def test_a_noncollinear_determinant_spans_the_spinor_basis(self, quiet):
         hamiltonian = LatticeHamiltonian.from_dict({
@@ -155,13 +156,15 @@ class TestFromFreeElectron:
 
         assert wavefunction.spin_symm is SpinSymm.NONCOLLINEAR
         assert wavefunction.nmo == 8
-        assert wavefunction.dets.shape == (1, 16, 8)
+        # both polarizations share one channel, so the split is not kept
+        assert wavefunction.nelec == (8, 0)
+        assert wavefunction.dets.shape == (1, 2, 8, 8)
 
     def test_the_result_is_orthonormal(self, hubbard, quiet):
         wavefunction = NOMSDWavefunction.from_free_electron(
             hubbard, nelec=(8, 8), spin_symm='collinear')
 
-        for block in wavefunction.spin_blocks(0):
+        for block in wavefunction.determinant(0):
             assert np.allclose(block.conj().T @ block, np.eye(block.shape[1]))
 
     def test_closed_shell_is_not_implemented(self, hubbard_params):
@@ -259,7 +262,7 @@ class TestOneBodyShapes:
                                                           quiet):
         wavefunction = from_free_electron(spin_independent, nelec=(2, 1))
 
-        assert wavefunction.dets.shape == (1, 6, 3)
+        assert spin_layout_shape(wavefunction.dets) == ((1, 6, 2), (1, 6, 1))
 
     def test_a_misshaped_term_is_reported(self, quiet):
         class FakeHamiltonian(LatticeHamiltonian):
@@ -274,6 +277,7 @@ class TestOneBodyShapes:
 class TestRoundTrip:
 
     def test_a_free_electron_wavefunction_round_trips(self, hubbard,
+                                                      layouts_close,
                                                       tmp_path, quiet):
         wavefunction = NOMSDWavefunction.from_free_electron(
             hubbard, nelec=(8, 8), spin_symm='collinear')
@@ -285,4 +289,4 @@ class TestRoundTrip:
         assert isinstance(read_back, NOMSDWavefunction)
         assert read_back.nelec == (8, 8)
         assert read_back.spin_symm is SpinSymm.COLLINEAR
-        assert np.allclose(read_back.dets, wavefunction.dets)
+        assert layouts_close(read_back.dets, wavefunction.dets)
