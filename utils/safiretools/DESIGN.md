@@ -57,6 +57,9 @@ decision.
   share one file in either order.
 - A complex array goes to disk as an interleaved trailing length-2 axis, defined once in `hdf5.py`.
 - Real and interleaved data are told apart by rank, never by the trailing axis length.
+- The dense format blocks its arrays by spin: `hcore` is `(nspin, npol, nmo, npol, nmo)` and
+  `DenseFactorized/L` is `(nspin, npol, nmo, npol, nmo, nchol)`. L's `nspin` is 1 when every spin
+  sector shares the vectors, and the executable reads only `npol == 1`.
 - `SpinSymm` is a 3-member `IntEnum` whose values are the C++ `WALKER_TYPES` wire format.
 - A wavefunction with no beta electrons is `COLLINEAR` with `ndown == 0`.
 - A `LatticeHamiltonian` file records the lattice's metadata dimension-agnostically, not the

@@ -26,6 +26,11 @@ from safiretools.hamiltonian.molecular import (
 )
 
 
+def pair_matrix(hamiltonian):
+    """The shared Cholesky vectors as the flat ``(npairs, nchol)`` matrix."""
+    return hamiltonian.chol.reshape(-1, hamiltonian.nchol)
+
+
 @pytest.fixture
 def random_hamiltonian():
     """A small positive-definite ERI tensor with a Hermitian one-body part."""
@@ -48,8 +53,8 @@ class TestFromIntegrals:
         nmo, hcore, chol, _ = random_hamiltonian
         hamiltonian = MolecularHamiltonian.from_integrals(hcore, chol=chol, enuc=1.5)
 
-        assert hamiltonian.chol.shape == (nmo * nmo, chol.shape[0])
-        assert np.allclose(hamiltonian.chol, chol.T)
+        assert hamiltonian.chol.shape == (1, 1, nmo, 1, nmo, chol.shape[0])
+        assert np.allclose(pair_matrix(hamiltonian), chol.T)
         assert hamiltonian.nmo == nmo
         assert hamiltonian.nchol == chol.shape[0]
         assert hamiltonian.enuc == 1.5
@@ -59,7 +64,8 @@ class TestFromIntegrals:
         hamiltonian = MolecularHamiltonian.from_integrals(hcore, eri=eri,
                                                           cholesky_tol=1e-10)
 
-        reconstructed = (hamiltonian.chol @ hamiltonian.chol.conj().T)
+        L = pair_matrix(hamiltonian)
+        reconstructed = L @ L.conj().T
         assert np.allclose(reconstructed.reshape((nmo,) * 4), eri, atol=1e-6)
 
     def test_exactly_one_of_chol_and_eri_is_required(self, random_hamiltonian):
@@ -199,8 +205,66 @@ class TestHdf5:
 
         with h5.File(path, 'r') as fh5:
             assert fh5['Hamiltonian/hcore'].ndim == 5
-            assert fh5['Hamiltonian/DenseFactorized/L'].ndim == 2
+            assert fh5['Hamiltonian/DenseFactorized/L'].ndim == 6
             assert fh5['Hamiltonian/ComplexIntegrals'][0] == 0
+
+    def test_the_cholesky_vectors_are_spin_blocked_on_disk(self, random_hamiltonian,
+                                                           tmp_path):
+        nmo, hcore, chol, _ = random_hamiltonian
+        path = tmp_path / 'ham.h5'
+        MolecularHamiltonian.from_integrals(hcore, chol=chol).to_hdf5(path)
+
+        with h5.File(path, 'r') as fh5:
+            L = fh5['Hamiltonian/DenseFactorized/L'][...]
+
+        assert L.shape == (1, 1, nmo, 1, nmo, chol.shape[0])
+        assert np.allclose(L.reshape(nmo * nmo, -1), chol.T)
+
+    def test_collinear_vectors_shared_by_both_spins_round_trip(self, random_hamiltonian,
+                                                               tmp_path):
+        nmo, hcore, chol, _ = random_hamiltonian
+        hamiltonian = MolecularHamiltonian(hcore=hcore, chol=chol.T,
+                                           spin_symm=SpinSymm.COLLINEAR)
+        assert hamiltonian.chol.shape == (1, 1, nmo, 1, nmo, chol.shape[0])
+
+        path = tmp_path / 'ham.h5'
+        hamiltonian.to_hdf5(path)
+        restored = Hamiltonian.from_hdf5(path)
+
+        assert restored.spin_symm is SpinSymm.COLLINEAR
+        assert restored.hcore.shape == (2, 1, nmo, 1, nmo)
+        assert np.array_equal(restored.chol, hamiltonian.chol)
+
+    def test_spin_dependent_vectors_round_trip(self, random_hamiltonian, tmp_path):
+        nmo, hcore, chol, _ = random_hamiltonian
+        per_spin = np.stack([chol.T, 2 * chol.T]).reshape(2, 1, nmo, 1, nmo, -1)
+        hamiltonian = MolecularHamiltonian(hcore=hcore, chol=per_spin,
+                                           spin_symm=SpinSymm.COLLINEAR)
+
+        path = tmp_path / 'ham.h5'
+        hamiltonian.to_hdf5(path)
+
+        assert np.array_equal(Hamiltonian.from_hdf5(path).chol, per_spin)
+
+    def test_spin_dependent_vectors_need_a_collinear_hamiltonian(self,
+                                                                 random_hamiltonian):
+        nmo, hcore, chol, _ = random_hamiltonian
+        per_spin = np.stack([chol.T, chol.T]).reshape(2, 1, nmo, 1, nmo, -1)
+
+        with pytest.raises(ValueError, match="nspin in"):
+            MolecularHamiltonian(hcore=hcore, chol=per_spin)
+
+    def test_a_flat_cholesky_file_is_rejected(self, random_hamiltonian, tmp_path):
+        nmo, hcore, chol, _ = random_hamiltonian
+        path = tmp_path / 'ham.h5'
+        MolecularHamiltonian.from_integrals(hcore, chol=chol).to_hdf5(path)
+
+        with h5.File(path, 'a') as fh5:
+            del fh5['Hamiltonian/DenseFactorized/L']
+            fh5.create_dataset('Hamiltonian/DenseFactorized/L', data=chol.T)
+
+        with pytest.raises(ValueError, match="DenseFactorized/L"):
+            Hamiltonian.from_hdf5(path)
 
     def test_a_complex_hcore_is_not_truncated(self, random_hamiltonian, tmp_path):
         """
@@ -263,8 +327,9 @@ class TestFcidump:
         assert np.isclose(restored.enuc, 1.5)
         assert np.allclose(restored.hcore[0].reshape(nmo, nmo), hcore)
 
-        eris = (hamiltonian.chol @ hamiltonian.chol.conj().T)
-        assert np.allclose(restored.chol @ restored.chol.conj().T, eris, atol=1e-6)
+        L, L_restored = pair_matrix(hamiltonian), pair_matrix(restored)
+        assert np.allclose(L_restored @ L_restored.conj().T, L @ L.conj().T,
+                           atol=1e-6)
 
     def test_complex_integrals_round_trip(self, tmp_path):
         r"""
@@ -292,7 +357,8 @@ class TestFcidump:
         restored = MolecularHamiltonian.from_fcidump(path, cholesky_tol=1e-10)
 
         assert np.allclose(restored.hcore.reshape(nmo, nmo), hcore)
-        assert np.allclose(restored.chol @ restored.chol.conj().T,
+        L_restored = pair_matrix(restored)
+        assert np.allclose(L_restored @ L_restored.conj().T,
                            chol @ chol.conj().T, atol=1e-6)
 
     @pytest.mark.parametrize("nelec,expected", [((2, 2), SpinSymm.CLOSED),
@@ -405,7 +471,8 @@ class TestFromPyscf:
         nmo = hamiltonian.nmo
         eri_mo = np.einsum('pi,qj,pqrs,rk,sl->ijkl', C, C,
                            neon_atom.intor('int2e', aosym='s1'), C, C)
-        reconstructed = (hamiltonian.chol @ hamiltonian.chol.conj().T)
+        L = pair_matrix(hamiltonian)
+        reconstructed = L @ L.conj().T
         assert np.allclose(reconstructed.reshape((nmo,) * 4), eri_mo, atol=1e-4)
 
         path = tmp_path / 'ham.h5'
@@ -455,7 +522,7 @@ class TestFromPyscf:
         hamiltonian = MolecularHamiltonian.from_pyscf(mf, basis=C, chol_cut=1e-6)
 
         nmo = hamiltonian.nmo
-        L = hamiltonian.chol.T.reshape(-1, nmo, nmo)
+        L = pair_matrix(hamiltonian).T.reshape(-1, nmo, nmo)
         assert hamiltonian.complex_chol
         assert np.allclose(L, L.conj().transpose(0, 2, 1))
 
@@ -547,7 +614,8 @@ class TestFromPyscf:
         assert hamiltonian.nchol == mf.with_df.get_naoaux()
         eri_mo = np.einsum('pi,qj,pqrs,rk,sl->ijkl', C, C,
                            neon_atom.intor('int2e', aosym='s1'), C, C)
-        reconstructed = hamiltonian.chol @ hamiltonian.chol.conj().T
+        L = pair_matrix(hamiltonian)
+        reconstructed = L @ L.conj().T
         assert np.allclose(reconstructed.reshape((hamiltonian.nmo,) * 4),
                            eri_mo, atol=1e-2)
 
@@ -598,7 +666,7 @@ class TestRealAndComplexAreToldApart:
 
         restored = self._round_trip(tmp_path, hcore, chol, 'nchol2.h5')
         assert restored.nchol == 2
-        assert restored.chol.shape == (9, 2)
+        assert restored.chol.shape == (1, 1, 3, 1, 3, 2)
         assert not np.iscomplexobj(restored.chol)
 
     def test_complex_data_is_still_recognized(self, tmp_path):
