@@ -71,14 +71,13 @@ import time
 
 import h5py as h5
 import numpy as np
-from pyscf import gto,scf,mcscf,lib
+from pyscf import gto,scf,mcscf
 import jax
 import jax.numpy as jnp
 
 import afqmctools
 import autohf
 
-from safiretools.convert.pyscf import load_pyscf_chk_mol
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
@@ -235,11 +234,9 @@ def setup_benchmark(key:str, case:dict):
 
     # run HF to generate a starting point
     # run CASSCF to get an orbital basis AND a CAS wavefunction
-    casscf_chkfile = local_scratch_dir / 'rhf_chkfile.h5'
 
     # quick run
     rhf = scf.ROHF(mol)
-    rhf.chkfile = casscf_chkfile
     rhf.max_cycle = -1
     rhf.init_guess = guess_ao_uhf
     E = rhf.kernel(guess_ao_uhf)
@@ -255,26 +252,19 @@ def setup_benchmark(key:str, case:dict):
 
     # run CASSCF to get a basis / trial wavefunction
     mc = mcscf.CASSCF(rhf, ncas, nelec_cas).run()
-    lib.chkfile.save(mc.chkfile, 'mcscf/ci', mc.ci)
-    
+
     # write the CAS wavefunction to a file
     Wavefunction.from_pyscf_cas(
-        mol=mol,
-        cas_chkfile=casscf_chkfile,
+        mc,
         tol=0.001, # from the PRX
         max_det=2000
     ).to_hdf5(local_scratch_dir / 'afqmc.h5')
-    
-    # the CASSCF orbital basis, so the checkpoint is loaded explicitly;
-    #   handed a path, from_pyscf() would read the "scf" group
-    basis_scf_data = load_pyscf_chk_mol(
-        chkfile = casscf_chkfile,
-        base = 'mcscf'
-    )
 
-    # write Hamiltonian
+    # write Hamiltonian in the CASSCF orbital basis, which the CAS
+    #   wavefunction's determinants are occupations of
     MolecularHamiltonian.from_pyscf(
-        basis_scf_data,
+        rhf,
+        basis = mc,
         chol_cut = 1e-6, # from the PRX
         verbose=True
     ).to_hdf5(local_scratch_dir / 'afqmc.h5')

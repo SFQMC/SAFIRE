@@ -225,11 +225,7 @@ mol = gto.M(
     spin = 1  # Nup - Ndown
 )
 
-atom_chkfile = "B.chk"
-
-
 mf = scf.ROHF(mol).newton()
-mf.chkfile = atom_chkfile
 mf.kernel()
 
 # perform stability analysis - see PySCF example:
@@ -241,9 +237,9 @@ mf.stability()
 mf.kernel()
 
 ### Step 2. use safiretools to generate and save the Hamiltonian
-# directly from the PySCF checkpoint file.
+# directly from the PySCF SCF object.
 MolecularHamiltonian.from_pyscf(
-    atom_chkfile,
+    mf,
     chol_cut = 1e-6,
     verbose=True
 ).to_hdf5("afqmc.h5")

@@ -35,30 +35,27 @@ mol = gto.M(
 )
 
 mf = scf.RHF(mol)
-mf.chkfile = 'rhf.chk'
 E_HF = mf.kernel()
 
-wfn_chk = 'rhf.chk'
 chol_tol = 1e-6
 
 fout = 'afqmc.h5'
 
 
 # specify the active space similarly to CAS methods,
-# `cas =(ne,no)` where `ne`/`no` is the number of active electrrons / orbitals
+# `active_space=(ne,no)` where `ne`/`no` is the number of active electrrons / orbitals
 # use `no=-1` to include all remaining orbitlas in the CAS space
 ne = 2 # [He] 2s^1 for each Li
 no = -1 # use all remaining orbitals in CAS space
 MolecularHamiltonian.from_pyscf(
-    wfn_chk,
+    mf,
     chol_cut = chol_tol,
-    cas = (ne,no),
-    spin_symm = "closed"
+    active_space = (ne,no),
 ).to_hdf5(fout)
 
 # write the frozen core trial wavefunction
 wfn = Wavefunction.from_pyscf(
-    wfn_chk,
-    cas = (ne,no)
+    mf,
+    active_space = (ne,no)
 )
 wfn.to_hdf5(fout)

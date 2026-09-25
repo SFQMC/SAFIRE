@@ -13,20 +13,19 @@ Trial wavefunctions from molecular PySCF calculations.
 
 Two constructions live here, reached through
 `NOMSDWavefunction.from_pyscf` and `PHMSDWavefunction.from_pyscf_cas`: a single
-Slater determinant built from an SCF solution's occupied orbitals, and a
-multi-determinant expansion read out of a CASSCF/CASCI checkpoint.
+Slater determinant built from an SCF object's occupied orbitals, and a
+multi-determinant expansion read out of a CASSCF/CASCI object.
 
 Both express the wavefunction in the same working basis the Hamiltonian uses, so
-the ``ortho_ao`` and ``cas`` arguments must match the ones
+the ``basis`` and ``active_space`` arguments must match the ones
 `safiretools.MolecularHamiltonian.from_pyscf` was given.
 """
 
 import logging
 
 import numpy as np
-import h5py as h5
 
-from safiretools.convert.pyscf import as_scf_data, working_basis
+from safiretools.convert.pyscf import determine_spin_symm, orbitals, working_basis
 from safiretools.types import SpinSymm
 from safiretools.wavefunction.slater import (
     format_spin_layout,
@@ -37,34 +36,26 @@ from safiretools.wavefunction.slater import (
 logger = logging.getLogger(__name__)
 
 
-def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
+def from_pyscf(mf, basis=None, active_space=None):
     """
     Build a single-determinant trial wavefunction from a molecular PySCF SCF
-    calculation.
+    object.
 
     Parameters
     ----------
-    source : str or pathlib.Path or dict
-        The SCF solution the wavefunction is built *from*: a PySCF checkpoint
-        file, or an already-loaded ``scf_data`` mapping from
-        `safiretools.convert.pyscf.load_pyscf_chk_mol`. Uses the keys
-        ``'mol'``, ``'mo_coeff'``, ``'mo_occ'``, ``'nelec'``, ``'norb'``,
-        ``'X'`` and ``'walker_type'``.
-    basis : str or pathlib.Path or dict, optional
-        The SCF solution whose orbitals define the basis the wavefunction is
-        expressed *in*, which must be the one the Hamiltonian was built in.
-        Defaults to `source` itself.
-    ortho_ao : bool, optional
-        Work in the Löwdin-orthogonalized AO basis rather than the MO basis.
-        Must match the Hamiltonian. Default False.
-    cas : tuple(int, int), optional
+    mf
+        The converged SCF solution the wavefunction is built *from*. Its spin
+        symmetry is that of the solution: noncollinear for GHF, collinear for
+        UHF or an ROHF solution with singly occupied orbitals, closed for RHF.
+    basis : None or 'ortho_ao' or object or numpy.ndarray, optional
+        The orbitals the wavefunction is expressed *in*, which must be the ones
+        the Hamiltonian was built in; takes the same values as
+        `safiretools.MolecularHamiltonian.from_pyscf`'s `basis`. Defaults to
+        `mf`'s own.
+    active_space : tuple(int, int), optional
         ``(nelecas, ncas)`` active space, which must match the Hamiltonian's.
         Occupied orbitals are trimmed to the active window and reindexed into
-        it. Incompatible with `ortho_ao`.
-    spin_symm : SpinSymm or str or int, optional
-        Overrides the spin symmetry of the SCF solution, which
-        `safiretools.convert.pyscf.determine_spin_symm` decided when the
-        checkpoint was read.
+        it. Incompatible with ``basis='ortho_ao'``.
 
     Returns
     -------
@@ -74,8 +65,8 @@ def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
     Raises
     ------
     ValueError
-        If ``mo_occ`` does not describe the expected number of occupied
-        orbitals.
+        If `mf` holds no orbitals, if `basis` cannot be used, or if ``mo_occ``
+        does not describe the expected number of occupied orbitals.
 
     Notes
     -----
@@ -92,30 +83,22 @@ def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
     """
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
 
-    scf_data = as_scf_data(source)
-    basis_scf_data = scf_data if basis is None else as_scf_data(basis)
+    mol = mf.mol
+    mo_coeff, mo_occ = orbitals(mf)
+    spin_symm = determine_spin_symm(mo_coeff, mo_occ, mol.nao_nr())
 
-    nelec = scf_data['nelec']
-    norb = scf_data['norb']
+    X, (nfzc, nfzv) = working_basis(mf, basis, active_space)
 
-    if spin_symm is None:
-        spin_symm = scf_data['walker_type']
-    spin_symm = SpinSymm.from_input(spin_symm)
+    nelec = tuple(n - nfzc for n in mol.nelec)
+    norb = X.shape[-1] - nfzc - nfzv
 
-    X, (nfzc, nfzv) = working_basis(basis_scf_data, ortho_ao, cas)
-
-    nelec = tuple(n - nfzc for n in nelec)
-    norb -= (nfzc + nfzv)
-
-    occa, occb = _occupied_indices(scf_data['mo_occ'], spin_symm,
-                                   nfzc=nfzc, nfzv=nfzv)
+    occa, occb = _occupied_indices(mo_occ, spin_symm, nfzc=nfzc, nfzv=nfzv)
     _check_occupations(occa, occb, nelec, spin_symm)
 
-    overlap = scf_data['mol'].intor('int1e_ovlp')
+    overlap = mol.intor('int1e_ovlp')
     transform = overlap @ X[:, nfzc:X.shape[-1] - nfzv]
-    channels = tuple(transform_slater(orbitals, transform) + 0j for orbitals
-                     in make_slater(spin_symm, scf_data['mo_coeff'],
-                                    (occa, occb), nelec))
+    channels = tuple(transform_slater(occupied, transform) + 0j for occupied
+                     in make_slater(spin_symm, mo_coeff, (occa, occb), nelec))
 
     logger.info("built a %s single-determinant trial wavefunction: "
                 "nelec=%s, nmo=%d", spin_symm.label, nelec, norb)
@@ -124,18 +107,19 @@ def from_pyscf(source, basis=None, ortho_ao=False, cas=None, spin_symm=None):
         format_spin_layout(channels, spin_symm))
 
 
-def from_pyscf_cas(mol, cas_chkfile, tol=1e-4, max_det=None):
+def from_pyscf_cas(mc, tol=1e-4, max_det=None):
     """
-    Read a CASSCF/CASCI expansion from a PySCF checkpoint as a particle-hole
-    multi-determinant wavefunction.
+    Read a CASSCF/CASCI expansion as a particle-hole multi-determinant
+    wavefunction.
+
+    The determinants are occupations of `mc`'s own orbitals, so the Hamiltonian
+    has to be built with ``basis=mc``.
 
     Parameters
     ----------
-    mol : pyscf.gto.Mole
-        The molecule the expansion was computed for.
-    cas_chkfile : str or pathlib.Path
-        PySCF checkpoint holding an ``mcscf`` group with ``ci``, ``ncore`` and
-        ``ncas``.
+    mc
+        A PySCF ``mcscf`` object that has been run, holding ``ci``, ``ncore``,
+        ``ncas``, ``nelecas`` and ``fcisolver``.
     tol : float, optional
         Keep determinants whose coefficient exceeds this in magnitude. Default
         1e-4.
@@ -151,23 +135,16 @@ def from_pyscf_cas(mol, cas_chkfile, tol=1e-4, max_det=None):
     """
     from safiretools.wavefunction.phmsd import PHMSDWavefunction
 
-    with h5.File(cas_chkfile, 'r') as fh5:
-        ci = fh5['mcscf/ci'][()]
-        ncore = int(fh5['mcscf/ncore'][()])
-        ncas = int(fh5['mcscf/ncas'][()])
-    nactive = tuple(n - ncore for n in mol.nelec)
+    coeffs, occa, occb = ci_expansion(mc, tol=tol, max_det=max_det)
 
-    coeffs, occa, occb = ci_expansion(ci, ncas, nactive, ncore,
-                                      tol=tol, max_det=max_det)
-
-    logger.info("read %d determinant(s) from %s", len(coeffs), cas_chkfile)
+    logger.info("read %d determinant(s) from the CI expansion", len(coeffs))
 
     return PHMSDWavefunction(
         coeffs=np.array(coeffs, dtype=np.complex128),
         occa=occa,
         occb=occb,
-        nmo=mol.nao_nr(),
-        nelec=mol.nelec,
+        nmo=np.shape(mc.mo_coeff)[-1],
+        nelec=mc.mol.nelec,
     )
 
 
@@ -243,9 +220,9 @@ def _check_occupations(occa, occb, nelec, spin_symm: SpinSymm) -> None:
 # reading a CI expansion
 # ----------------------------------------------------------------------
 
-def ci_expansion(ciab, norb: int, nelec, ncore: int, tol=1e-4, max_det=None):
+def ci_expansion(mc, tol=1e-4, max_det=None):
     r"""
-    Truncate a PySCF CI coefficient matrix into an explicit determinant list.
+    Truncate a PySCF CI expansion into an explicit determinant list.
 
     For a wavefunction
 
@@ -258,16 +235,12 @@ def ci_expansion(ciab, norb: int, nelec, ncore: int, tol=1e-4, max_det=None):
 
     Parameters
     ----------
-    ciab : numpy.ndarray
-        CI coefficient matrix, ``(n_alpha_dets, n_beta_dets)``.
-    norb : int
-        Number of active orbitals.
-    nelec : tuple(int, int)
-        Active-space electron counts.
-    ncore : int
-        Number of core orbitals, taken to be the lowest `ncore`. They are
-        reinserted into every determinant's occupations, so the result indexes
-        the full orbital basis.
+    mc
+        A PySCF ``mcscf`` object that has been run. Its CI vector ``ci`` over
+        ``ncas`` active orbitals and ``nelecas`` electrons is read through
+        ``fcisolver.large_ci``, and its ``ncore`` core orbitals, taken to be
+        the lowest, are reinserted into every determinant's occupations, so the
+        result indexes the full orbital basis.
     tol : float, optional
         Keep determinants whose coefficient exceeds this in magnitude. Default
         1e-4.
@@ -281,10 +254,9 @@ def ci_expansion(ciab, norb: int, nelec, ncore: int, tol=1e-4, max_det=None):
     occa, occb : numpy.ndarray
         Occupied orbital indices, ``(ndets, nup)`` and ``(ndets, ndown)``.
     """
-    from pyscf.fci.addons import large_ci
-
-    coeffs, occa, occb = zip(*large_ci(ciab, norb, tuple(nelec), tol=tol,
-                                       return_strs=False))
+    ncore = mc.ncore
+    coeffs, occa, occb = zip(*mc.fcisolver.large_ci(
+        mc.ci, mc.ncas, tuple(mc.nelecas), tol=tol, return_strs=False))
 
     order = np.argsort(np.abs(coeffs))[::-1]
     if max_det is not None:

@@ -54,7 +54,6 @@ from safiretools.hamiltonian.base import (
     read_hamiltonian_header,
     write_hamiltonian_header,
 )
-from safiretools.convert.pyscf import canonical_orthogonalization
 from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
 from safiretools.hdf5 import read_complex, replace_group
 from safiretools.types import SpinSymm
@@ -169,45 +168,6 @@ def generate_grid_shifts(cell):
         gmap[ii, :] = np.roll(g1, (-nx, -ny, -nz), axis=(0, 1, 2)).reshape(-1, order='C')
 
     return gmap, Qi, ngs
-
-
-def get_ortho_ao(cell, kpts, lindep_cutoff=0.0):
-    """
-    Canonical orthogonalization transformation for a periodic cell.
-
-    Parameters
-    ----------
-    cell : pyscf.pbc.gto.Cell
-        PySCF cell.
-    kpts : numpy.ndarray
-        k-points.
-    lindep_cutoff : float, optional
-        Basis functions whose overlap eigenvalues fall below this are dropped.
-        Should match the value used in ``pyscf.scf.addons.remove_linear_dep``.
-
-    Returns
-    -------
-    X : numpy.ndarray
-        ``(nkpts, nao, nao)`` transformation matrix.
-    nmo_per_kpt : numpy.ndarray
-        Number of orthogonalized orbitals kept at each k-point.
-    """
-    from pyscf import lib as pyscf_lib
-
-    kpts = np.reshape(kpts, (-1, 3))
-    nkpts = len(kpts)
-    nao = cell.nao_nr()
-
-    s1e = pyscf_lib.asarray(cell.pbc_intor('cint1e_ovlp_sph', hermi=1, kpts=kpts))
-    X = np.zeros((nkpts, nao, nao), dtype=np.complex128)
-    nmo_per_kpt = np.zeros(nkpts, dtype=np.int32)
-
-    for k in range(nkpts):
-        Xk = canonical_orthogonalization(s1e[k], lindep_cutoff)
-        nmo_per_kpt[k] = Xk.shape[1]
-        X[k, :, :nmo_per_kpt[k]] = Xk
-
-    return X, nmo_per_kpt
 
 
 def setup_basis_map(nmo_pk, nkpts):
@@ -647,18 +607,21 @@ class PeriodicHamiltonian(Hamiltonian):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_pyscf(cls, source, kpoint_symmetry=True, chol_cut=1e-5,
+    def from_pyscf(cls, kmf, basis=None, kpoint_symmetry=True, chol_cut=1e-5,
                    maxvecs=20, exxdiv='ewald', nelec=None,
                    verbose=False) -> "PeriodicHamiltonian":
         """
-        Generate a periodic Hamiltonian from a PySCF ``pbc`` SCF calculation.
+        Generate a periodic Hamiltonian from a PySCF ``pbc`` SCF object.
 
         Parameters
         ----------
-        source : str or pathlib.Path or dict
-            A PySCF checkpoint file, or an already-loaded ``scf_data`` mapping
-            from `safiretools.convert.pyscf.load_pyscf_chk`. Uses the keys
-            ``'hcore'``, ``'X'``, ``'cell'``, ``'kpts'`` and ``'nmo_pk'``.
+        kmf
+            A converged ``pbc.scf`` object, at one k-point or on a mesh; its
+            ``get_hcore()`` is the one-body Hamiltonian.
+        basis : None or 'ortho_ao', optional
+            The working basis: the solution's own orbitals (closed shell only),
+            or the orthogonalized AO basis. Pass the same basis to
+            `safiretools.NOMSDWavefunction.from_pbc_scf`.
         kpoint_symmetry : bool, optional
             Factorize per momentum transfer (True) rather than as one supercell
             (False). Default True. A supercell result comes back as a Γ-point
@@ -685,9 +648,9 @@ class PeriodicHamiltonian(Hamiltonian):
         The whole factorization is built in memory and written by `to_hdf5`,
         serially. CoQuí is the supported route for production-sized solids.
         """
-        from safiretools.convert.pyscf import as_scf_data
+        from safiretools.convert.pyscf import periodic_solution
 
-        scf_data = as_scf_data(source, periodic=True)
+        scf_data = periodic_solution(kmf, basis)
 
         cell, kpts, X = scf_data['cell'], scf_data['kpts'], scf_data['X']
         nmo_pk = np.asarray(scf_data['nmo_pk'])
@@ -798,8 +761,7 @@ class PeriodicHamiltonian(Hamiltonian):
         ``k * nmo_pk + i``, which the writer assumes to be laid out uniformly,
         so a mesh whose k-points carry different orbital counts is rejected
         rather than written wrongly. That happens when linear dependencies are
-        removed per k-point, i.e. when ``get_ortho_ao`` is given a nonzero
-        ``lindep_cutoff``.
+        removed per k-point.
         """
         if len(set(int(nmo) for nmo in self.nmo_pk)) > 1:
             raise ValueError(
@@ -893,7 +855,7 @@ class PeriodicHamiltonian(Hamiltonian):
                    enuc=enuc)
 
 
-def write_rhoG(scf_data, path, gcut, kpoint_symmetry=True,
+def write_rhoG(kmf, path, gcut, kpoint_symmetry=True,
                verbose=False) -> None:
     r"""
     Write the real-space density :math:`\rho(G)` on the FFT grid.
@@ -902,8 +864,8 @@ def write_rhoG(scf_data, path, gcut, kpoint_symmetry=True,
 
     Parameters
     ----------
-    scf_data : dict
-        Unpacked PySCF checkpoint; see `PeriodicHamiltonian.from_pyscf`.
+    kmf
+        Periodic PySCF SCF object; see `PeriodicHamiltonian.from_pyscf`.
     path : str or pathlib.Path
         HDF5 file to write.
     gcut : float

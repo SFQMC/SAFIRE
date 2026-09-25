@@ -11,16 +11,15 @@ Running the Example
 
 The workflow includes the following steps:
 
-1. **Generate the trial wavefunction and orbital basis**: Execute ``scf/scf.py`` to run PySCF calculations generating both ROHF and UHF checkpoint files. 
-
-2. **Create AFQMC input files**: Execute ``ham/ham.py`` to generate the Hamiltonian in 
-   Cholesky-decomposed form and format the trial wavefunction.
-   Note that we used the ROHF orbitals as a basis, since they are spin-independent. 
+1. **Create AFQMC input files**: Execute ``ham/ham.py``. It runs the ROHF and UHF calculations
+   with PySCF, then generates the Hamiltonian in Cholesky-decomposed form and formats the
+   trial wavefunction.
+   Note that we used the ROHF orbitals as a basis, since they are spin-independent.
    The UHF wavefunction will be used as the trial wavefunction for AFQMC.
    ``Wavefunction.from_pyscf()`` directly handles the change of basis as demonstrated in
     this example. This produces ``afqmc.h5`` containing the Hamiltonian and trial wavefunction. 
 
-3. **Run SAFIRE**: Run SAFIRE using the provided json input file (see below):
+2. **Run SAFIRE**: Run SAFIRE using the provided json input file (see below):
 
    .. code-block:: bash
 
@@ -28,7 +27,7 @@ The workflow includes the following steps:
 
    The AFQMC calculation will perform sampling and output energy estimates and other observables.
 
-4. **analyze the results**: Use the `scalar_stats` command-line tool from afqmctools to analyze the energy output:
+3. **analyze the results**: Use the `scalar_stats` command-line tool from afqmctools to analyze the energy output:
 
    .. code-block:: bash
 
@@ -68,12 +67,7 @@ The workflow includes the following steps:
 Files
 -----
 
-**SCF Calculation** (``scf/scf.py``):
-
-.. literalinclude:: scf/scf.py
-   :language: python
-
-**Hamiltonian and Wavefunction Generation** (``ham/ham.py``):
+**SCF, Hamiltonian and Wavefunction Generation** (``ham/ham.py``):
 
 .. literalinclude:: ham/ham.py
    :language: python

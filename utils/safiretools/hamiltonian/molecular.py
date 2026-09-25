@@ -18,8 +18,8 @@ stored densely as ``hcore`` plus the Cholesky matrix ``chol`` with elements
 :math:`L_{(ij),\gamma}`, and written in the dense format the AFQMC executable's
 ``RealDenseHamiltonian`` reads.
 
-The Cholesky decomposition itself is generated either from a PySCF ``mol``
-object (`MolecularHamiltonian.from_pyscf`), from integrals supplied directly
+The Cholesky decomposition itself is generated either from a PySCF SCF object
+(`MolecularHamiltonian.from_pyscf`), from integrals supplied directly
 (`MolecularHamiltonian.from_integrals`), or from a plain-text FCIDUMP
 (`MolecularHamiltonian.from_fcidump`). `MolecularHamiltonian.to_fcidump` writes
 that external format back out.
@@ -27,6 +27,7 @@ that external format back out.
 
 import logging
 import time
+from warnings import warn
 
 import numpy as np
 import h5py as h5
@@ -64,20 +65,16 @@ class MolecularHamiltonian(Hamiltonian):
     ortho : numpy.ndarray, optional
         Transformation from the AO basis to the working basis, written as
         ``Hamiltonian/X`` when given.
-    real_chol : bool, optional
-        Force the on-disk dtype instead of taking it from the data. ``True``
-        discards any imaginary part of the Cholesky matrix.
     """
 
     def __init__(self, hcore, chol, enuc=0.0,
-                 spin_symm=SpinSymm.CLOSED, ortho=None, real_chol=None) -> None:
+                 spin_symm=SpinSymm.CLOSED, ortho=None) -> None:
         super().__init__(spin_symm=spin_symm)
 
         self.hcore = spin_blocked_hcore(hcore, self.spin_symm)
         self.chol = np.asarray(chol)
         self.enuc = float(np.real(enuc))
         self.ortho = ortho
-        self.real_chol = real_chol
 
         # the Cholesky matrix may be stored in the spatial-orbital basis even when
         #   hcore is in the spin-orbital one
@@ -112,16 +109,13 @@ class MolecularHamiltonian(Hamiltonian):
     def complex_chol(self) -> bool:
         """
         Whether the Cholesky matrix is written as complex, which is what
-        ``Hamiltonian/ComplexIntegrals`` records.
+        ``Hamiltonian/ComplexIntegrals`` records. Decided by the data: complex
+        exactly when some element has a nonzero imaginary part.
 
         .. note:: The AFQMC executable's ``RealDenseHamiltonian`` reads
                   ``DenseFactorized/L`` into a real array, so it cannot consume
-                  a complex-Cholesky file. ``real_chol=False`` has always
-                  produced one anyway; it is preserved here rather than
-                  silently changed.
+                  a complex-Cholesky file.
         """
-        if self.real_chol is not None:
-            return not self.real_chol
         return bool(np.any(np.iscomplex(self.chol)))
 
     # ------------------------------------------------------------------
@@ -188,69 +182,62 @@ class MolecularHamiltonian(Hamiltonian):
         return cls(hcore=hcore, chol=chol.T, enuc=enuc, spin_symm=spin_symm)
 
     @classmethod
-    def from_pyscf(cls, source, chol_cut=1e-5, cas=None, ortho_ao=False,
-                   df=False, spin_symm=None, real_chol=None,
-                   verbose=False) -> "MolecularHamiltonian":
+    def from_pyscf(cls, mf, basis=None, active_space=None, df=False,
+                   chol_cut=1e-5, verbose=False) -> "MolecularHamiltonian":
         """
-        Build a Hamiltonian from a PySCF molecular SCF calculation.
+        Build a Hamiltonian from a PySCF molecular SCF object.
 
         Parameters
         ----------
-        source : str or pathlib.Path or dict
-            A PySCF checkpoint file, or an already-loaded ``scf_data`` mapping
-            from `safiretools.convert.pyscf.load_pyscf_chk_mol`. Pass the
-            mapping when one load has to serve several factories — a
-            spin-orbit basis reused by the wavefunction, say. Uses the keys
-            ``'hcore'``, ``'mo_coeff'``, ``'X'``, ``'mol'``, ``'nelec'``,
-            ``'norb'``, ``'walker_type'`` and (optionally) ``'df_ints'``.
+        mf
+            The source of the physics: ``mf.get_hcore()`` is the one-body
+            Hamiltonian, and ``mf.mol`` supplies the two-electron integrals and
+            the nuclear repulsion. The relativistic treatment is whatever `mf`
+            was set up with — ``mol.RHF().sfx2c1e()``, ``mol.GHF().x2c1e()``,
+            or a GHF object with ``with_soc = True`` for the spin-orbit ECP
+            term. `mf` need not be converged unless it also supplies the basis.
+        basis : None or 'ortho_ao' or object or numpy.ndarray, optional
+            The orbitals the Hamiltonian is expressed in. ``None`` uses `mf`'s
+            own orbitals, ``'ortho_ao'`` the canonically orthogonalized AO
+            basis, an object its ``mo_coeff`` (an ROHF or CASSCF solution, say),
+            and an array is taken as the ``(nao, nmo)`` transformation itself.
+            UHF and GHF orbitals cannot serve as a basis. Pass the same basis to
+            `safiretools.Wavefunction.from_pyscf`.
+        active_space : tuple(int, int), optional
+            ``(nelecas, ncas)`` active space; core orbitals are frozen into the
+            one-body term and the constant. ``ncas == -1`` takes every orbital
+            above the frozen core. Incompatible with ``basis='ortho_ao'``.
+        df : bool, optional
+            Use `mf`'s density-fitting vectors instead of decomposing the
+            two-electron integrals, which needs a density-fitted `mf`.
         chol_cut : float, optional
             Cholesky decomposition accuracy. Default 1e-5.
-        cas : tuple(int, int), optional
-            ``(nelecas, ncas)`` active space; core orbitals are frozen into the
-            one-body term and the constant. Incompatible with `ortho_ao`.
-        ortho_ao : bool, optional
-            Work in the orthogonalized AO basis rather than the MO basis.
-            Required for UHF/GHF references.
-        df : bool, optional
-            Use density-fitted integrals from the checkpoint, if present.
-        spin_symm : SpinSymm or str or int, optional
-            Overrides ``scf_data['walker_type']``.
-        real_chol : bool, optional
-            Force the on-disk dtype. See the class docstring.
         verbose : bool, optional
             Log timing and convergence progress.
 
         Returns
         -------
         MolecularHamiltonian
+            Noncollinear when ``mf.get_hcore()`` is a spinor matrix, closed
+            otherwise: a spin-independent one-body operator gains nothing from
+            two identical spin sectors.
 
         Raises
         ------
         ValueError
-            If the reference is UHF/GHF and `ortho_ao` is not set, if `cas` and
-            `ortho_ao` are combined, or if the Hamiltonian is noncollinear but
-            `spin_symm` says otherwise.
+            If `basis` is an unknown string, UHF/GHF orbitals, does not span
+            `mf`'s AO basis, or is ``'ortho_ao'`` together with `active_space`;
+            or if `df` is set and `mf` is not density fitted.
         """
-        from safiretools.convert.pyscf import as_scf_data, working_basis
+        from safiretools.convert.pyscf import cholesky_df, one_body, working_basis
 
-        scf_data = as_scf_data(source)
+        hcore, spin_symm = one_body(mf)
+        mol = mf.mol
 
-        if spin_symm is None:
-            spin_symm = scf_data["walker_type"]
-        spin_symm = SpinSymm.from_input(spin_symm)
-
-        hcore = scf_data['hcore']
-        mol = scf_data['mol']
-        df_ints = scf_data.get('df_ints', None)
-
-        X, (nfzc, nfzv) = working_basis(scf_data, ortho_ao, cas)
+        X, (nfzc, nfzv) = working_basis(mf, basis, active_space)
         nbasis = X.shape[-1]
 
-        if hcore.shape == (2 * X.shape[0], 2 * X.shape[0]):
-            if spin_symm is not SpinSymm.NONCOLLINEAR:
-                raise ValueError(
-                    f"Hamiltonian is noncollinear but spin_symm {spin_symm} is not"
-                )
+        if spin_symm is SpinSymm.NONCOLLINEAR:
             Xspin = np.kron(np.eye(2), X)
             h1e = Xspin.conj().T @ hcore @ Xspin
         else:
@@ -258,15 +245,9 @@ class MolecularHamiltonian(Hamiltonian):
 
         logger.info("number of basis functions: %d", nbasis)
 
-        if df_ints is not None and df:
-            logger.info("using DF integrals from the checkpoint file")
-            # transform_cholesky overwrites its input, and df_ints belongs to scf_data
-            chol_vecs = df_ints.copy()
-            if chol_vecs.shape[1] != nbasis * nbasis:
-                raise ValueError(
-                    f"DF integrals have shape {chol_vecs.shape}, expected "
-                    f"(nchol, {nbasis * nbasis})"
-                )
+        if df:
+            logger.info("using the density-fitting vectors of the SCF object")
+            chol_vecs = cholesky_df(mf)
         else:
             logger.info("performing modified Cholesky decomposition on the ERI tensor")
             chol_vecs = chunked_cholesky(mol, max_error=chol_cut, verbose=verbose)
@@ -288,7 +269,6 @@ class MolecularHamiltonian(Hamiltonian):
             enuc=enuc,
             spin_symm=spin_symm,
             ortho=X[:, nfzc:nbasis - nfzv],
-            real_chol=real_chol,
         )
 
     @classmethod
@@ -367,6 +347,12 @@ class MolecularHamiltonian(Hamiltonian):
             wavefunction can share one file in either order.
         """
         complex_chol = self.complex_chol
+        if complex_chol:
+            warn(
+                "writing complex Cholesky vectors, which a complex orbital basis "
+                "gives; the AFQMC executable's RealDenseHamiltonian reads "
+                "DenseFactorized/L as real and cannot run this file"
+            )
         # decided with any() rather than all(): a Hermitian matrix has a real
         #   diagonal, so all() would discard the imaginary part of every one
         complex_hcore = bool(np.any(np.iscomplex(self.hcore)))
@@ -700,7 +686,7 @@ def chunked_cholesky(mol, max_error=1e-6, verbose=False, cmax=10):
 
 
 def transform_cholesky(chol, C):
-    """
+    r"""
     Apply the basis rotation `C` to the Cholesky vectors `chol`.
 
     Parameters
@@ -713,23 +699,31 @@ def transform_cholesky(chol, C):
     Returns
     -------
     numpy.ndarray
-        Transformed vectors, shape ``(nchol, nmo*nmo)``.
+        Transformed vectors :math:`C^\dagger L^\gamma C`, shape
+        ``(nchol, nmo*nmo)``. Complex when `C` is, and hermitian in the orbital
+        pair like the one-body term.
 
     Notes
     -----
     Transforms in place through a flat view of `chol`, so that ``nao > nmo``
-    needs no second buffer. `chol` is overwritten.
+    needs no second buffer, and `chol` is overwritten. A complex `C` with real
+    `chol` is the exception: the result cannot live in the real buffer, so it
+    gets one of its own and `chol` is left alone.
     """
     nao, nmo = C.shape
     nik = nmo * nmo
     nchol = chol.shape[0]
 
+    if np.iscomplexobj(C) and not np.iscomplexobj(chol):
+        chol = chol.astype(np.result_type(chol, C))
+
+    Cdag = C.conj().T
     chol_ = chol.ravel()
     for i in range(nchol):
         cv = chol[i].reshape(nao, nao)
         half = np.dot(cv, C)
         # nmo <= nao, so vector i lands at or before where it was read from
-        chol_[i * nik:(i + 1) * nik] = np.dot(C.T, half).ravel()
+        chol_[i * nik:(i + 1) * nik] = np.dot(Cdag, half).ravel()
 
     return chol_[:nchol * nik].reshape((nchol, nik))
 
@@ -855,6 +849,8 @@ def core_contribution_cholesky(chol_vecs, G):
     cv = chol_vecs
 
     coulomb = np.einsum('l,lij->ij', np.sum(cv * G, axis=(1, 2)), cv)
-    exchange = 0.5 * np.einsum('lrq,lsq->rs', np.einsum('lpr,pq->lrq', cv, G), cv)
+    # K_rs = sum_pq (rp|qs) G_pq, in the order that stays right for complex
+    #   (hermitian) vectors, where L_pr is the conjugate of L_rp
+    exchange = 0.5 * np.einsum('lrp,pq,lqs->rs', cv, G, cv, optimize=True)
 
     return coulomb - exchange

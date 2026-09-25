@@ -9,7 +9,7 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 """
-Trial wavefunctions from periodic PySCF calculations.
+Trial wavefunctions from periodic PySCF SCF objects.
 
 The k-point orbitals are assembled into one supercell Slater matrix, block by
 k-point, giving a single Slater determinant. Reached through
@@ -29,21 +29,20 @@ from safiretools.types import SpinSymm
 logger = logging.getLogger(__name__)
 
 
-def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
+def from_pbc_scf(kmf, basis=None, rediag=True, low=0.1, high=0.95):
     """
     Build a single-determinant trial wavefunction from a periodic PySCF SCF
-    calculation.
+    object.
 
     Parameters
     ----------
-    source : str or pathlib.Path or dict
-        A PySCF checkpoint file, or an already-loaded ``scf_data`` mapping from
-        `safiretools.convert.pyscf.load_pyscf_chk`. Uses the keys ``'X'``,
-        ``'Xocc'``, ``'fock'``, ``'nmo_pk'``, ``'mo_energy'``, ``'kpts'`` and
-        ``'walker_type'``.
-    ortho_ao : bool, optional
-        Whether the working basis is the orthogonalized AO basis. Must match the
-        Hamiltonian. Default True; a collinear reference requires it.
+    kmf
+        A converged ``pbc.scf`` object, at one k-point or on a mesh,
+        restricted or unrestricted.
+    basis : None or 'ortho_ao', optional
+        The working basis: the solution's own orbitals, or the orthogonalized
+        AO basis. Must match the Hamiltonian. Default None; a collinear
+        reference requires ``'ortho_ao'``.
     rediag : bool, optional
         Rediagonalize the Fock matrix to get MO coefficients in the
         orthogonalized AO basis. Default True.
@@ -60,7 +59,7 @@ def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
     Raises
     ------
     ValueError
-        If a collinear reference is combined with ``ortho_ao=False``, or a
+        If a collinear reference is combined with ``basis=None``, or a
         closed-shell reference has partially occupied bands (see Notes).
 
     Notes
@@ -71,13 +70,19 @@ def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
     a calculation as a collinear reference instead.
 
     The orbitals are eigenvectors of a Hermitian Fock matrix (or columns of the
-    identity when ``ortho_ao=False``), so they are orthonormal by construction
+    identity when ``basis=None``), so they are orthonormal by construction
     and nothing here orthonormalizes them.
     """
-    from safiretools.convert.pyscf import as_scf_data
-    from safiretools.wavefunction.nomsd import NOMSDWavefunction
+    from safiretools.convert.pyscf import periodic_solution
 
-    scf_data = as_scf_data(source, periodic=True)
+    return _from_solution(periodic_solution(kmf, basis),
+                          ortho_ao=basis is not None, rediag=rediag,
+                          low=low, high=high)
+
+
+def _from_solution(scf_data, ortho_ao, rediag, low, high):
+    """`from_pbc_scf` on an already-read `periodic_solution` mapping."""
+    from safiretools.wavefunction.nomsd import NOMSDWavefunction
 
     spin_symm = SpinSymm.from_input(scf_data['walker_type'])
     collinear = spin_symm is SpinSymm.COLLINEAR
@@ -131,7 +136,7 @@ def _generate_orbitals(fock, X, nmo_pk, rediag, ortho_ao, mo_energy, collinear):
     if collinear and not ortho_ao:
         raise ValueError(
             "a collinear trial wavefunction requires the orthogonalized AO "
-            "basis; pass ortho_ao=True"
+            "basis; pass basis='ortho_ao'"
         )
 
     eigenvalues = ([], [])

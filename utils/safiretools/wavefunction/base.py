@@ -442,11 +442,10 @@ class Wavefunction(ABC):
         )
 
     @classmethod
-    def from_pyscf(cls, source, basis=None, ortho_ao=False, cas=None,
-                   spin_symm=None) -> "Wavefunction":
+    def from_pyscf(cls, mf, basis=None, active_space=None) -> "Wavefunction":
         """
         Build a single-determinant trial wavefunction from a molecular PySCF SCF
-        calculation. Always a `safiretools.NOMSDWavefunction`.
+        object. Always a `safiretools.NOMSDWavefunction`.
 
         See `safiretools.wavefunction.pyscf.from_pyscf` for the full parameter
         documentation.
@@ -456,14 +455,12 @@ class Wavefunction(ABC):
 
         _check_representation(cls, NOMSDWavefunction, 'from_pyscf')
 
-        return from_pyscf(source, basis=basis, ortho_ao=ortho_ao, cas=cas,
-                          spin_symm=spin_symm)
+        return from_pyscf(mf, basis=basis, active_space=active_space)
 
     @classmethod
-    def from_pyscf_cas(cls, mol, cas_chkfile, tol=1e-4,
-                       max_det=None) -> "Wavefunction":
+    def from_pyscf_cas(cls, mc, tol=1e-4, max_det=None) -> "Wavefunction":
         """
-        Read a CASSCF/CASCI expansion from a PySCF checkpoint file. Always a
+        Read a CASSCF/CASCI expansion from a PySCF ``mcscf`` object. Always a
         `safiretools.PHMSDWavefunction`.
 
         See `safiretools.wavefunction.pyscf.from_pyscf_cas` for the full
@@ -474,7 +471,7 @@ class Wavefunction(ABC):
 
         _check_representation(cls, PHMSDWavefunction, 'from_pyscf_cas')
 
-        return from_pyscf_cas(mol, cas_chkfile, tol=tol, max_det=max_det)
+        return from_pyscf_cas(mc, tol=tol, max_det=max_det)
 
     @classmethod
     def from_dice(cls, path, ndets, state=0) -> "Wavefunction":
@@ -493,11 +490,11 @@ class Wavefunction(ABC):
         return from_dice(path, ndets=ndets, state=state)
 
     @classmethod
-    def from_pbc_scf(cls, source, ortho_ao=True, rediag=True,
+    def from_pbc_scf(cls, kmf, basis=None, rediag=True,
                      low=0.1, high=0.95) -> "Wavefunction":
         """
         Build a single-determinant trial wavefunction from a periodic PySCF SCF
-        calculation. Always a `safiretools.NOMSDWavefunction`.
+        object. Always a `safiretools.NOMSDWavefunction`.
 
         See `safiretools.wavefunction.pbc.from_pbc_scf` for the full parameter
         documentation.
@@ -507,5 +504,4 @@ class Wavefunction(ABC):
 
         _check_representation(cls, NOMSDWavefunction, 'from_pbc_scf')
 
-        return from_pbc_scf(source, ortho_ao=ortho_ao, rediag=rediag,
-                            low=low, high=high)
+        return from_pbc_scf(kmf, basis=basis, rediag=rediag, low=low, high=high)
