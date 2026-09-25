@@ -87,6 +87,8 @@ def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
     nmo_tot = int(np.sum(nmo_pk))
 
     fock = scf_data['fock']
+    if fock.ndim == 3:
+        fock = fock.reshape((1,) + fock.shape)
 
     logger.info("generating a %s trial wavefunction over %d k-point(s)",
                 spin_symm.label, len(scf_data['kpts']))

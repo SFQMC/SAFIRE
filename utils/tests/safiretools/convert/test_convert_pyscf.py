@@ -397,12 +397,6 @@ class TestPeriodic:
         assert [X.shape for X in scf_data['X']] == [(8, 8)]
         assert list(scf_data['nmo_pk']) == [8]
 
-    def test_afqmctools_could_not_read_that_layout(self, single_kpt_chk):
-        from afqmctools.utils.pyscf_utils import load_from_pyscf_chk
-
-        with pytest.raises(ValueError, match="Slater determinant type"):
-            load_from_pyscf_chk(single_kpt_chk, orthoAO=False)
-
     def test_a_self_contradictory_checkpoint_is_reported(self, krks_chk,
                                                           tmp_path):
         """
