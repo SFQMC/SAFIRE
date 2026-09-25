@@ -120,7 +120,7 @@ class HamiltonianFormat(str, Enum):
     """
 
     # Python 3.11 made a mixin Enum's str() its member name; this keeps both
-    #   str() and f-strings rendering the value, as the pre-enum strings did.
+    #   str() and f-strings rendering the value.
     __str__ = str.__str__
 
     def __new__(cls, value, tag=''):
