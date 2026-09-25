@@ -29,6 +29,7 @@ import logging
 from itertools import product
 
 import numpy as np
+import scipy.linalg
 import scipy.sparse
 
 logger = logging.getLogger(__name__)
@@ -38,23 +39,7 @@ SUPPORTED_SYMMETRIES = (1, 4, 8)
 
 
 def fcidump_header(nel: int, norb: int, spin: int) -> str:
-    """
-    The FCIDUMP header block.
-
-    Parameters
-    ----------
-    nel : int
-        Total number of electrons.
-    norb : int
-        Number of orbitals.
-    spin : int
-        ``2 * S_z``, i.e. ``nup - ndown``.
-
-    Returns
-    -------
-    str
-        Header, ending with a newline after ``&END``.
-    """
+    """The FCIDUMP header block for `nel` electrons, `norb` orbitals and ``MS2 = spin``."""
     return (
         "&FCI "
         f"NORB={norb:d}, "
@@ -276,67 +261,34 @@ def check_sym(ikjl, nmo, sym) -> bool:
     return (i >= k and j >= l) and (i + k * nmo) >= (j + l * nmo)
 
 
-def h1_spat2spin(h1e_new, h1e_old):
+def h1_spat2spin(h1e):
     r"""
-    Convert a 1-body Hamiltonian from a spatial to a spinor basis.
-
-    Converts :math:`K_{ij}` in a spatial orbital basis :math:`\{\phi_i(r)\}` to
-    the spinor basis :math:`\{\phi_i(r) \times |\sigma\rangle\}` used in a
-    FCIDUMP file. The spinor basis is ordered with alternating up/down
-    components, i.e. :math:`\{\phi_0 |\uparrow\rangle, \phi_0
-    |\downarrow\rangle, \phi_1 |\uparrow\rangle, \phi_1 |\downarrow\rangle,
-    \dots\}`.
-
-    Parameters
-    ----------
-    h1e_new : numpy.ndarray
-        Output buffer, ``(2*Mspatial, 2*Mspatial)``.
-    h1e_old : numpy.ndarray
-        One-body Hamiltonian in the spatial basis.
-
-    Returns
-    -------
-    numpy.ndarray
-        `h1e_new`, filled.
+    `h1e` in the spinor basis a FCIDUMP file uses, which alternates up/down
+    components: :math:`\{\phi_0 |\uparrow\rangle, \phi_0 |\downarrow\rangle,
+    \phi_1 |\uparrow\rangle, \dots\}`.
     """
-    h1e_new[0::2, 0::2] = h1e_old
-    h1e_new[1::2, 1::2] = h1e_old
-    return h1e_new
+    nmo = h1e.shape[0]
+    spinor = np.zeros((2 * nmo, 2 * nmo), dtype=np.complex128)
+    spinor[0::2, 0::2] = h1e
+    spinor[1::2, 1::2] = h1e
+    return spinor
 
 
-def h2_spat2spin(h2e_new, h2e_old):
+def h2_spat2spin(h2e):
     r"""
-    Convert a 2-body Hamiltonian from a spatial to a spinor basis.
-
-    Converts :math:`V_{ijkl} = \int dr\, dr'\, \phi_i^*(r)\phi_k(r)
-    \frac{1}{|r - r'|} \phi_j^*(r')\phi_l(r')` in a spatial orbital basis
-    :math:`\{\phi_i(r)\}` to the spinor basis :math:`\{\phi_i(r) \times
-    |\sigma\rangle\}`, ordered with alternating up/down components as for
+    The chemists' :math:`(ik|jl)` integrals `h2e` in the spinor basis of
     `h1_spat2spin`.
-
-    Integrals are in :math:`(ik|jl)` chemists' notation, i.e. :math:`\langle
-    ij|lk \rangle` in physicists' notation.
 
     .. warning:: There must be no matrix elements between opposite spins within
                  :math:`(ik|` or within :math:`|jl)`.
-
-    Parameters
-    ----------
-    h2e_new : numpy.ndarray
-        Output buffer, ``(2*Mspatial,) * 4``.
-    h2e_old : numpy.ndarray
-        Two-body Hamiltonian in the spatial basis.
-
-    Returns
-    -------
-    numpy.ndarray
-        `h2e_new`, filled.
     """
-    h2e_new[0::2, 0::2, 0::2, 0::2] = h2e_old
-    h2e_new[0::2, 1::2, 0::2, 1::2] = h2e_old
-    h2e_new[1::2, 1::2, 1::2, 1::2] = h2e_old
-    h2e_new[1::2, 0::2, 1::2, 0::2] = h2e_old
-    return h2e_new
+    nmo = h2e.shape[0]
+    spinor = np.zeros((2 * nmo,) * 4, dtype=np.complex128)
+    spinor[0::2, 0::2, 0::2, 0::2] = h2e
+    spinor[0::2, 1::2, 0::2, 1::2] = h2e
+    spinor[1::2, 1::2, 1::2, 1::2] = h2e
+    spinor[1::2, 0::2, 1::2, 0::2] = h2e
+    return spinor
 
 
 def fmt_integral(intg, i, k, j, l, cplx, paren=False) -> str:
@@ -380,9 +332,18 @@ def fmt_integral(intg, i, k, j, l, cplx, paren=False) -> str:
     return fmt.format(intg.real, intg.imag, i + 1, k + 1, j + 1, l + 1)
 
 
+def _write_one_body_and_constant(f, hcore, enuc, tol, cplx, paren) -> None:
+    """Write the lower triangle of `hcore` and then the constant `enuc`."""
+    for i in range(hcore.shape[0]):
+        for j in range(i + 1):
+            if abs(hcore[i, j]) > tol:
+                f.write(fmt_integral(hcore[i, j], i, j, -1, -1, cplx, paren=paren))
+
+    f.write(fmt_integral(enuc + 0j, -1, -1, -1, -1, cplx, paren=paren))
+
+
 def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
-                  sym=1, cplx=True, paren=False, chol_is_eri=False,
-                  use_spinor=False) -> None:
+                  sym=1, cplx=True, paren=False, use_spinor=False) -> None:
     """
     Write an FCIDUMP file from Cholesky-factorized integrals.
 
@@ -393,8 +354,7 @@ def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
     hcore : numpy.ndarray
         One-body Hamiltonian.
     chol : numpy.ndarray or scipy.sparse.csr_array
-        Cholesky matrix ``L[ik,n]``, or the chemists' ERI ``(ik|jl)`` if
-        `chol_is_eri`.
+        Cholesky matrix ``L[ik,n]``.
     enuc : float
         Constant energy contribution.
     nmo : int
@@ -411,8 +371,6 @@ def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
         Write in complex format. Default True.
     paren : bool, optional
         Write complex numbers parenthesized.
-    chol_is_eri : bool, optional
-        `chol` is already the chemists' ERI tensor.
     use_spinor : bool, optional
         Convert to a spinor basis before writing.
 
@@ -439,28 +397,19 @@ def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
         cplx = False
 
     # Generate M_{(ik),(lj)} = (ik|jl)
-    if chol_is_eri:
-        # physicist <ij|kl> = chemist (ik|jl) = hermitian {(ik),(lj)}
-        eris = chol.transpose((0, 1, 3, 2))
-    elif isinstance(chol, scipy.sparse.csr_array):
+    if isinstance(chol, scipy.sparse.csr_array):
         eris = chol.dot(chol.conj().T).toarray().reshape((nmo, nmo, nmo, nmo))
     else:
         eris = chol.dot(chol.conj().T).reshape((nmo, nmo, nmo, nmo))
 
     if use_spinor:
-        hcore = h1_spat2spin(
-            h1e_new=np.zeros((2 * nmo, 2 * nmo), dtype=np.complex128),
-            h1e_old=hcore)
-        eris = h2_spat2spin(
-            h2e_new=np.zeros((2 * nmo,) * 4, dtype=np.complex128),
-            h2e_old=eris)
+        hcore = h1_spat2spin(hcore)
+        eris = h2_spat2spin(eris)
         nmo = 2 * nmo
 
     with open(filename, 'w') as f:
         f.write(fcidump_header(sum(nelec), nmo, nelec[0] - nelec[1]))
 
-        # TODO: instead of generating all possible i,k,l,j coordinates,
-        #         just loop over the allowed values.
         for i, k, l, j in product(range(nmo), repeat=4):
             if abs(eris[i, k, l, j]) <= tol:
                 continue
@@ -474,12 +423,7 @@ def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
                 )
             f.write(fmt_integral(eris[i, k, l, j], i, k, j, l, cplx, paren=paren))
 
-        for i in range(nmo):
-            for j in range(i + 1):
-                if abs(hcore[i, j]) > tol:
-                    f.write(fmt_integral(hcore[i, j], i, j, -1, -1, cplx, paren=paren))
-
-        f.write(fmt_integral(enuc + 0j, -1, -1, -1, -1, cplx, paren=paren))
+        _write_one_body_and_constant(f, hcore, enuc, tol, cplx, paren)
 
 
 def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
@@ -582,12 +526,5 @@ def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
                                     lj += 1
                             ik += 1
 
-        for ik, hk in enumerate(hcore):
-            for i in range(nmo_pk[ik]):
-                I = i + offsets[ik]
-                for j in range(nmo_pk[ik]):
-                    J = j + offsets[ik]
-                    if I >= J and abs(hk[i, j]) > tol:
-                        f.write(fmt_integral(hk[i, j], I, J, -1, -1, cplx, paren=paren))
-
-        f.write(fmt_integral(enuc + 0j, -1, -1, -1, -1, cplx, paren=paren))
+        _write_one_body_and_constant(f, scipy.linalg.block_diag(*hcore), enuc, tol,
+                                     cplx, paren)
