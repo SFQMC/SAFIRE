@@ -659,7 +659,7 @@ void ModelHamOpsGenerator::addComponent( WALKER_TYPES wtype, PropagatorTypes pty
         auto nI = IJ2n[I_];
         long J_ = (j+M)*M2+j+Madd;  // (j dn, j dn)
         auto nJ = IJ2n[J_];
-        ComplexType sqrtUij( std::sqrt(sign * Uij) );
+        ComplexType sqrtUij( std::sqrt(ComplexType(sign * Uij)) );
         if(writer) h0(nI) += minus_half*sign*Uij;  
         if(writer) h0(nJ) += minus_half*sign*Uij;  
         VnT[nFields][nI] += sqrtUij;
@@ -689,7 +689,7 @@ void ModelHamOpsGenerator::addComponent( WALKER_TYPES wtype, PropagatorTypes pty
         auto nI = IJ2n[I_];
         long J_ = j*M2+j;      // (j up, j up)
         auto nJ = IJ2n[J_];
-        ComplexType sqrtUij( std::sqrt(sign * Uij) );
+        ComplexType sqrtUij( std::sqrt(ComplexType(sign * Uij)) );
         if(writer) h0(nI) += minus_half*sign*Uij;  
         if(writer) h0(nJ) += minus_half*sign*Uij;  
         VnT[nFields][nI] += sqrtUij;
@@ -711,7 +711,7 @@ void ModelHamOpsGenerator::addComponent( WALKER_TYPES wtype, PropagatorTypes pty
         long j = long(J.columns(p));
         if( std::abs(Jij) < 1e-6 ) continue;
         if( i >= j ) continue;  
-        ComplexType sqrtJij( std::sqrt(sign * Jij) );
+        ComplexType sqrtJij( std::sqrt(ComplexType(sign * Jij)) );
         long ii_up = i*M2+i;           // (i up, i up)
         long jj_up = j*M2+j;           // (j up, j up)
         long ii_dn = (i+M)*M2+i+Madd;  // (i dn, i dn)
