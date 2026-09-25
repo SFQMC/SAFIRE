@@ -44,18 +44,6 @@ UNITCELL_KEYS = ('a1', 'a2', 'basis')
 """Unit-cell geometry keys, settable only for `CustomLattice`."""
 
 
-def euclid_nd(coord1, coord2):
-    """
-    Compute the N-dimensional Euclidean distance between coordinate 1 and
-    coordinate 2.
-    """
-    return np.sqrt(
-        np.sum(
-            np.square(coord1 - coord2)
-        )
-    )
-
-
 @dataclass(order=True)
 class LatticeSite:
     """
@@ -86,12 +74,11 @@ class NeighborPair:
 
     i: int
     j: int
-    _abs_r: tuple
     _shift: tuple
     r_relative: tuple
     phase: float = 0.0
 
-    def __init__(self, i: int, j: int, _abs_r=None, _shift=None,
+    def __init__(self, i: int, j: int, _shift=None,
                  phase: float = 0.0, r_relative=None) -> None:
         if i == j:
             raise ValueError("Lattice sites are not allowed to be their own neighbor")
@@ -99,8 +86,6 @@ class NeighborPair:
         self.i = i                  # index of first site
         self.j = j                  # index of second site
 
-        self._abs_r = _abs_r        # absolute lattice coordinate of "j". this differs from
-                                    #    the coordinate of "j" when the second site is an image
         self._shift = _shift        # supercell shift to obtain image
         self.phase = phase          # relative phase between sites
 
@@ -113,114 +98,53 @@ class NeighborPair:
 
 class Boundary:
     """
-    Base class for representing a boundary.
-      Encapsulates the boundary condition.
-    """
-
-    def __init__(self, L, direction=None, *args, **kwargs) -> None:
-        self.L = L
-        self.direction = direction
-        if not hasattr(self, 'phase'):
-            self.phase = None
-
-    def is_valid_image(self, coordinate):
-        return self.is_image(coordinate) and self.is_valid(coordinate)
-
-    def is_image(self, coordinate):
-        r"""
-        returns `True` if the site at a given coordinate is an image.
-
-        Note: coordinate is expressed in units of the lattice vectors \hat{a}_1, \hat{a}_2
-        """
-        if coordinate[self.direction] % self.L != coordinate[self.direction]:
-            return True
-        else:
-            return False
-
-    def is_allowed(self, position) -> bool:
-        """
-        returns True if the site at a given position is allowed by the boundaries.
-            all cites within the cell are "allowed", but some image sites may not
-            be "allowed" if there is one or more open boundary.
-        """
-        raise NotImplementedError("Called 'is_allowed' for Boundary abstract base class")
-
-    # TODO: remove when new "is_allowed" framework is implemented and tested
-    def is_valid(self, position) -> bool:
-        """
-        returns True if the site at a given position is a valid image
-
-        ( checks if site is an image first, a site that is not an image
-         is not a valid image )
-        """
-        raise NotImplementedError("Called 'is_valid' for Boundary abstract base class")
-
-
-class PBCBoundary(Boundary):
-    """
-    Concrete class for periodic boundary condition
+    The boundary condition along one lattice axis.
 
     Parameters
     ----------
     L : int
-        size of the lattice in the direction of the boundary
+        Size of the lattice along the axis.
     direction : int
-        direction of the boundary (i.e. along a1 or a2)
-    phase : iterable(ints)
-        phase angle for the boundary (i.e. the twist angle)
-        if phase is not given, it is assumed to be (0,0);
-        if phase is a 1-d iterable of length 2, it is interpreted as (phase1,phase2)
-        where phase1 is applied when crossing the boundary along the a1 direction
-        and phase2 is applied when crossing the boundary along the a2 direction.
+        The axis, 0 for a1 and 1 for a2.
+    phase : float, optional
+        Twist angle picked up when crossing the boundary. Default 0.0.
     """
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, L, direction, phase=0.0) -> None:
+        self.L = L
+        self.direction = direction
+        self.phase = phase
 
-        if 'phase' in kwargs.keys():
-            self.phase = kwargs['phase']
-        else:
-            self.phase = (0.0, 0.0)
+    def is_valid_image(self, coordinate) -> bool:
+        """True if `coordinate` is an image this boundary connects to."""
+        return self.is_image(coordinate) and self.is_valid(coordinate)
 
-    def is_valid(self, position):
-        if self.is_image(position):
-            return True
-        else:
-            return False
+    def is_image(self, coordinate) -> bool:
+        r"""
+        True if `coordinate`, in units of the lattice vectors :math:`\hat{a}_1,
+        \hat{a}_2`, lies outside the lattice along this axis.
+        """
+        return coordinate[self.direction] % self.L != coordinate[self.direction]
 
-    def is_allowed(self, position) -> bool:
+    def is_valid(self, coordinate) -> bool:
+        raise NotImplementedError
+
+
+class PBCBoundary(Boundary):
+    """A periodic, optionally twisted, boundary: every image is valid."""
+
+    def is_valid(self, coordinate) -> bool:
         return True
 
 
 class OpenBoundary(Boundary):
-    """
-    concrete class for open boundary
+    """An open boundary: no image is valid, so a twist has no effect."""
 
-    all images are invalid for open b.c.
-    """
+    def __init__(self, L, direction, phase=0.0) -> None:
+        super().__init__(L, direction)
 
-    def __init__(self, L, direction=None, **kwargs) -> None:
-        super().__init__(
-            L=L,
-            direction=direction,
-            **kwargs
-        )
-
-    def is_valid(self, position) -> bool:
+    def is_valid(self, coordinate) -> bool:
         return False
-
-    def is_allowed(self, position) -> bool:
-        return not super().is_image(position)
-
-
-def valid_L(L):
-    """
-    True if `L` is a 2-element specification of the lattice size.
-    """
-    if L is None:
-        return False
-
-    return hasattr(L, '__len__') and len(L) == 2
 
 
 def _angle_str_to_float(angle_string: str):
@@ -304,7 +228,7 @@ class Lattice(ABC):
     supported way to build a lattice whose geometry is not one of the built-in
     types. Passing ``a1``/``a2``/``basis`` to any other type raises `TypeError`,
     and `Lattice.from_dict` raises `ValueError` for the equivalent keys in a
-    parameter dict; both used to be silently discarded.
+    parameter dict.
 
     ``a1``, ``a2`` and ``basis`` are read-only properties, and the arrays they
     return are themselves immutable, so the geometry cannot be replaced or
@@ -328,7 +252,6 @@ class Lattice(ABC):
             self,
             L=None,
             *,
-            metric=euclid_nd,
             axis1_boundary=None,
             axis2_boundary=None,
             build=True,
@@ -344,8 +267,6 @@ class Lattice(ABC):
         ----------
         L : iterable(int)
             2-element lattice size, (L1, L2), in units of the unit cell.
-        metric : callable, optional
-            Distance function between two positions. Default is `euclid_nd`.
         axis1_boundary, axis2_boundary : type(Boundary), optional
             Boundary *classes* (not instances) applied along a1 and a2.
             Default is `OpenBoundary`.
@@ -375,8 +296,6 @@ class Lattice(ABC):
 
         self._pairs_by_distance = dict()
         self._image_pairs_by_distance = dict()
-        self._metric = metric
-        self._metric_v = np.vectorize(metric, signature="(n),(n)->()")
         self.sites = list()
         self.N_sites = 0
 
@@ -384,7 +303,7 @@ class Lattice(ABC):
         # default is nothing
         # with XC y dim is longer (1 in x dim)
         # and YC x is longer (1 in y dim)
-        if cyl_mode not in ["XC", "YC", "none", "None", None, False]:
+        if cyl_mode not in ("XC", "YC", None):
             raise ValueError(f"Unsupported cylinder mode {cyl_mode=}"
                              "\n Try None, 'XC', or 'YC'")
         if cyl_mode in ("XC", "YC") and self._type != "triangular":
@@ -398,10 +317,9 @@ class Lattice(ABC):
             )
         self.cyl_mode = cyl_mode
 
-        if valid_L(L):
-            self.L = L
-        else:
+        if not (hasattr(L, '__len__') and len(L) == 2):
             raise ValueError("L must be a 2-d Array-like")
+        self.L = L
 
         if twist is None:
             twist = (0.0, 0.0)
@@ -602,11 +520,11 @@ class Lattice(ABC):
         )
         self.N_sites += 1
 
-    def get_nth_neighbors(self, n=1, twist=None):
+    def get_nth_neighbors(self, n=1):
         """
         High-Level interface to get all nth-nearest neighbors
         """
-        return self.get_nth_direct_neighbors(n=n) + self.get_nth_image_neighbors(n=n, twist=twist)
+        return self.get_nth_direct_neighbors(n=n) + self.get_nth_image_neighbors(n=n)
 
     def get_nth_direct_neighbors(self, n=1):
         """
@@ -620,12 +538,12 @@ class Lattice(ABC):
 
         return self._pairs_by_distance[n]
 
-    def get_nth_image_neighbors(self, n=1, twist=None):
+    def get_nth_image_neighbors(self, n=1):
         self._fail_if_not_built()
 
         if n not in self._image_pairs_by_distance.keys():
             logger.debug("computing and storing %sth-nearest image neighbors", n)
-            self._build_nth_image_neighbors(n=n, twist=twist)
+            self._build_nth_image_neighbors(n=n)
 
         return self._image_pairs_by_distance[n]
 
@@ -675,9 +593,6 @@ class Lattice(ABC):
                           self.axis2_boundary.phase])
         ks = np.array([s.coord[:2]@kvecs for s in self.sites])
         ks += twist
-        # we should order it, but ks isn't always in the 1st bz
-        # order = np.argsort(np.linalg.norm(ks,axis=-1))
-        # ks = ks[order]
         rs = np.array([self.A@(s.coord[:2]/self.L) for s in self.sites])
         Uxtok = np.exp(1j*(ks@rs.T))/np.sqrt(self.L[0]*self.L[1])
         # we've mixed each basis, so we need to zero out those elements
@@ -814,33 +729,13 @@ class Lattice(ABC):
     def _position(self, coord):
         return coord[0]*self.a1 + coord[1]*self.a2 + self.basis[coord[2]]
 
-    def metric(self, coord1, coord2):
-        return self._metric(coord1, coord2)
-
     def _build_distances(self):
         if self._distances is None:
             poses = np.asarray([s.position for s in self.sites])
-            # fast numpy outer product
-            self._distances = self._metric_v(poses[:, None], poses[None, :])
-
-    def remove_distances(self):
-        """
-        Removes cached distance matrix.
-        Useful if low on memory and the lattice is large
-        """
-        del self._distances
-        del self._image_distances
-        self._distances = None
-        self._image_distances = None
-        logger.debug("Removed distance matrix")
+            self._distances = spatial.distance_matrix(poses, poses)
 
     def _build_nth_neighbors(self, n):
-        if n not in self._pairs_by_distance.keys():
-            self._pairs_by_distance[n] = list()
-        else:
-            raise RuntimeError(
-                "Adding pair distances to existing distance list: probably a mistake!"
-            )
+        self._pairs_by_distance[n] = list()
 
         try:
             # if we need to build up the distances, initialize it now
@@ -854,7 +749,6 @@ class Lattice(ABC):
             self._pairs_by_distance[n] = [
                 NeighborPair(
                     i, j,
-                    _abs_r=self.sites[j].position,
                     r_relative=self.sites[j].position-self.sites[i].position
                 ) for i, j in zip(*pairs)
             ]
@@ -880,50 +774,15 @@ class Lattice(ABC):
                     RuntimeWarning, stacklevel=4)
                 break
 
-    def _is_valid_image(self, r):
-        # If you invert, be sure to use De Morgan's theorem!!
-        if self.axis1_boundary.is_valid(r) and self.axis2_boundary.is_valid(r):
-            return True
-        else:
-            return False
-
-    def _is_allowed_site(self, r):
-        if self.axis1_boundary.is_allowed(r) and self.axis2_boundary.is_allowed(r):
-            return True
-        else:
-            return False
-
     def _get_image_axes(self, r):
-        r"""
-        Checks if a coordinate, r, is a valid image separately
-            for both boundaries.
+        """The axes (0 for a1, 1 for a2) along which `r` is a valid image."""
+        return [axis for axis, boundary
+                in enumerate((self.axis1_boundary, self.axis2_boundary))
+                if boundary.is_valid_image(r)]
 
-        Returns a list of boundary indices (either 0 - $\hat{a}_1$ or 1 - $\hat{a}_2$)
-            for which r is a valid image. The list is empty if r is not a valid image
-            for any boundary.
-
-        NOTE: This function will NOT perform a cross check to see if the
-                combination of boundaries would reject an image.
-                use `self._is_valid_image(r)`
-        """
-        is_x_image = self.axis1_boundary.is_valid_image(r)
-        is_y_image = self.axis2_boundary.is_valid_image(r)
-
-        if is_x_image and is_y_image:
-            return [0, 1]
-        elif is_x_image:
-            return [0]
-        elif is_y_image:
-            return [1]
-        else:
-            return []
-
-    def is_image(self, r):
-        # If you invert, be sure to use De Morgan's theorem!!
-        if self.axis1_boundary.is_image(r) or self.axis2_boundary.is_image(r):
-            return True
-        else:
-            return False
+    def is_image(self, r) -> bool:
+        """True if `r`, in lattice coordinates, lies outside the lattice."""
+        return self.axis1_boundary.is_image(r) or self.axis2_boundary.is_image(r)
 
     def _build_image_distances(self):
         """
@@ -946,27 +805,17 @@ class Lattice(ABC):
                     if shift1 == shift2 == 0:
                         continue
                     shiftvec = shift1*vShift1+shift2*vShift2
-                    distances = self._metric_v(poses[:, None],
-                                               poses[None, :]+shiftvec)
+                    distances = spatial.distance_matrix(poses, poses + shiftvec)
                     self._image_distances.append((shift1, shift2, shiftvec, distances))
 
-    def _build_nth_image_neighbors(self, n, twist=None):
+    def _build_nth_image_neighbors(self, n):
         """
         building the image nth-order-neighbors from the cache of shifted
           distance matrices built by `_build_image_distances`.
 
           We reject the case where a site is it's own nth-order neighbor.
         """
-
-        if twist is not None:
-            raise NotImplementedError("Need to recompute nth-order neighbors when given a twist")
-
-        if n not in self._image_pairs_by_distance.keys():
-            self._image_pairs_by_distance[n] = list()
-        else:
-            raise RuntimeError(
-                "Adding image pair distances to existing distance list: probably a mistake!"
-            )
+        self._image_pairs_by_distance[n] = list()
 
         self._neighbor_distance_map(0)  # init _dist_map
         self._build_image_distances()
@@ -981,7 +830,7 @@ class Lattice(ABC):
                     r1 = self.sites[pair.i].position
                     r2 = self.sites[pair.j].position+shiftvec
                     r = self._to_lattice_basis(r2)
-                    image_axes = self._get_image_axes(r)  # TODO: replace with shift1/2
+                    image_axes = self._get_image_axes(r)
                     phase = 0.0
 
                     for axis in image_axes:
@@ -993,9 +842,8 @@ class Lattice(ABC):
                             sign = 1
                         phase += sign*getattr(self, f"axis{axis+1}_boundary").phase
 
-                    # TODO: add a unit test that confirms that invalid pairs are rejected
                     image_pair = NeighborPair(pair.i, pair.j, phase=phase,
-                                              _abs_r=r2, _shift=(shift1, shift2),
+                                              _shift=(shift1, shift2),
                                               r_relative=r2-r1)
                     self._image_pairs_by_distance[n].append(image_pair)
 
@@ -1078,19 +926,6 @@ class Lattice(ABC):
         basis_idx = np.argmin([np.linalg.norm(c-c.round().astype(int)) for c in candidates])
         return np.array((*candidates[basis_idx].round().astype(int), basis_idx))
 
-    def _wrap_to_cell(self, r):
-        """
-        wrap input `r`, expressed in lattice basis,
-        into the lattice cell
-        """
-        return np.array(
-            [
-                r[0] % self.L[0],
-                r[1] % self.L[1],
-                r[2]
-            ]
-        )
-
 
 class SquareLattice(Lattice):
     """
@@ -1122,7 +957,7 @@ class TriangularLattice(Lattice):
 
     For a triangular Bravais lattice with a multi-site basis, use
     `HoneycombLattice` or `KagomeLattice`, which are implemented separately;
-    `CustomLattice` can express other bases, with the caveat noted there.
+    `CustomLattice` can express other bases.
 
     This is the only lattice type that accepts `cyl_mode`: the XC/YC cell
     reshaping `build()` performs is hardcoded for hexagonal geometry.
@@ -1198,7 +1033,7 @@ class CustomLattice(Lattice):
         Basis vectors within the unit cell. Default is a single site at the
         cell origin.
     **kwargs
-        Forwarded to `Lattice`; see that constructor for `metric`, `build`,
+        Forwarded to `Lattice`; see that constructor for `build`,
         `axis1_boundary`/`axis2_boundary`, `twist` and `cyl_mode`.
 
     Examples
@@ -1221,9 +1056,9 @@ class CustomLattice(Lattice):
     Currently only supports 2D lattices. Higher dimensions will be added in the
     future. Please contact the developers if you need this feature.
 
-    Only basis vectors that are inside the unit cell are allowed.
-    `build()` checks for basis vectors that are outside the unit cell and raises
-    `ValueError` if any are found.
+    `build()` raises `ValueError` for a basis the neighbor search cannot handle:
+    two basis vectors differing by a lattice translation, or an offset reaching
+    a full supercell. See `Lattice._validate_basis`.
     """
 
     _type = "custom"
@@ -1367,9 +1202,8 @@ def get_directed_pairs(lattice: Lattice, directions=None, nbands: int = 1):
 
             # every axis stepped along is periodic, so the offset site is always
             #   reachable; none are encoded as invalid ("-1")
-            if lattice.is_image(coord):
-                coord[0] %= lattice.L[0]
-                coord[1] %= lattice.L[1]
+            coord[0] %= lattice.L[0]
+            coord[1] %= lattice.L[1]
 
             index = lattice._index_map(coord)
             offsets[direction].extend(index * nbands + band
