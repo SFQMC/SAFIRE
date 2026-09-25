@@ -389,13 +389,11 @@ def test_fm_pinning_reads_fm_pin_type(square_4x4):
     afqmctools' `fm_pinning` read ``afm_pin_type``, which made ``fm_pin_type``
     dead input.
     """
-    builder = HamiltonianBuilder(lattice=square_4x4)
-    hamiltonian = builder.get_hamiltonian()
-    hamiltonian.afm_pin_type = 'sideways'   # would raise if it were consulted
-    hamiltonian.fm_pin_type = 'fm'
+    builder = HamiltonianBuilder(lattice=square_4x4, afm_pin_type='sideways',  # would raise
+                                 fm_pin_type='fm')
 
     builder.fm_pinning(0.25)
-    assert hamiltonian['tij']
+    assert builder.get_hamiltonian()['tij']
 
 
 @pytest.mark.parametrize("params,expected_calls", [

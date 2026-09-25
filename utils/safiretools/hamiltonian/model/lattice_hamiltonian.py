@@ -49,22 +49,22 @@ class HamiltonianComponent:
         ``'hubbard_u'``, ``'hubbard_j'``, ``'heisenberg_j'``.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry this term is expressed in. Default `SpinSymm.CLOSED`.
-    **kwargs
-        Extra per-component metadata written alongside the matrix, most
-        importantly ``hst_type`` (the Hubbard-Stratonovich transformation).
+    hst_type : str, optional
+        Hubbard-Stratonovich transformation of an interaction term, written
+        alongside the matrix.
     """
 
-    def __init__(self, csr_array, model_type, spin_symm=SpinSymm.CLOSED, **kwargs) -> None:
+    def __init__(self, csr_array, model_type, spin_symm=SpinSymm.CLOSED,
+                 hst_type=None) -> None:
         if not isinstance(csr_array, sps.sparray):
             csr_array = sps.csr_array(csr_array)
 
         self.csr_array = csr_array
         self.model_type = model_type
         self.spin_symm = SpinSymm.from_input(spin_symm)
-        self.metadata = kwargs
+        self.hubbard_strat_type = hst_type
 
         self.max_nnz = int(np.max(csr_array.indptr[1:] - csr_array.indptr[:-1]))
-        self.hubbard_strat_type = self.metadata.get("hst_type", None)
 
     @property
     def is_complex(self) -> bool:
@@ -80,8 +80,7 @@ class HamiltonianComponent:
         """
         Add two terms of the same `model_type` and Hubbard-Stratonovich type.
 
-        Addition is *not* commutative in its metadata: the result carries
-        ``self``'s. The result's spin symmetry is the *lower* of the two (the
+        The result's spin symmetry is the *lower* of the two (the
         larger `SpinSymm` value), since the sum is only as symmetric as its
         least symmetric part.
         """
@@ -104,7 +103,7 @@ class HamiltonianComponent:
             csr_array=self.csr_array + other.csr_array,
             model_type=self.model_type,
             spin_symm=max(self.spin_symm, other.spin_symm),
-            **self.metadata
+            hst_type=self.hubbard_strat_type,
         )
 
     def __radd__(self, other):
@@ -147,8 +146,6 @@ class LatticeHamiltonian(Hamiltonian):
         Number of bands per site. Default 1.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry of the Hamiltonian. Default `SpinSymm.CLOSED`.
-    twist : optional
-        Twist passed through to the lattice when building hopping terms.
     lattice_metadata : dict, optional
         Shape of the lattice this Hamiltonian was built on — see
         `lattice_metadata_from`. Recorded on disk; not used for any computation.
@@ -164,7 +161,6 @@ class LatticeHamiltonian(Hamiltonian):
             nsites: int,
             nbands: int = 1,
             spin_symm=SpinSymm.CLOSED,
-            twist=None,
             lattice_metadata=None,
     ) -> None:
         super().__init__(spin_symm=spin_symm)
@@ -172,12 +168,7 @@ class LatticeHamiltonian(Hamiltonian):
         self.terms = dict()
         self.nsites = nsites
         self.nbands = nbands
-        self.twist = twist
         self.lattice_metadata = dict(lattice_metadata) if lattice_metadata else {}
-
-        # builder parameters, kept here so from_dict can round-trip an input dict
-        self.afm_pin_type = "staggered"
-        self.fm_pin_type = "staggered"
 
     # ------------------------------------------------------------------
     # container interface
@@ -410,9 +401,9 @@ class LatticeHamiltonian(Hamiltonian):
                 component_group.create_dataset('model_type', data=component.model_type)
                 component_group.create_dataset('spin_type', data=component.spin_symm.label)
 
-                for metakey, value in component.metadata.items():
-                    if value is not None:
-                        component_group.create_dataset(metakey, data=value)
+                if component.hubbard_strat_type is not None:
+                    component_group.create_dataset('hst_type',
+                                                   data=component.hubbard_strat_type)
 
                 csr_array = component.csr_array
                 if not real_valued:
@@ -434,7 +425,7 @@ class LatticeHamiltonian(Hamiltonian):
 
         for key in ('Uij', 'Jij'):
             for component in self.get(key, []):
-                hst = component.metadata.get('hst_type', 'continuous_spin')
+                hst = component.hubbard_strat_type or 'continuous_spin'
                 max_nnz[key][hst] = max_nnz[key].get(hst, 0) + component.max_nnz
 
         return max(
@@ -489,16 +480,13 @@ class LatticeHamiltonian(Hamiltonian):
             for n in range(num_components):
                 component_group = group[f'ModelComponent_{n}']
                 key = _component_key(component_group)
-                metadata = {
-                    name: component_group[name].asstr()[()]
-                    for name in ('hst_type',) if name in component_group
-                }
                 component = HamiltonianComponent(
                     csr_array=read_csr(component_group[key]),
                     model_type=component_group['model_type'].asstr()[()],
                     spin_symm=SpinSymm.from_input(
                         component_group['spin_type'].asstr()[()]),
-                    **metadata
+                    hst_type=(component_group['hst_type'].asstr()[()]
+                              if 'hst_type' in component_group else None),
                 )
 
                 if key == 'Uij':
@@ -540,7 +528,7 @@ def lattice_metadata_from(lattice) -> dict:
         'type': lattice._type,
         'L': [int(size) for size in lattice.L],
         'boundaries': [_boundary_name(boundary) for boundary in boundaries],
-        'twist': [_boundary_phase(boundary) for boundary in boundaries],
+        'twist': [float(boundary.phase) for boundary in boundaries],
         'lattice_vectors': [list(lattice.a1), list(lattice.a2)],
         'basis': [list(b) for b in lattice.basis],
         'cyl_mode': lattice.cyl_mode or 'none',
@@ -552,22 +540,6 @@ def _boundary_name(boundary) -> str:
     from safiretools.hamiltonian.model.lattice import PBCBoundary
 
     return 'pbc' if isinstance(boundary, PBCBoundary) else 'open'
-
-
-def _boundary_phase(boundary) -> float:
-    """
-    The twist angle carried by `boundary`, as a single float.
-
-    `PBCBoundary` defaults its ``phase`` to the pair ``(0.0, 0.0)`` when none
-    was given, while `Lattice` always passes a scalar per axis; both spellings
-    reduce to 0.0 here.
-    """
-    phase = getattr(boundary, 'phase', None)
-    if phase is None:
-        return 0.0
-    if np.ndim(phase) == 0:
-        return float(phase)
-    return float(np.asarray(phase).ravel()[0])
 
 
 def _read_lattice_metadata(group):
@@ -622,14 +594,13 @@ def _split_hubbard_u(component: HamiltonianComponent, nbasis: int):
         zero, so that re-combining reproduces the stored shape.
     """
     matrix = component.csr_array
-    metadata = dict(component.metadata)
 
     def part(csr, model_type=None):
         return HamiltonianComponent(
             csr_array=csr,
             model_type=model_type or component.model_type,
             spin_symm=component.spin_symm,
-            **metadata
+            hst_type=component.hubbard_strat_type,
         )
 
     if matrix.shape == (2 * nbasis, nbasis):

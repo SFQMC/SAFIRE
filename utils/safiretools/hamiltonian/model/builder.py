@@ -54,16 +54,7 @@ The order also fixes the order combined Hubbard components are written in."""
 
 
 def is_hermitian(M, tol=1e-10) -> bool:
-    """
-    True if the dense or sparse matrix `M` equals its conjugate transpose.
-
-    Parameters
-    ----------
-    M : numpy.ndarray or scipy.sparse matrix
-        Matrix to check.
-    tol : float, optional
-        Absolute tolerance, dense inputs only. Default 1e-10.
-    """
+    """True if the dense or sparse `M` equals its conjugate transpose (to `tol`, dense only)."""
     if sps.issparse(M):
         return (M - M.conj().T).nnz == 0
     return np.allclose(M, M.conj().T, atol=tol)
@@ -77,7 +68,7 @@ def force_hermitian(M, method='upper_triangular'):
     ----------
     M : numpy.ndarray or scipy.sparse matrix
         Matrix to symmetrize.
-    method : {'upper_triangular', 'triu', 'average', 'avg'}, optional
+    method : {'upper_triangular', 'average'}, optional
         How to symmetrize. Default ``'upper_triangular'``.
 
     Returns
@@ -87,20 +78,20 @@ def force_hermitian(M, method='upper_triangular'):
 
     Notes
     -----
-    ``'upper_triangular'`` (``'triu'``) discards the lower triangle and mirrors
-    the upper one, keeping the diagonal:
+    ``'upper_triangular'`` discards the lower triangle and mirrors the upper
+    one, keeping the diagonal:
     :math:`M \rightarrow \mathrm{triu}(M, 0) + \mathrm{triu}(M, 1)^\dagger`.
 
-    ``'average'`` (``'avg'``) takes :math:`\frac{1}{2}(M + M^\dagger)`.
+    ``'average'`` takes :math:`\frac{1}{2}(M + M^\dagger)`.
     """
-    if method in ('upper_triangular', 'triu'):
+    if method == 'upper_triangular':
         logger.info("forcing Hermiticity from the upper triangle; "
                     "the lower triangle is ignored")
         if sps.issparse(M):
             return sps.triu(M, 0) + sps.triu(M, 1).conj().T
         return np.triu(M, 0) + np.triu(M, 1).conj().T
 
-    if method in ('average', 'avg'):
+    if method == 'average':
         logger.info("forcing Hermiticity by averaging M and its conjugate transpose")
         return 0.5 * (M + M.conj().T)
 
@@ -198,25 +189,13 @@ def intersite_band_matrix(value, nbands: int):
 
 def _amplitude_binder(func):
     """
-    Machinery for the build-step decorators below: the wrapped function's
-    signature, and the name of its amplitude parameter.
+    The signature of `func` and the name of its amplitude parameter, the first
+    after ``self``.
 
-    The amplitude is the first parameter after ``self`` — ``t``, ``U``, ``J``,
-    ``V``, ``epsilon``, ``rashba_lambda``, ... — and each build step documents
-    its own name for it. A decorator that declared its wrapper as
-    ``wrapper(self, params, *args, **kwargs)`` would rename that parameter to
-    ``params`` for every decorated step, so ``builder.onsite_hubbard(U=4.0)``
-    would raise ``TypeError: ... missing 1 required positional argument:
-    'params'``. Binding against the real signature instead keeps every
-    documented name callable, positionally or by keyword.
-
-    Returns
-    -------
-    signature : inspect.Signature
-        Signature of `func`. `functools.wraps` sets ``__wrapped__``, so this is
-        the *original* signature even when the decorators are stacked.
-    name : str
-        Name of the amplitude parameter.
+    The build-step decorators bind calls against the real signature, rather than
+    declaring ``wrapper(self, params, ...)``, so that every step keeps its own
+    documented amplitude name (``U=4.0``). `functools.wraps` sets
+    ``__wrapped__``, so the signature is the original one even when stacked.
     """
     signature = inspect.signature(func)
 
@@ -228,13 +207,6 @@ def _amplitude_binder(func):
         )
 
     return signature, names[1]
-
-
-def _bind(signature, args, kwargs):
-    """Bind a call to `signature`, with defaults filled in."""
-    bound = signature.bind(*args, **kwargs)
-    bound.apply_defaults()
-    return bound
 
 
 def skip_empty_params(func):
@@ -254,7 +226,8 @@ def skip_empty_params(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        bound = _bind(signature, args, kwargs)
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
 
         params = np.array(bound.arguments[amplitude])
         # The following line looks wrong, but is correct!
@@ -293,7 +266,8 @@ def iterate_nth_order(start_n=1):
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            bound = _bind(signature, args, kwargs)
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
             params = np.array(bound.arguments[amplitude])
 
             if params.ndim in {0, 2}:
@@ -327,7 +301,7 @@ def _parse_ham_input(source: dict):
     Returns
     -------
     ham_params : dict
-        Attribute/value pairs to set on the built `LatticeHamiltonian`.
+        ``nbands`` and the pin types, for the `HamiltonianBuilder` constructor.
     build_steps : list[tuple[str, list]]
         ``(builder method name, positional args)`` pairs, in order.
     """
@@ -335,10 +309,13 @@ def _parse_ham_input(source: dict):
 
     _known_params = {
         'nbands': 1,
-        'twist': None,
         'afm_pin_type': "staggered",
         'fm_pin_type': "staggered",
     }
+
+    if 'twist' in source:
+        raise ValueError("'twist' is a property of the lattice; set it in the "
+                         "'lattice' section rather than the 'hamiltonian' one")
 
     _supported_steps = {
         'nth_neighbor_hopping': 't',
@@ -388,6 +365,9 @@ class HamiltonianBuilder:
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry the Hamiltonian is expressed in. Default
         `SpinSymm.COLLINEAR`.
+    afm_pin_type, fm_pin_type : str, optional
+        Default ``pin_type`` of `afm_pinning` and `fm_pinning`. Default
+        ``'staggered'``.
 
     Raises
     ------
@@ -406,27 +386,21 @@ class HamiltonianBuilder:
             lattice: Lattice,
             nbands: int = 1,
             spin_symm=SpinSymm.COLLINEAR,
-            **kwargs
+            afm_pin_type: str = "staggered",
+            fm_pin_type: str = "staggered",
     ) -> None:
         if lattice is None:
             raise ValueError("A Hamiltonian must be defined on a 'Lattice' instance.")
 
         self._lattice = lattice
+        self.afm_pin_type = afm_pin_type
+        self.fm_pin_type = fm_pin_type
         self._hamiltonian = LatticeHamiltonian(
             nsites=lattice.N_sites,
             nbands=nbands,
             spin_symm=spin_symm,
             lattice_metadata=lattice_metadata_from(lattice),
         )
-
-        for param in ('afm_pin_type', 'fm_pin_type', 'twist'):
-            if param in kwargs:
-                setattr(self._hamiltonian, param, kwargs.pop(param))
-
-        if kwargs:
-            raise ValueError(
-                f"Unknown HamiltonianBuilder parameters: {sorted(kwargs)}"
-            )
 
     def get_hamiltonian(self) -> LatticeHamiltonian:
         """The `LatticeHamiltonian` being built."""
@@ -532,13 +506,9 @@ class HamiltonianBuilder:
 
         builder = cls(
             lattice=lattice,
-            nbands=ham_params['nbands'],
             spin_symm=ham_input.get('spin_symm', SpinSymm.COLLINEAR),
+            **ham_params,
         )
-
-        hamiltonian = builder.get_hamiltonian()
-        for param in ('twist', 'afm_pin_type', 'fm_pin_type'):
-            setattr(hamiltonian, param, ham_params[param])
 
         for step, args in build_steps:
             logger.info("running build step %s(%s)", step, args)
@@ -551,10 +521,6 @@ class HamiltonianBuilder:
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
-
-    def _add_term(self, key: str, term: HamiltonianComponent) -> None:
-        """Add `term` to the Hamiltonian under `key`."""
-        self._hamiltonian.add_term(key, term)
 
     def _find_max_spin_symm(self) -> None:
         """
@@ -621,74 +587,6 @@ class HamiltonianBuilder:
             return amplitude * np.eye(self._hamiltonian.nbands)
 
         raise ValueError(f"could not build {name} from {amplitude}")
-
-    def _upgrade_one_body_shape(self, in_mat: np.ndarray, target_spin_symm, nbasis: int):
-        """
-        Upgrade a one-body matrix's shape to match the target spin symmetry.
-
-        Performs automatic shape conversions:
-
-        - CLOSED ``(nbasis, nbasis)`` -> COLLINEAR ``(2*nbasis, nbasis)`` by vstacking
-        - CLOSED ``(nbasis, nbasis)`` -> NONCOLLINEAR ``(2*nbasis, 2*nbasis)`` as block diagonal
-        - COLLINEAR ``(2*nbasis, nbasis)`` -> NONCOLLINEAR ``(2*nbasis, 2*nbasis)`` by
-          splitting the up/down sectors into diagonal blocks
-
-        Parameters
-        ----------
-        in_mat : numpy.ndarray
-            One-body matrix to upgrade.
-        target_spin_symm : SpinSymm
-            Spin symmetry to upgrade to.
-        nbasis : int
-            Basis size, ``nbands * N_sites``.
-
-        Returns
-        -------
-        numpy.ndarray
-            The matrix, shaped for `target_spin_symm`.
-
-        Raises
-        ------
-        ValueError
-            When `in_mat` has no valid shape for the target spin symmetry.
-        """
-        if target_spin_symm is SpinSymm.NONCOLLINEAR:
-            if in_mat.shape == (2 * nbasis, 2 * nbasis):
-                return in_mat
-            if in_mat.shape == (nbasis, nbasis):
-                return sps.block_diag([in_mat, in_mat], format='csr').toarray()
-            if in_mat.shape == (2 * nbasis, nbasis):
-                return sps.block_diag([in_mat[:nbasis, :], in_mat[nbasis:, :]],
-                                      format='csr').toarray()
-            raise ValueError(
-                "custom one-body in_mat has invalid shape. Must have shape "
-                "(nbasis,nbasis), (2*nbasis,nbasis), or (2*nbasis,2*nbasis) for "
-                f"NONCOLLINEAR spin symmetry, but has shape {in_mat.shape}."
-            )
-
-        if target_spin_symm is SpinSymm.COLLINEAR:
-            if in_mat.shape == (2 * nbasis, nbasis):
-                return in_mat
-            if in_mat.shape == (nbasis, nbasis):
-                return np.vstack([in_mat, in_mat])
-            raise ValueError(
-                "custom one-body in_mat has invalid shape. Must have shape "
-                "(nbasis,nbasis) or (2*nbasis,nbasis) for COLLINEAR spin "
-                f"symmetry, but has shape {in_mat.shape}."
-            )
-
-        if target_spin_symm is SpinSymm.CLOSED:
-            if in_mat.shape == (nbasis, nbasis):
-                return in_mat
-            raise ValueError(
-                "custom one-body in_mat has invalid shape. Must have shape "
-                f"(nbasis,nbasis) for CLOSED spin symmetry, but has shape "
-                f"{in_mat.shape}."
-            )
-
-        raise ValueError(
-            "invalid spin symmetry. Only CLOSED, COLLINEAR and NONCOLLINEAR are supported"
-        )
 
     def _wrap_one_body_spin_structure(self, mat_up, target_spin_symm, mat_down=None):
         """
@@ -775,14 +673,9 @@ class HamiltonianBuilder:
         if spin_symm is None:
             spin_symm = self._hamiltonian.spin_symm
 
-        t = np.array(t)
-        if np.allclose(t, 0.0):
-            logger.info("no hopping t provided, skipping build")
-            return
-
         row, column, data = [], [], []
-        for pair in self._lattice.get_nth_neighbors(n=nth_neighbor,
-                                                    twist=self._hamiltonian.twist):
+        for pair in self._lattice.get_nth_neighbors(n=nth_neighbor):
+            # an untwisted pair stays real, so the Hamiltonian can be written as real
             if pair.phase != 0.0:
                 data.append(-1 * np.exp(-1j * pair.phase))
             else:
@@ -816,7 +709,7 @@ class HamiltonianBuilder:
 
         Hhop = self._wrap_one_body_spin_structure(Hhop, spin_symm, Hhop_down)
 
-        self._add_term('tij', HamiltonianComponent(
+        self._hamiltonian.add_term('tij', HamiltonianComponent(
             csr_array=Hhop,
             model_type='one_body',
             spin_symm=spin_symm,
@@ -836,9 +729,10 @@ class HamiltonianBuilder:
         Notes
         -----
         The `in_mat` must have a valid shape for the Hamiltonian and spin symmetry. For
-        COLLINEAR spin symmetry, the matrix must have shape (nbasis,nbasis) or
-        (2*nbasis,nbasis), and for NONCOLLINEAR spin symmetry, the matrix must have shape
-        (nbasis,nbasis), (2*nbasis,nbasis) or (2*nbasis,2*nbasis).
+        CLOSED spin symmetry that is (nbasis,nbasis); for COLLINEAR also the stacked
+        up/down sectors (2*nbasis,nbasis); for NONCOLLINEAR also the full spinor
+        matrix (2*nbasis,2*nbasis). A single (nbasis,nbasis) matrix is used for both
+        spin sectors.
 
         Examples
         --------
@@ -857,11 +751,25 @@ class HamiltonianBuilder:
         if spin_symm is None:
             spin_symm = self._hamiltonian.spin_symm
 
-        upgraded = self._upgrade_one_body_shape(
-            in_mat, spin_symm, self._hamiltonian.nbasis)
+        nbasis = self._hamiltonian.nbasis
+        in_mat = sps.csr_array(in_mat)
 
-        self._add_term('tij', HamiltonianComponent(
-            csr_array=sps.csr_array(upgraded),
+        if spin_symm is SpinSymm.NONCOLLINEAR and in_mat.shape == (2 * nbasis, 2 * nbasis):
+            one_body = in_mat
+        elif in_mat.shape == (nbasis, nbasis):
+            one_body = self._wrap_one_body_spin_structure(in_mat, spin_symm)
+        elif spin_symm is not SpinSymm.CLOSED and in_mat.shape == (2 * nbasis, nbasis):
+            one_body = self._wrap_one_body_spin_structure(
+                in_mat[:nbasis, :], spin_symm, in_mat[nbasis:, :])
+        else:
+            raise ValueError(
+                f"custom one-body in_mat has shape {in_mat.shape}, which is not valid "
+                f"for {spin_symm.label} spin symmetry with nbasis={nbasis}; see the "
+                "Notes of custom_one_body"
+            )
+
+        self._hamiltonian.add_term('tij', HamiltonianComponent(
+            csr_array=one_body,
             model_type='one_body',
             spin_symm=spin_symm,
         ))
@@ -904,7 +812,7 @@ class HamiltonianBuilder:
         )
 
         # for now, assume that the band energies are the same in the up and down sectors
-        self._add_term('tij', HamiltonianComponent(
+        self._hamiltonian.add_term('tij', HamiltonianComponent(
             csr_array=self._wrap_one_body_spin_structure(epsilon_up, spin_symm),
             model_type='one_body',
             spin_symm=spin_symm,
@@ -924,10 +832,6 @@ class HamiltonianBuilder:
         where :math:`\vec{\sigma}` is the vector of Pauli matrices, and :math:`\vec{r}_{ij}`
         is the relative position between sites i and j.
         """
-        if not rashba_lambda:
-            logger.info("no Rashba SOC lambda provided, skipping build")
-            return
-
         if spin_symm is None:
             spin_symm = self._hamiltonian.spin_symm
 
@@ -958,8 +862,7 @@ class HamiltonianBuilder:
         def soc_matrix(axis):
             """The site-pair matrix carrying the `axis` component of r_ij."""
             row, column, data = [], [], []
-            for pair in self._lattice.get_nth_neighbors(n=n,
-                                                        twist=self._hamiltonian.twist):
+            for pair in self._lattice.get_nth_neighbors(n=n):
                 for m in range(nbands):
                     row.append(self._index_map(pair.i, m))
                     column.append(self._index_map(pair.j, m))
@@ -981,7 +884,7 @@ class HamiltonianBuilder:
             [H_rashba_up_down.conj().T, zero]
         ], format='csr')
 
-        self._add_term('tij', HamiltonianComponent(
+        self._hamiltonian.add_term('tij', HamiltonianComponent(
             csr_array=H_rashba,
             model_type='one_body',
             spin_symm=spin_symm,
@@ -1006,12 +909,12 @@ class HamiltonianBuilder:
             an override for the default spin symmetry enumerate type for the hopping matrix.
             If not given, the spin symmetry of the Hamiltonian will be used.
         pin_type : str, optional
-            overrides the Hamiltonian's ``afm_pin_type``.
+            overrides the builder's ``afm_pin_type``.
 
         Raises
         ------
         ValueError
-            when the Hamiltonian has an invalid `afm_pin_type`
+            when the pin type is invalid
 
         Notes
         -----
@@ -1024,7 +927,7 @@ class HamiltonianBuilder:
         with lattice coordinate 0 or L-1, on the given axis.
         """
         if pin_type is None:
-            pin_type = self._hamiltonian.afm_pin_type
+            pin_type = self.afm_pin_type
         pin_type = pin_type.lower()
         logger.info("using afm pin type: %s", pin_type)
 
@@ -1059,12 +962,12 @@ class HamiltonianBuilder:
             an override for the default spin symmetry enumerate type for the hopping matrix.
             If not given, the spin symmetry of the Hamiltonian will be used.
         pin_type : str, optional
-            overrides the Hamiltonian's ``fm_pin_type``.
+            overrides the builder's ``fm_pin_type``.
 
         Raises
         ------
         ValueError
-            when the Hamiltonian has an invalid `fm_pin_type`
+            when the pin type is invalid
 
         Notes
         -----
@@ -1077,7 +980,7 @@ class HamiltonianBuilder:
         with lattice coordinate 0 or L-1, on the given axis.
         """
         if pin_type is None:
-            pin_type = self._hamiltonian.fm_pin_type
+            pin_type = self.fm_pin_type
         pin_type = pin_type.lower()
         logger.info("using fm pin type: %s", pin_type)
 
@@ -1152,8 +1055,6 @@ class HamiltonianBuilder:
         shape = (self._hamiltonian.nbasis, self._hamiltonian.nbasis)
 
         row, column, data = [], [], []
-        # TODO: a little inefficient, i.e. could loop over just the sites
-        #           on the desired edge, not a problem for now
         for site in self._lattice.get_sites():
             r = site.coord
             if r[axis] == 0 or r[axis] == self._lattice.L[axis] - 1:
@@ -1165,7 +1066,7 @@ class HamiltonianBuilder:
         H_pin_up = sps.csr_array((data, (row, column)), shape=shape)
         H_pin_down = H_pin_up if same_sign else -1 * H_pin_up
 
-        self._add_term('tij', HamiltonianComponent(
+        self._hamiltonian.add_term('tij', HamiltonianComponent(
             csr_array=self._wrap_one_body_spin_structure(H_pin_up, spin_symm, H_pin_down),
             model_type='one_body',
             spin_symm=spin_symm,
@@ -1287,8 +1188,8 @@ class HamiltonianBuilder:
         Notes
         -----
         Agnostic to the type of U term (U, U1, U2, ...); `band_U` is assumed to
-        already follow the upper-triangular convention (see
-        `upper_triangular_band_matrix`).
+        already follow the triangle convention (see `onsite_band_matrix` and
+        `intersite_band_matrix`).
         """
         if nth_neighbor == 0:
             site_matrix = sps.identity(self._lattice.N_sites)
@@ -1304,7 +1205,7 @@ class HamiltonianBuilder:
         if hst_type is None:
             hst_type = self._get_hst_type(band_U.toarray(), is_discrete=is_discrete)
 
-        self._add_term(_key, HamiltonianComponent(
+        self._hamiltonian.add_term(_key, HamiltonianComponent(
             csr_array=H_interaction,
             model_type=model_type,
             spin_symm=spin_symm,
@@ -1343,11 +1244,6 @@ class HamiltonianBuilder:
           and one negative) to allow different Hubbard-Stratonovich Transformations to be
           used for each case.
         """
-        U = np.array(U)
-
-        if np.allclose(U, 0.0):
-            logger.info("no Hubbard U provided, skipping build")
-            return
 
         logger.info("building Hubbard U term with U=%s", U)
 
@@ -1382,7 +1278,7 @@ class HamiltonianBuilder:
         if hst_type is None:
             hst_type = self._get_hst_type(U)
 
-        self._add_term('Uij', HamiltonianComponent(
+        self._hamiltonian.add_term('Uij', HamiltonianComponent(
             csr_array=H_U,
             model_type='hubbard_u',
             hst_type=self._clean_hst_type(hst_type),
@@ -1451,10 +1347,6 @@ class HamiltonianBuilder:
         """
         self._require_multiband_onsite(nth_neighbor, "Hubbard U1")
 
-        U1 = np.array(U1)
-        if np.allclose(U1, 0.0):
-            logger.info("no Hubbard-Kanamori U1 provided, skipping build")
-            return
 
         logger.info("building Hubbard-Kanamori density-density U1 term with U1=%s", U1)
 
@@ -1494,10 +1386,6 @@ class HamiltonianBuilder:
         """
         self._require_multiband_onsite(nth_neighbor, "Hubbard U2")
 
-        U2 = np.array(U2)
-        if np.allclose(U2, 0.0):
-            logger.info("empty Hubbard-Kanamori U2 provided, skipping build")
-            return
 
         logger.info("building Hubbard-Kanamori spin-spin U2 term with U2=%s", U2)
 
@@ -1533,10 +1421,6 @@ class HamiltonianBuilder:
         """
         self._require_multiband_onsite(nth_neighbor, "Hubbard J")
 
-        J = np.array(J)
-        if np.allclose(J, 0.0):
-            logger.info("no Hubbard-Kanamori J provided, skipping build")
-            return
 
         logger.info("building Hubbard-Kanamori J term with J=%s", J)
 
@@ -1570,10 +1454,7 @@ class HamiltonianBuilder:
         self.hubbard_U1_density_density(-J / 4, hst_type=hst_type, nth_neighbor=nth_neighbor)
         self.hubbard_U2_spin_spin(J / 4, hst_type=hst_type, nth_neighbor=nth_neighbor)
 
-        J = np.array(-J)  # by convention
-        if np.allclose(J, 0.0):
-            logger.info("empty Heisenberg J provided, skipping build")
-            return
+        J = -J  # by convention
 
         logger.info("building Heisenberg J term with J=%s", J)
 
@@ -1650,7 +1531,7 @@ class HamiltonianBuilder:
            size) whose top block is ``U + U1`` and whose bottom block is ``U2``.
         2. U2 is zero, so the result is just ``U + U1``.
 
-        `LatticeHamiltonian._split_hubbard_u` inverts this on read.
+        `lattice_hamiltonian._split_hubbard_u` inverts this on read.
         """
         def terms_by_hst(local_terms, hst_type, keys):
             """Every term of Hubbard-Stratonovich type `hst_type` under `keys`."""
@@ -1699,7 +1580,7 @@ class HamiltonianBuilder:
                 hubbard_matrix = density_density_term.csr_array
                 spin_symm = density_density_term.spin_symm
 
-            self._add_term('Uij', HamiltonianComponent(
+            self._hamiltonian.add_term('Uij', HamiltonianComponent(
                 csr_array=hubbard_matrix,
                 model_type='hubbard_u',
                 spin_symm=spin_symm,
