@@ -12,12 +12,12 @@
 Operations on Slater matrices, independent of the domain that produced the
 orbitals.
 
-Every trial wavefunction here reduces to Slater matrices in the column layout
-`safiretools.NOMSDWavefunction` takes — the spin channels as consecutive column
-blocks. This module holds the operations on that layout: building one from
-orbital coefficients and occupied indices, expressing it in another basis,
-splitting it back into its spin blocks, and checking or restoring the
-orthonormality of its columns.
+Every trial wavefunction here reduces to Slater matrices, held as one
+``(npol*nmo, n)`` matrix per spin channel. This module holds the operations on
+them: building one from orbital coefficients and occupied indices, expressing it
+in another basis, converting to and from the public spin layout the
+wavefunction classes take, and checking or restoring the orthonormality of its
+columns.
 
 Nothing here reads an external convention, so a domain module (`pyscf.py`,
 `pbc.py`, `free_electron.py`) keeps only the code that decodes its own — which
@@ -58,14 +58,14 @@ def _select_orbitals(mo_coeffs, nocc: Iterable, nelec: int):
 
 def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
     """
-    The Slater matrix for a reference of the given spin symmetry, in the column
-    layout `safiretools.NOMSDWavefunction` takes.
+    The Slater matrices for a reference of the given spin symmetry, one per
+    spin channel.
 
     Parameters
     ----------
     spin_symm : SpinSymm
-        Spin symmetry of the reference, which decides how many column blocks
-        the result has.
+        Spin symmetry of the reference, which decides how many channels the
+        result has.
     mo_coeffs : array_like
         Orbital coefficients: one matrix, or — for a collinear reference built
         from spin-resolved orbitals (UHF) — one per spin channel.
@@ -78,15 +78,16 @@ def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
 
     Returns
     -------
-    numpy.ndarray
-        ``complex128`` Slater matrix, ``(npol*nmo, sum(nelec_per_spin))``.
+    tuple of numpy.ndarray
+        One ``complex128`` ``(npol*nmo, nelec_of_that_spin)`` Slater matrix per
+        spin channel.
     """
     mo_coeffs = np.asarray(mo_coeffs)
 
     if spin_symm is SpinSymm.CLOSED:
-        return _select_orbitals(mo_coeffs, nocc[0], nelec[0])
+        return (_select_orbitals(mo_coeffs, nocc[0], nelec[0]),)
     if spin_symm is SpinSymm.NONCOLLINEAR:
-        return _select_orbitals(mo_coeffs, nocc[0], sum(nelec))
+        return (_select_orbitals(mo_coeffs, nocc[0], sum(nelec)),)
 
     if len(nocc) != len(nelec):
         raise ValueError(
@@ -95,9 +96,8 @@ def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
 
     # one matrix (ROHF) or one per spin (UHF)
     per_spin = mo_coeffs if mo_coeffs.ndim == 3 else [mo_coeffs] * len(nocc)
-    return np.concatenate([_select_orbitals(coeffs, spin_nocc, spin_nelec)
-                           for coeffs, spin_nocc, spin_nelec
-                           in zip(per_spin, nocc, nelec)], axis=1)
+    return tuple(_select_orbitals(coeffs, spin_nocc, spin_nelec)
+                 for coeffs, spin_nocc, spin_nelec in zip(per_spin, nocc, nelec))
 
 
 def transform_slater(orbitals, transform):
@@ -125,43 +125,136 @@ def transform_slater(orbitals, transform):
 
 
 # ----------------------------------------------------------------------
-# spin blocks
+# the public spin layout
 # ----------------------------------------------------------------------
 
-def spin_blocks(orbitals, nelec_per_spin):
-    """
-    Split an orbital matrix into its per-spin column blocks.
+def parse_spin_layout(value, spin_symm=None, stacked: bool = False,
+                      name: str = 'value'):
+    r"""
+    Read a value in the public spin layout into one matrix per spin channel.
+
+    The layout's type and rank carry the spin symmetry:
+
+    ============  ======================================================
+    closed        `numpy.ndarray`, ``(nmo, nup)``
+    collinear     `tuple` of two arrays, ``(nmo, nup)`` and ``(nmo, ndown)``
+    noncollinear  `numpy.ndarray`, ``(2, nmo, nelec)``
+    ============  ======================================================
+
+    A collinear value must be a `tuple`: a list, or an array holding both
+    channels, is not accepted, since with ``nup == ndown`` it would be
+    indistinguishable from a noncollinear one.
 
     Parameters
     ----------
-    orbitals : numpy.ndarray
-        Orbital matrix, ``(npol*nmo, sum(nelec_per_spin))``.
-    nelec_per_spin : sequence of int
-        Electron count in each spin channel.
+    value : numpy.ndarray or tuple of numpy.ndarray
+        The value to read.
+    spin_symm : SpinSymm or str or int, optional
+        The spin symmetry `value` must have. Inferred from the layout when
+        omitted.
+    stacked : bool, optional
+        Every array carries one extra leading axis, such as ``ndets``.
+    name : str, optional
+        What `value` is called in error messages.
 
-    Yields
-    ------
-    numpy.ndarray
-        One view per spin channel, in order.
+    Returns
+    -------
+    spin_symm : SpinSymm
+        The spin symmetry of the layout.
+    blocks : tuple of numpy.ndarray
+        One ``complex128`` ``(..., npol*nmo, n)`` matrix per spin channel. A
+        noncollinear value has its polarization axis folded into the rows,
+        spin up first.
 
     Raises
     ------
+    TypeError
+        If `value` is none of the three layouts.
     ValueError
-        If the matrix has the wrong number of columns.
+        If the two collinear channels span different orbitals, or the layout
+        contradicts `spin_symm`.
     """
-    orbitals = np.asarray(orbitals)
-    expected = sum(nelec_per_spin)
+    lead = int(stacked)
 
-    if orbitals.shape[-1] != expected:
+    if isinstance(value, tuple) and len(value) == 2:
+        blocks = tuple(np.asarray(block, dtype=np.complex128) for block in value)
+        if any(block.ndim != 2 + lead for block in blocks):
+            raise _layout_error(value, stacked, name)
+        if blocks[0].shape[:-1] != blocks[1].shape[:-1]:
+            raise ValueError(
+                f"the collinear channels of {name} have shapes {blocks[0].shape} "
+                f"and {blocks[1].shape}, which differ in more than their "
+                "electron count"
+            )
+        found = SpinSymm.COLLINEAR
+    elif isinstance(value, np.ndarray) and value.ndim == 2 + lead:
+        blocks = (value.astype(np.complex128, copy=False),)
+        found = SpinSymm.CLOSED
+    elif isinstance(value, np.ndarray) and value.ndim == 3 + lead \
+            and value.shape[lead] == 2:
+        rows = 2 * value.shape[lead + 1]
+        blocks = (value.astype(np.complex128, copy=False)
+                  .reshape(value.shape[:lead] + (rows, value.shape[-1])),)
+        found = SpinSymm.NONCOLLINEAR
+    else:
+        raise _layout_error(value, stacked, name)
+
+    if spin_symm is not None and SpinSymm.from_input(spin_symm) is not found:
         raise ValueError(
-            f"orbital matrix has {orbitals.shape[-1]} columns; expected "
-            f"{expected} for electron counts {tuple(nelec_per_spin)}"
+            f"{name} must be in the {SpinSymm.from_input(spin_symm).label} "
+            f"layout, got the {found.label} one"
         )
 
-    start = 0
-    for nelec in nelec_per_spin:
-        yield orbitals[..., start:start + nelec]
-        start += nelec
+    return found, blocks
+
+
+def format_spin_layout(blocks, spin_symm):
+    """
+    The inverse of `parse_spin_layout`: per-channel ``(..., npol*nmo, n)``
+    matrices in the public spin layout of `spin_symm`.
+    """
+    spin_symm = SpinSymm.from_input(spin_symm)
+    if spin_symm is SpinSymm.COLLINEAR:
+        return tuple(blocks)
+
+    (block,) = blocks
+    if spin_symm is SpinSymm.NONCOLLINEAR:
+        return block.reshape(block.shape[:-2]
+                             + (2, block.shape[-2] // 2, block.shape[-1]))
+    return block
+
+
+def spin_layout_shape(value):
+    """The shape of a value in the public spin layout; a pair of shapes when collinear."""
+    if isinstance(value, tuple):
+        return tuple(np.shape(block) for block in value)
+    return np.shape(value)
+
+
+def expected_spin_layout_shape(spin_symm, nmo: int, nelec_per_spin):
+    """The `spin_layout_shape` a single determinant of `spin_symm` must have."""
+    spin_symm = SpinSymm.from_input(spin_symm)
+    if spin_symm is SpinSymm.COLLINEAR:
+        return tuple((nmo, nelec) for nelec in nelec_per_spin)
+    if spin_symm is SpinSymm.NONCOLLINEAR:
+        return (2, nmo, nelec_per_spin[0])
+    return (nmo, nelec_per_spin[0])
+
+
+def _layout_error(value, stacked: bool, name: str) -> TypeError:
+    lead = "(ndets, " if stacked else "("
+    if isinstance(value, np.ndarray):
+        got = f"an array of shape {value.shape}"
+    elif isinstance(value, tuple):
+        got = f"a tuple of {len(value)}"
+    else:
+        got = f"a {type(value).__name__}"
+
+    return TypeError(
+        f"{name} must be a closed-shell array {lead}nmo, nup), a collinear "
+        f"tuple of arrays {lead}nmo, nup) and {lead}nmo, ndown), or a "
+        f"noncollinear array {lead}2, nmo, nelec); got {got}"
+    )
 
 
 # ----------------------------------------------------------------------

@@ -142,8 +142,7 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
             one_body, nelec=nelec, nmo=nmo,
             filling_strategy=filling_strategy, shell_tol=shell_tol)
 
-    return NOMSDWavefunction.from_single_determinant(orbitals, nelec=nelec,
-                                                     spin_symm=spin_symm, nmo=nmo)
+    return NOMSDWavefunction.from_single_determinant(orbitals)
 
 
 # ----------------------------------------------------------------------
@@ -328,12 +327,12 @@ def _collinear_orbitals(one_body, nelec, nmo: int, filling_strategy='aufbau',
                         shell_tol=SHELL_TOL):
     """
     Occupied orbitals for a collinear free-electron determinant: the two spin
-    channels are diagonalized independently and their columns concatenated.
+    channels are diagonalized independently.
 
     Returns
     -------
-    numpy.ndarray
-        ``(nmo, nup + ndown)``.
+    tuple of numpy.ndarray
+        ``(nmo, nup)`` and ``(nmo, ndown)``.
     """
     occupied = []
     for label, block, nelec_spin in zip(('up', 'down'),
@@ -347,7 +346,7 @@ def _collinear_orbitals(one_body, nelec, nmo: int, filling_strategy='aufbau',
     logger.info("built a collinear free-electron determinant: %d electrons "
                 "(up: %d, down: %d)", sum(nelec), *nelec)
 
-    return np.hstack(occupied)
+    return tuple(occupied)
 
 
 def _collinear_blocks(one_body, nmo: int):
@@ -378,7 +377,7 @@ def _noncollinear_orbitals(one_body, nelec, nmo: int,
     Returns
     -------
     numpy.ndarray
-        ``(2*nmo, nup + ndown)``.
+        ``(2, nmo, nup + ndown)``, spin-up components first.
     """
     nelec_total = sum(nelec)
 
@@ -401,4 +400,4 @@ def _noncollinear_orbitals(one_body, nelec, nmo: int,
                 "in %d spinor orbitals (originally up: %d, down: %d)",
                 nelec_total, 2 * nmo, *nelec)
 
-    return occupied
+    return occupied.reshape(2, nmo, nelec_total)

@@ -32,7 +32,13 @@ import h5py as h5
 from safiretools.hdf5 import replace_group
 from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
-from safiretools.wavefunction.slater import ORTHONORMAL_TOL
+from safiretools.wavefunction.slater import (
+    ORTHONORMAL_TOL,
+    expected_spin_layout_shape,
+    format_spin_layout,
+    parse_spin_layout,
+    spin_layout_shape,
+)
 
 
 def wavefunction_format(path) -> str:
@@ -90,16 +96,17 @@ class Wavefunction(ABC):
         Number of *spatial* orbitals, even when noncollinear.
     spin_symm : SpinSymm or str or int
         Spin symmetry, coerced through `SpinSymm.from_input`.
-    psi0 : sequence of numpy.ndarray, optional
-        Initial Slater determinant for the AFQMC walkers, one
-        ``(npol*nmo, nelec_of_that_spin)`` block per spin channel. Derived from
-        the wavefunction itself when omitted.
+    psi0 : numpy.ndarray or tuple of numpy.ndarray, optional
+        Initial Slater determinant for the AFQMC walkers, in the spin layout of
+        `spin_symm`: ``(nmo, nup)`` when closed, a tuple of ``(nmo, nup)`` and
+        ``(nmo, ndown)`` when collinear, ``(2, nmo, nelec)`` when noncollinear.
+        Derived from the wavefunction itself when omitted.
 
     Raises
     ------
     ValueError
         If the electron counts contradict `spin_symm`, or `psi0` has the wrong
-        number of blocks or the wrong shape.
+        layout or shape.
 
     Notes
     -----
@@ -187,17 +194,15 @@ class Wavefunction(ABC):
         return self.coeffs.size
 
     @property
-    def psi0(self) -> tuple:
+    def psi0(self):
         """
-        Initial Slater determinant for the AFQMC walkers: one
-        ``(npol*nmo, nelec_of_that_spin)`` block per spin channel.
+        Initial Slater determinant for the AFQMC walkers, in the spin layout of
+        `spin_symm` (see the class docstring).
 
         Derived from the wavefunction itself when none was supplied — see
         `_default_psi0` on the concrete subclass.
         """
-        if self._psi0 is None:
-            return self._default_psi0()
-        return self._psi0
+        return format_spin_layout(self._psi0_blocks(), self.spin_symm)
 
     @psi0.setter
     def psi0(self, value) -> None:
@@ -205,28 +210,28 @@ class Wavefunction(ABC):
             self._psi0 = None
             return
 
-        blocks = tuple(np.asarray(block, dtype=np.complex128) for block in value)
+        _, blocks = parse_spin_layout(value, self.spin_symm, name='psi0')
 
-        if len(blocks) != self.nspin:
+        expected = tuple((self.nrows, nelec) for nelec in self.nelec_per_spin)
+        if tuple(block.shape for block in blocks) != expected:
             raise ValueError(
-                f"psi0 must have one block per spin channel: expected "
-                f"{self.nspin} for a {self.spin_symm.label} wavefunction, "
-                f"got {len(blocks)}"
+                f"psi0 has shape {spin_layout_shape(value)}, expected "
+                f"{expected_spin_layout_shape(self.spin_symm, self.nmo, self.nelec_per_spin)}"
             )
 
-        for ispin, (block, nelec) in enumerate(zip(blocks, self.nelec_per_spin)):
-            if block.shape != (self.nrows, nelec):
-                raise ValueError(
-                    f"psi0 block {ispin} has shape {block.shape}, expected "
-                    f"({self.nrows}, {nelec})"
-                )
-
         self._psi0 = blocks
+
+    def _psi0_blocks(self) -> tuple:
+        """`psi0` as one ``(npol*nmo, n)`` matrix per spin channel."""
+        if self._psi0 is None:
+            return self._default_psi0()
+        return self._psi0
 
     @abstractmethod
     def _default_psi0(self) -> tuple:
         """
-        The initial Slater determinant to use when the caller supplied none.
+        The initial Slater determinant to use when the caller supplied none, as
+        one ``(npol*nmo, n)`` matrix per spin channel.
         """
 
     @abstractmethod
@@ -272,7 +277,7 @@ class Wavefunction(ABC):
                 nmo=self.nmo,
                 nelec=self.nelec_on_disk,
                 coeffs=self.coeffs,
-                psi0=self.psi0,
+                psi0=self._psi0_blocks(),
             )
             self._write_payload(group)
 
@@ -341,19 +346,73 @@ class Wavefunction(ABC):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_single_determinant(cls, det, nelec, spin_symm,
-                                nmo=None) -> "Wavefunction":
+    def from_single_determinant(cls, det) -> "Wavefunction":
         """
-        The wavefunction whose only determinant is the Slater matrix `det`.
-        Always a `safiretools.NOMSDWavefunction`.
+        Build a single-determinant trial wavefunction from its occupied
+        orbitals. Always a `safiretools.NOMSDWavefunction`.
+
+        The layout of `det` decides the spin symmetry, and its shape the
+        electron counts and the number of orbitals, so nothing else is needed.
+
+        Parameters
+        ----------
+        det : numpy.ndarray or tuple of numpy.ndarray
+            The occupied orbitals, as columns:
+
+            - closed shell: an array ``(nmo, nup)``, shared by both spins;
+            - collinear: a *tuple* of arrays ``(nmo, nup)`` and ``(nmo, ndown)``;
+            - noncollinear: an array ``(2, nmo, nelec)`` of spinor orbitals,
+              spin-up components first.
+
+        Returns
+        -------
+        NOMSDWavefunction
+            A one-determinant expansion with coefficient 1, whose walker
+            initial state `psi0` is `det` itself. A noncollinear one reports
+            ``nelec == (nelec, 0)``, as the file format does.
+
+        Raises
+        ------
+        TypeError
+            If `det` is none of the three layouts — including a list, which is
+            not read as collinear.
+        ValueError
+            If the two collinear channels span different numbers of orbitals, or
+            this is called on a subclass other than `NOMSDWavefunction`.
+
+        Notes
+        -----
+        A collinear determinant must be a tuple. An array holding both spin
+        channels — such as PySCF's UHF ``mo_coeff[:, :, :nocc]`` — has the
+        noncollinear shape ``(2, nmo, n)`` and is read as a noncollinear
+        determinant; pass ``tuple(...)`` of it instead.
+
+        Examples
+        --------
+        A closed-shell determinant occupying the lowest two of four orbitals:
+
+        >>> import numpy as np
+        >>> wavefunction = Wavefunction.from_single_determinant(np.eye(4)[:, :2])
+        >>> wavefunction.spin_symm.label, wavefunction.nelec
+        ('closed', (2, 2))
+
+        The collinear determinant with one more spin-up electron:
+
+        >>> orbitals = np.eye(4)
+        >>> wavefunction = Wavefunction.from_single_determinant(
+        ...     (orbitals[:, :3], orbitals[:, :2]))
+        >>> wavefunction.nelec
+        (3, 2)
         """
         from safiretools.wavefunction.nomsd import NOMSDWavefunction
 
         _check_representation(cls, NOMSDWavefunction, 'from_single_determinant')
 
-        return NOMSDWavefunction(coeffs=np.array([1.0 + 0j]),
-                                 dets=np.asarray(det)[np.newaxis, ...],
-                                 nelec=nelec, spin_symm=spin_symm, nmo=nmo)
+        spin_symm, blocks = parse_spin_layout(det, name='det')
+        dets = format_spin_layout(tuple(block[np.newaxis] for block in blocks),
+                                  spin_symm)
+
+        return NOMSDWavefunction(coeffs=np.array([1.0 + 0j]), dets=dets)
 
     @classmethod
     def from_free_electron(cls, source, nelec, spin_symm=None,

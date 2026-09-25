@@ -17,9 +17,10 @@ wavefunction,
 stored as the coefficients :math:`c_i` plus one orbital matrix per determinant.
 
 Every domain that produces this representation reaches it through a classmethod
-factory — `NOMSDWavefunction.from_free_electron`,
-`~NOMSDWavefunction.from_pyscf`, `~NOMSDWavefunction.from_pbc_scf` — which
-delegate to the implementation modules alongside this one.
+factory — `NOMSDWavefunction.from_single_determinant`,
+`~NOMSDWavefunction.from_free_electron`, `~NOMSDWavefunction.from_pyscf`,
+`~NOMSDWavefunction.from_pbc_scf` — which delegate to the implementation
+modules alongside this one.
 """
 
 from warnings import warn
@@ -31,8 +32,9 @@ from safiretools.wavefunction import io
 from safiretools.wavefunction.base import Wavefunction
 from safiretools.wavefunction.slater import (
     ORTHONORMAL_TOL,
+    format_spin_layout,
     orthonormalize,
-    spin_blocks,
+    parse_spin_layout,
 )
 
 
@@ -44,26 +46,29 @@ class NOMSDWavefunction(Wavefunction):
     ----------
     coeffs : array_like
         Determinant coefficients :math:`c_i`, ``(ndets,)``.
-    dets : array_like
-        Orbital matrices, ``(ndets, npol*nmo, ncols)``, where ``ncols`` is
-        ``sum(nelec_per_spin)``: the spin channels occupy consecutive column
-        blocks. That is ``nup`` columns for a closed-shell wavefunction (the
-        beta channel repeats the alpha one), ``nup + ndown`` when collinear, and
-        ``nup + ndown`` over ``2*nmo`` rows when noncollinear.
-    nelec : tuple(int, int)
-        Physical electron counts ``(nup, ndown)``.
-    spin_symm : SpinSymm or str or int
-        Spin symmetry, coerced through `SpinSymm.from_input`.
-    psi0 : sequence of numpy.ndarray, optional
-        Initial Slater determinant for the AFQMC walkers, one block per spin
-        channel. Taken from ``dets[0]`` when omitted.
-    nmo : int, optional
-        Number of orbitals. Inferred from `dets` and `spin_symm` when omitted.
+    dets : numpy.ndarray or tuple of numpy.ndarray
+        The occupied orbitals of every determinant, as columns. The layout
+        decides the spin symmetry, and the shape the electron counts and the
+        number of orbitals:
+
+        - closed shell: an array ``(ndets, nmo, nup)``, shared by both spins;
+        - collinear: a *tuple* of arrays ``(ndets, nmo, nup)`` and
+          ``(ndets, nmo, ndown)``;
+        - noncollinear: an array ``(ndets, 2, nmo, nelec)`` of spinor
+          orbitals, spin-up components first. `nelec` is then
+          ``(nelec, 0)``, as the file format records it.
+    psi0 : numpy.ndarray or tuple of numpy.ndarray, optional
+        Initial Slater determinant for the AFQMC walkers, in the single-
+        determinant form of the same layout. Taken from ``dets[0]`` when
+        omitted.
 
     Raises
     ------
+    TypeError
+        If `dets` or `psi0` is none of the layouts.
     ValueError
-        If `dets` has the wrong rank or does not match `nelec` and `spin_symm`.
+        If `dets` holds a different number of determinants than `coeffs`, or
+        `psi0` does not match it.
 
     Examples
     --------
@@ -74,61 +79,68 @@ class NOMSDWavefunction(Wavefunction):
 
     _HDF5_GROUP = 'NOMSD'
 
-    def __init__(self, coeffs, dets, nelec, spin_symm, psi0=None,
-                 nmo: int = None) -> None:
-        dets = np.asarray(dets, dtype=np.complex128)
-        if dets.ndim != 3:
-            raise ValueError(
-                "dets must have shape (ndets, npol*nmo, ncols), got shape "
-                f"{dets.shape}; a single determinant still needs its leading axis"
-            )
+    def __init__(self, coeffs, dets, psi0=None) -> None:
+        spin_symm, blocks = parse_spin_layout(dets, stacked=True, name='dets')
 
-        if nmo is None:
-            nmo = dets.shape[1] // SpinSymm.from_input(spin_symm).npol
+        widths = tuple(block.shape[-1] for block in blocks)
+        if spin_symm is SpinSymm.COLLINEAR:
+            nelec = widths
+        elif spin_symm is SpinSymm.NONCOLLINEAR:
+            nelec = (widths[0], 0)
+        else:
+            nelec = widths * 2
 
-        self.dets = dets
+        # one (ndets, npol*nmo, n) stack per spin channel, copied so the
+        #   caller's arrays are not aliased
+        self._dets = tuple(block.copy() for block in blocks)
 
-        super().__init__(coeffs=coeffs, nelec=nelec, nmo=nmo,
+        super().__init__(coeffs=coeffs, nelec=nelec,
+                         nmo=self._dets[0].shape[1] // spin_symm.npol,
                          spin_symm=spin_symm, psi0=psi0)
 
-        if self.dets.shape != (self.ndets, self.nrows, sum(self.nelec_per_spin)):
+        if self._dets[0].shape[0] != self.ndets:
             raise ValueError(
-                f"dets has shape {self.dets.shape}, expected "
-                f"({self.ndets}, {self.nrows}, {sum(self.nelec_per_spin)}) for "
-                f"{self.ndets} determinant(s) of a {self.spin_symm.label} "
-                f"wavefunction with nelec={self.nelec} and nmo={self.nmo}"
+                f"dets holds {self._dets[0].shape[0]} determinant(s) but coeffs "
+                f"has {self.ndets}"
             )
 
     # ------------------------------------------------------------------
     # views of the determinants
     # ------------------------------------------------------------------
 
-    def spin_blocks(self, idet: int = 0):
+    @property
+    def dets(self):
+        """Every determinant, in the layout the constructor takes."""
+        return format_spin_layout(self._dets, self.spin_symm)
+
+    def determinant(self, idet: int = 0):
         """
-        The per-spin column blocks of determinant `idet`, as a tuple of length
-        `Wavefunction.nspin`.
+        Determinant `idet`, in the layout `Wavefunction.from_single_determinant`
+        takes.
         """
-        return tuple(spin_blocks(self.dets[idet], self.nelec_per_spin))
+        return format_spin_layout(tuple(channel[idet] for channel in self._dets),
+                                  self.spin_symm)
 
     def _default_psi0(self) -> tuple:
-        """The leading determinant's spin blocks."""
-        return tuple(block.copy() for block in self.spin_blocks(0))
+        """The leading determinant."""
+        return tuple(channel[0].copy() for channel in self._dets)
 
     def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "NOMSDWavefunction":
         """
         Return a copy whose determinants — and explicit `psi0`, if any — have
         orthonormal columns. See `Wavefunction.orthonormalize`.
         """
-        dets = self.dets.copy()
-        for det in dets:
-            for block in spin_blocks(det, self.nelec_per_spin):
-                block[...] = orthonormalize(block, tol=tol)
+        dets = tuple(np.array([orthonormalize(block, tol=tol) for block in channel],
+                              dtype=np.complex128)
+                     for channel in self._dets)
 
-        psi0 = None if self._psi0 is None else tuple(
-            orthonormalize(block, tol=tol) for block in self._psi0)
+        psi0 = None if self._psi0 is None else format_spin_layout(
+            tuple(orthonormalize(block, tol=tol) for block in self._psi0),
+            self.spin_symm)
 
-        return type(self)(coeffs=self.coeffs.copy(), dets=dets, nelec=self.nelec,
-                          spin_symm=self.spin_symm, psi0=psi0, nmo=self.nmo)
+        return type(self)(coeffs=self.coeffs.copy(),
+                          dets=format_spin_layout(dets, self.spin_symm),
+                          psi0=psi0)
 
     # ------------------------------------------------------------------
     # serialization
@@ -143,15 +155,13 @@ class NOMSDWavefunction(Wavefunction):
                 "Slater determinants are recommended (pass psi0=)."
             )
 
-        io.write_nomsd(group, self.dets, self.nelec_per_spin)
+        io.write_nomsd(group, self._dets)
 
     @classmethod
     def _read_payload(cls, group, header: dict) -> "NOMSDWavefunction":
         spin_symm = header['spin_symm']
-        nelec = header['nelec']
+        dets = io.read_nomsd(group, header['ndets'], spin_symm.nspin)
 
-        dets = io.read_nomsd(group, header['ndets'], spin_symm.nelec_per_spin(nelec))
-
-        return cls(coeffs=header['coeffs'], dets=dets, nelec=nelec,
-                   spin_symm=spin_symm, psi0=header['psi0'],
-                   nmo=header['nmo'])
+        return cls(coeffs=header['coeffs'],
+                   dets=format_spin_layout(dets, spin_symm),
+                   psi0=format_spin_layout(header['psi0'], spin_symm))

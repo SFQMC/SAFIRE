@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from safiretools import NOMSDWavefunction, PHMSDWavefunction, SpinSymm, Wavefunction
+from safiretools.wavefunction.slater import spin_layout_shape
 
 pyscf = pytest.importorskip("pyscf")
 
@@ -125,7 +126,7 @@ class TestSingleDeterminant:
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec == (8, 8)
-        assert wavefunction.dets.shape == (1, 16, 16)
+        assert spin_layout_shape(wavefunction.dets) == ((1, 16, 8), (1, 16, 8))
 
     def test_partial_occupancies_still_give_one_determinant(self,
                                                             degenerate_scf_data):
@@ -209,11 +210,11 @@ class TestBaseClassDispatch:
         assert isinstance(Wavefunction.from_pbc_scf(collinear_scf_data),
                           NOMSDWavefunction)
 
-    def test_the_subclass_alias_agrees(self, collinear_scf_data):
+    def test_the_subclass_alias_agrees(self, collinear_scf_data, layouts_close):
         through_base = Wavefunction.from_pbc_scf(collinear_scf_data)
         through_subclass = NOMSDWavefunction.from_pbc_scf(collinear_scf_data)
 
-        assert np.allclose(through_base.dets, through_subclass.dets)
+        assert layouts_close(through_base.dets, through_subclass.dets)
 
     def test_the_wrong_representation_is_refused(self, collinear_scf_data):
         with pytest.raises(ValueError, match='from_pbc_scf'):

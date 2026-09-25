@@ -84,7 +84,6 @@ def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
 
     mo_occ = np.array(scf_data['Xocc'])
     nmo_pk = scf_data['nmo_pk']
-    nmo_tot = int(np.sum(nmo_pk))
 
     fock = scf_data['fock']
     if fock.ndim == 3:
@@ -110,8 +109,7 @@ def from_pbc_scf(source, ortho_ao=True, rediag=True, low=0.1, high=0.95):
     _log_eigenvalues(eigenvalues, order, nelec, collinear=collinear)
 
     return NOMSDWavefunction.from_single_determinant(
-        _supercell_slater(orbitals, occupancies, nmo_pk, nelec, collinear=collinear),
-        nelec=nelec, spin_symm=spin_symm, nmo=nmo_tot)
+        _supercell_slater(orbitals, occupancies, nmo_pk, nelec, collinear=collinear))
 
 
 # ----------------------------------------------------------------------
@@ -165,36 +163,31 @@ def _supercell_slater(orbitals, occupancies, nmo_pk, nelec, collinear):
 
     Returns
     -------
-    numpy.ndarray
-        ``(sum(nmo_pk), nup + ndown)`` when collinear, ``(sum(nmo_pk), nup)``
-        otherwise — the column layout `safiretools.NOMSDWavefunction` takes.
+    numpy.ndarray or tuple of numpy.ndarray
+        A tuple of ``(sum(nmo_pk), nup)`` and ``(sum(nmo_pk), ndown)`` when
+        collinear, one ``(sum(nmo_pk), nup)`` array otherwise — the layout
+        `safiretools.Wavefunction.from_single_determinant` takes.
     """
-    nalpha, nbeta = nelec
     nmo_tot = int(sum(nmo_pk))
-    ncols = nalpha + nbeta if collinear else nalpha
 
-    logger.debug("supercell wavefunction shape (%d, %d) for nelec=%s",
-                 nmo_tot, ncols, nelec)
+    logger.debug("supercell wavefunction over %d orbitals for nelec=%s",
+                 nmo_tot, nelec)
 
-    slater = np.zeros((nmo_tot, ncols), dtype=np.complex128)
+    channels = []
+    for ispin in range(2 if collinear else 1):
+        slater = np.zeros((nmo_tot, nelec[ispin]), dtype=np.complex128)
 
-    row = 0
-    col_alpha, col_beta = 0, nalpha
-    for k in range(len(nmo_pk)):
-        nocca = int(round(sum(occupancies[0][k])))
-        slater[row:row + nmo_pk[k], col_alpha:col_alpha + nocca] = \
-            orbitals[0][k][:, :nocca]
-        col_alpha += nocca
+        row, col = 0, 0
+        for k in range(len(nmo_pk)):
+            nocc = int(round(sum(occupancies[ispin][k])))
+            slater[row:row + nmo_pk[k], col:col + nocc] = \
+                orbitals[ispin][k][:, :nocc]
+            row += nmo_pk[k]
+            col += nocc
 
-        if collinear:
-            noccb = int(round(sum(occupancies[1][k])))
-            slater[row:row + nmo_pk[k], col_beta:col_beta + noccb] = \
-                orbitals[1][k][:, :noccb]
-            col_beta += noccb
+        channels.append(slater)
 
-        row += nmo_pk[k]
-
-    return slater
+    return tuple(channels) if collinear else channels[0]
 
 
 # ----------------------------------------------------------------------

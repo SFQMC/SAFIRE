@@ -34,28 +34,41 @@ def orthonormal(rng):
 
 
 @pytest.fixture
+def layouts_close():
+    """
+    `numpy.allclose` for values in the public spin layout, where a collinear
+    value is a tuple of two differently shaped arrays.
+    """
+    def close(a, b):
+        if isinstance(a, tuple) or isinstance(b, tuple):
+            return isinstance(a, tuple) and isinstance(b, tuple) \
+                and len(a) == len(b) \
+                and all(x.shape == y.shape and np.allclose(x, y)
+                        for x, y in zip(a, b))
+        return a.shape == b.shape and np.allclose(a, b)
+    return close
+
+
+@pytest.fixture
 def make_nomsd(orthonormal):
     """
     A factory for `NOMSDWavefunction`s of a given spin symmetry, with
-    orthonormal spin blocks.
+    orthonormal spin blocks. A noncollinear one takes all of `nelec` in its
+    single channel.
     """
-    widths = {
-        'closed': lambda na, nb: (na,),
-        'collinear': lambda na, nb: (na, nb),
-        'noncollinear': lambda na, nb: (na + nb,),
-    }
-
     def make(spin_symm='collinear', nelec=(3, 2), nmo=6, ndets=1):
-        npol = 2 if spin_symm == 'noncollinear' else 1
-        blocks = widths[spin_symm](*nelec)
-        dets = np.array([
-            np.concatenate([orthonormal(npol * nmo, width) for width in blocks],
-                           axis=1)
-            for _ in range(ndets)
-        ])
+        def stack(nrows, width):
+            return np.array([orthonormal(nrows, width) for _ in range(ndets)])
+
+        if spin_symm == 'closed':
+            dets = stack(nmo, nelec[0])
+        elif spin_symm == 'collinear':
+            dets = (stack(nmo, nelec[0]), stack(nmo, nelec[1]))
+        else:
+            dets = stack(2 * nmo, sum(nelec)).reshape(ndets, 2, nmo, sum(nelec))
+
         coeffs = np.array([1.0 + 0j] + [0.25 + 0j] * (ndets - 1))
-        return NOMSDWavefunction(coeffs=coeffs, dets=dets, nelec=nelec,
-                                 spin_symm=spin_symm, nmo=nmo)
+        return NOMSDWavefunction(coeffs=coeffs, dets=dets)
 
     return make
 
