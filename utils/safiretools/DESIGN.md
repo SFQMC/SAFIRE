@@ -423,20 +423,17 @@ only one of two BP-average endpoints' errors) gets fixed at the same time.
   wrote the first and read the second, so a closed-shell `spin_type` could never round-trip — and
   `label` always writes `'closed'`.
 
-## Known bug: `force_herm` diagonal-zeroing
+## Non-Hermitian one-body band matrices are an error
 
-`utils/matrix.py::force_herm`'s `'upper_triangular'` method (`np.triu(M,1)` then symmetrize)
-zeroes the diagonal. Its only two call sites (`tband` in `nth_neighbor_hopping`, `epsilon_band`
-in `onebody_onsite`) are one-body terms confirmed to be "read and used as the full matrix" (not
-the U1/U2/J convention below) — so this has been silently discarding onsite/diagonal terms for
-any caller using `force_herm=True` on a non-Hermitian `t`/`epsilon` input. Fix: reconstruct
-including the diagonal (`np.triu(M,0) + np.triu(M,1).conj().T`). The function is `force_hermitian`
-in `safiretools`, since both call sites take a *boolean* parameter of the same name that shadowed
-it — the boolean parameter keeps its documented name.
+`afqmctools`' `force_herm=True` option on `nth_neighbor_hopping` and `onebody_onsite` symmetrized a
+non-Hermitian `t`/`epsilon` band matrix from its upper triangle (and zeroed the diagonal while doing
+so). `safiretools` drops the option: a non-Hermitian band matrix raises `ValueError`, since silently
+discarding half of the user's input is never what they meant.
 
-**Distinct, correct convention — do not conflate:** the U1 and U2 pieces of the interaction matrix,
-and J, follow a triangularity rule of their own. This is a different code path from `force_herm` and
-stays in separate helpers — `onsite_band_matrix` and `intersite_band_matrix`.
+## Interaction-matrix triangle convention
+
+The U1 and U2 pieces of the interaction matrix, and J, follow a triangularity rule of their own,
+implemented in `onsite_band_matrix` and `intersite_band_matrix`.
 
 The AFQMC executable has **no notion of sites versus bands**: it reads a triangle of the whole
 interaction matrix, indexed by the combined `mu = site * nbands + band`. Per

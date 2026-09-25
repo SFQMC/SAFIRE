@@ -8,19 +8,16 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-"""`HamiltonianBuilder`: build steps, accessors, and the two Hermiticity
-conventions that must not be confused with each other."""
+"""`HamiltonianBuilder`: build steps, accessors, and the interaction-matrix
+triangle convention."""
 
 import numpy as np
 import pytest
-import scipy.sparse as sps
 
 from safiretools import Lattice, SpinSymm
 from safiretools.hamiltonian.model.builder import (
     HamiltonianBuilder,
-    force_hermitian,
     intersite_band_matrix,
-    is_hermitian,
     onsite_band_matrix,
     skip_empty_params,
 )
@@ -37,108 +34,11 @@ def square_4x4():
     return Lattice.from_dict(dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'))
 
 
-# ----------------------------------------------------------------------
-# force_hermitian: the diagonal must survive
-# ----------------------------------------------------------------------
-
-class TestForceHermitian:
-    """
-    afqmctools' ``force_herm`` started from ``triu(M, 1)``, which zeroed the
-    diagonal, so every onsite/diagonal term of a non-Hermitian input was
-    silently discarded.
-    """
-
-    NON_HERMITIAN = np.array([
-        [1.0, 2.0, 3.0],
-        [9.0, 4.0, 5.0],
-        [8.0, 7.0, 6.0],
-    ])
-
-    def test_diagonal_is_preserved(self):
-        result = force_hermitian(self.NON_HERMITIAN)
-
-        assert np.allclose(np.diag(result), np.diag(self.NON_HERMITIAN))
-        assert is_hermitian(result)
-
-    def test_upper_triangle_is_kept_and_mirrored(self):
-        result = force_hermitian(self.NON_HERMITIAN)
-
-        expected = np.array([
-            [1.0, 2.0, 3.0],
-            [2.0, 4.0, 5.0],
-            [3.0, 5.0, 6.0],
-        ])
-        assert np.allclose(result, expected)
-
-    def test_complex_diagonal_is_preserved_and_result_is_hermitian(self):
-        matrix = self.NON_HERMITIAN + 1j * np.tril(np.ones((3, 3)), -1)
-        result = force_hermitian(matrix)
-
-        assert np.allclose(np.diag(result), np.diag(matrix))
-        assert is_hermitian(result)
-
-    def test_sparse_diagonal_is_preserved(self):
-        result = force_hermitian(sps.csr_array(self.NON_HERMITIAN))
-
-        assert np.allclose(result.toarray().diagonal(), np.diag(self.NON_HERMITIAN))
-        assert is_hermitian(result)
-
-    def test_average_method(self):
-        result = force_hermitian(self.NON_HERMITIAN, method='average')
-
-        assert is_hermitian(result)
-        assert np.allclose(np.diag(result), np.diag(self.NON_HERMITIAN))
-
-    def test_unknown_method_raises(self):
-        with pytest.raises(ValueError, match="Unknown force_hermitian method"):
-            force_hermitian(self.NON_HERMITIAN, method='sideways')
-
-
-NON_HERMITIAN_BAND = np.array([[5.0, 2.0], [9.0, 7.0]])
-"""A non-Hermitian 2-band amplitude whose diagonal the old code discarded."""
-
-
-def test_onebody_onsite_keeps_the_band_diagonal(square_2x2):
-    """
-    Regression for the diagonal-zeroing bug at `epsilon_band` in
-    `onebody_onsite`, where the band diagonal lands on the matrix diagonal.
-    """
-    builder = HamiltonianBuilder(lattice=square_2x2, nbands=2,
-                                 spin_symm=SpinSymm.CLOSED)
-    builder.onebody_onsite(NON_HERMITIAN_BAND, force_herm=True)
-
-    matrix = builder.get_hamiltonian()['tij'][0].toarray()
-    assert np.allclose(np.diag(matrix), [5.0, 7.0] * square_2x2.N_sites)
-    assert np.allclose(matrix, matrix.conj().T)
-
-
-def test_nth_neighbor_hopping_keeps_the_band_diagonal(square_2x2):
-    """
-    Regression for the same bug at `tband` in `nth_neighbor_hopping`. Hopping
-    kroneckers the band matrix with a neighbor graph that has no self-neighbors,
-    so the band diagonal shows up inside the *off-site* blocks, not on the
-    matrix diagonal.
-    """
-    nbands = 2
-    builder = HamiltonianBuilder(lattice=square_2x2, nbands=nbands,
-                                 spin_symm=SpinSymm.CLOSED)
-    builder.nth_neighbor_hopping(NON_HERMITIAN_BAND, force_herm=True)
-
-    matrix = builder.get_hamiltonian()['tij'][0].toarray()
-    # sites 0 and 1 are nearest neighbors on a 2x2 periodic lattice
-    block = matrix[0:nbands, nbands:2 * nbands]
-    assert not np.allclose(block, 0.0)
-    # the graph weight is an integer multiple of -1, so the band diagonal is
-    #   proportional to (-5, -7) rather than zero
-    assert np.allclose(np.diag(block) / np.diag(block)[0], [1.0, 7.0 / 5.0])
-    assert np.allclose(matrix, matrix.conj().T)
-
-
 @pytest.mark.parametrize("step", ["nth_neighbor_hopping", "onebody_onsite"])
-def test_build_step_rejects_a_non_hermitian_band_matrix_by_default(square_2x2, step):
+def test_build_step_rejects_a_non_hermitian_band_matrix(square_2x2, step):
     builder = HamiltonianBuilder(lattice=square_2x2, nbands=2)
 
-    with pytest.raises(ValueError, match="force_herm"):
+    with pytest.raises(ValueError, match="not hermitian"):
         getattr(builder, step)(np.array([[5.0, 2.0], [9.0, 7.0]]))
 
 
@@ -151,8 +51,7 @@ class TestBandMatrices:
     The AFQMC executable reads a triangle of the whole interaction matrix,
     indexed by the combined ``site * nbands + band``; it has no notion of sites
     versus bands. U1, U2 and J must land strictly above that combined diagonal,
-    which is left for the onsite Hubbard U. So this convention must *not* pick
-    up the `force_hermitian` fix above.
+    which is left for the onsite Hubbard U.
 
     The onsite and inter-site band matrices differ because of how each is
     kroneckered into the combined index — see the two helpers' docstrings.
@@ -208,9 +107,6 @@ def test_interaction_terms_stay_strictly_above_the_combined_diagonal(
     ``site * nbands + band`` and keeps ``i < j`` for the spin-spin and J blocks,
     leaving the diagonal for the onsite Hubbard U. So every U1/U2/J contribution
     has to land strictly above the combined diagonal.
-
-    This also guards against accidentally applying the `force_hermitian`
-    diagonal fix to this path.
     """
     builder = HamiltonianBuilder(lattice=square_2x2, nbands=nbands)
     getattr(builder, step)(1.5, nth_neighbor=nth_neighbor)
