@@ -131,7 +131,7 @@ class NOMSDWavefunction(Wavefunction):
                           spin_symm=self.spin_symm, psi0=psi0, nmo=self.nmo)
 
     @classmethod
-    def single_determinant(cls, det, nelec, spin_symm, nmo=None) -> "NOMSDWavefunction":
+    def from_single_determinant(cls, det, nelec, spin_symm, nmo=None) -> "NOMSDWavefunction":
         """The wavefunction whose only determinant is the Slater matrix `det`."""
         return cls(coeffs=np.array([1.0 + 0j]), dets=np.asarray(det)[np.newaxis, ...],
                    nelec=nelec, spin_symm=spin_symm, nmo=nmo)
