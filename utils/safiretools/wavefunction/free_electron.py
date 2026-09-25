@@ -142,8 +142,8 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
             one_body, nelec=nelec, nmo=nmo,
             filling_strategy=filling_strategy, shell_tol=shell_tol)
 
-    return NOMSDWavefunction.single_determinant(orbitals, nelec=nelec,
-                                                spin_symm=spin_symm, nmo=nmo)
+    return NOMSDWavefunction.from_single_determinant(orbitals, nelec=nelec,
+                                                     spin_symm=spin_symm, nmo=nmo)
 
 
 # ----------------------------------------------------------------------
