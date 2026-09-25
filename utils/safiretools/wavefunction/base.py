@@ -341,6 +341,21 @@ class Wavefunction(ABC):
     # ------------------------------------------------------------------
 
     @classmethod
+    def from_single_determinant(cls, det, nelec, spin_symm,
+                                nmo=None) -> "Wavefunction":
+        """
+        The wavefunction whose only determinant is the Slater matrix `det`.
+        Always a `safiretools.NOMSDWavefunction`.
+        """
+        from safiretools.wavefunction.nomsd import NOMSDWavefunction
+
+        _check_representation(cls, NOMSDWavefunction, 'from_single_determinant')
+
+        return NOMSDWavefunction(coeffs=np.array([1.0 + 0j]),
+                                 dets=np.asarray(det)[np.newaxis, ...],
+                                 nelec=nelec, spin_symm=spin_symm, nmo=nmo)
+
+    @classmethod
     def from_free_electron(cls, source, nelec, spin_symm=None,
                            filling_strategy='aufbau',
                            shell_tol=None) -> "Wavefunction":

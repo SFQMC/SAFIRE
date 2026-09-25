@@ -409,6 +409,7 @@ class TestFactoryDispatch:
     """
 
     FIXED = {
+        'from_single_determinant': NOMSDWavefunction,
         'from_free_electron': NOMSDWavefunction,
         'from_pyscf': NOMSDWavefunction,
         'from_dice': PHMSDWavefunction,
@@ -434,7 +435,7 @@ class TestFactoryDispatch:
                  else NOMSDWavefunction)
 
         with pytest.raises(ValueError, match=target.__name__):
-            getattr(other, factory)(None, None)
+            getattr(other, factory)(None, None, None)
 
     @staticmethod
     def _hubbard_2x2():
