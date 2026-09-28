@@ -202,15 +202,12 @@ def _write_closed_trial(filename: Path, nelec=(4, 4), norb: int = 8) -> None:
     In the downfolded band basis the mean-field determinant *is* a column
     selection from the identity, so this needs no input from CoQui.
     """
-    from safiretools import NOMSDWavefunction, SpinSymm
+    from safiretools import NOMSDWavefunction
 
     orbitals = np.eye(norb)[:, :nelec[0]]
     NOMSDWavefunction(
         coeffs=np.array([1.0]),
         dets=orbitals[np.newaxis],
-        nelec=nelec,
-        spin_symm=SpinSymm.CLOSED,
-        nmo=norb,
     ).to_hdf5(filename)
 
 
@@ -221,23 +218,19 @@ def _collinear_to_noncollinear(source: Path, destination: Path) -> None:
     gives a noncollinear determinant describing the same state - the point being
     to feed the noncollinear code path a wavefunction with a known answer.
     """
-    from safiretools import NOMSDWavefunction, SpinSymm, Wavefunction
+    from safiretools import NOMSDWavefunction, Wavefunction
 
     collinear = Wavefunction.from_hdf5(source)
-    phi_up, phi_down = collinear.spin_blocks()
+    phi_up, phi_down = collinear.dets  # (ndets, nmo, nup), (ndets, nmo, ndown)
+    nup = phi_up.shape[-1]
 
-    phi_noncollinear = np.block([
-        [phi_up, np.zeros_like(phi_up)],
-        [np.zeros_like(phi_down), phi_down],
-    ])[np.newaxis, :, :]
+    # spinor orbitals (ndets, 2, nmo, nup + ndown)
+    spinors = np.zeros((collinear.ndets, 2, collinear.nmo,
+                        nup + phi_down.shape[-1]), dtype=np.complex128)
+    spinors[:, 0, :, :nup] = phi_up
+    spinors[:, 1, :, nup:] = phi_down
 
-    NOMSDWavefunction(
-        coeffs=collinear.coeffs,
-        dets=phi_noncollinear,
-        nelec=collinear.nelec,
-        spin_symm=SpinSymm.NONCOLLINEAR,
-        nmo=collinear.nmo,
-    ).to_hdf5(destination)
+    NOMSDWavefunction(coeffs=collinear.coeffs, dets=spinors).to_hdf5(destination)
 
 
 # ============================================================================

@@ -177,7 +177,7 @@ def build_bh(ctx: BuildContext) -> None:
 
     # The same expansion over an explicit RHF reference, which is the only case
     # that exercises the "mixed" type != 0 path in readWfn.cpp.
-    rhf_reference = [np.eye(nmo)[:, :na]]
+    rhf_reference = np.eye(nmo)[:, :na]
     write_phmsd("afqmc_casci_rhf_phmsd.h5", ci, occa, occb, SpinSymm.COLLINEAR,
                 orbitals=rhf_reference)
     write_phmsd("afqmc_casci_rhf_1phmsd.h5", ci[:1], occa[:1], occb[:1],
@@ -185,48 +185,30 @@ def build_bh(ctx: BuildContext) -> None:
 
     # The same expansion as NOMSD. In the RHF basis every determinant is a
     # column selection from the identity, so the orbital matrices are exact.
+    # The layout of `dets` sets the spin symmetry (see NOMSDWavefunction).
     identity = np.eye(nmo)
+    alpha = identity[:, occa].transpose(1, 0, 2)  # (ndets, nmo, na)
+    beta = identity[:, occb].transpose(1, 0, 2)   # (ndets, nmo, nb)
 
-    def write_nomsd(filename, dets, spin_symm):
-        NOMSDWavefunction(coeffs=ci, dets=np.array(dets), nelec=nelec,
-                          spin_symm=spin_symm, nmo=nmo).to_hdf5(out / filename)
+    def write_nomsd(filename, dets):
+        NOMSDWavefunction(coeffs=ci, dets=dets).to_hdf5(out / filename)
 
-    nomsd_collinear = []
-    for oa, ob in zip(occa, occb, strict=True):
-        phi = np.zeros((nmo, sum(nelec)), dtype=np.complex128)
-        phi[:, :na] = identity[:, oa]
-        phi[:, na:] = identity[:, ob]
-        nomsd_collinear.append(phi)
-    write_nomsd("afqmc_casci_uhf_nomsd.h5", nomsd_collinear, SpinSymm.COLLINEAR)
+    write_nomsd("afqmc_casci_uhf_nomsd.h5", (alpha, beta))
 
-    nomsd_noncollinear = []
-    for oa, ob in zip(occa, occb, strict=True):
-        phi = np.zeros((2 * nmo, sum(nelec)), dtype=np.complex128)
-        phi[:nmo, :na] = identity[:, oa]
-        phi[nmo:, na:] = identity[:, ob]
-        nomsd_noncollinear.append(phi)
-    write_nomsd("afqmc_casci_ghf_nomsd.h5", nomsd_noncollinear,
-                SpinSymm.NONCOLLINEAR)
+    # spinor orbitals (ndets, 2, nmo, na + nb): alpha electrons in the spin-up
+    # component, beta electrons in the spin-down one
+    spinors = np.zeros((len(ci), 2, nmo, na + nb), dtype=np.complex128)
+    spinors[:, 0, :, :na] = alpha
+    spinors[:, 1, :, na:] = beta
+    write_nomsd("afqmc_casci_ghf_nomsd.h5", spinors)
 
-    nomsd_closed = []
-    for oa in occa:
-        phi = np.zeros((nmo, na), dtype=np.complex128)
-        phi[:, :na] = identity[:, oa]
-        nomsd_closed.append(phi)
-    write_nomsd("afqmc_casci_rhf_nomsd.h5", nomsd_closed, SpinSymm.CLOSED)
+    write_nomsd("afqmc_casci_rhf_nomsd.h5", alpha)
 
     # --- UHF and GHF trials, expressed in the RHF basis --------------------
     uhf = scf.UHF(mol=mol).newton()
     uhf.kernel()
 
     _write_nomsd(uhf, out / "afqmc_uhf_nomsd.h5", basis=rhf)
-
-    # Same UHF trial, but started from the RHF determinant: exercises the
-    # separate initial-walker path.
-    rhf_initial = np.zeros((nmo, na), dtype=np.complex128)
-    rhf_initial[:na, :na] = np.eye(na)
-    _write_nomsd(uhf, out / "afqmc_uhf_nomsd_init_rhf.h5",
-                 basis=rhf, psi0=[rhf_initial, rhf_initial])
 
     ghf = uhf.to_ghf()
     dm0 = ghf.make_rdm1()
