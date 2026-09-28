@@ -368,10 +368,10 @@ Here is a sample walker_set block with options exposed and default values where 
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
-    Setting the "name" parameter allows the current walker_set block to be reference in
-    multiple execute blocks / calculations.
-    This allows one to perform two successive AFQMC calculations which share the same
-    walkers.
+    Successive execute blocks share their walkers by default: an execute block that names
+    no walker_set continues with the one of the execute block before it. Setting the "name"
+    parameter allows the current walker_set block to be referenced explicitly in other
+    execute blocks.
 </div>
 
 ### Most Common Settings
@@ -401,6 +401,7 @@ td, th {
 | <b>pop_control_type</b> |"pair"  |   choose population control algorithm to use. Choices are "pair", AND "serial_comb". The "pair" algorithm uses paired walker branching. The "serial_comb" algorithm uses the comb method from Booth, Gubernatis, PRE 2009. |
 | <b>min_weight</b> | 0.05 |   Minimum walker weight for population control  |
 | <b>max_weight</b> |4 |  Maximum walker weight for population control  |
+| <b>from</b> | the execute block's wavefunction |  What the walkers are initialized from, e.g. `{"wavefunction": "rohf"}` to start from the determinant with the largest coefficient of another wavefunction.  |
 
 +++ {"id": "b003de2e"}
 

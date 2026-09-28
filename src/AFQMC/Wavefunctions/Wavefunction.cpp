@@ -83,120 +83,6 @@ auto to_dense_shared(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   return dense;
 }
 
-/// The walker type the initial guess in `grp` was written for, checked against the walkers it
-/// is about to fill.
-WALKER_TYPES peek_guess_type(h5::group grp, WALKER_TYPES walker_type) {
-  WALKER_TYPES const wtype = read_spin_type(grp);
-  utils::check(walkerTypeIsConvertible(wtype, walker_type),
-               "Initial guess ({}) not convertible to walker_type {}",
-               walkerTypeToString(wtype), walkerTypeToString(walker_type));
-  return wtype;
-}
-
-/// Reads the initial walker Slater matrices, resized to the walkers that will hold them.
-WalkerSetInitialGuess read_initial_guess(h5::group grp, WALKER_TYPES walker_type,
-                                         int NMO, int nup, int ndown) {
-  using nda::range;
-  auto all = range::all;
-
-  WALKER_TYPES const wtype = peek_guess_type(grp, walker_type);
-  auto [nspin_in_guess, npol_in_guess] = walkerTypeToDims(wtype);
-
-  // a closed guess stands for both spins, a noncollinear one holds every electron in alpha
-  auto guess_width = [&](std::string const& name) {
-    return int(h5::array_interface::get_dataset_info(grp, name).lengths[1]);
-  };
-  std::array<int,2> nel_in_guess{};
-  nel_in_guess[0] = guess_width("Psi0_alpha");
-  if(wtype == COLLINEAR) {
-    nel_in_guess[1] = guess_width("Psi0_beta");
-  } else if(wtype == CLOSED) {
-    nel_in_guess[1] = nel_in_guess[0];
-  }
-
-  // Read the trial's per-spin orbital matrices at their true (in-file) widths.
-  std::array<std::string,2> dataset_names{{"Psi0_alpha", "Psi0_beta"}};
-  std::vector<nda::matrix<ComplexType>> Min;
-  Min.reserve(nspin_in_guess);
-  for(int is = 0; is < nspin_in_guess; is++) {
-    utils::check(nup >= nel_in_guess[is], "initial guess contains more electrons of spin {} than walker nup ({})", nel_in_guess[is], nup);
-    nda::matrix<ComplexType> m(npol_in_guess * NMO, nel_in_guess[is]);
-    m() = 0.0;
-    utils::h5_read(grp, dataset_names[is], m);
-    Min.push_back(std::move(m));
-  }
-
-  auto [nspin, npol] = walkerTypeToDims(walker_type);
-  // Walker-sized per-spin widths: alpha=nup, beta=ndown (collinear). Kept exact
-  // (no max-padding) so naeb is recoverable from the beta matrix's width.
-  std::array<int,2> out_width{{nup, ndown}};
-
-  std::vector<nda::matrix<ComplexType>> M;
-  M.reserve(nspin);
-  if(walker_type == NONCOLLINEAR && wtype != NONCOLLINEAR) {
-    // Interleave the (NMO-row) spin channels into one 2*NMO-row matrix.
-    nda::matrix<ComplexType> a(npol * NMO, nup);
-    a() = 0.0;
-    auto a3 = reshape(a, npol, NMO, nup);
-    int offset = 0;
-    for(int ip = 0; ip < npol; ip++) {
-      a3(ip, all, range(offset, offset + nel_in_guess[ip])) =
-          Min[ip % nspin_in_guess](all, range(nel_in_guess[ip]));
-      offset += nel_in_guess[ip];
-    }
-    M.push_back(std::move(a));
-  } else {
-    for(int is = 0; is < nspin; is++) {
-      nda::matrix<ComplexType> m(npol * NMO, out_width[is]);
-      m() = 0.0;
-      int src = is % nspin_in_guess;
-      int nc  = std::min<int>(out_width[is], nel_in_guess[src]);
-      m(all, range(nc)) = Min[src](all, range(nc));
-      M.push_back(std::move(m));
-    }
-  }
-
-  return {.walker_type = walker_type, .payload = std::move(M)};
-}
-
-/// Reads the finite-temperature UDV initial guess. Collective on mpi.comm, since the guess
-/// is allocated in shared memory.
-WalkerSetInitialGuess read_initial_guess_ft(h5::group grp,
-                                            utils::mpi_context_t<boost::mpi3::communicator>& mpi,
-                                            WALKER_TYPES walker_type, int NMO) {
-  WALKER_TYPES const wtype = peek_guess_type(grp, walker_type);
-  auto [nspin, npol] = walkerTypeToDims(walker_type);
-
-  return {.walker_type = walker_type,
-          .payload = memory::share_from_root(mpi, [&] {
-            nda::array<ComplexType,4> M(3, nspin, npol * NMO, NMO);
-            M() = 0.0;
-            auto URup = M(0,0,nda::ellipsis{});
-            utils::h5_read(grp,"UR_alpha",URup);
-            auto DRup = M(1,0,nda::ellipsis{});
-            utils::h5_read(grp,"DR_alpha",DRup);
-            auto VRup = M(2,0,nda::ellipsis{});
-            utils::h5_read(grp,"VR_alpha",VRup);
-            if(walker_type == COLLINEAR) {
-              if(wtype == COLLINEAR) {
-                auto URdn = M(0,1,nda::range::all,nda::range(NMO));
-                utils::h5_read(grp,"UR_beta",URdn);
-                auto DRdn = M(1,1,nda::range::all,nda::range(NMO));
-                utils::h5_read(grp,"DR_beta",DRdn);
-                auto VRdn = M(2,1,nda::range::all,nda::range(NMO));
-                utils::h5_read(grp,"VR_beta",VRdn);
-              } else if(wtype == CLOSED) {
-                M(0,1,nda::ellipsis{}) = URup();
-                M(1,1,nda::ellipsis{}) = DRup();
-                M(2,1,nda::ellipsis{}) = VRup();
-              } else {
-                utils::check(false,"Error: Unknown wtype. ");
-              }
-            }
-            return M;
-          })};
-}
-
 /// Builds the reference determinant(s) a PHMSD expansion is defined against, for a file that
 /// only stores occupation strings. Occupations (and the coefficient signs that go with them)
 /// are rewritten in place to refer to the reference that comes out.
@@ -385,16 +271,12 @@ Wavefunction<MEM> nomsd_from_params(std::shared_ptr<utils::mpi_context_t<boost::
   // Create Trial wavefunction.
   auto PsiT = read_nomsd_wavefunction<MEM>(ngrp, ndets_to_read, walker_type, trial.NMO, nup, ndown);
 
-  // Set initial walker's Slater matrix.
-  auto guess = read_initial_guess(ngrp, walker_type, trial.NMO, nup, ndown);
-
   auto HOps = h.getHamiltonianOperations<MEM>(walker_type, mpi, PsiT);
 
   auto build = [&](auto&& orbs) {
     using OrbType = typename std::remove_cvref_t<decltype(orbs)>::value_type;
     return Wavefunction<MEM>(NOMSD<MEM,OrbType>(params, trial.NMO, nup, ndown, walker_type, mpi,
-                                                std::move(HOps), std::move(ci), std::move(orbs), targetNW),
-                             std::move(guess));
+                                                std::move(HOps), std::move(ci), std::move(orbs), targetNW));
   };
 
   if(resolved(params.dense_trial, "dense_trial")) {
@@ -423,9 +305,6 @@ Wavefunction<MEM> nomsd_ft_from_params(std::shared_ptr<utils::mpi_context_t<boos
   // Create Trial wavefunction.
   auto PsiT = read_nomsd_wavefunction<MEM>(ngrp, ndets_to_read, walker_type, trial.NMO, ntau);
 
-  // Set initial walker's Slater matrix.
-  auto guess = read_initial_guess_ft(ngrp, *mpi, walker_type, trial.NMO);
-
   // at finite temperature the operators are built against the identity rather than the
   // trial, so they are not half-rotated
   nda::array<PsiT_Matrix<MEM>, 2> IMat(PsiT.extent(0), PsiT.extent(1));
@@ -440,8 +319,7 @@ Wavefunction<MEM> nomsd_ft_from_params(std::shared_ptr<utils::mpi_context_t<boos
   auto build = [&](auto&& orbs) {
     using OrbType = typename std::remove_cvref_t<decltype(orbs)>::value_type;
     return Wavefunction<MEM>(NOMSD_FT<MEM,OrbType>(params, trial.NMO, ntau, walker_type, mpi,
-                                                   std::move(HOps), std::move(ci), std::move(orbs), targetNW),
-                             std::move(guess));
+                                                   std::move(HOps), std::move(ci), std::move(orbs), targetNW));
   };
 
   if(resolved(params.dense_trial, "dense_trial")) {
@@ -562,8 +440,6 @@ Wavefunction<MEM> phmsd_from_params(std::shared_ptr<utils::mpi_context_t<boost::
     }
   }
 
-  auto guess = read_initial_guess(ngrp, walker_type, NMO, nup, ndown);
-
   auto n_unique(abij.number_of_unique_excitations());
   app_log(1,"Number of unique determinants per spin channel: {} {} ",
               n_unique[0],n_unique[1]);
@@ -617,8 +493,7 @@ Wavefunction<MEM> phmsd_from_params(std::shared_ptr<utils::mpi_context_t<boost::
 
   return Wavefunction<MEM>(PHMSD<MEM>(params, walker_type, NMO, nup, ndown, mpi, std::move(HOps),
                                       std::move(abij), std::move(det_coupling_matrix),
-                                      std::move(PsiT_1d), targetNW),
-                           std::move(guess));
+                                      std::move(PsiT_1d), targetNW));
 }
 
 }
@@ -658,6 +533,11 @@ Wavefunction<MEM> Wavefunction<MEM>::from_params(
     return phmsd_from_params<MEM>(mpi, params, trial, walker_type, h, targetNW);
   }
   APP_ABORT("Error: Unknown wave-function wfn_type: {}", wfn_type);
+}
+
+template<MEMORY_SPACE MEM>
+WalkerSetInitialGuess Wavefunction<MEM>::initial_guess() const {
+  return std::visit([&](auto&& a) { return a.initial_guess(); }, var);
 }
 
 template<MEMORY_SPACE MEM>

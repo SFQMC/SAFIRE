@@ -71,7 +71,7 @@ NOMSDWavefunction(coeffs=ci, dets=sd_rhf,
 
 +++ {"id": "z_a86xENVXt7"}
 
-If you use `!h5dump wfn_rhf_test.h5` to inspect the output file, you'll see the following structure. The `Psi0_alpha` dataset contains the RHF Slater determinant matrix, which is used for both spin-up and spin-down electrons.
+If you use `!h5dump wfn_rhf_test.h5` to inspect the output file, you'll see the following structure. The `PsiT_0` group contains the (conjugate transposed) RHF Slater determinant matrix, which is used for both spin-up and spin-down electrons.
 
 In summary, to generate an RHF wavefunction, you need to provide an array `A[0, i, j]` = $\Psi_{ij}^↑$ with shape `(1, norb, nelec // 2)` as input. Setting `spin_symm='closed'` (spelled `'rhf'` if you prefer) ensures the wavefunction is constructed in a spin-identical manner, meaning the same orbitals are used for both spin components.
 
@@ -104,7 +104,7 @@ NOMSDWavefunction(coeffs=ci, dets=sd_uhf,
 
 +++ {"id": "rrcDcotkYRuv"}
 
-If you use `!h5dump wfn_uhf_test.h5` to inspect the output file, you'll see the following structure. The `Psi0_alpha` dataset contains the Slater determinant matrix for spin-up electrons, while `Psi0_beta` contains the matrix for spin-down electrons.
+If you use `!h5dump wfn_uhf_test.h5` to inspect the output file, you'll see the following structure. The `PsiT_0` group contains the Slater determinant matrix for spin-up electrons, while `PsiT_1` contains the matrix for spin-down electrons.
 
 In summary, to generate a UHF wavefunction, you need to provide an array `A` of shape `(1, norb, nelec[0] + nelec[1])`, where `A[0, i, j]` = $\Psi_{ij}^↑$ for j < nelec[0], and `A[0, i, nelec[0] + j]` = $\Psi_{ij}^↓$ for j < nelec[1]. Setting `spin_symm='collinear'` (spelled `'uhf'` if you prefer) ensures the wavefunction is constructed with separate spin-up and spin-down components.
 
@@ -142,7 +142,7 @@ NOMSDWavefunction(coeffs=ci, dets=sd_ghf,
 
 +++ {"id": "0JhIJbFyadKb"}
 
-If you inspect the output file using !h5dump wfn_ghf_test.h5, you'll see the following structure. Notably, there is only a `Psi0_alpha` dataset, but its shape is `[2 * norb, sum(nelec)]`, representing the full GHF Slater determinant matrix with both spin sectors mixed.
+If you inspect the output file using !h5dump wfn_ghf_test.h5, you'll see the following structure. Notably, there is only a `PsiT_0` group, but it spans `2 * norb` orbitals for `sum(nelec)` electrons, representing the full GHF Slater determinant matrix with both spin sectors mixed.
 In summary, to generate a GHF wavefunction, you need to provide an array `A[0, i, j]` = $\Psi_{ij}$ with shape `(1, 2 * norb, nelec[0] + nelec[1])` as input. Setting `spin_symm='noncollinear'` (spelled `'ghf'` if you prefer) ensures the wavefunction is treated in a mixed spin manner. Note that the `nmo` parameter here still refers to the number of spatial orbitals per spin.
 
 ```{code-cell} ipython3
@@ -186,14 +186,18 @@ with `!h5ls -r -d wfn_multi_ghf_test.h5/Wavefunction/NOMSD ` you will see an out
 +++ {"id": "L4VNw2qMmwyu"}
 
 5. (Optional) Change the wavefunction used to initialize the walker.
-A `NOMSDWavefunction` carries the initial walker determinant as its `psi0` attribute, which you can assign before writing. `psi0` is a sequence with **one Slater matrix per independent spin channel**: one matrix of shape `(norb, nelec[0])` for RHF, two of shapes `(norb, nelec[0])` and `(norb, nelec[1])` for UHF, and one of shape `(2 * norb, sum(nelec))` for GHF. **By default**, the initial walker is taken from the trial wavefunction itself—specifically, the spin blocks of the first determinant if using a multi-Slater trial.
+The trial file does not store an initial walker. **By default**, the walkers start from the trial wavefunction itself—specifically, the determinant with the largest coefficient if using a multi-Slater trial. To start them from a different determinant, write it as a wavefunction file of its own and name it in the `from` parameter of the walker set in the input file (see {ref}`initial_walkers`):
 
-```python
-# a collinear trial: psi0 is one (norb, nelec[spin]) matrix per spin channel
-wfn = NOMSDWavefunction(coeffs=ci, dets=sd_mats, spin_symm='collinear',
-                        nelec=nelec, nmo=norb)
-wfn.psi0 = (psi0_alpha, psi0_beta)
-wfn.to_hdf5(wfn_input_filename)
+```json
+{
+  "wavefunction": [
+    {"name": "trial", "filename": "wfn.h5"},
+    {"name": "initial", "filename": "wfn_initial.h5"}
+  ],
+  "execute": [
+    {"wavefunction": "trial", "walker_set": {"from": {"wavefunction": "initial"}}}
+  ]
+}
 ```
 
 +++ {"id": "NYbUINg6HQyx"}

@@ -98,9 +98,6 @@ inline constexpr auto molecule_unit_tests_files(TestFiles::Flags flags)
       files.emplace_back(pre + "BH/afqmc_H_rhf_collinear.h5",
                                           pre + "BH/afqmc_uhf_nomsd.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "BH/afqmc_H_rhf_collinear.h5",
-                                          pre + "BH/afqmc_uhf_nomsd_init_rhf.h5",
-                                          afqmc::UNDEFINED_WALKER_TYPE);
       files.emplace_back(pre + "Li/hamil_closed.h5",
                                           pre + "Li/rohf_nomsd_polarized.h5",
                                           afqmc::COLLINEAR);

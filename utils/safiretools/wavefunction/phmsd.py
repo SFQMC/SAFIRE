@@ -66,17 +66,13 @@ class PHMSDWavefunction(Wavefunction):
         spin-resolved reference, collinear only, is a *tuple* of two
         ``(nmo, norb)`` arrays. Omitted, the occupation numbers index the
         Hamiltonian's own basis.
-    psi0 : numpy.ndarray or tuple of numpy.ndarray, optional
-        Initial Slater determinant for the AFQMC walkers, in the spin layout of
-        `spin_symm` (see `Wavefunction`). Built from the leading determinant's
-        occupations when omitted.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry.
 
     Raises
     ------
     TypeError
-        If `orbitals` or `psi0` is none of the layouts.
+        If `orbitals` is none of the layouts.
     ValueError
         If `occa`/`occb` disagree with `nelec`, if an orbital index falls
         outside the basis, or if `orbitals` does not fit the spin symmetry or
@@ -87,7 +83,7 @@ class PHMSDWavefunction(Wavefunction):
     _HDF5_GROUP = 'PHMSD'
 
     def __init__(self, coeffs, occa, occb, nmo: int, nelec=None, orbitals=None,
-                 psi0=None, spin_symm=SpinSymm.COLLINEAR) -> None:
+                 spin_symm=SpinSymm.COLLINEAR) -> None:
         self.occa = _occupations(occa, 'occa')
         self.occb = _occupations(occb, 'occb')
 
@@ -101,7 +97,7 @@ class PHMSDWavefunction(Wavefunction):
             nelec = (self.occa.shape[1], self.occb.shape[1])
 
         super().__init__(coeffs=coeffs, nelec=nelec, nmo=nmo,
-                         spin_symm=spin_symm, psi0=psi0)
+                         spin_symm=spin_symm)
 
         self._orbitals = None if orbitals is None \
             else self._parse_references(orbitals)
@@ -164,52 +160,39 @@ class PHMSDWavefunction(Wavefunction):
         """
         return 0 if self._orbitals is None else len(self._orbitals)
 
-    def _default_psi0(self) -> tuple:
-        """
-        The leading determinant, as columns of the identity selected by its own
-        occupation numbers — one block per independent spin channel.
-        """
-        identity = np.eye(self.nrows, dtype=np.complex128)
-        return tuple(identity[:, occ[0]].copy()
-                     for occ in (self.occa, self.occb)[:self.nspin])
-
     def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "PHMSDWavefunction":
         """
-        Return a copy whose orbital references — and explicit `psi0`, if any —
-        have orthonormal columns. See `Wavefunction.orthonormalize`.
+        Return a copy whose orbital references have orthonormal columns. See
+        `Wavefunction.orthonormalize`.
         """
         orbitals = None if self._orbitals is None else _format_references(
             tuple(orthonormalize(matrix, tol=tol) for matrix in self._orbitals),
             self.spin_symm)
-        psi0 = None if self._psi0 is None else format_spin_layout(
-            tuple(orthonormalize(block, tol=tol) for block in self._psi0),
-            self.spin_symm)
 
         return type(self)(coeffs=self.coeffs.copy(), occa=self.occa.copy(),
                           occb=self.occb.copy(), nmo=self.nmo, nelec=self.nelec,
-                          orbitals=orbitals, psi0=psi0,
-                          spin_symm=self.spin_symm)
+                          orbitals=orbitals, spin_symm=self.spin_symm)
 
     # ------------------------------------------------------------------
     # serialization
     # ------------------------------------------------------------------
 
     def _write_payload(self, group) -> None:
-        io.write_phmsd(group, self.occa, self.occb, orbitals=self._orbitals)
+        io.write_phmsd(group, self.nmo, self.occa, self.occb,
+                       orbitals=self._orbitals)
 
     @classmethod
     def _read_payload(cls, group, header: dict) -> "PHMSDWavefunction":
         spin_symm = header['spin_symm']
-        occa, occb, orbitals = io.read_phmsd(group)
+        nmo, occa, occb, orbitals = io.read_phmsd(group)
 
         # a closed-shell occb has zero width, since beta repeats alpha
         nup = occa.shape[1]
         nelec = (nup, nup) if spin_symm is SpinSymm.CLOSED else (nup, occb.shape[1])
 
         return cls(coeffs=header['coeffs'], occa=occa, occb=occb,
-                   nmo=header['nmo'], nelec=nelec,
+                   nmo=nmo, nelec=nelec,
                    orbitals=_format_references(orbitals, spin_symm),
-                   psi0=format_spin_layout(header['psi0'], spin_symm),
                    spin_symm=spin_symm)
 
 

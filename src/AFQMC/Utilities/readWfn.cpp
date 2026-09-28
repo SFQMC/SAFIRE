@@ -93,7 +93,8 @@ WavefunctionInfo read_wavefunction_info(h5::group ngrp) {
   info.ndets = dataset_extent(ngrp, "ci_coeffs", 0);
 
   if(ngrp.has_key("occa")) { // PHMSD
-    info.NMO   = dataset_extent(ngrp, "Psi0_alpha", 0) / npol;
+    // an occupation-only expansion has no array that spans the orbitals, so the count is recorded
+    h5::h5_read_attribute(ngrp, "number_of_orbitals", info.NMO);
     info.nup   = dataset_extent(ngrp, "occa", 1);
     info.ndown = dataset_extent(ngrp, "occb", 1);
   } else if(ngrp.has_key("UL_0")) { // finite-temperature NOMSD

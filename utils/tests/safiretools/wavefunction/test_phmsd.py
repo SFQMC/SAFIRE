@@ -36,7 +36,6 @@ class TestConstruction:
 
         assert wavefunction.nspin == 1
         assert (wavefunction.occa.shape, wavefunction.occb.shape) == ((1, 3), (1, 0))
-        assert wavefunction.psi0.shape == (6, 3)
 
     def test_a_noncollinear_expansion_indexes_spinors(self):
         """
@@ -50,7 +49,6 @@ class TestConstruction:
 
         assert (wavefunction.nspin, wavefunction.npol) == (1, 2)
         assert wavefunction.occa.shape == (1, 4)
-        assert wavefunction.psi0.shape == (2, 6, 4)
 
     def test_a_spinor_index_outside_the_basis_is_rejected(self):
         with pytest.raises(ValueError, match=r"outside \[0, 12\)"):
@@ -65,7 +63,7 @@ class TestConstruction:
 
         assert wavefunction.nelec == (3, 0)
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
-        assert wavefunction.psi0[1].shape == (6, 0)
+        assert wavefunction.occb.shape == (1, 0)
 
     def test_mismatched_determinant_counts_are_rejected(self):
         with pytest.raises(ValueError, match="different numbers of determinants"):
@@ -132,25 +130,25 @@ class TestConstruction:
             make_phmsd(orbitals=np.eye(5))
 
 
-class TestPsi0:
+class TestRoundTrip:
 
-    def test_it_defaults_to_the_leading_determinant_occupations(self,
-                                                               make_phmsd):
-        alpha, beta = make_phmsd().psi0
-        identity = np.eye(6)
-
-        assert np.allclose(alpha, identity[:, [0, 1, 2]])
-        assert np.allclose(beta, identity[:, [0, 1]])
-
-    def test_the_default_is_orthonormal_so_writing_is_quiet(self, make_phmsd,
-                                                            tmp_path,
-                                                            recwarn):
+    def test_writing_is_quiet(self, make_phmsd, tmp_path, recwarn):
         make_phmsd().to_hdf5(tmp_path / 'wfn.h5')
 
         assert [str(record.message) for record in recwarn] == []
 
+    def test_the_orbital_count_survives_unoccupied_orbitals(self, tmp_path):
+        # no occupation number reaches the top orbitals, so only the recorded
+        #   count can bring them back
+        wavefunction = PHMSDWavefunction(
+            coeffs=[1.0], occa=np.array([[0, 1]]), occb=np.array([[0]]),
+            nmo=10)
+        path = tmp_path / 'wfn.h5'
+        wavefunction.to_hdf5(path)
 
-class TestRoundTrip:
+        assert Wavefunction.from_hdf5(path).nmo == 10
+        with h5.File(path, 'r') as fh5:
+            assert int(fh5['Wavefunction/PHMSD'].attrs['number_of_orbitals']) == 10
 
     def test_occupations_round_trip(self, make_phmsd, tmp_path):
         wavefunction = make_phmsd()

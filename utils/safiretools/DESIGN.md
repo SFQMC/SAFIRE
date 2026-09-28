@@ -33,7 +33,8 @@ decision.
 - `Wavefunction`'s inherited factories guard the class they were called on; a `Hamiltonian` domain
   factory needs no guard, because a sibling's factory is simply not there to call.
 - `nelec` and `spin_symm` are Hamiltonian state, not write-time arguments.
-- `psi0` is wavefunction state with a derived default, not a write-time argument.
+- A trial file stores no initial walker; the AFQMC input's `walker_set.from` chooses the
+  wavefunction the walkers start from.
 - A determinant's shape carries its spin symmetry publicly, and is one matrix per independent spin
   channel internally.
 - Writing never repairs: every Slater matrix reaching disk has its overlap's condition number
@@ -241,7 +242,7 @@ so spin symmetry is a plain attribute there in the sense of "recorded", not "fre
 
 Every determinant-shaped value the wavefunction classes take or return — the
 `from_single_determinant` argument, `NOMSDWavefunction(dets=...)` and `.dets`, `.determinant(i)`,
-`psi0`, and `PHMSDWavefunction(orbitals=...)` — uses one layout whose *type and rank* say which spin
+and `PHMSDWavefunction(orbitals=...)` — uses one layout whose *type and rank* say which spin
 symmetry it is:
 
 | spin symmetry | layout                                            |
@@ -254,7 +255,7 @@ A multi-determinant value (`dets`) adds a leading `ndets` axis to each array. A 
 shared by both spins takes the single-array form even when the wavefunction is collinear; the tuple
 means spin-resolved (on-disk `type` 2).
 
-So `NOMSDWavefunction(coeffs, dets, psi0=None)` and `from_single_determinant(det)` take no
+So `NOMSDWavefunction(coeffs, dets)` and `from_single_determinant(det)` take no
 `nelec`, `spin_symm` or `nmo`: all three follow from `dets`, and can therefore never contradict
 it. The parsing and its inverse are `slater.parse_spin_layout`/`format_spin_layout`.
 
@@ -274,7 +275,7 @@ every electron, and the executable does not use the split either.
 The public layout is converted at the class boundary into its uniform core: a tuple with one
 `(npol*nmo, n)` matrix per independent spin channel — one entry when closed or noncollinear, two
 when collinear. `NOMSDWavefunction._dets` holds one `(ndets, npol*nmo, n)` stack per channel, and
-`psi0`, PHMSD references, `make_slater`'s result and `io.write_nomsd`/`read_nomsd` all use the same
+PHMSD references, `make_slater`'s result and `io.write_nomsd`/`read_nomsd` all use the same
 tuple. The channels are never concatenated into one matrix, so nothing splits them back apart;
 the executable's `PsiT_k` groups are already one per determinant and channel.
 
@@ -313,8 +314,8 @@ orthonormal by construction: PySCF's orbitals are orthonormal in the basis they 
 and the free-electron and periodic paths occupy eigenvectors of a Hermitian matrix.
 
 **`PsiT` blocks are checked after sparsifying.** The 1e-8
-threshold applies only to the sparse `PsiT` blocks it exists to sparsify, never to the dense `Psi0`,
-which goes to disk verbatim.
+threshold applies to the sparse `PsiT` blocks it exists to sparsify, so the state checked is the
+state written.
 
 **Blocks are checked per independent spin channel**, which is the physically correct grain: a
 collinear determinant's alpha and beta columns describe different spin sectors and need not be
@@ -443,9 +444,8 @@ only one of two BP-average endpoints' errors) gets fixed at the same time.
   layering inversion).
 - **A wavefunction with no beta electrons is `COLLINEAR` with `ndown == 0`** (user call). There is no
   separate value for that case: `spin_type` is `"collinear"`, and the beta blocks go to disk with
-  zero width (`Psi0_beta` of shape `(nmo, 0, 2)`, a `PsiT_1` whose CSR `dims` is `[0, nmo, 0]`),
-  because the executable's readers open them for any collinear file and take `ndown` from
-  `PsiT_1`'s row count.
+  zero width (a `PsiT_1` whose CSR `dims` is `[0, nmo, 0]`), because the executable's readers open
+  it for any collinear file and take `ndown` from its row count.
 
   > **On the C++ side:**` WALKER_TYPES` is exactly
   > `CLOSED`/`COLLINEAR`/`NONCOLLINEAR` ([config.h:48](../../src/AFQMC/config.h#L48)), and a
@@ -455,8 +455,7 @@ only one of two BP-average endpoints' errors) gets fixed at the same time.
   > [tests/test_polarized_consistency.cpp](../../tests/test_polarized_consistency.cpp) pins a
   > `ndown == 0` collinear run against an up-only noncollinear reference. Its
   > `derive_polarized_wfn` writes exactly the layout above — `spin_type = "collinear"`,
-  > `Psi0_beta` of shape `(nmo, 0)`, `PsiT_1` a `(0, nmo)` CSR — so the format here is the one the
-  > executable's own test data uses.
+  > `PsiT_1` a `(0, nmo)` CSR — so the format here is the one the executable's own test data uses.
 - Two members carry the coercion that `get_spin_symm_enum` used to: `SpinSymm.from_input(value)`
   accepts a `SpinSymm`, its int value, a spelling alias (`'closed'`/`'rhf'`, `'collinear'`/`'uhf'`,
   `'noncollinear'`/`'ghf'`, ...), or another enum whose value is one of those — so partly-migrated
@@ -794,15 +793,15 @@ writer could be reintroduced without touching the solver.
   > **`nelec` is on its way out entirely** — see **Future changes**. It is Hamiltonian state only
   > because the on-disk formats still record it; the executable already ignores those fields. This
   > bullet describes where it lives *today*, and reduces to `spin_symm` alone once it is gone.
-- **A wavefunction's `psi0` (the AFQMC initial walker) is instance state, not a write-time
-  argument.** `Wavefunction.psi0` defaults to something derived from the wavefunction itself — the
-  leading determinant for a NOMSD, identity columns at the leading occupations for a PHMSD — and
-  can be assigned, in the public spin layout (see above). This replaces `write_wfn(..., init=...)` and `orbmat=`, the latter
-  becoming `PHMSDWavefunction(orbitals=...)`.
-- **The default-`psi0` warning is NOMSD-specific.** A NOMSD's default `psi0` is the leading
-  determinant, which for a UHF-shaped determinant is worth warning about; a PHMSD's is
-  identity columns at the leading occupations — the recommended ROHF-like choice — so warning there
-  would be noise. `NOMSDWavefunction._write_payload` issues it.
+- **The AFQMC initial walker is not part of a wavefunction.** A trial file used to carry one
+  (`Psi0_alpha`/`Psi0_beta`, and `write_wfn(..., init=...)` before that); now the AFQMC input's
+  `walker_set.from` names the wavefunction a walker set starts from, and the executable derives the
+  determinant from it — the largest-coefficient determinant of a NOMSD, the reference of a PHMSD.
+  Starting a UHF trial from an ROHF determinant is therefore a second, single-determinant
+  wavefunction file, not state on the first one. `orbmat=` became `PHMSDWavefunction(orbitals=...)`.
+- **A PHMSD records `number_of_orbitals`.** It is the one size the format stores explicitly:
+  occupation numbers alone do not span the orbitals, and with no initial walker on disk nothing
+  else does either. The name follows CoQuí's.
 - **`to_hdf5()` replaces the Hamiltonian in its target file, not the whole file.** It opens the file
   in append mode (creating it if absent) and deletes an existing `Hamiltonian` group before writing.
   A SAFIRE input file holds **at most one Hamiltonian and at most one wavefunction**, so replacing

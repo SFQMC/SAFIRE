@@ -413,6 +413,13 @@ These are the most common Walker set options that a typical user will interact w
    * - **max_weight**
      - 4.0
      - Maximum walker weight for population control
+   * - **from**
+     - the execute block's wavefunction
+     - What the walkers are initialized from, as an object with a single key. ``{"wavefunction": ...}`` starts every walker from the determinant with the largest coefficient of a NOMSD wavefunction, or the reference of a PHMSD one; the wavefunction is given by name or as an inline block. Defaults to the wavefunction of the execute block that introduces the walker set. See :ref:`initial_walkers`.
+
+Only the first execute block falls back to a default walker set. A later execute block that
+names no walker set continues with the one of the execute block before it, so consecutive
+stages share their walkers unless a stage asks for a walker set of its own.
 
 
 

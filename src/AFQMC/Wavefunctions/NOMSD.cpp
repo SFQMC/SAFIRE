@@ -128,6 +128,30 @@ void NOMSD<MEM,devPsiT>::getReferences(memory::buffered_array<MEM,ComplexType,3>
   }
 }
 
+template<MEMORY_SPACE MEM, class devPsiT>
+WalkerSetInitialGuess NOMSD<MEM,devPsiT>::initial_guess() const {
+  long idet = 0;
+  for(long i = 1; i < ci.size(); ++i) {
+    if(std::abs(ci(i)) > std::abs(ci(idet))) {
+      idet = i;
+    }
+  }
+
+  int const nspin = (walker_type == COLLINEAR ? 2 : 1);
+  WalkerSetInitialGuess::slater_matrices M;
+  M.reserve(nspin);
+  for(int s = 0; s < nspin; ++s) {
+    // the orbitals are stored as the conjugate transpose of the Slater matrix
+    if constexpr (math::sparse::CSRMatrix<devPsiT>) {
+      M.emplace_back(nda::to_host(math::sparse::to_array<'H'>(OrbMats(idet,s)())));
+    } else {
+      auto PsiT = nda::to_host(OrbMats(idet,s)());
+      M.emplace_back(nda::dagger(PsiT));
+    }
+  }
+  return {.walker_type = walker_type, .payload = std::move(M)};
+}
+
 /*
  * Calculates the local energy and overlaps of all the walkers in the set and 
  * returns them in the appropriate data structures

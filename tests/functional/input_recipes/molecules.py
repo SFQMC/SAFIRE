@@ -76,7 +76,7 @@ def _write_hamiltonian(mf, filename: Path, chol_cut: float, *, basis=None,
     return hamiltonian
 
 
-def _write_nomsd(source, filename: Path, *, basis, psi0=None) -> None:
+def _write_nomsd(source, filename: Path, *, basis) -> None:
     """Write a single-determinant trial from `source`, in `basis`'s orbitals.
 
     The determinant is rotated by ``C^dag S`` onto the basis the hamiltonian was
@@ -86,10 +86,7 @@ def _write_nomsd(source, filename: Path, *, basis, psi0=None) -> None:
     """
     from safiretools import Wavefunction
 
-    wavefunction = Wavefunction.from_pyscf(source, basis=basis)
-    if psi0 is not None:
-        wavefunction.psi0 = psi0
-    wavefunction.to_hdf5(filename)
+    Wavefunction.from_pyscf(source, basis=basis).to_hdf5(filename)
 
 
 # ============================================================================

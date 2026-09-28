@@ -52,8 +52,8 @@ This input file contains two execute blocks.
 The first is used to quickly equilibrate using a fairly large step size.
 The second resumes that calculation using an equilibrated population, and a smaller Trotter step size in order to perform measurements.
 
-In this case, it is strictly necessary to define at least the "walker_set" outside of each "execute" block since it is shared between both.
-While not functionally necessary, defining the "wavefunction"and "hamiltonian" blocks outside of the "execute" blocks prevents the trial wavefunction and Hamiltonian from being constructed more than once.
+The second "execute" block would continue with the walkers of the first one even without naming the "walker_set", since an "execute" block that names none carries over the one of the block before it; naming it makes the sharing explicit.
+While not functionally necessary, defining the "wavefunction" and "hamiltonian" blocks outside of the "execute" blocks prevents the trial wavefunction and Hamiltonian from being constructed more than once.
 
 .. code-block:: json
 

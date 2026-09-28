@@ -47,15 +47,14 @@ public:
     Hamiltonian& h,
     int targetNW);
 
-  // The initial guess travels with the orbitals it was read next to, so there is no way to
-  // build a Wavefunction without one.
   template<typename Wfn>
-  Wavefunction(Wfn&& other, WalkerSetInitialGuess&& guess_)
-      : var(std::forward<Wfn>(other)), guess(std::move(guess_)) {}
+    requires(!std::same_as<std::remove_cvref_t<Wfn>, Wavefunction>)
+  explicit Wavefunction(Wfn&& other) : var(std::forward<Wfn>(other)) {}
 
-  // The trial's initial walker configuration, read alongside the orbitals it belongs to.
-  // The wavefunction does not use it itself; it keeps it for whoever builds the walker set.
-  const WalkerSetInitialGuess& initial_guess() const { return guess; }
+  // The walker configuration a walker set initialized from this wavefunction starts out in:
+  // the determinant with the largest coefficient of a NOMSD, the reference of a PHMSD, and the
+  // identity at finite temperature. It has the walker type the wavefunction was built for.
+  WalkerSetInitialGuess initial_guess() const;
 
   MEMORY_SPACE get_memory_space() const;
 
@@ -151,8 +150,6 @@ public:
                NOMSD_FT<MEM,memory::const_shared_array<MEM,ComplexType,2>>,
                PHMSD<MEM>
               > var;
-
-  WalkerSetInitialGuess guess;
 
 };
 

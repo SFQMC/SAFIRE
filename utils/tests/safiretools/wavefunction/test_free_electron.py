@@ -50,9 +50,8 @@ def hubbard(hubbard_params):
 @pytest.fixture
 def quiet():
     """
-    Silence the collinear default-psi0 warning (covered in test_base.py) and
-    the open-shell warning (covered in `TestOpenShell`); 4x4 at half filling
-    fills 3 of a 6-fold degenerate shell.
+    Silence the open-shell warning (covered in `TestOpenShell`); 4x4 at half
+    filling fills 3 of a 6-fold degenerate shell.
     """
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')

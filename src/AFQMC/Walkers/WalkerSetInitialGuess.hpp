@@ -32,8 +32,8 @@ namespace sfqmc::afqmc {
  * for finite-temperature ones. The walker dimensions and the finite-temperature flag are derived
  * from whichever it holds, so they cannot disagree with the data they describe.
  *
- * The guess is produced when the trial wavefunction is read and consumed later, when the
- * walker set is built, so it owns its payload rather than viewing it.
+ * The guess is derived from a wavefunction and consumed when the walker set is built, so it owns
+ * its payload rather than viewing it.
  */
 struct WalkerSetInitialGuess {
   /// Ground state: one (rows x naea) / (NMO x naeb) matrix per spin.
@@ -42,10 +42,9 @@ struct WalkerSetInitialGuess {
   /// diagonal is used) and V.
   using udv_guess = memory::array_view<HOST_MEMORY, const ComplexType, 4>;
 
-  /// The owning counterparts of the two views above. The finite-temperature guess lives in
-  /// shared memory, so it is produced collectively and handed over by move.
+  /// The owning counterparts of the two views above.
   using slater_matrices = std::vector<nda::matrix<ComplexType>>;
-  using udv_matrices    = memory::const_shared_array<HOST_MEMORY, ComplexType, 4>;
+  using udv_matrices    = nda::array<ComplexType, 4>;
 
   WALKER_TYPES walker_type{UNDEFINED_WALKER_TYPE};
   std::variant<slater_matrices, udv_matrices> payload{};

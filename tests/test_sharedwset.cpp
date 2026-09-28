@@ -124,11 +124,8 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
       }
 
     // the guess is always supplied on the host, mirroring the T=0 constructor
-    auto initUDV = memory::share_from_root(*mpi, [&] { return initUDV_h; });
-
     auto ws = WalkerSet<MEM>(mpi, rng, wlk_params,
-                             WalkerSetInitialGuess{.walker_type = wtype,
-                                                   .payload = std::move(initUDV)}, nwalkers);
+                             WalkerSetInitialGuess{.walker_type = wtype, .payload = initUDV_h}, nwalkers);
 
     REQUIRE(ws.size() == nwalkers);
     for(int iw = 0; iw < ws.size(); ++iw)

@@ -4,6 +4,7 @@
 #include <string_view>
 #include <vector>
 #include <optional>
+#include <variant>
 #include <filesystem>
 
 #include "AFQMC/config.h"
@@ -38,19 +39,6 @@ enum class PHMSDEnergyAlgorithm {
 };
 SAFIRE_DEFINE_ENUM_NAMES(PHMSDEnergyAlgorithm, reference, woodbury);
 
-struct WalkerSetParameters {
-  // an unnamed block cannot be referenced, so it is registered under a generated name
-  std::string name{};
-  WALKER_TYPES walker_type{COLLINEAR};
-  LoadBalanceAlgorithm load_balance_type{LoadBalanceAlgorithm::async};
-  BranchingAlgorithm pop_control_type{BranchingAlgorithm::pair};
-  double min_weight{0.05};
-  double max_weight{4.0};
-};
-SAFIRE_DEFINE_PARAMETERS(WalkerSetParameters, name, walker_type, load_balance_type, pop_control_type, min_weight,
-                         max_weight);
-
-
 struct WavefunctionParameters {
   std::string name{};
   std::string filename{}; // required
@@ -66,6 +54,48 @@ struct WavefunctionParameters {
 };
 SAFIRE_DEFINE_PARAMETERS(WavefunctionParameters, name, filename, ndets_to_read, algorithm, dense_trial,
                          nwalk_block_size, ndet_block_size);
+
+/// Every walker starts out as the initial guess of this wavefunction.
+struct WavefunctionSource {
+  utils::BlockRef<WavefunctionParameters> wavefunction{};
+};
+SAFIRE_DEFINE_PARAMETERS(WavefunctionSource, wavefunction);
+
+/// What a walker set is initialized from. In the input it is an object whose single key names
+/// the kind of source, e.g. {"wavefunction": "rhf"}.
+using WalkerSetSourceParameters = std::variant<WavefunctionSource>;
+
+template<utils::detail::basic_json SafireJson>
+void to_json(SafireJson& j, const WalkerSetSourceParameters& source) {
+  std::visit([&j](const auto& alternative) { j = alternative; }, source);
+}
+
+inline void from_json(const nlohmann::json& j, WalkerSetSourceParameters& source) {
+  utils::check(j.is_object() && j.size() == 1,
+               "A walker set source has to be an object with exactly one of the keys {{\"wavefunction\"}}, but "
+               "found {}.", j.dump());
+  if(j.contains("wavefunction")) {
+    source = j.get<WavefunctionSource>();
+  } else {
+    utils::check(false, "Unknown walker set source \"{}\", it has to be one of {{\"wavefunction\"}}.",
+                 j.items().begin().key());
+  }
+}
+
+struct WalkerSetParameters {
+  // an unnamed block cannot be referenced, so it is registered under a generated name
+  std::string name{};
+  WALKER_TYPES walker_type{COLLINEAR};
+  LoadBalanceAlgorithm load_balance_type{LoadBalanceAlgorithm::async};
+  BranchingAlgorithm pop_control_type{BranchingAlgorithm::pair};
+  double min_weight{0.05};
+  double max_weight{4.0};
+
+  // resolve_defaults falls back to the wavefunction of the execute block that introduces the walker set
+  std::optional<WalkerSetSourceParameters> from{};
+};
+SAFIRE_DEFINE_PARAMETERS(WalkerSetParameters, name, walker_type, load_balance_type, pop_control_type, min_weight,
+                         max_weight, from);
 
 struct HamiltonianParameters {
   std::string name{};

@@ -23,8 +23,6 @@ factory — `NOMSDWavefunction.from_single_determinant`,
 modules alongside this one.
 """
 
-from warnings import warn
-
 import numpy as np
 
 from safiretools.types import SpinSymm
@@ -57,18 +55,13 @@ class NOMSDWavefunction(Wavefunction):
         - noncollinear: an array ``(ndets, 2, nmo, nelec)`` of spinor
           orbitals, spin-up components first. `nelec` is then
           ``(nelec, 0)``, as the file format records it.
-    psi0 : numpy.ndarray or tuple of numpy.ndarray, optional
-        Initial Slater determinant for the AFQMC walkers, in the single-
-        determinant form of the same layout. Taken from ``dets[0]`` when
-        omitted.
 
     Raises
     ------
     TypeError
-        If `dets` or `psi0` is none of the layouts.
+        If `dets` is none of the layouts.
     ValueError
-        If `dets` holds a different number of determinants than `coeffs`, or
-        `psi0` does not match it.
+        If `dets` holds a different number of determinants than `coeffs`.
 
     Examples
     --------
@@ -79,7 +72,7 @@ class NOMSDWavefunction(Wavefunction):
 
     _HDF5_GROUP = 'NOMSD'
 
-    def __init__(self, coeffs, dets, psi0=None) -> None:
+    def __init__(self, coeffs, dets) -> None:
         spin_symm, blocks = parse_spin_layout(dets, stacked=True, name='dets')
 
         widths = tuple(block.shape[-1] for block in blocks)
@@ -96,7 +89,7 @@ class NOMSDWavefunction(Wavefunction):
 
         super().__init__(coeffs=coeffs, nelec=nelec,
                          nmo=self._dets[0].shape[1] // spin_symm.npol,
-                         spin_symm=spin_symm, psi0=psi0)
+                         spin_symm=spin_symm)
 
         if self._dets[0].shape[0] != self.ndets:
             raise ValueError(
@@ -121,40 +114,23 @@ class NOMSDWavefunction(Wavefunction):
         return format_spin_layout(tuple(channel[idet] for channel in self._dets),
                                   self.spin_symm)
 
-    def _default_psi0(self) -> tuple:
-        """The leading determinant."""
-        return tuple(channel[0].copy() for channel in self._dets)
-
     def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "NOMSDWavefunction":
         """
-        Return a copy whose determinants — and explicit `psi0`, if any — have
-        orthonormal columns. See `Wavefunction.orthonormalize`.
+        Return a copy whose determinants have orthonormal columns. See
+        `Wavefunction.orthonormalize`.
         """
         dets = tuple(np.array([orthonormalize(block, tol=tol) for block in channel],
                               dtype=np.complex128)
                      for channel in self._dets)
 
-        psi0 = None if self._psi0 is None else format_spin_layout(
-            tuple(orthonormalize(block, tol=tol) for block in self._psi0),
-            self.spin_symm)
-
         return type(self)(coeffs=self.coeffs.copy(),
-                          dets=format_spin_layout(dets, self.spin_symm),
-                          psi0=psi0)
+                          dets=format_spin_layout(dets, self.spin_symm))
 
     # ------------------------------------------------------------------
     # serialization
     # ------------------------------------------------------------------
 
     def _write_payload(self, group) -> None:
-        if self._psi0 is None and self.nspin == 2:
-            warn(
-                "Using this wavefunction's own Slater determinant for the "
-                "initial walkers of a collinear trial wavefunction. This can "
-                "lead to very slow equilibration in AFQMC calculations; ROHF "
-                "Slater determinants are recommended (pass psi0=)."
-            )
-
         io.write_nomsd(group, self._dets)
 
     @classmethod
@@ -163,5 +139,4 @@ class NOMSDWavefunction(Wavefunction):
         dets = io.read_nomsd(group, header['ndets'], spin_symm.nspin)
 
         return cls(coeffs=header['coeffs'],
-                   dets=format_spin_layout(dets, spin_symm),
-                   psi0=format_spin_layout(header['psi0'], spin_symm))
+                   dets=format_spin_layout(dets, spin_symm))

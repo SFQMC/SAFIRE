@@ -231,16 +231,6 @@ def spin_layout_shape(value):
     return np.shape(value)
 
 
-def expected_spin_layout_shape(spin_symm, nmo: int, nelec_per_spin):
-    """The `spin_layout_shape` a single determinant of `spin_symm` must have."""
-    spin_symm = SpinSymm.from_input(spin_symm)
-    if spin_symm is SpinSymm.COLLINEAR:
-        return tuple((nmo, nelec) for nelec in nelec_per_spin)
-    if spin_symm is SpinSymm.NONCOLLINEAR:
-        return (2, nmo, nelec_per_spin[0])
-    return (nmo, nelec_per_spin[0])
-
-
 def _layout_error(value, stacked: bool, name: str) -> TypeError:
     lead = "(ndets, " if stacked else "("
     if isinstance(value, np.ndarray):

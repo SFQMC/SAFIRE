@@ -67,19 +67,6 @@ def from_pyscf(mf, basis=None, active_space=None):
     ValueError
         If `mf` holds no orbitals, if `basis` cannot be used, or if ``mo_occ``
         does not describe the expected number of occupied orbitals.
-
-    Notes
-    -----
-    Set ``wavefunction.psi0`` afterwards to choose the AFQMC initial walker;
-    use `safiretools.Wavefunction.from_single_determinant` to supply a
-    determinant of your own.
-
-    A reference with no beta electrons — which a large enough frozen core can
-    produce from an open-shell one — is `SpinSymm.COLLINEAR` with
-    ``ndown == 0``, and its beta blocks go to disk with zero width.
-
-    PySCF's orbitals are orthonormal in the basis they are expressed in, so
-    nothing here orthonormalizes them.
     """
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
 

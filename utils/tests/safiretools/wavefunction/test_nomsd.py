@@ -10,8 +10,6 @@
 
 """`NOMSDWavefunction`: construction and round trips."""
 
-import warnings
-
 import h5py as h5
 import numpy as np
 import pytest
@@ -100,10 +98,7 @@ class TestRoundTrip:
         wavefunction = make_nomsd(spin_symm, nelec=nelec, nmo=6, ndets=ndets)
         path = tmp_path / 'wfn.h5'
 
-        # the collinear default-psi0 warning is covered in test_base.py
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            wavefunction.to_hdf5(path)
+        wavefunction.to_hdf5(path)
         read_back = Wavefunction.from_hdf5(path)
 
         assert isinstance(read_back, NOMSDWavefunction)
@@ -113,32 +108,18 @@ class TestRoundTrip:
         assert read_back.ndets == ndets
         assert np.allclose(read_back.coeffs, wavefunction.coeffs)
         assert layouts_close(read_back.dets, wavefunction.dets)
-        assert layouts_close(read_back.psi0, wavefunction.psi0)
 
     def test_a_polarized_wavefunction_writes_zero_width_beta_blocks(
             self, make_nomsd, tmp_path):
         wavefunction = make_nomsd('collinear', nelec=(3, 0), nmo=6)
         path = tmp_path / 'polarized.h5'
 
-        with pytest.warns(UserWarning):
-            wavefunction.to_hdf5(path)
+        wavefunction.to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
             group = fh5['Wavefunction/NOMSD']
             assert group.attrs['spin_type'] == 'collinear'
-            assert group['Psi0_beta'].shape == (6, 0)
             assert list(group['PsiT_1/dims'][...]) == [0, 6, 0]
-
-    def test_an_explicit_psi0_survives(self, make_nomsd, orthonormal,
-                                       layouts_close, tmp_path):
-        wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
-        wavefunction.psi0 = (orthonormal(6, 3), orthonormal(6, 2))
-        path = tmp_path / 'wfn.h5'
-
-        wavefunction.to_hdf5(path)
-        read_back = Wavefunction.from_hdf5(path)
-
-        assert layouts_close(read_back.psi0, wavefunction.psi0)
 
     def test_only_the_requested_determinants_come_back(self, make_nomsd,
                                                        tmp_path):

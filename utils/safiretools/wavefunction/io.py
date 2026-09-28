@@ -12,19 +12,22 @@
 The native SAFIRE wavefunction HDF5 schema, read and written here and nowhere
 else.
 
-Both representations share a header — the ``spin_type`` attribute, ``ci_coeffs``
-and the initial Slater determinant ``Psi0_alpha``/``Psi0_beta`` — and differ only
-in the payload that follows it: a `NOMSDWavefunction` writes one CSR ``PsiT_k``
-group per determinant and spin, while a `PHMSDWavefunction` writes ``occa``/``occb``
-occupation numbers plus an optional orbital reference. No sizes are stored; they
-are all read off the shapes of these arrays. `Wavefunction.to_hdf5` and
-`Wavefunction.from_hdf5` drive both from the shared header, so this module is
-the only place the layout is spelled out.
+Both representations share a header — the ``spin_type`` attribute and
+``ci_coeffs`` — and differ only in the payload that follows it: a
+`NOMSDWavefunction` writes one CSR ``PsiT_k`` group per determinant and spin,
+while a `PHMSDWavefunction` writes ``occa``/``occb`` occupation numbers plus an
+optional orbital reference. Sizes are read off the shapes of these arrays, with
+one exception: occupation numbers alone do not span the orbitals, so a PHMSD
+records their count in a ``number_of_orbitals`` attribute. `Wavefunction.to_hdf5`
+and `Wavefunction.from_hdf5` drive both from the shared header, so this module
+is the only place the layout is spelled out.
+
+No initial walker is stored. The executable derives it from whichever
+wavefunction the input initializes a walker set from.
 
 The layout is fixed by the AFQMC executable's readers (``readWfn.cpp``'s
-``getCommonInput`` / ``read_nomsd_wavefunction`` / ``read_ph_wavefunction_hdf``
-and ``WavefunctionFactory``'s ``getInitialGuess``), so none of it is
-configurable.
+``getCommonInput`` / ``read_nomsd_wavefunction`` / ``read_ph_wavefunction_hdf``),
+so none of it is configurable.
 """
 
 from warnings import warn
@@ -78,12 +81,12 @@ def warn_if_ill_conditioned(named_matrices, condition_max=CONDITION_MAX) -> None
 # the shared header
 # ----------------------------------------------------------------------
 
-def write_header(group, spin_symm: SpinSymm, coeffs, psi0) -> None:
+def write_header(group, spin_symm: SpinSymm, coeffs) -> None:
     """
     Write the header both representations share.
 
-    No sizes are recorded: the number of determinants, orbitals and electrons
-    are all read off the shapes of the arrays.
+    No sizes are recorded: the number of determinants is read off the shape of
+    ``ci_coeffs``.
 
     Parameters
     ----------
@@ -93,21 +96,9 @@ def write_header(group, spin_symm: SpinSymm, coeffs, psi0) -> None:
         Spin symmetry, recorded as the ``spin_type`` attribute.
     coeffs : array_like
         Determinant coefficients, ``(ndets,)``.
-    psi0 : sequence of numpy.ndarray
-        Initial Slater determinant, one ``(npol*nmo, nelec_of_that_spin)`` block
-        per spin channel — one block for closed/noncollinear, two for collinear.
     """
-    coeffs = np.asarray(coeffs)
-
-    warn_if_ill_conditioned(
-        (name, block) for name, block
-        in zip(('Psi0_alpha', 'Psi0_beta'), psi0))
-
     group.attrs['spin_type'] = spin_symm.label
-    group.create_dataset('ci_coeffs', data=coeffs)
-
-    for name, block in zip(('Psi0_alpha', 'Psi0_beta'), psi0):
-        group.create_dataset(name, data=block)
+    group.create_dataset('ci_coeffs', data=np.asarray(coeffs))
 
 
 def read_header(group) -> dict:
@@ -117,9 +108,9 @@ def read_header(group) -> dict:
     Returns
     -------
     dict
-        Keys ``nmo``, ``spin_symm``, ``ndets``, ``coeffs`` and ``psi0`` (a
-        tuple with one block per spin channel). The electron count is not part
-        of the header; each payload reader takes it from its own arrays.
+        Keys ``spin_symm``, ``ndets`` and ``coeffs``. The orbital and electron
+        counts are not part of the header; each payload reader takes them from
+        its own data.
     """
     if 'spin_type' in group.attrs:
         spin_symm = SpinSymm.from_input(group.attrs['spin_type'])
@@ -129,16 +120,10 @@ def read_header(group) -> dict:
         spin_symm = SpinSymm.from_input(int(group['dims'][3]))
     coeffs = read_complex(group['ci_coeffs'])
 
-    names = ('Psi0_alpha', 'Psi0_beta') if spin_symm is SpinSymm.COLLINEAR \
-        else ('Psi0_alpha',)
-    psi0 = tuple(read_complex(group[name]) for name in names)
-
     return {
-        'nmo': psi0[0].shape[0] // spin_symm.npol,
         'spin_symm': spin_symm,
         'ndets': coeffs.size,
         'coeffs': coeffs,
-        'psi0': psi0,
     }
 
 
@@ -253,7 +238,7 @@ def read_nomsd(group, ndets: int, nspin: int):
 # the PHMSD payload
 # ----------------------------------------------------------------------
 
-def write_phmsd(group, occa, occb, orbitals=None) -> None:
+def write_phmsd(group, nmo: int, occa, occb, orbitals=None) -> None:
     """
     Write the occupation numbers, and the optional orbital reference, of a PHMSD
     wavefunction.
@@ -262,6 +247,9 @@ def write_phmsd(group, occa, occb, orbitals=None) -> None:
     ----------
     group : h5py.Group
         The ``Wavefunction/PHMSD`` group.
+    nmo : int
+        Number of spatial orbitals, written as the ``number_of_orbitals``
+        attribute.
     occa, occb : numpy.ndarray
         Occupied-orbital indices per determinant, ``(ndets, nup)`` and
         ``(ndets, ndown)``, written as the ``occa`` and ``occb`` datasets. Their
@@ -279,6 +267,8 @@ def write_phmsd(group, occa, occb, orbitals=None) -> None:
     """
     references = orbitals or ()
 
+    # int32, as TRIQS/h5 writes an int: the executable reads attributes by exact type
+    group.attrs['number_of_orbitals'] = np.int32(nmo)
     group.create_dataset('type', data=len(references))
     for index, matrix in enumerate(references):
         write_orbitals(group, f'PsiT_{index}', matrix)
@@ -292,15 +282,18 @@ def write_phmsd(group, occa, occb, orbitals=None) -> None:
 
 def read_phmsd(group):
     """
-    Read the occupation numbers and orbital references back.
+    Read the orbital count, occupation numbers and orbital references back.
 
     Returns
     -------
+    nmo : int
+        Number of spatial orbitals.
     occa, occb : numpy.ndarray
         Occupied-orbital indices, one array per independent spin channel.
     orbitals : tuple of numpy.ndarray or None
         The orbital references, or None when ``type`` is 0.
     """
+    nmo = int(group.attrs['number_of_orbitals'])
     occa = np.asarray(group['occa'][...])
     occb = np.asarray(group['occb'][...])
 
@@ -310,4 +303,4 @@ def read_phmsd(group):
         orbitals = tuple(read_orbitals(group, f'PsiT_{index}')
                          for index in range(ntype))
 
-    return occa, occb, orbitals
+    return nmo, occa, occb, orbitals
