@@ -591,4 +591,253 @@ TEST_CASE("estimators: local energy is read off the walkers", "[estimators]")
   });
 }
 
+namespace
+{
+/// One entry of a back propagation record, carrying the tag of the walker it belongs to.
+/// `salt` separates the three records, so that a copy taken from the wrong one cannot pass.
+ComplexType bp_record_entry(int salt, int tag, int a, int b)
+{
+  return ComplexType(tag + 0.125 * a + 8192.0 * salt, 0.5 - 0.0625 * b - 4096.0 * salt);
+}
+
+/// The walker tag a record entry written by bp_record_entry(0, tag, 0, 0) names.
+int bp_record_tag(ComplexType entry) { return int(std::lround(entry.real())); }
+
+/// Sets up a population whose weights straddle the branching thresholds, so that population
+/// control has to duplicate a walker and kill another rather than pass the population through.
+template<MEMORY_SPACE MEM>
+void skew_weights(WalkerSet<MEM>& wset)
+{
+  int const nwalk = wset.size();
+  memory::buffered_array<HOST_MEMORY, ComplexType, 1> weights(nwalk);
+  wset.getProperty(WEIGHT, weights);
+  weights(0) *= 1e-3;
+  weights(nwalk - 1) *= 5.0;
+  auto staged = memory::to_memory_space<MEM>(nda::array<ComplexType, 1>{weights()});
+  wset.setProperty(WEIGHT, staged);
+}
+} // namespace
+
+/// A back propagation window is a number of steps of its own now, so a branching event can
+/// land anywhere inside one rather than only on its boundary. Everything the estimator reads
+/// back over the window -- the field ring, the weight factors and the anchor Slater matrix --
+/// lives on the walker, so it has to follow the walker that a branch duplicated or a load
+/// balance moved, all of it and from the same parent. Each record here names the walker it
+/// was written for, which is what lets a survivor be checked without knowing which parent it
+/// came from.
+template<MEMORY_SPACE MEM>
+void estimators_bp_record_survives_population_control(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+    Wavefunction<MEM>& wfn, WalkerSetParameters const& wlk_params,
+    std::shared_ptr<utils::RandomGenerator_t<>> rng, int nwalk)
+{
+  constexpr int nbp = 3;
+  constexpr int nCV = 5;
+
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nwalk);
+  wset.resize_bp(nbp, nCV, 1);
+
+  int const nhist = wset.HistoryBufferLength();
+  int const tag0  = mpi->comm.rank() * nwalk;
+
+  for(int s = 0; s < nbp; ++s) {
+    nda::array<ComplexType, 2> slot(nwalk, nCV);
+    for(int iw = 0; iw < nwalk; ++iw) {
+      for(int c = 0; c < nCV; ++c) {
+        slot(iw, c) = bp_record_entry(0, tag0 + iw, s, c);
+      }
+    }
+    auto staged = memory::to_memory_space<MEM>(std::move(slot));
+    wset.storeFields(s, staged);
+  }
+  {
+    nda::array<ComplexType, 2> factors(nwalk, nhist);
+    for(int iw = 0; iw < nwalk; ++iw) {
+      for(int k = 0; k < nhist; ++k) {
+        factors(iw, k) = bp_record_entry(1, tag0 + iw, 0, k);
+      }
+    }
+    auto staged = memory::to_memory_space<MEM>(std::move(factors));
+    auto weight_factors = wset.getWeightFactors();
+    weight_factors() = staged();
+  }
+  {
+    auto anchor = wset.SlaterMatricesN(Alpha);
+    nda::array<ComplexType, 3> smn(anchor.shape());
+    for(int iw = 0; iw < nwalk; ++iw) {
+      for(int i = 0; i < smn.extent(1); ++i) {
+        for(int j = 0; j < smn.extent(2); ++j) {
+          smn(iw, i, j) = bp_record_entry(2, tag0 + iw, i, j);
+        }
+      }
+    }
+    auto staged = memory::to_memory_space<MEM>(std::move(smn));
+    anchor() = staged();
+  }
+
+  skew_weights(wset);
+  wset.rescale_total_weight();
+  wset.popControl();
+  wset.rescale_total_weight();
+
+  REQUIRE(wset.size() == nwalk);
+
+  auto fields  = nda::to_host(wset.getFields());
+  auto factors = nda::to_host(wset.getWeightFactors());
+  auto anchor  = nda::to_host(wset.SlaterMatricesN(Alpha));
+
+  // a branch that left every walker in its own slot would let a record that never moves pass,
+  // so the run has to have moved at least one of them somewhere
+  int moved = 0;
+  for(int iw = 0; iw < nwalk; ++iw) {
+    int const tag = bp_record_tag(fields(iw, 0, 0));
+    if(tag != tag0 + iw) {
+      ++moved;
+    }
+
+    for(int s = 0; s < nbp; ++s) {
+      for(int c = 0; c < nCV; ++c) {
+        CHECK_THAT(fields(iw, s, c), utils::Approx(bp_record_entry(0, tag, s, c)));
+      }
+    }
+    for(int k = 0; k < nhist; ++k) {
+      CHECK_THAT(factors(iw, k), utils::Approx(bp_record_entry(1, tag, 0, k)));
+    }
+    for(int i = 0; i < anchor.extent(1); ++i) {
+      for(int j = 0; j < anchor.extent(2); ++j) {
+        CHECK_THAT(anchor(iw, i, j), utils::Approx(bp_record_entry(2, tag, i, j)));
+      }
+    }
+  }
+  CHECK(mpi->comm.all_reduce_value(moved) > 0);
+}
+
+/// The back propagation window and the population control interval run on grids of their own,
+/// so a window straddles branching events at a different offset every time it comes around.
+/// The propagator runs at dt -> 0 here, where back propagation is the identity and the
+/// estimator must reproduce the mixed estimate of the same step -- but only if it weights the
+/// walkers the population control event inside its window left behind, and anchors on the step
+/// its schedule says. The walkers are spread apart at a real timestep first, so that a weighted
+/// average over them is not the same as any single one of them and a mixed-up weight cannot
+/// cancel out.
+template<MEMORY_SPACE MEM>
+void estimators_bp_matches_mixed_across_population_control(
+    std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi)
+{
+  std::string const inputs     = utils::unit_test_base() + "BH/";
+  std::string const hamil_file = inputs + "afqmc_H_rhf_collinear.h5";
+  std::string const wfn_file   = inputs + "afqmc_uhf_nomsd.h5";
+
+  std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
+  std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev = std::make_shared<utils::RandomGenerator_t<MEM>>(777);
+
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
+
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file);
+  const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
+
+  int const nwalk = 4;
+  WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
+  apply_defaults(wfn_params, ham.getHamType());
+  auto wfn = Wavefunction<MEM>::from_params(mpi, wfn_params, type, false, ham, nwalk);
+
+  PropagatorParameters prop_params{.name = "prop0"};
+  apply_defaults(prop_params, ham.getHamType());
+  // one propagator to spread the walkers apart before the measurement phase, and one to run
+  // the measurement phase itself at a timestep small enough that replaying its fields
+  // backwards leaves the references where they started.
+  Propagator<MEM> spread{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, 0.01)};
+  Propagator<MEM> flat{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, 1e-18)};
+
+  estimators_bp_record_survives_population_control<MEM>(mpi, wfn, wlk_params, rng, nwalk);
+
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nwalk);
+  for(int i = 0; i < 4; ++i) {
+    spread.Propagate(wset, 0.0);
+  }
+  spread.Orthogonalize(wset);
+
+  constexpr int bp_window    = 3;
+  // deliberately not a divisor of the back propagation window, and not divided by it either
+  constexpr int pop_interval = 2;
+  constexpr long nsteps      = 9;
+
+  const ExecuteParameters exec{
+      .estimators = EstimatorParameters{
+          .energy   = std::nullopt,
+          .mixed    = MixedEstimatorParameters{.wavefunction     = "wfn0",
+                                               .hamiltonian      = "ham0",
+                                               .measure_interval = 1,
+                                               .onerdm           = OneRDMParameters{}},
+          // path restoration undoes the cosine projection over the window, which is a factor
+          // of its own and not what this compares; without it both estimators weight the
+          // walkers with the weights the population control event left on them
+          .backprop = BackPropEstimatorParameters{.wavefunction          = "wfn0",
+                                                  .hamiltonian           = "ham0",
+                                                  .propagation_steps     = std::vector<int>{bp_window},
+                                                  .walker_ortho_interval = 1,
+                                                  .path_restoration      = false,
+                                                  .onerdm                = OneRDMParameters{}}},
+      .population_control_interval = pop_interval,
+      .n_walkers_per_mpi_task = nwalk};
+
+  Estimators<MEM> estimators{
+      mpi, 0, exec, wset, wfn, flat,
+      [&](std::string const&, std::string const&) -> Wavefunction<MEM>& { return wfn; }};
+
+  // the anchor the constructor took sits at step 0, so the windows are [0,3], [3,6] and [6,9],
+  // while population control runs at steps 1, 2, 4, 6 and 8: inside a window, on its closing
+  // step, and on neither, over the course of the run
+  for(long step = 1; step <= nsteps; ++step) {
+    flat.Propagate(wset, 0.0);
+    flat.Orthogonalize(wset);
+    if(step % pop_interval == 0 || step == 1) {
+      // re-skewing keeps the thresholds in reach after a branch has equalized the weights,
+      // so that later windows see a branching event too and not just the first one
+      skew_weights(wset);
+      wset.rescale_total_weight();
+      wset.popControl();
+      wset.rescale_total_weight();
+    }
+    estimators.measure(*mpi, step, wset);
+  }
+
+  // only root records any bin, and Estimators::write is not guarded, so root alone writes
+  utils::TemporaryDirectory tmpdir;
+  if(mpi->comm.root()) {
+    auto const results = tmpdir / "bp_vs_mixed.results.h5";
+    estimators.write(results);
+
+    h5::file out(results.string(), 'r');
+    h5::group root(out);
+
+    nda::array<ComplexType, 4> bp_bins, mixed_bins;
+    h5::read(root, std::format("Measurements/Stage0/BackPropEstimator/Steps={}/OneRDM/bins", bp_window), bp_bins);
+    h5::read(root, "Measurements/Stage0/MixedEstimator/OneRDM/bins", mixed_bins);
+
+    REQUIRE(bp_bins.extent(0) == nsteps / bp_window);
+    REQUIRE(mixed_bins.extent(0) == nsteps);
+
+    for(long j = 0; j < bp_bins.extent(0); ++j) {
+      // the back propagated bin j was measured at step bp_window*(j+1), which is the mixed
+      // bin one lower: the mixed estimator measures every step, starting at step 1
+      long const mixed = bp_window * (j + 1) - 1;
+      CHECK_THAT(bp_bins(j, nda::ellipsis{}),
+                 utils::Approx(mixed_bins(mixed, nda::ellipsis{}), 1e-7, 1e-7));
+    }
+  }
+}
+
+TEST_CASE("estimators: back propagation across population control", "[estimators]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+
+  utils::catch_test_exceptions("estimators: back propagation across population control", [&] {
+    estimators_bp_matches_mixed_across_population_control<HOST_MEMORY>(mpi);
+#if defined(ENABLE_DEVICE)
+    estimators_bp_matches_mixed_across_population_control<DEVICE_MEMORY>(mpi);
+#endif
+  });
+}
+
 } // namespace sfqmc
