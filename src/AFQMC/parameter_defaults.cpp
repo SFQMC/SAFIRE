@@ -33,18 +33,18 @@ namespace sfqmc::afqmc {
 
 namespace {
 
-/// Names the blocks of one component and hoists the ones declared inside an execute block into
-/// the top level list, so that afterwards every execute block refers to its components by name
-/// and `blocks` is the complete registry.
+/// Names the blocks of one component and hoists the ones declared inline into the top level list,
+/// so that afterwards every one of `refs` refers to its block by name and `blocks` is the complete
+/// registry. The refs are resolved in order, which is the order generated names are handed out in.
 ///
 /// A generated name is only used if the input does not contain it, so that an input is free to
 /// name a block e.g. "propagator_0" itself.
 template<typename Params>
-void resolve_block_refs(std::string_view key, std::vector<Params>& blocks, std::vector<ExecuteParameters>& execute,
-                        std::optional<utils::BlockRef<Params>> ExecuteParameters::*member, bool required) {
+void resolve_block_refs(std::string_view key, std::vector<Params>& blocks,
+                        const std::vector<utils::BlockRef<Params>*>& refs) {
   // collect every name the input gives explicitly. This has to see all of them before the first
-  // name is generated, because an explicit name may appear in a later execute block than the
-  // nameless block that would otherwise be given it.
+  // name is generated, because an explicit name may appear in a later ref than the nameless block
+  // that would otherwise be given it.
   std::set<std::string> names;
   auto claim = [&](const std::string& name) {
     utils::check(names.insert(name).second, "There is more than one {} named \"{}\". Names have to be unique.", key,
@@ -55,11 +55,9 @@ void resolve_block_refs(std::string_view key, std::vector<Params>& blocks, std::
                  "execute block can refer to it.", key);
     claim(block.name);
   }
-  for(const auto& exec : execute) {
-    if(const auto& ref = exec.*member; ref) {
-      if(const auto* block = std::get_if<Params>(&*ref); block && !block->name.empty()) {
-        claim(block->name);
-      }
+  for(const auto* ref : refs) {
+    if(const auto* block = std::get_if<Params>(ref); block && !block->name.empty()) {
+      claim(block->name);
     }
   }
 
@@ -73,25 +71,60 @@ void resolve_block_refs(std::string_view key, std::vector<Params>& blocks, std::
     return name;
   };
 
-  for(auto& exec : execute) {
-    auto& ref = exec.*member;
-    if(ref) {
-      if(const auto* name = std::get_if<std::string>(&*ref)) {
-        utils::check(names.contains(*name), "An execute block refers to the {} \"{}\", which is not declared "
-                     "anywhere.", key, *name);
-        continue;
-      }
-    } else {
-      utils::check(!required, "An execute block is missing its {}, which is required.", key);
+  for(auto* ref : refs) {
+    if(const auto* name = std::get_if<std::string>(ref)) {
+      utils::check(names.contains(*name), "The input refers to the {} \"{}\", which is not declared anywhere.", key,
+                   *name);
+      continue;
     }
 
-    // an absent block is a default constructed one that nothing else can refer to
-    Params block = ref ? std::get<Params>(std::move(*ref)) : Params{};
+    Params block = std::get<Params>(std::move(*ref));
     if(block.name.empty()) {
       block.name = generate_name();
     }
-    ref = utils::BlockRef<Params>{block.name};
+    *ref = block.name;
     blocks.push_back(std::move(block));
+  }
+}
+
+/// The refs to one component from every execute block. An absent one is materialized as a default
+/// constructed block that nothing else can refer to, unless the component is required.
+template<typename Params>
+std::vector<utils::BlockRef<Params>*> execute_refs(std::string_view key, std::vector<ExecuteParameters>& execute,
+                                                   std::optional<utils::BlockRef<Params>> ExecuteParameters::*member,
+                                                   bool required) {
+  std::vector<utils::BlockRef<Params>*> refs;
+  for(auto& exec : execute) {
+    auto& ref = exec.*member;
+    if(!ref) {
+      utils::check(!required, "An execute block is missing its {}, which is required.", key);
+      ref.emplace(Params{});
+    }
+    refs.push_back(&*ref);
+  }
+  return refs;
+}
+
+/// Resolves the walker set of every execute block. Only the first execute block falls back to a
+/// default walker set; a later one that names none carries over the walker set of the stage before
+/// it, so that consecutive stages continue the same random walk.
+void resolve_walker_set_refs(std::vector<WalkerSetParameters>& blocks, std::vector<ExecuteParameters>& execute) {
+  std::vector<utils::BlockRef<WalkerSetParameters>*> refs;
+  for(std::size_t i = 0; i < execute.size(); ++i) {
+    auto& ref = execute[i].walker_set;
+    if(!ref && i == 0) {
+      ref.emplace(WalkerSetParameters{});
+    }
+    if(ref) {
+      refs.push_back(&*ref);
+    }
+  }
+  resolve_block_refs("walker_set", blocks, refs);
+
+  for(std::size_t i = 1; i < execute.size(); ++i) {
+    if(!execute[i].walker_set) {
+      execute[i].walker_set = execute[i - 1].walker_set;
+    }
   }
 }
 
@@ -234,11 +267,23 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
     params.seed = drawn;
   }
 
-  // 2. + 3. name every block and hoist the ones declared inside an execute block
-  resolve_block_refs("wavefunction", params.wavefunction, params.execute, &ExecuteParameters::wavefunction, true);
-  resolve_block_refs("hamiltonian", params.hamiltonian, params.execute, &ExecuteParameters::hamiltonian, false);
-  resolve_block_refs("walker_set", params.walker_set, params.execute, &ExecuteParameters::walker_set, false);
-  resolve_block_refs("propagator", params.propagator, params.execute, &ExecuteParameters::propagator, false);
+  // 2. + 3. name every block and hoist the ones declared inline. The walker sets go first, since
+  //    the wavefunction a walker set is initialized from may be declared inside of it.
+  resolve_walker_set_refs(params.walker_set, params.execute);
+
+  auto wavefunction_refs = execute_refs("wavefunction", params.execute, &ExecuteParameters::wavefunction, true);
+  for(auto& walker_set : params.walker_set) {
+    if(walker_set.from) {
+      if(auto* source = std::get_if<WavefunctionSource>(&*walker_set.from)) {
+        wavefunction_refs.push_back(&source->wavefunction);
+      }
+    }
+  }
+  resolve_block_refs("wavefunction", params.wavefunction, wavefunction_refs);
+  resolve_block_refs("hamiltonian", params.hamiltonian,
+                     execute_refs("hamiltonian", params.execute, &ExecuteParameters::hamiltonian, false));
+  resolve_block_refs("propagator", params.propagator,
+                     execute_refs("propagator", params.execute, &ExecuteParameters::propagator, false));
 
   for(const auto& wfn : params.wavefunction) {
     utils::check(!wfn.filename.empty(), "The wavefunction \"{}\" must contain a filename.", wfn.name);
@@ -255,6 +300,14 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
       ham.filename = find_block(params.wavefunction, wfn_name, "wavefunction").filename;
     }
 
+    // a walker set starts from the wavefunction of the stage that introduces it. The stages are
+    // visited in order, so a walker set carried over from an earlier stage already has its source.
+    WalkerSetParameters& walker_set =
+        find_block(params.walker_set, block_name(exec.walker_set, "walker_set"), "walker_set");
+    if(!walker_set.from) {
+      walker_set.from = WavefunctionSource{.wavefunction = wfn_name};
+    }
+
     apply_defaults(exec, params.driver);
   }
 
@@ -269,11 +322,24 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
     return entry->second;
   };
 
+  std::set<std::string> introduced_walker_sets;
   for(const auto& exec : params.execute) {
     const HamiltonianType htype = hamiltonian_type(block_name(exec.hamiltonian, "hamiltonian"));
     apply_defaults(find_block(params.wavefunction, block_name(exec.wavefunction, "wavefunction"), "wavefunction"),
                    htype);
     apply_defaults(find_block(params.propagator, block_name(exec.propagator, "propagator"), "propagator"), htype);
+
+    // the wavefunction a walker set starts from is built with the hamiltonian of the stage that
+    // introduces the walker set
+    const std::string& walker_set_name = block_name(exec.walker_set, "walker_set");
+    if(introduced_walker_sets.insert(walker_set_name).second) {
+      const auto& from = *find_block(params.walker_set, walker_set_name, "walker_set").from;
+      if(const auto* source = std::get_if<WavefunctionSource>(&from)) {
+        apply_defaults(find_block(params.wavefunction, block_name(source->wavefunction, "wavefunction"),
+                                  "wavefunction"),
+                       htype);
+      }
+    }
 
     // an estimator that brings its own wavefunction builds it from its own hamiltonian
     for_each_estimator(exec.estimators, [&](const auto& estimator) {

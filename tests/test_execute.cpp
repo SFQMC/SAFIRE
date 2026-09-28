@@ -189,6 +189,54 @@ TEST_CASE("execute: build", "[execute]")
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
 }
 
+/// A UHF trial whose walkers start from the RHF determinant rather than from the trial itself,
+/// followed by a stage that carries the walkers over.
+template<MEMORY_SPACE MEM>
+void execute_from_other_wavefunction(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi)
+{
+  std::string const pre = utils::unit_test_base();
+
+  AFQMCParameters params{};
+  params.seed         = 463;
+  params.hamiltonian  = {HamiltonianParameters{.name = "ham", .filename = pre + "BH/afqmc_H_rhf_collinear.h5"}};
+  params.wavefunction = {WavefunctionParameters{.name = "uhf", .filename = pre + "BH/afqmc_uhf_nomsd.h5"},
+                         WavefunctionParameters{.name = "rhf", .filename = pre + "BH/afqmc_rhf_nomsd.h5"}};
+  for(int stage = 0; stage < 2; ++stage) {
+    params.execute.push_back(ExecuteParameters{.wavefunction = std::string{"uhf"},
+                                               .hamiltonian  = std::string{"ham"},
+                                               .steps = 10, .equilibration_steps = 0});
+  }
+  params.execute[0].walker_set =
+      WalkerSetParameters{.walker_type = COLLINEAR, .from = WavefunctionSource{.wavefunction = std::string{"rhf"}}};
+
+  utils::TemporaryDirectory tmpdir;
+  params.output_name = (tmpdir / "exec_from_test").string();
+
+  resolve_defaults(params, *mpi);
+  REQUIRE(params.walker_set.size() == 1);
+  CHECK(block_name(std::get<WavefunctionSource>(*params.walker_set[0].from).wavefunction, "wavefunction") == "rhf");
+
+  execute_simulation<MEM>(mpi, params);
+
+  if(mpi->comm.root()) {
+    h5::file results(std::format("{}.results.h5", params.output_name), 'r');
+    h5::group meas = h5::group(results).open_group("Measurements");
+    CHECK(meas.has_subgroup("Stage0"));
+    CHECK(meas.has_subgroup("Stage1"));
+  }
+  mpi->comm.barrier();
+}
+
+TEST_CASE("execute: walker set from another wavefunction", "[execute]")
+{
+  auto& mpi = utils::make_unit_test_mpi_context();
+
+  execute_from_other_wavefunction<HOST_MEMORY>(mpi);
+#if defined(ENABLE_DEVICE)
+  execute_from_other_wavefunction<DEVICE_MEMORY>(mpi);
+#endif
+}
+
 /// The name an execute block refers a component by, checking that the reference was hoisted: it
 /// holds a name, and that name belongs to exactly one block of the registry.
 template<typename Params>
@@ -208,6 +256,17 @@ const Params& block_named(const std::vector<Params>& blocks, const std::string& 
   const auto block = std::ranges::find_if(blocks, [&](const Params& candidate) { return candidate.name == name; });
   REQUIRE(block != blocks.end());
   return *block;
+}
+
+/// The name of the wavefunction a resolved walker set is initialized from.
+std::string source_wavefunction(const WalkerSetParameters& walker_set)
+{
+  REQUIRE(walker_set.from.has_value());
+  const auto* source = std::get_if<WavefunctionSource>(&*walker_set.from);
+  REQUIRE(source != nullptr);
+  const auto* name = std::get_if<std::string>(&source->wavefunction);
+  REQUIRE(name != nullptr);
+  return *name;
 }
 
 /// Every block of a registry carries a name of its own.
@@ -250,7 +309,10 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     const std::string wfn_name    = resolved_name(exec.wavefunction, params.wavefunction);
     const std::string ham_name    = resolved_name(exec.hamiltonian, params.hamiltonian);
     const std::string prop_name   = resolved_name(exec.propagator, params.propagator);
-    resolved_name(exec.walker_set, params.walker_set); // nothing below needs the name itself
+    const std::string wlk_name    = resolved_name(exec.walker_set, params.walker_set);
+
+    // the default walker set starts from the wavefunction of the execute block
+    CHECK(source_wavefunction(block_named(params.walker_set, wlk_name)) == wfn_name);
 
     // a hamiltonian without a file of its own takes the one of the wavefunction
     const WavefunctionParameters& wfn = block_named(params.wavefunction, wfn_name);
@@ -400,6 +462,88 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     CHECK(resolved_name(params.execute[0].hamiltonian, params.hamiltonian) != "hamiltonian_0");
     CHECK(resolved_name(params.execute[1].wavefunction, params.wavefunction) == "wavefunction_0");
     CHECK(resolved_name(params.execute[1].hamiltonian, params.hamiltonian) == "hamiltonian_0");
+  }
+
+  // a later execute block without a walker set carries over the one of the stage before it, which
+  // keeps the source it was given by the stage that introduced it
+  {
+    AFQMCParameters params{};
+    params.wavefunction = {WavefunctionParameters{.name = "second_wfn", .filename = hamil_file}};
+    params.execute      = {
+        ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file}},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}},
+    };
+    resolve_defaults(params, *mpi);
+
+    REQUIRE(params.walker_set.size() == 1);
+    const std::string wlk_name = resolved_name(params.execute[0].walker_set, params.walker_set);
+    CHECK(resolved_name(params.execute[1].walker_set, params.walker_set) == wlk_name);
+    CHECK(resolved_name(params.execute[2].walker_set, params.walker_set) == wlk_name);
+    CHECK(source_wavefunction(block_named(params.walker_set, wlk_name)) ==
+          resolved_name(params.execute[0].wavefunction, params.wavefunction));
+  }
+
+  // so does an explicit walker set, while a later explicit one starts a walker set of its own, from
+  // the wavefunction of the stage that introduces it
+  {
+    AFQMCParameters params{};
+    params.wavefunction = {WavefunctionParameters{.name = "first_wfn", .filename = hamil_file},
+                           WavefunctionParameters{.name = "second_wfn", .filename = hamil_file}};
+    params.execute      = {
+        ExecuteParameters{.walker_set = WalkerSetParameters{.name = "first"}, .wavefunction = std::string{"first_wfn"}},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}},
+        ExecuteParameters{.walker_set = WalkerSetParameters{.name = "second"}, .wavefunction = std::string{"second_wfn"}},
+    };
+    resolve_defaults(params, *mpi);
+
+    REQUIRE(params.walker_set.size() == 2);
+    CHECK(resolved_name(params.execute[1].walker_set, params.walker_set) == "first");
+    CHECK(resolved_name(params.execute[2].walker_set, params.walker_set) == "second");
+    CHECK(source_wavefunction(block_named(params.walker_set, "first")) == "first_wfn");
+    CHECK(source_wavefunction(block_named(params.walker_set, "second")) == "second_wfn");
+  }
+
+  // a walker set may start from a wavefunction other than the one of the execute block, named or
+  // declared inline, and that wavefunction has its defaults resolved as well
+  {
+    AFQMCParameters params{};
+    params.wavefunction = {WavefunctionParameters{.name = "init_wfn", .filename = hamil_file}};
+    params.execute      = {
+        ExecuteParameters{
+            .walker_set   = WalkerSetParameters{.from = WavefunctionSource{.wavefunction = std::string{"init_wfn"}}},
+            .wavefunction = WavefunctionParameters{.filename = hamil_file}},
+        ExecuteParameters{
+            .walker_set   = WalkerSetParameters{.from = WavefunctionSource{
+                                                    .wavefunction = WavefunctionParameters{.filename = hamil_file}}},
+            .wavefunction = std::string{"init_wfn"}},
+    };
+    resolve_defaults(params, *mpi);
+
+    REQUIRE(params.walker_set.size() == 2);
+    REQUIRE(params.wavefunction.size() == 3);
+    check_unique_names(params.wavefunction);
+
+    const std::string first  = resolved_name(params.execute[0].walker_set, params.walker_set);
+    const std::string second = resolved_name(params.execute[1].walker_set, params.walker_set);
+    CHECK(source_wavefunction(block_named(params.walker_set, first)) == "init_wfn");
+
+    // the inline source is hoisted into the registry, as a block of its own
+    const std::string inline_source = source_wavefunction(block_named(params.walker_set, second));
+    CHECK(inline_source != "init_wfn");
+    CHECK(inline_source != resolved_name(params.execute[0].wavefunction, params.wavefunction));
+    const WavefunctionParameters& source_wfn = block_named(params.wavefunction, inline_source);
+    CHECK(source_wfn.algorithm.has_value());
+    CHECK(source_wfn.dense_trial.has_value());
+  }
+
+  // a walker set source is an object with exactly one known key
+  {
+    CHECK(nlohmann::json::parse(R"({"wavefunction": "wfn"})").get<WalkerSetSourceParameters>().index() == 0);
+    CHECK_THROWS_AS(nlohmann::json::parse(R"({})").get<WalkerSetSourceParameters>(), AppAbortException);
+    CHECK_THROWS_AS(nlohmann::json::parse(R"({"checkpoint": "stage0"})").get<WalkerSetSourceParameters>(),
+                    AppAbortException);
+    CHECK_THROWS_AS(nlohmann::json::parse(R"("wfn")").get<WalkerSetSourceParameters>(), AppAbortException);
   }
 
   // two blocks of the same kind cannot share a name

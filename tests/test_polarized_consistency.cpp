@@ -120,10 +120,6 @@ inline void derive_polarized_wfn(std::string const& src_file, WALKER_TYPES targe
                "unexpected up block shape ({}, {}); expected ({}, {})",
                up.extent(0), up.extent(1), nup, NMO);
 
-  nda::matrix<ComplexType> psi0a(NMO, nup);
-  psi0a() = ComplexType(0.0);
-  utils::h5_read(nin, "Psi0_alpha", psi0a);
-
   h5::file fout(out_path, 'w');
   h5::group nout = h5::group(fout).create_group("Wavefunction").create_group("NOMSD");
 
@@ -135,20 +131,11 @@ inline void derive_polarized_wfn(std::string const& src_file, WALKER_TYPES targe
 
   if(target == NONCOLLINEAR) {
     // Alpha orbitals occupy the top NMO rows of the 2*NMO spinor.
-    nda::matrix<ComplexType> psi0_nc(2 * NMO, nup);
-    psi0_nc() = ComplexType(0.0);
-    psi0_nc(range(NMO), range::all) = psi0a;
-    nda::h5_write(nout, "Psi0_alpha", psi0_nc);
-
     auto up2 = widen_csr(up, 2 * NMO);
     h5::group g0 = nout.create_group("PsiT_0");
     math::sparse::CSR2HDF(g0, up2);
   } else if(target == COLLINEAR) {
     // ndown == 0: alpha as-is, empty beta block.
-    nda::h5_write(nout, "Psi0_alpha", psi0a);
-    nda::matrix<ComplexType> psi0b(NMO, 0);
-    nda::h5_write(nout, "Psi0_beta", psi0b);
-
     h5::group g0 = nout.create_group("PsiT_0");
     math::sparse::CSR2HDF(g0, up);
 

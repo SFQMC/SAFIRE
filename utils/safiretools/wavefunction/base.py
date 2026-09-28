@@ -34,10 +34,8 @@ from safiretools.types import SpinSymm
 from safiretools.wavefunction import io
 from safiretools.wavefunction.slater import (
     ORTHONORMAL_TOL,
-    expected_spin_layout_shape,
     format_spin_layout,
     parse_spin_layout,
-    spin_layout_shape,
 )
 
 
@@ -96,17 +94,11 @@ class Wavefunction(ABC):
         Number of *spatial* orbitals, even when noncollinear.
     spin_symm : SpinSymm or str or int
         Spin symmetry, coerced through `SpinSymm.from_input`.
-    psi0 : numpy.ndarray or tuple of numpy.ndarray, optional
-        Initial Slater determinant for the AFQMC walkers, in the spin layout of
-        `spin_symm`: ``(nmo, nup)`` when closed, a tuple of ``(nmo, nup)`` and
-        ``(nmo, ndown)`` when collinear, ``(2, nmo, nelec)`` when noncollinear.
-        Derived from the wavefunction itself when omitted.
 
     Raises
     ------
     ValueError
-        If the electron counts contradict `spin_symm`, or `psi0` has the wrong
-        layout or shape.
+        If the electron counts contradict `spin_symm`.
 
     Notes
     -----
@@ -119,7 +111,7 @@ class Wavefunction(ABC):
     _HDF5_GROUP: str
     """Subgroup of ``Wavefunction`` this representation is written into."""
 
-    def __init__(self, coeffs, nelec, nmo: int, spin_symm, psi0=None) -> None:
+    def __init__(self, coeffs, nelec, nmo: int, spin_symm) -> None:
         self.coeffs = np.asarray(coeffs, dtype=np.complex128)
         if self.coeffs.ndim != 1:
             raise ValueError(
@@ -132,7 +124,6 @@ class Wavefunction(ABC):
             raise ValueError(f"nelec must be a (nup, ndown) pair, got {nelec!r}")
 
         self.spin_symm = spin_symm
-        self.psi0 = psi0
 
     # ------------------------------------------------------------------
     # derived shape
@@ -180,47 +171,6 @@ class Wavefunction(ABC):
         """Number of determinants in the expansion."""
         return self.coeffs.size
 
-    @property
-    def psi0(self):
-        """
-        Initial Slater determinant for the AFQMC walkers, in the spin layout of
-        `spin_symm` (see the class docstring).
-
-        Derived from the wavefunction itself when none was supplied — see
-        `_default_psi0` on the concrete subclass.
-        """
-        return format_spin_layout(self._psi0_blocks(), self.spin_symm)
-
-    @psi0.setter
-    def psi0(self, value) -> None:
-        if value is None:
-            self._psi0 = None
-            return
-
-        _, blocks = parse_spin_layout(value, self.spin_symm, name='psi0')
-
-        expected = tuple((self.nrows, nelec) for nelec in self.nelec_per_spin)
-        if tuple(block.shape for block in blocks) != expected:
-            raise ValueError(
-                f"psi0 has shape {spin_layout_shape(value)}, expected "
-                f"{expected_spin_layout_shape(self.spin_symm, self.nmo, self.nelec_per_spin)}"
-            )
-
-        self._psi0 = blocks
-
-    def _psi0_blocks(self) -> tuple:
-        """`psi0` as one ``(npol*nmo, n)`` matrix per spin channel."""
-        if self._psi0 is None:
-            return self._default_psi0()
-        return self._psi0
-
-    @abstractmethod
-    def _default_psi0(self) -> tuple:
-        """
-        The initial Slater determinant to use when the caller supplied none, as
-        one ``(npol*nmo, n)`` matrix per spin channel.
-        """
-
     @abstractmethod
     def orthonormalize(self, tol=ORTHONORMAL_TOL) -> "Wavefunction":
         """
@@ -245,9 +195,13 @@ class Wavefunction(ABC):
 
         Notes
         -----
-        The header (``spin_type``, ``ci_coeffs``, ``Psi0_alpha``/``Psi0_beta``) is
-        the same for every representation and is written here; the subclass adds
-        only its own payload.
+        The header (``spin_type``, ``ci_coeffs``) is the same for every
+        representation and is written here; the subclass adds only its own
+        payload.
+
+        No initial walker is written: the AFQMC input chooses the wavefunction
+        a walker set starts from (``walker_set.from``), and the executable
+        derives the initial determinant from it.
 
         Nothing is repaired on the way out. Every Slater matrix that reaches
         disk has its overlap's condition number checked, and an ill-conditioned
@@ -258,12 +212,7 @@ class Wavefunction(ABC):
             group = replace_group(fh5, 'Wavefunction').create_group(
                 type(self)._HDF5_GROUP)
 
-            io.write_header(
-                group,
-                spin_symm=self.spin_symm,
-                coeffs=self.coeffs,
-                psi0=self._psi0_blocks(),
-            )
+            io.write_header(group, spin_symm=self.spin_symm, coeffs=self.coeffs)
             self._write_payload(group)
 
     @classmethod
@@ -352,9 +301,8 @@ class Wavefunction(ABC):
         Returns
         -------
         NOMSDWavefunction
-            A one-determinant expansion with coefficient 1, whose walker
-            initial state `psi0` is `det` itself. A noncollinear one reports
-            ``nelec == (nelec, 0)``, as the file format does.
+            A one-determinant expansion with coefficient 1. A noncollinear one
+            reports ``nelec == (nelec, 0)``, as the file format does.
 
         Raises
         ------

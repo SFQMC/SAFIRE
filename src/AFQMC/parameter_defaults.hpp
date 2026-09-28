@@ -26,15 +26,19 @@
 
 namespace sfqmc::afqmc {
 
-/// The name a resolved execute block refers a component by. Every reference holds a name once
+/// The name a resolved reference refers a block by. Every reference holds a name once
 /// resolve_defaults has run.
+template<typename Params>
+const std::string& block_name(const utils::BlockRef<Params>& ref, std::string_view key) {
+  const auto* name = std::get_if<std::string>(&ref);
+  utils::check(name != nullptr, "A {} was not resolved to a name. Did resolve_defaults run?", key);
+  return *name;
+}
+
 template<typename Params>
 const std::string& block_name(const std::optional<utils::BlockRef<Params>>& ref, std::string_view key) {
   utils::check(ref.has_value(), "The execute block has no {}.", key);
-  const auto* name = std::get_if<std::string>(&*ref);
-  utils::check(name != nullptr, "The {} of the execute block was not resolved to a name. Did resolve_defaults run?",
-               key);
-  return *name;
+  return block_name(*ref, key);
 }
 
 /// The block of a registry that carries `name`. resolve_defaults has made the top level lists the
@@ -80,11 +84,14 @@ void apply_defaults(ExecuteParameters& exec, DriverType driver);
 /// 1. Draws a seed unless the input gave one, so that the run can be reproduced from the
 ///    parameters as they are printed.
 /// 2. Names every block. A block that an execute block leaves out entirely is materialized as
-///    a default constructed one. Generated names never collide with the names in the input.
-/// 3. Hoists the blocks declared inside an execute block into the top level lists, leaving the
-///    execute block referring to them by name. Afterwards every reference in an execute block
-///    is a name, and the top level lists are the complete registry of blocks.
-/// 4. Resolves the defaults a block inherits from a neighbouring block.
+///    a default constructed one, except for the walker set: only the first execute block gets a
+///    default one, and every later execute block carries over the walker set of the one before
+///    it. Generated names never collide with the names in the input.
+/// 3. Hoists the blocks declared inline, in an execute block or in the source of a walker set,
+///    into the top level lists, leaving a reference by name in their place. Afterwards every
+///    reference is a name, and the top level lists are the complete registry of blocks.
+/// 4. Resolves the defaults a block inherits from a neighbouring block. A walker set without a
+///    source starts from the wavefunction of the execute block that introduces it.
 /// 5. Peeks the type of every Hamiltonian and resolves the defaults that depend on it.
 ///
 /// Collective, because of the seed broadcast in the first step and the peek in the last one.

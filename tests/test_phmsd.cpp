@@ -161,7 +161,8 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
-  auto const initial_guess = wfn.initial_guess().slater();
+  auto const guess = wfn.initial_guess();
+  auto const initial_guess = guess.slater();
   REQUIRE(int(initial_guess.size()) == nspin);
   REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
 
@@ -217,13 +218,6 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
  
     h5::h5_write_attribute(ng,"spin_type",walkerTypeToString(type));
     nda::h5_write(ng,"ci_coeffs",coeffs);
-
-    {
-      nda::h5_write(ng,"Psi0_alpha",initial_guess[0]);
-    }
-    if(type == COLLINEAR) {
-      nda::h5_write(ng,"Psi0_beta",initial_guess[1]);
-    }
 
     for(int idet=0, n=0; idet<ndets; ++idet) {
       {

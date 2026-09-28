@@ -225,6 +225,25 @@ public:
     utils::check(false, "back propagation not implemented for finite-T");
   }
 
+  /*
+   * Identity U, D and V, which is also what the walkers are reset to at the start of every sweep.
+   */
+  WalkerSetInitialGuess initial_guess() const
+  {
+    int const nspin = (walker_type == COLLINEAR ? 2 : 1);
+    int const npol = (walker_type == NONCOLLINEAR ? 2 : 1);
+    WalkerSetInitialGuess::udv_matrices UDV(3, nspin, npol*NMO, NMO);
+    UDV() = 0.0;
+    for(int k = 0; k < 3; ++k) {
+      for(int s = 0; s < nspin; ++s) {
+        for(int i = 0; i < NMO; ++i) {
+          UDV(k, s, i, i) = 1.0;
+        }
+      }
+    }
+    return {.walker_type = walker_type, .payload = std::move(UDV)};
+  }
+
   // FIX: multi-determinant finiteT wfns?
   void updateLogScale(auto scl_new, SpinTypes s)
   {

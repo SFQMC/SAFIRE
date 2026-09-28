@@ -199,6 +199,11 @@ public:
    */ 
   void getReferences(memory::buffered_array<MEM,ComplexType,3>& Refs) const;
 
+  /*
+   * The determinant with the largest coefficient, one Slater matrix per spin.
+   */
+  WalkerSetInitialGuess initial_guess() const;
+
   void updateLogScale(auto scl_new, SpinTypes s)
   {
     utils::check(false, "updateLogScale is not implemented for ground state calculations");

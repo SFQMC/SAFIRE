@@ -61,8 +61,6 @@ NOMSD
             group      /
             group      /Wavefunction
             group      /Wavefunction/NOMSD
-            dataset    /Wavefunction/NOMSD/Psi0_alpha
-            dataset    /Wavefunction/NOMSD/Psi0_beta
             group      /Wavefunction/NOMSD/PsiT_0
             dataset    /Wavefunction/NOMSD/PsiT_0/data_
             dataset    /Wavefunction/NOMSD/PsiT_0/dims
@@ -82,10 +80,6 @@ NOMSD
 Note that the :math:`\alpha` components of the trial wavefunction are stored under
 ``PsiT_{2n}`` and the :math:`\beta` components are stored under ``PsiT_{2n+1}``.
 
--  ``/Wavefunction/NOMSD/Psi0_alpha`` :math:`[M,N_\alpha]` dimensional array :math:`\alpha`
-   component of initial walker wavefunction.
--  ``/Wavefunction/NOMSD/Psi0_beta`` :math:`[M,N_\beta]` dimensional array for :math:`\beta`
-   initial walker wavefunction.
 -  ``/Wavefunction/NOMSD/PsiT_{2n}/data_`` Array of length :math:`nnz` containing non-zero
    elements of :math:`n`-th :math:`\alpha` component of trial wavefunction walker
    wavefunction. Note the **conjugate transpose** of the Slater matrix is stored.
@@ -119,8 +113,6 @@ PHMSD
             group      /
             group      /Wavefunction
             group      /Wavefunction/PHMSD
-            dataset    /Wavefunction/PHMSD/Psi0_alpha
-            dataset    /Wavefunction/PHMSD/Psi0_beta
             dataset    /Wavefunction/PHMSD/ci_coeffs
             dataset    /Wavefunction/PHMSD/occa
             dataset    /Wavefunction/PHMSD/occb
@@ -128,24 +120,53 @@ PHMSD
         }
     }
 
--  ``/Wavefunction/NOMSD/Psi0_alpha`` :math:`[M,N_\alpha]` dimensional array :math:`\alpha`
-   component of initial walker wavefunction.
--  ``/Wavefunction/NOMSD/Psi0_beta`` :math:`[M,N_\beta]` dimensional array for :math:`\beta`
-   initial walker wavefunction.
 -  ``/Wavefunction/PHMSD/ci_coeffs`` :math:`N_D` length array of ci coefficients. Stored
    as complex numbers.
 -  ``spin_type`` attribute of ``/Wavefunction/PHMSD``: ``"collinear"``.
+-  ``number_of_orbitals`` attribute of ``/Wavefunction/PHMSD``: the number of spatial
+   orbitals :math:`M`.
 -  ``/Wavefunction/PHMSD/occa``, ``/Wavefunction/PHMSD/occb`` Integer arrays of shape
    :math:`[N_D,N_\alpha]` and :math:`[N_D,N_\beta]` describing the determinant occupancies.
    For example if :math:`(N_\alpha=N_\beta=2)`, :math:`N_D=2`, :math:`M=4`, and
    :math:`|\Psi_\mathrm{T}\rangle = |0,1\rangle|0,1\rangle + |0,1\rangle|0,2\rangle` then
    occa = :math:`[[0, 1], [0, 1]]` and occb = :math:`[[0, 1], [0, 2]]`.
-
-No sizes are stored separately. :math:`N_D` is the length of ``ci_coeffs``, :math:`N_\alpha`
-and :math:`N_\beta` the widths of ``occa`` and ``occb``, and :math:`M` the rows of
-``Psi0_alpha``.
 -  ``/Wavefunction/PHMSD/type`` integer 0/1. 1 implies trial wavefunction is written in
    different basis than the underlying basis used for the integrals. If so a matrix of
    orbital coefficients is required to be written in the NOMSD format. If 0 then assume
    wavefunction is in same basis as integrals.
+
+:math:`N_D` is the length of ``ci_coeffs``, and :math:`N_\alpha` and :math:`N_\beta` the
+widths of ``occa`` and ``occb``. :math:`M` is the one size that is stored explicitly, since the
+occupancies alone do not span the orbitals.
+
+
+.. _initial_walkers:
+
+Initial walkers
+~~~~~~~~~~~~~~~
+
+A trial wavefunction file does not store an initial walker. Every walker of a walker set starts
+out as a determinant derived from a wavefunction instead: the determinant with the largest
+coefficient of a NOMSD wavefunction, or the reference determinant of a PHMSD one. By default
+that is the wavefunction of the execute block that introduces the walker set; the ``from``
+parameter of the walker set names a different one, either by name or as an inline block:
+
+.. code-block:: json
+
+    {
+      "wavefunction": [
+        {"name": "uhf", "filename": "wfn_uhf.h5"},
+        {"name": "rohf", "filename": "wfn_rohf.h5"}
+      ],
+      "execute": [
+        {
+          "wavefunction": "uhf",
+          "walker_set": {"from": {"wavefunction": "rohf"}}
+        }
+      ]
+    }
+
+Starting from an ROHF determinant rather than the UHF trial itself can speed up equilibration
+considerably. Only the first execute block falls back to a default walker set; a later execute
+block without a ``walker_set`` continues with the walker set of the one before it.
 

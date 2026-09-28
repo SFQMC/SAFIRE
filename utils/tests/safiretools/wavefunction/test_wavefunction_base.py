@@ -9,8 +9,8 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 """
-The `Wavefunction` ABC: derived shape, the initial Slater determinant,
-orthonormality, format detection, and the file semantics of ``to_hdf5``.
+The `Wavefunction` ABC: derived shape, orthonormality, format detection, and
+the file semantics of ``to_hdf5``.
 """
 
 import warnings
@@ -27,7 +27,7 @@ from safiretools import (
     Wavefunction,
 )
 from safiretools.wavefunction.base import wavefunction_format
-from safiretools.wavefunction.slater import is_orthonormal, orthonormalize
+from safiretools.wavefunction.slater import is_orthonormal
 
 
 class TestDerivedShape:
@@ -79,70 +79,6 @@ class TestDerivedShape:
         with pytest.raises(ValueError, match=r"\(nup, ndown\) pair"):
             PHMSDWavefunction(coeffs=[1.0], occa=[[0, 1, 2]], occb=[[0, 1]],
                               nmo=6, nelec=(3,))
-
-
-class TestPsi0:
-
-    def test_it_defaults_to_the_leading_determinant(self, make_nomsd,
-                                                    layouts_close):
-        wavefunction = make_nomsd('collinear', nelec=(3, 2), ndets=2)
-
-        assert layouts_close(wavefunction.psi0, wavefunction.determinant(0))
-
-    def test_the_default_is_a_copy(self, make_nomsd):
-        wavefunction = make_nomsd('collinear')
-        wavefunction.psi0[0][0, 0] = 1234.0
-
-        assert wavefunction.dets[0][0, 0, 0] != 1234.0
-
-    @pytest.mark.parametrize('spin_symm, nelec, shape', [
-        ('closed', (3, 3), (6, 3)),
-        ('collinear', (3, 2), ((6, 3), (6, 2))),
-        ('noncollinear', (3, 2), (2, 6, 5)),
-    ])
-    def test_it_takes_the_layout_of_the_spin_symmetry(self, make_nomsd,
-                                                      spin_symm, nelec, shape):
-        wavefunction = make_nomsd(spin_symm, nelec=nelec, nmo=6)
-        psi0 = wavefunction.psi0
-
-        actual = tuple(block.shape for block in psi0) \
-            if isinstance(psi0, tuple) else psi0.shape
-        assert actual == shape
-
-    def test_an_explicit_psi0_is_kept(self, make_nomsd, orthonormal,
-                                      layouts_close):
-        wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
-        psi0 = (orthonormal(6, 3), orthonormal(6, 2))
-        wavefunction.psi0 = psi0
-
-        assert layouts_close(wavefunction.psi0, psi0)
-
-    def test_an_explicit_noncollinear_psi0_is_kept(self, make_nomsd,
-                                                   orthonormal):
-        wavefunction = make_nomsd('noncollinear', nelec=(3, 2), nmo=6)
-        psi0 = orthonormal(12, 5).reshape(2, 6, 5)
-        wavefunction.psi0 = psi0
-
-        assert np.allclose(wavefunction.psi0, psi0)
-
-    def test_it_must_be_in_the_layout_of_the_spin_symmetry(self, make_nomsd,
-                                                           orthonormal):
-        wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
-
-        with pytest.raises(ValueError, match="psi0 must be in the collinear"):
-            wavefunction.psi0 = orthonormal(6, 3)
-
-    def test_a_list_is_not_read_as_collinear(self, make_nomsd, orthonormal):
-        wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
-
-        with pytest.raises(TypeError, match="psi0 must be"):
-            wavefunction.psi0 = [orthonormal(6, 3), orthonormal(6, 2)]
-
-    def test_it_must_have_the_right_shape(self, make_nomsd, orthonormal):
-        wavefunction = make_nomsd('collinear', nelec=(3, 2), nmo=6)
-
-        with pytest.raises(ValueError, match="psi0 has shape"):
-            wavefunction.psi0 = (orthonormal(6, 3), orthonormal(6, 3))
 
 
 class TestOrthonormality:
@@ -198,35 +134,6 @@ class TestOrthonormality:
 
         assert np.allclose(Wavefunction.from_hdf5(path).dets, dets)
 
-    def test_the_check_covers_psi0_not_just_the_determinants(self, rng,
-                                                             tmp_path):
-        """
-        `psi0` is a dense Slater matrix like any other and AFQMC inverts its
-        overlap too, so it is checked even when the determinants are clean.
-        """
-        dets = orthonormalize(rng.normal(size=(6, 3)))[np.newaxis]
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
-        wavefunction.psi0 = _nearly_dependent(6, 3)
-
-        with pytest.warns(UserWarning, match=r"ill-conditioned overlap matrix: "
-                                             r"Psi0_alpha"):
-            wavefunction.to_hdf5(tmp_path / 'wfn.h5')
-
-    def test_a_defaulted_psi0_is_covered_too(self, tmp_path):
-        """
-        The default `psi0` is a copy of ``dets[0]``'s spin blocks, so both it
-        and the determinant are named.
-        """
-        dets = _nearly_dependent(6, 3)[np.newaxis]
-        wavefunction = NOMSDWavefunction(coeffs=[1.0], dets=dets)
-
-        with pytest.warns(UserWarning) as record:
-            wavefunction.to_hdf5(tmp_path / 'wfn.h5')
-
-        reported = ' '.join(str(entry.message) for entry in record)
-        assert 'Psi0_alpha' in reported
-        assert 'PsiT_0' in reported
-
 
 def _nearly_dependent(nrows, ncols, gap=1e-12):
     """
@@ -245,8 +152,7 @@ class TestFormatDetection:
         nomsd = tmp_path / 'nomsd.h5'
         phmsd = tmp_path / 'phmsd.h5'
 
-        with pytest.warns(UserWarning):
-            make_nomsd('collinear').to_hdf5(nomsd)
+        make_nomsd('collinear').to_hdf5(nomsd)
         make_phmsd().to_hdf5(phmsd)
 
         assert wavefunction_format(nomsd) == 'nomsd'
@@ -332,10 +238,8 @@ class TestFileSemantics:
             # the three-determinant collinear wavefunction left six PsiT groups
             assert sorted(name for name in group if name.startswith('PsiT')) \
                 == ['PsiT_0']
-            assert 'Psi0_beta' not in group
 
         assert Wavefunction.from_hdf5(path).ndets == 1
-
 
 class TestNoLengthBasedDispatch:
     """
@@ -420,7 +324,7 @@ class TestSpinSymmCoercion:
 
         assert wavefunction.spin_symm is SpinSymm.COLLINEAR
         assert wavefunction.nelec_per_spin == (3, 0)
-        assert wavefunction.psi0[1].shape == (6, 0)
+        assert wavefunction.determinant(0)[1].shape == (6, 0)
 
 
 

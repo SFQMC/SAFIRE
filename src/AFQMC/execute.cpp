@@ -143,10 +143,19 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
 
     Wavefunction<MEM>& wavefunction = wavefunction_for(wavefunction_name, hamiltonian_name);
 
-    WalkerSet<MEM>& walker_set = walker_sets
-                                     .try_emplace(walker_set_name, mpi, walker_rng, walker_set_params,
-                                                  wavefunction.initial_guess(), nwalkers)
-                                     .first->second;
+    // a walker set carried over from an earlier stage continues where it left off, so only a new
+    // one is initialized from its source
+    auto walker_set_entry = walker_sets.find(walker_set_name);
+    if(walker_set_entry == walker_sets.end()) {
+      WalkerSetInitialGuess const guess = std::visit(
+          [&](WavefunctionSource const& source) {
+            return wavefunction_for(block_name(source.wavefunction, "wavefunction"), hamiltonian_name).initial_guess();
+          },
+          resolved(walker_set_params.from, "from"));
+      walker_set_entry =
+          walker_sets.try_emplace(walker_set_name, mpi, walker_rng, walker_set_params, guess, nwalkers).first;
+    }
+    WalkerSet<MEM>& walker_set = walker_set_entry->second;
     if(finiteT) {
       walker_set.setTauStep(0); // time-slice initialized to 0
     }
