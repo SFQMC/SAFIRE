@@ -168,8 +168,8 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     hamiltonian = LatticeHamiltonian.from_dict(weak)
 
     # Untwisted, so the starting determinant - and the solution - stays real.
-    initial = Wavefunction.from_free_electron(
-        hamiltonian, nelec=nelec, spin_symm=SpinSymm.COLLINEAR).dets[0]
+    initial_alpha, initial_beta = Wavefunction.from_free_electron(
+        hamiltonian, nelec=nelec, spin_symm=SpinSymm.COLLINEAR).determinant(0)
 
     # AutoHFHamiltonian(source=...) only reads afqmctools hamiltonians, so the
     # terms are handed over explicitly, as its afqmctools interface would.
@@ -192,27 +192,20 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
             verbose=ctx.verbose,
             measure_spin=False,
         ),
-        initial_guess=initial,
+        # AutoHF takes the afqmctools layout, (norb, nup + ndn)
+        initial_guess=np.hstack([initial_alpha, initial_beta]).real,
         suppress_logo=True,
     )
     data = results[0] if isinstance(results, tuple) else results
 
-    # AutoHF hands back (spin, norb, nelec_per_spin); a collinear NOMSD wants a
-    # single determinant laid out as (ndet, norb, nup + ndn), beta after alpha.
+    # AutoHF hands back (spin, norb, nelec_per_spin)
     alpha, beta = np.asarray(data["orbitals"])
-    _check_spans_free_electron(alpha, initial[:, :nelec[0]], "alpha")
-    _check_spans_free_electron(beta, initial[:, nelec[0]:], "beta")
-
-    phi = np.zeros((1, norb, sum(nelec)), dtype=np.complex128)
-    phi[0, :, :nelec[0]] = alpha
-    phi[0, :, nelec[0]:] = beta
+    _check_spans_free_electron(alpha, initial_alpha, "alpha")
+    _check_spans_free_electron(beta, initial_beta, "beta")
 
     NOMSDWavefunction(
         coeffs=np.array([1.0], dtype=np.complex128),
-        dets=phi,
-        nelec=nelec,
-        spin_symm=SpinSymm.COLLINEAR,
-        nmo=norb,
+        dets=(alpha[None], beta[None]),
     ).to_hdf5(filename)
 
 
