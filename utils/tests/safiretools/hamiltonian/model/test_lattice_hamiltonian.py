@@ -348,5 +348,5 @@ def test_the_electron_count_is_not_recorded(tmp_path):
     with h5.File(path, 'r') as fh5:
         group = fh5['Hamiltonian']
         assert 'dims' not in group
-        assert set(group.attrs) == {'type'}
+        assert set(group.attrs) == {'format_version', 'type'}
         assert group['ModelHamiltonian/nsites'][()] == 4

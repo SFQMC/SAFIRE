@@ -541,7 +541,10 @@ so there it sits on the root; every stage of a run appends to the file, and the 
 
 CoQuí output is the one unversioned input, since we cannot change what it writes: a CoQuí
 Hamiltonian is recognized by its `System`/`Interaction` groups, and a CoQuí wavefunction by a
-`dims` array in place of `format_version`.
+`dims` array in place of `format_version`. That wavefunction layout is simply the legacy SAFIRE
+one, so an old SAFIRE wavefunction is read through the same path, and the committed legacy
+wavefunctions were left in it, apart from the finite-temperature one in
+`square_2x2_hubbard_Beta3_nt100`, which was converted to a versioned header.
 
 ## Hamiltonian on-disk formats
 
@@ -555,7 +558,7 @@ stays in one place. Those format names are `HamiltonianFormat` members, which ar
 they read and compare as the bare names throughout.
 
 **The layout decides the format.** `hamiltonian_format` goes by which datasets are present —
-`model` if `ModelHamiltonian/number_of_components` is there, `dense` if `DenseFactorized/L` is, and
+`model` if a `ModelHamiltonian` group is there, `dense` if `DenseFactorized/L` is, and
 so on — which is the only thing that works for every file: older ones, CoQuí files (no
 `Hamiltonian` group) and those from the hand-rolled writers in `afqmctools`/`cli`. The
 `write_hamiltonian_header` shared by the safiretools writers (which also writes the `Energies`
@@ -566,7 +569,11 @@ group, but nothing reads it yet.
 the orbital, k-point and Cholesky counts. Now each is read off the arrays that hold the data —
 `hcore` and `DenseFactorized/L` for dense, `NMOPerKP` for k-point — so the two cannot disagree.
 The one exception is the lattice model, whose matrix shapes don't give the basis size
-unambiguously; it writes `nsites` next to `nbands` under `ModelHamiltonian`.
+unambiguously; it writes `nsites` next to `nbands` under `ModelHamiltonian`. The same goes for
+the model's other derived values: the number of components is where the gap-free
+`ModelComponent_<n>` numbering stops, and the executable sizes the sparse matrices it collects the
+interaction terms into from the components' own row counts, where it used to trust a
+`maximum_connectivity` hint.
 
 **`HamiltonianFormat` members are strings.** They subclass `str`, so a format compares, hashes and
 formats as its safiretools name — `hamiltonian_format(path) == 'model'` holds and `_READERS` stays
@@ -608,10 +615,9 @@ nothing downstream branches on it. The dense format was never an option here any
 `RealDenseHamiltonian` reads `DenseFactorized/L` into a *real* array, so it could not carry a
 supercell's complex Cholesky vectors.
 
-> **Known, molecular-only.** `ComplexIntegrals` means "the Cholesky matrix is complex" to
-> afqmctools' dense *writer* and "hcore is complex" to its *reader*, so
-> `write_dense(real_chol=False)` has always produced a file that reader rejects. Preserved as-is;
-> `safiretools`' reader ignores the flag and takes the dtypes from the datasets.
+**No `ComplexIntegrals` flag.** afqmctools wrote one, meaning "the Cholesky matrix is complex" to
+its dense *writer* and "hcore is complex" to its *reader*, and the executable never read it. Every
+reader takes the dtype from the dataset itself, so format version 1 drops it.
 
 ## FCIDUMP is an external format the Hamiltonian classes own
 

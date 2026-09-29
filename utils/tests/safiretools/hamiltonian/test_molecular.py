@@ -198,7 +198,7 @@ class TestHdf5:
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
             assert 'dims' not in group
-            assert set(group.attrs) == {'type'}
+            assert set(group.attrs) == {'format_version', 'type'}
 
     def test_real_integrals_are_written_real(self, random_hamiltonian, tmp_path):
         _, hcore, chol, _ = random_hamiltonian
@@ -208,7 +208,8 @@ class TestHdf5:
         with h5.File(path, 'r') as fh5:
             assert fh5['Hamiltonian/hcore'].ndim == 5
             assert fh5['Hamiltonian/DenseFactorized/L'].ndim == 6
-            assert fh5['Hamiltonian/ComplexIntegrals'][0] == 0
+            assert fh5['Hamiltonian/DenseFactorized/L'].dtype == np.float64
+            assert fh5['Hamiltonian/hcore'].dtype == np.float64
 
     def test_the_cholesky_vectors_are_spin_blocked_on_disk(self, random_hamiltonian,
                                                            tmp_path):

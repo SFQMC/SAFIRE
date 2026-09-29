@@ -214,7 +214,7 @@ class TestFileSemantics:
         make_nomsd('closed', nelec=(3, 3)).orthonormalize().to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5
+            assert 'Hamiltonian/ModelHamiltonian/ModelComponent_0' in fh5
             assert 'Wavefunction/NOMSD/ci_coeffs' in fh5
 
     def test_a_hamiltonian_written_second_survives(self, hamiltonian,
@@ -224,7 +224,7 @@ class TestFileSemantics:
         hamiltonian.to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5
+            assert 'Hamiltonian/ModelHamiltonian/ModelComponent_0' in fh5
             assert 'Wavefunction/NOMSD/ci_coeffs' in fh5
 
     def test_rewriting_replaces_the_wavefunction(self, make_nomsd, tmp_path):

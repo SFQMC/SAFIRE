@@ -23,7 +23,7 @@ from safiretools.hamiltonian.base import (
 from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
 from safiretools.hamiltonian.molecular import MolecularHamiltonian
 from safiretools.hamiltonian.periodic import PeriodicHamiltonian
-from safiretools.hdf5 import FORMAT_VERSION
+from safiretools.hdf5 import FORMAT_VERSION, write_format_version
 
 
 def _make(tmp_path, name, datasets):
@@ -37,7 +37,7 @@ def _make(tmp_path, name, datasets):
 @pytest.mark.parametrize(
     "datasets,expected",
     [
-        ({'Hamiltonian/ModelHamiltonian/number_of_components': 3}, 'model'),
+        ({'Hamiltonian/ModelHamiltonian/nsites': 3}, 'model'),
         ({'Hamiltonian/DenseFactorized/L': np.zeros((4, 2))}, 'dense'),
         ({'Hamiltonian/KPFactorized/L0': np.zeros((2, 2))}, 'kpoint'),
         ({'Hamiltonian/THC/Luv': np.zeros((2, 2))}, 'thc'),
@@ -80,7 +80,7 @@ class TestTheHeader:
 @pytest.mark.parametrize(
     "datasets,expected",
     [
-        ({'Hamiltonian/ModelHamiltonian/number_of_components': 3}, LatticeHamiltonian),
+        ({'Hamiltonian/ModelHamiltonian/nsites': 3}, LatticeHamiltonian),
         ({'Hamiltonian/DenseFactorized/L': np.zeros((4, 2))}, MolecularHamiltonian),
         ({'Hamiltonian/KPFactorized/L0': np.zeros((2, 2))}, PeriodicHamiltonian),
     ],
@@ -96,12 +96,16 @@ def test_from_hdf5_dispatches_to_the_right_subclass(tmp_path, monkeypatch,
     monkeypatch.setattr(expected, '_read_hdf5',
                         classmethod(lambda cls, path, fmt: seen.setdefault('cls', cls)))
 
-    Hamiltonian.from_hdf5(_make(tmp_path, 'ham.h5', datasets))
+    path = _make(tmp_path, 'ham.h5', datasets)
+    with h5.File(path, 'a') as fh5:
+        write_format_version(fh5['Hamiltonian'])
+
+    Hamiltonian.from_hdf5(path)
     assert seen['cls'] is expected
 
 
 def test_from_hdf5_on_the_wrong_subclass_raises(tmp_path):
-    path = _make(tmp_path, 'ham.h5', {'Hamiltonian/ModelHamiltonian/number_of_components': 1})
+    path = _make(tmp_path, 'ham.h5', {'Hamiltonian/ModelHamiltonian/nsites': 1})
 
     with pytest.raises(ValueError, match="MolecularHamiltonian does not read"):
         MolecularHamiltonian.from_hdf5(path)

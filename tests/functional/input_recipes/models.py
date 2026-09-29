@@ -15,10 +15,12 @@ These are the cheap ones - safiretools and afqmctools only, no external
 codes, seconds rather than minutes - and they cover the Hubbard,
 Hubbard-Kanamori and Rashba spin-orbit models.
 
-Two of the four directories carry files that only the C++ unit tests read:
-the ``hst_type`` variants under ``square_4x4_hubbard_nup5_ndn5`` and the whole
-``square_2x2_hubbard_Beta3_nt100`` directory. They are regenerated here anyway,
-because the point of this tool is that the inputs tree can be rebuilt in full.
+The ``hst_type`` variants under ``square_4x4_hubbard_nup5_ndn5`` are read only by
+the C++ unit tests. They are regenerated here anyway, because the point of this
+tool is that the inputs tree can be rebuilt in full. The one exception is
+``square_2x2_hubbard_Beta3_nt100``, also read only by the unit tests: its
+finite-temperature trial wavefunction is something safiretools cannot write, so
+that directory is committed by hand.
 """
 
 from typing import Dict, List

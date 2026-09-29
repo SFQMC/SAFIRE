@@ -101,9 +101,8 @@ class MolecularHamiltonian(Hamiltonian):
     @property
     def complex_chol(self) -> bool:
         """
-        Whether the Cholesky matrix is written as complex, which is what
-        ``Hamiltonian/ComplexIntegrals`` records. Decided by the data: complex
-        exactly when some element has a nonzero imaginary part.
+        Whether the Cholesky matrix is written as complex. Decided by the data:
+        complex exactly when some element has a nonzero imaginary part.
 
         .. note:: The AFQMC executable's ``RealDenseHamiltonian`` reads
                   ``DenseFactorized/L`` into a real array, so it cannot consume
@@ -353,8 +352,6 @@ class MolecularHamiltonian(Hamiltonian):
         with h5.File(path, 'a') as fh5:
             group = replace_group(fh5, 'Hamiltonian')
             write_hamiltonian_header(group, 'dense', enuc=self.enuc)
-            group.create_dataset('ComplexIntegrals',
-                                 data=np.array([int(complex_chol)], dtype=np.int32))
             group.create_dataset('DenseFactorized/L',
                                  data=self.chol if complex_chol else np.real(self.chol))
             group.create_dataset('hcore',

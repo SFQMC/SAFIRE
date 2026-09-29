@@ -19,6 +19,8 @@ It does record the lattice's shape as metadata, so a file can say what lattice
 it came from (see `LatticeHamiltonian.lattice_params`).
 """
 
+import itertools
+
 import numpy as np
 import scipy.sparse as sps
 import h5py as h5
@@ -29,9 +31,6 @@ from safiretools.hamiltonian.base import (
 )
 from safiretools.hdf5 import read_csr, replace_group, write_csr
 from safiretools.types import SpinSymm
-
-_MIN_MAX_CONNECTIVITY = 12
-"""Floor on the ``maximum_connectivity`` hint written for the C++ allocator."""
 
 
 class HamiltonianComponent:
@@ -62,8 +61,6 @@ class HamiltonianComponent:
         self.model_type = model_type
         self.spin_symm = SpinSymm.from_input(spin_symm)
         self.hubbard_strat_type = hst_type
-
-        self.max_nnz = int(np.max(csr_array.indptr[1:] - csr_array.indptr[:-1]))
 
     @property
     def is_complex(self) -> bool:
@@ -387,10 +384,8 @@ class LatticeHamiltonian(Hamiltonian):
             group.create_dataset('spin_type', data=self.spin_symm.label)
 
             model = group.create_group('ModelHamiltonian')
-            model.create_dataset('number_of_components', data=self.num_components)
             model.create_dataset('nsites', data=self.nsites)
             model.create_dataset('nbands', data=self.nbands)
-            model.create_dataset('maximum_connectivity', data=self._maximum_connectivity())
 
             self._write_lattice_metadata(model)
 
@@ -409,29 +404,6 @@ class LatticeHamiltonian(Hamiltonian):
                     csr_array = csr_array.astype(np.complex128)
 
                 write_csr(component_group, key, csr_array)
-
-    def _maximum_connectivity(self) -> int:
-        """
-        The connectivity hint the C++ side allocates its collection matrices
-        from: the largest per-row nonzero count any single collection matrix can
-        end up with.
-
-        ``collect_U`` collects by Hubbard-Stratonovich type over four categories
-        and ``collect_J`` over two, and several components can land in the same
-        collection matrix, so contributions to one category are summed.
-        """
-        max_nnz = {'Uij': {}, 'Jij': {}}
-
-        for key in ('Uij', 'Jij'):
-            for component in self.get(key, []):
-                hst = component.hubbard_strat_type or 'continuous_spin'
-                max_nnz[key][hst] = max_nnz[key].get(hst, 0) + component.max_nnz
-
-        return max(
-            *(max_nnz['Uij'].values() or [0]),
-            *(max_nnz['Jij'].values() or [0]),
-            _MIN_MAX_CONNECTIVITY,
-        )
 
     def _write_lattice_metadata(self, model) -> None:
         """Write `lattice_metadata`, if any, into the ``Lattice`` subgroup of `model`."""
@@ -465,7 +437,6 @@ class LatticeHamiltonian(Hamiltonian):
             spin_symm = SpinSymm.from_input(fh5['Hamiltonian/spin_type'].asstr()[()])
 
             group = fh5['Hamiltonian/ModelHamiltonian']
-            num_components = int(group['number_of_components'][()])
             nsites = int(group['nsites'][()])
             nbands = int(group['nbands'][()]) if 'nbands' in group else 1
 
@@ -476,7 +447,10 @@ class LatticeHamiltonian(Hamiltonian):
                 lattice_metadata=_read_lattice_metadata(group),
             )
 
-            for n in range(num_components):
+            # numbered without gaps, so the count is where they stop
+            for n in itertools.count():
+                if f'ModelComponent_{n}' not in group:
+                    break
                 component_group = group[f'ModelComponent_{n}']
                 key = _component_key(component_group)
                 component = HamiltonianComponent(

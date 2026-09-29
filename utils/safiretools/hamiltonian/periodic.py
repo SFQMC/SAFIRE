@@ -697,7 +697,6 @@ class PeriodicHamiltonian(Hamiltonian):
         with h5.File(path, 'a') as fh5:
             group = replace_group(fh5, 'Hamiltonian')
             write_hamiltonian_header(group, 'kpoint', enuc=self.enuc)
-            group.create_dataset("ComplexIntegrals", data=np.array([1], dtype=np.int32))
             group.create_dataset("KPoints", data=np.asarray(self.kpts, dtype=np.float64))
             group.create_dataset("NMOPerKP", data=np.asarray(self.nmo_pk, dtype=np.int32))
             group.create_dataset("QKTok2", data=np.asarray(self.qk_to_k2, dtype=np.int32))
