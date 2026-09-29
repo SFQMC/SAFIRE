@@ -97,17 +97,30 @@ class TestKpointFormat:
         for Q, L in hamiltonian.chol.items():
             assert np.allclose(restored.chol[Q], L)
 
-    def test_nmo_per_kp_carries_the_sizes(self, tmp_path):
-        """The executable takes the k-point and orbital counts from ``NMOPerKP``."""
+    def test_the_shapes_carry_the_sizes(self, tmp_path):
+        """
+        The dense layouts with a leading k-point axis: the executable takes the
+        k-point, orbital and Cholesky-vector counts from them.
+        """
         hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
         path = tmp_path / 'ham.h5'
         hamiltonian.to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert set(fh5['Hamiltonian'].attrs) == {'format_version', 'type', 'nuclear_energy'}
-            nmo_pk = fh5['Hamiltonian/NMOPerKP'][...]
-        assert len(nmo_pk) == 2
-        assert np.sum(nmo_pk) == hamiltonian.nmo_tot
+            group = fh5['Hamiltonian']
+            assert set(group.attrs) == {'format_version', 'type', 'nuclear_energy'}
+            assert not {'NMOPerKP', 'NCholPerKP'} & set(group)
+            assert group['hcore'].shape == (2, 1, 1, 3, 1, 3)
+            for Q in hamiltonian.chol:
+                assert group[f'KPFactorized/L{Q}'].shape \
+                    == (2, 1, 1, 3, 1, 3, hamiltonian.nchol_pk[Q])
+
+    def test_uneven_orbital_counts_are_refused(self, tmp_path):
+        hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
+        hamiltonian.nmo_pk = np.array([3, 2])
+
+        with pytest.raises(ValueError, match="different orbital counts"):
+            hamiltonian.to_hdf5(tmp_path / 'ham.h5')
 
 
 def _mirrored_hamiltonian(nmo=2, nchol=2):

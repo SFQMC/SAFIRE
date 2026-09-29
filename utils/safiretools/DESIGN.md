@@ -510,7 +510,7 @@ executable already accepts both ranks.
 
 SAFIRE stores a complex array by interleaving the real and imaginary parts as a trailing length-2
 axis. That convention is **defined once**, in `safiretools/hdf5.py` as `to_complex`/`from_complex`,
-and every schema uses it — the dense `hcore`/Cholesky matrix, the k-point `H1_kp*`/`L*` blocks, and
+and every schema uses it — the dense `hcore`/Cholesky matrix, the k-point `hcore`/`L*` blocks, and
 a model component's CSR `values`.
 
 **Real and interleaved data are told apart by rank, not by the trailing axis.** `to_complex` appends
@@ -587,7 +587,8 @@ change, so ours follow it too. That makes `spin_type`, `model_type`, `hst_type`,
 
 **Sizes are not recorded separately.** The file used to carry an 8-slot `dims` array duplicating
 the orbital, k-point and Cholesky counts. Now each is read off the arrays that hold the data —
-`hcore` and `DenseFactorized/L` for dense, `NMOPerKP` for k-point — so the two cannot disagree.
+`hcore` and `DenseFactorized/L` for dense, `hcore` and each `KPFactorized/L{Q}` for k-point
+(which drops `NMOPerKP` and `NCholPerKP`) — so the two cannot disagree.
 The one exception is the lattice model, whose matrix shapes don't give the basis size
 unambiguously; it writes `number_of_sites` and `number_of_bands` attributes on
 `ModelHamiltonian`. The same goes for
@@ -626,7 +627,7 @@ entries — intrasite U1 is strictly inter-band, and intersite U1 only connects 
 format `write_hamil_supercell` wrote is gone — the AFQMC executable's `HamiltonianFactory` offers
 only `KPTHC`, `KPFactorized`, `RealDenseFactorized`, `ModelHamiltonian` and `THC` — so the supercell
 path emits the ordinary k-point format with a single k-point instead: `nkpts=1`,
-`nmo_pk=[nmo_tot]`, `QKTok2=[[0]]`, `MinusK=[0]`, one `L0` of shape `(1, nmo_tot**2 * nchol)`. The
+`QKTok2=[[0]]`, `MinusK=[0]`, one `L0` of shape `(1, 1, 1, nmo_tot, 1, nmo_tot, nchol)`. The
 Cholesky vectors stay complex, as `KPFactorizedHamiltonian` requires. Lattice models stay sparse —
 they are fundamentally sparse.
 
@@ -635,6 +636,15 @@ format and one in-memory representation, `kpoint_symmetry` is only a knob on the
 nothing downstream branches on it. The dense format was never an option here anyway —
 `RealDenseHamiltonian` reads `DenseFactorized/L` into a *real* array, so it could not carry a
 supercell's complex Cholesky vectors.
+
+**The k-point layout is the dense one with a leading k-point axis.** `hcore` is
+`(nkpts, nspin, npol, nmo, npol, nmo)` and each `KPFactorized/L{Q}` is
+`(nkpts, nspin, npol, nmo, npol, nmo, nchol_Q)`, replacing one `H1_kp{k}` dataset per k-point and
+flat `(nkpts, nmo**2 * nchol_Q)` vectors. `nspin` and `npol` are always 1: the format holds only
+spin-independent Hamiltonians, as before. One `nmo` for all k-points is what the executable already
+required, so `to_hdf5` refuses a Hamiltonian whose k-points carry different orbital counts rather
+than padding it. `PeriodicHamiltonian` keeps its in-memory representation — per-k-point `hcore`
+blocks and flat `chol` — only the file changed.
 
 **No `ComplexIntegrals` flag.** afqmctools wrote one, meaning "the Cholesky matrix is complex" to
 its dense *writer* and "hcore is complex" to its *reader*, and the executable never read it. Every

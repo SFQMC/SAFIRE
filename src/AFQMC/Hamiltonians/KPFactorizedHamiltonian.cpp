@@ -175,27 +175,53 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     } else if(format == "std") {
       // MAM: The "std" format, written for pyscf and the old fortran QE converter,
       //      was/is limited to spin independent basis sets. Generalize this if needed...
-      // Current implementation is limited to cases with a consistent number of bands 
+      // Current implementation is limited to cases with a consistent number of bands
       // per kpoint, unlikely we will go back to the more general case.
-      nspin_in_H1 = 1;
-      npol_in_H1  = 1;
       h5::group hgrp = grp.open_group("Hamiltonian");
-      std::vector<int> Idata;
-      h5::h5_read(hgrp,"NMOPerKP",Idata);
-      nkpts = Idata.size();
-      utils::check(nkpts > 0, " Error: NMOPerKP is empty.");
+      {
+        // hcore is the dense [nspin][npol][nbnd][npol][nbnd] with a leading k-point axis. The
+        //   raw rank is one higher for an interleaved complex dataset, which check_shape tolerates.
+        auto l = h5::array_interface::get_dataset_info(hgrp, "hcore");
+        utils::check(l.rank() >= 6, base_error + "hcore has rank {}", l.rank());
+        nkpts       = l.lengths[0];
+        nspin_in_H1 = l.lengths[1];
+        npol_in_H1  = l.lengths[2];
+        nbnd        = l.lengths[3];
+        utils::check(nkpts > 0, base_error + "hcore has no k-points");
+        utils::check(nspin_in_H1 == 1 && npol_in_H1 == 1,
+                     base_error + "the std k-point format holds spin-independent Hamiltonians only, hcore has nspin: {}, npol: {}",
+                     nspin_in_H1, npol_in_H1);
+        utils::check_shape(l, "hcore", nkpts, 1, 1, nbnd, 1, nbnd);
+      }
+      nqpts = nkpts;
       nkpts_ibz = nkpts;
       nqpts_ibz = nkpts;
-      nbnd = Idata[0];
-      for(int i=1; i<nkpts; ++i)
-        utils::check(Idata[i] == nbnd, "Inconsistent number of bands per kpoint. We now require all kpoints to have a consistent number of bands (NMOPerKP)."); 
       minusq.resize(nkpts);
       nda::h5_read(hgrp,"MinusK",minusq);
       qk_to_k2.resize(nkpts,nkpts);
       nda::h5_read(hgrp,"QKTok2",qk_to_k2);
-      nchol.resize(nkpts);
-      nda::h5_read(hgrp,"NCholPerKP",nchol);
-      utils::check(NMO == nbnd*nkpts, " Error: NMO:{}, nkpts:{}, nbnd:{}",NMO,nkpts,nbnd); 
+      utils::check(NMO == nbnd*nkpts, " Error: NMO:{}, nkpts:{}, nbnd:{}",NMO,nkpts,nbnd);
+      {
+        // L{Q} is [nkpts][nspin][npol][nbnd][npol][nbnd][nchol(Q)], the dense Cholesky layout with
+        //   a leading k-point axis; only Q <= minusq(Q) is read, the rest follow by symmetry
+        h5::group lgrp = hgrp.open_group("KPFactorized");
+        nchol.resize(nkpts);
+        for(int Q = 0; Q < nkpts; ++Q) {
+          if(Q > minusq(Q)) {
+            continue;
+          }
+          std::string const name = "L" + std::to_string(Q);
+          auto l = h5::array_interface::get_dataset_info(lgrp, name);
+          utils::check(l.rank() >= 7, base_error + "KPFactorized/{} has rank {}", name, l.rank());
+          nchol(Q) = l.lengths[6];
+          utils::check_shape(l, "KPFactorized/" + name, nkpts, 1, 1, nbnd, 1, nbnd, nchol(Q));
+        }
+        for(int Q = 0; Q < nkpts; ++Q) {
+          if(Q > minusq(Q)) {
+            nchol(Q) = nchol(minusq(Q));
+          }
+        }
+      }
       Q0_index=-1;
       for (int Q = 0; Q < nkpts; Q++)
       {
@@ -263,13 +289,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
       utils::check(npol_in_H1==1 and nspin_in_H1==1, "KPFactorized: std format requires nspin_in_H1==1 and npol_in_H1==1.");
 
       h5::group hgrp = grp.open_group("Hamiltonian");
-
-      // only spin independent hamiltonians right now!
-      // now read H1_kpK
-      for (int K = 0; K < nkpts; K++) {
-        auto h_ = H1_h(0,K,all,all);
-        utils::h5_read(hgrp, "H1_kp" + std::to_string(K), h_);
-      }
+      utils::h5_read(hgrp, "hcore", nda::reshape(H1_h(), nkpts, 1, 1, nbnd, 1, nbnd));
 
     } else if(format == "coqui") {
       h5::group sgrp = grp.open_group("System");
@@ -314,9 +334,8 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
 
       if(format == "std") {
         h5::group lgrp = grp.open_group("Hamiltonian").open_group("KPFactorized");
-        auto L2d = nda::reshape(L_h(0,0,nda::ellipsis{}),
-                                std::array<long,2>{nkpts,nbnd*nbnd*nchol(Q)});
-        utils::h5_read(lgrp, "L" + std::to_string(Q), L2d);
+        utils::h5_read(lgrp, "L" + std::to_string(Q),
+                       nda::reshape(L_h(), nkpts, 1, 1, nbnd, 1, nbnd, nchol(Q)));
         // normalization (1/sqrt(nkpts)) assummed to be included
       } else if(format == "coqui") {
         h5::group igrp = grp.open_group("Interaction");
