@@ -515,11 +515,12 @@ class PeriodicHamiltonian(Hamiltonian):
 
     Parameters
     ----------
-    hcore : list of numpy.ndarray
-        One-body Hamiltonian, one ``(nmo_pk[k], nmo_pk[k])`` block per k-point.
+    hcore : numpy.ndarray
+        One-body Hamiltonian, ``(nkpts, nmo, nmo)``: every k-point has to carry the
+        same number of orbitals.
     chol : dict
         Cholesky data as ``{Q: L_Q}``, with ``L_Q`` of shape
-        ``(nkpts, nmo_max**2 * nchol_Q)``. Only momentum transfers with
+        ``(nkpts, nmo**2 * nchol_Q)``. Only momentum transfers with
         ``Q <= minus_k[Q]`` are stored; the rest follow by symmetry.
     kpts : numpy.ndarray
         k-points, shape ``(nkpts, 3)``.
@@ -546,7 +547,7 @@ class PeriodicHamiltonian(Hamiltonian):
                  madelung_constant=0.0) -> None:
         super().__init__()
 
-        self.hcore = hcore
+        self.hcore = np.asarray(hcore)
         self.chol = chol
         self.kpts = np.asarray(kpts)
         self.qk_to_k2 = np.asarray(qk_to_k2)
@@ -555,10 +556,10 @@ class PeriodicHamiltonian(Hamiltonian):
         self.madelung_constant = float(madelung_constant)
 
         nkpts = len(self.kpts)
-        if len(self.hcore) != nkpts:
+        if (self.hcore.ndim != 3 or self.hcore.shape[0] != nkpts
+                or self.hcore.shape[1] != self.hcore.shape[2]):
             raise ValueError(
-                f"hcore has {len(self.hcore)} blocks, expected one for each of "
-                f"{nkpts} k-points"
+                f"hcore has shape {self.hcore.shape}, expected ({nkpts}, nmo, nmo)"
             )
         for name, array, shape in (('qk_to_k2', self.qk_to_k2, (nkpts, nkpts)),
                                    ('minus_k', self.minus_k, (nkpts,))):
@@ -569,10 +570,10 @@ class PeriodicHamiltonian(Hamiltonian):
                 )
         for Q, L in self.chol.items():
             shape = np.shape(L)
-            if len(shape) != 2 or shape[0] != nkpts or shape[1] % self.nmo_max**2:
+            if len(shape) != 2 or shape[0] != nkpts or shape[1] % self.nmo**2:
                 raise ValueError(
                     f"chol[{Q}] has shape {shape}, expected "
-                    f"({nkpts}, {self.nmo_max}**2 * nchol)"
+                    f"({nkpts}, {self.nmo}**2 * nchol)"
                 )
 
     @property
@@ -581,30 +582,9 @@ class PeriodicHamiltonian(Hamiltonian):
         return len(self.kpts)
 
     @property
-    def nmo_pk(self) -> np.ndarray:
-        """Number of orbitals at each k-point, read off `hcore`."""
-        return np.array([len(h) for h in self.hcore], dtype=np.int32)
-
-    @property
-    def nchol_pk(self) -> np.ndarray:
-        """
-        Number of Cholesky vectors per momentum transfer, read off `chol`. An
-        unstored momentum transfer has as many as its -Q partner.
-        """
-        return np.array(
-            [np.shape(self.chol[Q if Q in self.chol else int(self.minus_k[Q])])[1]
-             // self.nmo_max**2 for Q in range(self.nkpts)],
-            dtype=np.int32)
-
-    @property
-    def nmo_tot(self) -> int:
-        """Total number of orbitals across all k-points."""
-        return int(np.sum(self.nmo_pk))
-
-    @property
-    def nmo_max(self) -> int:
-        """Largest per-k-point orbital count."""
-        return int(np.max(self.nmo_pk))
+    def nmo(self) -> int:
+        """Number of orbitals at each k-point."""
+        return self.hcore.shape[1]
 
     # ------------------------------------------------------------------
     # construction
@@ -644,7 +624,10 @@ class PeriodicHamiltonian(Hamiltonian):
         ------
         ValueError
             If ``kmf.exxdiv`` is neither ``'ewald'`` nor ``None``: the Cholesky
-            vectors use the plain Coulomb kernel, not a truncated one.
+            vectors use the plain Coulomb kernel, not a truncated one. Also if
+            `kpoint_symmetry` is set and the k-points carry different orbital
+            counts, e.g. after linear dependencies were removed per k-point;
+            the supercell factorization takes those.
 
         Notes
         -----
@@ -664,6 +647,11 @@ class PeriodicHamiltonian(Hamiltonian):
 
         cell, kpts, X = scf_data['cell'], scf_data['kpts'], scf_data['X']
         nmo_pk = np.asarray(scf_data['nmo_pk'])
+        if kpoint_symmetry and len(set(nmo_pk)) > 1:
+            raise ValueError(
+                f"the k-points carry different orbital counts ({list(nmo_pk)}), but a "
+                "k-point Hamiltonian holds one count for all of them"
+            )
 
         solver = PeriodicCholesky(cell, kpts, nmo_pk, kp_sym=kpoint_symmetry,
                                   maxvecs=maxvecs, gtol_chol=chol_cut,
@@ -684,8 +672,8 @@ class PeriodicHamiltonian(Hamiltonian):
 
         chol = {Q: _kpoint_block(block, solver) for Q, block in solver.run(X)}
 
-        return cls(hcore=hcore_pk, chol=chol, kpts=kpts, qk_to_k2=solver.QKToK2,
-                   minus_k=solver.kminus, enuc=enuc,
+        return cls(hcore=np.array(hcore_pk), chol=chol, kpts=kpts,
+                   qk_to_k2=solver.QKToK2, minus_k=solver.kminus, enuc=enuc,
                    madelung_constant=madelung_constant)
 
     # ------------------------------------------------------------------
@@ -703,19 +691,8 @@ class PeriodicHamiltonian(Hamiltonian):
             already in the file is replaced; everything else — notably a
             ``Wavefunction`` — is left alone, so a Hamiltonian and a
             wavefunction can share one file in either order.
-
-        Raises
-        ------
-        ValueError
-            If the k-points carry different orbital counts, which neither the
-            format nor the executable can hold.
         """
-        if len(set(int(nmo) for nmo in self.nmo_pk)) > 1:
-            raise ValueError(
-                f"the k-points carry different orbital counts ({list(self.nmo_pk)}), "
-                "but the k-point format holds one count for all of them"
-            )
-        nkpts, nmo = self.nkpts, self.nmo_max
+        nkpts, nmo = self.nkpts, self.nmo
         hcore = np.asarray(self.hcore, dtype=np.complex128)
 
         with h5.File(path, 'a') as fh5:
@@ -771,25 +748,15 @@ class PeriodicHamiltonian(Hamiltonian):
         Raises
         ------
         ValueError
-            If the k-points do not all carry the same number of orbitals, if
-            there is a Madelung constant but no electron count, or if `cplx` is
-            False and the integrals have imaginary parts above `ctol`.
+            If there is a Madelung constant but no electron count, or if `cplx`
+            is False and the integrals have imaginary parts above `ctol`.
         NotImplementedError
             If `use_spinor` is set.
 
         Notes
         -----
-        The orbital index of the FCIDUMP is the combined
-        ``k * nmo_pk + i``, which the writer assumes to be laid out uniformly,
-        so a mesh whose k-points carry different orbital counts is rejected
-        rather than written wrongly. That happens when linear dependencies are
-        removed per k-point.
+        The orbital index of the FCIDUMP is the combined ``k * nmo + i``.
         """
-        if len(set(int(nmo) for nmo in self.nmo_pk)) > 1:
-            raise ValueError(
-                f"the k-points carry different orbital counts ({list(self.nmo_pk)}), "
-                "which the combined FCIDUMP orbital index cannot express"
-            )
         if self.madelung_constant != 0.0 and sum(nelec) == 0:
             raise ValueError(
                 "the FCIDUMP constant energy includes the Madelung correction, "
@@ -799,8 +766,7 @@ class PeriodicHamiltonian(Hamiltonian):
         chol = self._chol_all_momenta()
         enuc = self.enuc - self.madelung_constant * sum(nelec)
 
-        write_fcidump_kpoint(path, self.hcore, chol, enuc, self.nmo_tot,
-                             nelec, self.nmo_pk, self.nchol_pk, self.qk_to_k2,
+        write_fcidump_kpoint(path, self.hcore, chol, enuc, nelec, self.qk_to_k2,
                              tol=tol, sym=sym, paren=paren, cplx=cplx, ctol=ctol,
                              use_spinor=use_spinor)
 
@@ -820,14 +786,14 @@ class PeriodicHamiltonian(Hamiltonian):
         Returns
         -------
         list of numpy.ndarray
-            One ``(nkpts, nmo_max**2 * nchol_Q)`` block per momentum transfer.
+            One ``(nkpts, nmo**2 * nchol_Q)`` block per momentum transfer.
 
         Raises
         ------
         ValueError
             If neither a momentum transfer nor its partner has a block.
         """
-        nmo = self.nmo_max
+        nmo = self.nmo
         blocks = []
 
         for Q in range(self.nkpts):
@@ -876,7 +842,7 @@ class PeriodicHamiltonian(Hamiltonian):
             if stored.shape != (nkpts, 1, 1, nmo, 1, nmo):
                 raise ValueError(
                     f"hcore has shape {stored.shape}, expected (nkpts, 1, 1, nmo, 1, nmo)")
-            hcore = [stored[k, 0, 0, :, 0, :] for k in range(nkpts)]
+            hcore = stored[:, 0, 0, :, 0, :]
 
             kp_group = group['KPFactorized']
             chol = {}
@@ -992,7 +958,7 @@ def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
             L[ik2n[i, k1] * nmo_tot + ik2n[j, k2], :] = cholvecs[k, ij, :] * factor
 
     return {
-        'hcore': [hcore],
+        'hcore': hcore[np.newaxis],
         'chol': {0: L.reshape(1, nmo_tot * nmo_tot * nchol)},
         'kpts': np.zeros((1, 3)),
         'qk_to_k2': np.zeros((1, 1), dtype=np.int32),

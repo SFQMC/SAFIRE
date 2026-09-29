@@ -59,21 +59,27 @@ def _kpoint_hamiltonian(nkpts=2, nmo=3, nchol=4, madelung_constant=0.0):
     )
 
 
-def test_the_sizes_are_read_off_the_data():
-    hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3, nchol=4)
+def test_the_orbital_count_is_read_off_hcore():
+    assert _kpoint_hamiltonian(nkpts=2, nmo=3).nmo == 3
 
-    assert list(hamiltonian.nmo_pk) == [3, 3]
-    assert list(hamiltonian.nchol_pk) == [4, 4]
+
+def test_uneven_orbital_counts_are_refused():
+    with pytest.raises(ValueError):
+        PeriodicHamiltonian(hcore=[np.zeros((3, 3)), np.zeros((2, 2))], chol={},
+                            kpts=np.zeros((2, 3)),
+                            qk_to_k2=np.zeros((2, 2), dtype=np.int32),
+                            minus_k=np.zeros(2, dtype=np.int32))
 
 
 @pytest.mark.parametrize("field,value,match", [
-    ('hcore', [np.zeros((3, 3))] * 3, "hcore has 3 blocks"),
+    ('hcore', np.zeros((3, 3, 3)), "hcore has shape"),
+    ('hcore', np.zeros((2, 3, 2)), "hcore has shape"),
     ('qk_to_k2', np.zeros((3, 3), dtype=np.int32), "qk_to_k2 has shape"),
     ('minus_k', np.zeros(3, dtype=np.int32), "minus_k has shape"),
     ('chol', {0: np.zeros((2, 10))}, r"chol\[0\] has shape"),
 ])
 def test_the_data_must_match_the_kpoint_count(field, value, match):
-    kwargs = dict(hcore=[np.zeros((3, 3))] * 2, chol={}, kpts=np.zeros((2, 3)),
+    kwargs = dict(hcore=np.zeros((2, 3, 3)), chol={}, kpts=np.zeros((2, 3)),
                   qk_to_k2=np.zeros((2, 2), dtype=np.int32),
                   minus_k=np.zeros(2, dtype=np.int32))
     kwargs[field] = value
@@ -98,9 +104,8 @@ class TestKpointFormat:
         assert restored.nkpts == hamiltonian.nkpts
         assert restored.enuc == hamiltonian.enuc
         assert restored.madelung_constant == hamiltonian.madelung_constant
-        assert np.allclose(restored.nchol_pk, hamiltonian.nchol_pk)
-        for ki in range(hamiltonian.nkpts):
-            assert np.allclose(restored.hcore[ki], hamiltonian.hcore[ki])
+        assert np.allclose(restored.hcore, hamiltonian.hcore)
+        assert set(restored.chol) == set(hamiltonian.chol)
         for Q, L in hamiltonian.chol.items():
             assert np.allclose(restored.chol[Q], L)
 
@@ -109,7 +114,7 @@ class TestKpointFormat:
         The dense layouts with a leading k-point axis: the executable takes the
         k-point, orbital and Cholesky-vector counts from them.
         """
-        hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
+        hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3, nchol=4)
         path = tmp_path / 'ham.h5'
         hamiltonian.to_hdf5(path)
 
@@ -120,15 +125,7 @@ class TestKpointFormat:
             assert not {'NMOPerKP', 'NCholPerKP'} & set(group)
             assert group['hcore'].shape == (2, 1, 1, 3, 1, 3)
             for Q in hamiltonian.chol:
-                assert group[f'KPFactorized/L{Q}'].shape \
-                    == (2, 1, 1, 3, 1, 3, hamiltonian.nchol_pk[Q])
-
-    def test_uneven_orbital_counts_are_refused(self, tmp_path):
-        hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
-        hamiltonian.hcore[1] = hamiltonian.hcore[1][:2, :2]
-
-        with pytest.raises(ValueError, match="different orbital counts"):
-            hamiltonian.to_hdf5(tmp_path / 'ham.h5')
+                assert group[f'KPFactorized/L{Q}'].shape == (2, 1, 1, 3, 1, 3, 4)
 
 
 def _mirrored_hamiltonian(nmo=2, nchol=2):
@@ -167,9 +164,7 @@ class TestFcidump:
 
         direct = tmp_path / 'direct'
         write_fcidump_kpoint(direct, hamiltonian.hcore, chol, -1.25 - 0.75 * 4,
-                             hamiltonian.nmo_tot, nelec,
-                             hamiltonian.nmo_pk, hamiltonian.nchol_pk,
-                             hamiltonian.qk_to_k2, tol=1e-12)
+                             nelec, hamiltonian.qk_to_k2, tol=1e-12)
 
         assert from_method.read_text() == direct.read_text()
 
@@ -180,12 +175,11 @@ class TestFcidump:
         from the partner, where the factorization actually ran.
         """
         hamiltonian = _mirrored_hamiltonian()
-        nkpts, nmo, nchol = hamiltonian.nkpts, hamiltonian.nmo_max, 2
+        nkpts, nmo, nchol = hamiltonian.nkpts, hamiltonian.nmo, 2
 
         chol = hamiltonian._chol_all_momenta()
 
-        assert len(chol) == nkpts
-        assert np.array_equal(hamiltonian.nchol_pk, [nchol, nchol, nchol])
+        assert [block.shape for block in chol] == [(nkpts, nmo * nmo * nchol)] * nkpts
 
         for Q in (0, 1):
             assert np.array_equal(chol[Q], hamiltonian.chol[Q])
@@ -200,13 +194,6 @@ class TestFcidump:
         del hamiltonian.chol[1]
 
         with pytest.raises(ValueError, match="momentum transfer 1, nor for its -Q"):
-            hamiltonian.to_fcidump(tmp_path / 'FCIDUMP')
-
-    def test_uneven_orbital_counts_are_rejected(self, tmp_path):
-        hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
-        hamiltonian.hcore[1] = hamiltonian.hcore[1][:2, :2]
-
-        with pytest.raises(ValueError, match="different orbital counts"):
             hamiltonian.to_fcidump(tmp_path / 'FCIDUMP')
 
     def test_a_madelung_constant_needs_the_electron_count(self, tmp_path):
@@ -255,7 +242,7 @@ class TestGeneration:
 
         assert hamiltonian.nkpts == 2
         assert set(hamiltonian.chol) == {0, 1}
-        assert all(n > 0 for n in hamiltonian.nchol_pk)
+        assert all(L.shape[1] > 0 for L in hamiltonian.chol.values())
         # the Madelung term is left to the executable, which knows the electron count
         assert np.isclose(hamiltonian.enuc, 2 * kmf.cell.energy_nuc())
         assert hamiltonian.madelung_constant != 0.0
@@ -302,18 +289,17 @@ class TestGeneration:
         nao = kmf.cell.nao_nr()
 
         assert supercell.nkpts == 1
-        assert list(supercell.nmo_pk) == [original_nkpts * nao]
+        # the combined basis really did absorb the original k-points
+        nmo = original_nkpts * nao
+        assert supercell.nmo == nmo
         assert np.allclose(supercell.kpts, 0.0)
         assert supercell.qk_to_k2.tolist() == [[0]]
         assert supercell.minus_k.tolist() == [0]
         assert set(supercell.chol) == {0}
 
-        nmo_tot = supercell.nmo_tot
-        nchol = int(supercell.nchol_pk[0])
-        assert supercell.hcore[0].shape == (nmo_tot, nmo_tot)
-        assert supercell.chol[0].shape == (1, nmo_tot * nmo_tot * nchol)
-        # the combined basis really did absorb the original k-points
-        assert nmo_tot == original_nkpts * nao
+        assert supercell.hcore.shape == (1, nmo, nmo)
+        assert supercell.chol[0].shape[0] == 1
+        assert supercell.chol[0].shape[1] % (nmo * nmo) == 0
 
         path = tmp_path / 'sc.h5'
         supercell.to_hdf5(path)
@@ -368,16 +354,14 @@ class TestGeneration:
             kmf, basis='ortho_ao', kpoint_symmetry=True, chol_cut=chol_cut,
             maxvecs=20)
 
-        nmo_tot = supercell.nmo_tot
-        nchol_sc = int(supercell.nchol_pk[0])
-        L_sc = supercell.chol[0].reshape(nmo_tot * nmo_tot, nchol_sc)
+        nmo_tot = supercell.nmo
+        L_sc = supercell.chol[0].reshape(nmo_tot * nmo_tot, -1)
         sc_trace = np.einsum('ig,ig->i', L_sc, L_sc.conj()).real.reshape(
             nmo_tot, nmo_tot).diagonal().sum()
 
         # the Q = 0 block holds the k-diagonal pair densities
-        nmo = int(kpoint.nmo_pk[0])
-        nchol = int(kpoint.nchol_pk[0])
-        L0 = kpoint.chol[0].reshape(kpoint.nkpts, nmo * nmo, nchol)
+        nmo = kpoint.nmo
+        L0 = kpoint.chol[0].reshape(kpoint.nkpts, nmo * nmo, -1)
         kp_trace = sum(
             np.einsum('ig,ig->', L0[k, ::nmo + 1, :], L0[k, ::nmo + 1, :].conj()).real
             for k in range(kpoint.nkpts)
