@@ -17,6 +17,38 @@ for complex arrays and sparse matrices that the schemas build on.
 import numpy as np
 import scipy.sparse as sps
 
+FORMAT_VERSION = 1
+"""
+Version of the Hamiltonian, Wavefunction and results.h5 layouts, stored as the
+``format_version`` attribute of the ``Hamiltonian`` and ``Wavefunction/NOMSD``/``PHMSD``
+groups and of the results.h5 root. Bumped with every
+incompatible change, in step with ``FORMAT_VERSION`` in
+``src/AFQMC/Utilities/format_version.hpp``.
+"""
+
+
+def write_format_version(group) -> None:
+    """Stamp `group` with the current `FORMAT_VERSION`."""
+    # int32, as TRIQS/h5 writes an int: the executable reads attributes by exact type
+    group.attrs['format_version'] = np.int32(FORMAT_VERSION)
+
+
+def check_format_version(group) -> None:
+    """
+    Raise ``ValueError`` unless `group` carries the current `FORMAT_VERSION`.
+    """
+    version = group.attrs.get('format_version')
+    if version is None:
+        raise ValueError(
+            f"'{group.name}' has no format_version attribute: it was written before "
+            f"format version {FORMAT_VERSION}. Regenerate it with safiretools."
+        )
+    if int(version) != FORMAT_VERSION:
+        raise ValueError(
+            f"'{group.name}' has format_version {int(version)}, but safiretools reads "
+            f"version {FORMAT_VERSION}. Regenerate it."
+        )
+
 
 def replace_dataset(parent, name, value):
     """

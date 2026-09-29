@@ -17,6 +17,10 @@ Several generic classes of Hamiltonians are implemented and described in detail 
 #. :ref:`Lattice Model Hamiltonian <lattice_model_hamiltonian>`
 #. :ref:`THC Hamiltonian <thc_hamiltonian>`
 
+Every format below carries a ``format_version`` integer attribute on ``/Hamiltonian``, which
+SAFIRE checks against the version it reads; a file without one, or with another version, is
+rejected and has to be regenerated. CoQuí files have no ``/Hamiltonian`` group and are exempt.
+
 .. _dense-cholesky:
 
 Dense Cholesky

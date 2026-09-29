@@ -37,6 +37,7 @@
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "test_utils.hpp"
 #include "AFQMC/Utilities/readWfn.h"
+#include "AFQMC/Utilities/format_version.hpp"
 
 extern bool WRITE_REFERENCE;
 extern std::string UTEST_HAMIL, UTEST_WFN;
@@ -216,6 +217,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     h5::group wg = g_.create_group("Wavefunction");
     h5::group ng = wg.create_group("NOMSD");
  
+    write_format_version(ng);
     h5::h5_write_attribute(ng,"spin_type",walkerTypeToString(type));
     nda::h5_write(ng,"ci_coeffs",coeffs);
 

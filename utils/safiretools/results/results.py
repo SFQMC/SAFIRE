@@ -23,7 +23,7 @@ from pathlib import Path
 import h5py as h5
 import numpy as np
 
-from safiretools.hdf5 import read_complex
+from safiretools.hdf5 import check_format_version, read_complex
 from safiretools.results.stats import jackknife, rebinning_analysis, standard_error
 
 # one `execute` block of the input writes its observables below one of these groups
@@ -50,8 +50,9 @@ class Results:
     Raises
     ------
     ValueError
-        If the file has no ``Measurements`` group, if there is no ``Stage<N>`` group below
-        it, or if the file has no stage by the requested name.
+        If the file was written in another format version, if it has no ``Measurements``
+        group, if there is no ``Stage<N>`` group below it, or if the file has no stage by
+        the requested name.
 
     Examples
     --------
@@ -76,6 +77,7 @@ class Results:
         self.filename = filename
 
         with h5.File(self.filename, "r") as f:
+            check_format_version(f)
             measurements = f.get("Measurements")
             if measurements is None:
                 raise ValueError(f"'{filename}' has no Measurements group")

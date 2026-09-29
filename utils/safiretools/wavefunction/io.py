@@ -12,8 +12,8 @@
 The native SAFIRE wavefunction HDF5 schema, read and written here and nowhere
 else.
 
-Both representations share a header — the ``spin_type`` attribute and
-``ci_coeffs`` — and differ only in the payload that follows it: a
+Both representations share a header — the ``format_version`` and ``spin_type``
+attributes and ``ci_coeffs`` — and differ only in the payload that follows it: a
 `NOMSDWavefunction` writes one CSR ``PsiT_k`` group per determinant and spin,
 while a `PHMSDWavefunction` writes ``occa``/``occb`` occupation numbers plus an
 optional orbital reference. Sizes are read off the shapes of these arrays, with
@@ -34,7 +34,13 @@ from warnings import warn
 
 import numpy as np
 
-from safiretools.hdf5 import read_complex, read_csr, write_csr
+from safiretools.hdf5 import (
+    check_format_version,
+    read_complex,
+    read_csr,
+    write_csr,
+    write_format_version,
+)
 from safiretools.types import SpinSymm
 from safiretools.wavefunction.slater import CONDITION_MAX, overlap_condition_number
 
@@ -97,6 +103,7 @@ def write_header(group, spin_symm: SpinSymm, coeffs) -> None:
     coeffs : array_like
         Determinant coefficients, ``(ndets,)``.
     """
+    write_format_version(group)
     group.attrs['spin_type'] = spin_symm.label
     group.create_dataset('ci_coeffs', data=np.asarray(coeffs))
 
@@ -112,12 +119,13 @@ def read_header(group) -> dict:
         counts are not part of the header; each payload reader takes them from
         its own data.
     """
-    if 'spin_type' in group.attrs:
-        spin_symm = SpinSymm.from_input(group.attrs['spin_type'])
-    else:
-        # CoQuí writes no spin_type attribute, only the walker type in slot 3
-        #   of a 'dims' array
+    if 'format_version' not in group.attrs and 'dims' in group:
+        # CoQuí writes neither a format_version nor a spin_type attribute, only
+        #   the walker type in slot 3 of a 'dims' array
         spin_symm = SpinSymm.from_input(int(group['dims'][3]))
+    else:
+        check_format_version(group)
+        spin_symm = SpinSymm.from_input(group.attrs['spin_type'])
     coeffs = read_complex(group['ci_coeffs'])
 
     return {

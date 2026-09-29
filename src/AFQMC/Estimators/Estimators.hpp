@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "AFQMC/parameters.hpp"
+#include "AFQMC/Utilities/format_version.hpp"
 #include "IO/banner.hpp"
 #include "utilities/check.hpp"
 
@@ -124,6 +125,10 @@ public:
       h5::file out(tmppath, 'a');
       h5::group root(out);
 
+      // every stage appends to one file, which execute starts afresh, so the first stamps it
+      if(!has_format_version(root)) {
+        write_format_version(root);
+      }
       h5::group meas_group = utils::h5_open_or_create(root, "Measurements");
       measurements_.write(meas_group);
     }

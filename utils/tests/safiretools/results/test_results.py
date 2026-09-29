@@ -12,6 +12,7 @@ import numpy as np
 import h5py as h5
 import pytest
 
+from safiretools.hdf5 import write_format_version
 from safiretools.results import Results
 from safiretools.results.stats import rebinning_analysis, standard_error
 
@@ -50,6 +51,7 @@ def test_reading_every_stage_finds_the_same_series(results_file, measured):
 def test_a_file_without_measurements_is_rejected(tmp_path):
     path = tmp_path / 'no_measurements.h5'
     with h5.File(path, 'w') as f:
+        write_format_version(f)
         f.create_dataset('return_code', data=0)
 
     with pytest.raises(ValueError, match='no Measurements group'):
@@ -59,9 +61,19 @@ def test_a_file_without_measurements_is_rejected(tmp_path):
 def test_a_file_without_a_stage_is_rejected(tmp_path):
     path = tmp_path / 'no_stage.h5'
     with h5.File(path, 'w') as f:
+        write_format_version(f)
         f.create_group('Measurements/NotAStage')
 
     with pytest.raises(ValueError, match='no Stage<N> group'):
+        Results(path)
+
+
+def test_an_unversioned_file_is_rejected(tmp_path):
+    path = tmp_path / 'unversioned.h5'
+    with h5.File(path, 'w') as f:
+        f.create_group('Measurements/Stage0')
+
+    with pytest.raises(ValueError, match='no format_version'):
         Results(path)
 
 

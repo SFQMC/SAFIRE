@@ -526,6 +526,23 @@ components, and a real-valued Hamiltonian is written real so the file stays half
 **Known bug: inverted `real_valued` flag**) — so the distinction cannot be avoided by always writing
 complex.
 
+## Format version
+
+The group holding each input header — `Hamiltonian`, and `Wavefunction/NOMSD` or
+`Wavefunction/PHMSD` — and the root of a results.h5 carry an int32 `format_version` attribute. It
+is one number for all of them, `FORMAT_VERSION` in
+`safiretools/hdf5.py` and in `src/AFQMC/Utilities/format_version.hpp`, bumped together with every
+incompatible layout change. Readers on both sides require an exact match and name regeneration as
+the fix; nothing migrates an old layout on read.
+
+It sits on the header group rather than the file root because a Hamiltonian and a wavefunction are
+written independently and may share one file. A results.h5 has a single writer, the executable,
+so there it sits on the root; every stage of a run appends to the file, and the first stamps it.
+
+CoQuí output is the one unversioned input, since we cannot change what it writes: a CoQuí
+Hamiltonian is recognized by its `System`/`Interaction` groups, and a CoQuí wavefunction by a
+`dims` array in place of `format_version`.
+
 ## Hamiltonian on-disk formats
 
 Each `Hamiltonian` subclass owns its format, and `Hamiltonian.from_hdf5` dispatches on what a file

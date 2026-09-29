@@ -17,6 +17,7 @@
 
 #include "config.h"
 #include "AFQMC/config.h"
+#include "AFQMC/Utilities/format_version.hpp"
 #include "IO/app_loggers.h"
 #include "utilities/check.hpp"
 #include "nda/h5.hpp"
@@ -62,14 +63,14 @@ inline HamiltonianType peekHamType(h5::group grp, std::string format = "std")
   APP_ABORT("  Error: Invalid hdf5 file format in peekHamType(). ");
 }
 
-inline std::string get_hamiltonian_format(h5::group& grp)
-{
-  if(grp.has_subgroup(std::string("/Hamiltonian")))
+inline std::string get_hamiltonian_format(h5::group& grp) {
+  if(grp.has_subgroup(std::string("/Hamiltonian"))) {
+    check_format_version(grp.open_group("Hamiltonian"), "Hamiltonian");
     return "std";
-  else if(grp.has_subgroup(std::string("/System")) and grp.has_subgroup(std::string("/Interaction")))
-    return "coqui"; 
-  else
-    utils::check(false,"Error in get_hamiltonian_format: Invalid format");
+  } else if(grp.has_subgroup(std::string("/System")) && grp.has_subgroup(std::string("/Interaction"))) {
+    return "coqui";
+  }
+  utils::check(false, "Error in get_hamiltonian_format: Invalid format");
   return "";
 }
 
