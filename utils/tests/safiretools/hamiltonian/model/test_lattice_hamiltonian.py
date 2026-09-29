@@ -280,7 +280,7 @@ class TestRealValued:
         LatticeHamiltonian.from_dict(CASES['hubbard']).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            data = fh5['Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/data_']
+            data = fh5['Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/values']
             assert data.ndim == 1
 
     def test_a_complex_hamiltonian_writes_complex_data(self, tmp_path):
@@ -288,7 +288,7 @@ class TestRealValued:
         LatticeHamiltonian.from_dict(CASES['twisted_honeycomb']).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            data = fh5['Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/data_']
+            data = fh5['Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/values']
             assert data.ndim == 1
             assert data.dtype == np.complex128
 

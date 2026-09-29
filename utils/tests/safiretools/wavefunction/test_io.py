@@ -80,20 +80,20 @@ class TestOrbitals:
         io.write_orbitals(group, 'PsiT_0', orbitals)
 
         # the executable reads an (nelec, npol*nmo) CSR matrix
-        assert list(group['PsiT_0/dims'][...])[:2] == [3, 6]
+        assert list(group['PsiT_0/shape'][...]) == [3, 6]
         assert np.allclose(io.read_orbitals(group, 'PsiT_0'), orbitals)
 
     def test_the_index_datasets_are_int32(self, group, rng):
         io.write_orbitals(group, 'PsiT_0', rng.normal(size=(4, 2)) + 0j)
 
-        for name in ('dims', 'jdata_', 'pointers_begin_', 'pointers_end_'):
+        for name in ('shape', 'row_pointers', 'column_indices'):
             assert group[f'PsiT_0/{name}'].dtype == np.int32
 
     def test_an_empty_block_round_trips(self, group):
         io.write_orbitals(group, 'PsiT_1', np.zeros((6, 0), dtype=complex))
 
-        assert list(group['PsiT_1/dims'][...]) == [0, 6, 0]
-        assert group['PsiT_1/pointers_begin_'].shape == (0,)
+        assert list(group['PsiT_1/shape'][...]) == [0, 6]
+        assert list(group['PsiT_1/row_pointers'][...]) == [0]
         assert io.read_orbitals(group, 'PsiT_1').shape == (6, 0)
 
     def test_zeros_are_not_stored(self, group):
@@ -102,7 +102,21 @@ class TestOrbitals:
         orbitals[3, 1] = 1.0
         io.write_orbitals(group, 'PsiT_0', orbitals)
 
-        assert int(group['PsiT_0/dims'][2]) == 2
+        assert group['PsiT_0/values'].shape == (2,)
+
+    def test_the_legacy_layout_coqui_writes_is_read(self, group):
+        # the conjugate transpose of a (3, 2) orbital matrix with two nonzeros
+        legacy = group.create_group('PsiT_0')
+        legacy['dims'] = np.array([2, 3, 2], dtype=np.int32)
+        legacy['pointers_begin_'] = np.array([0, 1], dtype=np.int32)
+        legacy['pointers_end_'] = np.array([1, 2], dtype=np.int32)
+        legacy['jdata_'] = np.array([0, 2], dtype=np.int32)
+        legacy['data_'] = np.array([1.0 - 1.0j, 2.0])
+
+        expected = np.zeros((3, 2), dtype=complex)
+        expected[0, 0] = 1.0 + 1.0j
+        expected[2, 1] = 2.0
+        assert np.allclose(io.read_orbitals(group, 'PsiT_0'), expected)
 
 
 class TestNomsdPayload:
@@ -135,7 +149,7 @@ class TestNomsdPayload:
         dets[0, 0, 0] = 1e-12
         io.write_nomsd(group, (dets,))
 
-        assert int(group['PsiT_0/dims'][2]) == 7
+        assert group['PsiT_0/values'].shape == (7,)
 
     def test_a_finite_temperature_group_is_reported_clearly(self, group):
         group['UL_0/dims'] = np.array([1, 1, 1], dtype=np.int32)

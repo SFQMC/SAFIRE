@@ -95,21 +95,29 @@ def read_complex(dataset):
 def write_csr(parent, name, matrix):
     """
     Write the sparse `matrix` as group ``parent[name]`` in the CSR layout the AFQMC
-    executable reads: ``dims``, ``data_``, ``jdata_``, ``pointers_begin_``,
-    ``pointers_end_``.
+    executable reads: ``shape``, ``row_pointers`` (``nrows + 1`` offsets),
+    ``column_indices`` and ``values``.
     """
     matrix = sps.csr_array(matrix)
     group = parent.create_group(name)
-    group.create_dataset(
-        'dims', data=np.array([matrix.shape[0], matrix.shape[1], matrix.nnz], dtype=np.int32))
-    group.create_dataset('data_', data=matrix.data)
-    group.create_dataset('jdata_', data=matrix.indices.astype(np.int32, copy=False))
-    group.create_dataset('pointers_begin_', data=matrix.indptr[:-1].astype(np.int32, copy=False))
-    group.create_dataset('pointers_end_', data=matrix.indptr[1:].astype(np.int32, copy=False))
+    group.create_dataset('shape', data=np.array(matrix.shape, dtype=np.int32))
+    group.create_dataset('row_pointers', data=matrix.indptr.astype(np.int32, copy=False))
+    group.create_dataset('column_indices', data=matrix.indices.astype(np.int32, copy=False))
+    group.create_dataset('values', data=matrix.data)
 
 
 def read_csr(group):
-    """Read back a ``scipy.sparse.csr_array`` written by `write_csr`."""
+    """
+    Read back a ``scipy.sparse.csr_array`` written by `write_csr`, or one in the
+    legacy layout CoQuí writes: ``dims`` (rows, columns, nonzeros), ``data_``,
+    ``jdata_``, ``pointers_begin_`` and ``pointers_end_``.
+    """
+    if 'shape' in group:
+        return sps.csr_array(
+            (read_complex(group['values']), group['column_indices'][...],
+             group['row_pointers'][...]),
+            shape=tuple(int(n) for n in group['shape'][...]))
+
     nrows, ncols, nnz = (int(value) for value in group['dims'][...])
     data = read_complex(group['data_'])
     indices = group['jdata_'][...]

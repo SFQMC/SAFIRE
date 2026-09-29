@@ -458,4 +458,67 @@ TEST_CASE("combine_csr", "[csr]")
   test_combine_csr<std::complex<double>, int, int>();
 }
 
-} // namespace bdft 
+TEST_CASE("csr_hdf5", "[csr]") {
+  using Type = std::complex<double>;
+  using csr = math::sparse::csr_matrix<Type, HOST_MEMORY, int, int>;
+  using nda::range;
+
+  auto ref = nda::array<Type, 2>::zeros({3, 5});
+  ref(0, 1) = Type(1.0, 2.0);
+  ref(0, 4) = -3.0;
+  ref(2, 0) = Type(0.0, -4.0);
+  ref(2, 2) = 5.0;
+
+  // three slots per row: row 1 stays empty and the others keep spare capacity, so the stored
+  // offsets differ from the compact ones a file has to hold
+  csr A({3, 5}, 3);
+  for(long i = 0; i < 3; ++i) {
+    for(long j = 0; j < 5; ++j) {
+      if(ref(i, j) != Type(0.0)) {
+        A.emplace_back({int(i), int(j)}, ref(i, j));
+      }
+    }
+  }
+
+  sfqmc::utils::TemporaryDirectory tmpdir;
+  h5::file file((tmpdir / "csr.h5").string(), 'w');
+  h5::group root(file);
+
+  SECTION("round trip") {
+    h5::group grp = root.create_group("A");
+    math::sparse::CSR2HDF(grp, A);
+
+    REQUIRE(!math::sparse::hdf_csr_is_legacy(grp));
+    REQUIRE(math::sparse::hdf_csr_shape(grp) == std::array<long, 2>{3, 5});
+    auto B = math::sparse::HDF2CSR<Type, HOST_MEMORY, int, int>(grp);
+    REQUIRE(B.nnz() == 4);
+    CHECK_THAT(math::sparse::to_array<'N'>(B), sfqmc::utils::Approx(ref));
+  }
+
+  SECTION("selected rows, in the order given") {
+    h5::group grp = root.create_group("A");
+    math::sparse::CSR2HDF(grp, A, std::vector<int>{2, 0});
+
+    auto B = math::sparse::HDF2CSR<Type, HOST_MEMORY, int, int>(grp);
+    auto expected = nda::array<Type, 2>::zeros({2, 5});
+    expected(0, range::all) = ref(2, range::all);
+    expected(1, range::all) = ref(0, range::all);
+    CHECK_THAT(math::sparse::to_array<'N'>(B), sfqmc::utils::Approx(expected));
+  }
+
+  SECTION("the legacy layout CoQuí writes") {
+    h5::group grp = root.create_group("A");
+    h5::h5_write(grp, "dims", std::vector<int>{3, 5, 4});
+    nda::h5_write(grp, "pointers_begin_", nda::array<int, 1>{0, 2, 2});
+    nda::h5_write(grp, "pointers_end_", nda::array<int, 1>{2, 2, 4});
+    nda::h5_write(grp, "jdata_", nda::array<int, 1>{1, 4, 0, 2});
+    nda::h5_write(grp, "data_", nda::array<Type, 1>{Type(1.0, 2.0), -3.0, Type(0.0, -4.0), 5.0});
+
+    REQUIRE(math::sparse::hdf_csr_is_legacy(grp));
+    REQUIRE(math::sparse::hdf_csr_shape(grp) == std::array<long, 2>{3, 5});
+    auto B = math::sparse::HDF2CSR<Type, HOST_MEMORY, int, int>(grp);
+    CHECK_THAT(math::sparse::to_array<'N'>(B), sfqmc::utils::Approx(ref));
+  }
+}
+
+} // namespace bdft

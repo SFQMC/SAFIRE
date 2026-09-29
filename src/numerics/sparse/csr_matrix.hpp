@@ -22,22 +22,16 @@
 
 #include <array>
 #include <cassert>
-#include <iostream>
-#include <vector>
 #include <tuple>
-#include <numeric>
-#include <memory>
 #include <type_traits> 
 #include <algorithm>
 #include <utility>
 
 #include "configuration.hpp"
 #include "utilities/check.hpp"
-#include "IO/AppAbort.hpp"
-#include "IO/app_loggers.h"
 #include "utilities/pair_iterator.hpp"
 
-#include "nda/nda.hpp"
+#include <nda/nda.hpp>
 
 #include "numerics/sparse/ucsr_matrix.hpp"
 #include "numerics/sparse/csr_matrix_view.hpp"

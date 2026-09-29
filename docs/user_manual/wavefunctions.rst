@@ -68,17 +68,15 @@ NOMSD
             group      /Wavefunction
             group      /Wavefunction/NOMSD
             group      /Wavefunction/NOMSD/PsiT_0
-            dataset    /Wavefunction/NOMSD/PsiT_0/data_
-            dataset    /Wavefunction/NOMSD/PsiT_0/dims
-            dataset    /Wavefunction/NOMSD/PsiT_0/jdata_
-            dataset    /Wavefunction/NOMSD/PsiT_0/pointers_begin_
-            dataset    /Wavefunction/NOMSD/PsiT_0/pointers_end_
+            dataset    /Wavefunction/NOMSD/PsiT_0/column_indices
+            dataset    /Wavefunction/NOMSD/PsiT_0/row_pointers
+            dataset    /Wavefunction/NOMSD/PsiT_0/shape
+            dataset    /Wavefunction/NOMSD/PsiT_0/values
             group      /Wavefunction/NOMSD/PsiT_1
-            dataset    /Wavefunction/NOMSD/PsiT_1/data_
-            dataset    /Wavefunction/NOMSD/PsiT_1/dims
-            dataset    /Wavefunction/NOMSD/PsiT_1/jdata_
-            dataset    /Wavefunction/NOMSD/PsiT_1/pointers_begin_
-            dataset    /Wavefunction/NOMSD/PsiT_1/pointers_end_
+            dataset    /Wavefunction/NOMSD/PsiT_1/column_indices
+            dataset    /Wavefunction/NOMSD/PsiT_1/row_pointers
+            dataset    /Wavefunction/NOMSD/PsiT_1/shape
+            dataset    /Wavefunction/NOMSD/PsiT_1/values
             dataset    /Wavefunction/NOMSD/ci_coeffs
         }
     }
@@ -86,15 +84,20 @@ NOMSD
 Note that the :math:`\alpha` components of the trial wavefunction are stored under
 ``PsiT_{2n}`` and the :math:`\beta` components are stored under ``PsiT_{2n+1}``.
 
--  ``/Wavefunction/NOMSD/PsiT_{2n}/data_`` Array of length :math:`nnz` containing non-zero
-   elements of :math:`n`-th :math:`\alpha` component of trial wavefunction walker
-   wavefunction. Note the **conjugate transpose** of the Slater matrix is stored.
--  ``/Wavefunction/NOMSD/PsiT_{2n}/dims`` Array of length 3 containing
-   :math:`[M,N_{\alpha},nnz]` where :math:`nnz` is the number of non-zero elements of this
-   Slater matrix
--  ``/Wavefunction/NOMSD/PsiT_{2n}/jdata_`` CSR indices array.
--  ``/Wavefunction/NOMSD/PsiT_{2n}/pointers_begin_`` CSR format begin index pointer array.
--  ``/Wavefunction/NOMSD/PsiT_{2n}/pointers_end_`` CSR format end index pointer array.
+-  ``/Wavefunction/NOMSD/PsiT_{2n}`` The :math:`n`-th :math:`\alpha` Slater matrix as a CSR
+   matrix. Note the **conjugate transpose** of the Slater matrix is stored, so it has
+   :math:`N_\alpha` rows and :math:`N_p M` columns (:math:`N_p = 2` for noncollinear
+   wavefunctions, 1 otherwise). Its datasets are
+
+   -  ``shape``: :math:`[N_\alpha, N_p M]`.
+   -  ``values``: the :math:`nnz` non-zero elements.
+   -  ``column_indices``: the column index of each non-zero element.
+   -  ``row_pointers``: :math:`N_\alpha + 1` offsets; row :math:`i` holds entries
+      ``row_pointers[i]`` up to (not including) ``row_pointers[i+1]`` of ``values`` and
+      ``column_indices``.
+
+   The legacy layout CoQuí writes (``dims``, ``data_``, ``jdata_``, ``pointers_begin_``,
+   ``pointers_end_``) is read as well.
 -  ``/Wavefunction/NOMSD/ci_coeffs`` :math:`N_D` length array of ci coefficients. Stored
    as complex numbers.
 -  ``spin_type`` attribute of ``/Wavefunction/NOMSD``: ``"closed"``, ``"collinear"`` or

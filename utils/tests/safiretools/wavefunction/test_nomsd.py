@@ -119,7 +119,7 @@ class TestRoundTrip:
         with h5.File(path, 'r') as fh5:
             group = fh5['Wavefunction/NOMSD']
             assert group.attrs['spin_type'] == 'collinear'
-            assert list(group['PsiT_1/dims'][...]) == [0, 6, 0]
+            assert list(group['PsiT_1/shape'][...]) == [0, 6]
 
     def test_only_the_requested_determinants_come_back(self, make_nomsd,
                                                        tmp_path):
