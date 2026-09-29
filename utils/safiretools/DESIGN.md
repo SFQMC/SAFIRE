@@ -641,10 +641,15 @@ supercell's complex Cholesky vectors.
 `(nkpts, nspin, npol, nmo, npol, nmo)` and each `KPFactorized/L{Q}` is
 `(nkpts, nspin, npol, nmo, npol, nmo, nchol_Q)`, replacing one `H1_kp{k}` dataset per k-point and
 flat `(nkpts, nmo**2 * nchol_Q)` vectors. `nspin` and `npol` are always 1: the format holds only
-spin-independent Hamiltonians, as before. One `nmo` for all k-points is what the executable already
-required, so `to_hdf5` refuses a Hamiltonian whose k-points carry different orbital counts rather
-than padding it. `PeriodicHamiltonian` keeps its in-memory representation — per-k-point `hcore`
-blocks and flat `chol` — only the file changed.
+spin-independent Hamiltonians, as before.
+
+**One `nmo` for all k-points**, in memory as on disk: `PeriodicHamiltonian.hcore` is one
+`(nkpts, nmo, nmo)` array and `chol[Q]` is `(nkpts, nmo**2 * nchol_Q)`, so every size is read off
+the arrays and nothing like `nmo_pk`/`nchol_pk` is carried alongside. The executable already
+required it, and a Hamiltonian with uneven counts could be written neither to HDF5 nor to FCIDUMP,
+so there was no point in holding one. Uneven counts only arise from linear dependencies removed per
+k-point; `from_pyscf` refuses them with `kpoint_symmetry=True` before factorizing, and the supercell
+factorization, which collapses everything into one Γ-point block, still takes them.
 
 **No `ComplexIntegrals` flag.** afqmctools wrote one, meaning "the Cholesky matrix is complex" to
 its dense *writer* and "hcore is complex" to its *reader*, and the executable never read it. Every
@@ -676,16 +681,14 @@ knobs — `tol`, `ctol`, `sym`, `cplx`, `paren`, `use_spinor`.
 **`to_fcidump` fills in the momentum transfers a k-point file does not store.** `chol` holds only
 `Q <= minus_k[Q]`; the FCIDUMP needs all of them, so `_chol_all_momenta` reconstructs each
 partner as
-`L[-Q][k1][i,j,n] == conj(L[Q][k2][j,i,n])` with `k2 = qk_to_k2[-Q, k1]`; `nchol_pk`, read off
-the stored blocks, gives an unstored `Q` its partner's count. This is the same expansion
+`L[-Q][k1][i,j,n] == conj(L[Q][k2][j,i,n])` with `k2 = qk_to_k2[-Q, k1]`, with its partner's
+vector count. This is the same expansion
 any reader of the on-disk format performs — afqmctools did it in `get_kpoint_chol` at read time —
 so it is not new behavior, only relocated to the one place that needs the full set.
 
-**Uneven per-k-point orbital counts are rejected rather than written wrongly.** The FCIDUMP orbital
-index is the combined `k * nmo_pk + i`, and `write_fcidump_kpoint` walks it as though every k-point
-carried `nmo_max` orbitals, so a mesh with different counts per k-point (linear dependencies
-removed per k-point) silently produced garbage. `PeriodicHamiltonian.to_fcidump` raises `ValueError`
-instead. The underlying free function is left as it is.
+**The FCIDUMP orbital index is the combined `k * nmo + i`.** `write_fcidump_kpoint` used to take
+`nmo_pk` and walk the index as though every k-point carried `nmo_max` orbitals, so uneven counts
+silently produced garbage; with one `nmo` it takes just `hcore`, the blocks, `nelec` and `qk_to_k2`.
 
 **A spinor-basis FCIDUMP is still not available for a k-point Hamiltonian**, and `to_fcidump` keeps
 `use_spinor` for the sake of saying so. Its `NotImplementedError` no longer names

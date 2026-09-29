@@ -125,7 +125,6 @@ PHMSD
             dataset    /Wavefunction/PHMSD/ci_coeffs
             dataset    /Wavefunction/PHMSD/occa
             dataset    /Wavefunction/PHMSD/occb
-            dataset    /Wavefunction/PHMSD/type
         }
     }
 
@@ -139,14 +138,18 @@ PHMSD
    For example if :math:`(N_\alpha=N_\beta=2)`, :math:`N_D=2`, :math:`M=4`, and
    :math:`|\Psi_\mathrm{T}\rangle = |0,1\rangle|0,1\rangle + |0,1\rangle|0,2\rangle` then
    occa = :math:`[[0, 1], [0, 1]]` and occb = :math:`[[0, 1], [0, 2]]`.
--  ``/Wavefunction/PHMSD/type`` integer 0/1. 1 implies trial wavefunction is written in
-   different basis than the underlying basis used for the integrals. If so a matrix of
-   orbital coefficients is required to be written in the NOMSD format. If 0 then assume
-   wavefunction is in same basis as integrals.
+-  ``/Wavefunction/PHMSD/PsiT_0``, ``/Wavefunction/PHMSD/PsiT_1`` (optional) Orbital
+   references, if the occupancies refer to a different basis than the one the integrals are
+   written in. Each is the matrix of reference orbitals in the integrals' basis, stored as the
+   CSR matrix of its conjugate transpose, so it has one row per reference orbital and
+   :math:`N_p M` columns (the same datasets as a NOMSD ``PsiT``). There is either one, ``PsiT_0``, shared by both spins, or
+   ``PsiT_0`` (:math:`\alpha`) and ``PsiT_1`` (:math:`\beta`) for a spin-resolved reference.
+   Without any, the occupancies refer to the integrals' basis.
 
-:math:`N_D` is the length of ``ci_coeffs``, and :math:`N_\alpha` and :math:`N_\beta` the
-widths of ``occa`` and ``occb``. :math:`M` is the one size that is stored explicitly, since the
-occupancies alone do not span the orbitals.
+:math:`N_D` is the length of ``ci_coeffs``, :math:`N_\alpha` and :math:`N_\beta` the widths of
+``occa`` and ``occb``, and the number of orbital references the number of ``PsiT_<n>`` groups.
+:math:`M` is the one size that is stored explicitly, since the occupancies alone do not span the
+orbitals.
 
 
 .. _initial_walkers:

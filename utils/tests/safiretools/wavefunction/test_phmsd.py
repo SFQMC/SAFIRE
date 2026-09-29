@@ -181,7 +181,9 @@ class TestRoundTrip:
         assert layouts_close(read_back.orbitals, references)
 
         with h5.File(path, 'r') as fh5:
-            assert int(fh5['Wavefunction/PHMSD/type'][()]) == nreferences
+            group = fh5['Wavefunction/PHMSD']
+            assert sorted(name for name in group if name.startswith('PsiT')) \
+                == [f'PsiT_{i}' for i in range(nreferences)]
 
     def test_a_polarized_expansion_round_trips(self, tmp_path):
         wavefunction = PHMSDWavefunction(
