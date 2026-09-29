@@ -188,7 +188,7 @@ public:
     X_.resize(wset.size(), nspin, npolNMO, npolNMO);
     Y_.resize(wset.size(), nspin, npolNMO, npolNMO);
     M_.resize(wset.size(), nspin, npolNMO, npolNMO);
-    setAnchor(0);
+    setAnchor(-1);
 
     app_log(1, "\n  --   Back Propagation with Time Evolved Operators -- \n");
     if(extra_path_restoration_) {
@@ -272,9 +272,9 @@ private:
     back_propagate_time.stop();
   }
 
-  /// Anchor back propagation at `step`, the number of propagation steps the evolved
-  /// operators start from, and restart them from the identity. The constructor anchors
-  /// before the first step, at 0.
+  /// Anchor back propagation after step `step`, where the evolved operators start from,
+  /// and restart them from the identity. The constructor anchors before the first step,
+  /// at -1.
   void setAnchor(long step) {
     M_() = 0.0;
     math::set_identity(X_);

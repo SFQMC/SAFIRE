@@ -157,7 +157,7 @@ public:
     int ncv(prop_.number_of_cholesky_vectors());
     int number_of_references = wfn_.total_number_of_references();
     wset.resize_bp(propagation_steps_.back(), ncv, number_of_references);
-    setAnchor(wset, 0);
+    setAnchor(wset, -1);
   }
 
 
@@ -242,8 +242,8 @@ private:
     back_propagate_time.stop();
   }
 
-  /// Anchor back propagation at `step`, the number of propagation steps completed so far.
-  /// The constructor anchors before the first step, at 0.
+  /// Anchor back propagation after step `step`. The constructor anchors before the first
+  /// step, at -1.
   void setAnchor(WalkerSet<MEM>& wset, long step) {
     for(int iw = 0; iw < wset.size(); ++iw) {
       wset[iw].setSlaterMatrixN();
@@ -255,8 +255,8 @@ private:
   Propagator<MEM>& prop_;
   Observables<MEM> observables_;
 
-  // completed step count the anchor sits at, see setAnchor: at step s, s - bp_pos_ steps
-  // have been propagated over since it
+  // step the anchor sits after, see setAnchor: at step s, s - bp_pos_ steps have been
+  // propagated over since it
   long bp_pos_{};
 
   // the back propagation lengths, in steps, sorted

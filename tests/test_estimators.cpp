@@ -111,20 +111,20 @@ void run_measurement_steps(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                            EstimatorBase<MEM>& estimator, Measurements& meas,
                            WalkerSet<MEM>& wset, long nsteps)
 {
-  for(long step = 1; step <= nsteps; ++step) {
+  for(long step = 0; step < nsteps; ++step) {
     wset.advanceHistoryPos();
     estimator.measure(mpi, step, meas, wset);
   }
 }
 
-/// Runs every estimator of the set over the steps [first, last]. The walkers are never
+/// Runs every estimator of the set over the steps [first, last). The walkers are never
 /// propagated, so only the back propagation history position advances.
 template<MEMORY_SPACE MEM>
 void run_measurement_steps(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
                            Estimators<MEM>& estimators, WalkerSet<MEM>& wset,
                            long first, long last)
 {
-  for(long step = first; step <= last; ++step) {
+  for(long step = first; step < last; ++step) {
     wset.advanceHistoryPos();
     estimators.measure(mpi, step, wset);
   }
@@ -244,8 +244,8 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
     std::unique_ptr<EstimatorBase<MEM>> estimator = std::make_unique<BackPropEstimator<MEM>>(
         *mpi, est_params, wset, wfn, prop);
 
-    // the anchor starts at step 0 and resets after 2 steps, so measurements land on the even
-    // steps 2, 4, 6, 8
+    // the anchor starts before step 0 and resets after 2 steps, so measurements land on the
+    // odd steps 1, 3, 5, 7
     Measurements meas{};
     run_measurement_steps(*mpi, *estimator, meas, wset, nsteps);
     verify_bp_matches_mixed<MEM>(meas, "BackPropEstimator/Steps=2/OneRDM", 0,
@@ -262,7 +262,7 @@ void estimators_reduced_density_matrix(std::shared_ptr<utils::mpi_context_t<boos
     std::unique_ptr<EstimatorBase<MEM>> estimator = std::make_unique<BackPropEstimator<MEM>>(
         *mpi, est_params, wset, wfn, prop);
 
-    // the anchor resets after 3 steps, so Steps=2 is measured on steps 2, 5 and 8
+    // the anchor resets after 3 steps, so Steps=2 is measured on steps 1, 4 and 7
     Measurements meas{};
     run_measurement_steps(*mpi, *estimator, meas, wset, nsteps);
     verify_bp_matches_mixed<MEM>(meas, "BackPropEstimator/Steps=2/OneRDM", 0,
@@ -408,7 +408,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
     };
 
     // only root records any bin, and Estimators::write is not guarded, so root alone writes
-    run_measurement_steps(*mpi, estimators, wset, 1, nsteps_first);
+    run_measurement_steps(*mpi, estimators, wset, 0, nsteps_first);
     if(mpi->comm.root()) {
       estimators.write(results);
       check_bins(collect_bins(results), expected_bins(nsteps_first));
@@ -416,7 +416,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 
     // a write flushes the complete bins and drops them, so the second one has to grow the
     // datasets the first one created rather than start over
-    run_measurement_steps(*mpi, estimators, wset, nsteps_first + 1, nsteps_total);
+    run_measurement_steps(*mpi, estimators, wset, nsteps_first, nsteps_total);
     if(mpi->comm.root()) {
       estimators.write(results);
       check_bins(collect_bins(results), expected_bins(nsteps_total));
@@ -449,13 +449,13 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
       return expected;
     };
 
-    run_measurement_steps(*mpi, estimators, wset, 1, nsteps_first);
+    run_measurement_steps(*mpi, estimators, wset, 0, nsteps_first);
     if(mpi->comm.root()) {
       estimators.write(results);
       check_bins(collect_bins(results), expected_bins(nsteps_first));
     }
 
-    run_measurement_steps(*mpi, estimators, wset, nsteps_first + 1, nsteps_total);
+    run_measurement_steps(*mpi, estimators, wset, nsteps_first, nsteps_total);
     if(mpi->comm.root()) {
       estimators.write(results);
       check_bins(collect_bins(results), expected_bins(nsteps_total));
@@ -525,7 +525,7 @@ void estimators_local_energy_matches_recomputation(
   Estimators<MEM> estimators{
       mpi, 0, exec, wset, wfn, prop,
       [&](std::string const&, std::string const&) -> Wavefunction<MEM>& { return wfn; }};
-  estimators.measure(*mpi, 1, wset);
+  estimators.measure(*mpi, 0, wset);
 
   // the recomputation, averaged the way MeasurementOutput averages: weighted, reduced over the
   // ranks and divided by the summed weight
@@ -784,13 +784,13 @@ void estimators_bp_matches_mixed_across_population_control(
       mpi, 0, exec, wset, wfn, flat,
       [&](std::string const&, std::string const&) -> Wavefunction<MEM>& { return wfn; }};
 
-  // the anchor the constructor took sits at step 0, so the windows are [0,3], [3,6] and [6,9],
-  // while population control runs at steps 1, 2, 4, 6 and 8: inside a window, on its closing
-  // step, and on neither, over the course of the run
-  for(long step = 1; step <= nsteps; ++step) {
+  // the anchor the constructor took sits before step 0, so the windows close at steps 2, 5
+  // and 8, while population control runs at steps 0, 2, 4, 6 and 8: both inside a window and
+  // on its closing step, over the course of the run
+  for(long step = 0; step < nsteps; ++step) {
     flat.Propagate(wset, 0.0);
     flat.Orthogonalize(wset);
-    if(step % pop_interval == 0 || step == 1) {
+    if(step % pop_interval == 0) {
       // re-skewing keeps the thresholds in reach after a branch has equalized the weights,
       // so that later windows see a branching event too and not just the first one
       skew_weights(wset);
@@ -818,8 +818,8 @@ void estimators_bp_matches_mixed_across_population_control(
     REQUIRE(mixed_bins.extent(0) == nsteps);
 
     for(long j = 0; j < bp_bins.extent(0); ++j) {
-      // the back propagated bin j was measured at step bp_window*(j+1), which is the mixed
-      // bin one lower: the mixed estimator measures every step, starting at step 1
+      // the back propagated bin j was measured at step bp_window*(j+1) - 1, which is also
+      // its mixed bin: the mixed estimator measures every step, starting at step 0
       long const mixed = bp_window * (j + 1) - 1;
       CHECK_THAT(bp_bins(j, nda::ellipsis{}),
                  utils::Approx(mixed_bins(mixed, nda::ellipsis{}), 1e-7, 1e-7));
