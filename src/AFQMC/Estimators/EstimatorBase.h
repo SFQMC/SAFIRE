@@ -31,7 +31,7 @@ class EstimatorBase
 public:
   virtual ~EstimatorBase() {}
 
-  /// Called once per propagation step, with `step` the number of steps completed so far. An
+  /// Called once per propagation step, with `step` the index of the step just taken. An
   /// estimator that does not measure at this step has to return before doing anything at all
   /// -- no timer, no allocation, no collective -- because this runs on every step of the run.
   virtual void measure(utils::mpi_context_t<boost::mpi3::communicator>& mpi, long step, Measurements& meas, WalkerSet<MEM> &wset) = 0;

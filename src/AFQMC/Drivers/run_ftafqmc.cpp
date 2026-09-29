@@ -65,16 +65,16 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 
   app_log(1, "Executing {} sweeps, with Beta = {} ", exec.sweeps, beta);
 
-  for(int iSweep = 0; iSweep < exec.sweeps; ++iSweep) {
+  for(int sweep = 0; sweep < exec.sweeps; ++sweep) {
     Eshift = Eshift0; // Eshift set to same value at the beginning of each sweep
-    for(int iStep = 0; iStep < exec.steps; ++iStep) {
+    for(int step = 0; step < exec.steps; ++step) {
       auto step_time = timers.step.start();
-      if(iStep % print_interval == 0 && exec.print_sweep_step) {
-        app_log(1, "sweep {}, step {} ", iSweep, iStep);
+      if(step % print_interval == 0 && exec.print_sweep_step) {
+        app_log(1, "sweep {}, step {} ", sweep, step);
       }
       // reset wset log(ovlp), read initial value
       // from memory after sweep 1, rather than re-computing
-      if(iStep == 0 && iSweep > 0) {
+      if(step == 0 && sweep > 0) {
         auto const& LogPT0 = wavefunction.getLogPT0();
         utils::check(LogPT0.size() == wset.size(),
                      "LogPT0 size ({}) does not match walker set size ({})",
@@ -84,23 +84,23 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
         wset.setTauStep(0);
       }
 
-      propagator.Propagate(wset, Eshift, iStep + 1);
+      propagator.Propagate(wset, Eshift, step + 1);
 
-      if((iStep + 1) % exec.walker_ortho_interval == 0 && iStep != exec.steps - 1) {
+      if(step % exec.walker_ortho_interval == 0 && step != exec.steps - 1) {
         auto ortho_time = timers.ortho.start();
         propagator.Orthogonalize(wset);
         ortho_time.stop();
       }
 
       // KE: should there be a check for population control interval here?
-      if((iStep + 1) % exec.population_control_interval == 0 || iStep == 0 || iStep == exec.steps - 1) {
+      if(step % exec.population_control_interval == 0 || step == exec.steps - 1) {
         auto popcontrol_time = timers.popcontrol.start();
         wset.rescale_total_weight();
         wset.popControl();
         popcontrol_time.stop();
       }
 
-      if(iStep < exec.equilibration_steps) {
+      if(step < exec.equilibration_steps) {
         Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, exec.timestep) - Eshift);
       }
 
@@ -111,7 +111,7 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
     // one sweep is one measurement sample, so an estimator's measure_interval counts sweeps
     // here rather than steps. The walker set is still at nt = nStep, i.e. the full path has
     // been constructed.
-    estimators.measure(mpi, iSweep + 1, wset);
+    estimators.measure(mpi, sweep, wset);
 
     wset.clean(); // reset walker buffer
     // reset weights, UR, DR, VR

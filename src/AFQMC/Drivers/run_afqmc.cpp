@@ -62,21 +62,18 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   app_log(2, log_row, "Wall clock", log_col, "Step", log_col, "Energy", log_col);
   app_log(2, hrule());
 
-  for(int iStep = 0; iStep < exec.steps; ++iStep) {
+  for(int step = 0; step < exec.steps; ++step) {
     auto step_time = timers.step.start();
     propagator.Propagate(wset, Eshift);
 
-    if((iStep + 1) % exec.walker_ortho_interval == 0) {
+    if(step % exec.walker_ortho_interval == 0) {
       auto ortho_time = timers.ortho.start();
       propagator.Orthogonalize(wset);
       ortho_time.stop();
     }
 
-    // the number of completed propagation steps, which is the unit every measurement
-    // interval and every back propagation length is given in
-    long const step = iStep + 1;
 
-    if(step % exec.population_control_interval == 0 || iStep == 0) {
+    if(step % exec.population_control_interval == 0) {
       auto popcontrol_time = timers.popcontrol.start();
       wset.rescale_total_weight();
       wset.popControl();
@@ -84,7 +81,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       popcontrol_time.stop();
     }
 
-    if(step > exec.equilibration_steps) {
+    if(step >= exec.equilibration_steps) {
       // every estimator is offered every step and decides for itself whether this is one of
       // its own; one that skips a step does no work on it
       estimators.measure(mpi, step, wset);
@@ -92,12 +89,12 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, exec.timestep) - Eshift);
       // back propagation starts its first window here, rather than at the stale anchor its
       // constructor took before equilibration
-      if(step == exec.equilibration_steps) {
+      if(step == exec.equilibration_steps - 1) {
         estimators.equilibrated(step, wset);
       }
     }
 
-    if(iStep % log_interval == 0) {
+    if(step % log_interval == 0 || step == exec.steps-1) {
       const double energy = averagePseudoEnergy(mpi, wset, exec.timestep);
       const auto now = std::chrono::current_zone()->to_local(
           std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
@@ -105,7 +102,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       // app_log formats through spdlog's bundled fmt, which has no chrono formatter here,
       // so the timestamp is rendered by std::format and passed on as a string
       app_log(2, log_row, std::format("{:%F %T}", now), log_col,
-              std::format("{:>{}}/{}", iStep + 1, step_format_width, exec.steps), log_col,
+              std::format("{:>{}}/{}", step+1, step_format_width, exec.steps), log_col,
               std::format("{:#.15g}", energy), log_col);
     }
 
