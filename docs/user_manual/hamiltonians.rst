@@ -181,7 +181,9 @@ fewer symmetry inequivalent momentum transfer vectors than there are
 
 No sizes are stored separately: :math:`N_k` and :math:`m` are read off ``hcore``, and
 :math:`n^{\mathbf{Q}_n}_\mathrm{chol}` off ``L[n]``. The total number of basis functions is
-:math:`M = N_k m`. The electron count is taken from the trial wavefunction.
+:math:`M = N_k m`. The electron count is taken from the trial wavefunction, and so is the
+:math:`N_e` in the electron self-interaction :math:`-N_e \times` ``madelung_constant``, an optional
+attribute of ``/Hamiltonian`` named as in CoQuí files.
 
 Complex integrals should be written as an array with an additional dimension, e.g., a 1D array should be written as a 2D array with ``array_hdf5[:,0]=real(1d_array)`` and ``array_hdf5[:,1]=imag(1d_array)``. The functions ``afqmctools.utils.misc.from_complex`` and ``afqmctools.utils.misc.to_complex`` can be used to transform from the internal complex format to complex valued numpy arrays of the appropriate shape and vice versa.
 

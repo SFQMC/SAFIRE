@@ -42,7 +42,7 @@ def test_setup_basis_map_numbers_orbitals_consecutively():
 # the in-memory Hamiltonian, no PySCF needed
 # ----------------------------------------------------------------------
 
-def _kpoint_hamiltonian(nkpts=2, nmo=3, nchol=4):
+def _kpoint_hamiltonian(nkpts=2, nmo=3, nchol=4, madelung_constant=0.0):
     rng = np.random.default_rng(5)
     hcore = [rng.random((nmo, nmo)) + 1j * rng.random((nmo, nmo))
              for _ in range(nkpts)]
@@ -52,35 +52,40 @@ def _kpoint_hamiltonian(nkpts=2, nmo=3, nchol=4):
 
     return PeriodicHamiltonian(
         hcore=hcore, chol=chol, kpts=rng.random((nkpts, 3)),
-        nmo_pk=[nmo] * nkpts,
         qk_to_k2=np.zeros((nkpts, nkpts), dtype=np.int32),
         minus_k=np.arange(nkpts, dtype=np.int32),
-        nchol_pk=np.array([nchol] * nkpts, dtype=np.int32),
         enuc=-1.25,
+        madelung_constant=madelung_constant,
     )
 
 
-@pytest.mark.parametrize("field,value", [
-    ('nmo_pk', [3, 3, 3]),
-    ('qk_to_k2', np.zeros((3, 3), dtype=np.int32)),
-    ('minus_k', np.zeros(3, dtype=np.int32)),
-    ('nchol_pk', np.zeros(3, dtype=np.int32)),
+def test_the_sizes_are_read_off_the_data():
+    hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3, nchol=4)
+
+    assert list(hamiltonian.nmo_pk) == [3, 3]
+    assert list(hamiltonian.nchol_pk) == [4, 4]
+
+
+@pytest.mark.parametrize("field,value,match", [
+    ('hcore', [np.zeros((3, 3))] * 3, "hcore has 3 blocks"),
+    ('qk_to_k2', np.zeros((3, 3), dtype=np.int32), "qk_to_k2 has shape"),
+    ('minus_k', np.zeros(3, dtype=np.int32), "minus_k has shape"),
+    ('chol', {0: np.zeros((2, 10))}, r"chol\[0\] has shape"),
 ])
-def test_momentum_maps_must_match_the_kpoint_count(field, value):
-    kwargs = dict(hcore=[], chol={}, kpts=np.zeros((2, 3)), nmo_pk=[3, 3],
+def test_the_data_must_match_the_kpoint_count(field, value, match):
+    kwargs = dict(hcore=[np.zeros((3, 3))] * 2, chol={}, kpts=np.zeros((2, 3)),
                   qk_to_k2=np.zeros((2, 2), dtype=np.int32),
-                  minus_k=np.zeros(2, dtype=np.int32),
-                  nchol_pk=np.zeros(2, dtype=np.int32))
+                  minus_k=np.zeros(2, dtype=np.int32))
     kwargs[field] = value
 
-    with pytest.raises(ValueError, match=f"{field} has shape"):
+    with pytest.raises(ValueError, match=match):
         PeriodicHamiltonian(**kwargs)
 
 
 class TestKpointFormat:
 
     def test_round_trip(self, tmp_path):
-        hamiltonian = _kpoint_hamiltonian()
+        hamiltonian = _kpoint_hamiltonian(madelung_constant=0.75)
         path = tmp_path / 'ham.h5'
         hamiltonian.to_hdf5(path)
 
@@ -91,6 +96,8 @@ class TestKpointFormat:
         restored = Hamiltonian.from_hdf5(path)
         assert isinstance(restored, PeriodicHamiltonian)
         assert restored.nkpts == hamiltonian.nkpts
+        assert restored.enuc == hamiltonian.enuc
+        assert restored.madelung_constant == hamiltonian.madelung_constant
         assert np.allclose(restored.nchol_pk, hamiltonian.nchol_pk)
         for ki in range(hamiltonian.nkpts):
             assert np.allclose(restored.hcore[ki], hamiltonian.hcore[ki])
@@ -108,7 +115,8 @@ class TestKpointFormat:
 
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
-            assert set(group.attrs) == {'format_version', 'type', 'nuclear_energy'}
+            assert set(group.attrs) == {'format_version', 'type', 'nuclear_energy',
+                                        'madelung_constant'}
             assert not {'NMOPerKP', 'NCholPerKP'} & set(group)
             assert group['hcore'].shape == (2, 1, 1, 3, 1, 3)
             for Q in hamiltonian.chol:
@@ -117,7 +125,7 @@ class TestKpointFormat:
 
     def test_uneven_orbital_counts_are_refused(self, tmp_path):
         hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
-        hamiltonian.nmo_pk = np.array([3, 2])
+        hamiltonian.hcore[1] = hamiltonian.hcore[1][:2, :2]
 
         with pytest.raises(ValueError, match="different orbital counts"):
             hamiltonian.to_hdf5(tmp_path / 'ham.h5')
@@ -138,11 +146,9 @@ def _mirrored_hamiltonian(nmo=2, nchol=2):
 
     return PeriodicHamiltonian(
         hcore=hcore, chol=chol, kpts=rng.random((nkpts, 3)),
-        nmo_pk=[nmo] * nkpts,
         # k1 - k2 = Q on a 1D three-point mesh
         qk_to_k2=np.array([[0, 1, 2], [2, 0, 1], [1, 2, 0]], dtype=np.int32),
         minus_k=np.array([0, 2, 1], dtype=np.int32),
-        nchol_pk=np.array([nchol, nchol, 0], dtype=np.int32),
         enuc=0.5,
     )
 
@@ -151,7 +157,8 @@ class TestFcidump:
     """The FCIDUMP external format, over the combined basis of every k-point."""
 
     def test_it_matches_the_writer_on_a_full_momentum_set(self, tmp_path):
-        hamiltonian = _kpoint_hamiltonian()
+        """The Madelung correction is folded into the one constant FCIDUMP has."""
+        hamiltonian = _kpoint_hamiltonian(madelung_constant=0.75)
         chol = [hamiltonian.chol[Q] for Q in range(hamiltonian.nkpts)]
 
         nelec = (2, 2)
@@ -159,7 +166,7 @@ class TestFcidump:
         hamiltonian.to_fcidump(from_method, nelec=nelec, tol=1e-12)
 
         direct = tmp_path / 'direct'
-        write_fcidump_kpoint(direct, hamiltonian.hcore, chol, hamiltonian.enuc,
+        write_fcidump_kpoint(direct, hamiltonian.hcore, chol, -1.25 - 0.75 * 4,
                              hamiltonian.nmo_tot, nelec,
                              hamiltonian.nmo_pk, hamiltonian.nchol_pk,
                              hamiltonian.qk_to_k2, tol=1e-12)
@@ -175,11 +182,10 @@ class TestFcidump:
         hamiltonian = _mirrored_hamiltonian()
         nkpts, nmo, nchol = hamiltonian.nkpts, hamiltonian.nmo_max, 2
 
-        chol, nchol_pk = hamiltonian._chol_all_momenta()
+        chol = hamiltonian._chol_all_momenta()
 
         assert len(chol) == nkpts
-        assert np.array_equal(nchol_pk, [nchol, nchol, nchol])
-        assert np.array_equal(hamiltonian.nchol_pk, [nchol, nchol, 0])
+        assert np.array_equal(hamiltonian.nchol_pk, [nchol, nchol, nchol])
 
         for Q in (0, 1):
             assert np.array_equal(chol[Q], hamiltonian.chol[Q])
@@ -198,10 +204,14 @@ class TestFcidump:
 
     def test_uneven_orbital_counts_are_rejected(self, tmp_path):
         hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
-        hamiltonian.nmo_pk = np.array([3, 2])
+        hamiltonian.hcore[1] = hamiltonian.hcore[1][:2, :2]
 
         with pytest.raises(ValueError, match="different orbital counts"):
             hamiltonian.to_fcidump(tmp_path / 'FCIDUMP')
+
+    def test_a_madelung_constant_needs_the_electron_count(self, tmp_path):
+        with pytest.raises(ValueError, match="pass nelec"):
+            _kpoint_hamiltonian(madelung_constant=0.75).to_fcidump(tmp_path / 'FCIDUMP')
 
     def test_a_spinor_basis_is_not_implemented(self, tmp_path):
         with pytest.raises(NotImplementedError, match="spatial-orbital basis"):
@@ -246,6 +256,9 @@ class TestGeneration:
         assert hamiltonian.nkpts == 2
         assert set(hamiltonian.chol) == {0, 1}
         assert all(n > 0 for n in hamiltonian.nchol_pk)
+        # the Madelung term is left to the executable, which knows the electron count
+        assert np.isclose(hamiltonian.enuc, 2 * kmf.cell.energy_nuc())
+        assert hamiltonian.madelung_constant != 0.0
 
         path = tmp_path / 'kp.h5'
         hamiltonian.to_hdf5(path)
@@ -253,6 +266,27 @@ class TestGeneration:
 
         restored = Hamiltonian.from_hdf5(path)
         assert np.allclose(restored.chol[0], hamiltonian.chol[0])
+        assert restored.madelung_constant == hamiltonian.madelung_constant
+
+    def test_no_exchange_divergence_treatment_records_no_madelung_constant(
+            self, diamond_lda, monkeypatch):
+        kmf, _ = diamond_lda
+        monkeypatch.setattr(kmf, 'exxdiv', None)
+
+        hamiltonian = PeriodicHamiltonian.from_pyscf(
+            kmf, basis='ortho_ao', kpoint_symmetry=False, chol_cut=1e-2,
+            maxvecs=20)
+
+        assert hamiltonian.madelung_constant == 0.0
+
+    @pytest.mark.parametrize("exxdiv", ['vcut_sph', 'vcut_ws'])
+    def test_a_truncated_coulomb_kernel_is_refused(self, diamond_lda, monkeypatch,
+                                                   exxdiv):
+        kmf, _ = diamond_lda
+        monkeypatch.setattr(kmf, 'exxdiv', exxdiv)
+
+        with pytest.raises(ValueError, match="only 'ewald' or None"):
+            PeriodicHamiltonian.from_pyscf(kmf, basis='ortho_ao')
 
     def test_supercell_hamiltonian_is_a_gamma_point_kpoint_hamiltonian(
             self, diamond_lda, tmp_path):

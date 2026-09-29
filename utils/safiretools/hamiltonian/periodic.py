@@ -57,7 +57,6 @@ from safiretools.hamiltonian.base import (
 )
 from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
 from safiretools.hdf5 import read_complex, replace_group
-from safiretools.types import SpinSymm
 
 logger = logging.getLogger(__name__)
 
@@ -200,27 +199,6 @@ def setup_basis_map(nmo_pk, nkpts):
             count += 1
 
     return ik2n, count
-
-
-def _zero_electron_energy(cell, kpts, nelectron, exxdiv='ewald') -> float:
-    """
-    The constant energy: the nuclear repulsion of every cell, plus the Madelung
-    correction when the exchange divergence is treated by Ewald summation.
-    """
-    from pyscf.pbc import tools
-
-    e0 = len(kpts) * cell.energy_nuc()
-    if exxdiv == 'ewald':
-        emad = -0.5 * nelectron * tools.pbc.madelung(cell, kpts)
-        logger.info("adding ewald correction to the energy: %s", emad)
-        e0 += emad
-    return e0
-
-
-def _default_nelec(cell, nkpts):
-    """``(nup, ndown)`` for the whole supercell, from the cell's own counts."""
-    nup = nkpts * (cell.nelectron + cell.spin) // 2
-    return nup, nkpts * cell.nelectron - nup
 
 
 # ----------------------------------------------------------------------
@@ -545,53 +523,78 @@ class PeriodicHamiltonian(Hamiltonian):
         ``Q <= minus_k[Q]`` are stored; the rest follow by symmetry.
     kpts : numpy.ndarray
         k-points, shape ``(nkpts, 3)``.
-    nmo_pk : sequence of int
-        Number of orbitals at each k-point.
     qk_to_k2 : numpy.ndarray
         ``qk_to_k2[Q, k1] = k2``, the momentum-transfer map.
     minus_k : numpy.ndarray
         ``minus_k[Q]`` is the index of :math:`-Q`.
-    nchol_pk : numpy.ndarray
-        Number of Cholesky vectors per momentum transfer.
     enuc : float, optional
-        Constant energy, including the Madelung correction. Default 0.0.
-    spin_symm : SpinSymm or str or int, optional
-        Spin symmetry. Default `SpinSymm.CLOSED`.
+        Nuclear repulsion of every cell. Default 0.0.
+    madelung_constant : float, optional
+        Electron self-interaction per electron: the executable subtracts it
+        times the trial wavefunction's electron count. Default 0.0.
 
     Notes
     -----
     A supercell Hamiltonian is this same class with ``nkpts == 1`` — the Γ point
     of the supercell — so there is no separate representation to branch on.
+
+    The format holds only spin-independent Hamiltonians, so `spin_symm` is
+    always `SpinSymm.CLOSED`.
     """
 
-    def __init__(self, hcore, chol, kpts, nmo_pk, qk_to_k2, minus_k, nchol_pk,
-                 enuc=0.0, spin_symm=SpinSymm.CLOSED) -> None:
-        super().__init__(spin_symm=spin_symm)
+    def __init__(self, hcore, chol, kpts, qk_to_k2, minus_k, enuc=0.0,
+                 madelung_constant=0.0) -> None:
+        super().__init__()
 
         self.hcore = hcore
         self.chol = chol
         self.kpts = np.asarray(kpts)
-        self.nmo_pk = np.asarray(nmo_pk)
         self.qk_to_k2 = np.asarray(qk_to_k2)
         self.minus_k = np.asarray(minus_k)
-        self.nchol_pk = np.asarray(nchol_pk)
         self.enuc = float(np.real(enuc))
+        self.madelung_constant = float(madelung_constant)
 
         nkpts = len(self.kpts)
-        for name, array, shape in (('nmo_pk', self.nmo_pk, (nkpts,)),
-                                   ('qk_to_k2', self.qk_to_k2, (nkpts, nkpts)),
-                                   ('minus_k', self.minus_k, (nkpts,)),
-                                   ('nchol_pk', self.nchol_pk, (nkpts,))):
+        if len(self.hcore) != nkpts:
+            raise ValueError(
+                f"hcore has {len(self.hcore)} blocks, expected one for each of "
+                f"{nkpts} k-points"
+            )
+        for name, array, shape in (('qk_to_k2', self.qk_to_k2, (nkpts, nkpts)),
+                                   ('minus_k', self.minus_k, (nkpts,))):
             if array.shape != shape:
                 raise ValueError(
                     f"{name} has shape {array.shape}, expected {shape} for "
                     f"{nkpts} k-points"
+                )
+        for Q, L in self.chol.items():
+            shape = np.shape(L)
+            if len(shape) != 2 or shape[0] != nkpts or shape[1] % self.nmo_max**2:
+                raise ValueError(
+                    f"chol[{Q}] has shape {shape}, expected "
+                    f"({nkpts}, {self.nmo_max}**2 * nchol)"
                 )
 
     @property
     def nkpts(self) -> int:
         """Number of k-points. 1 for a supercell (Γ-point) Hamiltonian."""
         return len(self.kpts)
+
+    @property
+    def nmo_pk(self) -> np.ndarray:
+        """Number of orbitals at each k-point, read off `hcore`."""
+        return np.array([len(h) for h in self.hcore], dtype=np.int32)
+
+    @property
+    def nchol_pk(self) -> np.ndarray:
+        """
+        Number of Cholesky vectors per momentum transfer, read off `chol`. An
+        unstored momentum transfer has as many as its -Q partner.
+        """
+        return np.array(
+            [np.shape(self.chol[Q if Q in self.chol else int(self.minus_k[Q])])[1]
+             // self.nmo_max**2 for Q in range(self.nkpts)],
+            dtype=np.int32)
 
     @property
     def nmo_tot(self) -> int:
@@ -609,8 +612,7 @@ class PeriodicHamiltonian(Hamiltonian):
 
     @classmethod
     def from_pyscf(cls, kmf, basis=None, kpoint_symmetry=True, chol_cut=1e-5,
-                   maxvecs=20, exxdiv='ewald', nelec=None,
-                   verbose=False) -> "PeriodicHamiltonian":
+                   maxvecs=20, verbose=False) -> "PeriodicHamiltonian":
         """
         Generate a periodic Hamiltonian from a PySCF ``pbc`` SCF object.
 
@@ -631,12 +633,6 @@ class PeriodicHamiltonian(Hamiltonian):
             Cholesky convergence threshold. Default 1e-5.
         maxvecs : int, optional
             Cholesky-vector bound multiplier. Default 20.
-        exxdiv : str, optional
-            ``'ewald'`` adds the Madelung correction to the constant energy.
-        nelec : tuple(int, int), optional
-            Overrides the electron count taken from the cell. It is only the
-            Madelung correction that depends on it; the Hamiltonian itself
-            carries no electron count.
         verbose : bool, optional
             Log per-iteration Cholesky progress.
 
@@ -644,40 +640,53 @@ class PeriodicHamiltonian(Hamiltonian):
         -------
         PeriodicHamiltonian
 
+        Raises
+        ------
+        ValueError
+            If ``kmf.exxdiv`` is neither ``'ewald'`` nor ``None``: the Cholesky
+            vectors use the plain Coulomb kernel, not a truncated one.
+
         Notes
         -----
         The whole factorization is built in memory and written by `to_hdf5`,
         serially. CoQuí is the supported route for production-sized solids.
         """
+        from pyscf.pbc import tools
         from safiretools.convert.pyscf import periodic_solution
+
+        if kmf.exxdiv not in ('ewald', None):
+            raise ValueError(
+                f"exxdiv={kmf.exxdiv!r} is not supported, only 'ewald' or None: the "
+                "Cholesky vectors are built with the plain Coulomb kernel"
+            )
 
         scf_data = periodic_solution(kmf, basis)
 
         cell, kpts, X = scf_data['cell'], scf_data['kpts'], scf_data['X']
         nmo_pk = np.asarray(scf_data['nmo_pk'])
-        nelec = nelec if nelec is not None else _default_nelec(cell, len(kpts))
 
         solver = PeriodicCholesky(cell, kpts, nmo_pk, kp_sym=kpoint_symmetry,
                                   maxvecs=maxvecs, gtol_chol=chol_cut,
                                   verbose=verbose)
 
         hcore_pk = _transform_hcore(scf_data['hcore'], X, nmo_pk)
-        enuc = _zero_electron_energy(cell, kpts, sum(nelec), exxdiv)
+        enuc = len(kpts) * cell.energy_nuc()
+        # CoQuí's convention: the executable subtracts madelung_constant * nelec
+        madelung_constant = 0.0
+        if kmf.exxdiv == 'ewald':
+            madelung_constant = 0.5 * tools.pbc.madelung(cell, kpts)
+            logger.info("madelung constant: %s", madelung_constant)
 
         if not kpoint_symmetry:
             (_, cholvecs), = solver.run(X)
             return cls(**_supercell_layout(hcore_pk, cholvecs, solver),
-                       enuc=enuc)
+                       enuc=enuc, madelung_constant=madelung_constant)
 
-        chol = {}
-        nchol_pk = np.zeros(len(kpts), dtype=np.int32)
-        for Q, block in solver.run(X):
-            chol[Q] = _kpoint_block(block, solver)
-            nchol_pk[Q] = block.shape[-1]
+        chol = {Q: _kpoint_block(block, solver) for Q, block in solver.run(X)}
 
-        return cls(hcore=hcore_pk, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
-                   qk_to_k2=solver.QKToK2, minus_k=solver.kminus,
-                   nchol_pk=nchol_pk, enuc=enuc)
+        return cls(hcore=hcore_pk, chol=chol, kpts=kpts, qk_to_k2=solver.QKToK2,
+                   minus_k=solver.kminus, enuc=enuc,
+                   madelung_constant=madelung_constant)
 
     # ------------------------------------------------------------------
     # serialization
@@ -686,13 +695,6 @@ class PeriodicHamiltonian(Hamiltonian):
     def to_hdf5(self, path) -> None:
         """
         Write this Hamiltonian in the ``Hamiltonian/KPFactorized`` format.
-
-        The one-body Hamiltonian and each momentum transfer's Cholesky vectors
-        take the dense format's layouts with a leading k-point axis:
-        ``hcore`` is ``(nkpts, nspin, npol, nmo, npol, nmo)`` and ``L{Q}`` is
-        ``(nkpts, nspin, npol, nmo, npol, nmo, nchol_Q)``, with
-        ``nspin = npol = 1``, since the k-point format holds only
-        spin-independent Hamiltonians.
 
         Parameters
         ----------
@@ -719,6 +721,7 @@ class PeriodicHamiltonian(Hamiltonian):
         with h5.File(path, 'a') as fh5:
             group = replace_group(fh5, 'Hamiltonian')
             write_hamiltonian_header(group, 'kpoint', enuc=self.enuc)
+            group.attrs['madelung_constant'] = np.float64(self.madelung_constant)
             group.create_dataset("KPoints", data=np.asarray(self.kpts, dtype=np.float64))
             group.create_dataset("QKTok2", data=np.asarray(self.qk_to_k2, dtype=np.int32))
             group.create_dataset("MinusK", data=np.asarray(self.minus_k, dtype=np.int32))
@@ -727,8 +730,7 @@ class PeriodicHamiltonian(Hamiltonian):
             kp_group = group.create_group('KPFactorized')
             for Q, L in self.chol.items():
                 kp_group.create_dataset(
-                    f"L{Q}",
-                    data=np.asarray(L).reshape(nkpts, 1, 1, nmo, 1, nmo, int(self.nchol_pk[Q])))
+                    f"L{Q}", data=np.asarray(L).reshape(nkpts, 1, 1, nmo, 1, nmo, -1))
 
     def to_fcidump(self, path, nelec=(0, 0), tol=1e-8, ctol=1e-12, sym=1,
                    cplx=True, paren=False, use_spinor=False) -> None:
@@ -746,8 +748,9 @@ class PeriodicHamiltonian(Hamiltonian):
             FCIDUMP file to write. Overwritten if it exists.
         nelec : tuple(int, int), optional
             ``(nup, ndown)`` over the whole supercell, for the ``NELEC``/``MS2``
-            header fields. The Hamiltonian itself does not carry an electron
-            count, so it is supplied here. Default ``(0, 0)``.
+            header fields and the Madelung correction folded into the constant
+            energy. The Hamiltonian itself does not carry an electron count, so
+            it is supplied here. Default ``(0, 0)``.
         tol : float, optional
             Only write integrals above this magnitude. Default 1e-8.
         ctol : float, optional
@@ -768,8 +771,9 @@ class PeriodicHamiltonian(Hamiltonian):
         Raises
         ------
         ValueError
-            If the k-points do not all carry the same number of orbitals, or if
-            `cplx` is False and the integrals have imaginary parts above `ctol`.
+            If the k-points do not all carry the same number of orbitals, if
+            there is a Madelung constant but no electron count, or if `cplx` is
+            False and the integrals have imaginary parts above `ctol`.
         NotImplementedError
             If `use_spinor` is set.
 
@@ -786,18 +790,23 @@ class PeriodicHamiltonian(Hamiltonian):
                 f"the k-points carry different orbital counts ({list(self.nmo_pk)}), "
                 "which the combined FCIDUMP orbital index cannot express"
             )
+        if self.madelung_constant != 0.0 and sum(nelec) == 0:
+            raise ValueError(
+                "the FCIDUMP constant energy includes the Madelung correction, "
+                "which needs the electron count; pass nelec"
+            )
 
-        chol, nchol_pk = self._chol_all_momenta()
+        chol = self._chol_all_momenta()
+        enuc = self.enuc - self.madelung_constant * sum(nelec)
 
-        write_fcidump_kpoint(path, self.hcore, chol, self.enuc, self.nmo_tot,
-                             nelec, self.nmo_pk, nchol_pk, self.qk_to_k2,
+        write_fcidump_kpoint(path, self.hcore, chol, enuc, self.nmo_tot,
+                             nelec, self.nmo_pk, self.nchol_pk, self.qk_to_k2,
                              tol=tol, sym=sym, paren=paren, cplx=cplx, ctol=ctol,
                              use_spinor=use_spinor)
 
     def _chol_all_momenta(self):
         r"""
-        Every momentum transfer's Cholesky block in :math:`Q` order, and the
-        Cholesky-vector count that goes with each.
+        Every momentum transfer's Cholesky block in :math:`Q` order.
 
         `chol` stores only the momentum transfers with ``Q <= minus_k[Q]``; the
         partner of each is recovered by remapping the k-points and transposing
@@ -807,15 +816,11 @@ class PeriodicHamiltonian(Hamiltonian):
                   \quad k_2 = \mathrm{qk\_to\_k2}[-Q, k_1]
 
         which is what any reader of the on-disk format has to do as well.
-        `nchol_pk` is zero at a reconstructed momentum transfer, since nothing
-        was factorized there, so it comes back filled in from the partner.
 
         Returns
         -------
-        chol : list of numpy.ndarray
+        list of numpy.ndarray
             One ``(nkpts, nmo_max**2 * nchol_Q)`` block per momentum transfer.
-        nchol_pk : numpy.ndarray
-            Cholesky-vector count per momentum transfer.
 
         Raises
         ------
@@ -823,7 +828,6 @@ class PeriodicHamiltonian(Hamiltonian):
             If neither a momentum transfer nor its partner has a block.
         """
         nmo = self.nmo_max
-        nchol_pk = np.array(self.nchol_pk, dtype=np.int32)
         blocks = []
 
         for Q in range(self.nkpts):
@@ -838,26 +842,18 @@ class PeriodicHamiltonian(Hamiltonian):
                     f"-Q partner {partner}"
                 )
 
-            nchol = int(nchol_pk[partner])
-            nchol_pk[Q] = nchol
-
-            stored = np.asarray(self.chol[partner]).reshape(self.nkpts, nmo, nmo,
-                                                            nchol)
+            stored = np.asarray(self.chol[partner]).reshape(self.nkpts, nmo, nmo, -1)
             block = np.empty_like(stored)
             for k1 in range(self.nkpts):
                 block[k1] = stored[self.qk_to_k2[Q][k1]].transpose(1, 0, 2).conj()
-            blocks.append(block.reshape(self.nkpts, nmo * nmo * nchol))
+            blocks.append(block.reshape(self.nkpts, -1))
 
-        return blocks, nchol_pk
+        return blocks
 
     @classmethod
     def _read_hdf5(cls, path, fmt: str) -> "PeriodicHamiltonian":
         """
         Read a periodic Hamiltonian written by `to_hdf5`.
-
-        The orbital and Cholesky-vector counts come off the shapes of ``hcore``
-        and ``L{Q}``; a momentum transfer with no stored block gets a count of
-        0, as `from_pyscf` gives it.
 
         Raises
         ------
@@ -868,6 +864,7 @@ class PeriodicHamiltonian(Hamiltonian):
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
             enuc = read_hamiltonian_header(group)
+            madelung_constant = float(group.attrs.get('madelung_constant', 0.0))
 
             kpts = group['KPoints'][...]
             qk_to_k2 = group['QKTok2'][...]
@@ -880,11 +877,9 @@ class PeriodicHamiltonian(Hamiltonian):
                 raise ValueError(
                     f"hcore has shape {stored.shape}, expected (nkpts, 1, 1, nmo, 1, nmo)")
             hcore = [stored[k, 0, 0, :, 0, :] for k in range(nkpts)]
-            nmo_pk = np.full(nkpts, nmo, dtype=np.int32)
 
             kp_group = group['KPFactorized']
             chol = {}
-            nchol_pk = np.zeros(nkpts, dtype=np.int32)
             for Q in range(nkpts):
                 if f'L{Q}' not in kp_group:
                     continue
@@ -893,12 +888,10 @@ class PeriodicHamiltonian(Hamiltonian):
                     raise ValueError(
                         f"KPFactorized/L{Q} has shape {L.shape}, expected "
                         f"({nkpts}, 1, 1, {nmo}, 1, {nmo}, nchol)")
-                nchol_pk[Q] = L.shape[6]
-                chol[Q] = L.reshape(nkpts, nmo * nmo * L.shape[6])
+                chol[Q] = L.reshape(nkpts, -1)
 
-        return cls(hcore=hcore, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
-                   qk_to_k2=qk_to_k2, minus_k=minus_k, nchol_pk=nchol_pk,
-                   enuc=enuc)
+        return cls(hcore=hcore, chol=chol, kpts=kpts, qk_to_k2=qk_to_k2,
+                   minus_k=minus_k, enuc=enuc, madelung_constant=madelung_constant)
 
 
 def write_rhoG(kmf, path, gcut, kpoint_symmetry=True,
@@ -966,8 +959,8 @@ def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
     Returns
     -------
     dict
-        ``hcore``, ``chol``, ``kpts``, ``nmo_pk``, ``qk_to_k2``, ``minus_k`` and
-        ``nchol_pk``, ready to pass to `PeriodicHamiltonian`.
+        ``hcore``, ``chol``, ``kpts``, ``qk_to_k2`` and ``minus_k``, ready to
+        pass to `PeriodicHamiltonian`.
 
     Notes
     -----
@@ -1002,10 +995,8 @@ def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
         'hcore': [hcore],
         'chol': {0: L.reshape(1, nmo_tot * nmo_tot * nchol)},
         'kpts': np.zeros((1, 3)),
-        'nmo_pk': np.array([nmo_tot], dtype=np.int32),
         'qk_to_k2': np.zeros((1, 1), dtype=np.int32),
         'minus_k': np.zeros(1, dtype=np.int32),
-        'nchol_pk': np.array([nchol], dtype=np.int32),
     }
 
 

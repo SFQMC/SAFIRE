@@ -676,8 +676,8 @@ knobs — `tol`, `ctol`, `sym`, `cplx`, `paren`, `use_spinor`.
 **`to_fcidump` fills in the momentum transfers a k-point file does not store.** `chol` holds only
 `Q <= minus_k[Q]`; the FCIDUMP needs all of them, so `_chol_all_momenta` reconstructs each
 partner as
-`L[-Q][k1][i,j,n] == conj(L[Q][k2][j,i,n])` with `k2 = qk_to_k2[-Q, k1]`, and fills
-in the `nchol_pk` entry, which is zero wherever nothing was factorized. This is the same expansion
+`L[-Q][k1][i,j,n] == conj(L[Q][k2][j,i,n])` with `k2 = qk_to_k2[-Q, k1]`; `nchol_pk`, read off
+the stored blocks, gives an unstored `Q` its partner's count. This is the same expansion
 any reader of the on-disk format performs — afqmctools did it in `get_kpoint_chol` at read time —
 so it is not new behavior, only relocated to the one place that needs the full set.
 
@@ -949,7 +949,7 @@ base method is the only wrapper and spells out **real parameters**; the subclass
 and documents them in the one place they apply with no `**kwargs` forwarding layer in between.
 That is the practical payoff of pushing them down: the two `from_pyscf` signatures share only
 the SCF object, `basis`, `chol_cut` and `verbose`, and everything else is domain-specific
-(`active_space`/`df` molecular; `kpoint_symmetry`/`maxvecs`/`exxdiv`/`nelec` periodic),
+(`active_space`/`df` molecular; `kpoint_symmetry`/`maxvecs` periodic),
 so `inspect.signature` is exact and a keyword aimed at the wrong domain is a plain `TypeError` from
 the method the caller actually named.
 
@@ -977,36 +977,23 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   The same page change decides whether `hamiltonian_format()` is promoted — it is genuinely useful
   as "what is in this file?", but it is not public today, so the reference prose no longer names it.
 - **Remove `nelec` from Hamiltonians entirely — C++ and Python.** The electron count is a property
-  of the *problem*, not of the Hamiltonian; it sits on `Hamiltonian` today only because the on-disk
-  formats record it. The end state is that **nothing writes `nelec` to a Hamiltonian and nothing
-  reads `nelec` from one**.
-    - a Blocking item for this is computing the exchange divergence correction energy from the madelung
-    constant (found in the CoQuí Hamiltonian format) and electron number (from the Wavefunction) instead of 
-    reading the energy directly from HDF5. **Would require adding the madelung constant in the periodice PySCF**
-    **to SAFIRE route as well**.
-  **The file format is already there.** The old 8-slot `dims` header is gone, and with it the
-  electron-count slots. The C++ readers take electron counts from the wavefunction and ignore
-  a leftover `dims` in older files.
-  **The Python side is what there is to do.** On all three subclasses: the `nelec` constructor
-  argument and `.nelec` attribute; `MolecularHamiltonian.from_integrals`/`from_pyscf`;
-  `LatticeHamiltonian`'s `nelec` key in the `hamiltonian` input block (`_parse_ham_input`'s
-  `_known_params`) and `HamiltonianBuilder(nelec=)`; `PeriodicHamiltonian.from_pyscf` /
-  `write_from_pyscf` and `_default_nelec`; and the reads in each `_read_hdf5`.
+  of the *problem*, not of the Hamiltonian. The end state is that **nothing writes `nelec` to a
+  Hamiltonian and nothing reads `nelec` from one**. The code side is done: the file formats carry
+  no electron count, the C++ readers take it from the wavefunction, and no Python `Hamiltonian`
+  takes or holds one.
+  The last holdout was the periodic PySCF route, whose `from_pyscf(nelec=)` only fed the
+  Madelung/`exxdiv` correction baked into `enuc`. It now records a `madelung_constant` attribute
+  instead, in CoQuí's convention (`0.5 * pyscf.pbc.tools.madelung(cell, kpts)`), and the
+  executable's `read_energy_offset` subtracts `madelung_constant * nelec` with the trial
+  wavefunction's count — so the correction can no longer disagree with the electrons actually
+  simulated. The treatment is `kmf.exxdiv`, not a separate argument that could disagree with it;
+  only `'ewald'` and `None` are accepted, since the Cholesky vectors use the plain Coulomb kernel
+  with `G = 0` dropped, which the truncated `'vcut_sph'`/`'vcut_ws'` kernels are not.
+  **FCIDUMP keeps its `nelec`**, as an argument of `to_fcidump`: `NELEC` is a field of that
+  external format's own header, and FCIDUMP has only one constant, so a periodic Hamiltonian folds
+  `madelung_constant * sum(nelec)` into it there and refuses a nonzero constant with no count.
 
-  Two things this does **not** touch:
-
-  - **FCIDUMP keeps its `nelec`.** `NELEC` is a field of that external format's own header, so
-    `hamiltonian/fcidump.py` is unaffected. The two entry points are not: `to_fcidump` writes the
-    header from `self.nelec` today, so it would take an explicit `nelec` argument — the format
-    demands the field, and there would be nothing on the Hamiltonian to fill it from.
-    `from_fcidump` reads it and would simply stop passing it on.
-  - **The periodic generator still needs an electron count as an argument**, transiently:
-    `from_pyscf`/`write_from_pyscf` pass `sum(nelec)` to `_zero_electron_energy`, which computes the
-    Madelung/`exxdiv` correction that goes into `enuc`. Deleting that argument along with the
-    attribute would silently change the constant energy. The rule is about *stored state and file
-    fields*, not about arguments used to compute something else.
-
-  Doc churn to expect: the `nelec` key currently in the `[hamiltonian]` block of the eleven
+  Doc churn still to do: the `nelec` key currently in the `[hamiltonian]` block of the eleven
   `docs/snippets/01_setting_up/*/input*.toml` files, and in the Python parameter dicts across
   `docs/examples/models/*` and `docs/tutorials/models/*`, all comes back out — it went *in* during
   Phase 3b precisely because `to_hdf5` records it (see **Public API patterns**), so that bullet
