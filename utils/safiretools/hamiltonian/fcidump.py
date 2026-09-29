@@ -426,9 +426,9 @@ def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
         _write_one_body_and_constant(f, hcore, enuc, tol, cplx, paren)
 
 
-def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
-                         nchol_pk, qk_k2, tol=1e-8, sym=1, paren=False,
-                         cplx=True, ctol=1e-12, use_spinor=False) -> None:
+def write_fcidump_kpoint(filename, hcore, chol, enuc, nelec, qk_k2, tol=1e-8,
+                         sym=1, paren=False, cplx=True, ctol=1e-12,
+                         use_spinor=False) -> None:
     """
     Write an FCIDUMP file from a k-point Cholesky factorization.
 
@@ -436,20 +436,14 @@ def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
     ----------
     filename : str or pathlib.Path
         File to write.
-    hcore : list of numpy.ndarray
-        One-body Hamiltonian per k-point.
+    hcore : numpy.ndarray
+        One-body Hamiltonian, ``(nkpts, nmo, nmo)``.
     chol : sequence
-        Cholesky matrices ``L[Q][k_i][i,k]``.
+        Cholesky matrices ``L[Q]``, each ``(nkpts, nmo**2 * nchol_Q)``.
     enuc : float
         Constant energy contribution.
-    nmo_tot : int
-        Total number of MOs across all k-points.
     nelec : tuple(int, int)
         ``(nalpha, nbeta)``.
-    nmo_pk : numpy.ndarray
-        Number of MOs per k-point.
-    nchol_pk : numpy.ndarray
-        Number of Cholesky vectors per momentum transfer.
     qk_k2 : numpy.ndarray
         ``(q, k)`` to k-point map: ``Q = k_i - k_k + G``, ``qk_k2[iQ, ik_i] = ik_k``.
     tol : float, optional
@@ -474,8 +468,7 @@ def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
 
     Notes
     -----
-    The per-k-point index offsets are ``cumsum(nmo_pk) - nmo_pk``, which holds
-    for a varying number of orbitals per k-point.
+    The combined orbital index is ``k * nmo + i``.
     """
     if use_spinor:
         raise NotImplementedError(
@@ -484,14 +477,14 @@ def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
             "instead, with use_spinor=False."
         )
 
-    nkp = len(nmo_pk)
-    offsets = np.cumsum(nmo_pk) - nmo_pk
+    nkp, nmo = hcore.shape[:2]
+    nmo_tot = nkp * nmo
 
     with open(filename, 'w') as f:
         f.write(fcidump_header(sum(nelec), nmo_tot, nelec[0] - nelec[1]))
 
         for iq, lq_vec in enumerate(chol):
-            lq = lq_vec.reshape(nkp, -1, nchol_pk[iq])
+            lq = np.asarray(lq_vec).reshape(nkp, nmo * nmo, -1)
             for ki in range(nkp):
                 for kl in range(nkp):
                     # decompress Cholesky vectors to the physicists' v_ijkl =
@@ -503,28 +496,17 @@ def write_fcidump_kpoint(filename, hcore, chol, enuc, nmo_tot, nelec, nmo_pk,
 
                     kk = qk_k2[iq, ki]
                     kj = qk_k2[iq, kl]
-                    ik = 0
-                    for i in range(nmo_pk[ki]):
-                        I = i + offsets[ki]
-                        for k in range(nmo_pk[kk]):
-                            K = k + offsets[kk]
-                            lj = 0
-                            for l in range(nmo_pk[kl]):
-                                L = l + offsets[kl]
-                                for j in range(nmo_pk[kj]):
-                                    J = j + offsets[kj]
-                                    if abs(eri[ik, lj]) > tol:
-                                        if check_sym((I, K, J, L), nmo_tot, sym):
-                                            f.write(fmt_integral(eri[ik, lj], I, K,
-                                                                 J, L, cplx,
-                                                                 paren=paren))
-                                        else:
-                                            # Cholesky can produce forbidden entries
-                                            logger.debug(
-                                                "%s not allowed by %d-fold symmetry",
-                                                (I, J, K, L), sym)
-                                    lj += 1
-                            ik += 1
+                    for i, k, l, j in product(range(nmo), repeat=4):
+                        value = eri[i * nmo + k, l * nmo + j]
+                        if abs(value) <= tol:
+                            continue
+                        I, K, L, J = ki * nmo + i, kk * nmo + k, kl * nmo + l, kj * nmo + j
+                        if check_sym((I, K, J, L), nmo_tot, sym):
+                            f.write(fmt_integral(value, I, K, J, L, cplx, paren=paren))
+                        else:
+                            # Cholesky can produce forbidden entries
+                            logger.debug("%s not allowed by %d-fold symmetry",
+                                         (I, J, K, L), sym)
 
         _write_one_body_and_constant(f, scipy.linalg.block_diag(*hcore), enuc, tol,
                                      cplx, paren)
