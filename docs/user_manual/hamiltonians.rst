@@ -118,13 +118,15 @@ origin and at high symmetry points on the edge of the 1BZ), we have
 which requires us to store Cholesky vectors for either one of the
 :math:`(\textbf{Q},-\textbf{Q})` pair, but not both.
 
-In what follows let :math:`m_{\mathbf{k}}` denote the number of basis
-functions for basis functions of a given :math:`k`-point (these can in
-principle differ for different :math:`k`-points due to linear
-dependencies), :math:`n^{\alpha}_{\mathbf{k}}` the number of
-:math:`\alpha` electrons in a given :math:`k`-point and
+In what follows let :math:`m` denote the number of basis functions per
+:math:`k`-point, which has to be the same at every :math:`k`-point,
+:math:`N_k` the number of :math:`k`-points and
 :math:`n_{\mathrm{chol}}^{\mathbf{Q}_n}` the number of Cholesky vectors
-for momentum transfer :math:`\mathbf{Q}_n`. The file format for this
+for momentum transfer :math:`\mathbf{Q}_n`. The one-body Hamiltonian and
+the Cholesky vectors take the layouts of the
+:ref:`Dense Cholesky <dense-cholesky>` format with a leading
+:math:`k`-point axis; the format holds only spin-independent
+Hamiltonians, so :math:`N_s = N_p = 1` throughout. The file format for this
 factorization is as follows (for a :math:`2\times2\times2`
 :math:`k`-point mesh, for denser meshes generally there will be far
 fewer symmetry inequivalent momentum transfer vectors than there are
@@ -148,54 +150,38 @@ fewer symmetry inequivalent momentum transfer vectors than there are
           dataset    /Hamiltonian/KPFactorized/L5
           dataset    /Hamiltonian/KPFactorized/L6
           dataset    /Hamiltonian/KPFactorized/L7
-          dataset    /Hamiltonian/NCholPerKP
-          dataset    /Hamiltonian/MinusK
-          dataset    /Hamiltonian/NMOPerKP
-          dataset    /Hamiltonian/QKTok2
-          dataset    /Hamiltonian/H1_kp0
-          dataset    /Hamiltonian/H1_kp1
-          dataset    /Hamiltonian/H1_kp2
-          dataset    /Hamiltonian/H1_kp3
-          dataset    /Hamiltonian/H1_kp4
-          dataset    /Hamiltonian/H1_kp5
-          dataset    /Hamiltonian/H1_kp6
-          dataset    /Hamiltonian/H1_kp7
           dataset    /Hamiltonian/KPoints
+          dataset    /Hamiltonian/MinusK
+          dataset    /Hamiltonian/QKTok2
+          dataset    /Hamiltonian/hcore
       }
   }
 
--  ``/Hamiltonian/KPFactorized/L[n]`` This series of datasets store elements of the Cholesky tensors
-   :math:`L[\mathbf{Q}_n,\mathbf{k},pr,n]`. Each data set is of
-   dimension
-   :math:`[N_k,m_{\mathbf{k}}\times m_{\mathbf{k}'},n^{\mathbf{Q}_n}_\mathrm{chol}]`,
-   where, again, :math:`k` is the :math:`k`-point associated with basis
-   function :math:`p`, the :math:`k`-point of basis function :math:`r`
-   is defined via the mapping ``QKtok2``.
+-  ``/Hamiltonian/hcore`` One-body Hamiltonian matrix elements
+   :math:`h_{(\mathbf{k}p)(\mathbf{k}r)}`, with dimensions :math:`[N_k, 1, 1, m, 1, m]`.
 
--  ``/Hamiltonian/NCholPerKP`` :math:`N_k` length array giving number of Cholesky vectors per
-   :math:`k`-point.
+-  ``/Hamiltonian/KPFactorized/L[n]`` This series of datasets store elements of the Cholesky tensors
+   :math:`L[\mathbf{Q}_n,\mathbf{k},pr,n]`, each with dimensions
+   :math:`[N_k, 1, 1, m, 1, m, n^{\mathbf{Q}_n}_\mathrm{chol}]`, where :math:`\mathbf{k}` is the
+   :math:`k`-point of basis function :math:`p`; that of basis function :math:`r` is given by the
+   mapping ``QKTok2``. Only one of each :math:`(\mathbf{Q}, -\mathbf{Q})` pair, the one with
+   :math:`n \le` ``MinusK[n]``, has to be stored. The normalization :math:`1/\sqrt{N_k}` is
+   included.
 
 -  ``/Hamiltonian/MinusK``: :math:`N_k` length array mapping a
    :math:`k`-point to its inverse: :math:`\mathbf{k}_i+`\ ``MinusK[i]``
    :math:`= \mathbf{0} \mod \mathbf{G}`.
 
--  ``/Hamiltonian/NMOPerKP``: :math:`N_k` length array listing number of
-   basis functions per :math:`k`-point.
-
 -  ``/Hamiltonian/QKTok2``: :math:`[N_k,N_k]` dimensional array.
    ``QKtok2[i,j]`` yields the :math:`k` point index satisfying
    :math:`\mathbf{k}=\mathbf{Q}_i-\mathbf{k}_j+\mathbf{G}`.
 
--  ``/Hamiltonian/H1_kp[n]`` Contains the :math:`[m_{\mathbf{k}_n},m_{\mathbf{k}_n}]`
-   dimensional one-body Hamiltonian matrix elements
-   :math:`h_{(\mathbf{k}_{n}p)(\mathbf{k}_{n}q)}`.
-
 -  ``/Hamiltonian/KPoints`` :math:`[N_k,3]` Dimensional array containing :math:`k`-points used to
    sample Brillouin zone.
 
-The number of :math:`k`-points :math:`N_k` is the length of ``NMOPerKP``, and the total number
-of basis functions is :math:`M=\sum_\mathbf{k} m_\mathbf{k}`. The electron count is taken from
-the trial wavefunction.
+No sizes are stored separately: :math:`N_k` and :math:`m` are read off ``hcore``, and
+:math:`n^{\mathbf{Q}_n}_\mathrm{chol}` off ``L[n]``. The total number of basis functions is
+:math:`M = N_k m`. The electron count is taken from the trial wavefunction.
 
 Complex integrals should be written as an array with an additional dimension, e.g., a 1D array should be written as a 2D array with ``array_hdf5[:,0]=real(1d_array)`` and ``array_hdf5[:,1]=imag(1d_array)``. The functions ``afqmctools.utils.misc.from_complex`` and ``afqmctools.utils.misc.to_complex`` can be used to transform from the internal complex format to complex valued numpy arrays of the appropriate shape and vice versa.
 

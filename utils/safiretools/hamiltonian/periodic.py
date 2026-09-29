@@ -28,8 +28,9 @@ are factorized:
 
 **A supercell Hamiltonian is just the Γ point of the supercell**, so it is
 written in the same k-point format with a single k-point: ``nkpts = 1``,
-``nmo_pk = [nmo_tot]``, ``QKTok2 = [[0]]``, ``MinusK = [0]``, and one ``L0`` of
-shape ``(1, nmo_tot**2 * nchol)``. Nothing downstream has to special-case it,
+``QKTok2 = [[0]]``, ``MinusK = [0]``, an ``hcore`` of shape
+``(1, 1, 1, nmo_tot, 1, nmo_tot)`` and one ``L0`` of shape
+``(1, 1, 1, nmo_tot, 1, nmo_tot, nchol)``. Nothing downstream has to special-case it,
 and the Cholesky vectors stay complex, as the format and the executable require.
 
 The two solver modes differ only in how the k-point pairs are enumerated and how
@@ -686,6 +687,13 @@ class PeriodicHamiltonian(Hamiltonian):
         """
         Write this Hamiltonian in the ``Hamiltonian/KPFactorized`` format.
 
+        The one-body Hamiltonian and each momentum transfer's Cholesky vectors
+        take the dense format's layouts with a leading k-point axis:
+        ``hcore`` is ``(nkpts, nspin, npol, nmo, npol, nmo)`` and ``L{Q}`` is
+        ``(nkpts, nspin, npol, nmo, npol, nmo, nchol_Q)``, with
+        ``nspin = npol = 1``, since the k-point format holds only
+        spin-independent Hamiltonians.
+
         Parameters
         ----------
         path : str or pathlib.Path
@@ -693,22 +701,34 @@ class PeriodicHamiltonian(Hamiltonian):
             already in the file is replaced; everything else — notably a
             ``Wavefunction`` — is left alone, so a Hamiltonian and a
             wavefunction can share one file in either order.
+
+        Raises
+        ------
+        ValueError
+            If the k-points carry different orbital counts, which neither the
+            format nor the executable can hold.
         """
+        if len(set(int(nmo) for nmo in self.nmo_pk)) > 1:
+            raise ValueError(
+                f"the k-points carry different orbital counts ({list(self.nmo_pk)}), "
+                "but the k-point format holds one count for all of them"
+            )
+        nkpts, nmo = self.nkpts, self.nmo_max
+        hcore = np.asarray(self.hcore, dtype=np.complex128)
+
         with h5.File(path, 'a') as fh5:
             group = replace_group(fh5, 'Hamiltonian')
             write_hamiltonian_header(group, 'kpoint', enuc=self.enuc)
             group.create_dataset("KPoints", data=np.asarray(self.kpts, dtype=np.float64))
-            group.create_dataset("NMOPerKP", data=np.asarray(self.nmo_pk, dtype=np.int32))
             group.create_dataset("QKTok2", data=np.asarray(self.qk_to_k2, dtype=np.int32))
             group.create_dataset("MinusK", data=np.asarray(self.minus_k, dtype=np.int32))
-            for ki in range(self.nkpts):
-                _write_kpoint_h1(group, ki, self.nmo_pk[ki], self.hcore[ki])
-
-            group.create_dataset("NCholPerKP", data=self.nchol_pk)
+            group.create_dataset("hcore", data=hcore.reshape(nkpts, 1, 1, nmo, 1, nmo))
 
             kp_group = group.create_group('KPFactorized')
             for Q, L in self.chol.items():
-                kp_group.create_dataset(f"L{Q}", data=L)
+                kp_group.create_dataset(
+                    f"L{Q}",
+                    data=np.asarray(L).reshape(nkpts, 1, 1, nmo, 1, nmo, int(self.nchol_pk[Q])))
 
     def to_fcidump(self, path, nelec=(0, 0), tol=1e-8, ctol=1e-12, sym=1,
                    cplx=True, paren=False, use_spinor=False) -> None:
@@ -832,22 +852,49 @@ class PeriodicHamiltonian(Hamiltonian):
 
     @classmethod
     def _read_hdf5(cls, path, fmt: str) -> "PeriodicHamiltonian":
-        """Read a periodic Hamiltonian written by `to_hdf5`."""
+        """
+        Read a periodic Hamiltonian written by `to_hdf5`.
+
+        The orbital and Cholesky-vector counts come off the shapes of ``hcore``
+        and ``L{Q}``; a momentum transfer with no stored block gets a count of
+        0, as `from_pyscf` gives it.
+
+        Raises
+        ------
+        ValueError
+            If ``hcore`` or an ``L{Q}`` does not have the layout `to_hdf5`
+            writes.
+        """
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
             enuc = read_hamiltonian_header(group)
 
             kpts = group['KPoints'][...]
-            nmo_pk = group['NMOPerKP'][...]
-            nkpts = len(nmo_pk)
             qk_to_k2 = group['QKTok2'][...]
             minus_k = group['MinusK'][...]
-            nchol_pk = group['NCholPerKP'][...]
 
-            hcore = [read_complex(group[f'H1_kp{ki}']) for ki in range(nkpts)]
+            stored = read_complex(group['hcore'])
+            nkpts = stored.shape[0]
+            nmo = stored.shape[3] if stored.ndim == 6 else -1
+            if stored.shape != (nkpts, 1, 1, nmo, 1, nmo):
+                raise ValueError(
+                    f"hcore has shape {stored.shape}, expected (nkpts, 1, 1, nmo, 1, nmo)")
+            hcore = [stored[k, 0, 0, :, 0, :] for k in range(nkpts)]
+            nmo_pk = np.full(nkpts, nmo, dtype=np.int32)
+
             kp_group = group['KPFactorized']
-            chol = {Q: read_complex(kp_group[f'L{Q}'])
-                    for Q in range(nkpts) if f'L{Q}' in kp_group}
+            chol = {}
+            nchol_pk = np.zeros(nkpts, dtype=np.int32)
+            for Q in range(nkpts):
+                if f'L{Q}' not in kp_group:
+                    continue
+                L = read_complex(kp_group[f'L{Q}'])
+                if L.ndim != 7 or L.shape[:6] != (nkpts, 1, 1, nmo, 1, nmo):
+                    raise ValueError(
+                        f"KPFactorized/L{Q} has shape {L.shape}, expected "
+                        f"({nkpts}, 1, 1, {nmo}, 1, {nmo}, nchol)")
+                nchol_pk[Q] = L.shape[6]
+                chol[Q] = L.reshape(nkpts, nmo * nmo * L.shape[6])
 
         return cls(hcore=hcore, chol=chol, kpts=kpts, nmo_pk=nmo_pk,
                    qk_to_k2=qk_to_k2, minus_k=minus_k, nchol_pk=nchol_pk,
@@ -975,11 +1022,3 @@ def _kpoint_block(cholvecs, solver):
     factor = 1.0 / math.sqrt(nkpts)
 
     return cholvecs.reshape(nkpts, solver.nmo_max**2 * nchol) * factor
-
-
-def _write_kpoint_h1(group, ki, nmo, h1) -> None:
-    """Write the one-body block at k-point `ki`."""
-    if h1.shape != (nmo, nmo):
-        raise ValueError(f"H1 at kpoint {ki} has shape {h1.shape}, expected ({nmo}, {nmo})")
-
-    group.create_dataset(f"H1_kp{ki}", data=h1)
