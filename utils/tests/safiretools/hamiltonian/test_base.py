@@ -37,7 +37,7 @@ def _make(tmp_path, name, datasets):
 @pytest.mark.parametrize(
     "datasets,expected",
     [
-        ({'Hamiltonian/ModelHamiltonian/nsites': 3}, 'model'),
+        ({'Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/values': np.zeros(1)}, 'model'),
         ({'Hamiltonian/DenseFactorized/L': np.zeros((4, 2))}, 'dense'),
         ({'Hamiltonian/KPFactorized/L0': np.zeros((2, 2))}, 'kpoint'),
         ({'Hamiltonian/THC/Luv': np.zeros((2, 2))}, 'thc'),
@@ -66,8 +66,9 @@ class TestTheHeader:
 
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
-            assert dict(group.attrs) == {'format_version': FORMAT_VERSION, 'type': 'dense'}
-            assert list(group) == ['Energies']
+            assert dict(group.attrs) == {'format_version': FORMAT_VERSION, 'type': 'dense',
+                                         'nuclear_energy': 1.5}
+            assert list(group) == []
             assert read_hamiltonian_header(group) == 1.5
 
     def test_reading_an_unversioned_file_raises(self, tmp_path):
@@ -80,7 +81,8 @@ class TestTheHeader:
 @pytest.mark.parametrize(
     "datasets,expected",
     [
-        ({'Hamiltonian/ModelHamiltonian/nsites': 3}, LatticeHamiltonian),
+        ({'Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/values': np.zeros(1)},
+         LatticeHamiltonian),
         ({'Hamiltonian/DenseFactorized/L': np.zeros((4, 2))}, MolecularHamiltonian),
         ({'Hamiltonian/KPFactorized/L0': np.zeros((2, 2))}, PeriodicHamiltonian),
     ],
@@ -105,7 +107,8 @@ def test_from_hdf5_dispatches_to_the_right_subclass(tmp_path, monkeypatch,
 
 
 def test_from_hdf5_on_the_wrong_subclass_raises(tmp_path):
-    path = _make(tmp_path, 'ham.h5', {'Hamiltonian/ModelHamiltonian/nsites': 1})
+    path = _make(tmp_path, 'ham.h5',
+                 {'Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/values': np.zeros(1)})
 
     with pytest.raises(ValueError, match="MolecularHamiltonian does not read"):
         MolecularHamiltonian.from_hdf5(path)

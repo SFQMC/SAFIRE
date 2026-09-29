@@ -198,7 +198,7 @@ class TestHdf5:
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
             assert 'dims' not in group
-            assert set(group.attrs) == {'format_version', 'type'}
+            assert set(group.attrs) == {'format_version', 'type', 'nuclear_energy'}
 
     def test_real_integrals_are_written_real(self, random_hamiltonian, tmp_path):
         _, hcore, chol, _ = random_hamiltonian

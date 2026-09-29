@@ -58,7 +58,6 @@ format is given as follows:
       FILE_CONTENTS {
           group      /
           group      /Hamiltonian
-          dataset    /Hamiltonian/Energies
           dataset    /Hamiltonian/hcore
           group      /Hamiltonian/DenseFactorized
           dataset    /Hamiltonian/DenseFactorized/L
@@ -70,8 +69,6 @@ from the shapes of ``hcore`` and ``L``. The Hamiltonian records no electron coun
 from the trial wavefunction.
 
 **Required datasets:**
-
--  ``/Hamiltonian/Energies`` Array containing :math:`[E_{II}, E_{\mathrm{core}}]`. :math:`E_{II}` should contain ion-ion repulsion energy and any additional constant terms which have to be added to the total energy. :math:`E_{\mathrm{core}}` is deprecated and not used.
 
 -  ``/Hamiltonian/hcore`` One-body Hamiltonian matrix elements :math:`h^{s}_{\sigma p,\tau r}`, with dimensions :math:`[N_s, N_p, M, N_p, M]`. :math:`N_s = 2` for collinear systems (spin up first) and 1 otherwise, and :math:`N_p = 2` for noncollinear systems and 1 otherwise. For **complex integrals**, an additional dimension of size 2 is added to store real and imaginary parts separately.
 
@@ -164,7 +161,6 @@ fewer symmetry inequivalent momentum transfer vectors than there are
           dataset    /Hamiltonian/H1_kp6
           dataset    /Hamiltonian/H1_kp7
           dataset    /Hamiltonian/KPoints
-          dataset    /Hamiltonian/Energies
       }
   }
 
@@ -200,13 +196,6 @@ fewer symmetry inequivalent momentum transfer vectors than there are
 The number of :math:`k`-points :math:`N_k` is the length of ``NMOPerKP``, and the total number
 of basis functions is :math:`M=\sum_\mathbf{k} m_\mathbf{k}`. The electron count is taken from
 the trial wavefunction.
-
--  ``/Hamiltonian/Energies`` Array containing :math:`[E_{II}, E_{\mathrm{core}}]`.
-   :math:`E_{II}` should contain ion-ion repulsion energy and any
-   additional constant terms which have to be added to the total energy
-   (such as the electron-electron interaction Madelung contribution of
-   :math:`\frac{1}{2} N \xi )`. :math:`E_{\mathrm{core}}` is deprecated
-   and not used.
 
 Complex integrals should be written as an array with an additional dimension, e.g., a 1D array should be written as a 2D array with ``array_hdf5[:,0]=real(1d_array)`` and ``array_hdf5[:,1]=imag(1d_array)``. The functions ``afqmctools.utils.misc.from_complex`` and ``afqmctools.utils.misc.to_complex`` can be used to transform from the internal complex format to complex valued numpy arrays of the appropriate shape and vice versa.
 
@@ -265,11 +254,8 @@ Model Hamiltonians are saved in HDF5 using the following format.
       FILE_CONTENTS {
           group      /
           group      /Hamiltonian
-          dataset    /Hamiltonian/Energies
           group      /Hamiltonian/ModelHamiltonian
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_0
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/model_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/spin_type
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/column_indices
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/row_pointers
@@ -281,53 +267,43 @@ Model Hamiltonians are saved in HDF5 using the following format.
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/row_pointers
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/shape
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/values
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/hst_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/model_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/spin_type
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_2
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/column_indices
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/row_pointers
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/shape
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/values
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/hst_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/model_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/spin_type
-          dataset    /Hamiltonian/ModelHamiltonian/nbands
-          dataset    /Hamiltonian/ModelHamiltonian/nsites
-          dataset    /Hamiltonian/spin_type
     }
   }
 
--  ``/Hamiltonian/Energies``: Array containing :math:`[E_{II}, E_{\mathrm{core}}]`.
-   :math:`E_{II}` should contain ion-ion repulsion energy and any
-   additional constant terms which have to be added to the total energy
-   (such as the electron-electron interaction Madelung contribution of
-   :math:`\frac{1}{2} N \xi )`. :math:`E_{\mathrm{core}}` is deprecated
-   and not used. In the context of lattice models, both :math:`E_{II}` and 
-   :math:`E_{\mathrm{core}}` while generally be set to 0.0.
+``h5dump -n`` lists no attributes; the ones a model Hamiltonian carries are described below.
+For a lattice model the energy attributes are generally left out, i.e. 0.
 
--  ``/Hamiltonian/ModelHamiltonian/nsites`` and ``/Hamiltonian/ModelHamiltonian/nbands``: scalar
+-  ``number_of_sites`` and ``number_of_bands`` attributes of ``/Hamiltonian/ModelHamiltonian``:
    integers giving the number of lattice sites and of bands per site. The number of basis
    functions is :math:`M = n_\mathrm{sites} n_\mathrm{bands}`. The electron count is taken from
    the trial wavefunction.
 
--  ``/Hamiltonian/spin_type``: Is a string containing the spin symmetry type of the Hamiltonian.
-   possible values are "collinear", or "noncollinear".
+-  ``spin_type`` attribute of ``/Hamiltonian``: a string containing the spin symmetry type of the
+   Hamiltonian. Possible values are "collinear", or "noncollinear".
 
 -  ``/Hamiltonian/ModelHamiltonian/ModelComponent_n``: (where :math:`n` are replaced by a specific integer index)
    are HDF5 groups, numbered from 0 without gaps; the number of components is where the numbering
    stops. Each contains a Hamiltonian component (i.e. a term), which consists of some metadata
-   and a compressed sparse row (CSR) matrix representation of that Hamiltonian component. Each group has the 
-   following datasets and groups.
+   and a compressed sparse row (CSR) matrix representation of that Hamiltonian component. Each group has the
+   following attributes and groups.
 
-    -  ``/spin_type``: a string containing the spin symmetry type of the component.
+    -  ``spin_type`` attribute: a string containing the spin symmetry type of the component.
        Possible values are "collinear", or "noncollinear".
 
-    -  ``/model_type``: a string describing the type of model term. 
+    -  ``model_type`` attribute: a string describing the type of model term.
        Possible values are: "one_body", "hubbard_u", and "hubbard_j".
 
-    -  a matrix group. The name of the group depends on the ``/model_type``. 
+    -  ``hst_type`` attribute, for "hubbard_u" and "hubbard_j" only: the Hubbard-Stratonovich
+       transformation, one of "continuous_charge", "continuous_spin", "discrete_charge" and
+       "discrete_spin" (the discrete ones for "hubbard_u" only).
+
+    -  a matrix group. The name of the group depends on ``model_type``.
        Possible values are: ``/tij/`` (``"one_body"``), ``/Uij/`` (``"hubbard_u"``), 
        and ``/Jij/`` (``"hubbard_j"``). Conventions for the shape of each matrix are
        described below. The matrix group will always have the following datasets:

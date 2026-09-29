@@ -160,19 +160,19 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
     h5::group gn = mgrp.open_group("ModelComponent_"+std::to_string(n));
     
     std::string model_type("dummy");
-    h5::h5_read(gn,"model_type",model_type); 
+    h5::h5_read_attribute(gn, "model_type", model_type);
     std::transform(model_type.begin(), model_type.end(), model_type.begin(), (int (*)(int))tolower);
 
-    if( model_type == "one_body" ) 
+    if( model_type == "one_body" )
     {
-      utils::check(not one_body_term, base_error + " Multiple one_body components defined.");  
+      utils::check(not one_body_term, base_error + " Multiple one_body components defined.");
       one_body_term=true;
 
       h5::group dn = gn.open_group("tij");
       auto tij = math::sparse::HDF2CSR<ValueType,HOST_MEMORY,int,int>(dn);
 
       std::string stype;
-      h5::h5_read(gn,"spin_type",stype);
+      h5::h5_read_attribute(gn, "spin_type", stype);
       std::transform(stype.begin(), stype.end(), stype.begin(), (int (*)(int))tolower);
 
       // returns a sparse matrix with the 1-body hamiltonian consistent with type
@@ -189,8 +189,8 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
       // for safety
       utils::check(Uij.nnz() != 0, base_error + " Found empty Hubbard_U model. "); 
 
-      std::string hst_type; 
-      h5::h5_read(gn,"hst_type",hst_type);
+      std::string hst_type;
+      h5::h5_read_attribute(gn, "hst_type", hst_type);
       std::transform(hst_type.begin(), hst_type.end(), hst_type.begin(), (int (*)(int))tolower);
 
       int where_(-1);
@@ -215,7 +215,7 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
       utils::check(Jij.nnz() != 0, base_error + " Found empty Hubbard_U model. ");
 
       std::string hst_type;
-      h5::h5_read(gn,"hst_type",hst_type);
+      h5::h5_read_attribute(gn, "hst_type", hst_type);
       std::transform(hst_type.begin(), hst_type.end(), hst_type.begin(), (int (*)(int))tolower);
       
       int where_(-1);
@@ -411,7 +411,7 @@ ModelHamOpsGenerator::getHamiltonianOperations(WALKER_TYPES type,
 
       std::string dset;
       std::string model_type("dummy");
-      h5::h5_read(gn, "model_type", model_type);
+      h5::h5_read_attribute(gn, "model_type", model_type);
       std::transform(model_type.begin(), model_type.end(), model_type.begin(), (int (*)(int))tolower);
 
       if( model_type == "one_body" ) { 

@@ -381,23 +381,23 @@ class LatticeHamiltonian(Hamiltonian):
         with h5.File(path, 'a') as fh5:
             group = replace_group(fh5, 'Hamiltonian')
             write_hamiltonian_header(group, 'model')
-            group.create_dataset('spin_type', data=self.spin_symm.label)
+            group.attrs['spin_type'] = self.spin_symm.label
 
             model = group.create_group('ModelHamiltonian')
-            model.create_dataset('nsites', data=self.nsites)
-            model.create_dataset('nbands', data=self.nbands)
+            # int32, as TRIQS/h5 writes an int: the executable reads attributes by exact type
+            model.attrs['number_of_sites'] = np.int32(self.nsites)
+            model.attrs['number_of_bands'] = np.int32(self.nbands)
 
             self._write_lattice_metadata(model)
 
             for n, (key, component) in enumerate(
                     (key, component) for key in self.keys() for component in self[key]):
                 component_group = model.create_group(f'ModelComponent_{n}')
-                component_group.create_dataset('model_type', data=component.model_type)
-                component_group.create_dataset('spin_type', data=component.spin_symm.label)
+                component_group.attrs['model_type'] = component.model_type
+                component_group.attrs['spin_type'] = component.spin_symm.label
 
                 if component.hubbard_strat_type is not None:
-                    component_group.create_dataset('hst_type',
-                                                   data=component.hubbard_strat_type)
+                    component_group.attrs['hst_type'] = component.hubbard_strat_type
 
                 csr_array = component.csr_array
                 if not real_valued:
@@ -412,7 +412,8 @@ class LatticeHamiltonian(Hamiltonian):
             return
 
         group = model.create_group('Lattice')
-        group.create_dataset('type', data=metadata['type'])
+        group.attrs['type'] = metadata['type']
+        group.attrs['cyl_mode'] = metadata.get('cyl_mode') or 'none'
         group.create_dataset('L', data=np.asarray(metadata['L'], dtype=np.int64))
         group.create_dataset('boundaries',
                              data=np.array(metadata['boundaries'], dtype=h5.string_dtype()))
@@ -422,7 +423,6 @@ class LatticeHamiltonian(Hamiltonian):
                              data=np.asarray(metadata['lattice_vectors'], dtype=np.float64))
         group.create_dataset('basis',
                              data=np.asarray(metadata['basis'], dtype=np.float64))
-        group.create_dataset('cyl_mode', data=metadata.get('cyl_mode') or 'none')
 
     @classmethod
     def _read_hdf5(cls, path, fmt: str) -> "LatticeHamiltonian":
@@ -434,11 +434,11 @@ class LatticeHamiltonian(Hamiltonian):
         `_split_hubbard_u`.
         """
         with h5.File(path, 'r') as fh5:
-            spin_symm = SpinSymm.from_input(fh5['Hamiltonian/spin_type'].asstr()[()])
+            spin_symm = SpinSymm.from_input(fh5['Hamiltonian'].attrs['spin_type'])
 
             group = fh5['Hamiltonian/ModelHamiltonian']
-            nsites = int(group['nsites'][()])
-            nbands = int(group['nbands'][()]) if 'nbands' in group else 1
+            nsites = int(group.attrs['number_of_sites'])
+            nbands = int(group.attrs['number_of_bands'])
 
             hamiltonian = cls(
                 nsites=nsites,
@@ -455,11 +455,9 @@ class LatticeHamiltonian(Hamiltonian):
                 key = _component_key(component_group)
                 component = HamiltonianComponent(
                     csr_array=read_csr(component_group[key]),
-                    model_type=component_group['model_type'].asstr()[()],
-                    spin_symm=SpinSymm.from_input(
-                        component_group['spin_type'].asstr()[()]),
-                    hst_type=(component_group['hst_type'].asstr()[()]
-                              if 'hst_type' in component_group else None),
+                    model_type=component_group.attrs['model_type'],
+                    spin_symm=SpinSymm.from_input(component_group.attrs['spin_type']),
+                    hst_type=component_group.attrs.get('hst_type'),
                 )
 
                 if key == 'Uij':
@@ -523,13 +521,13 @@ def _read_lattice_metadata(group):
 
     lattice_group = group['Lattice']
     return {
-        'type': lattice_group['type'].asstr()[()],
+        'type': lattice_group.attrs['type'],
         'L': [int(size) for size in lattice_group['L'][...]],
         'boundaries': [str(name) for name in lattice_group['boundaries'].asstr()[...]],
         'twist': [float(angle) for angle in lattice_group['twist'][...]],
         'lattice_vectors': [list(vector) for vector in lattice_group['lattice_vectors'][...]],
         'basis': [list(b) for b in lattice_group['basis'][...]],
-        'cyl_mode': lattice_group['cyl_mode'].asstr()[()],
+        'cyl_mode': lattice_group.attrs['cyl_mode'],
     }
 
 
