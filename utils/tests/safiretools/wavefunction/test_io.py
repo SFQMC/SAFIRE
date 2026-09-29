@@ -301,18 +301,19 @@ class TestPhmsdPayload:
         assert orbitals is None
 
     @pytest.mark.parametrize('nreferences', [0, 1, 2])
-    def test_type_counts_the_references_actually_written(self, group,
-                                                         occupations, rng,
-                                                         nreferences):
+    def test_the_psit_groups_are_the_reference_count(self, group, occupations,
+                                                     rng, nreferences):
         occa, occb = occupations
         references = [rng.normal(size=(6, 6)) + 0j
                       for _ in range(nreferences)] or None
 
         io.write_phmsd(group, 6, occa, occb, orbitals=references)
 
-        assert int(group['type'][()]) == nreferences
+        assert 'type' not in group
         assert sorted(name for name in group if name.startswith('PsiT')) \
             == [f'PsiT_{i}' for i in range(nreferences)]
+        _, _, _, read_back = io.read_phmsd(group)
+        assert (0 if read_back is None else len(read_back)) == nreferences
 
     def test_references_round_trip(self, group, occupations, rng):
         occa, occb = occupations

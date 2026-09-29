@@ -352,7 +352,7 @@ Wavefunction<MEM> phmsd_from_params(std::shared_ptr<utils::mpi_context_t<boost::
   nda::array<PsiT_Matrix<HOST_MEMORY>, 1> PsiT_MO;
   nda::array<int,2> occs;
   nda::array<ComplexType,1> coeffs;
-  std::string orb_type;
+  PHMSDOrbitalType orb_type;
   app_log(1,"Reading PHMSD wavefunction from {}", params.filename);
   read_ph_wavefunction_hdf(ngrp, coeffs, occs, ndets_to_read, walker_type,
                            NMO, nup, ndown, PsiT_MO, orb_type);
@@ -360,8 +360,7 @@ Wavefunction<MEM> phmsd_from_params(std::shared_ptr<utils::mpi_context_t<boost::
   app_log(1,"Finished reading PHMSD wavefunction ");
 
   // 2. Build reference MOs (PsiT_MO) if needed.
-  utils::check(orb_type == "occ" || orb_type == "mixed", "Invalid wavefunction type:{}",orb_type);
-  if(orb_type == "occ") {
+  if(orb_type == PHMSDOrbitalType::occ) {
     build_PsiT_MO_phmsd(walker_type,npol,NMO,nup,ndown,ndets_to_read,coeffs,occs,PsiT_MO);
   }
 

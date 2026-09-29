@@ -153,22 +153,13 @@ void read_ph_wavefunction_hdf(h5::group& grp,
                               int nup,
                               int ndown,
                               nda::array<PsiT_Matrix<HOST_MEMORY>, 1>& PsiT,
-                              std::string& type)
+                              PHMSDOrbitalType& type)
 {
   int npol = (walker_type == NONCOLLINEAR ? 2 : 1);
   utils::check(walker_type != UNDEFINED_WALKER_TYPE, "Undefined walker type.");
   utils::check(walker_type != CLOSED, " walker_type==CLOSED not yet implemented in read_ph_wavefunction_hdf.");
-  bool mixed = false;
   int NEL    = nup + (walker_type == COLLINEAR ? ndown : 0);
 
-  /*
-   * type:
-   *   - occ: All determinants are specified with occupation numbers
-   *
-   *   - 0: excitations out of a RHF reference
-   *          NOTE: Does not mean perfect pairing, means excitations from a single reference
-   *   - 1: excitations out of a UHF reference (not yet working)
-   */
   WALKER_TYPES wtype;
   getCommonInput(grp, ndets, ci_coeff, wtype);
   // make first coefficient positive (or maybe largest???)
@@ -180,39 +171,23 @@ void read_ph_wavefunction_hdf(h5::group& grp,
   // a UHF basis
   utils::check(wtype == walker_type, " walker_type ({}) in wavefunction file differs from input file ({}).", walkerTypeToString(wtype), walkerTypeToString(walker_type));
 
-  int type_;
-  h5::h5_read(grp,"type",type_);
-  if (type_ == 0) {
-    type = "occ";
-  } else if(type_ == 1) {
-    type = "mixed";
-    mixed = true;
-  } else if(type_ == 2) {
-    type = "mixed";
-    mixed = true;
-  } else {
-    utils::check(false,"Unknown value of dataset type.");
+  // the orbital references are numbered PsiT_0, PsiT_1, ... without gaps: none, one, or one per spin
+  int nreferences = 0;
+  while(grp.has_subgroup("PsiT_" + std::to_string(nreferences))) {
+    ++nreferences;
   }
+  utils::check(nreferences <= 2, "PHMSD wavefunction has {} orbital references, expected at most 2.", nreferences);
+  utils::check(nreferences < 2 || walker_type == COLLINEAR,
+               "a PHMSD wavefunction with one orbital reference per spin needs COLLINEAR walkers, got {}",
+               walkerTypeToString(walker_type));
+  type = (nreferences == 0 ? PHMSDOrbitalType::occ : PHMSDOrbitalType::mixed);
 
-  if (mixed)
-  { // read reference
-    PsiT.resize( ( type_ == 2 ? 2 : 1) );
-
-    {
-      h5::group g = grp.open_group("PsiT_"+ std::to_string(0));
-      PsiT(0) = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(g);
-      utils::check(PsiT(0).extent(1) == npol*NMO, 
-                   "For PHMSD type=mixed, PsiT.size(1) must be npol*NMO");
-    }
-    if (type_ == 2)
-    {
-      utils::check(walker_type == COLLINEAR,
-                   "walker_type must be COLLINEAR, got {}", walkerTypeToString(walker_type));
-      h5::group g = grp.open_group("PsiT_"+ std::to_string(1));
-      PsiT(1) = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(g);
-      utils::check(PsiT(1).extent(1) == npol*NMO, 
-                   "For PHMSD type=mixed, PsiT.size(1) must be npol*NMO");
-    }
+  PsiT.resize(nreferences);
+  for(int n = 0; n < nreferences; ++n) {
+    h5::group g = grp.open_group("PsiT_" + std::to_string(n));
+    PsiT(n) = math::sparse::HDF2CSR<ComplexType,HOST_MEMORY,int,int>(g);
+    utils::check(PsiT(n).extent(1) == npol*NMO,
+                 "PHMSD orbital reference PsiT_{} has {} columns, expected npol*NMO = {}", n, PsiT(n).extent(1), npol*NMO);
   }
   // the file stores beta occupations unshifted; downstream code expects them offset by NMO
   using nda::range;

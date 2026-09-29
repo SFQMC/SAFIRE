@@ -30,6 +30,7 @@ The layout is fixed by the AFQMC executable's readers (``readWfn.cpp``'s
 so none of it is configurable.
 """
 
+import itertools
 from warnings import warn
 
 import numpy as np
@@ -264,20 +265,20 @@ def write_phmsd(group, nmo: int, occa, occb, orbitals=None) -> None:
         widths are how the file records the electron count.
     orbitals : sequence of numpy.ndarray, optional
         Orbital matrices the occupation numbers refer to, one per reference
-        (one for a closed-shell-like reference, two for a spin-resolved one).
-        Omitted, the occupation numbers refer to the orbitals themselves and
-        ``type`` is 0.
+        (one for a closed-shell-like reference, two for a spin-resolved one),
+        written as ``PsiT_0``, ``PsiT_1``. Omitted, the occupation numbers refer
+        to the orbitals themselves.
 
     Notes
     -----
-    ``type`` records how many references follow: 0 for none, 1 for one, 2 for
-    two. The arguments are taken as `PHMSDWavefunction` validated them.
+    How many references there are is the number of ``PsiT_<n>`` groups; nothing
+    records it separately. The arguments are taken as `PHMSDWavefunction`
+    validated them.
     """
     references = orbitals or ()
 
     # int32, as TRIQS/h5 writes an int: the executable reads attributes by exact type
     group.attrs['number_of_orbitals'] = np.int32(nmo)
-    group.create_dataset('type', data=len(references))
     for index, matrix in enumerate(references):
         write_orbitals(group, f'PsiT_{index}', matrix)
 
@@ -299,16 +300,15 @@ def read_phmsd(group):
     occa, occb : numpy.ndarray
         Occupied-orbital indices, one array per independent spin channel.
     orbitals : tuple of numpy.ndarray or None
-        The orbital references, or None when ``type`` is 0.
+        The orbital references, or None when there is no ``PsiT_0``.
     """
     nmo = int(group.attrs['number_of_orbitals'])
     occa = np.asarray(group['occa'][...])
     occb = np.asarray(group['occb'][...])
 
-    ntype = int(group['type'][()])
-    orbitals = None
-    if ntype:
-        orbitals = tuple(read_orbitals(group, f'PsiT_{index}')
-                         for index in range(ntype))
+    # numbered without gaps, so the count is where they stop
+    names = list(itertools.takewhile(lambda name: name in group,
+                                     (f'PsiT_{index}' for index in itertools.count())))
+    orbitals = tuple(read_orbitals(group, name) for name in names) or None
 
     return nmo, occa, occb, orbitals

@@ -35,6 +35,12 @@ namespace sfqmc
 {
 namespace afqmc
 {
+// What the occupation numbers of a PHMSD wavefunction index into.
+enum class PHMSDOrbitalType {
+  occ,   // the basis orbitals themselves
+  mixed, // the orbitals of the PsiT_0 reference, or of PsiT_0 (alpha) and PsiT_1 (beta)
+};
+
 void read_ph_wavefunction_hdf(h5::group& grp,
                               nda::array<ComplexType,1>& ci_coeff,
                               nda::array<int,2>& occs,
@@ -44,7 +50,7 @@ void read_ph_wavefunction_hdf(h5::group& grp,
                               int nup,
                               int ndown,
                               nda::array<PsiT_Matrix<HOST_MEMORY>, 1>& PsiT_MO,
-                              std::string& type);
+                              PHMSDOrbitalType& type);
 
 template<MEMORY_SPACE MEM>
 ph_excitations<int, ComplexType, MEM> build_ph_struct(nda::array<ComplexType,1> const& ci_coeff,
