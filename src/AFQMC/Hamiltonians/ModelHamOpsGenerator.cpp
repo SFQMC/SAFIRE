@@ -76,6 +76,15 @@ csrM spin_to_walker_type(int NMO, WALKER_TYPES type, std::string stype, csrM& hi
   }
   return hij;
 }
+
+// ModelComponent_0, ModelComponent_1, ... are numbered without gaps, so the count is where they stop
+inline long count_model_components(h5::group mgrp) {
+  long n = 0;
+  while(mgrp.has_subgroup("ModelComponent_" + std::to_string(n))) {
+    ++n;
+  }
+  return n;
+}
 }
 
 template<MEMORY_SPACE MEM, bool REAL> HamiltonianOperations<MEM> 
@@ -130,40 +139,22 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
   }
   mpi->comm.broadcast_n(&E0, 1, 0);
 
-  h5::group mgrp = grp.open_group("ModelHamiltonian"); 
-  
-  long num_components(0);
-  h5::read(mgrp,"number_of_components",num_components);
-  // can check file and determine maximum_connections directly!
-  long maximum_connections(12);
-  h5::read(mgrp,"maximum_connectivity",maximum_connections);
-  
+  h5::group mgrp = grp.open_group("ModelHamiltonian");
+
+  long const num_components = detail::count_model_components(mgrp);
+
   std::vector<ModelComponent<MEM,REAL>> Hams;
   Hams.reserve(num_components);
   csrMat hij({0,0});
 
-  // accumulating terms 
-  /*
-   * Map:
-   *   collect_U  ( opposite spin from 0-M, same spin from M-2M )  
-   *   0: continuous charge 
-   *   1: continuous spin 
-   *   2: discrete charge 
-   *   3: discrete spin 
-   *   collect_J
-   *   0: continuous charge 
-   *   1: continuous spin 
-   *   2: empty-container, for call to addComponent with discrete 
-   */
-  std::vector<csrMat> collect_U;  
-  std::vector<csrMat> collect_J;  
-  collect_U.reserve(4);
-  collect_J.reserve(3);
-  for(int i=0; i<4; i++) 
-    collect_U.emplace_back(csrMat({2*NMO, NMO},maximum_connections));
-  // [2] is a place-holder for the empty case
-  for(int i=0; i<3; i++)
-    collect_J.emplace_back(csrMat({NMO, NMO},maximum_connections));
+  // a Hubbard U or J component, kept until every component is read, because their row counts size
+  // the collection matrices they are accumulated into
+  struct Interaction {
+    csrMat matrix;
+    int where;
+    bool is_j;
+  };
+  std::vector<Interaction> interactions;
 
   for(int n=0; n<num_components; n++)  {
     h5::group gn = mgrp.open_group("ModelComponent_"+std::to_string(n));
@@ -212,36 +203,7 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
 
       app_log(1, "Hamiltonian component {} is using Hubbard-Stratonovich transformation type {} or Hubbard U", n, hst_type);
 
-      {
-        // doing this "by hand" to impose condition i>j
-        // opposite spin (i<=j)
-        // MAM: ignoring lower diagonal terms seems to confuse users, consider reading everything
-        //      and just transposing the terms here when you write them in collect_U/J
-        auto vals = Uij.values();
-        auto cols = Uij.columns();
-        for( int r=0; r<NMO; ++r) {
-          for(long i=Uij.row_begin(r); i<Uij.row_end(r); ++i) {
-            auto u_ = vals(i);
-            int j = cols(i);
-            if( std::abs(u_) < 1e-6 or r>j ) {
-              app_warning("Ignoring opposite spin Uij, i>j: i:{}, j:{}, U:{}",r,j,u_);
-              continue;
-	    }
-            collect_U[where_].add( {r, j}, u_ );
-          }
-        }
-        for( int r=NMO; r<Uij.extent(0); ++r) {
-          for(long i=Uij.row_begin(r); i<Uij.row_end(r); ++i) {
-            auto u_ = vals(i);
-            int j = cols(i);
-            if( std::abs(u_) < 1e-6 or (r-NMO)>=j ) { 
-              app_warning("Ignoring same spin Uij, i=>j: i:{}, j:{}, U:{}",r,j,u_);
-              continue;
-            }
-            collect_U[where_].add( {r, j}, u_ );
-          }
-        }
-      }
+      interactions.push_back({std::move(Uij), where_, false});
     }
     else if( model_type == "hubbard_j" )  
     { 
@@ -268,32 +230,113 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
     
       app_log(1, "Hamiltonian component {} is using Hubbard-Stratonovich transformation type {} for Hubbard J", n, hst_type);
 
-      { 
-        // doing this "by hand" to impose condition i>j
-        // opposite spin (i<=j)
-        auto vals = Jij.values();
-        auto cols = Jij.columns();
-        for( int r=0; r<NMO; ++r) {
-          for(long i=Jij.row_begin(r); i<Jij.row_end(r); ++i) {
-            auto v_ = vals(i);
-            int j = cols(i);
-            if( std::abs(v_) < 1e-6 or r>=j ) continue;
-            collect_J[where_].add( {r, j}, v_ );
-          }
-        }
-      }
+      interactions.push_back({std::move(Jij), where_, true});
     }
-    else  
+    else
       utils::check(false,base_error + " Unknown model type: " + model_type);
 
   }
-  utils::check(one_body_term, base_error + " Missing one_body component in ModelHamiltonian.");  
-  utils::check(hij.nnz() != 0, 
-               base_error + " Something went wrong, empty one_body component.");  
+  utils::check(one_body_term, base_error + " Missing one_body component in ModelHamiltonian.");
+  utils::check(hij.nnz() != 0,
+               base_error + " Something went wrong, empty one_body component.");
 
-  // combine all U/J matrices for energy evaluation. 
-  csrMat combined_U({2*NMO,NMO}, maximum_connections);
-  csrMat combined_J({NMO,NMO}, maximum_connections);
+  // accumulating terms
+  /*
+   * Map:
+   *   collect_U  ( opposite spin from 0-M, same spin from M-2M )
+   *   0: continuous charge
+   *   1: continuous spin
+   *   2: discrete charge
+   *   3: discrete spin
+   *   collect_J
+   *   0: continuous charge
+   *   1: continuous spin
+   *   2: empty-container, for call to addComponent with discrete
+   */
+  // Each row is allocated for every entry that can land in it: the row counts of all components
+  // collected into it and, in the same-spin rows of collect_U[0], both continuous J terms, which
+  // are moved there once the energy is built.
+  std::vector<nda::vector<long>> nnzpr_U(4, nda::zeros<long>(2*NMO));
+  std::vector<nda::vector<long>> nnzpr_J(3, nda::zeros<long>(NMO));
+  for(auto const& [m, where_, is_j] : interactions) {
+    for(long r = 0; r < m.extent(0); ++r) {
+      long const nnz = m.row_end(r) - m.row_begin(r);
+      if(is_j) {
+        nnzpr_J[where_](r) += nnz;
+        nnzpr_U[0](NMO + r) += nnz;
+      } else {
+        nnzpr_U[where_](r) += nnz;
+      }
+    }
+  }
+
+  std::vector<csrMat> collect_U;
+  std::vector<csrMat> collect_J;
+  collect_U.reserve(4);
+  collect_J.reserve(3);
+  for(auto const& nnzpr : nnzpr_U) {
+    collect_U.emplace_back(csrMat({2*NMO, NMO}, nnzpr));
+  }
+  // [2] is a place-holder for the empty case
+  for(auto const& nnzpr : nnzpr_J) {
+    collect_J.emplace_back(csrMat({NMO, NMO}, nnzpr));
+  }
+
+  for(auto const& [m, where_, is_j] : interactions) {
+    // doing this "by hand" to impose condition i>j
+    auto vals = m.values();
+    auto cols = m.columns();
+    if(is_j) {
+      for(int r = 0; r < NMO; ++r) {
+        for(long i = m.row_begin(r); i < m.row_end(r); ++i) {
+          auto v_ = vals(i);
+          int j = cols(i);
+          if(std::abs(v_) < 1e-6 || r >= j) {
+            continue;
+          }
+          collect_J[where_].add({r, j}, v_);
+        }
+      }
+      continue;
+    }
+    // opposite spin (i<=j)
+    // MAM: ignoring lower diagonal terms seems to confuse users, consider reading everything
+    //      and just transposing the terms here when you write them in collect_U/J
+    for(int r = 0; r < NMO; ++r) {
+      for(long i = m.row_begin(r); i < m.row_end(r); ++i) {
+        auto u_ = vals(i);
+        int j = cols(i);
+        if(std::abs(u_) < 1e-6 || r > j) {
+          app_warning("Ignoring opposite spin Uij, i>j: i:{}, j:{}, U:{}", r, j, u_);
+          continue;
+        }
+        collect_U[where_].add({r, j}, u_);
+      }
+    }
+    for(int r = NMO; r < m.extent(0); ++r) {
+      for(long i = m.row_begin(r); i < m.row_end(r); ++i) {
+        auto u_ = vals(i);
+        int j = cols(i);
+        if(std::abs(u_) < 1e-6 || (r - NMO) >= j) {
+          app_warning("Ignoring same spin Uij, i=>j: i:{}, j:{}, U:{}", r, j, u_);
+          continue;
+        }
+        collect_U[where_].add({r, j}, u_);
+      }
+    }
+  }
+
+  // combine all U/J matrices for energy evaluation.
+  nda::vector<long> nnzpr_combined_U = nda::zeros<long>(2*NMO);
+  nda::vector<long> nnzpr_combined_J = nda::zeros<long>(NMO);
+  for(auto const& nnzpr : nnzpr_U) {
+    nnzpr_combined_U += nnzpr;
+  }
+  for(auto const& nnzpr : nnzpr_J) {
+    nnzpr_combined_J += nnzpr;
+  }
+  csrMat combined_U({2*NMO,NMO}, nnzpr_combined_U);
+  csrMat combined_J({NMO,NMO}, nnzpr_combined_J);
 
   {
     for( auto& v: collect_U ) 
@@ -362,8 +405,7 @@ ModelHamOpsGenerator::getHamiltonianOperations(WALKER_TYPES type,
     h5::file file(fileName,'r');
     h5::group grp(file);
     h5::group mgrp = grp.open_group("Hamiltonian").open_group("ModelHamiltonian");
-    long num_components;
-    h5::h5_read(mgrp,"number_of_components",num_components);
+    long const num_components = detail::count_model_components(mgrp);
     for(int n=0; n<num_components; n++)  {
       h5::group gn = mgrp.open_group("ModelComponent_"+ std::to_string(n));
 

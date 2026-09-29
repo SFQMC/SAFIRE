@@ -163,7 +163,6 @@ fewer symmetry inequivalent momentum transfer vectors than there are
           dataset    /Hamiltonian/H1_kp5
           dataset    /Hamiltonian/H1_kp6
           dataset    /Hamiltonian/H1_kp7
-          dataset    /Hamiltonian/ComplexIntegrals
           dataset    /Hamiltonian/KPoints
           dataset    /Hamiltonian/Energies
       }
@@ -194,9 +193,6 @@ fewer symmetry inequivalent momentum transfer vectors than there are
 -  ``/Hamiltonian/H1_kp[n]`` Contains the :math:`[m_{\mathbf{k}_n},m_{\mathbf{k}_n}]`
    dimensional one-body Hamiltonian matrix elements
    :math:`h_{(\mathbf{k}_{n}p)(\mathbf{k}_{n}q)}`.
-
--  ``/Hamiltonian/ComplexIntegrals`` Length 1 array that specifies if integrals are complex valued. 1
-   for complex integrals, 0 for real integrals.
 
 -  ``/Hamiltonian/KPoints`` :math:`[N_k,3]` Dimensional array containing :math:`k`-points used to
    sample Brillouin zone.
@@ -300,10 +296,8 @@ Model Hamiltonians are saved in HDF5 using the following format.
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/hst_type
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/model_type
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/spin_type
-          dataset    /Hamiltonian/ModelHamiltonian/maximum_connectivity
           dataset    /Hamiltonian/ModelHamiltonian/nbands
           dataset    /Hamiltonian/ModelHamiltonian/nsites
-          dataset    /Hamiltonian/ModelHamiltonian/number_of_components
           dataset    /Hamiltonian/spin_type
     }
   }
@@ -324,17 +318,9 @@ Model Hamiltonians are saved in HDF5 using the following format.
 -  ``/Hamiltonian/spin_type``: Is a string containing the spin symmetry type of the Hamiltonian.
    possible values are "collinear", or "noncollinear".
 
--  ``/Hamiltonian/ModelHamiltonian/maximum_connectivity``: A scalar integer containing the maximum 
-   number of possible connections in the Hamiltonian. If in doubt, the number of non-zero elements
-   can be safely used here.
-
--  ``/Hamiltonian/ModelHamiltonian/number_of_components``: A scalar integer containing the number 
-   of "components" (i.e. terms) in the Hamiltonian. This should be consistent with the number of 
-   :math:` /Hamiltonian/ModelHamiltonian/ModelComponent_n/` groups, where :math:`n` is replaced with an
-   integer.
-
--  ``/Hamiltonian/ModelHamiltonian/ModelComponent_n``: (where :math:`n` are replaced by a specific integer index) 
-   are HDF5 groups which contain a Hamiltonian component (i.e. a term). Each component consists of some metadata
+-  ``/Hamiltonian/ModelHamiltonian/ModelComponent_n``: (where :math:`n` are replaced by a specific integer index)
+   are HDF5 groups, numbered from 0 without gaps; the number of components is where the numbering
+   stops. They which contain a Hamiltonian component (i.e. a term). Each component consists of some metadata
    and a compressed sparse row (CSR) matrix representation of that Hamiltonian component. Each group has the 
    following datasets and groups.
 

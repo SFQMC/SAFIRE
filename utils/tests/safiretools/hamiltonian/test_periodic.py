@@ -104,7 +104,7 @@ class TestKpointFormat:
         hamiltonian.to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert set(fh5['Hamiltonian'].attrs) == {'type'}
+            assert set(fh5['Hamiltonian'].attrs) == {'format_version', 'type'}
             nmo_pk = fh5['Hamiltonian/NMOPerKP'][...]
         assert len(nmo_pk) == 2
         assert np.sum(nmo_pk) == hamiltonian.nmo_tot
@@ -289,7 +289,6 @@ class TestGeneration:
 
         with h5.File(path, 'r') as fh5:
             assert fh5['Hamiltonian/KPFactorized/L0'].dtype == np.complex128
-            assert fh5['Hamiltonian/ComplexIntegrals'][0] == 1
 
     def test_the_one_body_hamiltonian_is_block_diagonal_in_k(self, diamond_lda):
         """

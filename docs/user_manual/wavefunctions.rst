@@ -48,8 +48,9 @@ Slater determinants (NOMSD) or SHCI/CASSCF style particle-hole multi Slater dete
 
 Both carry a ``format_version`` integer attribute on ``/Wavefunction/NOMSD`` or
 ``/Wavefunction/PHMSD``, which SAFIRE checks against the version it reads; a file without one,
-or with another version, is rejected and has to be regenerated. The one exception is a CoQuí
-NOMSD file, recognized by its ``dims`` array.
+or with another version, is rejected and has to be regenerated. The one exception is the legacy
+layout CoQuí writes, recognized by a ``dims`` array in place of ``format_version`` and
+``spin_type``, which is still read.
 
 
 .. _nomsd_wavefunction:

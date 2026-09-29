@@ -75,7 +75,7 @@ def hamiltonian_format(path) -> str:
         If the file matches none of the known formats.
     """
     with h5.File(path, 'r') as fh5:
-        if 'Hamiltonian/ModelHamiltonian/number_of_components' in fh5:
+        if 'Hamiltonian/ModelHamiltonian' in fh5:
             return HamiltonianFormat.MODEL
         if 'Hamiltonian/DenseFactorized/L' in fh5:
             return HamiltonianFormat.DENSE
