@@ -348,5 +348,19 @@ def test_the_electron_count_is_not_recorded(tmp_path):
     with h5.File(path, 'r') as fh5:
         group = fh5['Hamiltonian']
         assert 'dims' not in group
-        assert set(group.attrs) == {'format_version', 'type'}
-        assert group['ModelHamiltonian/nsites'][()] == 4
+        assert set(group.attrs) == {'format_version', 'type', 'nuclear_energy', 'spin_type'}
+        assert group['ModelHamiltonian'].attrs['number_of_sites'] == 4
+        assert group['ModelHamiltonian'].attrs['number_of_bands'] == 1
+
+
+def test_scalars_are_attributes_and_arrays_datasets(tmp_path):
+    """The rule CoQuí follows: every scalar goes to an attribute."""
+    path = tmp_path / 'ham.h5'
+    LatticeHamiltonian.from_dict(CASES['hubbard']).to_hdf5(path)
+
+    scalars = []
+    with h5.File(path, 'r') as fh5:
+        fh5['Hamiltonian'].visititems(
+            lambda name, item: scalars.append(name)
+            if isinstance(item, h5.Dataset) and item.shape == () else None)
+    assert scalars == []

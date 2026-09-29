@@ -74,43 +74,35 @@ inline std::string get_hamiltonian_format(h5::group& grp) {
   return "";
 }
 
-// Reads the constant energy offset from an integral file: E_nuclear + E_frozen_core,
-// plus the Madelung electron self-interaction for periodic (coqui) systems.
+// Reads the constant energy offset from an integral file: E_nuclear + E_frozen_core, plus the
+// Madelung electron self-interaction where the file records a Madelung constant (CoQuí's periodic
+// systems). All three are optional attributes, named as CoQuí names them, of the `Hamiltonian`
+// group in the std format and of the `System` group in the coqui one.
 // nup/ndn are the trial-WF occupations of each spin block (ndn == 0 for CLOSED and
 // NONCOLLINEAR), from which the total electron count is derived for the Madelung term.
 // Must be called on the MPI root (the caller broadcasts the result).
 inline RealType read_energy_offset(h5::group& grp, std::string const& format,
-                                   WALKER_TYPES type, long nup, long ndn)
-{
-  RealType E0(0);
-  if(format == "std") {
-    h5::group hgrp = grp.open_group("Hamiltonian");
-    nda::vector<RealType> energy_offsets;  // resized by the read; [nuclear, frozen_core]
-    nda::h5_read(hgrp, "Energies", energy_offsets);
-    E0 = nda::sum(energy_offsets);
-  } else if(format == "coqui") {
-    h5::group hgrp = grp.open_group("System");
-    RealType nuc(0), fzc(0), madelung(0);
-    if(H5Aexists(h5::hid_t(hgrp), "nuclear_energy")) {
-      h5::h5_read_attribute(hgrp, "nuclear_energy", nuc);
-    }
-    if(H5Aexists(h5::hid_t(hgrp), "frozen_core_energy")) {
-      h5::h5_read_attribute(hgrp, "frozen_core_energy", fzc);
-    }
-    if(H5Aexists(h5::hid_t(hgrp), "madelung_constant")) {
-      h5::h5_read_attribute(hgrp, "madelung_constant", madelung);
-      long nelec = (type == CLOSED) ? 2 * nup : nup + ndn;  // NONCOLLINEAR: ndn == 0
-      madelung *= -1.0 * nelec;
-    }
-    app_log(2, "");
-    app_log(2, " - Nuclear coulomb energy: {}", nuc);
-    app_log(2, " - Frozen Core energy: {}", fzc);
-    app_log(2, " - Electron self-interaction energy: {}", madelung);
-    E0 = nuc + fzc + madelung;
-  } else {
-    utils::check(false, "Error in read_energy_offset: Invalid format: {}", format);
+                                   WALKER_TYPES type, long nup, long ndn) {
+  utils::check(format == "std" || format == "coqui", "Error in read_energy_offset: Invalid format: {}", format);
+  h5::group hgrp = grp.open_group(format == "std" ? "Hamiltonian" : "System");
+
+  RealType nuc(0), fzc(0), madelung(0);
+  if(H5Aexists(h5::hid_t(hgrp), "nuclear_energy")) {
+    h5::h5_read_attribute(hgrp, "nuclear_energy", nuc);
   }
-  return E0;
+  if(H5Aexists(h5::hid_t(hgrp), "frozen_core_energy")) {
+    h5::h5_read_attribute(hgrp, "frozen_core_energy", fzc);
+  }
+  if(H5Aexists(h5::hid_t(hgrp), "madelung_constant")) {
+    h5::h5_read_attribute(hgrp, "madelung_constant", madelung);
+    long nelec = (type == CLOSED) ? 2 * nup : nup + ndn;  // NONCOLLINEAR: ndn == 0
+    madelung *= -1.0 * nelec;
+  }
+  app_log(2, "");
+  app_log(2, " - Nuclear coulomb energy: {}", nuc);
+  app_log(2, " - Frozen Core energy: {}", fzc);
+  app_log(2, " - Electron self-interaction energy: {}", madelung);
+  return nuc + fzc + madelung;
 }
 
 } // namespace afqmc

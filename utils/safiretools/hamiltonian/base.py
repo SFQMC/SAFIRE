@@ -32,8 +32,8 @@ from safiretools.types import HamiltonianFormat, SpinSymm
 def write_hamiltonian_header(group, fmt, enuc=0.0) -> None:
     """
     Write what every Hamiltonian format starts with into the (empty)
-    ``Hamiltonian`` `group`: the ``format_version`` and ``type`` attributes and
-    the ``Energies`` dataset.
+    ``Hamiltonian`` `group`: the ``format_version``, ``type`` and
+    ``nuclear_energy`` attributes, the last named as CoQuí names it.
 
     No sizes are recorded; each format's arrays carry their own. Nor is an
     electron count: the AFQMC executable takes it from the wavefunction.
@@ -46,12 +46,12 @@ def write_hamiltonian_header(group, fmt, enuc=0.0) -> None:
     """
     write_format_version(group)
     group.attrs['type'] = HamiltonianFormat(fmt).value
-    group.create_dataset('Energies', data=np.array([enuc, 0.], dtype=np.float64))
+    group.attrs['nuclear_energy'] = np.float64(enuc)
 
 
 def read_hamiltonian_header(group) -> float:
     """The nuclear energy `write_hamiltonian_header` recorded in `group`."""
-    return float(group['Energies'][0])
+    return float(group.attrs['nuclear_energy'])
 
 
 def hamiltonian_format(path) -> str:

@@ -104,7 +104,7 @@ class TestKpointFormat:
         hamiltonian.to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert set(fh5['Hamiltonian'].attrs) == {'format_version', 'type'}
+            assert set(fh5['Hamiltonian'].attrs) == {'format_version', 'type', 'nuclear_energy'}
             nmo_pk = fh5['Hamiltonian/NMOPerKP'][...]
         assert len(nmo_pk) == 2
         assert np.sum(nmo_pk) == hamiltonian.nmo_tot

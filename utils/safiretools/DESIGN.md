@@ -572,15 +572,25 @@ they read and compare as the bare names throughout.
 `model` if a `ModelHamiltonian` group is there, `dense` if `DenseFactorized/L` is, and
 so on — which is the only thing that works for every file: older ones, CoQuí files (no
 `Hamiltonian` group) and those from the hand-rolled writers in `afqmctools`/`cli`. The
-`write_hamiltonian_header` shared by the safiretools writers (which also writes the `Energies`
-dataset every format shares) stamps the format name as the `type` attribute of the `Hamiltonian`
-group, but nothing reads it yet.
+`write_hamiltonian_header` shared by the safiretools writers (which also writes the
+`nuclear_energy` every format shares) stamps the format name as the `type` attribute of the
+`Hamiltonian` group, but nothing reads it yet.
+
+**Scalars are attributes, arrays are datasets** — the rule CoQuí's files follow, which we cannot
+change, so ours follow it too. That makes `spin_type`, `model_type`, `hst_type`, the lattice
+`type` and `cyl_mode`, and the counts attributes, named `number_of_*` as CoQuí names its counts
+(`number_of_sites`, `number_of_bands`). The constant energy uses CoQuí's names as well: optional
+`nuclear_energy` and `frozen_core_energy` attributes of `Hamiltonian`, where CoQuí puts them on
+`System`, replacing the two-slot `Energies` array. The executable reads both with one function,
+`read_energy_offset`, which differs only in the group it opens; safiretools writes only
+`nuclear_energy`, since it has no frozen core.
 
 **Sizes are not recorded separately.** The file used to carry an 8-slot `dims` array duplicating
 the orbital, k-point and Cholesky counts. Now each is read off the arrays that hold the data —
 `hcore` and `DenseFactorized/L` for dense, `NMOPerKP` for k-point — so the two cannot disagree.
 The one exception is the lattice model, whose matrix shapes don't give the basis size
-unambiguously; it writes `nsites` next to `nbands` under `ModelHamiltonian`. The same goes for
+unambiguously; it writes `number_of_sites` and `number_of_bands` attributes on
+`ModelHamiltonian`. The same goes for
 the model's other derived values: the number of components is where the gap-free
 `ModelComponent_<n>` numbering stops, and the executable sizes the sparse matrices it collects the
 interaction terms into from the components' own row counts, where it used to trust a
