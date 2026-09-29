@@ -25,14 +25,15 @@ from importlib import import_module
 import h5py as h5
 import numpy as np
 
+from safiretools.hdf5 import check_format_version, write_format_version
 from safiretools.types import HamiltonianFormat, SpinSymm
 
 
 def write_hamiltonian_header(group, fmt, enuc=0.0) -> None:
     """
     Write what every Hamiltonian format starts with into the (empty)
-    ``Hamiltonian`` `group`: a ``type`` attribute naming `fmt` and the
-    ``Energies`` dataset.
+    ``Hamiltonian`` `group`: the ``format_version`` and ``type`` attributes and
+    the ``Energies`` dataset.
 
     No sizes are recorded; each format's arrays carry their own. Nor is an
     electron count: the AFQMC executable takes it from the wavefunction.
@@ -43,6 +44,7 @@ def write_hamiltonian_header(group, fmt, enuc=0.0) -> None:
     ValueError
         If `fmt` names no known format.
     """
+    write_format_version(group)
     group.attrs['type'] = HamiltonianFormat(fmt).value
     group.create_dataset('Energies', data=np.array([enuc, 0.], dtype=np.float64))
 
@@ -171,8 +173,9 @@ class Hamiltonian(ABC):
         Raises
         ------
         ValueError
-            If the file holds no recognized Hamiltonian, or holds one that the
-            subclass this was called on does not read.
+            If the file holds no recognized Hamiltonian, holds one that the
+            subclass this was called on does not read, or was written in another
+            format version.
         """
         fmt = hamiltonian_format(path)
         target = _class_for_format(fmt)
@@ -183,6 +186,9 @@ class Hamiltonian(ABC):
                 f"{cls.__name__} does not read; use {target.__name__}.from_hdf5 "
                 "or the dispatching Hamiltonian.from_hdf5"
             )
+
+        with h5.File(path, 'r') as fh5:
+            check_format_version(fh5['Hamiltonian'])
 
         return target._read_hdf5(path, fmt)
 

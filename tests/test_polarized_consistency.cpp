@@ -59,6 +59,7 @@
 #include "AFQMC/Propagators/AFQMCBasePropagator.h"
 #include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Utilities/readWfn.h"
+#include "AFQMC/Utilities/format_version.hpp"
 #include "numerics/sparse/sparse.hpp"
 #include "test_utils.hpp"
 
@@ -126,6 +127,7 @@ inline void derive_polarized_wfn(std::string const& src_file, WALKER_TYPES targe
   nda::array<ComplexType, 1> ci(1);
   ci(0) = ComplexType(1.0);
 
+  write_format_version(nout);
   h5::h5_write_attribute(nout, "spin_type", walkerTypeToString(target));
   nda::h5_write(nout, "ci_coeffs", ci);
 

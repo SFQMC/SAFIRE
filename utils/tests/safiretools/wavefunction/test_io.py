@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from safiretools import SpinSymm
+from safiretools.hdf5 import FORMAT_VERSION
 from safiretools.wavefunction import io
 from safiretools.wavefunction.slater import (
     CONDITION_MAX,
@@ -32,11 +33,12 @@ def group(tmp_path):
 
 class TestHeader:
 
-    def test_only_the_spin_type_and_coefficients_are_recorded(self, group):
+    def test_only_the_version_spin_type_and_coefficients_are_recorded(self, group):
         io.write_header(group, spin_symm=SpinSymm.COLLINEAR,
                         coeffs=np.array([1.0 + 0j, 0.5 + 0j]))
 
-        assert dict(group.attrs) == {'spin_type': 'collinear'}
+        assert dict(group.attrs) == {'format_version': FORMAT_VERSION,
+                                     'spin_type': 'collinear'}
         assert list(group) == ['ci_coeffs']
 
     def test_it_round_trips(self, group, rng):
@@ -52,10 +54,23 @@ class TestHeader:
     def test_a_coqui_file_without_spin_type_falls_back_to_dims(self, group):
         io.write_header(group, spin_symm=SpinSymm.CLOSED,
                         coeffs=np.array([1.0 + 0j]))
+        del group.attrs['format_version']
         del group.attrs['spin_type']
         group['dims'] = np.array([8, 4, 4, int(SpinSymm.CLOSED), 1], dtype=np.int32)
 
         assert io.read_header(group)['spin_symm'] is SpinSymm.CLOSED
+
+    @pytest.mark.parametrize("version", [None, FORMAT_VERSION + 1])
+    def test_another_format_version_raises(self, group, version):
+        io.write_header(group, spin_symm=SpinSymm.CLOSED,
+                        coeffs=np.array([1.0 + 0j]))
+        if version is None:
+            del group.attrs['format_version']
+        else:
+            group.attrs['format_version'] = np.int32(version)
+
+        with pytest.raises(ValueError, match="format_version"):
+            io.read_header(group)
 
 
 class TestOrbitals:

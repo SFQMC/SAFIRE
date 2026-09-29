@@ -23,6 +23,7 @@ from safiretools.hamiltonian.base import (
 from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
 from safiretools.hamiltonian.molecular import MolecularHamiltonian
 from safiretools.hamiltonian.periodic import PeriodicHamiltonian
+from safiretools.hdf5 import FORMAT_VERSION
 
 
 def _make(tmp_path, name, datasets):
@@ -65,9 +66,15 @@ class TestTheHeader:
 
         with h5.File(path, 'r') as fh5:
             group = fh5['Hamiltonian']
-            assert dict(group.attrs) == {'type': 'dense'}
+            assert dict(group.attrs) == {'format_version': FORMAT_VERSION, 'type': 'dense'}
             assert list(group) == ['Energies']
             assert read_hamiltonian_header(group) == 1.5
+
+    def test_reading_an_unversioned_file_raises(self, tmp_path):
+        path = _make(tmp_path, 'ham.h5', {'Hamiltonian/DenseFactorized/L': np.zeros((4, 2))})
+
+        with pytest.raises(ValueError, match="no format_version"):
+            Hamiltonian.from_hdf5(path)
 
 
 @pytest.mark.parametrize(

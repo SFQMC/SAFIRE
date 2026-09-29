@@ -27,6 +27,7 @@
 #include "utilities/check.hpp"
 #include "IO/app_loggers.h"
 #include "readWfn.h"
+#include "format_version.hpp"
 #include "utilities/h5_utils.hpp"
 
 #include "nda/nda.hpp"
@@ -71,17 +72,18 @@ h5::group open_wavefunction_group(h5::group wgrp, std::string type) {
 } // namespace
 
 WALKER_TYPES read_spin_type(h5::group grp) {
-  std::string spin_type;
-  h5::h5_read_attribute(grp, "spin_type", spin_type);
-  if(spin_type.empty()) {
-    // CoQuí writes no spin_type attribute, only the walker type in slot 3 of a 'dims' array
-    utils::check(grp.has_key("dims"), "Wavefunction has neither a spin_type attribute nor a 'dims' array.");
+  if(!has_format_version(grp) && grp.has_key("dims")) {
+    // CoQuí writes neither a format_version nor a spin_type attribute, only the walker type in
+    // slot 3 of a 'dims' array
     std::vector<int> dims;
     h5::h5_read(grp, "dims", dims);
     utils::check(dims.size() == 5, "Wavefunction 'dims' has length {}, expected 5.", dims.size());
     utils::check(dims[3] >= CLOSED && dims[3] <= NONCOLLINEAR, "Wavefunction 'dims' has invalid walker type {}.", dims[3]);
     return static_cast<WALKER_TYPES>(dims[3]);
   }
+  check_format_version(grp, "Wavefunction");
+  std::string spin_type;
+  h5::h5_read_attribute(grp, "spin_type", spin_type);
   auto const type = nlohmann::json(spin_type).get<WALKER_TYPES>();
   utils::check(type != UNDEFINED_WALKER_TYPE, "Wavefunction spin_type is \"{}\".", spin_type);
   return type;

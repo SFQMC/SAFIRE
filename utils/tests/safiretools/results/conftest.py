@@ -17,6 +17,8 @@ import numpy as np
 import h5py as h5
 import pytest
 
+from safiretools.hdf5 import write_format_version
+
 NBINS = 120
 NMO = 3
 
@@ -57,6 +59,7 @@ def results_file(tmp_path, measured):
     path = tmp_path / 'afqmc.results.h5'
 
     with h5.File(path, 'w') as f:
+        write_format_version(f)
         stage0 = f.create_group('Measurements/Stage0')
         for name, bins in measured.items():
             group = stage0.create_group(name)

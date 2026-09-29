@@ -46,6 +46,11 @@ AFQMC allows for two types of multi-determinant trial wavefunctions: non-orthogo
 Slater determinants (NOMSD) or SHCI/CASSCF style particle-hole multi Slater determinants
 (PHMSD).
 
+Both carry a ``format_version`` integer attribute on ``/Wavefunction/NOMSD`` or
+``/Wavefunction/PHMSD``, which SAFIRE checks against the version it reads; a file without one,
+or with another version, is rejected and has to be regenerated. The one exception is a CoQuí
+NOMSD file, recognized by its ``dims`` array.
+
 
 .. _nomsd_wavefunction:
 
