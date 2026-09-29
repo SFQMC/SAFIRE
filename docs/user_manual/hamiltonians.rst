@@ -271,28 +271,25 @@ Model Hamiltonians are saved in HDF5 using the following format.
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/model_type
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/spin_type
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/data_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/dims
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/jdata_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/pointers_begin_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/pointers_end_
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/column_indices
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/row_pointers
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/shape
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/values
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_1
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/data_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/dims
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/jdata_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/pointers_begin_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/pointers_end_
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/column_indices
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/row_pointers
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/shape
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/values
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/hst_type
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/model_type
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/spin_type
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_2
           group      /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/data_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/dims
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/jdata_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/pointers_begin_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/pointers_end_
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/column_indices
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/row_pointers
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/shape
+          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/values
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/hst_type
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/model_type
           dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/spin_type
@@ -320,7 +317,7 @@ Model Hamiltonians are saved in HDF5 using the following format.
 
 -  ``/Hamiltonian/ModelHamiltonian/ModelComponent_n``: (where :math:`n` are replaced by a specific integer index)
    are HDF5 groups, numbered from 0 without gaps; the number of components is where the numbering
-   stops. They which contain a Hamiltonian component (i.e. a term). Each component consists of some metadata
+   stops. Each contains a Hamiltonian component (i.e. a term), which consists of some metadata
    and a compressed sparse row (CSR) matrix representation of that Hamiltonian component. Each group has the 
    following datasets and groups.
 
@@ -335,19 +332,19 @@ Model Hamiltonians are saved in HDF5 using the following format.
        and ``/Jij/`` (``"hubbard_j"``). Conventions for the shape of each matrix are
        described below. The matrix group will always have the following datasets:
     
-      -  ``dims``:  Descriptor array of length 3 containing :math:`[M_1,M_2,N_{nz}]`. 
-         where :math:`M_1` and :math:`M_2` are the dimensions of the CSR matrix, and
-         :math:`N_{nz}` is the number of non-zero entries.
+      -  ``shape``: :math:`[M_1, M_2]`, the dimensions of the CSR matrix.
 
-      -  ``data_``: an array containing the non-zero matrix elements.
+      -  ``values``: an array containing the :math:`N_{nz}` non-zero matrix elements.
 
-      -  ``jdata_``: an array containing the column indices of each non-zero matrix element.
+      -  ``column_indices``: an array containing the column index of each non-zero matrix element.
 
-      -  ``pointers_begin_``: an array containing "pointers" to the beginning of each row
-         within ``data_`` / ``jdata_``.
+      -  ``row_pointers``: an array of length :math:`M_1 + 1`; row :math:`i` holds the entries
+         ``row_pointers[i]`` up to (not including) ``row_pointers[i+1]`` of ``values`` and
+         ``column_indices``, so ``row_pointers[0] = 0`` and ``row_pointers[M_1] = N_{nz}``.
 
-      -  ``pointers_end_``: an array containing "pointers" to the end of each row
-         within ``data_`` / ``jdata_``.
+      The reader also accepts the legacy layout CoQuí writes, told apart by the absence of
+      ``shape``: ``dims`` (:math:`[M_1, M_2, N_{nz}]`), ``data_``, ``jdata_``, and one
+      ``pointers_begin_`` and ``pointers_end_`` offset per row.
 
 Model Component Conventions
 ___________________________

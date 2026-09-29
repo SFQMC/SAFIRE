@@ -44,9 +44,8 @@ namespace {
 
 /// Rows and columns of the CSR matrix stored in subgroup `name` of `grp`.
 std::array<int,2> csr_extents(h5::group grp, std::string const& name) {
-  std::vector<int> dims(3);
-  h5::h5_read(grp.open_group(name), "dims", dims);
-  return {dims[0], dims[1]};
+  auto const [nrows, ncols] = math::sparse::hdf_csr_shape(grp.open_group(name));
+  return {int(nrows), int(ncols)};
 }
 
 /// Extent `dim` of dataset `name` in `grp`.

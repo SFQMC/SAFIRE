@@ -428,8 +428,8 @@ ModelHamOpsGenerator::getHamiltonianOperations(WALKER_TYPES type,
 
       // Allowing mixed types
       h5::group dn = gn.open_group(dset);
-      auto l = h5::array_interface::get_dataset_info(dn,"data_");
-      utils::check((l.rank() == 1) or (l.rank() == 2), "Rank mismatch");
+      auto l = h5::array_interface::get_dataset_info(dn, math::sparse::hdf_csr_values_name(dn));
+      utils::check(l.rank() == 1 || l.rank() == 2, "Rank mismatch");
       if(utils::dataset_is_complex(l)) {
         Real = false;
       }

@@ -444,7 +444,7 @@ only one of two BP-average endpoints' errors) gets fixed at the same time.
   layering inversion).
 - **A wavefunction with no beta electrons is `COLLINEAR` with `ndown == 0`** (user call). There is no
   separate value for that case: `spin_type` is `"collinear"`, and the beta blocks go to disk with
-  zero width (a `PsiT_1` whose CSR `dims` is `[0, nmo, 0]`), because the executable's readers open
+  zero width (a `PsiT_1` whose CSR `shape` is `[0, nmo]`), because the executable's readers open
   it for any collinear file and take `ndown` from its row count.
 
   > **On the C++ side:**` WALKER_TYPES` is exactly
@@ -511,7 +511,7 @@ executable already accepts both ranks.
 SAFIRE stores a complex array by interleaving the real and imaginary parts as a trailing length-2
 axis. That convention is **defined once**, in `safiretools/hdf5.py` as `to_complex`/`from_complex`,
 and every schema uses it — the dense `hcore`/Cholesky matrix, the k-point `H1_kp*`/`L*` blocks, and
-a model component's CSR `data_`.
+a model component's CSR `values`.
 
 **Real and interleaved data are told apart by rank, not by the trailing axis.** `to_complex` appends
 the axis, so an interleaved dataset has rank `real_ndim + 1`, where `real_ndim` is the rank the
@@ -545,6 +545,17 @@ Hamiltonian is recognized by its `System`/`Interaction` groups, and a CoQuí wav
 one, so an old SAFIRE wavefunction is read through the same path, and the committed legacy
 wavefunctions were left in it, apart from the finite-temperature one in
 `square_2x2_hubbard_Beta3_nt100`, which was converted to a versioned header.
+
+## Sparse matrices on disk
+
+A CSR matrix is a group of four datasets: `shape` (rows, columns), `row_pointers` (`rows + 1`
+offsets), `column_indices` and `values` — scipy's `indptr`/`indices`/`data` under descriptive
+names. Written by `write_csr` and `math::sparse::CSR2HDF`, read by `read_csr` and
+`math::sparse::HDF2CSR`.
+
+It replaced a layout that recorded the nonzero count in a `dims` array next to the shape and kept
+a separate begin and end offset per row. Both readers still take that one, told apart by the
+absence of `shape`, because it is what CoQuí writes. Nothing writes it any more.
 
 ## Hamiltonian on-disk formats
 
