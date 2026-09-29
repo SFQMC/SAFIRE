@@ -24,6 +24,7 @@
 #include "AFQMC/config.h"
 #include "numerics/sparse/sparse.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
+#include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
 
 #include "ModelHamOpsGenerator.h"
 //#include "AFQMC/HamiltonianOperations/ModelComponents/ModelComponent.hpp"
@@ -120,15 +121,14 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
 
   // everyone reads for simplicity, change to single reader if it becomes a problem
   h5::file file = h5::file(fileName,'r'); 
-  h5::group grp = h5::group(file).open_group("Hamiltonian");
+  h5::group root = h5::group(file);
+  h5::group grp = root.open_group("Hamiltonian");
 
-  RealType E0;
-  {
-    std::vector<RealType> E_(2);
-// MAM: dataset is currently long, fix!!! 
-    //h5::h5_read(grp,"Energies",E_);
-    E0 = 0.0; //E_[0] + E_[1];
+  RealType E0(0);
+  if(mpi->comm.root()) {
+    E0 = read_energy_offset(root, "std", type, nel_up, nel_dn);
   }
+  mpi->comm.broadcast_n(&E0, 1, 0);
 
   h5::group mgrp = grp.open_group("ModelHamiltonian"); 
   
