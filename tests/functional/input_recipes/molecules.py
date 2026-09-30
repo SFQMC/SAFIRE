@@ -89,6 +89,35 @@ def _write_nomsd(source, filename: Path, *, basis) -> None:
     Wavefunction.from_pyscf(source, basis=basis).to_hdf5(filename)
 
 
+def _rotation_within_spaces(mol, mo_coeff, spaces, rng, scale=0.3):
+    """A random orthogonal `U` that mixes `mo_coeff`'s orbitals only within each
+    of `spaces` (one label per orbital); the rotated orbitals are ``mo_coeff @ U``.
+
+    It mixes orbitals of one irrep only, and the partners of a degenerate shell
+    (E1x and E1y) by the same matrix, so a symmetry-adapted CASCI still accepts
+    the rotated orbitals. Each orbital's sign is pinned first (largest AO
+    coefficient positive), so the rotated orbitals do not depend on the signs
+    the SCF happened to return.
+    """
+    from pyscf import symm
+    from scipy.linalg import expm
+
+    nmo = mo_coeff.shape[1]
+    signs = np.sign(mo_coeff[np.argmax(np.abs(mo_coeff), axis=0), np.arange(nmo)])
+    irreps = np.asarray(symm.label_orb_symm(mol, mol.irrep_name, mol.symm_orb, mo_coeff))
+    shells = np.array([irrep.rstrip("xy") for irrep in irreps])
+
+    generator = np.zeros((nmo, nmo))
+    for space in np.unique(spaces):
+        for shell in np.unique(shells):
+            blocks = [np.flatnonzero((spaces == space) & (irreps == irrep))
+                      for irrep in np.unique(irreps[shells == shell])]
+            x = rng.normal(scale=scale, size=(len(blocks[0]), len(blocks[0])))
+            for block in blocks:
+                generator[np.ix_(block, block)] = x - x.T
+    return signs[:, None] * expm(generator)
+
+
 # ============================================================================
 # BH
 # ============================================================================
@@ -172,13 +201,37 @@ def build_bh(ctx: BuildContext) -> None:
     write_phmsd("afqmc_casci_ghf_1phmsd.h5", ci[:1], occ_noco[:1], empty[:1],
                 SpinSymm.NONCOLLINEAR)
 
-    # The same expansion over an explicit RHF reference, which is the only case
-    # that exercises the "mixed" type != 0 path in readWfn.cpp.
-    rhf_reference = np.eye(nmo)[:, :na]
-    write_phmsd("afqmc_casci_rhf_phmsd.h5", ci, occa, occb, SpinSymm.COLLINEAR,
-                orbitals=rhf_reference)
+    # ph-MSD over an explicit orbital reference, the PsiT_0 path in readWfn.cpp.
+    # The occupation numbers index the reference's columns, so it carries every
+    # orbital, not just the occupied ones.
+    #
+    # The single determinant takes the identity, which has to reproduce
+    # afqmc_casci_uhf_1phmsd.h5. The expansion takes a nontrivial reference: the
+    # same CASCI, solved in orbitals rotated within the core, active and virtual
+    # spaces. That leaves the CASCI state unchanged but not its determinants, so
+    # the trial is a different truncation of the same wavefunction. Each rotated
+    # orbital also gets a complex phase, which the CI coefficients absorb, so the
+    # reference is a dense complex unitary in the RHF basis.
     write_phmsd("afqmc_casci_rhf_1phmsd.h5", ci[:1], occa[:1], occb[:1],
-                SpinSymm.COLLINEAR, orbitals=rhf_reference)
+                SpinSymm.COLLINEAR, orbitals=np.eye(nmo))
+
+    rng = np.random.default_rng(1234)
+    spaces = np.repeat([0, 1, 2], [mc.ncore, mc.ncas, nmo - mc.ncore - mc.ncas])
+    rotation = _rotation_within_spaces(mol, rhf.mo_coeff, spaces, rng)
+    mc_rotated = mcscf.CASCI(rhf, mc.ncas, mc.nelecas)
+    mc_rotated.kernel(rhf.mo_coeff @ rotation)
+    if abs(mc_rotated.e_tot - mc.e_tot) > 1e-7:
+        raise RuntimeError(f"the rotation changed the CASCI energy by "
+                           f"{mc_rotated.e_tot - mc.e_tot:.2e}; it left the CAS spaces")
+    rotated = PHMSDWavefunction.from_pyscf_cas(mc_rotated, tol=ci_tol)
+    print(f"    number of determinants over the rotated reference: "
+          f"{len(rotated.coeffs)}", flush=True)
+    phases = np.exp(2j * np.pi * rng.random(nmo))
+    # a determinant of phased orbitals carries the product of their phases
+    coeffs = rotated.coeffs * np.conj(np.prod(phases[rotated.occa], axis=1)
+                                      * np.prod(phases[rotated.occb], axis=1))
+    write_phmsd("afqmc_casci_rhf_phmsd.h5", coeffs, rotated.occa, rotated.occb,
+                SpinSymm.COLLINEAR, orbitals=rotation * phases)
 
     # The same expansion as NOMSD. In the RHF basis every determinant is a
     # column selection from the identity, so the orbital matrices are exact.
