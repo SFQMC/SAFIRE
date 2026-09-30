@@ -67,7 +67,7 @@ def test_write_then_read_reproduces_the_integrals(integrals, tmp_path, sym):
     nelec = (2, 2)
 
     path = tmp_path / 'FCIDUMP'
-    write_fcidump(path, hcore, chol, enuc, nmo, nelec, sym=sym, cplx=False, tol=1e-12)
+    write_fcidump(path, hcore, chol, enuc, nelec, sym=sym, cplx=False, tol=1e-12)
 
     h1e, h2e, ecore, nelec_read = read_fcidump(path, symmetry=sym, verbose=False)
 
@@ -87,7 +87,7 @@ def test_complex_integrals_round_trip(integrals, tmp_path, paren):
     complex_chol = chol + 1j * np.roll(chol, 1, axis=0)
 
     path = tmp_path / 'FCIDUMP'
-    write_fcidump(path, hcore.astype(complex), complex_chol, enuc, nmo, (2, 2),
+    write_fcidump(path, hcore.astype(complex), complex_chol, enuc, (2, 2),
                   sym=1, cplx=True, paren=paren, tol=1e-12)
 
     h1e, h2e, ecore, _ = read_fcidump(path, symmetry=1, verbose=False)
@@ -99,27 +99,27 @@ def test_complex_integrals_round_trip(integrals, tmp_path, paren):
 
 
 def test_writing_complex_integrals_as_real_is_rejected(integrals, tmp_path):
-    nmo, hcore, chol, enuc = integrals
+    _, hcore, chol, enuc = integrals
     complex_chol = chol + 1j * np.roll(chol, 1, axis=0)
 
     with pytest.raises(ValueError, match="complex integrals with cplx=False"):
-        write_fcidump(tmp_path / 'FCIDUMP', hcore, complex_chol, enuc, nmo, (2, 2),
+        write_fcidump(tmp_path / 'FCIDUMP', hcore, complex_chol, enuc, (2, 2),
                       sym=1, cplx=False)
 
 
 def test_an_unsupported_symmetry_is_rejected(integrals, tmp_path):
-    nmo, hcore, chol, enuc = integrals
+    _, hcore, chol, enuc = integrals
     path = tmp_path / 'FCIDUMP'
-    write_fcidump(path, hcore, chol, enuc, nmo, (2, 2), sym=1, cplx=False)
+    write_fcidump(path, hcore, chol, enuc, (2, 2), sym=1, cplx=False)
 
     with pytest.raises(ValueError, match="Unsupported permutational symmetry"):
         read_fcidump(path, symmetry=2, verbose=False)
 
 
 def test_eight_fold_symmetry_writes_each_integral_once(integrals, tmp_path):
-    nmo, hcore, chol, enuc = integrals
+    _, hcore, chol, enuc = integrals
     path = tmp_path / 'FCIDUMP'
-    write_fcidump(path, hcore, chol, enuc, nmo, (2, 2), sym=8, cplx=False, tol=1e-12)
+    write_fcidump(path, hcore, chol, enuc, (2, 2), sym=8, cplx=False, tol=1e-12)
 
     # read with symmetry=1, so only the entries actually written are populated
     _, h2e, _, _ = read_fcidump(path, symmetry=1, verbose=False)
@@ -134,7 +134,7 @@ def test_eight_fold_symmetry_writes_each_integral_once(integrals, tmp_path):
 def test_spinor_basis_doubles_the_orbital_count(integrals, tmp_path):
     nmo, hcore, chol, enuc = integrals
     path = tmp_path / 'FCIDUMP'
-    write_fcidump(path, hcore, chol, enuc, nmo, (2, 2), sym=1, cplx=True,
+    write_fcidump(path, hcore, chol, enuc, (2, 2), sym=1, cplx=True,
                   use_spinor=True, tol=1e-12)
 
     assert read_fcidump_header(path)['nbasis'] == 2 * nmo

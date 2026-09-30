@@ -85,7 +85,7 @@ def from_pyscf(mf, basis=None, active_space=None):
     overlap = mol.intor('int1e_ovlp')
     transform = overlap @ X[:, nfzc:X.shape[-1] - nfzv]
     channels = tuple(transform_slater(occupied, transform) + 0j for occupied
-                     in make_slater(spin_symm, mo_coeff, (occa, occb), nelec))
+                     in make_slater(spin_symm, mo_coeff, (occa, occb)))
 
     logger.info("built a %s single-determinant trial wavefunction: "
                 "nelec=%s, nmo=%d", spin_symm.label, nelec, norb)

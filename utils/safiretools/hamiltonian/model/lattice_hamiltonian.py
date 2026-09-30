@@ -425,7 +425,7 @@ class LatticeHamiltonian(Hamiltonian):
                              data=np.asarray(metadata['basis'], dtype=np.float64))
 
     @classmethod
-    def _read_hdf5(cls, path, fmt: str) -> "LatticeHamiltonian":
+    def _read_hdf5(cls, path) -> "LatticeHamiltonian":
         """
         Read a model Hamiltonian written by `to_hdf5`.
 

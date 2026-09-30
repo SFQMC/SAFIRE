@@ -342,7 +342,7 @@ def _write_one_body_and_constant(f, hcore, enuc, tol, cplx, paren) -> None:
     f.write(fmt_integral(enuc + 0j, -1, -1, -1, -1, cplx, paren=paren))
 
 
-def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
+def write_fcidump(filename, hcore, chol, enuc, nelec, tol=1e-8, ctol=1e-12,
                   sym=1, cplx=True, paren=False, use_spinor=False) -> None:
     """
     Write an FCIDUMP file from Cholesky-factorized integrals.
@@ -352,13 +352,11 @@ def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
     filename : str or pathlib.Path
         File to write.
     hcore : numpy.ndarray
-        One-body Hamiltonian.
+        One-body Hamiltonian, ``(nmo, nmo)``.
     chol : numpy.ndarray or scipy.sparse.csr_array
-        Cholesky matrix ``L[ik,n]``.
+        Cholesky matrix ``L[ik,n]``, ``(nmo*nmo, nchol)``.
     enuc : float
         Constant energy contribution.
-    nmo : int
-        Total number of MOs.
     nelec : tuple(int, int)
         ``(nalpha, nbeta)``.
     tol : float, optional
@@ -395,6 +393,8 @@ def write_fcidump(filename, hcore, chol, enuc, nmo, nelec, tol=1e-8, ctol=1e-12,
         logger.warning("requested 8-fold permutational symmetry with complex "
                        "integrals: writing real integrals")
         cplx = False
+
+    nmo = hcore.shape[0]
 
     # Generate M_{(ik),(lj)} = (ik|jl)
     if isinstance(chol, scipy.sparse.csr_array):

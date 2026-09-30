@@ -48,15 +48,16 @@ CONDITION_MAX = 1.0 / np.sqrt(np.finfo(np.float64).eps)
 # building a Slater matrix
 # ----------------------------------------------------------------------
 
-def _select_orbitals(mo_coeffs, nocc: Iterable, nelec: int):
+def _select_orbitals(mo_coeffs, nocc: Iterable):
     """One spin channel's Slater matrix: the orbitals `nocc` out of `mo_coeffs`."""
+    nelec = len(nocc)
     selection = np.zeros((mo_coeffs.shape[1], nelec))
     selection[nocc, np.arange(nelec)] = 1
 
     return mo_coeffs @ selection + 0j
 
 
-def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
+def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc):
     """
     The Slater matrices for a reference of the given spin symmetry, one per
     spin channel.
@@ -70,34 +71,26 @@ def make_slater(spin_symm: SpinSymm, mo_coeffs, nocc, nelec):
         Orbital coefficients: one matrix, or — for a collinear reference built
         from spin-resolved orbitals (UHF) — one per spin channel.
     nocc : sequence
-        Occupied orbital indices per spin channel. Only the alpha entry is read
-        for the single-channel symmetries.
-    nelec : tuple(int, int)
-        Electron counts ``(nup, ndown)``. A noncollinear reference takes their
-        sum, since both polarizations share one channel.
+        Occupied orbital indices per spin channel; each channel's electron count
+        is its length. Only the alpha entry is read for the single-channel
+        symmetries, and for a noncollinear reference it holds both
+        polarizations' electrons.
 
     Returns
     -------
     tuple of numpy.ndarray
-        One ``complex128`` ``(npol*nmo, nelec_of_that_spin)`` Slater matrix per
-        spin channel.
+        One ``complex128`` ``(npol*nmo, len(nocc_of_that_spin))`` Slater matrix
+        per spin channel.
     """
     mo_coeffs = np.asarray(mo_coeffs)
 
-    if spin_symm is SpinSymm.CLOSED:
-        return (_select_orbitals(mo_coeffs, nocc[0], nelec[0]),)
-    if spin_symm is SpinSymm.NONCOLLINEAR:
-        return (_select_orbitals(mo_coeffs, nocc[0], sum(nelec)),)
-
-    if len(nocc) != len(nelec):
-        raise ValueError(
-            f"nocc describes {len(nocc)} spin channels and nelec {len(nelec)}"
-        )
+    if spin_symm is not SpinSymm.COLLINEAR:
+        return (_select_orbitals(mo_coeffs, nocc[0]),)
 
     # one matrix (ROHF) or one per spin (UHF)
     per_spin = mo_coeffs if mo_coeffs.ndim == 3 else [mo_coeffs] * len(nocc)
-    return tuple(_select_orbitals(coeffs, spin_nocc, spin_nelec)
-                 for coeffs, spin_nocc, spin_nelec in zip(per_spin, nocc, nelec))
+    return tuple(_select_orbitals(coeffs, spin_nocc)
+                 for coeffs, spin_nocc in zip(per_spin, nocc))
 
 
 def transform_slater(orbitals, transform):

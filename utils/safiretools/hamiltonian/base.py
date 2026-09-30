@@ -190,13 +190,13 @@ class Hamiltonian(ABC):
         with h5.File(path, 'r') as fh5:
             check_format_version(fh5['Hamiltonian'])
 
-        return target._read_hdf5(path, fmt)
+        return target._read_hdf5(path)
 
     @classmethod
     @abstractmethod
-    def _read_hdf5(cls, path, fmt: str) -> "Hamiltonian":
+    def _read_hdf5(cls, path) -> "Hamiltonian":
         """
-        Read `path`, which `from_hdf5` has already identified as holding format
-        `fmt`. Subclasses implement this rather than overriding `from_hdf5`, so
-        that dispatch stays in one place.
+        Read `path`, which `from_hdf5` has already identified as holding this
+        subclass's format. Subclasses implement this rather than overriding
+        `from_hdf5`, so that dispatch stays in one place.
         """

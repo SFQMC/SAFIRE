@@ -564,7 +564,7 @@ actually contains via the public `hamiltonian_format(path)` (which replaces
 `converter.py::read_hamil_type`): `model` -> `LatticeHamiltonian`, `dense` ->
 `MolecularHamiltonian`, `kpoint` -> `PeriodicHamiltonian`. It also recognizes `thc` and
 `kpoint_coqui`, which safiretools has no reader for — `from_hdf5` raises `NotImplementedError` for
-those. Subclasses implement `_read_hdf5(path, fmt)` rather than overriding `from_hdf5`, so dispatch
+those. Subclasses implement `_read_hdf5(path)` rather than overriding `from_hdf5`, so dispatch
 stays in one place. Those format names are `HamiltonianFormat` members, which are strings too, so
 they read and compare as the bare names throughout.
 
@@ -917,7 +917,7 @@ It resolves the format first (`hamiltonian_format(path)`)
 and then checks the resolved class against the class it was called on, so
 `MolecularHamiltonian.from_hdf5` on a k-point file raises instead of returning a
 `PeriodicHamiltonian`, while `Hamiltonian.from_hdf5` on the same file returns one. Subclasses
-implement `_read_hdf5(path, fmt)` rather than overriding `from_hdf5`, so dispatch stays in one place.
+implement `_read_hdf5(path)` rather than overriding `from_hdf5`, so dispatch stays in one place.
 
 `Wavefunction`'s base-class factories still need their guard, because inheritance does offer every
 one of them on every subclass. A fixed-answer factory knows its target from its own definition and

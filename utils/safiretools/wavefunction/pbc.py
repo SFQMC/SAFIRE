@@ -29,7 +29,7 @@ from safiretools.types import SpinSymm
 logger = logging.getLogger(__name__)
 
 
-def from_pbc_scf(kmf, basis=None, rediag=True, low=0.1, high=0.95):
+def from_pbc_scf(kmf, basis=None, low=0.1, high=0.95):
     """
     Build a single-determinant trial wavefunction from a periodic PySCF SCF
     object.
@@ -43,9 +43,6 @@ def from_pbc_scf(kmf, basis=None, rediag=True, low=0.1, high=0.95):
         The working basis: the solution's own orbitals, or the orthogonalized
         AO basis. Must match the Hamiltonian. Default None; a collinear
         reference requires ``'ortho_ao'``.
-    rediag : bool, optional
-        Rediagonalize the Fock matrix to get MO coefficients in the
-        orthogonalized AO basis. Default True.
     low, high : float, optional
         Occupancies strictly between these bounds count as partial. The leading
         configuration — the lowest-indexed of the partially occupied bands — is
@@ -76,11 +73,10 @@ def from_pbc_scf(kmf, basis=None, rediag=True, low=0.1, high=0.95):
     from safiretools.convert.pyscf import periodic_solution
 
     return _from_solution(periodic_solution(kmf, basis),
-                          ortho_ao=basis is not None, rediag=rediag,
-                          low=low, high=high)
+                          ortho_ao=basis is not None, low=low, high=high)
 
 
-def _from_solution(scf_data, ortho_ao, rediag, low, high):
+def _from_solution(scf_data, ortho_ao, low, high):
     """`from_pbc_scf` on an already-read `periodic_solution` mapping."""
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
 
@@ -100,7 +96,7 @@ def _from_solution(scf_data, ortho_ao, rediag, low, high):
         logger.debug("  k-point %d: %s", index, kpt)
 
     eigenvalues, orbitals = _generate_orbitals(
-        fock, scf_data['X'], nmo_pk, rediag=rediag, ortho_ao=ortho_ao,
+        fock, scf_data['X'], nmo_pk, ortho_ao=ortho_ao,
         mo_energy=scf_data['mo_energy'], collinear=collinear)
 
     occupancies, order = _reoccupy(mo_occ, eigenvalues, collinear=collinear,
@@ -121,7 +117,7 @@ def _from_solution(scf_data, ortho_ao, rediag, low, high):
 # orbitals per k-point
 # ----------------------------------------------------------------------
 
-def _generate_orbitals(fock, X, nmo_pk, rediag, ortho_ao, mo_energy, collinear):
+def _generate_orbitals(fock, X, nmo_pk, ortho_ao, mo_energy, collinear):
     """
     Orbitals and eigenvalues for every k-point and spin channel.
 

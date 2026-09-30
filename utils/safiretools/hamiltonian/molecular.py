@@ -427,12 +427,12 @@ class MolecularHamiltonian(Hamiltonian):
                 "spin-orbital one"
             )
 
-        write_fcidump(path, hcore, chol, self.enuc, nbasis, nelec,
+        write_fcidump(path, hcore, chol, self.enuc, nelec,
                       tol=tol, ctol=ctol, sym=sym, cplx=cplx, paren=paren,
                       use_spinor=use_spinor)
 
     @classmethod
-    def _read_hdf5(cls, path, fmt: str) -> "MolecularHamiltonian":
+    def _read_hdf5(cls, path) -> "MolecularHamiltonian":
         """
         Read a dense Hamiltonian written by `to_hdf5`.
 
