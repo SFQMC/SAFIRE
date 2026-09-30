@@ -73,7 +73,7 @@ public:
       bool const walkers_carry_energy =
           prop.stores_local_energy() && std::addressof(energy_wfn) == std::addressof(wfn0);
       estimators_.emplace_back(std::make_unique<EnergyEstimator<MEM>>(
-          *estimators.energy, walkers_carry_energy, energy_wfn));
+          *estimators.energy, walkers_carry_energy, exec.timestep, energy_wfn));
       app_log(1, "Energy estimator initialized");
     }
 

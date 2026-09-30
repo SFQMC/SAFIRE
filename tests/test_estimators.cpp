@@ -399,7 +399,8 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
 
     auto expected_bins = [&](long nsteps) {
       std::map<std::string, long> expected;
-      for(auto const* name : {"Energy", "OnebodyEnergy", "ExchangeEnergy", "CoulombEnergy", "Overlap"}) {
+      for(auto const* name : {"Energy", "OnebodyEnergy", "ExchangeEnergy", "CoulombEnergy", "Overlap",
+                              "ProjectionTime", "EffectiveNumWalkers", "Phase", "TotalWeight"}) {
         expected[name] = nsteps;
       }
       expect_observables(expected, "MixedEstimator", nsteps / 2);
@@ -520,12 +521,14 @@ void estimators_local_energy_matches_recomputation(
                                               .hamiltonian      = "ham0",
                                               .measure_interval = 1}},
       .population_control_interval = pop_control_interval,
+      .timestep = dt,
       .n_walkers_per_mpi_task = nwalk};
 
   Estimators<MEM> estimators{
       mpi, 0, exec, wset, wfn, prop,
       [&](std::string const&, std::string const&) -> Wavefunction<MEM>& { return wfn; }};
-  estimators.measure(*mpi, 0, wset);
+  constexpr long step = 3;
+  estimators.measure(*mpi, step, wset);
 
   // the recomputation, averaged the way MeasurementOutput averages: weighted, reduced over the
   // ranks and divided by the summed weight
@@ -546,7 +549,8 @@ void estimators_local_energy_matches_recomputation(
     for(int k = 0; k < 3; ++k) {
       expected(k + 1) += weights_h(iw) * localEnergy_h(iw, k);
     }
-    expected(4) += weights_h(iw) * ovlp_h(iw);
+    // Energy returns the log overlap
+    expected(4) += weights_h(iw) * std::exp(ovlp_h(iw));
   }
   expected(0) = expected(1) + expected(2) + expected(3);
 
@@ -555,6 +559,9 @@ void estimators_local_energy_matches_recomputation(
     expected(k) = mpi->comm.reduce_value(expected(k));
   }
   denominator = mpi->comm.reduce_value(denominator);
+
+  RealType const abs_sum = mpi->comm.reduce_value(nda::sum(nda::abs(weights_h)));
+  RealType const abs2_sum = mpi->comm.reduce_value(nda::sum(nda::abs2(weights_h)));
 
   // only root records any bin, and Estimators::write is not guarded, so root alone writes
   utils::TemporaryDirectory tmpdir;
@@ -575,6 +582,18 @@ void estimators_local_energy_matches_recomputation(
       // to roundoff rather than exactly
       CHECK_THAT(bins(0), utils::Approx(expected(k) / denominator, 1e-10, 1e-10));
     }
+
+    auto read_bin = [&]<typename T>(std::string_view name, T) {
+      nda::array<T,1> bins;
+      h5::read(root, std::format("Measurements/Stage0/{}/bins", name), bins);
+      REQUIRE(bins.extent(0) == 1);
+      return bins(0);
+    };
+    // measured after the propagation of the step, so step 3 has propagated for four timesteps
+    CHECK_THAT(read_bin("ProjectionTime", RealType{}), utils::Approx((step + 1) * dt));
+    CHECK_THAT(read_bin("EffectiveNumWalkers", RealType{}), utils::Approx(abs_sum * abs_sum / abs2_sum));
+    CHECK_THAT(read_bin("Phase", ComplexType{}), utils::Approx(denominator / abs_sum));
+    CHECK_THAT(read_bin("TotalWeight", ComplexType{}), utils::Approx(denominator));
   }
 }
 

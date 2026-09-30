@@ -127,4 +127,23 @@ private:
   Measurements& meas_;
 };
 
+struct WeightStatistics {
+  RealType effective_num_walkers{}; // (Σ|W|)^2 / Σ|W|^2
+  ComplexType phase{}; // ΣW / Σ|W|
+  ComplexType total_weight{}; // ΣW
+};
+
+WeightStatistics weight_statistics(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+                                   nda::MemoryVector auto const& weights) {
+  // a rank holds a handful of walkers, and cuTENSOR has no SUM_ABS reduction, so the moments
+  // are taken on the host
+  auto const w = nda::to_host(weights);
+  std::array<ComplexType, 3> moments{nda::sum(w), nda::sum(nda::abs(w)), nda::sum(nda::abs2(w))};
+  mpi.comm.all_reduce_in_place_n(moments.data(), moments.size(), std::plus<>{});
+
+  return {.effective_num_walkers = (moments[1]*moments[1] / moments[2]).real(),
+          .phase = moments[0] / moments[1],
+          .total_weight = moments[0]};
+}
+
 }
