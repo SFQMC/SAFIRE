@@ -14,6 +14,12 @@ from warnings import warn
 
 import numpy as np
 
+
+class RebinningWarning(UserWarning):
+    """The rebin size is not large compared to the autocorrelation time, so the error bar
+    from the bins is underestimated."""
+
+
 def rebinning_analysis(samples, skip=0, rebinsize=None):
     """Rebin a time series into decorrelated bins and estimate its autocorrelation time.
 
@@ -64,6 +70,7 @@ def rebinning_analysis(samples, skip=0, rebinsize=None):
             f'rebin size {rebinsize} is not large compared to the autocorrelation time '
             f'{autocorrtime:.3g}, so the error bar from these {rebincount} bins may be underestimated. '
             f'Sample longer or pass a larger rebinsize.',
+            RebinningWarning,
             stacklevel=2,
         )
 
