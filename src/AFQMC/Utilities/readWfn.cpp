@@ -201,6 +201,20 @@ void read_ph_wavefunction_hdf(h5::group& grp,
   utils::check(occa.extent(0) >= ndets && occb.extent(0) >= ndets, " occupation arrays too small.");
   utils::check_shape(occa(range(ndets), all), "occa", ndets, nup);
   utils::check_shape(occb(range(ndets), all), "occb", ndets, NEL - nup);
+  // with a reference, the occupation numbers index its orbitals (the rows of PsiT_n)
+  if(nreferences > 0) {
+    for(int s = 0; s < 2; ++s) {
+      auto const& occ = (s == 0 ? occa : occb);
+      int const ref   = (s == 0 ? 0 : nreferences - 1);
+      int const norb  = PsiT(ref).extent(0);
+      for(int i = 0; i < ndets; ++i) {
+        for(int k = 0; k < occ.extent(1); ++k) {
+          utils::check(occ(i, k) < norb, "PHMSD {}({},{}) = {} is past the {} orbitals of the reference PsiT_{}.",
+                       s == 0 ? "occa" : "occb", i, k, occ(i, k), norb, ref);
+        }
+      }
+    }
+  }
   occs.resize(ndets,NEL);
   occs(all, range(nup)) = occa(range(ndets), all);
   occs(all, range(nup, NEL)) = occb(range(ndets), all) + NMO;
