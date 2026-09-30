@@ -89,9 +89,12 @@ WALKER_TYPES read_spin_type(h5::group grp) {
 }
 
 WavefunctionInfo read_wavefunction_info(h5::group ngrp) {
-  WavefunctionInfo info{.walker_type = read_spin_type(ngrp)};
+  WavefunctionInfo info{.walker_type = read_spin_type(ngrp),
+                        .NMO         = 0,
+                        .nup         = 0,
+                        .ndown       = 0,
+                        .ndets       = dataset_extent(ngrp, "ci_coeffs", 0)};
   auto const [nspin, npol] = walkerTypeToDims(info.walker_type);
-  info.ndets = dataset_extent(ngrp, "ci_coeffs", 0);
 
   if(ngrp.has_key("occa")) { // PHMSD
     // an occupation-only expansion has no array that spans the orbitals, so the count is recorded
