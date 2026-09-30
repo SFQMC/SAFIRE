@@ -30,7 +30,7 @@ from safiretools.hamiltonian.periodic import (
 # ----------------------------------------------------------------------
 
 def test_setup_basis_map_numbers_orbitals_consecutively():
-    ik2n, nmo_tot = setup_basis_map([3, 2], nkpts=2)
+    ik2n, nmo_tot = setup_basis_map([3, 2])
 
     assert nmo_tot == 5
     assert list(ik2n[:, 0]) == [0, 1, 2]

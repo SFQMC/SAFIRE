@@ -170,7 +170,7 @@ def generate_grid_shifts(cell):
     return gmap, Qi, ngs
 
 
-def setup_basis_map(nmo_pk, nkpts):
+def setup_basis_map(nmo_pk):
     """
     Map each ``(orbital, k-point)`` pair onto its index in the combined
     supercell basis.
@@ -179,8 +179,6 @@ def setup_basis_map(nmo_pk, nkpts):
     ----------
     nmo_pk : sequence of int
         Number of orbitals at each k-point.
-    nkpts : int
-        Number of k-points.
 
     Returns
     -------
@@ -189,6 +187,7 @@ def setup_basis_map(nmo_pk, nkpts):
     nmo_tot : int
         Size of the combined basis.
     """
+    nkpts = len(nmo_pk)
     nmo_max = int(np.max(nmo_pk))
     ik2n = -1 * np.ones((nmo_max, nkpts), dtype=np.int32)
 
@@ -817,7 +816,7 @@ class PeriodicHamiltonian(Hamiltonian):
         return blocks
 
     @classmethod
-    def _read_hdf5(cls, path, fmt: str) -> "PeriodicHamiltonian":
+    def _read_hdf5(cls, path) -> "PeriodicHamiltonian":
         """
         Read a periodic Hamiltonian written by `to_hdf5`.
 
@@ -942,7 +941,7 @@ def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
     nkpts = len(solver.kpts)
     nchol = cholvecs.shape[-1]
 
-    ik2n, nmo_tot = setup_basis_map(nmo_pk, nkpts)
+    ik2n, nmo_tot = setup_basis_map(nmo_pk)
     factor = 1.0 / math.sqrt(nkpts)
 
     hcore = np.zeros((nmo_tot, nmo_tot), dtype=np.complex128)

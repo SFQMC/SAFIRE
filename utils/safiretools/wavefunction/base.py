@@ -423,8 +423,7 @@ class Wavefunction(ABC):
         return from_dice(path, ndets=ndets, state=state)
 
     @classmethod
-    def from_pbc_scf(cls, kmf, basis=None, rediag=True,
-                     low=0.1, high=0.95) -> "Wavefunction":
+    def from_pbc_scf(cls, kmf, basis=None, low=0.1, high=0.95) -> "Wavefunction":
         """
         Build a single-determinant trial wavefunction from a periodic PySCF SCF
         object. Always a `safiretools.NOMSDWavefunction`.
@@ -437,4 +436,4 @@ class Wavefunction(ABC):
 
         _check_representation(cls, NOMSDWavefunction, 'from_pbc_scf')
 
-        return from_pbc_scf(kmf, basis=basis, rediag=rediag, low=low, high=high)
+        return from_pbc_scf(kmf, basis=basis, low=low, high=high)

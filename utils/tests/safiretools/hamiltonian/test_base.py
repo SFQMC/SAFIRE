@@ -96,7 +96,7 @@ def test_from_hdf5_dispatches_to_the_right_subclass(tmp_path, monkeypatch,
     """
     seen = {}
     monkeypatch.setattr(expected, '_read_hdf5',
-                        classmethod(lambda cls, path, fmt: seen.setdefault('cls', cls)))
+                        classmethod(lambda cls, path: seen.setdefault('cls', cls)))
 
     path = _make(tmp_path, 'ham.h5', datasets)
     with h5.File(path, 'a') as fh5:

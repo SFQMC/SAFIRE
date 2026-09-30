@@ -33,16 +33,14 @@ def coeffs():
 class TestMakeSlater:
 
     def test_closed_takes_one_channel_of_alpha_columns(self, coeffs):
-        (slater,) = make_slater(SpinSymm.CLOSED, coeffs, ([0, 2], [0, 2]),
-                                (2, 2))
+        (slater,) = make_slater(SpinSymm.CLOSED, coeffs, ([0, 2], [0, 2]))
 
         assert np.array_equal(slater, coeffs[:, [0, 2]])
         assert slater.dtype == np.complex128
 
     def test_collinear_gives_one_matrix_per_channel(self, coeffs):
         # a 2-D mo_coeff is an ROHF reference: both channels share it
-        alpha, beta = make_slater(SpinSymm.COLLINEAR, coeffs, ([0, 1], [0]),
-                                  (2, 1))
+        alpha, beta = make_slater(SpinSymm.COLLINEAR, coeffs, ([0, 1], [0]))
 
         assert np.array_equal(alpha, coeffs[:, [0, 1]])
         assert np.array_equal(beta, coeffs[:, [0]])
@@ -50,22 +48,16 @@ class TestMakeSlater:
     def test_collinear_reads_one_matrix_per_spin_when_given_them(self, coeffs):
         # a 3-D mo_coeff is a UHF reference: one matrix per channel
         spin_coeffs = np.array([coeffs, -coeffs])
-        alpha, beta = make_slater(SpinSymm.COLLINEAR, spin_coeffs,
-                                  ([0, 1], [3]), (2, 1))
+        alpha, beta = make_slater(SpinSymm.COLLINEAR, spin_coeffs, ([0, 1], [3]))
 
         assert np.array_equal(alpha, coeffs[:, [0, 1]])
         assert np.array_equal(beta, -coeffs[:, [3]])
 
     def test_noncollinear_takes_every_electron_in_one_channel(self):
         spinor_coeffs = np.arange(24.0).reshape(4, 6)
-        (slater,) = make_slater(SpinSymm.NONCOLLINEAR, spinor_coeffs,
-                                ([0, 2, 5],), (2, 1))
+        (slater,) = make_slater(SpinSymm.NONCOLLINEAR, spinor_coeffs, ([0, 2, 5],))
 
         assert np.array_equal(slater, spinor_coeffs[:, [0, 2, 5]])
-
-    def test_a_channel_count_mismatch_is_rejected(self, coeffs):
-        with pytest.raises(ValueError, match="nocc describes 2 spin channels"):
-            make_slater(SpinSymm.COLLINEAR, coeffs, ([0], [1]), (1,))
 
 
 class TestTransformSlater:
