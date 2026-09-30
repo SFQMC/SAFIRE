@@ -108,18 +108,21 @@ class PHMSDWavefunction(Wavefunction):
         # one width per independent spin channel, so the beta array has zero
         #   width whenever the two polarizations share a single channel
         widths = self.nelec_per_spin + (0,) * (2 - self.nspin)
+        # with a reference, the occupation numbers index its orbitals instead of the basis
+        bounds = (self.nrows, self.nrows) if self._orbitals is None \
+            else (self._orbitals[0].shape[1], self._orbitals[-1].shape[1])
 
-        for name, occ, width in (('occa', self.occa, widths[0]),
-                                 ('occb', self.occb, widths[1])):
+        for name, occ, width, bound in (('occa', self.occa, widths[0], bounds[0]),
+                                        ('occb', self.occb, widths[1], bounds[1])):
             if occ.shape != (self.ndets, width):
                 raise ValueError(
                     f"{name} has shape {occ.shape}, expected "
                     f"({self.ndets}, {width}) for {self.ndets} determinant(s) of a "
                     f"{self.spin_symm.label} wavefunction with nelec={self.nelec}"
                 )
-            if occ.size and (occ.min() < 0 or occ.max() >= self.nrows):
+            if occ.size and (occ.min() < 0 or occ.max() >= bound):
                 raise ValueError(
-                    f"{name} holds orbital indices outside [0, {self.nrows}): "
+                    f"{name} holds orbital indices outside [0, {bound}): "
                     f"[{occ.min()}, {occ.max()}]"
                 )
 
@@ -155,7 +158,7 @@ class PHMSDWavefunction(Wavefunction):
     @property
     def nreferences(self) -> int:
         """
-        Number of explicit orbital references, which ``type`` records on disk:
+        Number of explicit orbital references, written as ``PsiT_0``, ``PsiT_1``:
         0 when the occupation numbers index the Hamiltonian's basis directly.
         """
         return 0 if self._orbitals is None else len(self._orbitals)
