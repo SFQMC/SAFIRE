@@ -59,7 +59,7 @@ import numpy as np
 import scipy.stats
 
 from safiretools import SpinSymm, Results
-from safiretools.results import RebinningWarning
+from safiretools.results.results import RebinningWarning
 
 from functional_cases import (
     HamiltonianClass,
