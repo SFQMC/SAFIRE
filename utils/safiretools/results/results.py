@@ -185,7 +185,7 @@ class Results:
 
         Warns
         -----
-        UserWarning
+        RebinningWarning
             If the rebin size does not come out large compared to the autocorrelation time
             of the series, in which case `error` is too small.
         """
@@ -241,7 +241,7 @@ class Results:
 
         Warns
         -----
-        UserWarning
+        RebinningWarning
             If the rebin size does not come out large compared to the autocorrelation time
             of one of the series, in which case `error` is too small.
         """

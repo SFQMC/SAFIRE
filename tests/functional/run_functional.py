@@ -48,6 +48,7 @@ import shutil
 import subprocess as sp
 import sys
 import tempfile
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -57,8 +58,8 @@ import h5py as h5
 import numpy as np
 import scipy.stats
 
-from safiretools import SpinSymm
-from safiretools.results import Results
+from safiretools import SpinSymm, Results
+from safiretools.results import RebinningWarning
 
 from functional_cases import (
     HamiltonianClass,
@@ -683,7 +684,12 @@ def run_case(case: Case, test_type: TestType, out_root: Path, mpiexec: str,
         run_time = perf_counter() - t0
 
     results = out_dir / "results.h5"
-    record_results(out_dir, return_code, ranks, run_time)
+    with warnings.catch_warnings():
+        if snapshot:
+            # a snapshot compares the error bars as exact numbers, so it does not matter
+            # that a run this short underestimates them
+            warnings.simplefilter("ignore", RebinningWarning)
+        record_results(out_dir, return_code, ranks, run_time)
     reference = case.reference(snapshot)
     if regenerate:
         return store_reference(results, reference, test_type)

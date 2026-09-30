@@ -11,9 +11,10 @@
 """Reading a results.h5 and turning its bins into averages with error bars."""
 
 from safiretools.results.results import Results
-from safiretools.results.stats import jackknife, rebinning_analysis, standard_error
+from safiretools.results.stats import RebinningWarning, jackknife, rebinning_analysis, standard_error
 
 __all__ = [
+    'RebinningWarning',
     'Results',
     'jackknife',
     'rebinning_analysis',
