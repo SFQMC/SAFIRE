@@ -38,11 +38,12 @@ class EnergyEstimator : public EstimatorBase<MEM>
 public:
   /// `walkers_carry_energy` says whether the propagator already evaluated the local energy of
   /// this wavefunction and left its components on the walkers, in which case there is nothing
-  /// to recompute here.
-  EnergyEstimator(EnergyEstimatorParameters const& params, bool walkers_carry_energy, Wavefunction<MEM>& wfn)
+  /// to recompute here. `timestep` is the one the stage propagates with.
+  EnergyEstimator(EnergyEstimatorParameters const& params, bool walkers_carry_energy, RealType timestep, Wavefunction<MEM>& wfn)
       : wfn_{wfn},
         measure_interval_{resolved(params.measure_interval, "measure_interval")},
-        walkers_carry_energy_{walkers_carry_energy}
+        walkers_carry_energy_{walkers_carry_energy},
+        timestep_{timestep}
   {
   }
 
@@ -81,7 +82,20 @@ public:
     output.measure(mpi, "OnebodyEnergy", avgLocalEnergy_h(0));
     output.measure(mpi, "ExchangeEnergy", avgLocalEnergy_h(1));
     output.measure(mpi, "CoulombEnergy", avgLocalEnergy_h(2));
+    nda::tensor::scale(1.0, ovlp, nda::tensor::unary_op::EXP);
     output.measure(mpi, "Overlap", nda::blas::dot(ovlp, weights));
+
+    WeightStatistics const weight_stats = weight_statistics(mpi, weights);
+    if(mpi.comm.root()) {
+      // the driver measures after propagating, so step 0 is one timestep into the stage. A
+      // finite temperature sample is a whole sweep, which always ends at the same beta
+      if(!wset.isFiniteTemperature()) {
+        meas.measure("ProjectionTime", (step + 1) * timestep_);
+      }
+      meas.measure("EffectiveNumWalkers", weight_stats.effective_num_walkers);
+      meas.measure("Phase", weight_stats.phase);
+      meas.measure("TotalWeight", weight_stats.total_weight);
+    }
   }
 
 private:
@@ -90,6 +104,7 @@ private:
   // in units of steps
   int measure_interval_{};
   bool walkers_carry_energy_{};
+  RealType timestep_{};
 };
 } // namespace afqmc
 } // namespace sfqmc
