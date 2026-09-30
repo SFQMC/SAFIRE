@@ -62,9 +62,8 @@ def rebinning_analysis(samples, skip=0, rebinsize=None):
     if rebinsize < 10 * autocorrtime:
         warn(
             f'rebin size {rebinsize} is not large compared to the autocorrelation time '
-            f'{autocorrtime:.3g}, so the error bar from these {rebincount} bins is too '
-            f'small by roughly {50 * autocorrtime / rebinsize:.0f}%. Sample longer or '
-            f'pass a larger rebinsize.',
+            f'{autocorrtime:.3g}, so the error bar from these {rebincount} bins may be underestimated. '
+            f'Sample longer or pass a larger rebinsize.',
             stacklevel=2,
         )
 
