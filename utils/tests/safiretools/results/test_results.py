@@ -8,13 +8,20 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
+import warnings
+
 import numpy as np
 import h5py as h5
 import pytest
 
 from safiretools.hdf5 import write_format_version
-from safiretools.results import Results
-from safiretools.results.stats import rebinning_analysis, standard_error
+from safiretools.results.results import RebinningWarning, Results
+from safiretools.results.stats import (
+    jackknife,
+    optimal_rebinsize,
+    rebinning_analysis,
+    standard_error,
+)
 
 RDM = 'BackPropEstimator/Steps=40/OneRDM'
 
@@ -108,7 +115,8 @@ def test_an_unknown_observable_says_what_there_is(results_file):
 
 
 def test_average_agrees_with_rebinning_the_series_by_hand(results_file, measured):
-    bins, _ = rebinning_analysis(measured['Energy'], skip=5)
+    rebinsize, _ = optimal_rebinsize(measured['Energy'], skip=5)
+    bins, _ = rebinning_analysis(measured['Energy'], rebinsize=rebinsize, skip=5)
 
     mean, error = Results(results_file, stage=0).average('Energy', skip=5)
 
@@ -134,26 +142,44 @@ def test_evaluate_reproduces_average_for_a_linear_function(results_file):
 
 
 def test_evaluate_passes_the_observables_in_the_order_they_are_named(results_file):
-    # a linear function, so that the bias correction cannot blur the comparison
+    # a linear function, so that the bias correction cannot blur the comparison; one
+    # rebin size for every call, since each drops a different remainder of bins otherwise
     results = Results(results_file, stage=0)
-    energy, _ = results.average('Energy')
-    norm, _ = results.average('Norm')
+    energy, _ = results.average('Energy', rebinsize=8)
+    norm, _ = results.average('Norm', rebinsize=8)
 
-    value, _ = results.evaluate(lambda a, b: a - b, ['Energy', 'Norm'])
+    value, _ = results.evaluate(lambda a, b: a - b, ['Energy', 'Norm'], rebinsize=8)
 
     assert value == pytest.approx(energy - norm)
 
 
 def test_evaluate_debiases_a_nonlinear_function(results_file):
+    # one rebin size, so that the difference is the bias correction and not a different
+    # remainder of bins dropped
     results = Results(results_file, stage=0)
-    energy, _ = results.average('Energy')
-    norm, _ = results.average('Norm')
+    energy, _ = results.average('Energy', rebinsize=8)
+    norm, _ = results.average('Norm', rebinsize=8)
 
-    value, _ = results.evaluate(lambda a, b: a / b, ['Energy', 'Norm'])
+    value, _ = results.evaluate(lambda a, b: a / b, ['Energy', 'Norm'], rebinsize=8)
 
     # the correction is small but it is there, and it is not noise
     assert value != pytest.approx(energy / norm, rel=1e-9)
     assert value == pytest.approx(energy / norm, rel=1e-3)
+
+
+def test_evaluate_rebins_every_observable_with_the_largest_size(results_file, measured):
+    # the jackknife needs one bin count, so the observable needing the larger rebin
+    # size sets it for all of them
+    rebinsize = max(optimal_rebinsize(measured[name])[0] for name in ['Energy', 'Norm'])
+    binned = [
+        rebinning_analysis(measured[name], rebinsize=rebinsize)[0] for name in ['Energy', 'Norm']
+    ]
+
+    value, error = Results(results_file, stage=0).evaluate(lambda a, b: a / b, ['Energy', 'Norm'])
+
+    expected, expected_error = jackknife(lambda a, b: a / b, *binned)
+    assert value == pytest.approx(expected)
+    assert error == pytest.approx(expected_error)
 
 
 def test_evaluate_rejects_observables_of_different_length(results_file):
@@ -161,3 +187,27 @@ def test_evaluate_rejects_observables_of_different_length(results_file):
         Results(results_file, stage=0).evaluate(
             lambda energy, short: energy.real + short, ['Energy', 'Short']
         )
+
+
+def add_real_observable(results_file, name, bins):
+    """Write one more real observable into Stage0 of `results_file`."""
+    with h5.File(results_file, 'a') as f:
+        f.create_dataset(f'Measurements/Stage0/{name}/bins', data=bins)
+
+
+def add_drift(results_file):
+    """Add an observable ``Drift`` that decays from three standard deviations off."""
+    rng = np.random.default_rng(15)
+    steps = np.arange(120)
+    add_real_observable(results_file, 'Drift', rng.normal(size=steps.size) + 3 * np.exp(-steps / 15))
+
+
+def test_stationary_observables_average_without_a_warning(results_file, measured):
+    # the 1-RDM is not a scalar, so it is not tested for drift at all
+    results = Results(results_file, stage=0)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        for name in measured:
+            results.average(name)
+        results.evaluate(lambda a, b: a / b, ['Energy', 'Norm'])

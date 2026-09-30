@@ -19,15 +19,64 @@ bins is an unweighted mean.
 import re
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from warnings import simplefilter, warn
 
 import h5py as h5
 import numpy as np
 
 from safiretools.hdf5 import check_format_version, read_complex
-from safiretools.results.stats import jackknife, rebinning_analysis, standard_error
+from safiretools.results.stats import (
+    jackknife,
+    optimal_rebinsize,
+    rebinning_analysis,
+    standard_error,
+    stationarity_pvalue,
+)
 
 # one `execute` block of the input writes its observables below one of these groups
 STAGE_GROUP = re.compile(r"^Stage(\d+)$")
+
+
+class RebinningWarning(UserWarning):
+    """The bins of an observable do not support the average and error bar taken from them:
+    either the series is too short for its autocorrelation time, so the error bar is
+    underestimated, or it drifts, so the average is biased."""
+
+
+# Python shows a warning once per line and text by default, which would hide the same
+# observable failing again in another run. Appended, so that filters set from the command
+# line or by the caller still decide.
+simplefilter("always", RebinningWarning, append=True)
+
+
+def _checked_rebinsize(name, series, skip, rebinsize):
+    """Rebin size for the series of observable `name`, warning about what undermines it.
+
+    A scalar series is put to `stationarity_pvalue` and taken to drift at 99.99%
+    confidence. Without a `rebinsize`, the one `optimal_rebinsize` chooses is returned.
+    """
+    if series.ndim == 1:
+        pvalue = stationarity_pvalue(series, skip)
+        if pvalue < 0.0001:
+            warn(
+                f"'{name}' may not be equilibrated: if it were, a drift this large would have a "
+                f"p-value of {pvalue:.2g}. Inspect `result.timeseries(\"{name}\")` visually and "
+                f"pass a higher `skip` parameter to skip the unequilibrated part.",
+                RebinningWarning,
+                stacklevel=3,
+            )
+
+    if rebinsize is None:
+        rebinsize, meets_criterion = optimal_rebinsize(series, skip)
+        if not meets_criterion:
+            warn(
+                f"'{name}' is too short for its autocorrelation time: no rebin size up to "
+                f"{rebinsize} meets the rebinning criterion for its {series[skip:].shape[0]} "
+                "bins after skip, so its error bar may be underestimated.",
+                RebinningWarning,
+                stacklevel=3,
+            )
+    return rebinsize
 
 
 class Results:
@@ -171,8 +220,8 @@ class Results:
         skip : int, optional
             Leading bins to drop as equilibration, default 0.
         rebinsize : int, optional
-            Bins to average into one before taking the error. Defaults to roughly the
-            square root of the number of bins left after `skip`.
+            Bins to average into one before taking the error. Defaults to the size
+            `optimal_rebinsize` chooses for the bins left after `skip`.
 
         Returns
         -------
@@ -186,10 +235,13 @@ class Results:
         Warns
         -----
         RebinningWarning
-            If the rebin size does not come out large compared to the autocorrelation time
-            of the series, in which case `error` is too small.
+            If the series is too short for its autocorrelation time, in which case `error`
+            is too small, or if a scalar observable drifts after `skip`, in which case
+            `mean` is biased.
         """
-        bins, _ = rebinning_analysis(self.timeseries(observable_name), skip, rebinsize)
+        series = self.timeseries(observable_name)
+        rebinsize = _checked_rebinsize(observable_name, series, skip, rebinsize)
+        bins, _ = rebinning_analysis(series, rebinsize=rebinsize, skip=skip)
         return bins.mean(axis=0), standard_error(bins)
 
     def evaluate(
@@ -220,8 +272,9 @@ class Results:
         skip : int, optional
             Leading bins to drop as equilibration, default 0.
         rebinsize : int, optional
-            Bins to average into one before the jackknife. Defaults to roughly the square
-            root of the number of bins left after `skip`.
+            Bins to average into one before the jackknife, the same for every observable.
+            Defaults to the largest of the sizes `optimal_rebinsize` chooses for them, so
+            that the slowest observable is rebinned far enough.
 
         Returns
         -------
@@ -242,22 +295,32 @@ class Results:
         Warns
         -----
         RebinningWarning
-            If the rebin size does not come out large compared to the autocorrelation time
-            of one of the series, in which case `error` is too small.
+            If one of the series is too short for its autocorrelation time, in which case
+            `error` is too small, or if a scalar observable among them drifts after `skip`,
+            in which case `value` is biased.
         """
         observable_names = list(observable_names)
-        binned = [
-            rebinning_analysis(self.timeseries(name), skip, rebinsize)[0]
-            for name in observable_names
-        ]
+        series = [self.timeseries(name) for name in observable_names]
 
-        if len({bins.shape[0] for bins in binned}) != 1:
+        # every series is rebinned with one size, so they line up for the jackknife exactly
+        # when they are equally long; checked first, since a size chosen for the longer ones
+        # can leave a shorter one without enough bins to get that far
+        if len({values.shape[0] for values in series}) != 1:
             raise ValueError(
                 'observables can only be combined if they share a bin count, but '
                 + ', '.join(
-                    f"'{name}' has {bins.shape[0]}"
-                    for name, bins in zip(observable_names, binned, strict=True)
+                    f"'{name}' has {values.shape[0]}"
+                    for name, values in zip(observable_names, series, strict=True)
                 )
             )
+
+        # a loop rather than a comprehension, so the warnings point at the caller's frame
+        rebinsizes = []
+        for name, values in zip(observable_names, series, strict=True):
+            rebinsizes.append(_checked_rebinsize(name, values, skip, rebinsize))
+        rebinsize = max(rebinsizes)
+        binned = [
+            rebinning_analysis(values, rebinsize=rebinsize, skip=skip)[0] for values in series
+        ]
 
         return jackknife(func, *binned)
