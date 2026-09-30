@@ -105,7 +105,7 @@ ReferenceInputs read_reference_inputs(h5::group const& root,
 
 std::string reference_file_path()
 {
-  return std::string(PROJECT_SOURCE_DIR_STR) + "/tests/unit_test_files/rdm_reference.h5";
+  return std::string(PROJECT_SOURCE_DIR_STR) + "/tests/rdm_reference.h5";
 }
 
 ReferenceInputs load_reference(std::string const& case_group, WALKER_TYPES wt)

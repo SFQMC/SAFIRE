@@ -54,7 +54,6 @@ extern std::shared_ptr<mpi_context_t<boost::mpi3::communicator>> __unit_test_mpi
 /* Path to unit test files included in the code base */
 inline constexpr std::string unit_test_base()
 {
-  //std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/unit_test_files/";
   std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/functional/afqmc_inputs/";
   return pre;
 }

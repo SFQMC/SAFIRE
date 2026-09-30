@@ -189,11 +189,11 @@ TEST_CASE("hamiltonian_factory: thc_vs_chol_energy", "[hamiltonian_factory]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
 
-  std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/unit_test_files/C_1x1x1_ks_basis/";
-    thc_vs_chol_energy_agreement(mpi,
-      pre + "ham_chol_1e-5.h5",
-      pre + "ham_thc_1e-6.h5",
-      pre + "wfn_mf_pbe.h5");
+  std::string pre = utils::unit_test_base() + "C_diamond_coqui/";
+  thc_vs_chol_energy_agreement(mpi,
+    pre + "ham_chol_1e-5.h5",
+    pre + "ham_thc_1e-6.h5",
+    pre + "wfn_mf_pbe_closed.h5");
 }
 
 // Regression test for the Madelung electron self-interaction offset (see the constant
@@ -205,9 +205,9 @@ TEST_CASE("hamiltonian_factory: closed_vs_collinear_energy_offset", "[hamiltonia
 {
   auto& mpi = utils::make_unit_test_mpi_context();
 
-  std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/unit_test_files/C_1x1x1_ks_basis/";
+  std::string pre = utils::unit_test_base() + "C_diamond_coqui/";
   std::string chol_file = pre + "ham_chol_1e-5.h5";
-  std::string wfn_file  = pre + "wfn_mf_pbe.h5";
+  std::string wfn_file  = pre + "wfn_mf_pbe_closed.h5";
   utils::check(utils::file_exists(chol_file), "Cholesky file not found: {}", chol_file);
   utils::check(utils::file_exists(wfn_file),  "Wavefunction file not found: {}", wfn_file);
 
