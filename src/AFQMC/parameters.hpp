@@ -87,7 +87,7 @@ struct WalkerSetParameters {
   std::string name{};
   WALKER_TYPES walker_type{COLLINEAR};
   LoadBalanceAlgorithm load_balance_type{LoadBalanceAlgorithm::async};
-  BranchingAlgorithm pop_control_type{BranchingAlgorithm::pair};
+  BranchingAlgorithm pop_control_type{BranchingAlgorithm::serial_comb};
   double min_weight{0.05};
   double max_weight{4.0};
 
