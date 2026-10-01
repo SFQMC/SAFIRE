@@ -26,6 +26,7 @@
 #include "utilities/check.hpp"
 #include "utilities/check_shape.hpp"
 #include "utilities/h5_utils.hpp"
+#include "utilities/memory_utils.hpp"
 #include "numerics/nda_functions.hpp"
 #include "numerics/operations/tensor.hpp"
 #include "AFQMC/config.h"
@@ -56,7 +57,6 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   std::string base_error(" Error in KPFactorizedHamiltonian::getHamiltonianOperations_shared: \n    ");
   auto all = range::all;
   std::string format;  // only meaningful at root
-  double GBx = sizeof(ComplexType)/double(1024*1024*1024);
   ComplexType zero(0.0),one(1.0);
   long nspin = (type == COLLINEAR?2:1);
   long npol = (type == NONCOLLINEAR?2:1);
@@ -318,8 +318,8 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     return H1_h;
   });
 
-  app_log(2, "KPFactorizedHamiltonian: Allocating Lijn: {} GB",
-    number_of_allocated_Q*nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd*nchol_av*GBx);
+  app_log(2, "KPFactorizedHamiltonian: Allocating Lijn: {}",
+    utils::format_bytes(sizeof(ComplexType)*number_of_allocated_Q*nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd*nchol_av));
   // L(Q)(ispin*ip,ik,i,j,n): Since each qpoint has its own nchol
   // Entries with Q > minusq(Q) are never read and stay default-constructed (empty)
   nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> LQ(nkpts);
@@ -365,8 +365,8 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
    * Lank(Q)(idet,ispin,a,j,n) = sum_i PsiT(idet,ispin)(a,ip,i) * LQ(Q)(ispin*ip,ik,i,j,n)
    *  where a includes the kpoint index implicitly, e.g. a:{0,nup/ndown}
    */
-  app_log(2, "KPFactorizedHamiltonian: Allocating Lank: {} GB",
-        (number_of_symmetric_Q+nkpts)*ndet*nspin_in_H1*npol_in_H1*nel_up*nbnd*nchol_av*GBx);
+  app_log(2, "KPFactorizedHamiltonian: Allocating Lank: {}",
+        utils::format_bytes(sizeof(ComplexType)*(number_of_symmetric_Q+nkpts)*ndet*nspin_in_H1*npol_in_H1*nel_up*nbnd*nchol_av));
   auto [Lank, Lbnk] = kpoint_half_rotate_cholesky<MEM>(*mpi, type, nspin_in_H1, npol_in_H1,
       NMO, nbnd, PsiT, nocc, minusq, qk_to_k2, Qmap, nchol, LQ);
 
