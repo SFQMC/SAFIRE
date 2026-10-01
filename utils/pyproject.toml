@@ -64,7 +64,7 @@ packages = [
     "stats.lib",
     "tutorial_utils",
     "safiretools",
-    "safiretools.analysis",
+    "safiretools.results",
     "safiretools.hamiltonian",
     "safiretools.hamiltonian.model",
     "safiretools.wavefunction",
