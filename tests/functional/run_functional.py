@@ -82,6 +82,9 @@ class TestType(enum.Enum):
 
 SIGNIFICANCE_LEVEL = 0.001
 MACHINE_EPS = 1e-9
+# observables a statistical test neither averages nor compares, by the last component of
+# their path; a snapshot still records and compares them exactly
+UNCOMPARED_OBSERVABLES = {"Phase", "ProjectionTime", "EffectiveNumWalkers", "TotalWeight"}
 
 # AFQMC's own output, named after the stem of the input file write_input writes. One run writes
 # one file, with the observables of each execute block below a Stage<N> group of its own.
@@ -127,30 +130,6 @@ def should_succeed(c: Case) -> bool:
     return all(rules)
 
 
-def should_skip(c: Case) -> bool:
-    return False
-
-
-def should_backprop(c: Case) -> bool:
-    """Back-propagation subset selection from should_succeed.
-
-    BP runs are expensive, so only a representative subset of the successful
-    space is exercised, chosen to cover distinct spin-symmetry transitions.
-    """
-    h, w, walker = c.hamiltonian.spin, c.wavefunction.spin, c.walker
-    if h == SpinSymm.CLOSED:
-        if w == SpinSymm.COLLINEAR:
-            return walker != SpinSymm.CLOSED
-        if w == SpinSymm.NONCOLLINEAR:
-            return walker == SpinSymm.NONCOLLINEAR
-    elif h == SpinSymm.COLLINEAR:
-        if w == SpinSymm.COLLINEAR:
-            return walker in (SpinSymm.COLLINEAR, SpinSymm.NONCOLLINEAR)
-    elif h == SpinSymm.NONCOLLINEAR:
-        return w == SpinSymm.NONCOLLINEAR and walker == SpinSymm.NONCOLLINEAR
-    return False
-
-
 # ============================================================================
 # Case generation
 # ============================================================================
@@ -165,19 +144,32 @@ def merge_runparams(*sources) -> dict:
 
 def generate(system: System) -> List[Case]:
     """Every hamiltonian x wavefunction x walker combination of a system, each
-    keyed to the reference at `<hamiltonian>/<wavefunction>/<walker>/results.h5`."""
+    keyed to the reference at `<hamiltonian>/<wavefunction>/<walker>/results.h5`.
+    Only the combinations in `system.backprop` carry the observables."""
+    if system.backprop and not system.observables:
+        raise ValueError(f"{system.data_dir}: back-propagation cases without observables")
+    unmatched = set(system.backprop)
     cases: List[Case] = []
     for h_name, hamiltonian in system.hamiltonians.items():
         for w_name, wavefunction in system.wavefunctions.items():
             for walker in system.walkers:
                 subdir = Path(h_name) / w_name / walker.name.lower()
-                cases.append(Case(
+                backprop = (h_name, w_name, walker) in unmatched
+                unmatched.discard((h_name, w_name, walker))
+                case = Case(
                     hamiltonian=hamiltonian, wavefunction=wavefunction, walker=walker,
                     data_dir=system.data_dir,
                     out_subdir=subdir,
                     runparams=merge_runparams(hamiltonian.runparams, wavefunction.runparams),
-                    observables=system.observables,
-                ))
+                    observables=system.observables if backprop else {},
+                )
+                if backprop and not should_succeed(case):
+                    raise ValueError(f"{system.data_dir}: back-propagation case {subdir} "
+                                     "is expected to fail")
+                cases.append(case)
+    if unmatched:
+        raise ValueError(f"{system.data_dir}: back-propagation cases not in the cross "
+                         f"product: {sorted(unmatched)}")
     return cases
 
 
@@ -206,11 +198,14 @@ def resolve_observable_inputs(observables: dict, inputs_dir: Path) -> dict:
 def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
                 n_walkers_per_mpi_task: int, timestep: float, observables: dict,
                 snapshot: bool):
-    steps = 10000
-    equilibration_steps = 2000
+    steps = 12000
+    if observables: # backprop needs more samples
+        steps *= 4
+
+    equilibration_steps = 3000
     population_control_interval = 10
     measure_interval = 10
-    propagation_steps = 200
+    propagation_steps = 100
     if snapshot:
         steps = 20
         equilibration_steps = 0
@@ -295,10 +290,11 @@ def _write_message_group(f: h5.File, name: str, messages: set):
         g.create_dataset(f"{prefix}_{i}", data=str(m))
 
 
-def _average_observables(results: Path) -> dict:
+def _average_observables(results: Path, snapshot: bool) -> dict:
     """(mean, stochastic error) for every observable AFQMC measured, keyed by the full
     '/'-separated path it was measured under, e.g. `Stage0/Energy` or
-    `Stage0/BackPropEstimator/Steps=200/OneRDM`.
+    `Stage0/BackPropEstimator/Steps=200/OneRDM`. A statistical test leaves out those in
+    `UNCOMPARED_OBSERVABLES`, a snapshot keeps every one.
 
     Nothing is discarded here: the driver measures nothing before `equilibration_steps`, so
     every bin in the file is already equilibrated.
@@ -309,7 +305,8 @@ def _average_observables(results: Path) -> dict:
     try:
         measured = Results(results, stage="")
         return {name: measured.average(name, skip=0)
-                for name in measured.observable_names()}
+                for name in measured.observable_names()
+                if snapshot or name.rpartition("/")[2] not in UNCOMPARED_OBSERVABLES}
     except Exception as e:  # noqa: BLE001
         print(f"  [warn] could not average {results.name}: {e}")
         return {}
@@ -341,9 +338,11 @@ def _read_measurements(f: h5.File) -> dict:
     return recorded
 
 
-def record_results(out_dir: Path, return_code: int, ranks: int, run_time: float):
+def record_results(out_dir: Path, return_code: int, ranks: int, run_time: float,
+                   snapshot: bool):
     """Extract a results summary and write results.h5: the run metadata, the error/warning
-    message groups, and every observable AFQMC measured, averaged over its bins."""
+    message groups, and the observables AFQMC measured, averaged over their bins; for a
+    statistical test without those in `UNCOMPARED_OBSERVABLES`."""
     out_text = (out_dir / "afqmc.out").read_text()
     with h5.File(out_dir / "results.h5", "w") as f:
         f.create_dataset("return_code", data=return_code)
@@ -357,7 +356,7 @@ def record_results(out_dir: Path, return_code: int, ranks: int, run_time: float)
 
         finite = is_finite(out_text)
         if return_code == 0:
-            averaged = _average_observables(out_dir / AFQMC_RESULTS)
+            averaged = _average_observables(out_dir / AFQMC_RESULTS, snapshot)
             _write_measurements(f, averaged)
             finite = finite and all(np.all(np.isfinite(v))
                                     for pair in averaged.values() for v in pair)
@@ -430,8 +429,13 @@ def _compare_measurement(name: str, test, ref) -> bool:
 
 def _compare_measurements(ft: h5.File, fr: h5.File) -> bool:
     """Whether every observable of the run agrees with the reference. The same treatment for
-    all of them: an observable is a tensor of some rank, and the energy is the rank-0 case."""
-    test, ref = _read_measurements(ft), _read_measurements(fr)
+    all of them: an observable is a tensor of some rank, and the energy is the rank-0 case.
+    Those in `UNCOMPARED_OBSERVABLES` are left out on both sides."""
+    test, ref = (
+        {name: value for name, value in _read_measurements(f).items()
+         if name.rpartition("/")[2] not in UNCOMPARED_OBSERVABLES}
+        for f in (ft, fr)
+    )
     if set(test) != set(ref):
         print(f"  [compare] recorded observables differ: "
               f"only in test = {sorted(set(test) - set(ref))}, "
@@ -689,7 +693,7 @@ def run_case(case: Case, test_type: TestType, out_root: Path, mpiexec: str,
             # a snapshot compares the error bars as exact numbers, so it does not matter
             # that a run this short underestimates them
             warnings.simplefilter("ignore", RebinningWarning)
-        record_results(out_dir, return_code, ranks, run_time)
+        record_results(out_dir, return_code, ranks, run_time, snapshot)
     reference = case.reference(snapshot)
     if regenerate:
         return store_reference(results, reference, test_type)
@@ -771,17 +775,12 @@ def main(argv=None) -> int:
     for name in selected:
         system = systems[name]
         all_cases = generate(system)
-        has_bp = bool(system.observables)
-        success = [c for c in all_cases if should_succeed(c) and not should_skip(c) and not (has_bp and should_backprop(c))]
-        fail = [c for c in all_cases if not should_succeed(c) and not should_skip(c)]
-        backprop = [c for c in all_cases if should_succeed(c) and has_bp and should_backprop(c) and not should_skip(c)]
+        success = [c for c in all_cases if should_succeed(c) and not c.observables]
+        fail = [c for c in all_cases if not should_succeed(c)]
+        backprop = [c for c in all_cases if c.observables]
 
         print(f"=== {name}: {len(success)} expected-success, "
               f"{len(fail)} expected-fail, {len(backprop)} back-propagation ===")
-
-        for c in all_cases:
-            if should_skip(c):
-                print(f"  [SKIPPED] {c.out_subdir}")
 
         for test_type, group in (
                 (TestType.EXPECT_FAILURE, fail),

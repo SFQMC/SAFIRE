@@ -76,10 +76,12 @@ class System:
     walkers: List[SpinSymm]  # the member name also names the reference path component
                              # and the walker_type of the generated input
     # Observable blocks spliced into the back-propagation estimator, keyed by the name the
-    # input schema gives them. A non-empty dict is what makes a system run back-propagation
-    # cases at all. A relative `filename` in a stored-input block is resolved against the
-    # system's afqmc_inputs dir.
+    # input schema gives them. A relative `filename` in a stored-input block is resolved
+    # against the system's afqmc_inputs dir.
     observables: Dict[str, dict] = field(default_factory=dict)
+    # The (hamiltonian, wavefunction, walker) combinations run as back-propagation cases;
+    # the rest of the cross product runs without it.
+    backprop: List[Tuple[str, str, SpinSymm]] = field(default_factory=list)
 
 
 # ============================================================================
@@ -119,6 +121,16 @@ def build_systems() -> Dict[str, System]:
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
             observables={"onerdm": {}, "diag_twordm": {}},
+            backprop=[
+                ("dense_rhf_basis_closed", "rhf_nomsd", S.CLOSED),
+                ("dense_rhf_basis_closed", "uhf_nomsd", S.COLLINEAR),
+                ("dense_rhf_basis_closed", "uhf_nomsd", S.NONCOLLINEAR),
+                ("dense_rhf_basis_closed", "rcasci_uhf_nomsd", S.COLLINEAR),
+                ("dense_rhf_basis_closed", "rcasci_uhf_nomsd", S.NONCOLLINEAR),
+                ("dense_rhf_basis_closed", "rcasci_uhf_phmsd", S.COLLINEAR),
+                # ph-MSD over an explicit orbital reference
+                ("dense_rhf_basis_closed", "rcasci_rhf_phmsd", S.COLLINEAR),
+            ],
         ),
         "Li": System(
             data_dir="Li",
@@ -126,6 +138,7 @@ def build_systems() -> Dict[str, System]:
             wavefunctions={"rohf_wfn_polarized": Wavefunction("rohf_nomsd_polarized.h5", S.COLLINEAR, WC.NOMSD)},
             walkers=[S.COLLINEAR],
             observables={"onerdm": {}, "diag_twordm": {}},
+            backprop=[("hamil_closed", "rohf_wfn_polarized", S.COLLINEAR)],
         ),
         "Pb": System(
             data_dir="Pb",
@@ -160,6 +173,11 @@ def build_systems() -> Dict[str, System]:
                 "paircorr": {"pairs": {"filename": "pair_correlators.h5",
                                        "group": "PairCorrelator/orbital_map"}},
             },
+            backprop=[
+                ("ham_collinear", "fe_collinear", S.COLLINEAR),
+                ("ham_collinear_cont_spin", "fe_collinear", S.COLLINEAR),
+                ("ham_noncollinear", "fe_noncollinear", S.NONCOLLINEAR),
+            ],
         ),
         "hubbard_charge": System(
             data_dir="square_4x4_hubbard_nup5_ndn5",
@@ -178,6 +196,10 @@ def build_systems() -> Dict[str, System]:
                 "paircorr": {"pairs": {"filename": "pair_correlators.h5",
                                        "group": "PairCorrelator/orbital_map"}},
             },
+            backprop=[
+                ("ham_collinear_disc_charge", "hf_U0.1_collinear", S.COLLINEAR),
+                ("ham_collinear_cont_charge", "hf_U0.1_collinear", S.COLLINEAR),
+            ],
         ),
         "hubbard_kanamori": System(
             data_dir="square_6x1_hubbard_kanamori_nup6_ndn6",
@@ -199,6 +221,10 @@ def build_systems() -> Dict[str, System]:
                 "paircorr": {"pairs": {"filename": "pair_correlators.h5",
                                        "group": "PairCorrelator/orbital_map"}},
             },
+            backprop=[
+                ("ham_collinear", "fe_collinear", S.COLLINEAR),
+                ("ham_noncollinear", "fe_noncollinear", S.NONCOLLINEAR),
+            ],
         ),
         "rashba_soc": System(
             data_dir="rashba_soc",
@@ -223,6 +249,13 @@ def build_systems() -> Dict[str, System]:
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
             observables={"onerdm": {}, "diag_twordm": {}},
+            backprop=[
+                ("ham_chol_closed", "pbe_closed_nomsd", S.CLOSED),
+                ("ham_chol_closed", "pbe_collinear_nomsd", S.COLLINEAR),
+                ("ham_chol_closed", "pbe_collinear_nomsd", S.NONCOLLINEAR),
+                ("ham_thc_closed", "pbe_collinear_nomsd", S.COLLINEAR),
+                ("ham_thc_closed", "pbe_collinear_nomsd", S.NONCOLLINEAR),
+            ],
         ),
         "diamond_2x2x2": System(
             data_dir="C_diamond_coqui",
@@ -232,5 +265,6 @@ def build_systems() -> Dict[str, System]:
             wavefunctions={"pbe_wfn_2x2x2_collinear": Wavefunction("wfn_mf_2x2x2_pbe.h5", S.COLLINEAR, WC.NOMSD)},
             walkers=[S.COLLINEAR],
             observables={"onerdm": {}, "diag_twordm": {}},
+            backprop=[("ham_2x2x2_chol_closed", "pbe_wfn_2x2x2_collinear", S.COLLINEAR)],
         ),
     }
