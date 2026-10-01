@@ -200,7 +200,7 @@ class Results:
 
         raise KeyError(
             f"{self.stage or 'Measurements'} of '{self.filename}' has no observable "
-            f"'{observable_name}'; it has {', '.join(self.observable_names())}"
+            f"'{observable_name}'; it has {', '.join(self.observable_names()) if self.observable_names() else "none"}"
         )
 
     def average(
