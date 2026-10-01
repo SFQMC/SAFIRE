@@ -11,16 +11,7 @@
 """
 Recipes for the lattice-model systems.
 
-These are the cheap ones - safiretools and afqmctools only, no external
-codes, seconds rather than minutes - and they cover the Hubbard,
-Hubbard-Kanamori and Rashba spin-orbit models.
-
-The ``hst_type`` variants under ``square_4x4_hubbard_nup5_ndn5`` are read only by
-the C++ unit tests. They are regenerated here anyway, because the point of this
-tool is that the inputs tree can be rebuilt in full. The one exception is
-``square_2x2_hubbard_Beta3_nt100``, also read only by the unit tests: its
-finite-temperature trial wavefunction is something safiretools cannot write, so
-that directory is committed by hand.
+``square_2x2_hubbard_Beta3_nt100`` is not written by this tool yet.
 """
 
 from typing import Dict, List
@@ -40,12 +31,7 @@ FREE_ELECTRON_TWIST = 0.1 * np.array((1 / np.sqrt(592560607), 1 / np.sqrt(47603)
 def _lattices(model: Dict):
     """The lattice a model is defined on, and a twisted copy of it.
 
-    A free-electron trial is diagonalized straight out of the one-body term, so
-    at a closed shell its highest occupied shell is degenerate and the
-    determinant is not uniquely defined. The twist lifts that, and it belongs to
-    the lattice rather than to the wavefunction builder - hence two lattices,
-    the untwisted one for the Hamiltonian the run reads and the twisted one for
-    the trial built from it.
+    Twisted to avoid open shells.
     """
     from safiretools import Lattice
 
@@ -77,8 +63,8 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
     """4x4 Hubbard at U/t = 6, five electrons per spin.
 
     Writes the three spin symmetries of the U = 6 hamiltonian with matching
-    free-electron trials, plus four files that exist to exercise the
-    Hubbard-Stratonovich decompositions in the C++ unit tests.
+    free-electron trials, plus three hamiltonians and a UHF trial that
+    exercise the other Hubbard-Stratonovich decompositions.
     """
     from safiretools import SpinSymm, Wavefunction
 
@@ -103,16 +89,12 @@ def build_hubbard_4x4(ctx: BuildContext) -> None:
     lattice.get_directed_pairs(
         directions=["s", "+x", "+y"]).to_hdf5(out / "pair_correlators.h5")
 
-    # --- Hubbard-Stratonovich variants (C++ unit tests only) ---------------
+    # --- Hubbard-Stratonovich variants (functional and C++ unit tests) -----
     # For U > 0 the builder infers a discrete *spin* decomposition and for
     # U < 0 a discrete *charge* one; `hst_types` overrides that inference.
     # Together with ham_collinear.h5's inferred discrete_spin, the three
     # overrides below cover all four decompositions the C++ reader accepts
     # (`ModelHamOpsGenerator.cpp`).
-    #
-    # The committed ham_collinear_cont_spin.h5 predates this override and
-    # stores discrete_spin despite its name, so it duplicated ham_collinear.h5
-    # and left continuous_spin exercised by nothing.
     variants = {
         "ham_collinear_cont_spin.h5":
             {"t": 1.0, "U": 6.0, "hst_types": {"U": "continuous_spin"}},
