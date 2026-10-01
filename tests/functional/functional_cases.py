@@ -144,11 +144,21 @@ def build_systems() -> Dict[str, System]:
             data_dir="Pb",
             hamiltonians={
                 "dense_rhf_basis_noncollinear_sf": Hamiltonian("afqmc_H_rhf_basis_noncollinear_sf.h5", S.NONCOLLINEAR, HC.GENERIC_DENSE),
-                "dense_rhf_basis_noncollinear_soc": Hamiltonian("afqmc_H_rhf_basis_noncollinear_soc.h5", S.NONCOLLINEAR, HC.GENERIC_DENSE),
             },
             wavefunctions={
                 "uhf_nomsd": Wavefunction("afqmc_uhf_nomsd.h5", S.COLLINEAR, WC.NOMSD),
                 "ghf_sf_nomsd": Wavefunction("afqmc_ghf_sf_nomsd.h5", S.NONCOLLINEAR, WC.NOMSD),
+                "ghf_soc_nomsd": Wavefunction("afqmc_ghf_soc_nomsd.h5", S.NONCOLLINEAR, WC.NOMSD),
+            },
+            walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
+        ),
+        # The spin-free trials are left out: on the spin-orbit hamiltonian their energy equilibrates very slowly
+        "Pb_soc": System(
+            data_dir="Pb",
+            hamiltonians={
+                "dense_rhf_basis_noncollinear_soc": Hamiltonian("afqmc_H_rhf_basis_noncollinear_soc.h5", S.NONCOLLINEAR, HC.GENERIC_DENSE),
+            },
+            wavefunctions={
                 "ghf_soc_nomsd": Wavefunction("afqmc_ghf_soc_nomsd.h5", S.NONCOLLINEAR, WC.NOMSD),
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
