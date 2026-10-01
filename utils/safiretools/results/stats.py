@@ -14,6 +14,9 @@ import numpy as np
 from scipy.signal import correlate
 from scipy.special import gammaln, kve
 
+# spreads up to this are taken for roundoff
+_ROUNDOFF = 1e-9
+
 
 def optimal_rebinsize(samples, skip=0):
     """Choose the rebin size for `rebinning_analysis` from the series itself.
@@ -31,8 +34,8 @@ def optimal_rebinsize(samples, skip=0):
     count, so rebin all of them with the largest of their sizes.
 
     Returns the rebin size and whether it meets the criterion. If no size does, the series
-    is too short for its autocorrelation time, the size returned is the largest that
-    still leaves two bins, and the error bar from them is underestimated.
+    is too short for its autocorrelation time, and the size returned is the compromise of
+    `_fallback_rebinsize`, whose error bar is underestimated.
     """
     samples = np.asarray(samples)[skip:, ...]
     num_samples = samples.shape[0]
@@ -40,10 +43,11 @@ def optimal_rebinsize(samples, skip=0):
         # nothing to block; rebinning_analysis reports the lack of bins
         return 1, True
 
-    rebins = samples.reshape(num_samples, -1)
-    if np.iscomplexobj(rebins):
-        rebins = np.concatenate([rebins.real, rebins.imag], axis=1)
+    components = samples.reshape(num_samples, -1)
+    if np.iscomplexobj(components):
+        components = np.concatenate([components.real, components.imag], axis=1)
 
+    rebins = components
     rebinsize = 1
     base_variance = None
     while True:
@@ -59,10 +63,31 @@ def optimal_rebinsize(samples, skip=0):
 
         # the next level has to leave at least two rebins for a variance
         if rebins.shape[0] < 4:
-            return rebinsize, False
+            return _fallback_rebinsize(components), False
         pairs = rebins.shape[0] // 2
         rebins = 0.5 * (rebins[0 : 2 * pairs : 2] + rebins[1 : 2 * pairs : 2])
         rebinsize *= 2
+
+
+def _fallback_rebinsize(components):
+    """Rebin size for a series too short for the criterion of `optimal_rebinsize`, given as
+    its real components along the second axis.
+
+    The criterion compares statistical inefficiencies estimated from the blocks
+    themselves, which a series this short leaves too few of; the autocorrelation function
+    still gives one, kappa, that of the slowest component. A bin of size B then misses a
+    fraction ``(kappa**2 - 1)/(2*kappa*B)`` of the variance of the mean, as it does for
+    an exponentially decaying autocorrelation, while m bins leave the variance itself
+    uncertain by a relative ``2/(m - 1)``. The size with the smallest sum of the squared
+    bias and that variance is taken; the largest size that leaves two bins, which has the
+    least bias, would leave an error bar of a single degree of freedom.
+    """
+    num_samples = components.shape[0]
+    kappa = max(_statistical_inefficiency(components[:, j]) for j in range(components.shape[1]))
+    rebinsizes = np.arange(1, num_samples // 2 + 1)
+    rebincounts = num_samples // rebinsizes
+    squared_error = ((kappa**2 - 1) / (2 * kappa * rebinsizes)) ** 2 + 2 / (rebincounts - 1)
+    return int(rebinsizes[np.argmin(squared_error)])
 
 
 def rebinning_analysis(samples, *, rebinsize, skip=0):
@@ -140,10 +165,6 @@ def _cramer_von_mises_sf(statistic):
     return max(1.0 - cdf, 0.0)
 
 
-# spreads up to this are taken for roundoff
-_ROUNDOFF = 1e-9
-
-
 def _statistical_inefficiency(samples, window_factor=5.0):
     """Statistical inefficiency ``kappa = 1 + 2*sum_t rho(t)`` of a real series, rho being
     its normalized autocorrelation function.
@@ -152,8 +173,16 @@ def _statistical_inefficiency(samples, window_factor=5.0):
     self-consistent window of Madras and Sokal, J. Stat. Phys. 50, 109 (1988), beyond which
     the noise of rho would outweigh its signal. A series too short for any window to
     qualify is summed over every lag it has.
+
+    kappa is floored at 1: the noise of a short window often sums to less, which would
+    understate a variance taken from it, and a Monte Carlo series is not anticorrelated.
+    A series too short to correlate, or constant up to roundoff, has nothing to measure
+    and gets the neutral 1.
     """
     num_samples = samples.shape[0]
+    if num_samples < 2 or np.ptp(samples) <= _ROUNDOFF:
+        return 1.0
+
     deviations = samples - samples.mean()
     # the full correlation runs over lags -(N-1) to N-1, the second half of it over t >= 0;
     # divided by N rather than N - t, which keeps the estimator positive semidefinite
@@ -165,7 +194,7 @@ def _statistical_inefficiency(samples, window_factor=5.0):
 
     windows = np.arange(1, num_samples)
     qualifies = windows >= window_factor * kappa
-    return kappa[np.argmax(qualifies) if qualifies.any() else -1]
+    return max(float(kappa[np.argmax(qualifies) if qualifies.any() else -1]), 1.0)
 
 
 def _bridge_pvalue(samples):
@@ -186,11 +215,7 @@ def _bridge_pvalue(samples):
     # The long-run variance is the variance times the statistical inefficiency, the
     # standard error of the mean being sigma/sqrt(N_eff) with N_eff = N/kappa. Chosen
     # because it is smooth in skip.
-    # kappa is floored at 1: the noise of a short window often sums to less, which would
-    # understate the variance and flag stationary series, and a Monte Carlo series is not
-    # anticorrelated.
-    kappa = max(_statistical_inefficiency(second_half), 1.0)
-    longrun_variance = kappa * np.var(second_half)
+    longrun_variance = _statistical_inefficiency(second_half) * np.var(second_half)
 
     bridge = np.cumsum(samples - samples.mean()) / np.sqrt(num_samples * longrun_variance)
     return _cramer_von_mises_sf(np.mean(bridge**2))

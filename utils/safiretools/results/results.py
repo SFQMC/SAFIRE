@@ -69,10 +69,11 @@ def _checked_rebinsize(name, series, skip, rebinsize):
     if rebinsize is None:
         rebinsize, meets_criterion = optimal_rebinsize(series, skip)
         if not meets_criterion:
+            num_bins = series[skip:].shape[0]
             warn(
-                f"'{name}' is too short for its autocorrelation time: no rebin size up to "
-                f"{rebinsize} meets the rebinning criterion for its {series[skip:].shape[0]} "
-                "bins after skip, so its error bar may be underestimated.",
+                f"'{name}' is too short for its autocorrelation time: no rebin size meets "
+                f"the rebinning criterion for its {num_bins} bins after skip. Defaulting to "
+                f"{num_bins // rebinsize} rebins of size {rebinsize}.",
                 RebinningWarning,
                 stacklevel=3,
             )

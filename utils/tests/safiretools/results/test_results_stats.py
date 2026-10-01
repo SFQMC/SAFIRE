@@ -13,6 +13,7 @@ import pytest
 
 from safiretools.results.stats import (
     _cramer_von_mises_sf,
+    _fallback_rebinsize,
     _statistical_inefficiency,
     jackknife,
     optimal_rebinsize,
@@ -155,9 +156,28 @@ def test_optimal_rebinsize_honours_skip():
 
 
 def test_a_series_too_short_for_the_criterion_is_reported():
-    # a ramp has kappa_B = B, so B**3 > 2*N*B**2 never holds for B < N; the size that
-    # comes back is the largest that still leaves two bins
-    assert optimal_rebinsize(np.arange(100.0)) == (32, False)
+    # a ramp has kappa_B = B, so B**3 > 2*N*B**2 never holds for B < N
+    rebinsize, meets_criterion = optimal_rebinsize(np.arange(100.0))
+
+    assert not meets_criterion
+    assert 100 // rebinsize > 2
+
+
+def test_a_short_correlated_series_keeps_enough_bins():
+    # 180 samples at kappa = 19 fail the criterion; the largest size leaving two bins
+    # would give an error bar of a single degree of freedom
+    rebinsize, meets_criterion = optimal_rebinsize(ar1(180, 0.9, np.random.default_rng(6)))
+
+    assert not meets_criterion
+    assert 180 // rebinsize >= 5
+
+
+def test_the_fallback_rebinsize_serves_the_slowest_component():
+    fast = np.random.default_rng(7).normal(size=180)
+    slow = ar1(180, 0.9, np.random.default_rng(5))
+
+    assert _fallback_rebinsize(np.column_stack([fast, slow])) == _fallback_rebinsize(slow[:, None])
+    assert _fallback_rebinsize(slow[:, None]) > _fallback_rebinsize(fast[:, None])
 
 
 @pytest.mark.parametrize(
@@ -205,6 +225,21 @@ def test_statistical_inefficiency_recovers_that_of_an_ar1_series():
 
     assert kappa == pytest.approx((1 + rho) / (1 - rho), rel=0.2)
     assert _statistical_inefficiency(np.random.default_rng(4).normal(size=20000)) == pytest.approx(1.0, abs=0.1)
+
+
+def test_statistical_inefficiency_has_nothing_to_measure_in_a_constant_series():
+    # an exactly constant series has no variance to normalize the autocorrelation by
+    assert _statistical_inefficiency(np.full(50, 3.0)) == 1.0
+    assert _statistical_inefficiency(1.0 + 1e-15 * np.arange(50.0)) == 1.0
+    assert _statistical_inefficiency(np.zeros(0)) == 1.0
+    assert _statistical_inefficiency(np.ones(1)) == 1.0
+
+
+def test_statistical_inefficiency_is_at_least_one():
+    # the noise of a short window often sums to less than 1 for an uncorrelated series
+    rng = np.random.default_rng(8)
+
+    assert min(_statistical_inefficiency(rng.normal(size=60)) for _ in range(100)) == 1.0
 
 
 def test_an_initial_transient_is_detected():
