@@ -281,24 +281,20 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
   }
   resolve_block_refs("wavefunction", params.wavefunctions, wavefunction_refs);
   resolve_block_refs("hamiltonian", params.hamiltonians,
-                     execute_refs("hamiltonian", params.execute, &ExecuteParameters::hamiltonian, false));
+                     execute_refs("hamiltonian", params.execute, &ExecuteParameters::hamiltonian, true));
   resolve_block_refs("propagator", params.propagators,
                      execute_refs("propagator", params.execute, &ExecuteParameters::propagator, false));
 
   for(const auto& wfn : params.wavefunctions) {
     utils::check(!wfn.filename.empty(), "The wavefunction \"{}\" must contain a filename.", wfn.name);
   }
+  for(const auto& ham : params.hamiltonians) {
+    utils::check(!ham.filename.empty(), "The hamiltonian \"{}\" must contain a filename.", ham.name);
+  }
 
   // 4. resolve what a block inherits from a neighbouring block
   for(auto& exec : params.execute) {
     const std::string& wfn_name = block_name(exec.wavefunction, "wavefunction");
-    const std::string& ham_name = block_name(exec.hamiltonian, "hamiltonian");
-
-    // a hamiltonian that does not name a file of its own uses the one of the wavefunction
-    HamiltonianParameters& ham = find_block(params.hamiltonians, ham_name, "hamiltonian");
-    if(ham.filename.empty()) {
-      ham.filename = find_block(params.wavefunctions, wfn_name, "wavefunction").filename;
-    }
 
     // a walker set starts from the wavefunction of the stage that introduces it. The stages are
     // visited in order, so a walker set carried over from an earlier stage already has its source.

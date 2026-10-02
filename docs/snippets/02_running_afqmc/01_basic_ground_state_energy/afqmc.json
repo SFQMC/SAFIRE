@@ -11,6 +11,9 @@
       "wavefunction": {
         "filename": "afqmc.h5"
       },
+      "hamiltonian": {
+        "filename": "afqmc.h5"
+      },
       "timestep": 0.01,
       "steps": 10000,
       "n_walkers_per_mpi_task": 60,

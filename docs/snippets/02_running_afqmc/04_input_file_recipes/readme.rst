@@ -7,15 +7,14 @@ This example shows a few recipes for input files to run SAFIRE.
 
 
 
-Nested structure with default hamiltonian location
---------------------------------------------------
+Nested structure with a single HDF5 file
+----------------------------------------
 
 In this input file, we use a "nested" structure in which we
-define the "walker_set" and the "wavefunction" within the "execute"
-block. 
+define the "walker_set", the "wavefunction" and the "hamiltonian" within the "execute"
+block.
 This is the simplest input file layout if you don't need to reuse the "walker_set" in a second "execute" block.
-Additionally, we allow the "hamiltonian" to default to the "filename" found in the "wavefunction" block by not 
-defining an explicit "hamiltonian" block.
+The Hamiltonian and the trial wavefunction are stored in the same HDF5 file, which both blocks name.
 If you will only be trying one trial wavefunction, this can be simpler than saving the Hamiltonian and trial
 wavefunctions in separate HDF5 files.
 
@@ -32,6 +31,9 @@ wavefunctions in separate HDF5 files.
             "walker_type": "CLOSED"
           },
           "wavefunction": {
+            "filename": "input.h5"
+          },
+          "hamiltonian": {
             "filename": "input.h5"
           },
           "timestep": 0.01,

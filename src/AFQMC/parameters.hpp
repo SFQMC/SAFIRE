@@ -99,8 +99,8 @@ SAFIRE_DEFINE_PARAMETERS(WalkerSetParameters, name, walker_type, load_balance_ty
 
 struct HamiltonianParameters {
   std::string name{};
-  std::string filename{}; // resolve_defaults falls back to the filename of the wavefunction
-  int max_memory{2000};   // MiB
+  std::string filename{};
+  int max_memory{2000}; // MiB
   bool shift_1body{};
   int buffer_size{4096};
 };

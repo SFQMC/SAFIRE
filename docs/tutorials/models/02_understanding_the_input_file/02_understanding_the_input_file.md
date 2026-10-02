@@ -105,6 +105,9 @@ This input block will be explored in more detail in later tutorials.
         "wavefunction": {
           "filename": "files/input.h5"
         },
+        "hamiltonian": {
+          "filename": "files/input.h5"
+        },
         "timestep": "0.01",
         "steps": "1",
         "population_control_interval": "10",
@@ -282,12 +285,12 @@ td, th {
 
 ![](files/input_file_03_wavefunction.png)
 
-The wavefunction block is the only of the 5 low-level blocks
+The wavefunction and the hamiltonian blocks are the only of the 5 low-level blocks
 that must always be specified.
 The wavefunction block is used to point to the input HDF5 file containing
 the desired trial wavefunction via the "filename" keyword.
-If no hamiltonian block is provided, SAFIRE assumes that this HDF5 file
-also contains the Hamiltonian.
+The Hamiltonian is never read from this file implicitly: even if the same HDF5 file
+holds both, the hamiltonian block has to name it.
 
 Here is a sample wavefunction block with options exposed and default values where appropriate.
 
@@ -418,7 +421,7 @@ td, th {
 
 The hamiltonian block is used to provide settings related to the Hamiltonian.
 This mostly entails pointing to the input HDF5 file containing
-the desired hamiltonian via the "filename" keyword.
+the desired hamiltonian via the "filename" keyword, which is mandatory.
 
 Here is a sample hamiltonian input block with
 options exposed and default values where appropriate.

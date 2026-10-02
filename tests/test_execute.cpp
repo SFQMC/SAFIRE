@@ -99,10 +99,6 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   };
 
   if(default_walker) {
-    // wfn only - this is invalid unless wfn file and hamil file are the same
-    if(hamil_file == wfn_file) {
-      add("wfn only (inline)", ExecuteParameters{.wavefunction = wfn_min});
-    }
     add("wfn+ham (inline)", ExecuteParameters{.wavefunction = wfn_min, .hamiltonian = ham_min});
     add("wfn+ham+prop (inline)",
         ExecuteParameters{.wavefunction = wfn_min, .hamiltonian = ham_min, .propagator = prop_min});
@@ -115,9 +111,6 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
                         .propagator   = prop_min});
 
   if(default_walker) {
-    if(hamil_file == wfn_file) {
-      add("wfn only (external)", ExecuteParameters{.wavefunction = std::string{"wfn0"}});
-    }
     add("wfn+ham (external)",
         ExecuteParameters{.wavefunction = std::string{"wfn0"}, .hamiltonian = std::string{"ham0"}});
     add("wfn+ham+prop (external)",
@@ -133,10 +126,10 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
                         .propagator   = std::string{"prop0"}});
 
   // mixed external internal
-  if(hamil_file == wfn_file) {
-    add("wfn(inline)+wlk(external)",
-        ExecuteParameters{.walker_set = std::string{"wlk0"}, .wavefunction = wfn_min});
-  }
+  add("wfn(inline)+ham(external)+wlk(external)",
+      ExecuteParameters{.walker_set   = std::string{"wlk0"},
+                        .wavefunction = wfn_min,
+                        .hamiltonian  = std::string{"ham0"}});
 
   if(default_walker) {
     add("wfn(inline)+ham(external)",
@@ -286,12 +279,11 @@ void check_unique_names(const std::vector<Params>& blocks)
 void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                    std::string hamil_file, std::string wfn_file)
 {
-  // the minimal input: one nameless wavefunction and nothing else. Its file has to hold the
-  // hamiltonian too, because that is what the inherited hamiltonian is peeked from -- only the
-  // hamiltonian file is read here, so hamil_file stands in for a single file holding both.
+  // the minimal input: one nameless wavefunction, one nameless hamiltonian, and nothing else
   {
     AFQMCParameters params{};
-    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file}}};
+    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
+                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file}}};
     resolve_defaults(params, *mpi);
 
     // the absent blocks are materialized, one of each, and the registries name them uniquely
@@ -314,12 +306,9 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     // the default walker set starts from the wavefunction of the execute block
     CHECK(source_wavefunction(block_named(params.walker_sets, wlk_name)) == wfn_name);
 
-    // a hamiltonian without a file of its own takes the one of the wavefunction
-    const WavefunctionParameters& wfn = block_named(params.wavefunctions, wfn_name);
-    CHECK(block_named(params.hamiltonians, ham_name).filename == wfn.filename);
-
     // whatever the hamiltonian type is, the defaults that depend on it are filled in, so that no
     // consumer ever sees an empty optional
+    const WavefunctionParameters& wfn = block_named(params.wavefunctions, wfn_name);
     CHECK(wfn.algorithm.has_value());
     CHECK(wfn.dense_trial.has_value());
     const PropagatorParameters& prop = block_named(params.propagators, prop_name);
@@ -387,9 +376,6 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     CHECK(prop.lower_cutoff_scale == 0.25);
     CHECK(prop.denseP2 == false);
 
-    // a hamiltonian that names a file keeps it, rather than inheriting the one of the wavefunction
-    CHECK(block_named(params.hamiltonians, ham_name).filename == hamil_file);
-
     // an estimator keeps the blocks and the intervals it brings itself, and inherits the ones
     // it leaves out from the execute block around it
     const EstimatorParameters& estimators = exec.estimators;
@@ -412,8 +398,9 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{
-        .wavefunction = WavefunctionParameters{.filename = hamil_file},
-        .estimators   = EstimatorParameters{.backprop        = BackPropEstimatorParameters{},
+        .wavefunction = WavefunctionParameters{.filename = wfn_file},
+        .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+        .estimators   =EstimatorParameters{.backprop        = BackPropEstimatorParameters{},
                                             .time_evolved_bp = BackPropEstimatorParameters{}},
     }};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
@@ -423,8 +410,9 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{
-        .wavefunction = WavefunctionParameters{.filename = hamil_file},
-        .estimators   = EstimatorParameters{.backprop = BackPropEstimatorParameters{}},
+        .wavefunction = WavefunctionParameters{.filename = wfn_file},
+        .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+        .estimators   =EstimatorParameters{.backprop = BackPropEstimatorParameters{}},
     }};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
@@ -433,8 +421,9 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{
-        .wavefunction = WavefunctionParameters{.filename = hamil_file},
-        .estimators   = EstimatorParameters{.time_evolved_bp = BackPropEstimatorParameters{
+        .wavefunction = WavefunctionParameters{.filename = wfn_file},
+        .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+        .estimators   =EstimatorParameters{.time_evolved_bp = BackPropEstimatorParameters{
                                                 .propagation_steps = std::vector<int>{}}},
     }};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
@@ -468,11 +457,13 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   // keeps the source it was given by the stage that introduced it
   {
     AFQMCParameters params{};
-    params.wavefunctions = {WavefunctionParameters{.name = "second_wfn", .filename = hamil_file}};
+    params.wavefunctions = {WavefunctionParameters{.name = "second_wfn", .filename = wfn_file}};
+    params.hamiltonians  = {HamiltonianParameters{.name = "ham", .filename = hamil_file}};
     params.execute       = {
-        ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file}},
-        ExecuteParameters{.wavefunction = std::string{"second_wfn"}},
-        ExecuteParameters{.wavefunction = std::string{"second_wfn"}},
+        ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
+                          .hamiltonian  = std::string{"ham"}},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"}},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"}},
     };
     resolve_defaults(params, *mpi);
 
@@ -488,12 +479,17 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   // the wavefunction of the stage that introduces it
   {
     AFQMCParameters params{};
-    params.wavefunctions = {WavefunctionParameters{.name = "first_wfn", .filename = hamil_file},
-                            WavefunctionParameters{.name = "second_wfn", .filename = hamil_file}};
+    params.wavefunctions = {WavefunctionParameters{.name = "first_wfn", .filename = wfn_file},
+                            WavefunctionParameters{.name = "second_wfn", .filename = wfn_file}};
+    params.hamiltonians  = {HamiltonianParameters{.name = "ham", .filename = hamil_file}};
     params.execute       = {
-        ExecuteParameters{.walker_set = WalkerSetParameters{.name = "first"}, .wavefunction = std::string{"first_wfn"}},
-        ExecuteParameters{.wavefunction = std::string{"second_wfn"}},
-        ExecuteParameters{.walker_set = WalkerSetParameters{.name = "second"}, .wavefunction = std::string{"second_wfn"}},
+        ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "first"},
+                          .wavefunction = std::string{"first_wfn"},
+                          .hamiltonian  = std::string{"ham"}},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"}},
+        ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "second"},
+                          .wavefunction = std::string{"second_wfn"},
+                          .hamiltonian  = std::string{"ham"}},
     };
     resolve_defaults(params, *mpi);
 
@@ -508,15 +504,18 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   // declared inline, and that wavefunction has its defaults resolved as well
   {
     AFQMCParameters params{};
-    params.wavefunctions = {WavefunctionParameters{.name = "init_wfn", .filename = hamil_file}};
+    params.wavefunctions = {WavefunctionParameters{.name = "init_wfn", .filename = wfn_file}};
+    params.hamiltonians  = {HamiltonianParameters{.name = "ham", .filename = hamil_file}};
     params.execute       = {
         ExecuteParameters{
             .walker_set   = WalkerSetParameters{.from = WavefunctionSource{.wavefunction = std::string{"init_wfn"}}},
-            .wavefunction = WavefunctionParameters{.filename = hamil_file}},
+            .wavefunction = WavefunctionParameters{.filename = wfn_file},
+            .hamiltonian  = std::string{"ham"}},
         ExecuteParameters{
             .walker_set   = WalkerSetParameters{.from = WavefunctionSource{
-                                                    .wavefunction = WavefunctionParameters{.filename = hamil_file}}},
-            .wavefunction = std::string{"init_wfn"}},
+                                                    .wavefunction = WavefunctionParameters{.filename = wfn_file}}},
+            .wavefunction = std::string{"init_wfn"},
+            .hamiltonian  = std::string{"ham"}},
     };
     resolve_defaults(params, *mpi);
 
@@ -559,6 +558,20 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{.wavefunction = std::string{"nowhere"}}};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
+  }
+
+  // the hamiltonian is never taken from the file of the wavefunction: an execute block has to
+  // give one, and it has to name its file
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file}}};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
+  }
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file},
+                                        .hamiltonian  = HamiltonianParameters{}}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 }

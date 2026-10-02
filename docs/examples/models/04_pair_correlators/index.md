@@ -216,6 +216,9 @@ instead of the above.
       "wavefunction": {
         "filename": "afqmc.h5"
       },
+      "hamiltonian": {
+        "filename": "afqmc.h5"
+      },
       "timestep": 0.01,
       "steps": 12000,
       "n_walkers_per_mpi_task": 80,

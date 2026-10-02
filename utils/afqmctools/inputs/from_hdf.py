@@ -134,13 +134,8 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
     inps = default_inputs(fwfn0, fham0=fham0)
     if relpath:  # use relative file path
         path = os.path.dirname(fout)
-        fwfn = os.path.relpath(fwfn0, path)
-        fham = os.path.relpath(fham0, path)
-        inps["execute"]["wavefunction"]["filename"] = fwfn
-        if fham != fwfn:
-            inps["execute"]["hamiltonian"] = dict(
-                filename = fham
-            )
+        inps["execute"]["wavefunction"]["filename"] = os.path.relpath(fwfn0, path)
+        inps["execute"]["hamiltonian"]["filename"] = os.path.relpath(fham0, path)
     if args_namespace is not None:
         # a block exec_opts names itself is more specific than one the arguments imply
         estimators = exec_opts.setdefault("estimators", {})
@@ -223,15 +218,12 @@ def default_inputs(fwfn0, fham0=None):
             "wavefunction": {
                 "filename": fwfn0,
             },
+            "hamiltonian": {
+                "filename": fham0,
+            },
             "timestep": 0.01,
             "steps": 10000,
             "n_walkers_per_mpi_task": 10,
         }
     }
-    use_wfn_ham = fham0 == fwfn0
-    if not use_wfn_ham:
-        inps["execute"]["hamiltonian"] = {
-          "name": "ham0",
-          "filename": fham0,
-        }
     return inps
