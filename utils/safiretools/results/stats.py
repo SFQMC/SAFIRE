@@ -135,18 +135,16 @@ def rebinning_analysis(samples, *, rebinsize, skip=0):
 def _cramer_von_mises_sf(statistic):
     """Upper tail ``P(W > statistic)`` of ``W = int_0^1 B(t)**2 dt``, B a Brownian bridge.
 
-    Summed from the series of Anderson and Darling, Ann. Math. Stat. 23, 193 (1952), whose
-    terms fall off monotonically.
+    Summed from the series of Anderson and Darling, Ann. Math. Stat. 23, 193 (1952).
     """
-    if statistic <= 0.0:
+    # the cdf is below 1e-17 here, and kve turns nan for a statistic below about 6e-11
+    if statistic < 1e-3:
         return 1.0
-    # an infinite statistic would never let the terms fall off
-    if np.isinf(statistic):
+    if statistic > 4.3:
         return 0.0
 
     cdf = 0.0
-    j = 0
-    while True:
+    for j in range(10):
         y = 4 * j + 1
         q = y**2 / (16 * statistic)
         # kve(nu, q) = kv(nu, q) * exp(q), so exp(-2q) leaves the exp(-q) * kv(nu, q) wanted
@@ -157,11 +155,9 @@ def _cramer_von_mises_sf(statistic):
             / (np.pi**1.5 * np.sqrt(statistic))
         )
         cdf += term
-        # a large statistic has many terms of similar size, so stopping any earlier than
-        # machine precision leaves a remainder that swamps its tiny upper tail
-        if term < 1e-17:
+
+        if term < 1e-13:
             break
-        j += 1
     return max(1.0 - cdf, 0.0)
 
 
