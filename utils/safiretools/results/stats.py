@@ -22,16 +22,8 @@ def optimal_rebinsize(samples, skip=0):
     """Choose the rebin size for `rebinning_analysis` from the series itself.
 
     The series is blocked in powers of two (Flyvbjerg and Petersen, J. Chem. Phys. 91, 461
-    (1989)) and the smallest block size B with ``B**3 > 2*N*kappa_B**2`` is taken, N being
-    the number of samples and kappa_B the statistical inefficiency seen at that block
-    size, the squared ratio of the blocked to the unblocked standard error. This is the
-    criterion of Lee et al., Phys. Rev. E 83, 066706 (2011), also used by pyblock: it
-    balances the correlation left inside a bin against the noise of having few bins.
-
-    As in `rebinning_analysis`, one size serves every component, the one the slowest of
-    them needs; the real and imaginary parts of a complex series count as components of
-    their own. Series that are to be combined, as in `jackknife`, have to share one bin
-    count, so rebin all of them with the largest of their sizes.
+    (1989)) and the smallest block size B with ``B**3 > 2*N*max(kappa_B)**2`` is taken (U. Wolff,
+    Comput. Phys. Commun. 156, 143 (2004)) where kappa is maximized over every component.
 
     Returns the rebin size and whether it meets the criterion. If no size does, the series
     is too short for its autocorrelation time, and the size returned is the compromise of
