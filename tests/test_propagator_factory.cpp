@@ -38,7 +38,8 @@
 #include "numerics/sparse/sparse.hpp"
 
 #include "test_utils.hpp"
-#include "AFQMC/Utilities/readWfn.h" 
+#include "AFQMC/Utilities/readWfn.h"
+#include "AFQMC/Utilities/AFQMCTimer.h"
 
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"

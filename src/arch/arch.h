@@ -45,6 +45,7 @@ namespace arch
 {
   void init(bool use_gpu);
   void check_device_configuration();
+  void device_synchronize();
 }
 }
 

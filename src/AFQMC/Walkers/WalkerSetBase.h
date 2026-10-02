@@ -17,13 +17,15 @@
 #pragma once
 
 #include <memory>
-#include <span>
 #include <utility>
+#include <vector>
 
 #include "configuration.hpp"
 #include "config.h"
+#include "arch/arch.h"
 #include "IO/AppAbort.hpp"
 #include "AFQMC/parameters.hpp"
+#include "mpi3/request.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/mpi_context.h"
 
@@ -31,7 +33,6 @@
 #include "IO/app_loggers.h"
 
 #include "AFQMC/Walkers/Walkers.hpp"
-#include "AFQMC/Walkers/WalkerControl.hpp"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
 #include "AFQMC/Walkers/WalkerSetInitialGuess.hpp"
 
@@ -85,7 +86,6 @@ public:
         walker_buffer(0, 1),
         bp_buffer(0, 0)
   {
-    // parse fills load_balance, pop_control, min_weight and max_weight from params
     parse(params);
     setup(dims);
     allocate_walkers(nWalkers);
@@ -370,27 +370,49 @@ public:
   }
 
   /*
-   * Rescales every walker weight so that the total weight over the whole population equals
-   * the global target population, leaving the mean weight at 1.
-   *
-   * Collective over the walker set's communicator.
+   * Calls f(A) for every per-walker field A, whose leading index is the walker slot. The call
+   * order is the wire order, so both ends of an exchange must agree on it.
    */
-  void rescale_total_weight();
+  template<class F>
+  void for_each_field(F&& f) {
+    f(walker_buffer);
+    if(wlk_desc[3] > 0) {
+      f(bp_buffer);
+    }
+  }
 
-  void popControl();
+  /*
+   * Posts one non-blocking send per field of walker i to dest; field k uses tag k.
+   */
+  void isend_walker(int i, int dest, mpi3::communicator& comm, std::vector<mpi3::request>& requests) {
+    // CUDA-aware MPI reads device memory outside the stream, and nda runs without synchronization
+    if constexpr(MEM == DEVICE_MEMORY) {
+      arch::device_synchronize();
+    }
+    int tag = 0;
+    for_each_field([&](auto& A) {
+      auto row = A(i, nda::ellipsis{});
+      requests.emplace_back(comm.isend_n(row.data(), row.size(), dest, tag++));
+    });
+  }
 
-  // M holds the incoming walkers packed as {walker_buffer row, bp_buffer row}; it comes
-  // from an MPI receive buffer, so it is on the host even when the set lives on a device.
-  void push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M);
+  /*
+   * Posts one non-blocking receive per field into slot i, matching isend_walker.
+   */
+  void irecv_walker(int i, int source, mpi3::communicator& comm, std::vector<mpi3::request>& requests) {
+    int tag = 0;
+    for_each_field([&](auto& A) {
+      auto row = A(i, nda::ellipsis{});
+      requests.emplace_back(comm.ireceive_n(row.data(), row.size(), source, tag++));
+    });
+  }
 
-  void pop_walkers(memory::array_view<HOST_MEMORY, ComplexType, 2> M);
-
-  // given a list of new weights and counts, add/remove walkers and reassign weight accordingly.
-  // counts is one {weight, multiplicity} entry per local walker and is reordered in place;
-  // walkers beyond the target population are written to M. The new weights are magnitudes, so
-  // each walker keeps the phase it had before the branch.
-  void branch(std::span<std::pair<double, int>> counts,
-              memory::array_view<MEM, ComplexType, 2> M);
+  /*
+   * Copies every field of the walker in slot from into slot to.
+   */
+  void copy_walker(int from, int to) {
+    for_each_field([&](auto& A) { A(to, nda::ellipsis{}) = A(from, nda::ellipsis{}); });
+  }
 
   auto get_mpi() const { return mpi; }
 
@@ -402,9 +424,6 @@ public:
   WALKER_TYPES getWalkerType() const { return walkerType; }
 
   bool isFiniteTemperature() const { return finite_temperature; }
-
-  std::tuple<BranchingAlgorithm,int,int> population_control_parameters() const 
-  { return std::make_tuple(pop_control,min_weight,max_weight); }
 
   int walkerSizeIO() const
   {
@@ -514,22 +533,6 @@ public:
     return bp_buffer(range::all,range(i0,i0+wlk_desc[6]));
   }
 
-  // load balancing algorithm
-  void loadBalance(nda::MemoryArrayOfRank<2> auto&& M,  
-                   std::vector<int> const& nwalk_counts_old,  
-                   std::vector<int> const& nwalk_counts_new)
-  {
-    if (load_balance == LoadBalanceAlgorithm::simple)
-    {
-      afqmc::swapWalkersSimple(*this, M, nwalk_counts_old, nwalk_counts_new, mpi->comm);
-    }
-    else if (load_balance == LoadBalanceAlgorithm::async)
-    {
-      afqmc::swapWalkersAsync(*this, M, nwalk_counts_old, nwalk_counts_new, mpi->comm);
-    }
-    mpi->comm.barrier();
-  }
-
   std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> getRNG() { return rng; }
 
 protected:
@@ -566,16 +569,6 @@ protected:
   void setup(std::array<int, 3> dims);
   // reserve capacity for n walkers and initialize them to valid defaults
   void allocate_walkers(int n);
-
-  // the four below are set by parse(); the sentinels only guard against a ctor that forgets to
-  // call it
-
-  // load balance algorithm
-  LoadBalanceAlgorithm load_balance{LoadBalanceAlgorithm::undefined};
-
-  // branching algorithm
-  BranchingAlgorithm pop_control{BranchingAlgorithm::undefined};
-  [[maybe_unused]] double min_weight{}, max_weight{};
 };
 
 } // namespace afqmc

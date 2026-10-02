@@ -28,9 +28,6 @@ SAFIRE_DEFINE_ENUM(WALKER_TYPES, {
   {NONCOLLINEAR, "noncollinear"},
 });
 
-SAFIRE_DEFINE_ENUM_NAMES(LoadBalanceAlgorithm, undefined, simple, async);
-SAFIRE_DEFINE_ENUM_NAMES(BranchingAlgorithm, undefined, pair, comb, serial_comb);
-
   
 enum class PHMSDEnergyAlgorithm {
   reference, // loop over unique configurations, calculate G and evaluate E from scratch
@@ -86,16 +83,11 @@ struct WalkerSetParameters {
   // an unnamed block cannot be referenced, so it is registered under a generated name
   std::string name{};
   WALKER_TYPES walker_type{COLLINEAR};
-  LoadBalanceAlgorithm load_balance_type{LoadBalanceAlgorithm::async};
-  BranchingAlgorithm pop_control_type{BranchingAlgorithm::serial_comb};
-  double min_weight{0.05};
-  double max_weight{4.0};
 
   // resolve_defaults falls back to the wavefunction of the execute block that introduces the walker set
   std::optional<WalkerSetSourceParameters> from{};
 };
-SAFIRE_DEFINE_PARAMETERS(WalkerSetParameters, name, walker_type, load_balance_type, pop_control_type, min_weight,
-                         max_weight, from);
+SAFIRE_DEFINE_PARAMETERS(WalkerSetParameters, name, walker_type, from);
 
 struct HamiltonianParameters {
   std::string name{};

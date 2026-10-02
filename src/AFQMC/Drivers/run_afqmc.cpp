@@ -27,6 +27,7 @@
 #include "AFQMC/Drivers/average_energy.hpp"
 #include "AFQMC/Drivers/run_afqmc.hpp"
 #include "AFQMC/Utilities/AFQMCTimer.h"
+#include "AFQMC/Walkers/population_control.hpp"
 #include "IO/app_loggers.h"
 #include "IO/banner.hpp"
 
@@ -75,9 +76,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 
     if(step % exec.population_control_interval == 0) {
       auto popcontrol_time = timers.popcontrol.start();
-      wset.rescale_total_weight();
-      wset.popControl();
-      wset.rescale_total_weight();
+      population_control(mpi, *wset.getRNG(), wset);
       popcontrol_time.stop();
     }
 

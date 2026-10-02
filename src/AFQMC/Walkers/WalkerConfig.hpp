@@ -47,19 +47,6 @@ enum walker_data {
   THETA,
 };
 
-enum class LoadBalanceAlgorithm {
-  undefined,
-  simple,
-  async
-};
-
-enum class BranchingAlgorithm {
-  undefined,
-  pair,
-  comb,
-  serial_comb
-};
-
 } // namespace afqmc
 } // namespace sfqmc
 

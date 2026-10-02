@@ -18,33 +18,12 @@
 #include <cstdlib>
 
 #include "AFQMC/Walkers/WalkerSetBase.h"
+#include "IO/banner.hpp"
 
 namespace sfqmc
 {
 namespace afqmc
 {
-
-namespace detail
-{
-inline std::string_view load_balance_explanation(LoadBalanceAlgorithm algorithm)
-{
-  switch(algorithm) {
-    case LoadBalanceAlgorithm::simple: return "blocking 1-1 swap";
-    case LoadBalanceAlgorithm::async: return "nonblocking swap";
-    default: return "";
-  }
-}
-
-inline std::string_view branching_explanation(BranchingAlgorithm algorithm)
-{
-  switch(algorithm) {
-    case BranchingAlgorithm::pair: return "paired walker branching";
-    case BranchingAlgorithm::comb:
-    case BranchingAlgorithm::serial_comb: return "comb method [Booth, Gubernatis, PRE 2009]";
-    default: return "";
-  }
-}
-} // namespace detail
 
 template<MEMORY_SPACE MEM>
 void WalkerSetBase<MEM>::parse(const WalkerSetParameters& params)
@@ -52,24 +31,11 @@ void WalkerSetBase<MEM>::parse(const WalkerSetParameters& params)
   app_log(1, section(std::format("Initializing Walker Set \"{}\"", params.name)));
   // walkerType is set from params in the constructor's member-init list, before setup()
   // needs it, so it is not assigned here.
-  min_weight   = params.min_weight;
-  max_weight   = params.max_weight;
-  load_balance = params.load_balance_type;
-  pop_control  = params.pop_control_type;
-
-  utils::check(min_weight >= 1e-2, "min_weight too small");
-  utils::check(load_balance != LoadBalanceAlgorithm::undefined, "undefined load balancing algorithm");
-  utils::check(pop_control != BranchingAlgorithm::undefined, "undefined population control algorithm");
 
   if constexpr (MEM == HOST_MEMORY)
     app_log(1, "Walker resides in CPU memory");
   else
     app_log(1, "Walker resides in GPU memory");
-
-  app_log(1, "Using {} ({}) load balancing algorithm.", nlohmann::json(load_balance).get<std::string>(),
-          detail::load_balance_explanation(load_balance));
-  app_log(1, "Using {} ({}) population control algorithm.", nlohmann::json(pop_control).get<std::string>(),
-          detail::branching_explanation(pop_control));
 
   app_log(1, "");
 }
@@ -223,68 +189,6 @@ void WalkerSetBase<MEM>::resize(int n)
   utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
            " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
            targetN,targetN_per_rank,mpi->comm.size());
-}
-
-template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::rescale_total_weight() {
-  utils::check(tot_num_walkers == targetN_per_rank, "Error: tot_num_walkers!=targetN_per_rank");
-
-  memory::buffered_array<HOST_MEMORY, ComplexType, 1> weights(tot_num_walkers);
-  getProperty(WEIGHT, weights);
-
-  RealType total = nda::fold([](RealType sum, ComplexType w) { return sum + std::abs(w); }, weights, 0.0);
-
-  total = mpi->comm.all_reduce_value(total);
-  utils::check(total > 1e-6, "The total walker weight collapsed to {}. Something went very wrong.", total);
-
-  ComplexType scale = get_global_target_population() / total;
-  nda::blas::scal(scale, walker_buffer(nda::range(tot_num_walkers), data_displ[WEIGHT]));
-
-  // the weight history entry of the last completed step holds the same weight, so it has to be
-  // rescaled along with it
-  if(wlk_desc[6] > 0) {
-    int his_pos = (history_pos == 0) ? wlk_desc[6] - 1 : history_pos - 1;
-    nda::blas::scal(scale, bp_buffer(nda::range(tot_num_walkers), data_displ[WEIGHT_HISTORY] + his_pos));
-  }
-}
-
-template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::popControl()
-{
-  auto branching_time = timers.branching.start();
-
-  // matrix to hold walkers beyond targetN_per_rank
-  // doing this to avoid resizing SHMBuffer, instead use local memory
-  // will be resized later
-  memory::array<MEM, ComplexType, 2> Wexcess(0, walker_size + (wlk_desc[3] > 0 ? bp_walker_size : 0));
-
-  std::vector<int> nwalk_counts_old, nwalk_counts_new;
-  {
-    nwalk_counts_old.resize(mpi->comm.size());
-    nwalk_counts_new.resize(mpi->comm.size());
-    std::fill(nwalk_counts_new.begin(), nwalk_counts_new.end(), targetN_per_rank);
-  }
-
-  // population control on master node
-  if (pop_control == BranchingAlgorithm::pair || pop_control == BranchingAlgorithm::serial_comb)
-  {
-    SerialBranching(*this, pop_control, min_weight, max_weight, nwalk_counts_old, Wexcess, *rng, mpi->comm);
-
-    // distributed routines from here
-  }
-  else if (pop_control == BranchingAlgorithm::comb)
-  {
-    utils::check(false," Error: Distributed comb not implemented yet. \n\n");
-    //afqmc::DistCombBranching(*this,rng_heads,nwalk_counts_old);
-  }
-  branching_time.stop();
-
-  // load balance after population control events
-  auto load_balance_time = timers.load_balance.start();
-  loadBalance(Wexcess,nwalk_counts_old,nwalk_counts_new);
-  load_balance_time.stop();
-
-  utils::check(tot_num_walkers==targetN_per_rank," Error: tot_num_walkers != targetN_per_rank");
 }
 
 /*
@@ -488,150 +392,6 @@ void WalkerSetBase<MEM>::resize_bp(int nbp, int nCV, int nref)
     walker_buffer = std::move(wb);
   }
 }  
-
-template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M)
-{
-  utils::check(tot_num_walkers + M.extent(0) <= capacity(), "Insufficient capacity");
-  utils::check(single_walker_size() + single_walker_bp_size() == M.extent(1), 
-               "Incorrect dimensions.");
-  utils::check(M.strides()[1] == 1, "Incorrect strides.");
-  auto all = nda::range::all;
-  for (int i = 0; i < M.extent(0); i++)
-  {
-    walker_buffer(tot_num_walkers, all) = M(i, nda::range(walker_size));
-    if (wlk_desc[3] > 0)
-      bp_buffer(tot_num_walkers,all) = M(i, nda::range(walker_size,walker_size+bp_walker_size));
-    tot_num_walkers++;
-  }
-}
-
-template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::pop_walkers(memory::array_view<HOST_MEMORY, ComplexType, 2> M)
-{
-  utils::check(tot_num_walkers >= M.extent(0), "Insufficient walkers");
-  utils::check(walker_size + (wlk_desc[3]>0 ? bp_walker_size : 0 ) == int(M.extent(1)),
-               "Incorrect dimensions.");
-  utils::check(M.strides()[1] == 1, "Incorrect strides.");
-  auto all = nda::range::all;
-  for (int i = 0; i < M.extent(0); i++)
-  {
-    M(i, nda::range(walker_size)) =  walker_buffer(tot_num_walkers-1, all); 
-    if (wlk_desc[3] > 0)
-      M(i, nda::range(walker_size,walker_size+bp_walker_size)) = bp_buffer(tot_num_walkers-1,all);
-    tot_num_walkers--;
-  }
-}
-
-template<MEMORY_SPACE MEM>
-void WalkerSetBase<MEM>::branch(std::span<std::pair<double, int>> counts,
-                                memory::array_view<MEM, ComplexType, 2> M)
-{
-  auto itbegin = counts.begin();
-  auto itend   = counts.end();
-  utils::check(std::distance(itbegin, itend) == tot_num_walkers,
-               "Error in WalkerSetBase::branch(): ptr_range != # walkers. ");
-
-  auto all = nda::range::all;
-  // checking purposes
-  int nW = 0;
-  for (auto it = itbegin; it != itend; ++it)
-    nW += it->second;
-  utils::check(M.extent(0) >= std::max(0, nW - targetN_per_rank),
-               "Error in WalkerSetBase::branch(): Not enough space in excess matrix.");
-  utils::check(M.extent(1) >= walker_size + ((wlk_desc[3] > 0) ? bp_walker_size : 0),
-               "Error in WalkerSetBase::branch(): Wrong dimensions in excess matrix.");
-
-  // if all walkers are dead, don't bother with routine, reset tot_num_walkers and return
-  if (nW == 0)
-  {
-    tot_num_walkers = 0;
-    return;
-  }
-
-  //1. push/swap all dead walkers to the end and adjust tot_num_walkers
-  {
-    auto kill = itbegin;
-    auto keep = itend - 1;
-
-    while (keep > kill)
-    {
-      // 1. look for next keep
-      while (keep->second == 0 && keep > kill)
-      {
-        tot_num_walkers--;
-        --keep;
-      }
-      if (keep == kill)
-        break;
-
-      // 2. look for next kill
-      while (kill->second != 0 && kill < keep)
-        ++kill;
-      if (keep == kill)
-        break;
-
-      // 3. swap
-      std::swap(*kill, *keep);
-      walker_buffer(std::distance(itbegin, kill),all) = walker_buffer(tot_num_walkers - 1,all);
-      if (wlk_desc[3] > 0)
-        bp_buffer(std::distance(itbegin, kill),all) = bp_buffer(tot_num_walkers - 1,all);
-      --tot_num_walkers;
-      --keep;
-    }
-
-    // check
-    int n = 0;
-    for (auto it = itbegin; it != itbegin + tot_num_walkers; ++it)
-      n += it->second;
-    if (n != nW)
-      APP_ABORT("Error in WalkerSetBase::branch(): Problems with walker counts after sort.");
-    for (auto it = itbegin + tot_num_walkers; it != itend; ++it)
-      if (it->second != 0)
-        APP_ABORT("Error in WalkerSetBase::branch(): Problems after sort.");
-  }
-
-  //2. Adjust weights and replicate walkers. Those beyond targetN_per_rank go in M
-  itend   = itbegin + tot_num_walkers;
-  int pos = 0;
-  int cnt = 0;
-  // circular buffer
-  int his_pos = ((history_pos == 0) ? wlk_desc[6] - 1 : history_pos - 1);
-  // The branching algorithms decide on |w| alone, so they hand back a real weight. Restore the
-  // phase of the walker that survived, which is still in walker_buffer from before the branch;
-  // without it free projection would lose the walker phases at every population control event.
-  memory::buffered_array<HOST_MEMORY, ComplexType, 1> old_weight(tot_num_walkers);
-  getProperty(WEIGHT, old_weight);
-  for (; itbegin != itend; ++itbegin, ++pos)
-  {
-    utils::check(itbegin->second > 0, "Error in WalkerSetBase::branch(): Problems during branch.");
-
-    RealType abs_w = std::abs(old_weight(pos));
-    ComplexType w  = (abs_w > 0.0 ? itbegin->first * old_weight(pos) / abs_w
-                                  : ComplexType(itbegin->first, 0.0));
-    nda::tensor::set(w,walker_buffer(pos,nda::range(data_displ[WEIGHT],data_displ[WEIGHT]+1)));
-    if (wlk_desc[6] > 0 && his_pos >= 0 && his_pos < wlk_desc[6])
-      nda::tensor::set(w,bp_buffer(nda::range(pos,pos+1),data_displ[WEIGHT_HISTORY] + his_pos));
-
-    if (itbegin->second > 1)
-    {
-      int n = std::min(targetN_per_rank - tot_num_walkers, itbegin->second - 1);
-      for (int i = 0; i < n; i++)
-      {
-        walker_buffer(tot_num_walkers,all) = walker_buffer(pos,all);
-        if (wlk_desc[3] > 0)
-          bp_buffer(tot_num_walkers,all) = bp_buffer(pos,all);
-        tot_num_walkers++;
-      }
-      for (int i = 0, in = itbegin->second - 1 - n; i < in; i++, cnt++)
-      {
-        M(cnt,nda::range(walker_size)) = walker_buffer(pos,all);  
-        if (wlk_desc[3] > 0)
-          M(cnt,nda::range(walker_size, walker_size + bp_walker_size)) = bp_buffer(pos,all);  
-      }
-    }
-  }
-}
 
 template<MEMORY_SPACE MEM>
 void WalkerSetBase<MEM>::benchmark(std::string& blist, int maxnW, int delnW, int repeat)

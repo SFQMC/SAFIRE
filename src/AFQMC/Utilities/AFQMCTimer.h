@@ -37,15 +37,13 @@ struct AFQMCTimers {
   utils::Timer ortho{"WalkerOrthogonalization"};
   utils::Timer setup{"Setup"};
   utils::Timer extra{"Extra"};
-  utils::Timer load_balance{"WalkerSet::loadBalance"};
-  utils::Timer branching{"WalkerSet::branching"};
 
-  static constexpr int ntimers = 16;
+  static constexpr int ntimers = 14;
 
   std::array<utils::Timer*, ntimers> all() {
     return {&step,            &pseudo_energy,  &energy, &vHS,   &assemble_X,   &vbias,
             &G_for_vbias,     &propagate,      &mixed_estimator, &back_propagate,
-            &popcontrol,      &ortho,          &setup,  &extra, &load_balance, &branching};
+            &popcontrol,      &ortho,          &setup,  &extra};
   }
 
   void reset_all() {

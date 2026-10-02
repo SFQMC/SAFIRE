@@ -19,6 +19,7 @@
 #include <algorithm>
 
 #include "AFQMC/config.h"
+#include "AFQMC/Utilities/AFQMCTimer.h"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
 #include "AFQMC/SlaterDeterminantOperations/density_matrix.hpp"
 #include "numerics/operations/product.hpp"

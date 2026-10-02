@@ -113,7 +113,7 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
 
     For input blocks provided in exec_opts, each parameter is appended into the
     corresponding block in the JSON file. For example, if exec_opts contains
-    ``{"execute": {"walker_set": {"min_weight": 0.01}}}``, the resulting JSON
+    ``{"execute": {"walker_set": {"name": "my_walkers"}}}``, the resulting JSON
     file will contain the following::
 
         {
@@ -121,7 +121,7 @@ def write_json(fout, fwfn0, fham0=None, relpath=True, exec_opts=dict(), args_nam
             "execute": {
                 "walker_set": {
                     "walker_type": "COLLINEAR",
-                    "min_weight": 0.01
+                    "name": "my_walkers"
                 },
                 ...
             }

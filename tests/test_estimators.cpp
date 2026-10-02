@@ -51,6 +51,7 @@
 #include "AFQMC/Propagators/AFQMCBasePropagator.h"
 #include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Utilities/readWfn.h"
+#include "AFQMC/Walkers/population_control.hpp"
 #include "test_utils.hpp"
 
 
@@ -694,9 +695,7 @@ void estimators_bp_record_survives_population_control(
   }
 
   skew_weights(wset);
-  wset.rescale_total_weight();
-  wset.popControl();
-  wset.rescale_total_weight();
+  population_control(*mpi, *wset.getRNG(), wset);
 
   REQUIRE(wset.size() == nwalk);
 
@@ -810,12 +809,10 @@ void estimators_bp_matches_mixed_across_population_control(
     flat.Propagate(wset, 0.0);
     flat.Orthogonalize(wset);
     if(step % pop_interval == 0) {
-      // re-skewing keeps the thresholds in reach after a branch has equalized the weights,
-      // so that later windows see a branching event too and not just the first one
+      // re-skewing after a branch has equalized the weights makes the comb duplicate and drop
+      // walkers again, so that later windows see a branching event too and not just the first one
       skew_weights(wset);
-      wset.rescale_total_weight();
-      wset.popControl();
-      wset.rescale_total_weight();
+      population_control(*mpi, *wset.getRNG(), wset);
     }
     estimators.measure(*mpi, step, wset);
   }

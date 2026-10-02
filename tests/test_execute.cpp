@@ -62,7 +62,7 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
 
   const WavefunctionParameters wfn_min{.filename = wfn_file};
   const HamiltonianParameters ham_min{.filename = hamil_file};
-  WalkerSetParameters wlk_min{.max_weight = 4.0};
+  WalkerSetParameters wlk_min{};
 
   // KE: Some special walker_types must match the wavefunction type;
   //     if an explicit walker type is provided to this test, use it!
@@ -337,7 +337,7 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     params.wavefunctions = {WavefunctionParameters{.name = "estimator_wfn", .filename = wfn_file}};
     params.hamiltonians  = {HamiltonianParameters{.name = "estimator_ham", .filename = hamil_file}};
     params.execute       = {ExecuteParameters{
-             .walker_set   = WalkerSetParameters{.min_weight = 0.125, .max_weight = 8.0},
+             .walker_set   = WalkerSetParameters{.walker_type = CLOSED},
              .wavefunction = WavefunctionParameters{.filename    = wfn_file,
                                                    .algorithm   = PHMSDEnergyAlgorithm::woodbury,
                                                    .dense_trial = false},
@@ -363,8 +363,7 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     const std::string prop_name   = resolved_name(exec.propagator, params.propagators);
 
     const WalkerSetParameters& wlk = block_named(params.walker_sets, wlk_name);
-    CHECK(wlk.min_weight == 0.125);
-    CHECK(wlk.max_weight == 8.0);
+    CHECK(wlk.walker_type == CLOSED);
 
     const WavefunctionParameters& wfn = block_named(params.wavefunctions, wfn_name);
     CHECK(wfn.algorithm == PHMSDEnergyAlgorithm::woodbury);

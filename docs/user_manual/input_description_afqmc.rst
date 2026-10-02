@@ -382,11 +382,7 @@ Below is a sample "walker_set" block with all settings explicitly set.
   :name: Listing 202
   
   "walker_set": {
-    "walker_type": "COLLINEAR",
-    "load_balance_type" : "async",
-    "pop_control_type" : "pair",
-    "min_weight" : 0.05,
-    "max_weight" : 4.0
+    "walker_type": "COLLINEAR"
   }
 
 
@@ -408,18 +404,6 @@ These are the most common Walker set options that a typical user will interact w
    * - **name**
      - n/a
      - The name to assign to the current walker_set block. This allows it to be referenced by name in execute blocks. A name is generated internally if not set here.
-   * - **load_balance_type**
-     - async
-     - Choose which load balancing algorithm to use. Choices are "async" for the asynchronous non-block swap load balancing algorithm and "simple" for a blocking (1-1) swap load balancing algorithm.
-   * - **pop_control_type**
-     - pair
-     - Choose population control algorithm to use. Choices are "pair" and "serial_comb". The "pair" algorithm uses paired walker branching. The "serial_comb" algorithm uses the comb method from Booth, Gubernatis, PRE 2009.
-   * - **min_weight**
-     - 0.05
-     - Minimum walker weight for population control
-   * - **max_weight**
-     - 4.0
-     - Maximum walker weight for population control
    * - **from**
      - the execute block's wavefunction
      - What the walkers are initialized from, as an object with a single key. ``{"wavefunction": ...}`` starts every walker from the determinant with the largest coefficient of a NOMSD wavefunction, or the reference of a PHMSD one; the wavefunction is given by name or as an inline block. Defaults to the wavefunction of the execute block that introduces the walker set. See :ref:`initial_walkers`.
