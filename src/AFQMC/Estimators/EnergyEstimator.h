@@ -25,6 +25,7 @@
 #include "AFQMC/Walkers/WalkerConfig.hpp"
 #include "EstimatorBase.h"
 #include "Measurements.hpp"
+#include "numerics/nda_functions.hpp"
 
 
 namespace sfqmc
@@ -82,7 +83,7 @@ public:
     output.measure(mpi, "OnebodyEnergy", avgLocalEnergy_h(0));
     output.measure(mpi, "ExchangeEnergy", avgLocalEnergy_h(1));
     output.measure(mpi, "CoulombEnergy", avgLocalEnergy_h(2));
-    nda::tensor::scale(1.0, ovlp, nda::tensor::unary_op::EXP);
+    nda::apply(1.0, ovlp, nda::tensor::unary_op::EXP);
     output.measure(mpi, "Overlap", nda::blas::dot(ovlp, weights));
 
     WeightStatistics const weight_stats = weight_statistics(mpi, weights);
