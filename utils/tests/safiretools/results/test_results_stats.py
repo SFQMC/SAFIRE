@@ -188,10 +188,12 @@ def test_cramer_von_mises_tail_matches_its_tabulated_critical_values(statistic, 
 
 
 def test_cramer_von_mises_tail_vanishes_for_a_large_statistic():
-    # truncating the series too early leaves a remainder far above the true tail
-    for statistic in [10.0, 1e4, 1e6]:
-        assert _cramer_von_mises_sf(statistic) < 1e-14
-    assert _cramer_von_mises_sf(0.0) == 1.0
+    for statistic in [10.0, 1e4, 1e6, np.inf]:
+        assert _cramer_von_mises_sf(statistic) == 0.0
+    # the series used to loop forever on a statistic this small, kve turning nan
+    for statistic in [0.0, 1e-12]:
+        assert _cramer_von_mises_sf(statistic) == 1.0
+    assert np.isnan(_cramer_von_mises_sf(np.nan))
 
 
 def test_a_stationary_series_is_not_taken_for_a_drifting_one():
