@@ -31,8 +31,9 @@ def write_jobfile(filename, parameters) -> None:
     parameters : dict
         The input parameters, in the format of the SAFIRE afqmc.json input file,
         except that a `Hamiltonian` or `Wavefunction` object may stand in for the
-        ``filename`` of a ``hamiltonian`` or ``wavefunction`` block, or for the
-        whole block, which is then ``{'filename': obj}``. Every such object is
+        ``filename`` of a ``hamiltonian`` or ``wavefunction`` block, inline or
+        in the ``hamiltonians`` / ``wavefunctions`` list, or for the whole
+        block, which is then ``{'filename': obj}``. Every such object is
         written to ``<filename without suffix>_<name>.h5`` next to the input
         file, and its ``filename`` becomes the name of that file. ``<name>`` is
         the ``"name"`` of the block, or else ``hamiltonian<i>`` /

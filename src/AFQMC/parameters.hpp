@@ -302,13 +302,13 @@ struct AFQMCParameters {
   std::vector<ExecuteParameters> execute{};
 
   // blocks declared outside of an execute block have to be named, so that an execute block can refer to them
-  std::vector<WalkerSetParameters> walker_set{};
-  std::vector<WavefunctionParameters> wavefunction{};
-  std::vector<HamiltonianParameters> hamiltonian{};
-  std::vector<PropagatorParameters> propagator{};
+  std::vector<WalkerSetParameters> walker_sets{};
+  std::vector<WavefunctionParameters> wavefunctions{};
+  std::vector<HamiltonianParameters> hamiltonians{};
+  std::vector<PropagatorParameters> propagators{};
 };
-SAFIRE_DEFINE_PARAMETERS(AFQMCParameters, driver, output_name, seed, execute, walker_set, wavefunction, hamiltonian,
-                         propagator);
+SAFIRE_DEFINE_PARAMETERS(AFQMCParameters, driver, output_name, seed, execute, walker_sets, wavefunctions,
+                         hamiltonians, propagators);
 
 
 /// Parses the input json file. An input that does not name its output is named after the input file itself.

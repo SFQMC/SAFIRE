@@ -269,23 +269,23 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
 
   // 2. + 3. name every block and hoist the ones declared inline. The walker sets go first, since
   //    the wavefunction a walker set is initialized from may be declared inside of it.
-  resolve_walker_set_refs(params.walker_set, params.execute);
+  resolve_walker_set_refs(params.walker_sets, params.execute);
 
   auto wavefunction_refs = execute_refs("wavefunction", params.execute, &ExecuteParameters::wavefunction, true);
-  for(auto& walker_set : params.walker_set) {
+  for(auto& walker_set : params.walker_sets) {
     if(walker_set.from) {
       if(auto* source = std::get_if<WavefunctionSource>(&*walker_set.from)) {
         wavefunction_refs.push_back(&source->wavefunction);
       }
     }
   }
-  resolve_block_refs("wavefunction", params.wavefunction, wavefunction_refs);
-  resolve_block_refs("hamiltonian", params.hamiltonian,
+  resolve_block_refs("wavefunction", params.wavefunctions, wavefunction_refs);
+  resolve_block_refs("hamiltonian", params.hamiltonians,
                      execute_refs("hamiltonian", params.execute, &ExecuteParameters::hamiltonian, false));
-  resolve_block_refs("propagator", params.propagator,
+  resolve_block_refs("propagator", params.propagators,
                      execute_refs("propagator", params.execute, &ExecuteParameters::propagator, false));
 
-  for(const auto& wfn : params.wavefunction) {
+  for(const auto& wfn : params.wavefunctions) {
     utils::check(!wfn.filename.empty(), "The wavefunction \"{}\" must contain a filename.", wfn.name);
   }
 
@@ -295,15 +295,15 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
     const std::string& ham_name = block_name(exec.hamiltonian, "hamiltonian");
 
     // a hamiltonian that does not name a file of its own uses the one of the wavefunction
-    HamiltonianParameters& ham = find_block(params.hamiltonian, ham_name, "hamiltonian");
+    HamiltonianParameters& ham = find_block(params.hamiltonians, ham_name, "hamiltonian");
     if(ham.filename.empty()) {
-      ham.filename = find_block(params.wavefunction, wfn_name, "wavefunction").filename;
+      ham.filename = find_block(params.wavefunctions, wfn_name, "wavefunction").filename;
     }
 
     // a walker set starts from the wavefunction of the stage that introduces it. The stages are
     // visited in order, so a walker set carried over from an earlier stage already has its source.
     WalkerSetParameters& walker_set =
-        find_block(params.walker_set, block_name(exec.walker_set, "walker_set"), "walker_set");
+        find_block(params.walker_sets, block_name(exec.walker_set, "walker_set"), "walker_set");
     if(!walker_set.from) {
       walker_set.from = WavefunctionSource{.wavefunction = wfn_name};
     }
@@ -317,7 +317,7 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
   auto hamiltonian_type = [&](const std::string& name) {
     auto entry = htypes.find(name);
     if(entry == htypes.end()) {
-      entry = htypes.emplace(name, peek_hamiltonian_type(find_block(params.hamiltonian, name, "hamiltonian"), mpi)).first;
+      entry = htypes.emplace(name, peek_hamiltonian_type(find_block(params.hamiltonians, name, "hamiltonian"), mpi)).first;
     }
     return entry->second;
   };
@@ -325,17 +325,17 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
   std::set<std::string> introduced_walker_sets;
   for(const auto& exec : params.execute) {
     const HamiltonianType htype = hamiltonian_type(block_name(exec.hamiltonian, "hamiltonian"));
-    apply_defaults(find_block(params.wavefunction, block_name(exec.wavefunction, "wavefunction"), "wavefunction"),
+    apply_defaults(find_block(params.wavefunctions, block_name(exec.wavefunction, "wavefunction"), "wavefunction"),
                    htype);
-    apply_defaults(find_block(params.propagator, block_name(exec.propagator, "propagator"), "propagator"), htype);
+    apply_defaults(find_block(params.propagators, block_name(exec.propagator, "propagator"), "propagator"), htype);
 
     // the wavefunction a walker set starts from is built with the hamiltonian of the stage that
     // introduces the walker set
     const std::string& walker_set_name = block_name(exec.walker_set, "walker_set");
     if(introduced_walker_sets.insert(walker_set_name).second) {
-      const auto& from = *find_block(params.walker_set, walker_set_name, "walker_set").from;
+      const auto& from = *find_block(params.walker_sets, walker_set_name, "walker_set").from;
       if(const auto* source = std::get_if<WavefunctionSource>(&from)) {
-        apply_defaults(find_block(params.wavefunction, block_name(source->wavefunction, "wavefunction"),
+        apply_defaults(find_block(params.wavefunctions, block_name(source->wavefunction, "wavefunction"),
                                   "wavefunction"),
                        htype);
       }
@@ -345,7 +345,7 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
     for_each_estimator(exec.estimators, [&](const auto& estimator) {
       const std::string& estimator_wfn = resolved(estimator.wavefunction, "wavefunction");
       const std::string& estimator_ham = resolved(estimator.hamiltonian, "hamiltonian");
-      apply_defaults(find_block(params.wavefunction, estimator_wfn, "wavefunction"),
+      apply_defaults(find_block(params.wavefunctions, estimator_wfn, "wavefunction"),
                      hamiltonian_type(estimator_ham));
     });
   }

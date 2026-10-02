@@ -166,7 +166,7 @@ parameter of the walker set names a different one, either by name or as an inlin
 .. code-block:: json
 
     {
-      "wavefunction": [
+      "wavefunctions": [
         {"name": "uhf", "filename": "wfn_uhf.h5"},
         {"name": "rohf", "filename": "wfn_rohf.h5"}
       ],

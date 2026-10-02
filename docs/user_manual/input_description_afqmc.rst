@@ -33,8 +33,8 @@ Currently, "afqmc" is the only supported option.
 
 .. important::
 
-  The wavefunction, hamiltonian, and walker_set blocks may be defined either within an execute block or outside of an execute block.
-  If defined outside of an execute block, they must be given a name via the "name" parameter.
+  The wavefunction, hamiltonian, walker_set, and propagator blocks may be defined either within an execute block or outside of an execute block.
+  Outside of an execute block, they are listed under "wavefunctions", "hamiltonians", "walker_sets", and "propagators", and must be given a name via the "name" parameter.
   They can then be referenced by name within an execute block.
 
 Below is a sample input file for an AFQMC calculation in SAFIRE. 
@@ -185,19 +185,21 @@ which are used in AFQMC such as the Hamiltonian and the trial wavefunction.
 Externally defined blocks
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The wavefunction, hamiltonian, and walker_set blocks may be defined either within an execute block or outside of an execute block.
-If defined outside of an execute block, they must be given a name via the "name" parameter.
+The wavefunction, hamiltonian, walker_set, and propagator blocks may be defined either within an execute block or outside of an execute block.
+Outside of an execute block, they are listed under "wavefunctions", "hamiltonians", "walker_sets", and "propagators", and must be given a name via the "name" parameter.
 They can then be referenced by name within an execute block instead of defining a json block.
-For example, in the input file below, the walker_set is defined outside of the execute block and given the name "my_walkers".
+For example, in the input file below, the walker_set is defined in the "walker_sets" list outside of the execute block and given the name "my_walker_set".
 
 .. code-block:: json
   :caption: Sample input file for AFQMC with Externally Defined Blocks
 
   {
     "afqmc": {
-      "walker_set": {
+      "walker_sets": [
+        {
           "name" : "my_walker_set"
-      },
+        }
+      ],
       "execute": {
         "walker_set" : "my_walker_set",
         "wavefunction": {

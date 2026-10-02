@@ -80,12 +80,12 @@ Wavefunction<MEM>& construct_wavefunction(std::shared_ptr<utils::mpi_context_t<b
   auto entry = wavefunctions.find(wavefunction_name);
   if(entry == wavefunctions.end()) {
     Hamiltonian hamiltonian =
-        Hamiltonian::from_params(mpi, find_block(params.hamiltonian, hamiltonian_name, "hamiltonian"));
+        Hamiltonian::from_params(mpi, find_block(params.hamiltonians, hamiltonian_name, "hamiltonian"));
 
     entry = wavefunctions
                 .emplace(wavefunction_name,
                          Wavefunction<MEM>::from_params(
-                             mpi, find_block(params.wavefunction, wavefunction_name, "wavefunction"),
+                             mpi, find_block(params.wavefunctions, wavefunction_name, "wavefunction"),
                              walker_type, finiteT, hamiltonian, nwalkers))
                 .first;
   }
@@ -133,7 +133,7 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
     std::string const& hamiltonian_name  = block_name(stage.hamiltonian, "hamiltonian");
     std::string const& propagator_name   = block_name(stage.propagator, "propagator");
 
-    WalkerSetParameters const& walker_set_params = find_block(params.walker_set, walker_set_name, "walker_set");
+    WalkerSetParameters const& walker_set_params = find_block(params.walker_sets, walker_set_name, "walker_set");
     int const nwalkers = stage.n_walkers_per_mpi_task;
 
     auto wavefunction_for = [&](std::string const& wfn_name, std::string const& ham_name) -> Wavefunction<MEM>& {
@@ -183,7 +183,7 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
     // the propagator builds its 1-body propagator for stage.timestep on construction, so it
     // is built after the wavefunction has seen the walker set
     Propagator<MEM> propagator{AFQMCBasePropagator<MEM>(
-        find_block(params.propagator, propagator_name, "propagator"), mpi, wavefunction, field_rng,
+        find_block(params.propagators, propagator_name, "propagator"), mpi, wavefunction, field_rng,
         stage.timestep)};
 
 

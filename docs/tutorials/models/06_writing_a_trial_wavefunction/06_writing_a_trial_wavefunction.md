@@ -190,7 +190,7 @@ The trial file does not store an initial walker. **By default**, the walkers sta
 
 ```json
 {
-  "wavefunction": [
+  "wavefunctions": [
     {"name": "trial", "filename": "wfn.h5"},
     {"name": "initial", "filename": "wfn_initial.h5"}
   ],
