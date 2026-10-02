@@ -103,7 +103,7 @@ timeout(time: 1, unit: 'HOURS') {
     }
   },
   cuda: {
-    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins', tag: 'cuda', gpus: 1,
+    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins', tag: 'cuda', gpus: 1, gpuType: 'a100',
              buildArgs: '--build-arg VARIANT=cuda') {
       withEnv([
         "SRC=$WORKSPACE",
