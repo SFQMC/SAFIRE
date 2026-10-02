@@ -90,7 +90,9 @@ void apply_defaults(ExecuteParameters& exec, DriverType driver);
 ///    it. Generated names never collide with the names in the input.
 /// 3. Hoists the blocks declared inline, in an execute block or in the source of a walker set,
 ///    into the top level lists, leaving a reference by name in their place. Afterwards every
-///    reference is a name, and the top level lists are the complete registry of blocks.
+///    reference is a name, and the top level lists are the complete registry of blocks. Every
+///    file the input names is made absolute against the working directory, which main sets to
+///    the directory of the input file.
 /// 4. Resolves the defaults a block inherits from a neighbouring block. A walker set without a
 ///    source starts from the wavefunction of the execute block that introduces it.
 /// 5. Peeks the type of every Hamiltonian and resolves the defaults that depend on it.

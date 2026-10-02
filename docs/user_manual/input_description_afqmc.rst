@@ -37,6 +37,11 @@ Currently, "afqmc" is the only supported option.
   Outside of an execute block, they are listed under "wavefunctions", "hamiltonians", "walker_sets", and "propagators", and must be given a name via the "name" parameter.
   They can then be referenced by name within an execute block.
 
+.. note::
+
+  Every file name in the input file is relative to the directory of the input file.
+  The results file is the exception: it is written to the directory AFQMC is launched from.
+
 Below is a sample input file for an AFQMC calculation in SAFIRE. 
 We will explore the details of this input file in the following sections.
 

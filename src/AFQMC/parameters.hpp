@@ -292,7 +292,8 @@ struct AFQMCParameters {
   DriverType driver{DriverType::afqmc};
 
   // results will be written to `<output_name>.results.h5`. defaults to the name of the input file
-  // without its extension, in the current working directory
+  // without its extension. Unlike every other path in the input, it is relative to the directory
+  // AFQMC was launched from rather than to the input file
   std::string output_name{};
 
   // seeds the random number generators of the whole run, every stage included. Without one
