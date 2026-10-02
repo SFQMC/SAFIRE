@@ -52,6 +52,12 @@ timeout(time: 1, unit: 'HOURS') {
               }
             }
           }
+          stage('python tests') {
+            sh '''
+              cd $SRC/utils
+              pytest tests/safiretools
+            '''
+          }
         },
         cpp_release: {
           stage('release') {
