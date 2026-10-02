@@ -46,8 +46,9 @@ Flat structure with multiple "execute" blocks
 ---------------------------------------------
 
 In the input file below we use a "flat" input structure in the
-sense that the "walker_set" and "wavefunction" blocks are defined
-outside of the "execute" blocks and are referenced by name within the "execute" blocks.
+sense that the "walker_set", "wavefunction" and "hamiltonian" blocks are defined
+outside of the "execute" blocks, in the "walker_sets", "wavefunctions" and "hamiltonians" lists,
+and are referenced by name within the "execute" blocks.
 This input file contains two execute blocks.
 The first is used to quickly equilibrate using a fairly large step size.
 The second resumes that calculation using an equilibrated population, and a smaller Trotter step size in order to perform measurements.
@@ -63,18 +64,24 @@ While not functionally necessary, defining the "wavefunction" and "hamiltonian" 
           "id": "qmc",
           "series": 0
         },
-        "walker_set":{
+        "walker_sets": [
+          {
             "name" : "walkers",
             "walker_type": "CLOSED"
-        },
-        "wavefunction" : {
+          }
+        ],
+        "wavefunctions" : [
+          {
             "name" : "my_wavefunction",
             "filename": "files/input.h5"
-        },
-        "hamiltonian" : {
+          }
+        ],
+        "hamiltonians" : [
+          {
             "name" : "my_hamiltonian",
             "filename": "files/input.h5"
-        },
+          }
+        ],
         "execute": {
           "walker_set": "walkers",
           "wavefunction": "my_wavefunction",
@@ -131,14 +138,16 @@ We use ellipses ( `...`)  in some of the advanced input blocks within some input
         "id": "qmc",
         "series": 0
       },
-      "walker_set": {
-        "name" : "my_walkers",
-        "walker_type": "CLOSED",
-        "load_balance_type": "async",
-        "pop_control_type": "pair",
-        "min_weight": "0.05",
-        "max_weight": "4"
-      },
+      "walker_sets": [
+        {
+          "name" : "my_walkers",
+          "walker_type": "CLOSED",
+          "load_balance_type": "async",
+          "pop_control_type": "pair",
+          "min_weight": "0.05",
+          "max_weight": "4"
+        }
+      ],
       "execute": {
         "walker_set" : "my_walkers",
         "wavefunction": {
@@ -174,7 +183,7 @@ We use ellipses ( `...`)  in some of the advanced input blocks within some input
   }
 
 
-For pedagogical reasons, we have defined a "walker_set" block outside of the "execute" block and have named it "my_walkers".
+For pedagogical reasons, we have defined a "walker_set" block outside of the "execute" block, in the "walker_sets" list, and have named it "my_walkers".
 Notice that within "execute" we are able to reference this "walker_set" by its name using "walker_set" : "my_walkers"
 instead of supplying a json input block.
 

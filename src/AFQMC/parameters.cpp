@@ -129,16 +129,16 @@ void print_parameters(const AFQMCParameters& params) {
   }
 
   app_log(2, section("Hamiltonians"));
-  app_log(2, parameter_string(nlohmann::ordered_json(params.hamiltonian), 0));
-  
+  app_log(2, parameter_string(nlohmann::ordered_json(params.hamiltonians), 0));
+
   app_log(2, section("Wavefunctions"));
-  app_log(2, parameter_string(nlohmann::ordered_json(params.wavefunction), 0));
-  
+  app_log(2, parameter_string(nlohmann::ordered_json(params.wavefunctions), 0));
+
   app_log(2, section("Walker Sets"));
-  app_log(2, parameter_string(nlohmann::ordered_json(params.walker_set), 0));
-  
+  app_log(2, parameter_string(nlohmann::ordered_json(params.walker_sets), 0));
+
   app_log(2, section("Propagators"));
-  app_log(2, parameter_string(nlohmann::ordered_json(params.propagator), 0));
+  app_log(2, parameter_string(nlohmann::ordered_json(params.propagators), 0));
 }
 
 

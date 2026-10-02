@@ -125,7 +125,7 @@ Note that we did not define a "hamiltonian" block at all.
 In this case, SAFIRE will look for the Hamiltonian in the same
 file as the trial wavefunction.
 We defined the "walker_set" block within the "execute" block.
-We could have defined it within the "afqmc" block and referenced it by "name"
+We could have defined it in the "walker_sets" list of the "afqmc" block and referenced it by "name"
 within the execute block instead.
 This is only necessary if
 you will use multiple execute blocks and want to use the same walker set in both.
@@ -210,7 +210,8 @@ As described earlier, it needs a wavefunction, walker_set, hamiltonian,
 propagator, and estimator.
 Of these, **the wavefunction must always be defined** while the others have default values.
 The blocks can either be defined within the "execute" block, or defined
-outside and referenced by name.
+outside, in the "wavefunctions", "walker_sets", "hamiltonians" and "propagators" lists,
+and referenced by name.
 
 In addition to these blocks, the "execute" block is used to define several AFQMC methodological parameters.
 
