@@ -37,6 +37,7 @@ namespace sfqmc {
 namespace arch
 {
   void check_device_configuration() { cuda::check_device_configuration(); }
+  void device_synchronize() { cuda::cuda_check(cudaDeviceSynchronize(), "cudaDeviceSynchronize()"); }
 }
 }
 
@@ -46,6 +47,7 @@ namespace sfqmc {
 namespace arch
 {
   void check_device_configuration() {};
+  void device_synchronize() {}
 }
 }
 

@@ -30,9 +30,7 @@ General Features
   - Importance sampling with either hybrid or local energy importance function
   - Modified Gram-Schmidt orthogonalization of Walkers with configurable intervals
   - Restart capabilities from previous calculations
-  - Multiple population control algorithms (pair branching, serial comb method)
-  - Configurable weight thresholds and branching criteria
-  - Load balancing across MPI processes (asynchronous and blocking modes)
+  - Comb population control with minimal-communication walker exchange across MPI processes
   - Configurable measurement intervals for performance optimization
   - Mixed estimators and back-propagated estimators (can be used in the same calculation)
 

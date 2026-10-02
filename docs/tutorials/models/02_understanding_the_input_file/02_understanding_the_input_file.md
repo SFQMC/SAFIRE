@@ -362,11 +362,7 @@ Here is a sample walker_set block with options exposed and default values where 
 ```json
 "walker_set" : {
     "name": "your_walker_name",
-    "walker_type": "COLLINEAR",
-    "load_balance_type": "async",
-    "pop_control_type": "pair",
-    "min_weight": "0.05",
-    "max_weight": "4"
+    "walker_type": "COLLINEAR"
 }
 ```
 
@@ -390,21 +386,6 @@ td, th {
 |--:|---|:--|
 |<b>walker_type</b> |  Collinear  | The type of walker to use in AFQMC. Options are Closed, Collinear, Noncollinear |
 |<b>name</b> | n/a  | The name to assign to the current walker_set block. This allows it to be referenced by name in execute blocks. A name is generated internally if not set here. |
-
-### Less Common Settings
-
-<style>
-td, th {
-   border: none!important;
-}
-</style>
-
-| <b>        Parameter</b>   |  Default | Description |
-|--:|---|:--|
-| <b>load_balance_type</b> |  "async"  |  Choose which load balancing algorithm to use, Choices are "async" for the asynchronous non-block swap load balancing algorithm and "simple" for a blocking (1-1) swap load balancing algorithm.  |
-| <b>pop_control_type</b> |"pair"  |   choose population control algorithm to use. Choices are "pair", AND "serial_comb". The "pair" algorithm uses paired walker branching. The "serial_comb" algorithm uses the comb method from Booth, Gubernatis, PRE 2009. |
-| <b>min_weight</b> | 0.05 |   Minimum walker weight for population control  |
-| <b>max_weight</b> |4 |  Maximum walker weight for population control  |
 | <b>from</b> | the execute block's wavefunction |  What the walkers are initialized from, e.g. `{"wavefunction": "rohf"}` to start from the determinant with the largest coefficient of another wavefunction.  |
 
 +++ {"id": "b003de2e"}

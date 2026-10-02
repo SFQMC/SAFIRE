@@ -143,11 +143,7 @@ We use ellipses ( `...`)  in some of the advanced input blocks within some input
       "walker_sets": [
         {
           "name" : "my_walkers",
-          "walker_type": "CLOSED",
-          "load_balance_type": "async",
-          "pop_control_type": "pair",
-          "min_weight": "0.05",
-          "max_weight": "4"
+          "walker_type": "CLOSED"
         }
       ],
       "execute": {

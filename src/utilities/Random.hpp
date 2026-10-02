@@ -35,7 +35,7 @@ using SeedType = unsigned long long;
 SeedType split_seed(int seed, boost::mpi3::communicator& comm, unsigned stream = 0);
 
 struct HostRandomGenerator {
-  std::mt19937 std_rng; // still used directly in popcontrol
+  std::mt19937 std_rng;
 
   HostRandomGenerator(SeedType iseed) : std_rng{std::mt19937::result_type(iseed)} {};
   HostRandomGenerator() = default;
