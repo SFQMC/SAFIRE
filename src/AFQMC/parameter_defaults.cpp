@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <concepts>
+#include <filesystem>
 #include <format>
 #include <map>
 #include <random>
@@ -153,6 +154,15 @@ void apply_estimator_defaults(auto& params, const ExecuteParameters& exec) {
     params.hamiltonian = block_name(exec.hamiltonian, "hamiltonian");
   }
 
+  if constexpr(requires { params.onerdm; params.paircorr; }) {
+    if(params.onerdm && params.onerdm->rotation) {
+      params.onerdm->rotation->filename = std::filesystem::absolute(params.onerdm->rotation->filename).string();
+    }
+    if(params.paircorr) {
+      params.paircorr->pairs.filename = std::filesystem::absolute(params.paircorr->pairs.filename).string();
+    }
+  }
+
   if constexpr(std::same_as<std::remove_reference_t<decltype(params)>, BackPropEstimatorParameters>) {
     utils::check(params.propagation_steps && !params.propagation_steps->empty(),
                  "A back-propagation estimator requires a non-empty \"propagation_steps\", the back "
@@ -285,11 +295,14 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
   resolve_block_refs("propagator", params.propagators,
                      execute_refs("propagator", params.execute, &ExecuteParameters::propagator, false));
 
-  for(const auto& wfn : params.wavefunctions) {
+  // the files are made absolute, so that the printed parameters say which ones the run reads
+  for(auto& wfn : params.wavefunctions) {
     utils::check(!wfn.filename.empty(), "The wavefunction \"{}\" must contain a filename.", wfn.name);
+    wfn.filename = std::filesystem::absolute(wfn.filename).string();
   }
-  for(const auto& ham : params.hamiltonians) {
+  for(auto& ham : params.hamiltonians) {
     utils::check(!ham.filename.empty(), "The hamiltonian \"{}\" must contain a filename.", ham.name);
+    ham.filename = std::filesystem::absolute(ham.filename).string();
   }
 
   // 4. resolve what a block inherits from a neighbouring block

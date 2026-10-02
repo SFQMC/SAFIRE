@@ -155,6 +155,9 @@ int main_impl(int argc, char** argv)
   } catch (std::exception const& e) {
     throw AppAbortException(fmt::format("Could not parse input file: {}", e.what()));
   }
+  // the paths in the input are relative to the input file, but the results go to the launch directory
+  params.output_name = std::filesystem::absolute(params.output_name).string();
+  std::filesystem::current_path(std::filesystem::absolute(myinput).parent_path());
   // every default the parameter structs cannot express as a member initializer is applied here,
   // so that the code below only ever sees resolved values
   afqmc::resolve_defaults(params, *mpi);
