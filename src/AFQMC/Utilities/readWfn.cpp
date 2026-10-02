@@ -42,12 +42,6 @@ namespace afqmc
 
 namespace {
 
-/// Rows and columns of the CSR matrix stored in subgroup `name` of `grp`.
-std::array<int,2> csr_extents(h5::group grp, std::string const& name) {
-  auto const [nrows, ncols] = math::sparse::hdf_csr_shape(grp.open_group(name));
-  return {int(nrows), int(ncols)};
-}
-
 /// Extent `dim` of dataset `name` in `grp`.
 int dataset_extent(h5::group grp, std::string const& name, int dim) {
   return h5::array_interface::get_dataset_info(grp, name).lengths[dim];
@@ -102,15 +96,15 @@ WavefunctionInfo read_wavefunction_info(h5::group ngrp) {
     info.nup   = dataset_extent(ngrp, "occa", 1);
     info.ndown = dataset_extent(ngrp, "occb", 1);
   } else if(ngrp.has_key("UL_0")) { // finite-temperature NOMSD
-    info.NMO   = csr_extents(ngrp, "UL_0")[1] / npol;
-    info.nup   = csr_extents(ngrp, "DL_0")[0];
+    info.NMO   = math::sparse::hdf_csr_shape(ngrp.open_group("UL_0"))[1] / npol;
+    info.nup   = math::sparse::hdf_csr_shape(ngrp.open_group("DL_0"))[0];
     info.ndown = 0;
   } else {
-    auto const [nup, ncols] = csr_extents(ngrp, "PsiT_0");
+    auto const [nup, ncols] = math::sparse::hdf_csr_shape(ngrp.open_group("PsiT_0"));
     info.NMO = ncols / npol;
     info.nup = nup;
     if(info.walker_type == COLLINEAR) {
-      info.ndown = csr_extents(ngrp, "PsiT_1")[0];
+      info.ndown = math::sparse::hdf_csr_shape(ngrp.open_group("PsiT_1"))[0];
     } else if(info.walker_type == CLOSED) {
       info.ndown = nup;
     } else {
