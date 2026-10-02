@@ -122,6 +122,9 @@ SAFIRE provides a keyword in the "wavefunction" json input block to limit the nu
         "filename": "your_wfn_file.h5",
         "ndets_to_read": 500
       },
+      "hamiltonian": {
+        "filename": "your_hamiltonian_file.h5"
+      },
       "timestep": 0.01,
       "steps": 10000,
       "n_walkers_per_mpi_task": 100,
@@ -262,6 +265,9 @@ will generate a "wavefunction" block that points to the wavefunction file, with 
       "wavefunction": {
         "filename": "afqmc.h5",
         "ndets_to_read": 500
+      },
+      "hamiltonian": {
+        "filename": "afqmc.h5"
       },
       "timestep": 0.01,
       "steps": 10000,

@@ -83,8 +83,9 @@ void apply_defaults(ExecuteParameters& exec, DriverType driver);
 ///
 /// 1. Draws a seed unless the input gave one, so that the run can be reproduced from the
 ///    parameters as they are printed.
-/// 2. Names every block. A block that an execute block leaves out entirely is materialized as
-///    a default constructed one, except for the walker set: only the first execute block gets a
+/// 2. Names every block. Every execute block has to give a wavefunction and a hamiltonian. Any
+///    other block that an execute block leaves out entirely is materialized as a default
+///    constructed one, except for the walker set: only the first execute block gets a
 ///    default one, and every later execute block carries over the walker set of the one before
 ///    it. Generated names never collide with the names in the input.
 /// 3. Hoists the blocks declared inline, in an execute block or in the source of a walker set,

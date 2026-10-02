@@ -465,9 +465,9 @@ These are the most common hamiltonian settings that a typical user will interact
    * - **name**
      - 
      - The name to assign to the current walker_set block. This allows it to be referenced by name in execute blocks. A name is generated internally if not set here.
-   * - **filename** 
-     - 
-     - name of the HDF5 file containing the hamiltonian. If not specified, then the hamiltonian must exist within the same hdf5 file as the trial wavefun. See :ref:`wavefunction_block`. 
+   * - **filename** (**mandatory**)
+     -
+     - name of the HDF5 file containing the hamiltonian. It may be the same file as the one of the trial wavefunction, but it is never taken from the wavefunction block implicitly. See :ref:`wavefunction_block`.
 
 
 .. _estimator_block:
