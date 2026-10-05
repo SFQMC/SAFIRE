@@ -1,8 +1,8 @@
 # The CI image, in a CPU and a CUDA flavour: build with --build-arg VARIANT=cpu (the default)
 # or --build-arg VARIANT=cuda. An ARG declared before the first FROM is in scope for every FROM
 # in the file, which is what lets the shared stages below sit on either base. The variant stages
-# are sandwiched between the shared ones because mpi4py has to be built after MPI is in place,
-# and podman/docker skip the stages the requested variant does not reach.
+# are sandwiched between the shared ones, and podman/docker skip the stages the requested
+# variant does not reach.
 ARG VARIANT=cpu
 
 FROM ubuntu:24.04 AS base-cpu
@@ -128,39 +128,23 @@ RUN install -d -o 1000 -g 1000 ${VIRTUAL_ENV}
 USER 1000:1000
 RUN python3 -m venv ${VIRTUAL_ENV}
 
-# This mirrors utils/pyproject.toml: the base dependencies plus the DOCS, TESTING and PYSCF
-# extras. Versions are pinned so that rebuilding the image cannot silently
-# change the python stack under the tests; to update, resolve the same list unpinned in a
-# scratch venv and copy the resulting `pip freeze` versions back here.
-#
-# mpi4py is built from source so that it links against this image's OpenMPI rather than
-# whatever MPI the PyPI wheel was built against -- Ubuntu's on the CPU flavour, the
-# CUDA-aware one in /opt/openmpi on the CUDA flavour.
-#
-# pyscf is held at 2.12: from 2.13 on, remove_linear_dep_ gives a different SCF energy for
-# the neon aug-cc-pVTZ case, so test_inputs.py::TestEnergy::test_from_pyscf_lindep fails
-# against its hardcoded reference (-128.1109 expected, -128.5333 with 2.13, -128.1029 with
-# 2.14). Bump this pin once that reference has been reviewed.
-RUN pip install --no-cache-dir --no-binary=mpi4py \
+# This mirrors utils/pyproject.toml: the base dependencies plus the VIS, TESTING, PYSCF and DOCS
+# extras. Versions are pinned so that rebuilding the image
+# cannot silently change the python stack under the tests; to update, resolve the same list
+# unpinned in a scratch venv and copy the resulting `pip freeze` versions back here.
+RUN pip install --no-cache-dir \
       numpy==2.4.6 \
-      mpi4py==4.1.2 \
       scipy==1.18.0 \
       h5py==3.16.0 \
-      pandas==3.0.5 \
       matplotlib==3.11.1 \
-      numba==0.66.0 \
       pytest==9.1.1 \
-      toml==0.10.2 \
-      tables==3.11.1 \
-      pytest-html==4.2.0 \
-      coverage==7.15.2 \
-      pyscf==2.12.0 \
+      pyscf==2.14.0 \
       sphinx==9.1.0 \
       sphinxcontrib-bibtex==2.7.0 \
       sphinx-rtd-theme==3.1.0 \
-      nbsphinx==0.9.8 \
       sphinx-autodoc-typehints==3.13.0 \
       numpydoc==1.10.0 \
       myst-nb==1.4.0 \
       jupytext==1.19.5 \
-      pydata-sphinx-theme==0.20.0
+      pydata-sphinx-theme==0.20.0 \
+      sfqmc-autohf==0.1.0

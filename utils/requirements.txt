@@ -1,5 +1,0 @@
-h5py
-mpi4py==3.1.4
-numpy==1.25.1
-scipy==1.11.1
-pyscf>=2.4.0
