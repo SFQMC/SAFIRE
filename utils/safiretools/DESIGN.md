@@ -15,10 +15,17 @@ decision.
 
 - One package, `safiretools`, replaces `afqmctools` + `stats`; `AutoHF` stays separate.
 - Deep implementation tree, curated flat re-exports from `safiretools/__init__.py`.
-- `__all__` in `safiretools/__init__.py` is the sole definition of what is public.
+- `__all__` in `safiretools/__init__.py` is the sole definition of what is public, apart from the
+  `vis` namespace below.
 - User-facing docstrings, documentation and error messages name only top-level paths.
 - `scalar_stats` is the only CLI entry point kept.
-- Importing safiretools never requires `AFQMC_EXEC`, and never pulls in pyscf or mpi4py.
+- Importing safiretools never requires `AFQMC_EXEC`, and never pulls in pyscf, mpi4py or
+  matplotlib.
+- Plotting lives in the `safiretools.vis` namespace (`from safiretools import vis`), never as
+  methods on the data classes. `vis` is not imported by `__init__.py` and not in `__all__`, and it
+  is the only module that imports matplotlib.
+- A `vis` helper draws into the `ax` it is given, creates a figure only when given none, returns
+  the axes, and never shows or saves.
 - Nothing in the package uses MPI; the periodic Cholesky factorization runs serially.
 - "No internal callers found in `utils/`" is never on its own a reason to drop something.
 
@@ -92,6 +99,8 @@ decision.
 - 1-RDM statistics path (equilibration, autocorrelation-aware averaging).
 - Execution-input (AFQMC run-config JSON) generation — redesigned, not just ported.
 - `scalar_stats` — the only CLI entry point kept (`energy_stats`, a duplicate alias, is dropped).
+- Lattice plotting — as `vis.plot_lattice`. `save`/`show_plot` are dropped per the `vis`
+  convention, and `density` is one value per site, flat or `(L1, L2, nb)`.
 - QE interop — bugs fixed, behavior preserved.
 - CAS/CI wavefunction import from PySCF (`write_cas_wfn`) — kept as
   `PHMSDWavefunction.from_pyscf_cas`; `ci_wavefunction` came with it, as `ci_expansion`.

@@ -56,7 +56,7 @@ outputId: 51107f5c-4186-4817-9e97-990b46c79acc
 import numpy as np
 
 from safiretools import HamiltonianBuilder, Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 lattice = Lattice.from_dict(
     params=dict(
@@ -68,7 +68,7 @@ lattice = Lattice.from_dict(
 )
 
 # plot the lattice for reality checks!
-plot_lattice(lattice)
+vis.plot_lattice(lattice)
 
 # define Hamiltonian parameters
 hamiltonian_params = {

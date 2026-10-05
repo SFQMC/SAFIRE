@@ -82,7 +82,7 @@ colab:
 outputId: c0edb976-6ddc-4ada-eb2f-66c8587a93b7
 ---
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 # Step 1. define the lattice parameters
 lattice_params = dict(
@@ -898,7 +898,7 @@ plt.show()
 
 ## Visualizing Observables on the Lattice
 
-We used the `afqmctools.utils.visualize` module's `plot_lattice()` function earlier in order to visualize the lattice itself.
+We used `vis.plot_lattice()` earlier in order to visualize the lattice itself.
 The same function allows us to colorize each lattice site based on some observables.
 Below, we plot the charge density, then the spin density on the lattice.
 
@@ -910,7 +910,7 @@ colab:
 id: 8I7F7yFX22Ya
 outputId: 3eb88439-52df-4ab6-989f-edb3fc5d0aad
 ---
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 avg_to_plot = 2
 
@@ -929,7 +929,7 @@ vis.plot_lattice(
 ```
 
 ```{code-cell} ipython3
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 avg_to_plot = 1
 

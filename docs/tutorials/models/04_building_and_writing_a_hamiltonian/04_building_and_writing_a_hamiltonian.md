@@ -213,7 +213,7 @@ id: 6QgfLv7kOK_V
 outputId: c3552c28-5791-45f0-ae57-39f29435e27d
 ---
 from safiretools import HamiltonianBuilder, Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 # Define the lattice parameters
 lattice_params = {
@@ -234,7 +234,7 @@ params = {
 }
 
 lattice = Lattice.from_dict(lattice_params)
-plot_lattice(lattice)
+vis.plot_lattice(lattice)
 
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 ```
@@ -357,7 +357,7 @@ outputId: 731d316b-7dbb-4990-f273-0ad6da75081a
 import matplotlib.pyplot as plt
 
 from safiretools import HamiltonianBuilder, Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 # define Hamiltonian parameters
 params = {
@@ -421,7 +421,7 @@ id: i0l8VxorOK_W
 outputId: 4113cab3-7b9d-4366-edb5-ff8b22bd89fd
 ---
 from safiretools import HamiltonianBuilder, Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 import numpy as np
 
@@ -451,7 +451,7 @@ hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_
 # let's take a look at the U term:
 U = hamiltonian.get_U().toarray().diagonal().reshape(lattice.L)
 
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=U,
     vmin=0.0,
@@ -478,7 +478,7 @@ id: jN42bp5cOK_W
 outputId: d257ba45-6561-41df-a581-8a19e1f73a2a
 ---
 from safiretools import HamiltonianBuilder, Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 import numpy as np
 
@@ -508,14 +508,14 @@ hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_
 # let's take a look at the U term:
 U_shape = (lattice.L[0],lattice.L[1],hamiltonian_params['nbands'])
 U = hamiltonian.get_U().toarray().diagonal().reshape(U_shape)
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=U[:,:,0],
     title='U for band 0',
     vmin=0.0,
     vmax=3.0
 )
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=U[:,:,1],
     title='U for band 1',
@@ -528,7 +528,7 @@ plot_lattice(
 :id: _6grG3FOOK_X
 
 from safiretools import HamiltonianBuilder, Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 import numpy as np
 
@@ -558,14 +558,14 @@ hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_
 # let's take a look at the U term:
 U_shape = (lattice.L[0],lattice.L[1],hamiltonian_params['nbands'])
 U = hamiltonian.get_U().toarray().diagonal().reshape(U_shape)
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=U[:,:,0],
     title='U for band 0',
     vmin=0.0,
     vmax=3.0
 )
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=U[:,:,1],
     title='U for band 1',
@@ -719,7 +719,7 @@ id: D72pRPc6OK_X
 outputId: b6f1c99c-e33b-4574-d108-3a2ea7f66d89
 ---
 from safiretools import HamiltonianBuilder, Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 # Define the lattice parameters
 lattice_params = {
@@ -744,7 +744,7 @@ params = {
 }
 
 lattice = Lattice.from_dict(lattice_params)
-plot_lattice(lattice)
+vis.plot_lattice(lattice)
 
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 ```
@@ -795,7 +795,7 @@ outputId: c5bfa756-3d14-4865-ddb6-2c4d9fac99e0
 import matplotlib.pyplot as plt
 
 from safiretools import HamiltonianBuilder, Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 # define Hamiltonian parameters
 params = {

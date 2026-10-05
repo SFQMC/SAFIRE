@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from safiretools import HamiltonianBuilder, Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 from safiretools import Wavefunction
 from afqmctools.analysis.rdm import average_afqmc_rdm
