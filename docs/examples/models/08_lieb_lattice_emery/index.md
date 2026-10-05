@@ -39,7 +39,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 :outputId: 41c1c867-f098-44c7-d47d-dfcb8232728e
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -292,7 +292,7 @@ import numpy as np
 
 from safiretools import LatticeHamiltonian, NOMSDWavefunction
 from afqmctools.inputs.from_hdf import write_json
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 
 # define the problem
@@ -412,7 +412,7 @@ import h5py as h5
 
 from safiretools import (HamiltonianBuilder, Lattice, NOMSDWavefunction, SpinSymm,
                          Wavefunction)
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 
 import faulthandler; faulthandler.enable()
@@ -734,23 +734,23 @@ print(f"For O py sublattice: mean charge density: {np.mean(Opy_density.real)} +/
 
 
 if True:
-    vis.plot_lattice(
+    ax = vis.plot_lattice(
         lattice,
         density=rho_charge.real,
         density_label="charge density",
         cmap = 'bwr',
         show_labels=False,
-        save="charge.png"
     )
+    ax.figure.savefig("charge.png")
 
-    vis.plot_lattice(
+    ax = vis.plot_lattice(
         lattice,
         density=rho_spin.real,
         density_label="spin density",
         cmap = 'bwr',
         show_labels=False,
-        save="spin.png"
     )
+    ax.figure.savefig("spin.png")
 ```
 
 ```{code-cell} ipython3

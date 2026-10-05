@@ -78,7 +78,7 @@ colab:
 outputId: 20f4b568-da4f-4137-fb6f-575426ee0d09
 ---
 from safiretools import HamiltonianBuilder, Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,

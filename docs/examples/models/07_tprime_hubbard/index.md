@@ -60,7 +60,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 :outputId: c065dd3d-6070-4a49-80ef-e02029ba7b13
 
 from safiretools import Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 
 lattice_params = {
     "L1" : 4,
@@ -71,7 +71,7 @@ lattice_params = {
 
 lattice = Lattice.from_dict(lattice_params)
 
-plot_lattice(lattice,show_coords=False)
+vis.plot_lattice(lattice)
 ```
 
 +++ {"id": "91688c0b-bca3-4a6b-9d0f-008ab9c943ff"}
@@ -152,7 +152,7 @@ wfn.to_hdf5(scratch_dir/"free_elec_wfn.h5")
 :id: 20127a9c-5c29-4c69-8a81-bd497f042406
 :outputId: 55190e94-44ed-4b7c-9f28-7cdcd5d151ba
 
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 from autohf import AutoHFHamiltonian, lattice_hf
 
 # building the wavefunction does not measure anything, so run the HF solver

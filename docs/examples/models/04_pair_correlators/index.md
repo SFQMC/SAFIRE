@@ -77,7 +77,7 @@ We will explore this in more detail below.
 
 ```{code-cell} ipython3
 from safiretools import Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 from safiretools import HamiltonianBuilder
 from pathlib import Path
 
@@ -94,7 +94,7 @@ lattice = Lattice.from_dict(
 )
 
 # plot the lattice for reality checks!
-plot_lattice(lattice)
+vis.plot_lattice(lattice)
 
 params = dict(
     hamiltonian=dict(
@@ -328,7 +328,7 @@ import numpy as np
 from warnings import warn
 
 from safiretools import Lattice
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import vis
 from afqmctools.analysis.average import average_pair_correlation
 
 
@@ -350,7 +350,7 @@ P_s_x_ij = P_ab_ij[a,b,:,:].reshape(lattice.N_sites,lattice.N_sites)
 # use the first site as the reference site
 P_s_x_0j = P_s_x_ij[0,:].reshape(lattice.L)
 
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=np.abs(P_s_x_0j.real),
     norm_type="log",

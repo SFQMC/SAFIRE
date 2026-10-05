@@ -67,13 +67,13 @@ We'll explore the available options individually, but possible lattice parameter
   `type='triangular'`**, since the reshaping is hardcoded for hexagonal geometry.
 
 Below is a minimal example of building a lattice allowing most parameters to take on default values.
-We also use `afqmctool`'s `plot_lattice()` function so that we can visualize what we have made.
+We also use `vis.plot_lattice()` so that we can visualize what we have made.
 
 ```{code-cell} ipython3
 :id: 68d02ad8-c469-49b2-a54c-f8611c4ecb68
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -163,14 +163,14 @@ lattice_params = dict(
 
 Try setting different combinations of boundary conditions
 in `lattice_params` in the code block below.
-The `plot_lattice()` function will indicate the position of nearest image
+The `vis.plot_lattice()` function will indicate the position of nearest image
 neighbors with a black dotted line.
 
 ```{code-cell} ipython3
 :id: 08d214dc-f42a-48ca-9215-f17f86f481fa
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -222,7 +222,7 @@ For example, in the code block
 
 ```python
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -254,7 +254,7 @@ Try building a few of these in the code block below.
 :id: 590508fb-00bd-4bb6-9e3a-03b95a19ba01
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -322,7 +322,7 @@ are required, and `basis` defaults to a single site at the cell origin.
 
 import numpy as np
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
 
@@ -396,7 +396,7 @@ about mapping atoms in a solid onto a lattice model without the complication of 
 :id: 3c519903-9583-4236-9e64-192a8026b087
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 1,
@@ -425,7 +425,7 @@ The Cu and O atoms are arranged in the Lieb lattice as shown below.
 :id: d4955fae-dac3-4197-a3b5-f35bf51b103e
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -451,7 +451,7 @@ vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
 :id: 3eac1b2a-f2e9-4416-81bb-88d02fb5952b
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -472,7 +472,7 @@ vis.plot_lattice(lattice,title="Kagome Lattice",show_labels=False)
 :id: ae7e9e7c-896b-4ce4-86c7-98f6951756f7
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -493,7 +493,7 @@ vis.plot_lattice(lattice,title="Triangular Lattice",show_labels=False)
 :id: 9767452c-454d-4e3f-99a6-42a35f501b35
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -514,7 +514,7 @@ vis.plot_lattice(lattice,title="Honeycomb Lattice",show_labels=False)
 :id: 669f3165-f665-4fbc-940b-5783f111b1a9
 
 from safiretools import Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 lattice_params = dict(
     L1 = 8,

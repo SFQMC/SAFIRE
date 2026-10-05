@@ -38,7 +38,7 @@ import numpy as np
 # all the imports used later in the tutorial, but put here for convenience
 
 from safiretools import HamiltonianBuilder, Lattice
-import afqmctools.utils.visualize as vis
+from safiretools import vis
 
 from safiretools import Wavefunction
 from afqmctools.inputs.from_hdf import write_json
