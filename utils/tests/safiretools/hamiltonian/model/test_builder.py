@@ -215,23 +215,10 @@ def test_from_input_builds_its_own_lattice():
     assert builder.get_hamiltonian().nsites == 9
 
 
-def test_from_input_reads_a_toml_file(tmp_path):
-    import toml
-
-    path = tmp_path / 'input.toml'
-    with open(path, 'w') as f:
-        toml.dump({
-            'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
-            'hamiltonian': dict(t=1.0, U=4.0),
-        }, f)
-
-    builder = HamiltonianBuilder.from_input(path)
-    assert builder.get_hamiltonian().nsites == 4
-
-
-def test_from_input_rejects_other_sources():
+@pytest.mark.parametrize('source', [42, 'input.toml'])
+def test_from_input_rejects_other_sources(source):
     with pytest.raises(ValueError, match="Invalid parameter source"):
-        HamiltonianBuilder.from_input(42)
+        HamiltonianBuilder.from_input(source)
 
 
 def test_negative_and_positive_u_become_separate_components(square_2x2):

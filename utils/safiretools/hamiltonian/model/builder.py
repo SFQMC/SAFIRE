@@ -26,12 +26,10 @@ import functools
 import inspect
 import itertools
 import logging
-from pathlib import Path
 from warnings import warn
 
 import numpy as np
 import scipy.sparse as sps
-import toml
 
 from safiretools.hamiltonian.model.lattice import Lattice
 from safiretools.hamiltonian.model.lattice_hamiltonian import (
@@ -381,9 +379,8 @@ class HamiltonianBuilder:
 
         Parameters
         ----------
-        source : dict or str or pathlib.Path
-            Hamiltonian (and possibly lattice) parameters. A str/Path is read as
-            a TOML input file.
+        source : dict
+            Hamiltonian (and possibly lattice) parameters.
         lattice : ~safiretools.hamiltonian.model.lattice.Lattice, optional
             Lattice describing the geometry. Built from ``source['lattice']`` if
             omitted.
@@ -442,26 +439,23 @@ class HamiltonianBuilder:
 
         Examples
         --------
-        >>> builder = HamiltonianBuilder.from_input("input.toml")
+        >>> builder = HamiltonianBuilder.from_input({
+        ...     'lattice': dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'),
+        ...     'hamiltonian': dict(t=1.0, U=4.0),
+        ... })
         >>> hamiltonian = builder.get_hamiltonian()
         """
-        if isinstance(source, (str, Path)):
-            with open(source, 'r') as f:
-                source_dict = toml.loads(f.read())
-        elif isinstance(source, dict):
-            source_dict = source
-        else:
+        if not isinstance(source, dict):
             raise ValueError(
-                "Invalid parameter source: must be a dict, or the file name of a "
-                f"TOML input file, not {type(source).__name__}"
+                f"Invalid parameter source: must be a dict, not {type(source).__name__}"
             )
 
-        ham_input = source_dict['hamiltonian']
+        ham_input = source['hamiltonian']
         ham_params, build_steps = _parse_ham_input(ham_input)
 
         if lattice is None:
             logger.info("no lattice instance supplied: building from parameters")
-            lattice = Lattice.from_dict(params=source_dict['lattice'])
+            lattice = Lattice.from_dict(params=source['lattice'])
 
         builder = cls(
             lattice=lattice,

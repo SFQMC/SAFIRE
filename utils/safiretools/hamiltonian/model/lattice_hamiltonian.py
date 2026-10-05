@@ -292,10 +292,9 @@ class LatticeHamiltonian(Hamiltonian):
 
         Parameters
         ----------
-        source : dict or str or pathlib.Path
-            Input parameters, as a dict with a ``'hamiltonian'`` section (and a
-            ``'lattice'`` section unless `lattice` is given), or the path to a
-            TOML file holding the same.
+        source : dict
+            Input parameters, with a ``'hamiltonian'`` section (and a
+            ``'lattice'`` section unless `lattice` is given).
         lattice : ~safiretools.hamiltonian.model.lattice.Lattice, optional
             Lattice to build on. Built from ``source['lattice']`` if omitted.
 
