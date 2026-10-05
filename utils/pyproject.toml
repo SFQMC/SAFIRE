@@ -13,86 +13,40 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "afqmctools"
-version = "0.0.3"
-requires-python = ">=3.10"
+name = "safiretools"
+description = "Companion module for the SAFIRE AFQMC code. Contains various helpers to create the input files for molecular, materials and lattice model Hamiltonians."
+version = "1.0.0"
+license = "Apache-2.0"
+requires-python = ">=3.11"
 dependencies = [
     "numpy > 1.11.2",
-    "mpi4py >= 2.0.0",
     "scipy >= 1.11.0",
     "h5py > 2.6.0",
-    "pandas",
-    "matplotlib",
-    "numba",
-    "pytest",
-    "toml",
-    "tables",
 ]
 
 # domain-specific dependencies are considered optional!
 [project.optional-dependencies]
-PYSCF = ["pyscf >= 2.4.0"]
-AUTOHF = ["jax","optax","jaxlib", "jaxopt"]
-LATTICE_HF = ["jax","optax","jaxlib", "jaxopt"] # for backwards compatibility!
-TESTING = ["pytest-html","coverage"]
-TUTORIALS = ["jupyterlab"]
-DOCS = [
-    "sphinx",
+pyscf = ["pyscf >= 2.4.0"]
+vis = ["matplotlib"]
+testing = ["pytest"]
+docs = [
+    "sphinx >= 8.2",
     "sphinxcontrib-bibtex",
     "sphinx-rtd-theme",
-    "nbsphinx",
     "sphinx-autodoc-typehints",
     "numpydoc",
     "myst-nb",
     "jupytext",
-    "pydata-sphinx-theme"
+    "pydata-sphinx-theme",
+    "sfqmc-autohf"
 ]
 
-[tool.setuptools]
-packages = [
-    "afqmctools",
-    "afqmctools.analysis",
-    "afqmctools.hamiltonian",
-    "afqmctools.hamiltonian.model",
-    "afqmctools.inputs",
-    "afqmctools.observables",
-    "afqmctools.systems",
-    "afqmctools.utils",
-    "afqmctools.wavefunction",
-    "cli",
-    "stats",
-    "stats.lib",
-    "tutorial_utils",
-    "safiretools",
-    "safiretools.results",
-    "safiretools.hamiltonian",
-    "safiretools.hamiltonian.model",
-    "safiretools.wavefunction",
-    "safiretools.convert",
-    "safiretools.qe"
-]
-
-[project.scripts]
-afqmc_to_fcidump = "cli.afqmc_to_fcidump:main"
-dice_to_hdf5 = "cli.dice_to_hdf5:main"
-fcidump_to_afqmc = "cli.fcidump_to_afqmc:main"
-pyscf_to_afqmc = "cli.pyscf_to_afqmc:main"
-test_afqmc_input = "cli.test_afqmc_input:main"
-wfn_to_hdf5 = "cli.wfn_to_hdf5:main"
-write_afqmc_json = "cli.write_afqmc_json:main"
-scalar_stats = "cli.scalar_tab:main"
-energy_stats = "cli.scalar_tab:main"
-rdm_stats = "cli.observables_stats:main"
-make_model_ham = "cli.make_model_ham:main"
-fcidump_spat2spin = "cli.fcidump_spat2spin:main"
-coqui_to_afqmc = "cli.aimbes_to_afqmc:main"  # TODO: remove once aimbes_to_2nd_quant is well tested
-coqui_to_fcidump = "cli.aimbes_to_2nd_quant:main" # TODO: remove once aimbes_to_2nd_quant is well tested
-coqui_to_2nd_quant = "cli.aimbes_to_2nd_quant:main"
-check_one_rdm = "cli.check_one_rdm:main"
+[tool.setuptools.packages.find]
+include = ["safiretools*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-m 'not dev and not debug' --verbose --html=./.htmlpytest/pytest.html --strict-markers"
+addopts = "-m 'not dev and not debug' --strict-config --strict-markers"
 
 testpaths = [
     "tests",
@@ -108,16 +62,6 @@ markers = [
     "debug: use only when debugging",
     "weekly: for weekly testing",
     "push: tests to run every push"
-]
-
-[tool.coverage.run]
-source = [
-    "afqmctools/",
-    "stats/",
-    "AutoHF/"
-]
-omit = [
-    "__init__.py", # no interesting code in __init__.py files right now
 ]
 
 # configure tools for building documentation
