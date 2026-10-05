@@ -214,6 +214,11 @@ class LatticeHamiltonian(Hamiltonian):
         """Single-particle basis size, ``nsites * nbands``."""
         return self.nsites * self.nbands
 
+    @property
+    def basis_rotation(self) -> np.ndarray:
+        """The identity: a lattice model is computed in the basis it is given in."""
+        return np.eye(self.spin_symm.npol * self.nbasis)
+
     # ------------------------------------------------------------------
     # assembled views of the terms
     # ------------------------------------------------------------------

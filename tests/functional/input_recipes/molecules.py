@@ -165,7 +165,7 @@ def build_bh(ctx: BuildContext) -> None:
         chol=closed.chol,
         enuc=closed.enuc,
         spin_symm=SpinSymm.COLLINEAR,
-        ortho=closed.ortho,
+        basis_rotation=closed.basis_rotation,
     ).to_hdf5(out / "afqmc_H_rhf_collinear.h5")
     _write_hamiltonian(rhf.to_ghf(), out / "afqmc_H_rhf_noncollinear.h5",
                        chol_tol, basis=rhf, verbose=ctx.verbose)

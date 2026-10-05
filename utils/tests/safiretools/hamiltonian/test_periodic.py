@@ -14,7 +14,9 @@ one `kp_sym`-flagged solver produces."""
 import h5py as h5
 import numpy as np
 import pytest
+import scipy.linalg
 
+from safiretools.convert.pyscf import canonical_orthogonalization
 from safiretools.hamiltonian.base import Hamiltonian, hamiltonian_format
 from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
 from safiretools.hamiltonian.periodic import (
@@ -77,6 +79,8 @@ def test_uneven_orbital_counts_are_refused():
     ('qk_to_k2', np.zeros((3, 3), dtype=np.int32), "qk_to_k2 has shape"),
     ('minus_k', np.zeros(3, dtype=np.int32), "minus_k has shape"),
     ('chol', {0: np.zeros((2, 10))}, r"chol\[0\] has shape"),
+    ('basis_rotation', np.zeros((3, 4, 3)), "basis_rotation has shape"),
+    ('basis_rotation', np.zeros((2, 4, 2)), "basis_rotation has shape"),
 ])
 def test_the_data_must_match_the_kpoint_count(field, value, match):
     kwargs = dict(hcore=np.zeros((2, 3, 3)), chol={}, kpts=np.zeros((2, 3)),
@@ -108,6 +112,33 @@ class TestKpointFormat:
         assert set(restored.chol) == set(hamiltonian.chol)
         for Q, L in hamiltonian.chol.items():
             assert np.allclose(restored.chol[Q], L)
+
+    def test_the_basis_rotation_is_the_identity_at_every_kpoint_by_default(
+            self, tmp_path):
+        hamiltonian = _kpoint_hamiltonian(nkpts=2, nmo=3)
+        identity = np.stack([np.eye(3)] * 2)
+        assert np.array_equal(hamiltonian.basis_rotation, identity)
+
+        path = tmp_path / 'ham.h5'
+        hamiltonian.to_hdf5(path)
+
+        with h5.File(path, 'r') as fh5:
+            assert 'BasisRotation' not in fh5['Hamiltonian']
+        assert np.array_equal(Hamiltonian.from_hdf5(path).basis_rotation, identity)
+
+    def test_the_basis_rotation_round_trips(self, tmp_path):
+        reference = _kpoint_hamiltonian(nkpts=2, nmo=3)
+        rng = np.random.default_rng(9)
+        rotation = rng.random((2, 5, 3)) + 1j * rng.random((2, 5, 3))
+        hamiltonian = PeriodicHamiltonian(
+            hcore=reference.hcore, chol=reference.chol, kpts=reference.kpts,
+            qk_to_k2=reference.qk_to_k2, minus_k=reference.minus_k,
+            basis_rotation=rotation)
+
+        path = tmp_path / 'ham.h5'
+        hamiltonian.to_hdf5(path)
+
+        assert np.array_equal(Hamiltonian.from_hdf5(path).basis_rotation, rotation)
 
     def test_the_shapes_carry_the_sizes(self, tmp_path):
         """
@@ -255,6 +286,11 @@ class TestGeneration:
         assert np.allclose(restored.chol[0], hamiltonian.chol[0])
         assert restored.madelung_constant == hamiltonian.madelung_constant
 
+        overlaps = np.reshape(kmf.get_ovlp(), (2, kmf.cell.nao_nr(), -1))
+        expected = np.array([canonical_orthogonalization(s) for s in overlaps])
+        assert np.allclose(hamiltonian.basis_rotation, expected)
+        assert np.array_equal(restored.basis_rotation, hamiltonian.basis_rotation)
+
     def test_no_exchange_divergence_treatment_records_no_madelung_constant(
             self, diamond_lda, monkeypatch):
         kmf, _ = diamond_lda
@@ -308,6 +344,15 @@ class TestGeneration:
         restored = Hamiltonian.from_hdf5(path)
         assert restored.nkpts == 1
         assert np.allclose(restored.chol[0], supercell.chol[0])
+
+        # block diagonal: the Bloch AOs of each original k-point map onto that
+        #   k-point's slice of the combined basis
+        overlaps = np.reshape(kmf.get_ovlp(), (original_nkpts, nao, nao))
+        expected = scipy.linalg.block_diag(
+            *[canonical_orthogonalization(s) for s in overlaps])
+        assert supercell.basis_rotation.shape == (1, original_nkpts * nao, nmo)
+        assert np.allclose(supercell.basis_rotation[0], expected)
+        assert np.array_equal(restored.basis_rotation, supercell.basis_rotation)
 
     def test_supercell_cholesky_vectors_stay_complex(self, diamond_lda, tmp_path):
         """

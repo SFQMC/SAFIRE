@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from safiretools import SpinSymm
+from safiretools.convert.pyscf import canonical_orthogonalization
 from safiretools.hamiltonian.base import Hamiltonian, hamiltonian_format
 from safiretools.hamiltonian.fcidump import read_fcidump_header
 from safiretools.hamiltonian.molecular import (
@@ -155,6 +156,36 @@ class TestConstruction:
         assert hamiltonian.npol == 2
         assert hamiltonian.nmo == nmo
 
+    def test_the_basis_rotation_must_end_in_the_working_basis(self,
+                                                              random_hamiltonian):
+        nmo, hcore, chol, _ = random_hamiltonian
+
+        with pytest.raises(ValueError, match="basis_rotation has shape"):
+            MolecularHamiltonian(hcore=hcore, chol=chol.T,
+                                 basis_rotation=np.zeros((nmo, nmo + 1)))
+
+    def test_a_noncollinear_basis_rotation_is_a_spinor_matrix(self,
+                                                              random_hamiltonian):
+        """It spans both polarizations, so a spatial one is refused."""
+        nmo, hcore, chol, _ = random_hamiltonian
+        spinor_hcore = np.kron(np.eye(2), hcore)
+        spatial = np.random.default_rng(2).random((nmo + 2, nmo))
+
+        default = MolecularHamiltonian(hcore=spinor_hcore, chol=chol.T,
+                                       spin_symm=SpinSymm.NONCOLLINEAR)
+        assert np.array_equal(default.basis_rotation, np.eye(2 * nmo))
+
+        spinor = np.kron(np.eye(2), spatial)
+        given = MolecularHamiltonian(hcore=spinor_hcore, chol=chol.T,
+                                     spin_symm=SpinSymm.NONCOLLINEAR,
+                                     basis_rotation=spinor)
+        assert np.array_equal(given.basis_rotation, spinor)
+
+        with pytest.raises(ValueError, match="npol=2"):
+            MolecularHamiltonian(hcore=spinor_hcore, chol=chol.T,
+                                 spin_symm=SpinSymm.NONCOLLINEAR,
+                                 basis_rotation=spatial)
+
 
 class TestHdf5:
 
@@ -290,15 +321,46 @@ class TestHdf5:
         assert np.allclose(Hamiltonian.from_hdf5(path).hcore.reshape(nmo, nmo),
                            complex_hcore)
 
-    def test_the_ortho_matrix_is_written_when_given(self, random_hamiltonian, tmp_path):
+    def test_the_basis_rotation_round_trips(self, random_hamiltonian, tmp_path):
         nmo, hcore, chol, _ = random_hamiltonian
-        ortho = np.eye(nmo)
+        rotation = np.random.default_rng(2).random((nmo + 2, nmo))
 
         path = tmp_path / 'ham.h5'
-        MolecularHamiltonian(hcore=hcore, chol=chol.T, ortho=ortho).to_hdf5(path)
+        MolecularHamiltonian(hcore=hcore, chol=chol.T,
+                             basis_rotation=rotation).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
-            assert np.allclose(fh5['Hamiltonian/X'][...], ortho)
+            assert np.array_equal(fh5['Hamiltonian/BasisRotation'][...], rotation)
+        assert np.array_equal(Hamiltonian.from_hdf5(path).basis_rotation, rotation)
+
+    def test_a_spinor_basis_rotation_round_trips(self, random_hamiltonian, tmp_path):
+        nmo, hcore, chol, _ = random_hamiltonian
+        rng = np.random.default_rng(4)
+        rotation = (rng.random((2 * (nmo + 2), 2 * nmo))
+                    + 1j * rng.random((2 * (nmo + 2), 2 * nmo)))
+
+        path = tmp_path / 'ham.h5'
+        MolecularHamiltonian(hcore=np.kron(np.eye(2), hcore), chol=chol.T,
+                             spin_symm=SpinSymm.NONCOLLINEAR,
+                             basis_rotation=rotation).to_hdf5(path)
+
+        restored = Hamiltonian.from_hdf5(path)
+        assert restored.spin_symm is SpinSymm.NONCOLLINEAR
+        assert np.array_equal(restored.basis_rotation, rotation)
+
+    def test_no_basis_rotation_is_written_when_none_was_given(self, random_hamiltonian,
+                                                              tmp_path):
+        """Integrals given directly are in the working basis already."""
+        nmo, hcore, chol, _ = random_hamiltonian
+        hamiltonian = MolecularHamiltonian.from_integrals(hcore, chol=chol)
+        assert np.array_equal(hamiltonian.basis_rotation, np.eye(nmo))
+
+        path = tmp_path / 'ham.h5'
+        hamiltonian.to_hdf5(path)
+
+        with h5.File(path, 'r') as fh5:
+            assert 'BasisRotation' not in fh5['Hamiltonian']
+        assert np.array_equal(Hamiltonian.from_hdf5(path).basis_rotation, np.eye(nmo))
 
     def test_a_file_with_no_cholesky_matrix_is_rejected(self, tmp_path):
         path = tmp_path / 'ham.h5'
@@ -482,6 +544,30 @@ class TestFromPyscf:
         assert hamiltonian_format(path) == 'dense'
         assert np.allclose(Hamiltonian.from_hdf5(path).hcore, hamiltonian.hcore)
 
+    def test_the_basis_rotation_is_the_scf_orbitals_by_default(self, neon_rhf):
+        mf, _ = neon_rhf
+
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf, chol_cut=1e-3)
+
+        assert np.array_equal(hamiltonian.basis_rotation, mf.mo_coeff)
+
+    def test_the_basis_rotation_of_ortho_ao(self, neon_atom, neon_rhf):
+        mf, _ = neon_rhf
+
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf, basis='ortho_ao',
+                                                      chol_cut=1e-3)
+
+        expected = canonical_orthogonalization(neon_atom.intor('int1e_ovlp'))
+        assert np.allclose(hamiltonian.basis_rotation, expected)
+
+    def test_the_basis_rotation_leaves_out_frozen_orbitals(self, neon_rhf):
+        mf, _ = neon_rhf
+
+        hamiltonian = MolecularHamiltonian.from_pyscf(mf, active_space=(8, -1),
+                                                      chol_cut=1e-3)
+
+        assert np.array_equal(hamiltonian.basis_rotation, mf.mo_coeff[:, 1:])
+
     def test_chunked_cholesky_reproduces_the_eri_tensor(self, neon_atom):
         chol = chunked_cholesky(neon_atom, max_error=1e-6)
         eri = neon_atom.intor('int2e', aosym='s1').reshape(25, 25)
@@ -604,6 +690,8 @@ class TestFromPyscf:
             noncollinear.hcore.reshape(2 * nmo, 2 * nmo),
             np.kron(np.eye(2), closed.hcore.reshape(nmo, nmo)))
         assert np.array_equal(noncollinear.chol, closed.chol)
+        assert np.array_equal(noncollinear.basis_rotation,
+                              np.kron(np.eye(2), mf.mo_coeff))
 
     def test_density_fitting_vectors_are_used_when_asked(self, neon_atom):
         from pyscf import scf
