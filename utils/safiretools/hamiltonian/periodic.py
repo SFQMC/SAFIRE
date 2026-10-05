@@ -9,36 +9,12 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 r"""
-`PeriodicHamiltonian` — a Cholesky-factorized Hamiltonian for a periodic system,
-generated from a PySCF ``pbc`` SCF calculation.
+`PeriodicHamiltonian` — a Cholesky-factorized Hamiltonian for a periodic system.
 
-There is one on-disk format — ``Hamiltonian/KPFactorized``, which the
-executable's ``KPFactorizedHamiltonian`` reads — and one Cholesky solver,
-`PeriodicCholesky`, with a ``kp_sym`` flag choosing how the two-body integrals
-are factorized:
+Corresponds to the on-disk format ``Hamiltonian/KPFactorized``, which the
+executable's ``KPFactorizedHamiltonian`` reads.
 
-``kp_sym=True``
-    Factorize each momentum transfer *Q* separately, exploiting
-    :math:`k_1 - k_2 + G = Q`. Gives one ``L_Q`` per momentum transfer over the
-    original k-point mesh.
-
-``kp_sym=False``
-    Factorize the full :math:`(k_1, k_2)` matrix at once, giving a *supercell*
-    Hamiltonian in one combined orbital basis.
-
-**A supercell Hamiltonian is just the Γ point of the supercell**, so it is
-written in the same k-point format with a single k-point: ``nkpts = 1``,
-``QKTok2 = [[0]]``, ``MinusK = [0]``, an ``hcore`` of shape
-``(1, 1, 1, nmo_tot, 1, nmo_tot)`` and one ``L0`` of shape
-``(1, 1, 1, nmo_tot, 1, nmo_tot, nchol)``. Nothing downstream has to special-case it,
-and the Cholesky vectors stay complex, as the format and the executable require.
-
-The two solver modes differ only in how the k-point pairs are enumerated and how
-the already-visited pivots are indexed; the factorization loop itself is shared.
-
-.. note:: The factorization runs serially and is written by
-          `PeriodicHamiltonian.to_hdf5`. **CoQuí is the supported route for
-          production-sized solids**; see DESIGN.md.
+For large-scale solids, this interface may be too slow. Consider using Coquí instead.
 """
 
 import itertools
@@ -48,6 +24,7 @@ import time
 import warnings
 
 import numpy as np
+import scipy.linalg
 import h5py as h5
 
 from safiretools.hamiltonian.base import (
@@ -532,6 +509,16 @@ class PeriodicHamiltonian(Hamiltonian):
     madelung_constant : float, optional
         Electron self-interaction per electron: the executable subtracts it
         times the trial wavefunction's electron count. Default 0.0.
+    basis_rotation : numpy.ndarray, optional
+        Transformation from the input (Bloch AO) basis to the working basis at
+        each k-point, ``(nkpts, nao, nmo)``; see `Hamiltonian.basis_rotation`.
+        Written as ``Hamiltonian/BasisRotation`` when given. Omitted, the
+        integrals are taken to be in the working basis already.
+
+    Raises
+    ------
+    ValueError
+        If any array does not match the k-point count or the orbital count.
 
     Notes
     -----
@@ -543,7 +530,7 @@ class PeriodicHamiltonian(Hamiltonian):
     """
 
     def __init__(self, hcore, chol, kpts, qk_to_k2, minus_k, enuc=0.0,
-                 madelung_constant=0.0) -> None:
+                 madelung_constant=0.0, basis_rotation=None) -> None:
         super().__init__()
 
         self.hcore = np.asarray(hcore)
@@ -553,6 +540,8 @@ class PeriodicHamiltonian(Hamiltonian):
         self.minus_k = np.asarray(minus_k)
         self.enuc = float(np.real(enuc))
         self.madelung_constant = float(madelung_constant)
+        self._basis_rotation = (None if basis_rotation is None
+                                else np.asarray(basis_rotation))
 
         nkpts = len(self.kpts)
         if (self.hcore.ndim != 3 or self.hcore.shape[0] != nkpts
@@ -574,6 +563,13 @@ class PeriodicHamiltonian(Hamiltonian):
                     f"chol[{Q}] has shape {shape}, expected "
                     f"({nkpts}, {self.nmo}**2 * nchol)"
                 )
+        if self._basis_rotation is not None:
+            shape = self._basis_rotation.shape
+            if len(shape) != 3 or shape[0] != nkpts or shape[2] != self.nmo:
+                raise ValueError(
+                    f"basis_rotation has shape {shape}, expected "
+                    f"({nkpts}, nao, {self.nmo})"
+                )
 
     @property
     def nkpts(self) -> int:
@@ -584,6 +580,20 @@ class PeriodicHamiltonian(Hamiltonian):
     def nmo(self) -> int:
         """Number of orbitals at each k-point."""
         return self.hcore.shape[1]
+
+    @property
+    def basis_rotation(self) -> np.ndarray:
+        """
+        The stored ``(nkpts, nao, nmo)`` transformation, or the identity at
+        every k-point when the Hamiltonian was given in its working basis.
+
+        A supercell Hamiltonian's one k-point carries the block-diagonal
+        rotation from the Bloch AOs of every original k-point, k-major, to the
+        combined basis.
+        """
+        if self._basis_rotation is None:
+            return np.tile(np.eye(self.nmo), (self.nkpts, 1, 1))
+        return self._basis_rotation
 
     # ------------------------------------------------------------------
     # construction
@@ -666,14 +676,18 @@ class PeriodicHamiltonian(Hamiltonian):
 
         if not kpoint_symmetry:
             (_, cholvecs), = solver.run(X)
+            # setup_basis_map numbers the combined basis k-major, as block_diag
+            #   stacks the per-k-point blocks
             return cls(**_supercell_layout(hcore_pk, cholvecs, solver),
-                       enuc=enuc, madelung_constant=madelung_constant)
+                       enuc=enuc, madelung_constant=madelung_constant,
+                       basis_rotation=scipy.linalg.block_diag(*X)[np.newaxis])
 
         chol = {Q: _kpoint_block(block, solver) for Q, block in solver.run(X)}
 
         return cls(hcore=np.array(hcore_pk), chol=chol, kpts=kpts,
                    qk_to_k2=solver.QKToK2, minus_k=solver.kminus, enuc=enuc,
-                   madelung_constant=madelung_constant)
+                   madelung_constant=madelung_constant,
+                   basis_rotation=np.array(X))
 
     # ------------------------------------------------------------------
     # serialization
@@ -702,6 +716,8 @@ class PeriodicHamiltonian(Hamiltonian):
             group.create_dataset("QKTok2", data=np.asarray(self.qk_to_k2, dtype=np.int32))
             group.create_dataset("MinusK", data=np.asarray(self.minus_k, dtype=np.int32))
             group.create_dataset("hcore", data=hcore.reshape(nkpts, 1, 1, nmo, 1, nmo))
+            if self._basis_rotation is not None:
+                group.create_dataset("BasisRotation", data=self._basis_rotation)
 
             kp_group = group.create_group('KPFactorized')
             for Q, L in self.chol.items():
@@ -842,6 +858,8 @@ class PeriodicHamiltonian(Hamiltonian):
                 raise ValueError(
                     f"hcore has shape {stored.shape}, expected (nkpts, 1, 1, nmo, 1, nmo)")
             hcore = stored[:, 0, 0, :, 0, :]
+            basis_rotation = (read_complex(group['BasisRotation'])
+                              if 'BasisRotation' in group else None)
 
             kp_group = group['KPFactorized']
             chol = {}
@@ -856,7 +874,8 @@ class PeriodicHamiltonian(Hamiltonian):
                 chol[Q] = L.reshape(nkpts, -1)
 
         return cls(hcore=hcore, chol=chol, kpts=kpts, qk_to_k2=qk_to_k2,
-                   minus_k=minus_k, enuc=enuc, madelung_constant=madelung_constant)
+                   minus_k=minus_k, enuc=enuc, madelung_constant=madelung_constant,
+                   basis_rotation=basis_rotation)
 
 
 def write_rhoG(kmf, path, gcut, kpoint_symmetry=True,

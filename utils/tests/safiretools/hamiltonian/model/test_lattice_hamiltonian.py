@@ -106,6 +106,21 @@ def test_from_dict_builds_a_finalized_hamiltonian(case):
     assert hamiltonian.spin_symm is not None
 
 
+def test_the_basis_rotation_is_the_identity(case):
+    _, source = case
+    hamiltonian = LatticeHamiltonian.from_dict(source)
+
+    assert np.array_equal(hamiltonian.basis_rotation,
+                          np.eye(hamiltonian.spin_symm.npol * hamiltonian.nbasis))
+
+
+def test_a_noncollinear_basis_rotation_spans_both_polarizations():
+    hamiltonian = LatticeHamiltonian(nsites=4, nbands=2,
+                                     spin_symm=SpinSymm.NONCOLLINEAR)
+
+    assert np.array_equal(hamiltonian.basis_rotation, np.eye(16))
+
+
 def test_hdf5_round_trip_preserves_the_terms(case, tmp_path):
     """
     A file holds the *combined* Hubbard matrix, so reading it back has to invert

@@ -144,6 +144,17 @@ class Hamiltonian(ABC):
     def spin_symm(self, value):
         self._spin_symm = None if value is None else SpinSymm.from_input(value)
 
+    @property
+    @abstractmethod
+    def basis_rotation(self) -> np.ndarray:
+        r"""
+        The transformation from the basis this Hamiltonian was given (e.g. atomic orbitals)
+        in to the basis the AFQMC executable computes in (e.g. molecular or Löwdin orbitals).
+
+        Its columns are the computational orbitals expanded in the input basis,
+        so a one-body operator transforms as :math:`h' = R^\dagger h R`.
+        """
+
     @abstractmethod
     def to_hdf5(self, path) -> None:
         """

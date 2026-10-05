@@ -64,19 +64,49 @@ class MolecularHamiltonian(Hamiltonian):
         Constant (nuclear repulsion) energy. Default 0.0.
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry. Default `SpinSymm.CLOSED`.
-    ortho : numpy.ndarray, optional
-        Transformation from the AO basis to the working basis, written as
-        ``Hamiltonian/X`` when given.
+    basis_rotation : numpy.ndarray, optional
+        Transformation from the input (AO) basis to the working basis,
+        ``(npol*nao, npol*nmo)``: the spinor matrix, spin-up block first, for a
+        noncollinear Hamiltonian; see `Hamiltonian.basis_rotation`. Written as
+        ``Hamiltonian/BasisRotation`` when given. Omitted, the integrals are
+        taken to be in the working basis already.
+
+    Raises
+    ------
+    ValueError
+        If `basis_rotation` does not span ``npol`` polarizations of ``nmo``
+        orbitals in its columns and of some input basis in its rows.
     """
 
     def __init__(self, hcore, chol, enuc=0.0,
-                 spin_symm=SpinSymm.CLOSED, ortho=None) -> None:
+                 spin_symm=SpinSymm.CLOSED, basis_rotation=None) -> None:
         super().__init__(spin_symm=spin_symm)
 
         self.hcore = spin_blocked_hcore(hcore, self.spin_symm)
         self.chol = spin_blocked_chol(chol, self.spin_symm, self.nmo)
         self.enuc = float(np.real(enuc))
-        self.ortho = ortho
+
+        if basis_rotation is not None:
+            basis_rotation = np.asarray(basis_rotation)
+            npol = self.npol
+            if (basis_rotation.ndim != 2 or basis_rotation.shape[0] % npol
+                    or basis_rotation.shape[1] != npol * self.nmo):
+                raise ValueError(
+                    f"basis_rotation has shape {basis_rotation.shape}, expected "
+                    f"(npol*nao, {npol * self.nmo}) with npol={npol} for a "
+                    f"{self.spin_symm.label} Hamiltonian"
+                )
+        self._basis_rotation = basis_rotation
+
+    @property
+    def basis_rotation(self) -> np.ndarray:
+        """
+        The stored ``(npol*nao, npol*nmo)`` transformation, or the identity when
+        the Hamiltonian was given in its working basis.
+        """
+        if self._basis_rotation is None:
+            return np.eye(self.npol * self.nmo)
+        return self._basis_rotation
 
     @property
     def nspin(self) -> int:
@@ -255,12 +285,16 @@ class MolecularHamiltonian(Hamiltonian):
             h1e, chol_trans, enuc = freeze_core(
                 h1e, chol_trans, enuc, nfzc, nbasis - nfzv - nfzc, verbose=verbose)
 
+        rotation = X[:, nfzc:nbasis - nfzv]
+        if spin_symm is SpinSymm.NONCOLLINEAR:
+            rotation = np.kron(np.eye(2), rotation)
+
         return cls(
             hcore=h1e,
             chol=chol_trans.T,   # want L_{(ij),gamma}
             enuc=enuc,
             spin_symm=spin_symm,
-            ortho=X[:, nfzc:nbasis - nfzv],
+            basis_rotation=rotation,
         )
 
     @classmethod
@@ -356,8 +390,8 @@ class MolecularHamiltonian(Hamiltonian):
                                  data=self.chol if complex_chol else np.real(self.chol))
             group.create_dataset('hcore',
                                  data=self.hcore if complex_hcore else np.real(self.hcore))
-            if self.ortho is not None:
-                group.create_dataset('X', data=np.asarray(self.ortho))
+            if self._basis_rotation is not None:
+                group.create_dataset('BasisRotation', data=self._basis_rotation)
 
     def to_fcidump(self, path, nelec=(0, 0), tol=1e-8, ctol=1e-12, sym=1,
                    cplx=True, paren=False, use_spinor=False) -> None:
@@ -446,6 +480,8 @@ class MolecularHamiltonian(Hamiltonian):
             enuc = read_hamiltonian_header(group)
             chol = read_complex(group['DenseFactorized/L'])
             hcore = read_complex(group['hcore'])
+            basis_rotation = (read_complex(group['BasisRotation'])
+                              if 'BasisRotation' in group else None)
 
         if hcore.ndim != 5:
             raise ValueError(
@@ -464,7 +500,8 @@ class MolecularHamiltonian(Hamiltonian):
         else:
             spin_symm = SpinSymm.NONCOLLINEAR if npol == 2 else SpinSymm.CLOSED
 
-        return cls(hcore=hcore, chol=chol, enuc=enuc, spin_symm=spin_symm)
+        return cls(hcore=hcore, chol=chol, enuc=enuc, spin_symm=spin_symm,
+                   basis_rotation=basis_rotation)
 
 
 # ----------------------------------------------------------------------
