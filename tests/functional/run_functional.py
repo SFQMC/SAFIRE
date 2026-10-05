@@ -390,40 +390,25 @@ def _compare_measurement(name: str, test, ref) -> bool:
     A, Aerr = np.atleast_1d(test[0]).astype(np.complex128), np.abs(np.atleast_1d(test[1]))
     B, Berr = np.atleast_1d(ref[0]).astype(np.complex128), np.abs(np.atleast_1d(ref[1]))
     if A.shape != B.shape or Aerr.shape != Berr.shape:
-        print(f"  [compare] {name} shape mismatch: {A.shape} vs {B.shape}")
+        print(f"  [mismatch] {name} shape mismatch: {A.shape} vs {B.shape}")
         return False
-    sigma = np.sqrt(Aerr ** 2 + Berr ** 2)
-    # Only test components with a meaningful stochastic error. Off-diagonal spin
-    # blocks that are identically zero (e.g. a collinear-derived noncollinear
-    # reference) have sigma ~ machine epsilon, where (a - b)/sigma is a
-    # tiny/tiny ratio that spuriously inflates the z-score.
-    valid = sigma > MACHINE_EPS
-    n_valid = int(np.count_nonzero(valid))
+    # The tolerance of each component is the larger of the stochastic and the numerical one,
+    # so that components whose stochastic error vanishes (e.g. the identically zero
+    # off-diagonal spin blocks of a collinear-derived noncollinear reference) are held to
+    # machine precision, without a jump at the crossover.
+    z_crit = scipy.stats.norm.ppf(1 - SIGNIFICANCE_LEVEL / (2 * A.size))
+    tol = np.maximum(z_crit * np.sqrt(Aerr ** 2 + Berr ** 2), MACHINE_EPS * (1 + np.abs(B)))
 
-    det = ~valid
-    if det.any():
-        if not np.allclose(A[det], B[det], rtol=MACHINE_EPS, atol=MACHINE_EPS):
-            d = np.abs(A - B)
-            d[valid] = 0.0
-            worst = tuple(map(int, np.unravel_index(np.argmax(d), d.shape)))
-            print(f"  [compare] {name} deterministic (sigma <= {MACHINE_EPS}) mismatch: |Δ| = {d[worst]:.3e} > {MACHINE_EPS} at idx = {worst}")
-            return False
-
-    if n_valid == 0:
-        print(f"  [compare] {name}: no components with sigma > {MACHINE_EPS}; matched to machine precision")
-        return True
-    z_crit = scipy.stats.norm.ppf(1 - SIGNIFICANCE_LEVEL / (2 * n_valid))
-
-    z = np.zeros_like(sigma)
-    z[valid] = np.abs(A[valid] - B[valid]) / sigma[valid]
-    worst = tuple(map(int, np.unravel_index(np.argmax(z), z.shape)))
-    values = (f"{A[worst]:.6f} ± {Aerr[worst]:.6f} vs "
+    d = np.abs(A - B)
+    worst = tuple(map(int, np.unravel_index(np.argmax(d / tol), d.shape)))
+    values = (f"|Δ| = {d[worst]:.3e}, tolerance {tol[worst]:.3e} (z_crit = {z_crit:.2f}), "
+              f"{A[worst]:.6f} ± {Aerr[worst]:.6f} vs "
               f"{B[worst]:.6f} ± {Berr[worst]:.6f} at idx = {worst}")
 
-    if z[worst] <= z_crit:
-        print(f"  [compare] {name} OK: worst component z = {z[worst]:.2f} <= {z_crit:.2f}, {values}")
+    if d[worst] <= tol[worst]:
+        print(f"  [compare] {name} OK: worst component {values}")
         return True
-    print(f"  [compare] {name} mismatch: worst component z = {z[worst]:.2f} > {z_crit:.2f}, {values}")
+    print(f"  [mismatch] {name} mismatch: worst component {values}")
     return False
 
 
@@ -437,12 +422,12 @@ def _compare_measurements(ft: h5.File, fr: h5.File) -> bool:
         for f in (ft, fr)
     )
     if set(test) != set(ref):
-        print(f"  [compare] recorded observables differ: "
+        print(f"  [mismatch] recorded observables differ: "
               f"only in test = {sorted(set(test) - set(ref))}, "
               f"only in reference = {sorted(set(ref) - set(test))}")
         return False
     if not test:
-        print("  [compare] no observables were recorded")
+        print("  [mismatch] no observables were recorded")
         return False
     # a list, not a generator: report every observable rather than stopping at the first bad one
     return all([_compare_measurement(name, test[name], ref[name]) for name in sorted(test)])
@@ -452,23 +437,23 @@ def compare_statistically(test_h5: Path, ref_h5: Path, test_type: TestType) -> b
     """Whether the run agrees with the reference within the stochastic error."""
     with h5.File(test_h5, "r") as ft, h5.File(ref_h5, "r") as fr:
         if not bool(ft["afqmc_is_finite"][()]):
-            print("  [compare] test results contain NaN")
+            print("  [mismatch] test results contain NaN")
             return False
         test_rc = _rc_class(ft["return_code"][()])
         ref_rc = _rc_class(fr["return_code"][()])
         if test_rc != ref_rc:
-            print(f"  [compare] return-code class mismatch: test={test_rc} ref={ref_rc}")
+            print(f"  [mismatch] return-code class mismatch: test={test_rc} ref={ref_rc}")
             return False
 
         if test_type != TestType.EXPECT_FAILURE:
             if test_rc != 0:
-                print("  [compare] expected success but run exited with error")
+                print("  [mismatch] expected success but run exited with error")
                 return False
             return _compare_measurements(ft, fr)
 
         # expected failure: both must have exited with a SAFIRE error.
         if test_rc != 1 or ref_rc != 1:
-            print("  [compare] expected both to exit with error")
+            print("  [mismatch] expected both to exit with error")
             return False
         if _h5_messages(fr) != _h5_messages(ft):
             print("  [compare] error messages differ (still counts as matching error exit)")
@@ -502,7 +487,7 @@ def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
     """
     with h5.File(test_h5, "r") as ft, h5.File(snapshot_h5, "r") as fs:
         if not bool(ft["afqmc_is_finite"][()]):
-            print("  [compare] test results contain NaN")
+            print("  [mismatch] test results contain NaN")
             return False
 
         # run_time_seconds is timing; input_file is compared as parsed settings below; the
@@ -510,7 +495,7 @@ def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
         ignored = {"run_time_seconds", "input_file", "measurements"}
         test_keys, snap_keys = set(ft.keys()) - ignored, set(fs.keys()) - ignored
         if test_keys != snap_keys:
-            print(f"  [compare] recorded quantities differ: "
+            print(f"  [mismatch] recorded quantities differ: "
                   f"only in test = {sorted(test_keys - snap_keys)}, "
                   f"only in snapshot = {sorted(snap_keys - test_keys)}")
             return False
@@ -521,26 +506,26 @@ def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
         if "num_ranks" in test_keys:
             mismatch = _exact_mismatch(ft["num_ranks"][()], fs["num_ranks"][()])
             if mismatch is not None:
-                print(f"  [compare] rank count differs ({mismatch}); rerun with the "
+                print(f"  [mismatch] rank count differs ({mismatch}); rerun with the "
                       f"launcher the snapshot was recorded with, or re-record it")
                 return False
 
         message_groups = {"error_messages", "warning_messages"}
         for name in sorted(message_groups & test_keys):
             if _h5_messages(ft, name) != _h5_messages(fs, name):
-                print(f"  [compare] {name} differ (not compared)")
+                print(f"  [mismatch] {name} differ (not compared)")
 
         ok = True
         compared = sorted(test_keys - message_groups)
         for name in compared:
             mismatch = _exact_mismatch(ft[name][()], fs[name][()])
             if mismatch is not None:
-                print(f"  [compare] {name} mismatch: {mismatch}")
+                print(f"  [mismatch] {name} mismatch: {mismatch}")
                 ok = False
 
         test_obs, snap_obs = _read_measurements(ft), _read_measurements(fs)
         if set(test_obs) != set(snap_obs):
-            print(f"  [compare] recorded observables differ: "
+            print(f"  [mismatch] recorded observables differ: "
                   f"only in test = {sorted(set(test_obs) - set(snap_obs))}, "
                   f"only in snapshot = {sorted(set(snap_obs) - set(test_obs))}")
             return False
@@ -548,7 +533,7 @@ def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
             for i, part in enumerate(("mean", "error")):
                 mismatch = _exact_mismatch(test_obs[name][i], snap_obs[name][i])
                 if mismatch is not None:
-                    print(f"  [compare] {name} {part} mismatch: {mismatch}")
+                    print(f"  [mismatch] {name} {part} mismatch: {mismatch}")
                     ok = False
                 compared.append(f"{name}/{part}")
 
@@ -698,7 +683,7 @@ def run_case(case: Case, test_type: TestType, out_root: Path, mpiexec: str,
     if regenerate:
         return store_reference(results, reference, test_type)
     if not reference.exists():
-        print(f"  [compare] reference missing: {reference}")
+        print(f"  [mismatch] reference missing: {reference}")
         return None
     if snapshot:
         return compare_exactly(results, reference)
