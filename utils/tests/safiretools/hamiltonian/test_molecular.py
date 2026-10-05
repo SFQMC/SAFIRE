@@ -515,13 +515,34 @@ class TestModifiedCholesky:
         assert chol.shape[0] == 11
 
 
+@pytest.fixture(scope='module')
+def neon_atom():
+    gto = pytest.importorskip("pyscf.gto")
+
+    return gto.M(atom='Ne 0 0 0', basis='sto-3g', verbose=0)
+
+
+@pytest.fixture(scope='module')
+def neon_rhf(neon_atom):
+    from pyscf import scf
+
+    return scf.RHF(neon_atom).run()
+
+
+@pytest.fixture(scope='module')
+def neon_casscf(neon_rhf):
+    from pyscf import mcscf
+
+    return mcscf.CASSCF(neon_rhf, 4, (4, 4)).run()
+
+
 @pytest.mark.pyscf
 class TestFromPyscf:
     """The PySCF path, checked against directly computed integrals."""
 
     def test_neon_hamiltonian_matches_the_scf_integrals(self, neon_atom, neon_rhf,
                                                         tmp_path):
-        mf, _ = neon_rhf
+        mf = neon_rhf
 
         hamiltonian = MolecularHamiltonian.from_pyscf(mf, chol_cut=1e-5)
 
@@ -545,14 +566,14 @@ class TestFromPyscf:
         assert np.allclose(Hamiltonian.from_hdf5(path).hcore, hamiltonian.hcore)
 
     def test_the_basis_rotation_is_the_scf_orbitals_by_default(self, neon_rhf):
-        mf, _ = neon_rhf
+        mf = neon_rhf
 
         hamiltonian = MolecularHamiltonian.from_pyscf(mf, chol_cut=1e-3)
 
         assert np.array_equal(hamiltonian.basis_rotation, mf.mo_coeff)
 
     def test_the_basis_rotation_of_ortho_ao(self, neon_atom, neon_rhf):
-        mf, _ = neon_rhf
+        mf = neon_rhf
 
         hamiltonian = MolecularHamiltonian.from_pyscf(mf, basis='ortho_ao',
                                                       chol_cut=1e-3)
@@ -561,7 +582,7 @@ class TestFromPyscf:
         assert np.allclose(hamiltonian.basis_rotation, expected)
 
     def test_the_basis_rotation_leaves_out_frozen_orbitals(self, neon_rhf):
-        mf, _ = neon_rhf
+        mf = neon_rhf
 
         hamiltonian = MolecularHamiltonian.from_pyscf(mf, active_space=(8, -1),
                                                       chol_cut=1e-3)
@@ -575,7 +596,7 @@ class TestFromPyscf:
         assert np.allclose(chol.T @ chol, eri, atol=1e-5)
 
     def test_frozen_core_matches_pyscf_casscf(self, neon_atom, neon_rhf, neon_casscf):
-        mf, _ = neon_rhf
+        mf = neon_rhf
         C = mf.mo_coeff
 
         chol = chunked_cholesky(neon_atom, max_error=1e-5)
@@ -592,7 +613,7 @@ class TestFromPyscf:
     @pytest.fixture
     def phased(self, neon_rhf):
         """The RHF orbitals, each multiplied by an arbitrary phase: a complex basis."""
-        mf, _ = neon_rhf
+        mf = neon_rhf
         nmo = mf.mo_coeff.shape[1]
         phases = np.exp(1j * np.linspace(0.3, 2.9, nmo))
         return mf.mo_coeff * phases, phases
@@ -604,7 +625,7 @@ class TestFromPyscf:
         stay hermitian in the orbital pair, and :math:`\sum_\gamma L_{ij} L_{kl}`
         is the MO-basis :math:`(ij|kl)`.
         """
-        mf, _ = neon_rhf
+        mf = neon_rhf
         C, _ = phased
 
         hamiltonian = MolecularHamiltonian.from_pyscf(mf, basis=C, chol_cut=1e-6)
@@ -624,7 +645,7 @@ class TestFromPyscf:
         Phases change no physics: the frozen-core constant is the same, and the
         active one-body term only picks up the phases of its orbitals.
         """
-        mf, _ = neon_rhf
+        mf = neon_rhf
         C, phases = phased
 
         real = MolecularHamiltonian.from_pyscf(mf, active_space=(8, -1))
@@ -638,7 +659,7 @@ class TestFromPyscf:
 
     def test_complex_cholesky_vectors_warn_on_write(self, neon_rhf, phased,
                                                     tmp_path):
-        mf, _ = neon_rhf
+        mf = neon_rhf
         C, _ = phased
         hamiltonian = MolecularHamiltonian.from_pyscf(mf, basis=C)
 
@@ -646,7 +667,7 @@ class TestFromPyscf:
             hamiltonian.to_hdf5(tmp_path / 'complex.h5')
 
     def test_freezing_more_orbitals_than_exist_is_rejected(self, neon_atom, neon_rhf):
-        mf, _ = neon_rhf
+        mf = neon_rhf
         C = mf.mo_coeff
         chol = chunked_cholesky(neon_atom, max_error=1e-5)
         transform_cholesky(chol, C)
@@ -656,7 +677,7 @@ class TestFromPyscf:
             freeze_core(h1e, chol, 0, 3, 4, verbose=False)
 
     def test_a_uhf_basis_needs_ortho_ao(self, neon_rhf):
-        mf, _ = neon_rhf
+        mf = neon_rhf
 
         with pytest.raises(ValueError, match="basis='ortho_ao'"):
             MolecularHamiltonian.from_pyscf(mf.to_uhf())
@@ -666,7 +687,7 @@ class TestFromPyscf:
         assert hamiltonian.spin_symm is SpinSymm.CLOSED
 
     def test_an_active_space_and_ortho_ao_are_mutually_exclusive(self, neon_rhf):
-        mf, _ = neon_rhf
+        mf = neon_rhf
 
         with pytest.raises(ValueError, match="cannot be combined"):
             MolecularHamiltonian.from_pyscf(mf, active_space=(4, 4),
@@ -678,7 +699,7 @@ class TestFromPyscf:
         A GHF object's hcore is the scalar one on both spins, so the result is
         the closed Hamiltonian's one-body term promoted to the spinor basis.
         """
-        mf, _ = neon_rhf
+        mf = neon_rhf
 
         closed = MolecularHamiltonian.from_pyscf(mf, chol_cut=1e-5)
         noncollinear = MolecularHamiltonian.from_pyscf(mf.to_ghf(), basis=mf,
@@ -710,7 +731,7 @@ class TestFromPyscf:
                            eri_mo, atol=1e-2)
 
     def test_df_needs_a_density_fitted_object(self, neon_rhf):
-        mf, _ = neon_rhf
+        mf = neon_rhf
 
         with pytest.raises(ValueError, match="density-fitted"):
             MolecularHamiltonian.from_pyscf(mf, df=True)

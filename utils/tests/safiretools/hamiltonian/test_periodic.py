@@ -240,6 +240,31 @@ class TestFcidump:
 # the PySCF-backed generation path
 # ----------------------------------------------------------------------
 
+@pytest.fixture(scope='module')
+def diamond():
+    pbcgto = pytest.importorskip("pyscf.pbc.gto")
+
+    cell = pbcgto.Cell()
+    alat = 3.6
+    cell.a = (np.ones((3, 3)) - np.eye(3)) * alat / 2.0
+    cell.atom = (('C', 0, 0, 0), ('C', np.array([0.25, 0.25, 0.25]) * alat))
+    cell.basis = 'gth-szv'
+    cell.pseudo = 'gth-pade'
+    cell.mesh = [12] * 3
+    cell.verbose = 0
+    cell.build(parse_arg=False)
+    return cell
+
+
+@pytest.fixture(scope='module')
+def diamond_lda(diamond):
+    """A 2x1x1 diamond KRKS calculation."""
+    from pyscf.pbc import dft
+
+    kpts = diamond.make_kpts([2, 1, 1])
+    return dft.KRKS(diamond, kpts=kpts).run(), kpts
+
+
 @pytest.mark.pyscf
 class TestGeneration:
 

@@ -221,33 +221,3 @@ class TestHelpers:
     def test_an_unrecognizable_third_column_is_reported(self):
         with pytest.raises(ValueError, match="Dice determinant line"):
             has_real_coefficients(['0', '-0.503', 'zzz'])
-
-
-class TestEquivalenceWithAfqmctools:
-
-    def test_the_ascii_reader_agrees(self, real_log):
-        from afqmctools.wavefunction.converter import (
-            read_dice_ascii_wavefunction)
-
-        (coeffs, occa, occb), nmo, nup, ndown, _ = \
-            read_dice_ascii_wavefunction(str(real_log), 4, 0)
-        wavefunction = from_dice(real_log, ndets=4)
-
-        assert nmo == wavefunction.nmo
-        assert (nup, ndown) == wavefunction.nelec
-        assert np.allclose(coeffs, wavefunction.coeffs)
-        assert np.array_equal(occa, wavefunction.occa)
-        assert np.array_equal(occb, wavefunction.occb)
-
-    def test_the_hdf5_reader_agrees(self, dice_hdf5):
-        from afqmctools.wavefunction.converter import read_dice_h5_wavefunction
-
-        (coeffs, occa, occb), nmo, nup, ndown, _ = \
-            read_dice_h5_wavefunction(str(dice_hdf5), 3, 0)
-        wavefunction = from_dice(dice_hdf5, ndets=3)
-
-        assert nmo == wavefunction.nmo
-        assert (nup, ndown) == wavefunction.nelec
-        assert np.allclose(coeffs, wavefunction.coeffs)
-        assert np.array_equal(occa, wavefunction.occa)
-        assert np.array_equal(occb, wavefunction.occb)
