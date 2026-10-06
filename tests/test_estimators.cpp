@@ -386,7 +386,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
         // deliberately not the default and no divisor of any interval above: no measurement
         // schedule may depend on the population control interval any more
         .population_control_interval = 3,
-        .n_walkers_per_mpi_task = nwalk};
+        .num_walkers = nwalk * mpi->comm.size()};
 
     auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);
     Estimators<MEM> estimators{
@@ -435,7 +435,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
         .estimators = EstimatorParameters{.energy          = std::nullopt,
                                           .time_evolved_bp = back_propagated({1, 2})},
         .population_control_interval = pop_control_interval,
-        .n_walkers_per_mpi_task = nwalk};
+        .num_walkers = nwalk * mpi->comm.size()};
 
     auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);
     Estimators<MEM> estimators{
@@ -523,7 +523,7 @@ void estimators_local_energy_matches_recomputation(
                                               .measure_interval = 1}},
       .population_control_interval = pop_control_interval,
       .timestep = dt,
-      .n_walkers_per_mpi_task = nwalk};
+      .num_walkers = nwalk * mpi->comm.size()};
 
   Estimators<MEM> estimators{
       mpi, 0, exec, wset, wfn, prop,
@@ -643,7 +643,8 @@ void skew_weights(WalkerSet<MEM>& wset)
 /// lives on the walker, so it has to follow the walker that a branch duplicated or a load
 /// balance moved, all of it and from the same parent. Each record here names the walker it
 /// was written for, which is what lets a survivor be checked without knowing which parent it
-/// came from.
+/// came from. Rank 0 holds one walker more than the others, as an uneven split of the walkers
+/// over the ranks leaves it, so that a run on several ranks exchanges between unequal ones.
 template<MEMORY_SPACE MEM>
 void estimators_bp_record_survives_population_control(
     std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
@@ -653,15 +654,18 @@ void estimators_bp_record_survives_population_control(
   constexpr int nbp = 3;
   constexpr int nCV = 5;
 
-  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nwalk);
+  int const rank   = mpi->comm.rank();
+  int const nlocal = nwalk + (rank == 0 ? 1 : 0);
+
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nlocal);
   wset.resize_bp(nbp, nCV, 1);
 
   int const nhist = wset.HistoryBufferLength();
-  int const tag0  = mpi->comm.rank() * nwalk;
+  int const tag0  = rank * nwalk + (rank > 0 ? 1 : 0);
 
   for(int s = 0; s < nbp; ++s) {
-    nda::array<ComplexType, 2> slot(nwalk, nCV);
-    for(int iw = 0; iw < nwalk; ++iw) {
+    nda::array<ComplexType, 2> slot(nlocal, nCV);
+    for(int iw = 0; iw < nlocal; ++iw) {
       for(int c = 0; c < nCV; ++c) {
         slot(iw, c) = bp_record_entry(0, tag0 + iw, s, c);
       }
@@ -670,8 +674,8 @@ void estimators_bp_record_survives_population_control(
     wset.storeFields(s, staged);
   }
   {
-    nda::array<ComplexType, 2> factors(nwalk, nhist);
-    for(int iw = 0; iw < nwalk; ++iw) {
+    nda::array<ComplexType, 2> factors(nlocal, nhist);
+    for(int iw = 0; iw < nlocal; ++iw) {
       for(int k = 0; k < nhist; ++k) {
         factors(iw, k) = bp_record_entry(1, tag0 + iw, 0, k);
       }
@@ -683,7 +687,7 @@ void estimators_bp_record_survives_population_control(
   {
     auto anchor = wset.SlaterMatricesN(Alpha);
     nda::array<ComplexType, 3> smn(anchor.shape());
-    for(int iw = 0; iw < nwalk; ++iw) {
+    for(int iw = 0; iw < nlocal; ++iw) {
       for(int i = 0; i < smn.extent(1); ++i) {
         for(int j = 0; j < smn.extent(2); ++j) {
           smn(iw, i, j) = bp_record_entry(2, tag0 + iw, i, j);
@@ -697,7 +701,7 @@ void estimators_bp_record_survives_population_control(
   skew_weights(wset);
   population_control(*mpi, *wset.getRNG(), wset);
 
-  REQUIRE(wset.size() == nwalk);
+  REQUIRE(wset.size() == nlocal);
 
   auto fields  = nda::to_host(wset.getFields());
   auto factors = nda::to_host(wset.getWeightFactors());
@@ -706,7 +710,7 @@ void estimators_bp_record_survives_population_control(
   // a branch that left every walker in its own slot would let a record that never moves pass,
   // so the run has to have moved at least one of them somewhere
   int moved = 0;
-  for(int iw = 0; iw < nwalk; ++iw) {
+  for(int iw = 0; iw < nlocal; ++iw) {
     int const tag = bp_record_tag(fields(iw, 0, 0));
     if(tag != tag0 + iw) {
       ++moved;
@@ -796,7 +800,7 @@ void estimators_bp_matches_mixed_across_population_control(
                                                   .path_restoration      = false,
                                                   .onerdm                = OneRDMParameters{}}},
       .population_control_interval = pop_interval,
-      .n_walkers_per_mpi_task = nwalk};
+      .num_walkers = nwalk * mpi->comm.size()};
 
   Estimators<MEM> estimators{
       mpi, 0, exec, wset, wfn, flat,

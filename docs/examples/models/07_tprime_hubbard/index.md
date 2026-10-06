@@ -217,7 +217,7 @@ from afqmctools.inputs.from_hdf import write_json
 afqmc_params = {
     "timestep": 0.01,
     "steps": 12000,
-    "n_walkers_per_mpi_task": 30,
+    "num_walkers": 480,
     "population_control_interval": 5,
     "walker_ortho_interval": 5,
     "measure_interval": 10,

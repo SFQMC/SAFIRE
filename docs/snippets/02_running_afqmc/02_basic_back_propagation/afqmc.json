@@ -16,7 +16,7 @@
       },
       "timestep": 0.01,
       "steps": 10000,
-      "n_walkers_per_mpi_task": 60,
+      "num_walkers": 3000,
       "walker_ortho_interval" : 10,
       "population_control_interval": 5,
       "measure_interval": 10,

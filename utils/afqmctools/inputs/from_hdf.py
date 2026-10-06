@@ -223,7 +223,7 @@ def default_inputs(fwfn0, fham0=None):
             },
             "timestep": 0.01,
             "steps": 10000,
-            "n_walkers_per_mpi_task": 10,
+            "num_walkers": 200,
         }
     }
     return inps

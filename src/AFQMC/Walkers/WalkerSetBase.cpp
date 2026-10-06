@@ -186,9 +186,6 @@ void WalkerSetBase<MEM>::resize(int n)
   tot_num_walkers  = n;
   targetN_per_rank = tot_num_walkers;
   targetN          = GlobalPopulation();
-  utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
-           " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
-           targetN,targetN_per_rank,mpi->comm.size());
 }
 
 /*
@@ -220,9 +217,6 @@ void WalkerSetBase<MEM>::allocate_walkers(int n)
   }
   targetN_per_rank = tot_num_walkers;
   targetN          = GlobalPopulation();
-  utils::check(targetN == targetN_per_rank * mpi->comm.size(),
-           " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
-           targetN,targetN_per_rank,mpi->comm.size());
 }
 
 /*
@@ -318,9 +312,6 @@ void WalkerSetBase<MEM>::reset(int n)
   tot_num_walkers = n;
   targetN_per_rank  = tot_num_walkers;
   targetN         = GlobalPopulation();
-  utils::check(targetN == targetN_per_rank * mpi->comm.size(), 
-           " Error in total walker population: targetN, targetN_per_rank, # of ranks: {}, {}, {}",
-           targetN,targetN_per_rank,mpi->comm.size());
 }
 
 template<MEMORY_SPACE MEM>

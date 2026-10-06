@@ -221,7 +221,7 @@ instead of the above.
       },
       "timestep": 0.01,
       "steps": 12000,
-      "n_walkers_per_mpi_task": 80,
+      "num_walkers": 200,
       "measure_interval": 10,
       "population_control_interval": 10,
       "walker_ortho_interval": 10,
@@ -280,7 +280,7 @@ afqmc_params = {
     "steps": 10000,
     "population_control_interval": 2,
     "walker_ortho_interval": 2,
-    "n_walkers_per_mpi_task": 40,
+    "num_walkers": 640,
     "measure_interval": 2,
     "estimator": {
         "name": "back_propagation",

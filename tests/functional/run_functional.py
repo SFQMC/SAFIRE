@@ -196,7 +196,7 @@ def resolve_observable_inputs(observables: dict, inputs_dir: Path) -> dict:
 # ============================================================================
 
 def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
-                n_walkers_per_mpi_task: int, timestep: float, observables: dict,
+                num_walkers: int, timestep: float, observables: dict,
                 snapshot: bool):
     steps = 12000
     if observables: # backprop needs more samples
@@ -219,7 +219,7 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
         "hamiltonian": {"filename": str(hamil_file)},
         "timestep": timestep,
         "steps": steps,
-        "n_walkers_per_mpi_task": n_walkers_per_mpi_task,
+        "num_walkers": num_walkers,
     }
     if observables:
         execute["estimators"] = {
@@ -636,12 +636,11 @@ def run_case(case: Case, test_type: TestType, out_root: Path, mpiexec: str,
     total_walkers = case.runparams.get("total_walkers", 1600)
     if snapshot:
         total_walkers = 50
-    n_walkers = total_walkers // max(1, ranks)
 
     input_file = out_dir / "afqmc.json"
     write_input(
         input_file, hamil_file, wfn_file, case.walker,
-        n_walkers_per_mpi_task=n_walkers,
+        num_walkers=total_walkers,
         timestep=case.runparams.get("timestep", 0.01),
         observables=observables,
         snapshot=snapshot,

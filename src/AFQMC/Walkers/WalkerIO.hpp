@@ -208,13 +208,15 @@ bool dumpToHDF5(WalkerSet& wset, h5::file& fh5)
     {
       for (int p = 0, nt = 0; p < mpi->comm.size(); p++)
       {
+        // the ranks need not hold the same number of walkers
+        int const nWp = nw_per_rank[p];
         int n_ = 0;
-        if (ndone + nwlk_tot > nt && ndone < nt + nW)
+        if (ndone + nwlk_tot > nt && ndone < nt + nWp)
         {
           if (ndone <= nt)
-            n_ = std::min(nW, (ndone + nwlk_tot) - nt);
+            n_ = std::min(nWp, (ndone + nwlk_tot) - nt);
           else
-            n_ = std::min(nt + nW - ndone, nwlk_tot);
+            n_ = std::min(nt + nWp - ndone, nwlk_tot);
         }
 
         counts[p] = n_ * wlk_nterms;

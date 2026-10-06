@@ -29,6 +29,10 @@
 #include <string>
 #include <vector>
 #include <complex>
+#include <numeric>
+#include <random>
+#include <set>
+#include <tuple>
 
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Walkers/WalkerIO.hpp"
@@ -408,5 +412,59 @@ TEST_CASE("sharedwset: walker io", "[sharedwset]")
   sharedwset_walker_io<DEVICE_MEMORY>(COLLINEAR);
   sharedwset_walker_io<DEVICE_MEMORY>(NONCOLLINEAR);
 #endif
+}
+
+/// The exchange plan of population control on ranks that hold different numbers of walkers, as an
+/// uneven split of num_walkers leaves them. The plan is a pure function of the offspring, so the
+/// ranks are only simulated here and a single process covers any rank layout.
+TEST_CASE("sharedwset: walker exchange plan over uneven ranks", "[sharedwset]")
+{
+  std::mt19937 gen(17);
+  for(std::vector<int> const& counts :
+      {std::vector<int>{3, 2, 2}, std::vector<int>{1, 4}, std::vector<int>{2, 2, 2, 1}, std::vector<int>{5}}) {
+    int const nranks = counts.size();
+    // walker i of rank r is entry first[r] + i of the global population
+    std::vector<int> first(nranks + 1, 0);
+    std::partial_sum(counts.begin(), counts.end(), first.begin() + 1);
+    int const ntot = first.back();
+
+    for(int trial = 0; trial < 200; ++trial) {
+      // the copies of a random resampling, which preserves the population like the comb does
+      nda::vector<int> offspring(ntot, 0);
+      std::uniform_int_distribution<int> pick(0, ntot - 1);
+      for(int c = 0; c < ntot; ++c) {
+        ++offspring(pick(gen));
+      }
+
+      auto const plan = plan_walker_exchange(offspring, counts);
+
+      std::vector<int> keep(offspring.begin(), offspring.end());
+      std::vector<int> held(nranks, 0);
+      std::vector<bool> sends(nranks, false), receives(nranks, false);
+      std::set<std::tuple<int, int, int>> routes;
+      for(auto const& t : plan) {
+        REQUIRE(t.src != t.dst);
+        REQUIRE(t.walker < counts[t.src]);
+        REQUIRE(t.copies > 0);
+        // a walker goes to a destination once and is replicated there
+        CHECK(routes.emplace(t.src, t.walker, t.dst).second);
+        keep[first[t.src] + t.walker] -= t.copies;
+        held[t.dst] += t.copies;
+        sends[t.src]    = true;
+        receives[t.dst] = true;
+      }
+
+      for(int r = 0; r < nranks; ++r) {
+        for(int w = first[r]; w < first[r + 1]; ++w) {
+          // no walker gives away more copies than the comb made of it
+          REQUIRE(keep[w] >= 0);
+          held[r] += keep[w];
+        }
+        // every rank ends with its own count, and the exchange posts only sends or only receives
+        CHECK(held[r] == counts[r]);
+        CHECK(!(sends[r] && receives[r]));
+      }
+    }
+  }
 }
 } // namespace sfqmc

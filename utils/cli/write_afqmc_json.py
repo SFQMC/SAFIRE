@@ -34,8 +34,8 @@ def get_args(description=None):
     # basic projection settings
     parser.add_argument('--steps', '-s', type=int, default=10000)
     parser.add_argument('--timestep', '-ts', type=float, default=0.01)
-    parser.add_argument('--n_walkers', '-nw', type=int, default=10,
-        help='number of walkers per MPI rank')
+    parser.add_argument('--n_walkers', '-nw', type=int, default=200,
+        help='total number of walkers, split evenly over the MPI ranks')
     
     # estimator settings
     parser.add_argument('--mixed_est', '-me', action='store_true')
@@ -62,7 +62,7 @@ def main():
     exec_opts = dict(
         steps = args.steps,
         timestep = args.timestep,
-        n_walkers_per_mpi_task = args.n_walkers
+        num_walkers = args.n_walkers
     )
     write_json(args.fout, args.fwfn, fham, exec_opts=exec_opts, args_namespace=args)
 

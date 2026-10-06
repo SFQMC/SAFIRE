@@ -127,7 +127,7 @@ SAFIRE provides a keyword in the "wavefunction" json input block to limit the nu
       },
       "timestep": 0.01,
       "steps": 10000,
-      "n_walkers_per_mpi_task": 100,
+      "num_walkers": 1600,
       "seed": 42
     }
   }
@@ -271,7 +271,7 @@ will generate a "wavefunction" block that points to the wavefunction file, with 
       },
       "timestep": 0.01,
       "steps": 10000,
-      "n_walkers_per_mpi_task": 10
+      "num_walkers": 200
     }
   }
 }
@@ -288,7 +288,7 @@ execute_options = {
     "measure_interval": 10,
     "population_control_interval" : 10,
     "walker_ortho_interval" : 10 ,
-    "n_walkers_per_mpi_task": 20,
+    "num_walkers": 320,
     "seed" : 42
 }
 
@@ -432,7 +432,7 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
         "measure_interval": 10,
         "population_control_interval" : 10,
         "walker_ortho_interval" : 10 ,
-        "n_walkers_per_mpi_task": 20,
+        "num_walkers": 320,
         "seed" : 42,
         "wavefunction" : { "ndets_to_read" : ndets_to_read }
     }

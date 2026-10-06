@@ -46,7 +46,8 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 
   RealType w0   = wset.GlobalWeight();
   int nwalk_ini = wset.GlobalPopulation();
-  int nwalk_ini_per_mpi = nwalk_ini / mpi.comm.size();
+  // the ranks need not carry the same number of walkers, so each restores its own count
+  int const nwalk_local = wset.size();
 
   int print_interval = std::max(1, exec.steps / 20);
 
@@ -115,7 +116,7 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 
     wset.clean(); // reset walker buffer
     // reset weights, UR, DR, VR
-    wset.reset(nwalk_ini_per_mpi);
+    wset.reset(nwalk_local);
     // reset logsclL, probably only necessary if backward sweeps are implemented
     wavefunction.resetLogScale();
   }
