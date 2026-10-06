@@ -1,60 +1,26 @@
 .. _input_afqmc:
 
-Input file
-==========
+The Job File
+============
 
 The AFQMC executable runs AFQMC calculations based on the settings provided in an
-input file written in json.
-The input file is described in detail below.
-This reference document assumes familiarity with the AFQMC method.
-An explanation of the AFQMC method is provided elsewhere in the :ref:`AFQMC overview <afqmc>`.
-The structure of the input file is described below in  :ref:`input_file_strcuture`.
+input file written in JSON. This page serves as a reference for its format.
 
 .. seealso::
 
-   The :ref:`SAFIRE tutorials <tutorials>` covers the input file along with other relevant topics.
+   The :ref:`tutorials` and :ref:`user_examples` contain many examples of practical input files. Often you can use one of them as a starting point for your own calculation.
+   ``safiretools`` provides a helper function ``write_jobfile()``, that simplifies writing job files from Python.
 
-.. _input_file_strcuture:
-
-Input File Structure
+The Minimal Job File
 --------------------
 
-The input file is json format and consists of several json "blocks".
-Some input blocks may have sub-blocks as described below.
-The highest level block determines what kind of calculation to run.
-Currently, "afqmc" is the only supported option.
-
-.. image:: /images/shared/02_input_file/input_file_01_all.png
-   :width: 800px
-   :alt: Input file structure diagram
-   :align: center
-
-*Input file structure overview*
-
-.. important::
-
-  The wavefunction, hamiltonian, walker_set, and propagator blocks may be defined either within an execute block or outside of an execute block.
-  Outside of an execute block, they are listed under "wavefunctions", "hamiltonians", "walker_sets", and "propagators", and must be given a name via the "name" parameter.
-  They can then be referenced by name within an execute block.
-
-.. note::
-
-  Every file name in the input file is relative to the directory of the input file.
-  The results file is the exception: it is written to the directory AFQMC is launched from.
-
-Below is a sample input file for an AFQMC calculation in SAFIRE. 
-We will explore the details of this input file in the following sections.
+Most parameters in the job file have sensible defaults so that for a standard calculation of the energy of a system, only a small subset of options has to be spelled out.
 
 .. code-block:: json
-  :caption: Sample input file for AFQMC.
-  :name: Listing 101
+  :caption: ``afqmc.json``: A minimal job file containing all the necessary information for a basic calculation.
 
   {
-    "output_name": "qmc",
     "execute": {
-      "walker_set": {
-        "walker_type": "collinear"
-      },
       "wavefunction": {
         "filename": "afqmc.h5"
       },
@@ -70,130 +36,143 @@ We will explore the details of this input file in the following sections.
     }
   }
 
+At the start of a calculation, SAFIRE will fill in all the default values and print the full job file in the log output.
 
-.. seealso::
+The Full Job File
+-----------------
 
-  The sample input file above is just one possible input file layout.
-  See the :ref:`input file recipes <run_afqmc_ex_4>` example for other possible layouts.
-
-.. code-block:: json
-  :caption: Sample input file for AFQMC.
-  :name: Listing 102
-
-  {
-    /* top-level settings here */
-    "execute": {
-      /* execution settings here */
-    }
-  }
-
-.. _execute_block:
-
-Execute blocks
---------------
-
-The execute blocks contain methodological parameters for the AFQMC calculation. They specify which system is simulated
-using what trial wavefunction and walkers and what should be measured how as a result. An input file can contain more than a single
-execute block, which will then be run as multiple execution stages in sequence. This is useful for example, to complete the equilibration phase
-of a simulation with a larger time step.
-
-.. image:: /images/shared/02_input_file/input_file_02_execute.png
-   :width: 800px
-   :alt: Execute block structure diagram
-   :align: center
-
-*Execute block structure overview*
-
+The following is an example where every possible parameter has been filled in. Below, we will list the meaning and default of every parameter.
 
 .. code-block:: json
-  :caption: Sample input file for AFQMC with Back-Propagation
-  :name: Listing 201
+  :caption: A job file containing every possible parameter.
 
   {
-    /* ... */
+    "driver": "afqmc",
+    "output_name": "afqmc",
     "seed": 42,
-    "execute": {
-      "walker_set": {
-        /* ... */
-      },
-      "wavefunction": {
-        /* ... */
-      },
-      "hamiltonian": {
-        /* ... */
-      },
-      "timestep": 0.01,
-      "steps": 10000,
-      "population_control_interval": 10,
-      "measure_interval": 10,
-      "walker_ortho_interval": 10,
-      "num_walkers": 200,
-      "estimators": {
-        "mixed": {
-          /* ... */
-        },
-        "backprop": {
-          /* ... */
-        }
-      }
-    }
-  }
-
-
-Externally defined blocks
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The wavefunction, hamiltonian, walker_set, and propagator blocks may be defined either within an execute block or outside of an execute block.
-Outside of an execute block, they are listed under "wavefunctions", "hamiltonians", "walker_sets", and "propagators", and must be given a name via the "name" parameter.
-They can then be referenced by name within an execute block instead of defining a json block.
-For example, in the input file below, the walker_set is defined in the "walker_sets" list outside of the execute block and given the name "my_walker_set".
-
-.. code-block:: json
-  :caption: Sample input file for AFQMC with Externally Defined Blocks
-
-  {
-    "seed": 42,
-    "walker_sets": [
+    "wavefunctions": [
       {
-        "name": "my_walker_set"
+        "name": "trial",
+        "filename": "afqmc.h5",
+        "ndets_to_read": -1
       }
     ],
-    "execute": {
-      "walker_set": "my_walker_set",
-      "wavefunction": {
-        /* ... */
-      },
-      "hamiltonian": {
-        /* ... */
-      },
-      "timestep": 0.01,
-      "steps": 10000,
-      "population_control_interval": 10,
-      "measure_interval": 10,
-      "walker_ortho_interval": 10,
-      "num_walkers": 200,
-      "estimators": {
-        "mixed": {
-          /* ... */
-        },
-        "backprop": {
-          /* ... */
+    "hamiltonians": [
+      {
+        "name": "hamiltonian",
+        "filename": "afqmc.h5"
+      }
+    ],
+    "walker_sets": [
+      {
+        "name": "walkers",
+        "walker_type": "collinear",
+        "from": {
+          "wavefunction": "trial"
         }
       }
-    }
+    ],
+    "propagators": [
+      {
+        "name": "propagator",
+        "taylor_n": 6,
+        "vbias_bound": 50.0,
+        "upper_cutoff_scale": 10.0,
+        "lower_cutoff_scale": 1.0,
+        "weight_bound_floor": 100.0,
+        "weight_bound_fraction": 0.1,
+        "subtractMF": true,
+        "hybrid": true,
+        "free_projection": false,
+        "natural_shift": true,
+        "use_cp_constraint": false,
+        "project_force_bias": false
+      }
+    ],
+    "execute": [
+      {
+        "walker_set": "walkers",
+        "wavefunction": "trial",
+        "hamiltonian": "hamiltonian",
+        "propagator": "propagator",
+        "steps": 1000,
+        "equilibration_steps": 100,
+        "binsize": 1,
+        "population_control_interval": 10,
+        "walker_ortho_interval": 10,
+        "measure_interval": 10,
+        "timestep": 0.01,
+        "num_walkers": 200,
+        "Eshift_relaxation_factor": 0.095,
+        "initial_Eshift": 0.0,
+        "estimators": {
+          "energy": {
+            "wavefunction": "trial",
+            "hamiltonian": "hamiltonian",
+            "measure_interval": 10
+          },
+          "mixed": {
+            "wavefunction": "trial",
+            "hamiltonian": "hamiltonian",
+            "measure_interval": 10,
+            "onerdm": {
+              "rotation": {
+                "filename": "rotation.h5",
+                "group": "/"
+              }
+            },
+            "diag_twordm": {},
+            "twordm": {},
+            "paircorr": {
+              "pairs": {
+                "filename": "pairs.h5",
+                "group": "/"
+              }
+            },
+            "spincorr": {}
+          },
+          "backprop": {
+            "wavefunction": "trial",
+            "hamiltonian": "hamiltonian",
+            "propagation_steps": [100, 200],
+            "walker_ortho_interval": 10,
+            "path_restoration": true,
+            "extra_path_restoration": false,
+            "onerdm": {
+              "rotation": {
+                "filename": "rotation.h5",
+                "group": "/"
+              }
+            },
+            "diag_twordm": {},
+            "twordm": {},
+            "paircorr": {
+              "pairs": {
+                "filename": "pairs.h5",
+                "group": "/"
+              }
+            },
+            "spincorr": {}
+          }
+        }
+      }
+    ]
   }
 
 .. note::
 
-  Externally defined blocks can be reused in multiple execute blocks.
-  Walker sets, wavefunctions and hamiltonians are built once per name and keep their state
-  between execute blocks. This allows a walker population to be reused across different
-  simulation runs, picking up where the last projection left off.
-  Propagators carry no state worth keeping and are rebuilt for every execute block.
+  Some of the parameters have dynamic defaults that are chosen based on the input, as explained below. In the listing they have been given a static value instead.
 
+  There may be some parameters that appear in the SAFIRE log but not here. These parameters are considered experimental and changing them is not supported.
 
-Settings
-~~~~~~~~
+.. _input_file_structure:
+
+Job File Structure
+------------------
+
+In the following we will traverse the job file structure section by section and list all the keys with their defaults at each level.
+
+At the top level, we have the following general parameters.
 
 .. list-table::
    :header-rows: 1
@@ -202,60 +181,224 @@ Settings
    * - **Parameter**
      - **Default**
      - **Description**
+   * - **driver**
+     - afqmc
+     - The driver that runs the execute blocks: "afqmc" for ground state AFQMC.
+   * - **output_name**
+     - name of the input file without its extension
+     - The results are written to ``<output_name>.results.h5``. Unlike every other path in the input, it is relative to the directory AFQMC is launched from. See :ref:`output_afqmc`.
+   * - **seed**
+     - random
+     - The seed for the random number generator. Can be used to reproduce simulations with the same random number stream. To reproduce an existing calculation, you can reuse the seed in its log.
+
+Along with the subblocks ``execute``, ``wavefunctions``, ``hamiltonians``, ``walker_sets``, and ``propagators``.
+
+.. admonition:: Inline vs Out-of-Line Definitions
+  :class: note
+
+  Hamiltonians, wavefunctions, walker sets, and propagators can either be defined directly inline where they are needed, deep in the input file or declared out-of-line with a name at the top level, in the corresponding subblocks. This is useful when one input component is shared in multiple parts of the calculation. For this overview, we will assume all components are declared out-of-line.
+
+.. _execute_block:
+
+``execute``
+~~~~~~~~~~~
+
+An execute block represents one execution stage of an AFQMC calculation. It contains all essential parameters describing a simulation.
+
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - **Parameter**
+     - **Default**
+     - **Description**
+   * - **hamiltonian**
+     - *required*
+     - Hamiltonian to use for the AFQMC propagation. Either the name or an inline block. See :ref:`hamiltonian_block`.
+   * - **wavefunction**
+     - *required*
+     - The AFQMC trial wavefunction. Either the name or an inline block. See :ref:`wavefunction_block`.
+   * - **walker_set**
+     - a walker set initialized from **wavefunction**, or the walker set of the previous execute block
+     - The walker set to propagate. Either the name or an inline block. See :ref:`walker_set_block`.
+   * - **propagator**
+     - a propagator with default settings
+     - The propagator settings. Either the name or an inline block. See :ref:`propagator_block`.
+   * - **estimators**
+     - energy estimator enabled
+     - Specifies which estimators will measure what observables. See :ref:`estimator_block`.
    * - **timestep**
-     - 
-     - The Trotter step size, :math:`\tau`, in inverse energy units. The specific unit depends on what units are used to represent the Hamiltonian such that :math:`\tau \hat{H}` is dimensionless.
+     - *required*
+     - The Trotter step size, :math:`\Delta\tau`, in inverse energy units. The specific unit depends on what units are used to represent the Hamiltonian such that :math:`\Delta\tau \hat{H}` is dimensionless.
    * - **steps**
-     - 
-     - The total number of projection steps, :math:`N_{steps}` to perform. Together, the "steps" setting and the "timestep" setting determine the total projection time :math:`\beta = N_{steps} \tau`
+     - *required*
+     - The total number of propagation steps, :math:`N_\mathrm{steps}` to perform. Together, the "steps" setting and the "timestep" setting determine the total projection time :math:`\beta = N_\mathrm{steps} \Delta\tau`.
+   * - **equilibration_steps**
+     - 100
+     - The number of propagation steps at the start of the execute block during which nothing is measured.
    * - **population_control_interval**
      - 10
-     - The number of projection steps between population control operations. Population control is relatively inexpensive, and it is typically okay to allow this interval to remain small.
+     - The number of propagation steps between population control operations. Population control is relatively inexpensive, and it is typically okay to allow this interval to remain small.
    * - **measure_interval**
      - 10
-     - The number of projection steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will reduce the CPU time necessary to perform AFQMC calculations.
+     - The number of propagation steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will speed up an AFQMC calculation, but increasing it above the Monte Carlo autocorrelation time brings no benefit.
    * - **binsize**
      - 1
      - The number of consecutive measurements averaged into one bin of the results file. Binning reduces the size of the results file and the autocorrelation between neighbouring bins. A trailing partial bin is not written out.
    * - **walker_ortho_interval**
      - 10
-     - The number of projection steps between application of the modified Gram-Schmidt (mGS) orthogonalization procedure. The mGS procedure is relatively inexpensive computationally and frequent orthogonalization is recommended.
+     - The number of propagation steps between orthogonalizing the walker Slater determinants. Orthogonalization is relatively inexpensive so performing it frequently is recommended.
    * - **num_walkers**
-     - required
-     - The total number of random walkers, summed over all MPI tasks. The walkers are split evenly over the tasks, so that the walker counts of two tasks differ by at most one, and there have to be at least as many walkers as tasks. This value should be chosen such that the total population is reasonably large. The choice also depends on whether SAFIRE has been compiled for CPUs or GPUs. For GPUs, the goal is to saturate the device memory, which could take on the order of 10000 walkers per GPU for small systems. For CPUs and many MPI tasks, a share on the order of 10 walkers per task is typical.
-   * - **seed**
-     - 
-     - The seed for the random number generator. This value only needs to be set when strict reproducibility is necessary.
+     - *required*
+     - The total number of random walkers. The walkers are split evenly over the tasks, and there have to be at least as many walkers as tasks. This value should be chosen such that the total population is reasonably large. The choice also depends on whether SAFIRE has been compiled for CPUs or GPUs. For GPUs, the goal is to saturate the device bandwidth, which could take on the order of 10000 walkers per GPU for small systems. For CPUs and many MPI tasks, a share on the order of 10 walkers per task is typical.
+   * - **initial_Eshift**
+     - initial local energy of the walkers
+     - The initial value of the energy shift.
+   * - **Eshift_relaxation_factor**
+     - set so that :math:`E_\mathrm{shift}` relaxes within every **equilibration_steps**/10
+     - The fraction :math:`d` of the gap to the average energy that the energy shift closes once per step of the equilibration phase under the update :math:`E_\mathrm{shift} \mathrel{+}= d (E - E_\mathrm{shift})`.
+
+.. _estimator_block:
+
+``estimators``
+^^^^^^^^^^^^^^
+
+The estimator block configures which measurements are performed during the AFQMC calculation.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - **Parameter**
+     - **Default**
+     - **Description**
+   * - **energy**
+     - ``{}``
+     - The energy estimator. It is enabled by default, ``"energy": null`` disables it.
+   * - **mixed**
+     - disabled
+     - The mixed estimator.
+   * - **backprop**
+     - disabled
+     - The back-propagated estimator.
+
+See :ref:`estimators` for the theory behind each estimator.
+
+``energy``
+""""""""""
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - **Parameter**
+     - **Default**
+     - **Description**
+   * - **wavefunction**
+     - the execute block's **wavefunction**
+     - Name of the trial wavefunction used to evaluate the energy.
+   * - **hamiltonian**
+     - the execute block's **hamiltonian**
+     - Name of the Hamiltonian whose energy is measured.
+   * - **measure_interval**
+     - the execute block's **measure_interval**
+     - The number of propagation steps between measurements.
+
+``mixed``
+"""""""""
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - **Parameter**
+     - **Default**
+     - **Description**
+   * - **wavefunction**
+     - the execute block's **wavefunction**
+     - Name of the trial wavefunction of the mixed estimate.
+   * - **hamiltonian**
+     - the execute block's **hamiltonian**
+     - Name of the Hamiltonian the estimator uses.
+   * - **measure_interval**
+     - the execute block's **measure_interval**
+     - The number of propagation steps between measurements.
+   * - **onerdm**, **diag_twordm**, **twordm**, **paircorr**, **spincorr**
+     - disabled
+     - The observables to measure. See :ref:`observables_block`.
+
+``backprop``
+""""""""""""
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - **Parameter**
+     - **Default**
+     - **Description**
+   * - **propagation_steps**
+     - *required*
+     - List of back-propagation lengths in propagation steps. Every length is measured as a separate average. The longest one is also the measurement interval: a new back-propagation window starts once it has been covered.
+   * - **wavefunction**
+     - the execute block's **wavefunction**
+     - Name of the trial wavefunction that is back-propagated.
+   * - **hamiltonian**
+     - the execute block's **hamiltonian**
+     - Name of the Hamiltonian the estimator uses.
+   * - **walker_ortho_interval**
+     - the execute block's **walker_ortho_interval**
+     - The number of back-propagation steps between orthogonalizations.
+   * - **path_restoration**
+     - true
+     - Restore the walker paths during back propagation. Advanced option, keep the default.
+   * - **extra_path_restoration**
+     - false
+     - Apply an additional path restoration. Advanced option, keep the default.
+   * - **onerdm**, **diag_twordm**, **twordm**, **paircorr**, **spincorr**
+     - disabled
+     - The observables to measure. See :ref:`observables_block`.
+
+.. _observables_block:
+
+Observables
+"""""""""""
+
+The **mixed** and **backprop** estimators measure an observable if and only if its block is present. Observables without parameters are enabled with an empty block, e.g. ``"twordm": {}``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - **Parameter**
+     - **Default**
+     - **Description**
+   * - **onerdm**
+     - disabled
+     - The one-body reduced density matrix. Takes an optional **rotation** block with **filename** and **group** (default ``"/"``) of an HDF5 group containing a ``RotationMatrix`` dataset of shape :math:`(n_\mathrm{spin}, n, n_\mathrm{pol} N)`. If given, the density matrix is measured in the rotated basis.
+   * - **diag_twordm**
+     - disabled
+     - The diagonal of the two-body reduced density matrix.
+   * - **twordm**
+     - disabled
+     - The full two-body reduced density matrix.
+   * - **paircorr**
+     - disabled
+     - Pair correlation functions. Requires a **pairs** block with **filename** and **group** of an HDF5 group in which every dataset defines one orbital pair map. Each dataset becomes a correlator named after it.
+   * - **spincorr**
+     - disabled
+     - Spin-spin correlation functions.
+
+See :ref:`observables` for details on each observable.
 
 .. _wavefunction_block:
 
-Wavefunction block
-------------------
+``wavefunctions``
+~~~~~~~~~~~~~~~~~
 
-The wavefunction block contains settings related to the trial wavefunction used in the AFQMC code.
-**It is one of the only mandatory sub-blocks within the "execute" block.**
-The wavefunction block must at least specify an HDF5 file containing the trial wavefunction.
-Some settings are relevant only to specific classes of trial wavefunctions as indicated in the settings
-listings below.
-
-.. image:: /images/shared/02_input_file/input_file_03_wavefunction.png
-   :width: 800px
-   :alt: Wavefunction block structure diagram
-   :align: center
-
-*Wavefunction block structure overview*
-
-Settings
-~~~~~~~~
-
-.. code-block::
-  :caption: Sample execute.wavefunction input block with settings exposed.
-
-  "wavefunction": {
-    "filename" : "afqmc.h5",
-    "ndets_to_read" : -1,
-  }
-
+Wavefunction blocks can either be defined inline where they are needed or out-of-line in the top-level ``wavefunctions`` list.
+Describes a wavefunction used in SAFIRE.
 
 .. list-table::
    :header-rows: 1
@@ -264,84 +407,24 @@ Settings
    * - **Parameter**
      - **Default**
      - **Description**
-   * - **filename** (**mandatory**) 
-     - 
-     - name of the HDF5 file containing the trial wavefunction.
+   * - **name**
+     - ``wavefunction_*``
+     - The name of the wavefunction, required to refer to it elsewhere.
+   * - **filename**
+     - *required*
+     - Path of the HDF5 file containing the wavefunction.
    * - **ndets_to_read**
      - -1
      - The number of Slater determinants to read from the HDF5 file. If set to -1, all available determinants will be read.
 
 
-.. only:: developer
+.. _hamiltonian_block:
 
-  Advanced / developer settings
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``hamiltonians``
+~~~~~~~~~~~~~~~~
 
-  Advanced settings for developers.
-
-  .. code-block::
-    :caption: Sample execute.wavefunction input block with advanced / developer settings exposed.
-    :name: Listing 211
-
-    "wavefunction": {
-      "filename": "afqmc.h5",
-      "ndets_to_read": -1,
-      "algorithm": "woodbury",
-      "dense_trial": true
-    }
-
-  .. list-table::
-   :header-rows: 1
-   :widths: 25 20 55
-
-   * - **Parameter**
-     - **Default**
-     - **Description**
-   * - **restart_file**
-     - 
-     - **Currently disabled.** Name of restart file to generate.
-   * - **rediag**
-     - 
-     - For PHMSD, rediagonalize the Hamiltonian in the basis of Slater determinants included in the trial wavefunction.
-   * - **algorithm**
-     - auto
-     - Energy evaluation algorithm. Choices are 0 (slow) or 1. If no value is specified, "algorithm" is determined internally from Hamiltonian.
-   * - **dense_trial**
-     - auto
-     - For non-orthogonal multi-Slater determinant trial wavefunctions, Boolean value to treat trial wavefunction as dense (true) or sparse (false). Determined internally based on the trial Hamiltonian type.
-
-.. _walker_set_block:
-
-Walker set block
-----------------
-
-The Walker set block contains settings for the Slater determinant random walkers in 
-the AFQMC code.
-
-.. image:: /images/shared/02_input_file/input_file_04_walker.png
-   :width: 800px
-   :alt: Walker set block structure diagram
-   :align: center
-
-*Walker set block structure overview*
-
-
-See :ref:`Walker-classes` for more detail on the types of Slater determinant random walkers available.
-Below is a sample "walker_set" block with all settings explicitly set.
-
-.. code-block:: json
-  :caption: Sample execute.walker_set input block
-  :name: Listing 202
-
-  "walker_set": {
-    "walker_type": "collinear"
-  }
-
-
-Settings
-~~~~~~~~
-
-These are the most common Walker set options that a typical user will interact with.
+Hamiltonian blocks can either be defined inline where they are needed or out-of-line in the top-level ``hamiltonians`` list.
+Describes a Hamiltonian used in SAFIRE.
 
 .. list-table::
    :header-rows: 1
@@ -350,128 +433,58 @@ These are the most common Walker set options that a typical user will interact w
    * - **Parameter**
      - **Default**
      - **Description**
-   * - **walker_type**
-     - inferred
-     - The type of walker to use in AFQMC. Options are Closed, Collinear, Noncollinear. If no type is set, the walker set uses the least general type that every hamiltonian and wavefunction in the input can be used with. Model hamiltonians and the finite temperature driver need at least Collinear. All walker sets that leave the type out share this default; a walker set that sets one keeps it. See :ref:`Walker-classes` for more detail.
    * - **name**
-     - n/a
-     - The name to assign to the current walker_set block. This allows it to be referenced by name in execute blocks. A name is generated internally if not set here.
+     - ``hamiltonian_*``
+     - The name of the Hamiltonian, required to refer to it elsewhere.
+   * - **filename**
+     - *required*
+     - Path of the HDF5 file containing the Hamiltonian.
+    
+.. _walker_set_block:
+
+``walker_sets``
+~~~~~~~~~~~~~~~
+
+Walker set blocks can either be defined inline where they are needed or out-of-line in the top-level ``walker_sets`` list.
+Describes an ensemble of AFQMC walkers that can be propagated. Walker sets are mutable. If they are shared between different execution stages, later stages will carry on the state from previous stages.
+
+For many basic calculations, this block can be omitted.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - **Parameter**
+     - **Default**
+     - **Description**
+   * - **name**
+     - ``walker_set_*``
+     - The name of the walker set, required to refer to it elsewhere.
    * - **from**
-     - the execute block's wavefunction
-     - What the walkers are initialized from, as an object with a single key. ``{"wavefunction": ...}`` starts every walker from the determinant with the largest coefficient of a NOMSD wavefunction, or the reference of a PHMSD one; the wavefunction is given by name or as an inline block. Defaults to the wavefunction of the execute block that introduces the walker set. See :ref:`initial_walkers`.
+     - the execute block's **wavefunction**
+     - What the walkers are initialized from, as an object with a single key. ``{"wavefunction": ...}`` starts every walker from the determinant with the largest coefficient of a NOMSD wavefunction, or the reference of a PHMSD one; the wavefunction is given by name or as an inline block. Initializing the walkers from a different wavefunction can be very beneficial for performance. See :ref:`initial_walkers`.
+   * - **walker_type**
+     - the highest spin symmetry viable for simulating all wavefunctions and Hamiltonians in the job file
+     - Spin symmetry of the walkers to use in AFQMC. Options are ``"closed"``, ``"collinear"``, or ``"noncollinear"``. See :ref:`Walker-classes`.
+
 
 Only the first execute block falls back to a default walker set. A later execute block that
 names no walker set continues with the one of the execute block before it, so consecutive
 stages share their walkers unless a stage asks for a walker set of its own.
 
 
+.. _propagator_block:
 
-.. _hamiltonian_block:
-
-Hamiltonian block
------------------
-
-The Hamiltonian block contains settings related to the Hamiltonian used in the AFQMC code.
-The main purpose of the block is to tell the AFQMC code which file to find the Hamiltonian in.
-
-.. image:: /images/shared/02_input_file/input_file_05_hamiltonian.png
-   :width: 800px
-   :alt: Hamiltonian block structure diagram
-   :align: center
-
-*Hamiltonian block structure overview*
-
-Settings
-~~~~~~~~
-
-These are the most common hamiltonian settings that a typical user will interact with.
-
-.. code-block:: json
-  :caption: Sample execute.hamiltonian input block with settings exposed
-  :name: Listing 221
-
-  "hamiltonian": {
-    "name": "my_hamiltonian",
-    "filename": "afqmc.h5"
-  }
-
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 20 50
-
-   * - **Parameter**
-     - **Default**
-     - **Description**
-   * - **name**
-     - 
-     - The name to assign to the current walker_set block. This allows it to be referenced by name in execute blocks. A name is generated internally if not set here.
-   * - **filename** (**mandatory**)
-     -
-     - name of the HDF5 file containing the hamiltonian. It may be the same file as the one of the trial wavefunction, but it is never taken from the wavefunction block implicitly. See :ref:`wavefunction_block`.
-
-
-.. _estimator_block:
-
-Estimator block
----------------
-
-The purpose of the estimator block(s) is to choose and configure estimators to use during AFQMC calculations.
-Specific observables to be measured are chosen within each estimator block.
-
-.. image:: /images/shared/02_input_file/input_file_07_estimator.png
-   :width: 800px
-   :alt: Estimator block structure diagram
-   :align: center
-
-*Estimator block structure overview*
-
-
-Multiple estimator blocks may be specified and configured separately.
-Regardless of which estimator blocks are specified, a "basic" estimator block and an "energy"
-estimator block will be generated.
-Settings vary considerably based on the type of estimator used.
-See the :ref:`Estimators reference <estimators>` for details on the various estimators available,
-and the :ref:`Observables reference <observables>` for details on the various observables available.
-
-.. _projector_block:
-
-Projector block
----------------
+``propagators``
+~~~~~~~~~~~~~~~
 
 .. caution::
 
-  Changing projector settings is considered advanced. Be sure that you know what you are doing.
+  Changing propagator settings is considered advanced. Be sure that you know what you are doing.
 
+Propagator blocks can either be defined inline where they are needed or out-of-line in the top-level ``propagators`` list.
+Configure the detailed behavior of the AFQMC propagator.
 
-The projector block is used to set properties of the AFQMC projector.
-A typical user will not need to interact with this input block
-
-.. image:: /images/shared/02_input_file/input_file_06_propagator.png
-   :width: 800px
-   :alt: Projector block structure diagram
-   :align: center
-
-*Projector block structure overview*
-
-
-Settings
-~~~~~~~~
-
-.. code-block:: json
-
-  "propagator": {
-    "name": "my_projector",
-    "vbias_bound": 50.0,
-    "upper_cutoff_scale": 10.0,
-    "lower_cutoff_scale": 1.0,
-    "weight_bound_floor": 100.0,
-    "weight_bound_fraction": 0.1,
-    "subtractMF": true,
-    "hybrid": true,
-    "printP1eigval": false,
-    "denseP1": false
-  }
 
 .. list-table::
    :header-rows: 1
@@ -480,21 +493,21 @@ Settings
    * - **Parameter**
      - **Default**
      - **Description**
-   * - **nbatch**
-     - 0 for CPU builds or -1 for GPU builds 
-     - Batch size for matrix operations
-   * - **nbatch_qr**
-     - 0 for CPU builds or -1 for GPU builds 
-     - Batch size for QR decomposition operations
+   * - **name**
+     - ``propagator_*``
+     - The name of the propagator, required to refer to it elsewhere.
+   * - **taylor_n**
+     - 6
+     - Order of the Taylor expansion used to apply the exponential of the propagator to the walkers.
    * - **vbias_bound**
-     - 50.0
+     - 50.0, or 100.0 for model Hamiltonians
      - Bound for the force bias.
    * - **upper_cutoff_scale**
-     - 10.0
-     - Upper cutoff scaling factor for pseudo local energy updates
+     - 10.0, or 50.0 for model Hamiltonians
+     - Upper cutoff scaling factor for pseudo local energy updates.
    * - **lower_cutoff_scale**
-     - 1.0
-     - Lower cutoff scaling factor for pseudo local energy updates
+     - 1.0, or 50.0 for model Hamiltonians
+     - Lower cutoff scaling factor for pseudo local energy updates.
    * - **weight_bound_floor**
      - 100.0
      - Lower limit of the walker weight bound. After every propagation step, walker
@@ -508,107 +521,73 @@ Settings
        allowed to carry. See **weight_bound_floor**.
    * - **subtractMF**
      - true
-     - Whether to subtract mean field contribution
+     - Whether to subtract mean field contribution.
    * - **hybrid**
      - true
-     - Whether to use hybrid propagation method
-   * - **printP1eigval**
+     - Whether to use hybrid propagation method.
+   * - **free_projection**
      - false
-     - Whether to print P1 eigenvalues for debugging
-   * - **denseP1**
+     - Whether to use free projection or not. Requires **hybrid**. Disables the force bias,
+       the phaseless constraint and the local-energy bound, and leaves the phase of each
+       step in the walker weight, which therefore turns complex.
+   * - **natural_shift**
+     - true
+     - For the discrete Hubbard-Stratonovich fields of model Hamiltonians, shift by the natural
+       mean field (a density of 1 for the charge and 0 for the spin decomposition) instead of the
+       mean field of the trial wavefunction.
+   * - **use_cp_constraint**
      - false
-     - Whether to use dense P1 matrix representation
+     - Use the constrained-path approximation: a walker whose overlap phase changes by
+       :math:`|\Delta\theta| \geq \pi/2` in one step is given zero weight, instead of scaling the
+       weight by :math:`\max(0, \cos\Delta\theta)` as in the phaseless approximation. Implies
+       **project_force_bias**.
+   * - **project_force_bias**
+     - false
+     - Keep only the real part of the force bias for continuous charge decompositions, and only
+       the imaginary part for continuous spin decompositions.
 
-.. only:: developer
+.. _multi_stage_runs:
 
-  Advanced / developer settings
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Multiple Execution Stages
+-------------------------
 
+The ``execute`` block can be a list of multiple entries in the format above. These will then define multiple execution stages
+that are run sequentially. Stages which share the same ``walker_set`` will continue propagating it so that this feature can be used
+to define propagation protocols for quicker equilibration or sweeping different Hamiltonian parameters.
 
-  .. code-block:: json
+.. code-block:: json
+  :caption: Equilibrating with a larger time step before measuring with a smaller one.
 
-    "propagator": {
-      "name": "my_projector",
-      "vbias_bound": 50.0,
-      "upper_cutoff_scale": 10.0,
-      "lower_cutoff_scale": 1.0,
-      "weight_bound_floor": 100.0,
-      "weight_bound_fraction": 0.1,
-      "subtractMF": true,
-      "hybrid": true,
-      "printP1eigval": false,
-      "free_projection": false,
-      "denseP1": false,
-      "debug_verbosity": false
-    }
+  {
+    "wavefunctions": [
+      {
+        "name": "trial",
+        "filename": "afqmc.h5"
+      }
+    ],
+    "hamiltonians": [
+      {
+        "name": "hamiltonian",
+        "filename": "afqmc.h5"
+      }
+    ],
+    "execute": [
+      {
+        "wavefunction": "trial",
+        "hamiltonian": "hamiltonian",
+        "timestep": 0.02,
+        "steps": 500,
+        "equilibration_steps": 500,
+        "num_walkers": 200
+      },
+      {
+        "wavefunction": "trial",
+        "hamiltonian": "hamiltonian",
+        "timestep": 0.005,
+        "steps": 10000,
+        "num_walkers": 200
+      }
+    ]
+  }
 
-  .. list-table::
-    :header-rows: 1
-    :widths: 30 15 55
-
-    * - **Parameter**
-      - **Default**
-      - **Description**
-    * - **nbatch**
-      - 0 for CPU builds or -1 for GPU builds 
-      - Batch size for matrix operations
-    * - **nbatch_qr**
-      - 0 for CPU builds or -1 for GPU builds 
-      - Batch size for QR decomposition operations
-    * - **i**
-      - -1
-      - excited orbital index for excited state calculation. Must correspond to a virtual / unoccupied orbital.
-    * - **a**
-      - -1
-      - occupied orbital index for excited state calculation. Must correspond to a filled orbital.
-    * - **vbias_bound**
-      - 50.0
-      - Bound for the force bias.
-    * - **external_field_scale**
-      - 1.0
-      - Scaling factor for external field
-    * - **upper_cutoff_scale**
-      - 10.0
-      - Upper cutoff scaling factor for pseudo local energy updates
-    * - **lower_cutoff_scale**
-      - 1.0
-      - Lower cutoff scaling factor for pseudo local energy updates
-    * - **weight_bound_floor**
-      - 100.0
-      - Lower limit of the walker weight bound. After every propagation step, walker
-        weights are capped at ``max(weight_bound_floor, weight_bound_fraction*N)``, where
-        ``N`` is the global target population, which is the total weight the population is
-        rescaled to at every population control interval. A walker over the bound is
-        rescaled onto it and keeps its phase.
-    * - **weight_bound_fraction**
-      - 0.1
-      - Largest fraction of a normalized population's total weight that a single walker is
-        allowed to carry. See **weight_bound_floor**.
-    * - **subtractMF**
-      - true
-      - Whether to subtract mean field contribution
-    * - **hybrid**
-      - true
-      - Whether to use hybrid propagation method
-    * - **printP1eigval**
-      - false
-      - Whether to print P1 eigenvalues for debugging
-    * - **free_projection**
-      - false
-      - Whether to use free projection or not. Requires **hybrid**. Disables the force bias,
-        the phaseless constraint and the local-energy bound, and leaves the phase of each
-        step in the walker weight, which therefore turns complex.
-    * - **denseP1**
-      - false
-      - Whether to use dense P1 matrix representation
-    * - **debug_verbosity**
-      - false
-      - Whether to enable debug verbosity
-    * - **external_field**
-      - ""
-      - External field specification (string)
-    * - **excited_file**
-      - ""
-      - File containing excited state information
-
-
+Measurement results are recorded and saved to the results file separately per stage. See :ref:`output_afqmc`.
