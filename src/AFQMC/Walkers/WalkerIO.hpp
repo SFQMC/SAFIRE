@@ -66,9 +66,10 @@ WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
   int ndn        = Idata[6];
 
   std::array<int, 3> dims;  // {rows, naea, naeb} = wlk_desc[0..2]
-  if (params.walker_type == NONCOLLINEAR)
+  WALKER_TYPES const walker_type = resolved(params.walker_type, "walker_type");
+  if (walker_type == NONCOLLINEAR)
     dims = {2 * NMO, nup + ndn, 0};
-  else if (params.walker_type == COLLINEAR)
+  else if (walker_type == COLLINEAR)
     dims = {NMO, nup, ndn};
   else
     dims = {NMO, nup, 0};
