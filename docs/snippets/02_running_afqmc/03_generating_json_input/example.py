@@ -11,7 +11,7 @@ afqmc_execution_options = {
     "population_control_interval" : 10,  # in units of steps
     "measure_interval": 10,              # in units of steps
     "walker_ortho_interval" : 10 ,       # in units of steps
-    "n_walkers_per_mpi_task": 10,
+    "num_walkers": 200,
     "seed" : 42,
     "estimator": {
         "name": "energy",

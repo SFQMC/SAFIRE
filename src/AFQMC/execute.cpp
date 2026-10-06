@@ -33,6 +33,7 @@
 #include "IO/app_loggers.h"
 #include "IO/banner.hpp"
 #include "utilities/check.hpp"
+#include "utilities/FairDivide.hpp"
 #include "utilities/Random.hpp"
 
 namespace sfqmc::afqmc {
@@ -134,7 +135,10 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
     std::string const& propagator_name   = block_name(stage.propagator, "propagator");
 
     WalkerSetParameters const& walker_set_params = find_block(params.walker_sets, walker_set_name, "walker_set");
-    int const nwalkers = stage.n_walkers_per_mpi_task;
+    // this rank's share of the walkers; the first num_walkers % size ranks carry one more
+    int const num_walkers = resolved(stage.num_walkers, "num_walkers");
+    auto const [walker0, walkerN] = FairDivideBoundary(mpi->comm.rank(), num_walkers, mpi->comm.size());
+    int const nwalkers = walkerN - walker0;
 
     auto wavefunction_for = [&](std::string const& wfn_name, std::string const& ham_name) -> Wavefunction<MEM>& {
       return construct_wavefunction<MEM>(mpi, wavefunctions, params, wfn_name, ham_name,
@@ -156,6 +160,10 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
           walker_sets.try_emplace(walker_set_name, mpi, walker_rng, walker_set_params, guess, nwalkers).first;
     }
     WalkerSet<MEM>& walker_set = walker_set_entry->second;
+    utils::check(walker_set.get_global_target_population() == num_walkers,
+                 "The walker set \"{}\" carries {} walkers over from an earlier stage, but this stage asks for "
+                 "\"num_walkers\": {}.",
+                 walker_set_name, walker_set.get_global_target_population(), num_walkers);
     if(finiteT) {
       walker_set.setTauStep(0); // time-slice initialized to 0
     }

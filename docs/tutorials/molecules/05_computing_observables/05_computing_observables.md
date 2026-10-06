@@ -238,7 +238,7 @@ execute_options = {
     "population_control_interval" : 10,
     "measure_interval": 10,
     "walker_ortho_interval" : 10 ,
-    "n_walkers_per_mpi_task": 20,
+    "num_walkers": 320,
     "seed" : 42,
     "estimator" : {
         "name" : "energy",
@@ -434,7 +434,7 @@ execute_options = {
     "measure_interval": 10,
     "population_control_interval" : 10,
     "walker_ortho_interval" : 10 ,
-    "n_walkers_per_mpi_task": 20,
+    "num_walkers": 320,
     "seed" : 42,
     "estimator" : {
         "name" : "energy",
@@ -815,7 +815,7 @@ execute_options_bp = {
     "equilibration_steps": 150,
     "population_control_interval": 5,
     "walker_ortho_interval": 10,
-    "n_walkers_per_mpi_task": 100,
+    "num_walkers": 1600,
     "seed": 42,
     "estimator": {
         "name": "back_propagation",

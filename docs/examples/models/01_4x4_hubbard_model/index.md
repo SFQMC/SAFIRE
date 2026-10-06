@@ -333,7 +333,7 @@ from afqmctools.inputs.from_hdf import write_json
 afqmc_params = {
     "timestep": 0.01,
     "steps": 12000,
-    "n_walkers_per_mpi_task": 100,
+    "num_walkers": 1600,
     "population_control_interval": 5,
     "walker_ortho_interval": 5,
     "measure_interval": 5,
@@ -514,7 +514,7 @@ from afqmctools.inputs.from_hdf import write_json
 afqmc_params = {
     "timestep": 0.01,
     "steps": 12000,
-    "n_walkers_per_mpi_task": 100,
+    "num_walkers": 1600,
     "population_control_interval": 5,
     "walker_ortho_interval": 5,
     "measure_interval": 5,
@@ -608,7 +608,7 @@ from afqmctools.inputs.from_hdf import write_json
 afqmc_params = {
     "timestep": 0.005,
     "steps": 24000,
-    "n_walkers_per_mpi_task": 100,
+    "num_walkers": 1600,
     "population_control_interval": 10,
     "walker_ortho_interval": 10,
     "measure_interval": 10,
@@ -741,7 +741,7 @@ from afqmctools.inputs.from_hdf import write_json
 afqmc_params = {
     "timestep": 0.005,
     "steps": 24000,
-    "n_walkers_per_mpi_task": 100,
+    "num_walkers": 1600,
     "population_control_interval": 10,
     "walker_ortho_interval": 10,
     "measure_interval": 10,

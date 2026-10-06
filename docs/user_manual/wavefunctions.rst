@@ -173,7 +173,8 @@ parameter of the walker set names a different one, either by name or as an inlin
       "execute": [
         {
           "wavefunction": "uhf",
-          "walker_set": {"from": {"wavefunction": "rohf"}}
+          "walker_set": {"from": {"wavefunction": "rohf"}},
+          "num_walkers": 200
         }
       ]
     }

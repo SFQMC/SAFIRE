@@ -152,7 +152,7 @@ The sample json file that we have provided is reproduced here.
     },
     "timestep": 0.01,
     "steps": 10000,
-    "n_walkers_per_mpi_task": 200,
+    "num_walkers": 200,
     "seed": 42
   }
 }
@@ -372,18 +372,14 @@ For example, using mpirun, we could run SAFIRE with 64 MPI tasks as
     $ mpirun -np 64 safire --filenames input.json
 ```
 
-It is important to note that the number of walkers is specified in the input file
-as `n_walkers_per_mpi_task`.
-So, the total number of walkers using the sample input file above and 64 MPI tasks
-would be
-
-$$
-N_\mathrm{walkers} = n_\mathrm{walkers\_per\_mpi} \times n_\mathrm{mpi\_task} = 200 \times 64 = 12800.
-$$
-
-For the sample inputs, this is significantly more walkers than necessary,
-and for calculations that run on a CPU only build of SAFIRE,
-`n_walkers_per_mpi_task` will typically be on the order of 10-50.
+It is important to note that `num_walkers` in the input file is the total number of walkers
+over all MPI tasks.
+SAFIRE splits them evenly over the tasks, so that the walker counts of two tasks differ by at
+most one.
+So, running the sample input file above with 64 MPI tasks gives each task 3 or 4 of its 200
+walkers.
+For calculations that run on a CPU only build of SAFIRE, `num_walkers` is typically chosen
+such that every task carries on the order of 10-50 walkers.
 
 ### GPU Builds
 

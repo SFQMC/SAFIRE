@@ -55,7 +55,7 @@ def write_jobfile(filename, parameters) -> None:
     ...         'hamiltonian': ham,
     ...         'timestep': 0.01,
     ...         'steps': 10000,
-    ...         'n_walkers_per_mpi_task': 10,
+    ...         'num_walkers': 200,
     ...     },
     ... })
 

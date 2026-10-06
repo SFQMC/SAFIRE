@@ -266,7 +266,7 @@ execute_options = {
     "measure_interval": 5,
     "population_control_interval" : 5,
     "walker_ortho_interval" : 10 ,
-    "n_walkers_per_mpi_task": 80,
+    "num_walkers": 1280,
     "seed" : 42
 }
 write_json(
@@ -440,7 +440,7 @@ execute_options = {
     "measure_interval": 5,
     "population_control_interval" : 5,
     "walker_ortho_interval" : 10 ,
-    "n_walkers_per_mpi_task": 70,
+    "num_walkers": 1120,
     "seed" : 42
 }
 write_json(

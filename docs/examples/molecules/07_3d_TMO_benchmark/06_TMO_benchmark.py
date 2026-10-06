@@ -275,7 +275,7 @@ def setup_benchmark(key:str, case:dict):
         "measure_interval": 10,
         "population_control_interval" : 10,
         "walker_ortho_interval" : 10 ,
-        "n_walkers_per_mpi_task": 50,
+        "num_walkers": 3000,
         "seed" : 42
     }    
     write_json(

@@ -18,7 +18,7 @@
        "steps": "6000",
        "population_control_interval": "10",
        "measure_interval": "10",
-       "n_walkers_per_mpi_task": "100",
+       "num_walkers": "1600",
        "seed": "42"
     }
   }

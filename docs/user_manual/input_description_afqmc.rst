@@ -70,7 +70,7 @@ We will explore the details of this input file in the following sections.
         "measure_interval": 10,
         "population_control_interval" : 10,
         "walker_ortho_interval" : 10 ,
-        "n_walkers_per_mpi_task": 10
+        "num_walkers": 200
       }
     }
   }
@@ -174,7 +174,7 @@ which are used in AFQMC such as the Hamiltonian and the trial wavefunction.
         "population_control_interval" : 10,
         "measure_interval": 10,
         "walker_ortho_interval" : 10 ,
-        "n_walkers_per_mpi_task": 10 ,
+        "num_walkers": 200 ,
         "seed" : 42,
         "estimator": {
           ...
@@ -218,7 +218,7 @@ For example, in the input file below, the walker_set is defined in the "walker_s
         "population_control_interval" : 10,
         "measure_interval": 10,
         "walker_ortho_interval": 10,
-        "n_walkers_per_mpi_task": 10,
+        "num_walkers": 200,
         "seed" : 42,
         "estimator": {
           /* ... */
@@ -267,9 +267,9 @@ Settings
    * - **walker_ortho_interval**
      - 10
      - The number of projection steps between application of the modified Gram-Schmidt (mGS) orthogonalization procedure. The mGS procedure is relatively inexpensive computationally and frequent orthogonalization is recommended.
-   * - **n_walkers_per_mpi_task**
-     - 10
-     - The number of random walkers to use per MPI task. This value should be chosen such that the total population is reasonably large. The choice also depends on whether SAFIRE has been compiled for CPUs or GPUs. For GPUs, the goal is to saturate the device memory and could be on the order of 10000 for small systems. For CPUs and many MPI tasks, this value will typically be on the order of 10.
+   * - **num_walkers**
+     - required
+     - The total number of random walkers, summed over all MPI tasks. The walkers are split evenly over the tasks, so that the walker counts of two tasks differ by at most one, and there have to be at least as many walkers as tasks. This value should be chosen such that the total population is reasonably large. The choice also depends on whether SAFIRE has been compiled for CPUs or GPUs. For GPUs, the goal is to saturate the device memory, which could take on the order of 10000 walkers per GPU for small systems. For CPUs and many MPI tasks, a share on the order of 10 walkers per task is typical.
    * - **seed**
      - 
      - The seed for the random number generator. This value only needs to be set when strict reproducibility is necessary.

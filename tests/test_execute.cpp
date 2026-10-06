@@ -94,6 +94,7 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   auto add = [&](std::string label, ExecuteParameters exec) {
     exec.steps               = 10;
     exec.equilibration_steps = 0;
+    exec.num_walkers         = 10 * mpi->comm.size();
     scenarios.push_back(std::move(label));
     params.execute.push_back(std::move(exec));
   };
@@ -197,7 +198,8 @@ void execute_from_other_wavefunction(std::shared_ptr<utils::mpi_context_t<boost:
   for(int stage = 0; stage < 2; ++stage) {
     params.execute.push_back(ExecuteParameters{.wavefunction = std::string{"uhf"},
                                                .hamiltonian  = std::string{"ham"},
-                                               .steps = 10, .equilibration_steps = 0});
+                                               .steps = 10, .equilibration_steps = 0,
+                                               .num_walkers = 10 * mpi->comm.size()});
   }
   params.execute[0].walker_set =
       WalkerSetParameters{.walker_type = COLLINEAR, .from = WavefunctionSource{.wavefunction = std::string{"rhf"}}};
@@ -279,11 +281,16 @@ void check_unique_names(const std::vector<Params>& blocks)
 void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                    std::string hamil_file, std::string wfn_file)
 {
-  // the minimal input: one nameless wavefunction, one nameless hamiltonian, and nothing else
+  // the number of walkers has no default, so every execute block below brings one
+  int const nwalk = mpi->comm.size();
+
+  // the minimal input: one nameless wavefunction, one nameless hamiltonian, and the number of
+  // walkers
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
-                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file}}};
+                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                                        .num_walkers  = nwalk}};
     resolve_defaults(params, *mpi);
 
     // the absent blocks are materialized, one of each, and the registries name them uniquely
@@ -353,6 +360,7 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
                  .backprop =
                      BackPropEstimatorParameters{.propagation_steps = std::vector<int>{3}}},
              .measure_interval = 7,
+             .num_walkers      = nwalk,
     }};
     resolve_defaults(params, *mpi);
 
@@ -401,6 +409,7 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
         .estimators   =EstimatorParameters{.backprop        = BackPropEstimatorParameters{},
                                             .time_evolved_bp = BackPropEstimatorParameters{}},
+        .num_walkers  = nwalk,
     }};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
@@ -412,6 +421,7 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         .wavefunction = WavefunctionParameters{.filename = wfn_file},
         .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
         .estimators   =EstimatorParameters{.backprop = BackPropEstimatorParameters{}},
+        .num_walkers  = nwalk,
     }};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
@@ -424,7 +434,23 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
         .estimators   =EstimatorParameters{.time_evolved_bp = BackPropEstimatorParameters{
                                                 .propagation_steps = std::vector<int>{}}},
+        .num_walkers  = nwalk,
     }};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
+  }
+
+  // the number of walkers has to be given, and it has to leave every rank at least one
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
+                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file}}};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
+  }
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
+                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                                        .num_walkers  = nwalk - 1}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 
@@ -434,10 +460,12 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     params.wavefunctions = {WavefunctionParameters{.name = "wavefunction_0", .filename = wfn_file}};
     params.execute       = {
         ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
-                               .hamiltonian  = HamiltonianParameters{.filename = hamil_file}},
+                               .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                               .num_walkers  = nwalk},
         ExecuteParameters{.wavefunction = std::string{"wavefunction_0"},
                                .hamiltonian  = HamiltonianParameters{.name     = "hamiltonian_0",
-                                                                     .filename = hamil_file}},
+                                                                     .filename = hamil_file},
+                               .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
 
@@ -460,9 +488,12 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     params.hamiltonians  = {HamiltonianParameters{.name = "ham", .filename = hamil_file}};
     params.execute       = {
         ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
-                          .hamiltonian  = std::string{"ham"}},
-        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"}},
-        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"}},
+                          .hamiltonian  = std::string{"ham"},
+                          .num_walkers  = nwalk},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"},
+                          .num_walkers  = nwalk},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"},
+                          .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
 
@@ -484,11 +515,14 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     params.execute       = {
         ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "first"},
                           .wavefunction = std::string{"first_wfn"},
-                          .hamiltonian  = std::string{"ham"}},
-        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"}},
+                          .hamiltonian  = std::string{"ham"},
+                          .num_walkers  = nwalk},
+        ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"},
+                          .num_walkers  = nwalk},
         ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "second"},
                           .wavefunction = std::string{"second_wfn"},
-                          .hamiltonian  = std::string{"ham"}},
+                          .hamiltonian  = std::string{"ham"},
+                          .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
 
@@ -509,12 +543,14 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         ExecuteParameters{
             .walker_set   = WalkerSetParameters{.from = WavefunctionSource{.wavefunction = std::string{"init_wfn"}}},
             .wavefunction = WavefunctionParameters{.filename = wfn_file},
-            .hamiltonian  = std::string{"ham"}},
+            .hamiltonian  = std::string{"ham"},
+            .num_walkers  = nwalk},
         ExecuteParameters{
             .walker_set   = WalkerSetParameters{.from = WavefunctionSource{
                                                     .wavefunction = WavefunctionParameters{.filename = wfn_file}}},
             .wavefunction = std::string{"init_wfn"},
-            .hamiltonian  = std::string{"ham"}},
+            .hamiltonian  = std::string{"ham"},
+            .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
 
@@ -549,14 +585,14 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     AFQMCParameters params{};
     params.wavefunctions = {WavefunctionParameters{.name = "wfn", .filename = wfn_file},
                             WavefunctionParameters{.name = "wfn", .filename = wfn_file}};
-    params.execute       = {ExecuteParameters{.wavefunction = std::string{"wfn"}}};
+    params.execute       = {ExecuteParameters{.wavefunction = std::string{"wfn"}, .num_walkers = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 
   // an execute block cannot refer to a block that is not declared
   {
     AFQMCParameters params{};
-    params.execute = {ExecuteParameters{.wavefunction = std::string{"nowhere"}}};
+    params.execute = {ExecuteParameters{.wavefunction = std::string{"nowhere"}, .num_walkers = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 
@@ -564,13 +600,15 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   // give one, and it has to name its file
   {
     AFQMCParameters params{};
-    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file}}};
+    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file},
+                                        .num_walkers  = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file},
-                                        .hamiltonian  = HamiltonianParameters{}}};
+                                        .hamiltonian  = HamiltonianParameters{},
+                                        .num_walkers  = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 }

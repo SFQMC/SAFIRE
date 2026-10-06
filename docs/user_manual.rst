@@ -57,7 +57,7 @@ See the ":ref:`Input file description <input_afqmc>`" for more.
         "measure_interval": 10,
         "population_control_interval" : 10,
         "walker_ortho_interval" : 10 ,
-        "n_walkers_per_mpi_task": 10,
+        "num_walkers": 200,
         "estimator": {
           "name": "mixed",
           "onerdm" : {

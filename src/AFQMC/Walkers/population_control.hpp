@@ -41,13 +41,19 @@ inline nda::vector<int> comb(utils::HostRandomGenerator& rng, nda::vector<RealTy
   memory::buffered_array<HOST_MEMORY, RealType, 1> r(1);
   rng.sampleUniformFields(r);
 
+  // the last tooth can round up to the total weight, and then it has to land on the last walker
+  // that has any weight rather than on a zero-weight one behind it; the total weight is positive,
+  // so there is one
   int last = weights.size() - 1;
+  while(weights[last] <= 0.0) {
+    --last;
+  }
+
   nda::vector<int> offspring(weights.size(), 0);
   int iw = 0;
   int ic = 0;
   while(ic < num_target) {
     RealType comb = (ic + r(0))  * total_weight / num_target;
-    // the last tooth can round up to the total weight
     if(comb < cumweights[iw] || iw == last) {
       offspring[iw] += 1;
       ic++;
@@ -69,26 +75,30 @@ struct walker_transfer {
 
 /*
  * Plans the walker exchange that realizes offspring, one copy count per walker of the global
- * population in rank-major order (walker i of rank r is entry r * nw + i, nw walkers per rank).
- * Every rank keeps as many of its copies as fit. A rank with excess exports the walkers with the
- * most copies first, which covers the excess with the fewest walkers sent, and the exports fill
- * the ranks with a deficit in rank order. A walker is sent once per destination and replicated
- * there, and an export is split only where a deficit runs out.
+ * population in rank-major order: rank r holds counts[r] walkers, and its walker i is entry
+ * counts[0] + ... + counts[r-1] + i. Every rank keeps its count and as many of its own copies as
+ * fit. A rank with excess exports the walkers with the most copies first, which covers the excess
+ * with the fewest walkers sent, and the exports fill the ranks with a deficit in rank order. A
+ * walker is sent once per destination and replicated there, and an export is split only where a
+ * deficit runs out.
  *
  * The plan is deterministic, so every rank computes the same one from the same offspring.
  */
-inline std::vector<walker_transfer> plan_walker_exchange(nda::vector_const_view<int> offspring, int nranks) {
-  utils::check(offspring.size() % nranks == 0, "plan_walker_exchange: {} walkers on {} ranks.", offspring.size(), nranks);
-  utils::check(std::accumulate(offspring.begin(), offspring.end(), 0L) == offspring.size(),
+inline std::vector<walker_transfer> plan_walker_exchange(nda::vector_const_view<int> offspring,
+                                                         std::vector<int> const& counts) {
+  long const ntot = std::accumulate(counts.begin(), counts.end(), 0L);
+  utils::check(offspring.size() == ntot, "plan_walker_exchange: {} walkers, but the ranks hold {}.",
+               offspring.size(), ntot);
+  utils::check(std::accumulate(offspring.begin(), offspring.end(), 0L) == ntot,
                "plan_walker_exchange: offspring does not preserve the population.");
-  int nw = offspring.size() / nranks;
 
   std::vector<walker_transfer> exports;
   // {rank, missing copies}
   std::vector<std::pair<int, int>> deficits;
-  std::vector<int> order(nw);
-  for(int r = 0; r < nranks; ++r) {
-    auto local = offspring(nda::range(r * nw, (r + 1) * nw));
+  std::vector<int> order;
+  for(int r = 0, first = 0; r < int(counts.size()); first += counts[r], ++r) {
+    int const nw = counts[r];
+    auto local = offspring(nda::range(first, first + nw));
     int excess = std::accumulate(local.begin(), local.end(), 0) - nw;
     if(excess < 0) {
       deficits.emplace_back(r, -excess);
@@ -96,6 +106,7 @@ inline std::vector<walker_transfer> plan_walker_exchange(nda::vector_const_view<
     if(excess <= 0) {
       continue;
     }
+    order.resize(nw);
     std::iota(order.begin(), order.end(), 0);
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return local(a) > local(b); });
     for(int k = 0; excess > 0; ++k) {
@@ -123,22 +134,27 @@ inline std::vector<walker_transfer> plan_walker_exchange(nda::vector_const_view<
 
 /*
  * Replaces every walker of wset by offspring copies of itself, moving walkers between ranks so
- * that each rank ends up with its target population; see plan_walker_exchange for the layout of
- * offspring and the exchange. Weights are left untouched, so the caller resets them.
+ * that each rank ends up with its target population, counts[rank]; see plan_walker_exchange for
+ * the layout of offspring and the exchange. Weights are left untouched, so the caller resets them.
  *
  * Collective over mpi.comm.
  */
 template<MEMORY_SPACE MEM>
-inline void swap_walkers_async(utils::mpi_context_t<>& mpi, WalkerSet<MEM>& wset, nda::vector_const_view<int> offspring) {
+inline void swap_walkers_async(utils::mpi_context_t<>& mpi, WalkerSet<MEM>& wset, nda::vector_const_view<int> offspring,
+                               std::vector<int> const& counts) {
   int me = mpi.comm.rank();
   int nw = wset.get_target_population();
-  utils::check_shape(offspring, "offspring", mpi.comm.size() * nw);
+  utils::check(int(counts.size()) == mpi.comm.size() && counts[me] == nw,
+               "swap_walkers_async: the walker counts do not match {} ranks with {} walkers on rank {}.",
+               mpi.comm.size(), nw, me);
   utils::check(wset.size() == nw, "swap_walkers_async: {} walkers, target {}.", wset.size(), nw);
+  utils::check_shape(offspring, "offspring", std::accumulate(counts.begin(), counts.end(), 0L));
 
-  auto plan = plan_walker_exchange(offspring, mpi.comm.size());
+  auto plan = plan_walker_exchange(offspring, counts);
 
   // copies of each local walker that stay on this rank
-  auto local = offspring(nda::range(me * nw, (me + 1) * nw));
+  int const first = std::accumulate(counts.begin(), counts.begin() + me, 0);
+  auto local = offspring(nda::range(first, first + nw));
   std::vector<int> keep(local.begin(), local.end());
   for(auto const& t : plan) {
     if(t.src == me) {
@@ -202,7 +218,12 @@ inline void swap_walkers_async(utils::mpi_context_t<>& mpi, WalkerSet<MEM>& wset
 template<MEMORY_SPACE MEM>
 inline void population_control(utils::mpi_context_t<>& mpi, utils::HostRandomGenerator& rng, WalkerSet<MEM>& wset) {
   int nw = wset.size();
-  int ntot = wset.get_global_target_population();
+
+  // the ranks need not hold the same number of walkers, and each one keeps its own
+  std::vector<int> counts = mpi.comm.all_gather_value(nw);
+  std::vector<int> displs(counts.size());
+  std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
+  int ntot = displs.back() + counts.back();
 
   memory::buffered_array<HOST_MEMORY, ComplexType, 1> complex_weights(nw);
   wset.getProperty(WEIGHT, complex_weights);
@@ -211,14 +232,14 @@ inline void population_control(utils::mpi_context_t<>& mpi, utils::HostRandomGen
   std::ranges::transform(complex_weights, weights.begin(), [](ComplexType w) { return std::abs(w); });
 
   nda::vector<RealType> all_weights(mpi.comm.root() ? ntot : 0);
-  mpi.comm.gather_n(weights.data(), nw, all_weights.data(), 0);
+  mpi.comm.gatherv_n(weights.data(), nw, all_weights.data(), counts.data(), displs.data(), 0);
 
   nda::vector<int> offspring(ntot);
   if(mpi.comm.root()) {
     offspring = comb(rng, std::move(all_weights), ntot);
   }
   mpi.broadcast(offspring);
-  swap_walkers_async(mpi, wset, offspring);
+  swap_walkers_async(mpi, wset, offspring, counts);
 
   // every copy now carries its parent's weight; comb never copies a zero-weight walker
   wset.getProperty(WEIGHT, complex_weights);

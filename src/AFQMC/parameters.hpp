@@ -266,7 +266,9 @@ struct ExecuteParameters {
   bool print_sweep_step{false}; // ftafqmc only
 
   double timestep{DEFAULT_TIME_STEP};
-  int n_walkers_per_mpi_task{10};
+  // required: the total number of walkers over all ranks, split so that the walker counts of two
+  // ranks differ by at most one
+  std::optional<int> num_walkers{};
 
   // fraction of the gap to the average energy that Eshift closes, once per step of the
   // equilibration phase; defaults to decaying within a tenth of that phase
@@ -276,7 +278,7 @@ struct ExecuteParameters {
 SAFIRE_DEFINE_PARAMETERS(ExecuteParameters, walker_set, wavefunction, hamiltonian, propagator, estimators, steps,
                          equilibration_steps, binsize, sweeps, population_control_interval,
                          walker_ortho_interval, measure_interval, print_sweep_step,
-                         timestep, n_walkers_per_mpi_task, Eshift_relaxation_factor, initial_Eshift);
+                         timestep, num_walkers, Eshift_relaxation_factor, initial_Eshift);
 
 
 struct AFQMCParameters {

@@ -195,7 +195,7 @@ The trial file does not store an initial walker. **By default**, the walkers sta
     {"name": "initial", "filename": "wfn_initial.h5"}
   ],
   "execute": [
-    {"wavefunction": "trial", "walker_set": {"from": {"wavefunction": "initial"}}}
+    {"wavefunction": "trial", "walker_set": {"from": {"wavefunction": "initial"}}, "num_walkers": 200}
   ]
 }
 ```

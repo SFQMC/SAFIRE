@@ -264,6 +264,15 @@ void apply_defaults(ExecuteParameters& exec, DriverType driver) {
 void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::communicator>& mpi) {
   utils::check(!params.execute.empty(), "The input contains no execute block, so there is nothing to run.");
 
+  // the walkers are split over the ranks, so their number has no default that suits every launch
+  for(auto const& exec : params.execute) {
+    utils::check(exec.num_walkers.has_value(),
+                 "Every execute block needs \"num_walkers\", the total number of walkers over all ranks.");
+    utils::check(*exec.num_walkers >= mpi.comm.size(),
+                 "\"num_walkers\" ({}) has to be at least the number of MPI ranks ({}), so that every rank has a walker.",
+                 *exec.num_walkers, mpi.comm.size());
+  }
+
   // 1. draw a seed unless the input gave one, so that print_parameters reports a value that
   //    reproduces the run
   if(!params.seed) {
