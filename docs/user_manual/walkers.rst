@@ -12,8 +12,9 @@ The following list includes all walker types.
 #. :ref:`UHF/Collinear Walkers <collinear_walker>`
 #. :ref:`GHF/Noncollinear Walkers <noncollinear_walker>`
 
-The walker type can be set in the AFQMC input file using the ``walker_type`` keyword 
-within a "walker_set" input block.
+The walker type can be set in the AFQMC input file using the ``walker_type`` keyword
+within a "walker_set" input block. Without it, the walker type is the least general one that
+every hamiltonian and wavefunction in the input can be used with.
 The walker type can be set to one of the following values:
 
 .. _closed_walker:

@@ -399,8 +399,8 @@ These are the most common Walker set options that a typical user will interact w
      - **Default**
      - **Description**
    * - **walker_type**
-     - Collinear
-     - The type of walker to use in AFQMC. Options are Closed, Collinear, Noncollinear. See :ref:`Walker-classes` for more detail.
+     - inferred
+     - The type of walker to use in AFQMC. Options are Closed, Collinear, Noncollinear. If no type is set, the walker set uses the least general type that every hamiltonian and wavefunction in the input can be used with. Model hamiltonians and the finite temperature driver need at least Collinear. All walker sets that leave the type out share this default; a walker set that sets one keeps it. See :ref:`Walker-classes` for more detail.
    * - **name**
      - n/a
      - The name to assign to the current walker_set block. This allows it to be referenced by name in execute blocks. A name is generated internally if not set here.

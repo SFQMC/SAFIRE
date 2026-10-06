@@ -80,7 +80,7 @@ public:
         bp_walker_memory_usage(0),
         tau_step(0),
         history_pos(0),
-        walkerType(params.walker_type),
+        walkerType(resolved(params.walker_type, "walker_type")),
         finite_temperature(finite_temperature_),
         tot_num_walkers(0),
         walker_buffer(0, 1),
@@ -103,9 +103,9 @@ public:
                )
       : WalkerSetBase(mpi, r, params, guess.walker_dims(), nWalkers, guess.isFiniteTemperature())
   {
-    utils::check(guess.walker_type == params.walker_type,
+    utils::check(guess.walker_type == walkerType,
                  "WalkerSetBase: the initial guess is {} but the walker set is {}.",
-                 walkerTypeToString(guess.walker_type), walkerTypeToString(params.walker_type));
+                 walkerTypeToString(guess.walker_type), walkerTypeToString(walkerType));
     if(finite_temperature) {
       populate_from_guess_ft(guess.udv());
     } else {

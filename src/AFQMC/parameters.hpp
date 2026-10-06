@@ -82,7 +82,9 @@ inline void from_json(const nlohmann::json& j, WalkerSetSourceParameters& source
 struct WalkerSetParameters {
   // an unnamed block cannot be referenced, so it is registered under a generated name
   std::string name{};
-  WALKER_TYPES walker_type{COLLINEAR};
+  // resolve_defaults falls back to the least general walker type that every hamiltonian and
+  // wavefunction of the input can be used with, the same one for every walker set
+  std::optional<WALKER_TYPES> walker_type{};
 
   // resolve_defaults falls back to the wavefunction of the execute block that introduces the walker set
   std::optional<WalkerSetSourceParameters> from{};

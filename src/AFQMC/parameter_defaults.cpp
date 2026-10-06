@@ -12,6 +12,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <cctype>
 #include <concepts>
 #include <filesystem>
 #include <format>
@@ -26,6 +27,7 @@
 
 #include "AFQMC/parameter_defaults.hpp"
 #include "AFQMC/Hamiltonians/hdf5_helpers.hpp"
+#include "AFQMC/Utilities/readWfn.h"
 #include "IO/app_loggers.h"
 #include "nda/h5.hpp"
 #include "utilities/check.hpp"
@@ -180,6 +182,63 @@ void apply_estimator_defaults(auto& params, const ExecuteParameters& exec) {
     utils::check(*params.measure_interval > 0,
                  "'measure_interval' must be positive, but it is {}.", *params.measure_interval);
   }
+}
+
+/// The least general walker type the hamiltonian file `root` can be used with: the spin structure
+/// of its one-body part, except that a model hamiltonian never takes closed walkers.
+WALKER_TYPES minimum_walker_type(h5::group root) {
+  const std::string format = get_hamiltonian_format(root);
+  if(format == "coqui") {
+    // the coqui format has no spinors
+    return walkerTypeFromDims(h5::h5_read_attribute<int>(root.open_group("System"), "number_of_spins"), 1);
+  }
+
+  h5::group hgrp              = root.open_group("Hamiltonian");
+  const HamiltonianType htype = peekHamType(root, format);
+  if(htype == HamiltonianType::model_hamiltonian) {
+    auto read_lowercase = [](h5::group grp, const std::string& name) {
+      std::string value;
+      h5::h5_read_attribute(grp, name, value);
+      std::ranges::transform(value, value.begin(), [](unsigned char c) { return std::tolower(c); });
+      return value;
+    };
+    h5::group mgrp = hgrp.open_group("ModelHamiltonian");
+    for(int n = 0; mgrp.has_subgroup(std::format("ModelComponent_{}", n)); ++n) {
+      h5::group component = mgrp.open_group(std::format("ModelComponent_{}", n));
+      if(read_lowercase(component, "model_type") == "one_body" &&
+         read_lowercase(component, "spin_type") == "noncollinear") {
+        return NONCOLLINEAR;
+      }
+    }
+    return COLLINEAR;
+  }
+
+  // hcore is [nspin][npol][NMO][npol][NMO], behind a leading k-point axis in the k-point format
+  const int spin_axis = htype == HamiltonianType::kp_factorized ? 1 : 0;
+  auto hcore          = h5::array_interface::get_dataset_info(hgrp, "hcore");
+  return walkerTypeFromDims(hcore.lengths[spin_axis], hcore.lengths[spin_axis + 1]);
+}
+
+/// The walker type of the walker sets that do not choose one: the least general one that every
+/// hamiltonian and wavefunction of the input can be used with. Collective: the root reads the
+/// files and broadcasts the result.
+WALKER_TYPES default_walker_type(const AFQMCParameters& params, utils::mpi_context_t<mpi3::communicator>& mpi) {
+  int walker_type{};
+  if(mpi.comm.root()) {
+    // walker types are ordered by generality, so the least general one that every block can be
+    // used with is the largest of their minimums. Finite temperature walkers are never closed.
+    WALKER_TYPES minimum = params.driver == DriverType::ftafqmc ? COLLINEAR : CLOSED;
+    for(const auto& ham : params.hamiltonians) {
+      h5::file file(ham.filename, 'r');
+      minimum = std::max(minimum, minimum_walker_type(h5::group(file)));
+    }
+    for(const auto& wfn : params.wavefunctions) {
+      minimum = std::max(minimum, getWalkerType(wfn.filename));
+    }
+    walker_type = int(minimum);
+  }
+  mpi.comm.broadcast_n(&walker_type, 1, 0);
+  return WALKER_TYPES(walker_type);
 }
 
 } // namespace
@@ -366,6 +425,17 @@ void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::commun
       apply_defaults(find_block(params.wavefunctions, estimator_wfn, "wavefunction"),
                      hamiltonian_type(estimator_ham));
     });
+  }
+
+  // 6. the walker type is one default for the whole input. The files are only read if a walker
+  //    set leaves it out.
+  if(std::ranges::any_of(params.walker_sets, [](const auto& walker_set) { return !walker_set.walker_type; })) {
+    const WALKER_TYPES walker_type = default_walker_type(params, mpi);
+    for(auto& walker_set : params.walker_sets) {
+      if(!walker_set.walker_type) {
+        walker_set.walker_type = walker_type;
+      }
+    }
   }
 }
 

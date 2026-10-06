@@ -96,8 +96,11 @@ void apply_defaults(ExecuteParameters& exec, DriverType driver);
 /// 4. Resolves the defaults a block inherits from a neighbouring block. A walker set without a
 ///    source starts from the wavefunction of the execute block that introduces it.
 /// 5. Peeks the type of every Hamiltonian and resolves the defaults that depend on it.
+/// 6. Gives every walker set without a walker type the least general one that every hamiltonian
+///    and wavefunction in the registry can be used with, at least collinear for the finite
+///    temperature driver. A walker set that chooses its own walker type keeps it.
 ///
-/// Collective, because of the seed broadcast in the first step and the peek in the last one.
+/// Collective, because of the seed broadcast in the first step and the peeks in the last two.
 void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::communicator>& mpi);
 
 } // namespace sfqmc::afqmc

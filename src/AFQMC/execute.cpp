@@ -142,7 +142,7 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
 
     auto wavefunction_for = [&](std::string const& wfn_name, std::string const& ham_name) -> Wavefunction<MEM>& {
       return construct_wavefunction<MEM>(mpi, wavefunctions, params, wfn_name, ham_name,
-                                         walker_set_params.walker_type, finiteT, nwalkers);
+                                         resolved(walker_set_params.walker_type, "walker_type"), finiteT, nwalkers);
     };
 
     Wavefunction<MEM>& wavefunction = wavefunction_for(wavefunction_name, hamiltonian_name);

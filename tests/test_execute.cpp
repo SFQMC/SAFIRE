@@ -310,8 +310,12 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     const std::string prop_name   = resolved_name(exec.propagator, params.propagators);
     const std::string wlk_name    = resolved_name(exec.walker_set, params.walker_sets);
 
-    // the default walker set starts from the wavefunction of the execute block
-    CHECK(source_wavefunction(block_named(params.walker_sets, wlk_name)) == wfn_name);
+    // the default walker set starts from the wavefunction of the execute block, with walkers that
+    // can carry it
+    const WalkerSetParameters& wlk = block_named(params.walker_sets, wlk_name);
+    CHECK(source_wavefunction(wlk) == wfn_name);
+    REQUIRE(wlk.walker_type.has_value());
+    CHECK(walkerTypeIsConvertible(getWalkerType(wfn_file), *wlk.walker_type));
 
     // whatever the hamiltonian type is, the defaults that depend on it are filled in, so that no
     // consumer ever sees an empty optional
@@ -531,6 +535,30 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     CHECK(resolved_name(params.execute[2].walker_set, params.walker_sets) == "second");
     CHECK(source_wavefunction(block_named(params.walker_sets, "first")) == "first_wfn");
     CHECK(source_wavefunction(block_named(params.walker_sets, "second")) == "second_wfn");
+  }
+
+  // the default walker type is shared by the whole input, so a noncollinear wavefunction makes it
+  // noncollinear even where it is not used, while a walker set that chooses its own keeps it
+  {
+    AFQMCParameters params{};
+    params.wavefunctions = {
+        WavefunctionParameters{.name = "wfn", .filename = wfn_file},
+        WavefunctionParameters{.name = "ghf", .filename = utils::unit_test_base() + "BH/afqmc_ghf_nomsd.h5"}};
+    params.hamiltonians = {HamiltonianParameters{.name = "ham", .filename = hamil_file}};
+    params.execute      = {
+        ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "inferred"},
+                          .wavefunction = std::string{"wfn"},
+                          .hamiltonian  = std::string{"ham"},
+                          .num_walkers  = nwalk},
+        ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "chosen", .walker_type = COLLINEAR},
+                          .wavefunction = std::string{"wfn"},
+                          .hamiltonian  = std::string{"ham"},
+                          .num_walkers  = nwalk},
+    };
+    resolve_defaults(params, *mpi);
+
+    CHECK(block_named(params.walker_sets, "inferred").walker_type == NONCOLLINEAR);
+    CHECK(block_named(params.walker_sets, "chosen").walker_type == COLLINEAR);
   }
 
   // a walker set may start from a wavefunction other than the one of the execute block, named or
