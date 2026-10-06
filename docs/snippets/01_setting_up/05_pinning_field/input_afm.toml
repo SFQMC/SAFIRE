@@ -1,9 +1,10 @@
+nelec = [16,16]
+
 [hamiltonian]
 t = [1.0,0.5] # a 't' array of length n give nth-order neighbor hoping
-U = 2.0 
+U = 2.0
 h_afm_pin = 0.5 # NOTE: syntax likely to change in the near future
 afm_pin_type = "staggered" # "afm"; alternative is "fm"
-nelec = [16,16]
 
 [lattice]
 L1 = 8

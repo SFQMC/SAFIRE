@@ -15,10 +15,7 @@ For example, using the sample "project" block here,
 
 .. code-block:: json
 
-    "project": {
-      "id": "qmc",
-      "series": 0
-    }
+    "output_name": "qmc"
 
 the data will be written to a file called, "qmc.s000.scalar.dat".
 We assume this name for the remainder of the example.

@@ -135,27 +135,19 @@ The sample json file that we have provided is reproduced here.
 
 ```json
 {
-"afqmc": {
-  "project": {
-    "id": "qmc",
-    "series": 0
-  },
+  "output_name": "qmc",
+  "seed": 42,
   "execute": {
-    "walker_set": {
-      "walker_type": "CLOSED"
-    },
     "wavefunction": {
-      "filename": "files/wfn.h5"
+      "filename": "wfn.h5"
     },
     "hamiltonian": {
-      "filename": "files/hamil.h5"
+      "filename": "hamil.h5"
     },
     "timestep": 0.01,
     "steps": 10000,
-    "num_walkers": 200,
-    "seed": 42
+    "num_walkers": 200
   }
-}
 }
 ```
   
@@ -566,7 +558,6 @@ import shutil
 
 import numpy as np
 
-from afqmctools.inputs.from_hdf import write_json
 from tutorial_utils import run_afqmc
 from stats.scalar_dat import analyze_scalar_data
 

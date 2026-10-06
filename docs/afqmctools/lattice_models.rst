@@ -204,20 +204,19 @@ A Hamiltonian may be built from a Python ``dict`` as follows:
    from safiretools import HamiltonianBuilder
 
    params = {
-       'hamiltonian' : {
-           'nbands' : 2,
-           't' : 1.0,
-           'U' : 2.0,
-           'U1' : 1.5,
-           'U2' : 1.0,
-           'J' : 0.5,
-           'nelec' : (6,6)
-     },
-     'lattice' : {
-         'L1' : 6,
-         'L2' : 1,
-         'boundary1' : 'PBC',
-     }
+       'hamiltonian': {
+           'nbands': 2,
+           't': 1.0,
+           'U': 2.0,
+           'U1': 1.5,
+           'U2': 1.0,
+           'J': 0.5
+       },
+       'lattice': {
+           'L1': 6,
+           'L2': 1,
+           'boundary1': 'PBC'
+       }
    }
 
    hamiltonian = HamiltonianBuilder.from_input(
@@ -258,7 +257,6 @@ In TOML:
    U1 = 1.5
    U2 = 1.0
    J = 0.5
-   nelec = [6,6]
 
    [lattice]
    L1 = 6

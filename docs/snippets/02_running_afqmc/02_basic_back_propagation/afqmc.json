@@ -1,34 +1,25 @@
 {
-  "afqmc": {
-    "project": {
-      "id": "qmc",
-      "series": 0
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "wavefunction": {
+      "filename": "afqmc.h5"
     },
-    "execute": {
-      "walker_set": {
-        "walker_type": "COLLINEAR"
-      },
-      "wavefunction": {
-        "filename": "afqmc.h5"
-      },
-      "hamiltonian": {
-        "filename": "afqmc.h5"
-      },
-      "timestep": 0.01,
-      "steps": 10000,
-      "num_walkers": 3000,
-      "walker_ortho_interval" : 10,
-      "population_control_interval": 5,
-      "measure_interval": 10,
-      "seed": 42,
-      "estimator": {
-        "name": "back_propagation",
+    "hamiltonian": {
+      "filename": "afqmc.h5"
+    },
+    "timestep": 0.01,
+    "steps": 10000,
+    "num_walkers": 3000,
+    "walker_ortho_interval": 10,
+    "population_control_interval": 5,
+    "measure_interval": 10,
+    "estimators": {
+      "backprop": {
         "path_restoration": true,
-        "bp_walker_ortho_interval": 10,
+        "walker_ortho_interval": 10,
         "propagation_steps": [400],
-        "onerdm": {
-          "name": "one_rdm"
-        }
+        "onerdm": {}
       }
     }
   }

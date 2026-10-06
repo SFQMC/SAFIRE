@@ -141,7 +141,7 @@ builder.finalize()
 ```{code-cell} ipython3
 :id: f94e92dd-9802-46ea-a1db-0baffb7efbb4
 
-builder.get_hamiltonian().to_hdf5(scratch_dir / "afqmc.h5")
+hamiltonian = builder.get_hamiltonian()
 ```
 
 ```{code-cell} ipython3
@@ -152,16 +152,15 @@ colab:
   base_uri: https://localhost:8080/
 ---
 # get a trial wavefunction: First, let's try a free-electron (i.e. non-interacting) wavefunction.
-# from_free_electron() takes the Hamiltonian itself; to_hdf5() then appends the
-# wavefunction to the same file we wrote the Hamiltonian into.
+# from_free_electron() takes the Hamiltonian itself.
 #
 # No twist is needed here: the open boundary along axis 1 and the pinning field
 # already split the shells, so the determinant is well defined. On a fully
 # periodic, unpinned lattice it would not be. See the 4x4 Hubbard example.
-Wavefunction.from_free_electron(
-    source=builder.get_hamiltonian(),
+wavefunction = Wavefunction.from_free_electron(
+    source=hamiltonian,
     nelec=nelec
-).to_hdf5(scratch_dir / "afqmc.h5")
+)
 ```
 
 +++ {"id": "ec2d1ea0-fc24-45f6-a799-5e9d14e39639"}
@@ -171,45 +170,43 @@ Now we'll write the file to run AFQMC. There are some better tools than this but
 ```{code-cell} ipython3
 :id: 866c943b-b811-40b9-a8a5-e257e30bda24
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # make an input file
 afqmc_params = {
-        "timestep": 0.005,
-        "steps": 10000,
-        "population_control_interval": 2,
-        "walker_ortho_interval": 2,
-        "num_walkers": 640,
-        "measure_interval": 2,
-        "equilibration_steps": 2000,
-        "estimator1": {
-            "name": "energy",
-            "overwrite": True,
-            "print_components": True
-        },
-        "estimator2": {
-            "name":"back_propagation",
+    "timestep": 0.005,
+    "steps": 10000,
+    "population_control_interval": 2,
+    "walker_ortho_interval": 2,
+    "num_walkers": 640,
+    "measure_interval": 2,
+    "equilibration_steps": 2000,
+    "estimators": {
+        "energy": {},
+        "backprop": {
             "path_restoration": True,
             "extra_path_restoration": True,
-            "bp_walker_ortho_interval": 2,
+            "walker_ortho_interval": 2,
             "propagation_steps": [500],
-            "onerdm" : {
-                "name":"onerdm"
-    	    }
-        },
-        "seed" : 42,                          # just for reproducibility
-        "propagator": {
-            "use_cp_constraint": True,
-            "project_force_bias" : True
+            "onerdm": {}
+        }
+    },
+    "propagator": {
+        "use_cp_constraint": True,
+        "project_force_bias": True
+    }
+}
+
+write_jobfile(
+    scratch_dir / "afqmc.json",
+    {
+        "seed": 42,                          # just for reproducibility
+        "execute": {
+            "wavefunction": wavefunction,
+            "hamiltonian": hamiltonian,
+            **afqmc_params
         }
     }
-
-write_json(
-    scratch_dir / "afqmc.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    fham0=scratch_dir / "afqmc.h5",
-    exec_opts=afqmc_params,
-    series=0
 )
 ```
 
@@ -349,8 +346,8 @@ for Ueff in Ueffs:
     builder_eff.afm_pinning(0.5)
     builder_eff.finalize()
 
-    # NOTICE: we must be careful here! We can either keep around afqmc.h5
-    # which has the original Hamiltonian (U=6) and keep the wf and its Hamiltonian together
+    # NOTICE: we must be careful here! We can either keep around the
+    # original Hamiltonian (U=6) and keep the wf and its Hamiltonian together
     # or we have one file with afqmc_Ueff which has both the wf and builder.get_hamiltonian()
     builder_eff.get_hamiltonian().to_hdf5(scratch_dir / f"afqmc_{Ueff}.h5")
 
@@ -373,12 +370,19 @@ for Ueff in Ueffs:
         output_fname = scratch_dir / f"afqmc_{Ueff}.h5"
     )
 
-    write_json(
+    write_jobfile(
         scratch_dir / f"afqmc_{Ueff}.json",
-        fwfn0=scratch_dir / f"afqmc_{Ueff}.h5",
-        fham0=scratch_dir / "afqmc.h5",
-        exec_opts=afqmc_params,
-        id = f"afqmc_{Ueff}"
+        {
+            "output_name": f"afqmc_{Ueff}",
+            "seed": 42,
+            "execute": {
+                "wavefunction": {
+                    "filename": f"afqmc_{Ueff}.h5"
+                },
+                "hamiltonian": hamiltonian,
+                **afqmc_params
+            }
+        }
     )
     print(f"Written {Ueff}")
 ```
@@ -451,8 +455,8 @@ for Ueff in Ueffs:
     else:
         fname = f"afqmc_{Ueff}.h5"
     trial = Wavefunction.from_hdf5(scratch_dir / fname)
-    # spin_blocks() splits the leading determinant into its alpha and beta columns
-    alpha, beta = trial.spin_blocks(0)
+    # determinant() gives the leading determinant's alpha and beta orbitals
+    alpha, beta = trial.determinant(0)
     o = np.stack([alpha.real, beta.real])
 
     rdm = greens_1body(o)

@@ -21,26 +21,18 @@ wavefunctions in separate HDF5 files.
 .. code-block:: json
 
     {
-      "afqmc": {
-        "project": {
-          "id": "qmc",
-          "series": 0
+      "output_name": "qmc",
+      "seed": 42,
+      "execute": {
+        "wavefunction": {
+          "filename": "input.h5"
         },
-        "execute": {
-          "walker_set": {
-            "walker_type": "CLOSED"
-          },
-          "wavefunction": {
-            "filename": "input.h5"
-          },
-          "hamiltonian": {
-            "filename": "input.h5"
-          },
-          "timestep": 0.01,
-          "steps": 10000,
-          "num_walkers": 200,
-          "seed": 42
-        }
+        "hamiltonian": {
+          "filename": "input.h5"
+        },
+        "timestep": 0.01,
+        "steps": 10000,
+        "num_walkers": 200
       }
     }
 
@@ -61,54 +53,49 @@ While not functionally necessary, defining the "wavefunction" and "hamiltonian" 
 .. code-block:: json
 
     {
-      "afqmc": {
-        "project": {
-          "id": "qmc",
-          "series": 0
-        },
-        "walker_sets": [
-          {
-            "name" : "walkers",
-            "walker_type": "CLOSED"
-          }
-        ],
-        "wavefunctions" : [
-          {
-            "name" : "my_wavefunction",
-            "filename": "files/input.h5"
-          }
-        ],
-        "hamiltonians" : [
-          {
-            "name" : "my_hamiltonian",
-            "filename": "files/input.h5"
-          }
-        ],
-        "execute": {
+      "output_name": "qmc",
+      "seed": 42,
+      "walker_sets": [
+        {
+          "name": "walkers"
+        }
+      ],
+      "wavefunctions": [
+        {
+          "name": "my_wavefunction",
+          "filename": "files/input.h5"
+        }
+      ],
+      "hamiltonians": [
+        {
+          "name": "my_hamiltonian",
+          "filename": "files/input.h5"
+        }
+      ],
+      "execute": [
+        {
           "walker_set": "walkers",
           "wavefunction": "my_wavefunction",
-          "hamiltonian" : "my_hamiltonian",
+          "hamiltonian": "my_hamiltonian",
           "timestep": 0.05,
           "steps": 20,
           "num_walkers": 200,
           "measure_interval": 1,
           "population_control_interval": 1,
-          "walker_ortho_interval": 1,
-          "seed": 42
+          "walker_ortho_interval": 1
         },
-        "execute": {
+        {
           "walker_set": "walkers",
           "wavefunction": "my_wavefunction",
-          "hamiltonian" : "my_hamiltonian",
+          "hamiltonian": "my_hamiltonian",
           "timestep": 0.01,
           "steps": 10000,
           "num_walkers": 200,
           "measure_interval": 10,
           "population_control_interval": 10,
-          "walker_ortho_interval": 10,
-          "seed": 43
+          "walker_ortho_interval": 10
         }
-      }
+      ]
     }
 
 The walker set is saved after the first execute block and will be used "as is" in
@@ -135,45 +122,37 @@ We use ellipses ( `...`)  in some of the advanced input blocks within some input
 .. code-block:: json
 
   {
-    "afqmc": {
-      "project": {
-        "id": "qmc",
-        "series": 0
+    "output_name": "qmc",
+    "seed": 42,
+    "walker_sets": [
+      {
+        "name": "my_walkers",
+        "walker_type": "closed"
+      }
+    ],
+    "execute": {
+      "walker_set": "my_walkers",
+      "wavefunction": {
+        "filename": "files/input.h5",
+        "ndets_to_read": -1
       },
-      "walker_sets": [
-        {
-          "name" : "my_walkers",
-          "walker_type": "CLOSED"
-        }
-      ],
-      "execute": {
-        "walker_set" : "my_walkers",
-        "wavefunction": {
-          "filename": "files/input.h5",
-          "ndets_to_read": "-1"
-        },
-        "hamiltonian" : {
-          "filename" : "files/input.h5"
-        },
-        "timestep": "0.01",
-        "steps": "1",
-        "population_control_interval": "10",
-        "measure_interval": "20",
-        "walker_ortho_interval": "10",
-        "checkpoint_interval": "-1",
-        "hdf_write_file": "",
-        "hdf_read_file": "",
-        "num_walkers": "200",
-        "seed": "42",
-        "propagator" : {
+      "hamiltonian": {
+        "filename": "files/input.h5"
+      },
+      "timestep": 0.01,
+      "steps": 1,
+      "population_control_interval": 10,
+      "measure_interval": 20,
+      "walker_ortho_interval": 10,
+      "num_walkers": 200,
+      "propagator": {
+        /* ... */
+      },
+      "estimators": {
+        "energy": {
           /* ... */
         },
-        "estimator" : {
-          "name" : "energy",
-          /* ... */
-        },
-        "estimator" : {
-          "name" : "mixed",
+        "mixed": {
           /* ... */
         }
       }

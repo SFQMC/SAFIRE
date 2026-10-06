@@ -31,8 +31,15 @@ Begin by generating a SAFIRE Hamiltonian HDF5 file.
 See the [sample script below](#sample-script-for-generating-the-safire-hamiltonian-file).
 afqmctools provides a command line tool to convert from the SAFIRE HDF5 Hamiltonian file to a FCIDUMP which can be read by many quantum chemistry codes.
 
-```bash
-afqmc_to_fcidump -i afqmc.h5 -o FCIDUMP
+```python
+from safiretools import MolecularHamiltonian
+
+# the Hamiltonian file carries no electron count, so pass (nup, ndown) of the B atom
+MolecularHamiltonian.from_hdf5("afqmc.h5").to_fcidump(
+    "FCIDUMP",
+    nelec=(3, 2),
+    cplx=False
+)
 ```
 
 We will use SHCI as implemented in [DICE](https://github.com/sanshar/Dice) for this example; 
@@ -119,10 +126,10 @@ Time(s):       39.50
 Finally, `afqmctools` provides a command line tool to convert from the wavefunction printed in the Dice raw text output to the SAFIRE HDF5 wavefunction format.
 From the example directory, run
 
-```bash
-$ dice_to_hdf5 -o shci_wfn.h5 -i output.dat -n 100 -v
-Number of electrons: up:2, down:3
-PHMSD trial wavfunction -> using uhf-like walkers
+```python
+from safiretools import Wavefunction
+
+Wavefunction.from_dice("output.dat", ndets=100).to_hdf5("shci_wfn.h5")
 ```
 
 The `-o` option sets the output HDF5 file name,
@@ -136,29 +143,21 @@ for this case.
 
 ```json
 {
-  "afqmc": {
-    "project": {
-      "id": "qmc",
-      "series": 0
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "hamiltonian": {
+      "filename": "afqmc.h5"
     },
-    "execute": {
-      "walker_set": {
-        "walker_type": "COLLINEAR"
-      },
-      "hamiltonian": {
-        "filename": "afqmc.h5"
-      },
-      "wavefunction": {
-        "filename": "shci_wfn.h5"
-      },
-      "timestep": 0.01,
-      "steps": 10000,
-      "num_walkers": 1280,
-      "measure_interval": 10,
-      "population_control_interval": 10,
-      "walker_ortho_interval": 10,
-      "seed": 42
-    }
+    "wavefunction": {
+      "filename": "shci_wfn.h5"
+    },
+    "timestep": 0.01,
+    "steps": 10000,
+    "num_walkers": 1280,
+    "measure_interval": 10,
+    "population_control_interval": 10,
+    "walker_ortho_interval": 10
   }
 }
 ```

@@ -17,13 +17,17 @@ safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
+    import tomllib
+
     from safiretools import HamiltonianBuilder, Lattice, Wavefunction
     from safiretools.wavefunction.free_electron import DEFAULT_TWIST
 
     infile = "input.toml"
+    with open(infile, "rb") as f:
+        params = tomllib.load(f)
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian = HamiltonianBuilder.from_input(infile).get_hamiltonian()
+    hamiltonian = HamiltonianBuilder.from_input(params).get_hamiltonian()
     hamiltonian.to_hdf5("afqmc.h5")
 
     # The trial wavefunction needs its *own* Hamiltonian, built on a lattice
@@ -33,14 +37,14 @@ safiretools can be invoked within a Python script as
         dict(hamiltonian.lattice_params, twist=list(DEFAULT_TWIST))
     )
     fe_hamiltonian = HamiltonianBuilder.from_input(
-        infile,
+        params,
         lattice=fe_lattice,
     ).get_hamiltonian()
 
     # compute and save a free-electron trial wfn, into the same file
     Wavefunction.from_free_electron(
         source=fe_hamiltonian,
-        nelec=hamiltonian.nelec,
+        nelec=params["nelec"],
     ).to_hdf5("afqmc.h5")
 
 `Wavefunction.from_free_electron()` uses the Hamiltonian exactly as given and

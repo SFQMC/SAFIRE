@@ -74,8 +74,7 @@ import h5py as h5
 import matplotlib.pyplot as plt
 from pyscf import gto, scf, lo
 
-from safiretools import MolecularHamiltonian, NOMSDWavefunction
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import MolecularHamiltonian, NOMSDWavefunction, write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
 from tutorial_utils import run_afqmc
@@ -198,51 +197,40 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
     # 4. build and save the Hamiltonian
     # generate the Frozen Core Hamiltonian + save for AFQMC
 
-    afqmc_hamil_file = local_scratch / "local_embedding_H.h5"
-
     # the localized orbitals are the basis, rather than the RHF ones
-    MolecularHamiltonian.from_pyscf(
+    hamiltonian = MolecularHamiltonian.from_pyscf(
         mf,
         basis=local_basis,
         active_space=(2*(N_active_occ),ncas),
         chol_cut = 1e-5,
         verbose=False
-    ).to_hdf5(afqmc_hamil_file)
+    )
 
-    # 5. Write the trial wavefunction
-
-    # write the trial wavefunction
-    afqmc_wfn_file = local_scratch / "active_space_rhf_wfn.h5"
-
+    # 5. the trial wavefunction
     active_det_up = np.eye(ncas,N_active_occ)
-    nelec_active = (N_active_occ,N_active_occ)
 
-    NOMSDWavefunction(
+    # a single (ncas, N_active_occ) array per determinant makes the wavefunction closed shell
+    wavefunction = NOMSDWavefunction(
         coeffs=np.array([1.0]),
-        dets=np.array([active_det_up]),
-        spin_symm='closed',
-        nelec=nelec_active,
-        nmo=ncas
-    ).to_hdf5(afqmc_wfn_file)
+        dets=np.array([active_det_up])
+    )
 
-    # 6. write json input file
-    execute_options = {
-        "timestep": 0.01,
-        "steps": 6000,
-        "population_control_interval" : 10,
-        "measure_interval": 10,
-        "walker_ortho_interval" : 10,
-        "num_walkers": 320,
-        "seed" : 42,
-        "walker_set": {
-            "walker_type": "COLLINEAR"
-        },
-    }
-    write_json(
+    # 6. write json input file, which also writes the Hamiltonian and the wavefunction to HDF5
+    write_jobfile(
         local_scratch / "afqmc.json",
-        fwfn0=afqmc_wfn_file,
-        fham0=afqmc_hamil_file,
-        exec_opts=execute_options
+        {
+            "seed": 42,
+            "execute": {
+                "timestep": 0.01,
+                "steps": 6000,
+                "population_control_interval": 10,
+                "measure_interval": 10,
+                "walker_ortho_interval": 10,
+                "num_walkers": 320,
+                "wavefunction": wavefunction,
+                "hamiltonian": hamiltonian
+            }
+        }
     )
 
     # 7. run AFQMC

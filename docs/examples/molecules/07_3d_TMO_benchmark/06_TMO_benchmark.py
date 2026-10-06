@@ -80,7 +80,7 @@ import autohf
 
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -253,35 +253,38 @@ def setup_benchmark(key:str, case:dict):
     # run CASSCF to get a basis / trial wavefunction
     mc = mcscf.CASSCF(rhf, ncas, nelec_cas).run()
 
-    # write the CAS wavefunction to a file
-    Wavefunction.from_pyscf_cas(
+    # the CAS wavefunction
+    wavefunction = Wavefunction.from_pyscf_cas(
         mc,
         tol=0.001, # from the PRX
         max_det=2000
-    ).to_hdf5(local_scratch_dir / 'afqmc.h5')
+    )
 
-    # write Hamiltonian in the CASSCF orbital basis, which the CAS
+    # the Hamiltonian in the CASSCF orbital basis, which the CAS
     #   wavefunction's determinants are occupations of
-    MolecularHamiltonian.from_pyscf(
+    hamiltonian = MolecularHamiltonian.from_pyscf(
         rhf,
         basis = mc,
         chol_cut = 1e-6, # from the PRX
         verbose=True
-    ).to_hdf5(local_scratch_dir / 'afqmc.h5')
+    )
 
-    execute_options = {
-        "timestep": 0.005,
-        "steps": 7000,
-        "measure_interval": 10,
-        "population_control_interval" : 10,
-        "walker_ortho_interval" : 10 ,
-        "num_walkers": 3000,
-        "seed" : 42
-    }    
-    write_json(
+    # the input file, which also writes the wavefunction and the Hamiltonian to HDF5
+    write_jobfile(
         local_scratch_dir/ "afqmc.json",
-        fwfn0=local_scratch_dir / 'afqmc.h5',
-        exec_opts=execute_options
+        {
+            "seed": 42,
+            "execute": {
+                "wavefunction": wavefunction,
+                "hamiltonian": hamiltonian,
+                "timestep": 0.005,
+                "steps": 7000,
+                "measure_interval": 10,
+                "population_control_interval": 10,
+                "walker_ortho_interval": 10,
+                "num_walkers": 3000
+            }
+        }
     )
 
 # run the setup

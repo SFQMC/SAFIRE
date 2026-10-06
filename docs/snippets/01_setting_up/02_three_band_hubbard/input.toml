@@ -1,7 +1,8 @@
+nelec = [3,3]
+
 [hamiltonian]
 nbands = 3  # edit to change number of bands
-U = 2.0 
-nelec = [3,3]
+U = 2.0
 
 [lattice]
 L1 = 2

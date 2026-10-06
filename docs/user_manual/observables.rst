@@ -27,14 +27,13 @@ Sample Input Block
 
 .. code-block:: json
 
-	{
-	"estimator": {
-		"name" : "mixed",
-		"onerdm" : {
-			"name" : "my_one_rdm"
-		}
-	}
-	}
+  {
+    "estimators": {
+      "mixed": {
+        "onerdm": {}
+      }
+    }
+  }
 
 Wavefunction Class Compatibility
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -73,14 +72,13 @@ Sample Input Block
 
 .. code-block:: json
 
-	{
-	"estimator": {
-		"name" : "mixed",
-		"twordm" : {
-			"name" : "my_two_rdm"
-		}
-	}
-	}
+  {
+    "estimators": {
+      "mixed": {
+        "twordm": {}
+      }
+    }
+  }
 
 
 Wavefunction Class Compatibility
@@ -114,14 +112,13 @@ Sample Input Block
 ~~~~~~~~~~~~~~~~~~
 .. code-block:: json
 
-	{
-	"estimator": {
-		"name" : "mixed",
-		"diag2rdm" : {
-			"name" : "my_diag_two_rdm"
-		}
-	}
-	}
+  {
+    "estimators": {
+      "mixed": {
+        "diag_twordm": {}
+      }
+    }
+  }
 
 
 Wavefunction Class Compatibility
@@ -160,14 +157,13 @@ Sample Input Block
 ~~~~~~~~~~~~~~~~~~
 .. code-block:: json
 
-	{
-	"estimator": {
-		"name" : "mixed",
-		"spinspin" : {
-			"name" : "my_spinspin"
-		}
-	}
-	}
+  {
+    "estimators": {
+      "mixed": {
+        "spincorr": {}
+      }
+    }
+  }
 
 
 Wavefunction Class Compatibility
@@ -251,16 +247,18 @@ Sample Input Block
 ~~~~~~~~~~~~~~~~~~
 .. code-block:: json
 
-	{
-	"estimator": {
-		"name" : "mixed",
-		"pair_correlators" : {
-			"name" : "my_pair_correlators",
-        	"filename" : "pair_definitions.h5",
-        	"pair_type" : ["s","+x","-x","+y","-y","xy"]
-		}
-	}
-	}
+  {
+    "estimators": {
+      "mixed": {
+        "paircorr": {
+          "pairs": {
+            "filename": "pair_definitions.h5",
+            "group": "PairCorrelator/orbital_map"
+          }
+        }
+      }
+    }
+  }
 
 
 Wavefunction Class Compatibility

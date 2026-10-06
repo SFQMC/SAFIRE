@@ -22,22 +22,23 @@ safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
-    from safiretools import HamiltonianBuilder, Lattice, Wavefunction
+    import tomllib
+
+    from safiretools import HamiltonianBuilder, Lattice, Wavefunction, vis
     from safiretools.wavefunction.free_electron import DEFAULT_TWIST
-    import afqmctools.utils.visualize as vis
 
     infile = "input.toml"
+    with open(infile, "rb") as f:
+        params = tomllib.load(f)
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian_builder = HamiltonianBuilder.from_input(source=infile)
+    hamiltonian_builder = HamiltonianBuilder.from_input(source=params)
     lattice = hamiltonian_builder.get_lattice()
     hamiltonian = hamiltonian_builder.get_hamiltonian()
 
     # makes a visualization of the lattice and saves it "lattice.png"
-    vis.plot_lattice(
-        lattice=lattice,
-        save=True
-    )
+    ax = vis.plot_lattice(lattice)
+    ax.figure.savefig("lattice.png")
 
     hamiltonian.to_hdf5("afqmc.h5")
 
@@ -48,14 +49,14 @@ safiretools can be invoked within a Python script as
         dict(hamiltonian.lattice_params, twist=list(DEFAULT_TWIST))
     )
     fe_hamiltonian = HamiltonianBuilder.from_input(
-        infile,
+        params,
         lattice=fe_lattice,
     ).get_hamiltonian()
 
     # compute and save a free-electron trial wfn, into the same file
     Wavefunction.from_free_electron(
         source=fe_hamiltonian,
-        nelec=hamiltonian.nelec,
+        nelec=params["nelec"],
     ).to_hdf5("afqmc.h5")
 
 

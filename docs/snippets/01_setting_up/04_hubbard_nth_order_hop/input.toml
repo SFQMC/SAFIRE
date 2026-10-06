@@ -1,7 +1,8 @@
+nelec = [2,2]
+
 [hamiltonian]
 t = [1.0,0.5] # a 't' array of length n give nth-order neighbor hoping
-U = 2.0 
-nelec = [2,2]
+U = 2.0
 
 [lattice]
 L1 = 2

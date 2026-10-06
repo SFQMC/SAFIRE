@@ -140,10 +140,7 @@ from safiretools import NOMSDWavefunction
 
 NOMSDWavefunction(
     coeffs=np.array([C_0]),
-    dets=phi_0,
-    spin_symm="rhf",
-    nelec=number_of_electrons,
-    nmo=number_of_orbitals
+    dets=phi_0
 ).to_hdf5(scratch_dir/ "rhf_wavefunction.h5")
 ```
 
@@ -178,10 +175,7 @@ C_0 = 1.0
 
 NOMSDWavefunction(
     coeffs=np.array([C_0]),
-    dets=phi_0,
-    spin_symm="rhf",
-    nelec=number_of_electrons,
-    nmo=number_of_orbitals
+    dets=phi_0
 ).to_hdf5(scratch_dir/ "rhf_wfn.h5")
 ```
 
@@ -198,11 +192,11 @@ details on the expected data.
 ```
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/data_ {scratch_dir}/rhf_wfn.h5
+!h5dump -d /Wavefunction/NOMSD/PsiT_0/values {scratch_dir}/rhf_wfn.h5
 ```
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/jdata_ {scratch_dir}/rhf_wfn.h5
+!h5dump -d /Wavefunction/NOMSD/PsiT_0/column_indices {scratch_dir}/rhf_wfn.h5
 ```
 
 +++ {"id": "VJfGuez4rsE-"}
@@ -243,10 +237,7 @@ from safiretools import NOMSDWavefunction
 
 NOMSDWavefunction(
     coeffs=np.array([C_0,C_1]),
-    dets=phi_nomsd,
-    spin_symm="rhf",
-    nelec=number_of_electrons,
-    nmo=number_of_orbitals
+    dets=phi_nomsd
 ).to_hdf5(scratch_dir/ "NOMSD_wfn.h5")
 ```
 
@@ -272,10 +263,7 @@ C_1 = 1.0
 
 NOMSDWavefunction(
     coeffs=np.array([C_0,C_1]),
-    dets=phi_nomsd,
-    spin_symm="rhf",
-    nelec=number_of_electrons,
-    nmo=number_of_orbitals
+    dets=phi_nomsd
 ).to_hdf5(scratch_dir/ "NOMSD_wfn.h5")
 ```
 
@@ -288,11 +276,11 @@ notice that there are two Slater determinants in the HDF5 file! We note that
 corresponding to up (down) sector Slater determinants.
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/data_ {scratch_dir}/NOMSD_wfn.h5
+!h5dump -d /Wavefunction/NOMSD/PsiT_0/values {scratch_dir}/NOMSD_wfn.h5
 ```
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_1/data_ {scratch_dir}/NOMSD_wfn.h5
+!h5dump -d /Wavefunction/NOMSD/PsiT_1/values {scratch_dir}/NOMSD_wfn.h5
 ```
 
 +++ {"id": "YtBpL-q8rlGT"}
@@ -367,7 +355,7 @@ here, the interesting information is the orbital occupancies in `/Wavefunction/P
 the CI coefficients in `/Wavefunction/PHMSD/ci_coeffs`.
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/PHMSD/occs {scratch_dir}/PHMSD_wfn.h5
+!h5dump -d /Wavefunction/PHMSD/occa {scratch_dir}/PHMSD_wfn.h5
 ```
 
 ```{code-cell} ipython3

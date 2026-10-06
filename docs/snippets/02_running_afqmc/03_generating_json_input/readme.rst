@@ -15,7 +15,7 @@ a trial wavefunction is saved in an HDF5 file called `afqmc_wfn.h5`.
 Of course, the Hamiltonian and wavefunction can exist within the same HDF5 file if desired.
 
 The input file is explained in detail in :ref:`input_afqmc`.
-We can use the `afqmctools` Python module to generate one for us
+We can use the `safiretools` Python module to generate one for us
 using the same keywords as in the input file.
 In the example below, we show how to set the "execute" block parameters
 with all possible options explicitly enumerated with the exception

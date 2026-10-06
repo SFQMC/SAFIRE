@@ -104,7 +104,6 @@ builder.afm_pinning(h_afm_pin=0.25,axis=1,pin_type="same")
 builder.finalize()
 
 hamiltonian = builder.get_hamiltonian()
-hamiltonian.to_hdf5(scratch_dir/"Hubbard_tprime0.4_U4.0.h5")
 ```
 
 +++ {"id": "81220323-65d6-4438-91db-87cc44e71047"}
@@ -144,14 +143,13 @@ wfn = Wavefunction.from_free_electron(
 
 # get lattice dimensions from the Lattice instance
 L = lattice.L
-
-wfn.to_hdf5(scratch_dir/"free_elec_wfn.h5")
 ```
 
 ```{code-cell} ipython3
 :id: 20127a9c-5c29-4c69-8a81-bd497f042406
 :outputId: 55190e94-44ed-4b7c-9f28-7cdcd5d151ba
 
+import numpy as np
 from safiretools import vis
 from autohf import AutoHFHamiltonian, lattice_hf
 
@@ -166,7 +164,7 @@ results = lattice_hf(
         nelec=nelec,
         batch_size=1
     ),
-    initial_guess=wfn.dets[0],
+    initial_guess=np.hstack(wfn.determinant(0)),
     suppress_logo=True
 )
 
@@ -212,38 +210,34 @@ vis.plot_lattice(
 
 ```{code-cell} ipython3
 # make a json input file
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
-afqmc_params = {
-    "timestep": 0.01,
-    "steps": 12000,
-    "num_walkers": 480,
-    "population_control_interval": 5,
-    "walker_ortho_interval": 5,
-    "measure_interval": 10,
-    "equilibration_steps": 2400,
-    "seed" : 42,                          # for reproducibility
-    "propagator": {
-        "use_cp_constraint": True,
-        "project_force_bias": True
-    },
-    "estimator": {
-        "name":"back_propagation",
-        "path_restoration": True,
-        "bp_walker_ortho_interval": 5,
-        "propagation_steps": [200, 400, 600, 800],
-        "onerdm":{
-            "name":"onerdm"
+write_jobfile(scratch_dir/"afqmc.json", {
+    "seed": 42,                          # for reproducibility
+    "execute": {
+        "wavefunction": wfn,
+        "hamiltonian": hamiltonian,
+        "timestep": 0.01,
+        "steps": 12000,
+        "num_walkers": 480,
+        "population_control_interval": 5,
+        "walker_ortho_interval": 5,
+        "measure_interval": 10,
+        "equilibration_steps": 2400,
+        "propagator": {
+            "use_cp_constraint": True,
+            "project_force_bias": True
+        },
+        "estimators": {
+            "backprop": {
+                "path_restoration": True,
+                "walker_ortho_interval": 5,
+                "propagation_steps": [200, 400, 600, 800],
+                "onerdm": {}
+            }
         }
     }
-}
-
-write_json(
-    scratch_dir/"afqmc.json",
-    fwfn0=scratch_dir/"free_elec_wfn.h5",
-    fham0=scratch_dir/"Hubbard_tprime0.4_U4.0.h5",
-    exec_opts=afqmc_params
-)
+})
 ```
 
 +++ {"id": "5831b8a6-6262-46ce-9bef-f51e20838015"}

@@ -62,7 +62,7 @@ from pathlib import Path
 
 from safiretools import MolecularHamiltonian
 from safiretools import NOMSDWavefunction
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 from tutorial_utils import run_afqmc
 
@@ -215,11 +215,8 @@ outputId: 5e7b4b17-4e40-4189-ac2e-633cfb904805
 hamiltonian = MolecularHamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
-    enuc=H0,
-    nelec=number_of_electrons
+    enuc=H0
 )
-
-hamiltonian.to_hdf5(scratch_dir/"hamil.h5")
 ```
 
 +++ {"id": "FL2jWTrTyCNf"}
@@ -244,7 +241,7 @@ in the same HDF5 file as the Hamiltonian.**
 import numpy as np
 
 from safiretools import NOMSDWavefunction
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # RHF orbtials represented in the basis of RHF orbitals
 orbitals = np.array(
@@ -257,15 +254,21 @@ phi_0 = np.array([
 ])
 C_0 = 1.0
 
-NOMSDWavefunction(
+wavefunction = NOMSDWavefunction(
     coeffs=np.array([C_0]),
-    dets=phi_0,
-    spin_symm="rhf",
-    nelec=number_of_electrons,
-    nmo=number_of_orbitals
-).to_hdf5(scratch_dir/ "wfn.h5")
+    dets=phi_0
+)
 
-write_json(scratch_dir / "afqmc.json", scratch_dir / "wfn.h5", scratch_dir / "hamil.h5", exec_opts=dict(timestep=0.005, steps=20000))
+# write_jobfile also writes the wavefunction and the Hamiltonian to HDF5 files next to the input file
+write_jobfile(scratch_dir / "afqmc.json", {
+    "execute": {
+        "wavefunction": wavefunction,
+        "hamiltonian": hamiltonian,
+        "timestep": 0.005,
+        "steps": 20000,
+        "num_walkers": 200
+    }
+})
 ```
 
 +++ {"id": "CXQ3jT_pyCNf"}
@@ -520,7 +523,7 @@ import numpy as np
 
 from safiretools import MolecularHamiltonian
 from safiretools import NOMSDWavefunction
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
 from tutorial_utils import run_afqmc
@@ -541,6 +544,7 @@ H1_ij = np.array([[-1.25279706e+00,  0.0           ],
                   [ 0.0           , -4.75602313e-01]])
 
 # two-body integrals in the basis of canonical RHF orbitals
+H2_ijkl = np.zeros((2,2,2,2))
 H2_ijkl[0,0,:,:] = np.array([[ 6.74976525e-01, 0.0],
                              [0.0, 6.63461552e-01]])
 
@@ -563,15 +567,14 @@ phi_hf = np.array([[ 0.54893404,  1.21146407],
 Sij = np.array([[1.,         0.65931821],
                 [0.65931821, 1.        ]])
 
-# Save the Hamiltonian to HDF5
-MolecularHamiltonian.from_integrals(
+# the Hamiltonian
+hamiltonian = MolecularHamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
-    enuc=H0,
-    nelec=number_of_electrons
-).to_hdf5(scratch_dir/"H2_hamiltonian.h5")
+    enuc=H0
+)
 
-# make and save a trial wavefunction
+# a trial wavefunction
 orbitals = np.array(
     [[1.0,0.0],
     [0.0,1.0]]
@@ -581,31 +584,27 @@ phi_0 = np.array([
     orbitals[:, :number_of_electrons[0]]
 ])
 C_0 = 1.0
-NOMSDWavefunction(
+wavefunction = NOMSDWavefunction(
     coeffs=np.array([C_0]),
-    dets=phi_0,
-    spin_symm="rhf",
-    nelec=number_of_electrons,
-    nmo=number_of_orbitals
-).to_hdf5(scratch_dir/"H2_rhf_wfn.h5")  # this is the name of the file that will be created
+    dets=phi_0
+)
 
-# make an input file
-
-afqmc_execution_options = {
-    "timestep": 0.01,
-    "steps": 10000,
-    "population_control_interval" : 10, # in units of steps
-    "measure_interval": 10,             # in units of steps
-    "walker_ortho_interval" : 10 ,      # in units of steps
-    "num_walkers": 2400,
-    "seed" : 42
-}
-
-write_json(
+# make an input file, which also writes the Hamiltonian and the wavefunction to HDF5
+write_jobfile(
     scratch_dir/ "H2_afqmc_input.json",
-    fham0=scratch_dir / "H2_hamiltonian.h5",
-    fwfn0=scratch_dir / "H2_rhf_wfn.h5",
-    exec_opts=afqmc_execution_options
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": wavefunction,
+            "hamiltonian": hamiltonian,
+            "timestep": 0.01,
+            "steps": 10000,
+            "population_control_interval": 10, # in units of steps
+            "measure_interval": 10,            # in units of steps
+            "walker_ortho_interval": 10,       # in units of steps
+            "num_walkers": 2400
+        }
+    }
 )
 
 # run afqmc

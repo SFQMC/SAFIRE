@@ -230,11 +230,11 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 
 # The SOC-GHF object's hcore carries the ECP spin-orbit term, which makes the
 #   Hamiltonian noncollinear
-MolecularHamiltonian.from_pyscf(
+hamiltonian = MolecularHamiltonian.from_pyscf(
     ghf_soc,
     basis=rohf,
     chol_cut=chol_tol,
-).to_hdf5(fout_soc)
+)
 
 #####################################
 #                                   #
@@ -242,10 +242,10 @@ MolecularHamiltonian.from_pyscf(
 #                                   #
 #####################################
 
-Wavefunction.from_pyscf(
+wavefunction = Wavefunction.from_pyscf(
     ghf_soc,
     basis=rohf
-).to_hdf5(fout_soc)
+)
 ```
 
 +++ {"id": "atWbeuX8i2Xd"}
@@ -256,23 +256,25 @@ Wavefunction.from_pyscf(
 :id: PsAy09S7i2Xd
 :outputId: 1ef1d7f2-a846-4794-b2cd-1d91df0bf49d
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
-# Write json input file
-execute_options = {
-    "timestep": 0.005,
-    "steps": 7000,
-    "measure_interval": 5,
-    "population_control_interval" : 5,
-    "walker_ortho_interval" : 10 ,
-    "num_walkers": 1280,
-    "seed" : 42
-}
-write_json(
+# Write json input file, which also writes the wavefunction and the Hamiltonian to HDF5
+write_jobfile(
     local_scratch_dir/ "afqmc.json",
-    fwfn0=fout_soc,
-    exec_opts=execute_options
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": wavefunction,
+            "hamiltonian": hamiltonian,
+            "timestep": 0.005,
+            "steps": 7000,
+            "measure_interval": 5,
+            "population_control_interval": 5,
+            "walker_ortho_interval": 10,
+            "num_walkers": 1280
+        }
+    }
 )
 
 # run AFQMC
@@ -396,11 +398,11 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 
 # The SOC-GHF object's hcore carries the ECP spin-orbit term, which makes the
 #   Hamiltonian noncollinear
-MolecularHamiltonian.from_pyscf(
+hamiltonian = MolecularHamiltonian.from_pyscf(
     ghf_soc,
     basis=rohf,
     chol_cut=chol_tol,
-).to_hdf5(fout_soc)
+)
 
 #####################################
 #                                   #
@@ -408,10 +410,10 @@ MolecularHamiltonian.from_pyscf(
 #                                   #
 #####################################
 
-Wavefunction.from_pyscf(
+wavefunction = Wavefunction.from_pyscf(
     ghf_soc,
     basis=rohf
-).to_hdf5(fout_soc)
+)
 ```
 
 ```{code-cell} ipython3
@@ -430,23 +432,25 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 :id: JWAr64xIi2Xe
 :outputId: 0f831053-5571-4d5f-88ca-1a7c8f7edd61
 
-### from afqmctools.inputs.from_hdf import write_json
+### from safiretools import write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
 # Write json input file
-execute_options = {
-    "timestep": 0.005,
-    "steps": 7000,
-    "measure_interval": 5,
-    "population_control_interval" : 5,
-    "walker_ortho_interval" : 10 ,
-    "num_walkers": 1120,
-    "seed" : 42
-}
-write_json(
+write_jobfile(
     local_scratch_dir/ "afqmc.json",
-    fwfn0=fout_soc,
-    exec_opts=execute_options
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": wavefunction,
+            "hamiltonian": hamiltonian,
+            "timestep": 0.005,
+            "steps": 7000,
+            "measure_interval": 5,
+            "population_control_interval": 5,
+            "walker_ortho_interval": 10,
+            "num_walkers": 1120
+        }
+    }
 )
 
 # run AFQMC

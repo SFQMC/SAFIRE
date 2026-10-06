@@ -1,25 +1,17 @@
 {
-    "afqmc" :{
-        "project": {
-      "id": "qmc",
-      "series": 0
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "wavefunction": {
+      "filename": "../ham/afqmc.h5"
     },
-    "execute": {    
-      "walker_set": {
-        "walker_type": "COLLINEAR"
-      },
-       "wavefunction": {
-         "filename": "../ham/afqmc.h5"
-       },
-       "hamiltonian": {
-         "filename": "../ham/afqmc.h5"
-       },
-       "timestep": "0.01",
-       "steps": "6000",
-       "population_control_interval": "10",
-       "measure_interval": "10",
-       "num_walkers": "1600",
-       "seed": "42"
-    }
+    "hamiltonian": {
+      "filename": "../ham/afqmc.h5"
+    },
+    "timestep": 0.01,
+    "steps": 6000,
+    "population_control_interval": 10,
+    "measure_interval": 10,
+    "num_walkers": 1600
   }
 }

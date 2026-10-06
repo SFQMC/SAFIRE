@@ -1,24 +1,16 @@
 {
-  "afqmc": {
-    "project": {
-      "id": "qmc",
-      "series": 0
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "wavefunction": {
+      "filename": "afqmc.h5"
     },
-    "execute": {
-      "walker_set": {
-        "walker_type": "COLLINEAR"
-      },
-      "wavefunction": {
-        "filename": "afqmc.h5"
-      },
-      "hamiltonian": {
-        "filename": "afqmc.h5"
-      },
-      "timestep": 0.01,
-      "steps": 10000,
-      "num_walkers": 3000,
-      "population_control_interval": 2,
-      "seed": 42
-    }
+    "hamiltonian": {
+      "filename": "afqmc.h5"
+    },
+    "timestep": 0.01,
+    "steps": 10000,
+    "num_walkers": 3000,
+    "population_control_interval": 2
   }
 }

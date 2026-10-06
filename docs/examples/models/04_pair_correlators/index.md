@@ -104,8 +104,6 @@ params = dict(
 )
 
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
-
-hamiltonian.to_hdf5(scratch_dir/"afqmc.h5")
 ```
 
 +++ {"id": "Np-zIkGusNIP"}
@@ -175,26 +173,28 @@ Since the pair correlation functions do not generally commute with the Hamiltoni
 A back-propagated estimator block with pair correlation functions would look like the following,
 
 ```json
-"estimator": {
-    "name": "back_propagation",
+"estimators": {
+  "backprop": {
     "path_restoration": true,
-    "bp_walker_ortho_interval": 10,
-    "equil": 200,
-    "pair_correlators" : {
-        "name" : "my_pair_correlators",
-        "filename" : "afqmc.h5",
-        "pair_type" : ["s","+x","-x","+y","-y","xy"]
+    "walker_ortho_interval": 10,
+    "paircorr": {
+      "pairs": {
+        "filename": "afqmc.h5",
+        "group": "PairCorrelator/orbital_map"
+      }
     }
   }
+}
 ```
 
 If we decided we only wanted s-wave pair correlations, we could use
 
 ```json
-"pair_correlators" : {
-  "name" : "my_pair_correlators",
-  "filename" : "afqmc.h5",
-  "pair_type" : ["s","+x","-x","+y","-y","xy"]
+"paircorr": {
+  "pairs": {
+    "filename": "afqmc.h5",
+    "group": "PairCorrelator/orbital_map"
+  }
 }
 ```
 
@@ -204,38 +204,31 @@ instead of the above.
 
 ```json
 {
-  "afqmc": {
-    "project": {
-      "id": "qmc",
-      "series": 0
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "wavefunction": {
+      "filename": "afqmc.h5"
     },
-    "execute": {
-      "walker_set": {
-        "walker_type": "NONCOLLINEAR"
-      },
-      "wavefunction": {
-        "filename": "afqmc.h5"
-      },
-      "hamiltonian": {
-        "filename": "afqmc.h5"
-      },
-      "timestep": 0.01,
-      "steps": 12000,
-      "num_walkers": 200,
-      "measure_interval": 10,
-      "population_control_interval": 10,
-      "walker_ortho_interval": 10,
-      "seed": 42,
-      "estimator": {
-        "name": "back_propagation",
+    "hamiltonian": {
+      "filename": "afqmc.h5"
+    },
+    "timestep": 0.01,
+    "steps": 12000,
+    "num_walkers": 200,
+    "measure_interval": 10,
+    "population_control_interval": 10,
+    "walker_ortho_interval": 10,
+    "estimators": {
+      "backprop": {
         "path_restoration": true,
-        "bp_walker_ortho_interval": 10,
+        "walker_ortho_interval": 10,
         "propagation_steps": [100],
-        "equil": 200,
-        "pair_correlators" : {
-            "name" : "my_pair_correlators",
-            "filename" : "afqmc.h5",
-            "pair_type" : ["s","+x","-x","+y","-y","xy"]
+        "paircorr": {
+          "pairs": {
+            "filename": "afqmc.h5",
+            "group": "PairCorrelator/orbital_map"
+          }
         }
       }
     }
@@ -244,7 +237,7 @@ instead of the above.
 ```
 
 ```{code-cell} ipython3
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 from afqmctools.inputs.from_autohf import autohf_to_afqmc
 import autohf
 
@@ -275,33 +268,35 @@ autohf_to_afqmc(
 )
 
 
-afqmc_params = {
-    "timestep": 0.005,
-    "steps": 10000,
-    "population_control_interval": 2,
-    "walker_ortho_interval": 2,
-    "num_walkers": 640,
-    "measure_interval": 2,
-    "estimator": {
-        "name": "back_propagation",
-        "path_restoration": True,
-        "bp_walker_ortho_interval": 10,
-        "propagation_steps": [100],
-        "equil": 200,
-        "pair_correlators" : {
-            "name" : "my_pair_correlators",
-            "filename" : "afqmc.h5",
-            "pair_type" : ["s","+x","-x","+y","-y","xy"]
+write_jobfile(
+    scratch_dir / "afqmc.json",
+    {
+        "execute": {
+            "wavefunction": {
+                "filename": "afqmc.h5"
+            },
+            "hamiltonian": hamiltonian,
+            "timestep": 0.005,
+            "steps": 10000,
+            "population_control_interval": 2,
+            "walker_ortho_interval": 2,
+            "num_walkers": 640,
+            "measure_interval": 2,
+            "estimators": {
+                "backprop": {
+                    "path_restoration": True,
+                    "walker_ortho_interval": 10,
+                    "propagation_steps": [100],
+                    "paircorr": {
+                        "pairs": {
+                            "filename": "afqmc.h5",
+                            "group": "PairCorrelator/orbital_map"
+                        }
+                    }
+                }
+            }
         }
     }
-}
-
-write_json(
-    scratch_dir / "afqmc.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    fham0=scratch_dir / "afqmc.h5",
-    exec_opts=afqmc_params,
-    series=0
 )
 ```
 
