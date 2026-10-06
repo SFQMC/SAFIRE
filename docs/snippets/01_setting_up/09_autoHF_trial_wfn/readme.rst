@@ -21,13 +21,17 @@ autohf and safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
+    import tomllib
+
     from safiretools import HamiltonianBuilder
     from autohf import AutoHFHamiltonian, lattice_hf
 
     infile = "input.toml"
+    with open(infile, "rb") as f:
+        params = tomllib.load(f)
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian_builder = HamiltonianBuilder.from_input(source=infile)
+    hamiltonian_builder = HamiltonianBuilder.from_input(source=params)
     lattice = hamiltonian_builder.get_lattice()
     hamiltonian = hamiltonian_builder.get_hamiltonian()
 
@@ -37,7 +41,7 @@ autohf and safiretools can be invoked within a Python script as
         ansatz = 'SD_ROT',
         numSteps = 100,
         output = "afqmc.h5",
-        nelec = hamiltonian.nelec,
+        nelec = params["nelec"],
         numTrials = 10,
         seed = 42
     )

@@ -429,18 +429,15 @@ A key part of the input file is the "estimator" block for the
 back-propagation algorithm.
 
 ```json
-"estimator": {
-    "name":"back_propagation",
-    "path_restoration":true,
-    "extra_path_restoration":true,
-    "ortho":10,
-    "nsteps":400,
-    "naverages" : 2,
-    "equil":400,
-    "onerdm" : {
-        "name":"onerdm"
-    }
-},
+"estimators": {
+  "backprop": {
+    "path_restoration": true,
+    "extra_path_restoration": true,
+    "walker_ortho_interval": 10,
+    "propagation_steps": [200, 400],
+    "onerdm": {}
+  }
+}
 ```
 
 The "name" parameter tells SAFIRE what kind of estimator to use (`"back_propagation"` in this case).

@@ -37,32 +37,26 @@ See the ":ref:`Input file description <input_afqmc>`" for more.
   :name: Listing 1
 
   {
-    "afqmc": {
-      "project": {
-        "id": "my_qmc_run",
-        "series": 0
+    "output_name": "my_qmc_run",
+    "execute": {
+      "walker_set": {
+        "walker_type": "collinear"
       },
-      "execute": {
-        "walker_set": {
-          "walker_type": "COLLINEAR"
-        },
-        "wavefunction": {
-          "filename": "wfn.h5"
-        },
-        "hamiltonian": {
-          "filename": "hamiltonian.h5"
-        },
-        "timestep": 0.01,
-        "steps": 10000,
-        "measure_interval": 10,
-        "population_control_interval" : 10,
-        "walker_ortho_interval" : 10 ,
-        "num_walkers": 200,
-        "estimator": {
-          "name": "mixed",
-          "onerdm" : {
-            "name" : "my_onerdm"
-          }
+      "wavefunction": {
+        "filename": "wfn.h5"
+      },
+      "hamiltonian": {
+        "filename": "hamiltonian.h5"
+      },
+      "timestep": 0.01,
+      "steps": 10000,
+      "measure_interval": 10,
+      "population_control_interval": 10,
+      "walker_ortho_interval": 10,
+      "num_walkers": 200,
+      "estimators": {
+        "mixed": {
+          "onerdm": {}
         }
       }
     }

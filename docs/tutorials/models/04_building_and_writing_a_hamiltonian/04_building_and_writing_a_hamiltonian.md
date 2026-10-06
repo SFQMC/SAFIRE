@@ -313,9 +313,9 @@ or as a Python dictionary
 
 ```python
 params = {
-    'Hamiltonian' : {
-        't' : 0.5
-    }    
+    'hamiltonian': {
+        't': 0.5
+    }
 }
 ```
 

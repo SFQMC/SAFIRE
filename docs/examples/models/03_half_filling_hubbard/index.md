@@ -41,7 +41,7 @@ from safiretools import HamiltonianBuilder, Lattice
 from safiretools import vis
 
 from safiretools import Wavefunction
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 from afqmctools.analysis.rdm import average_afqmc_rdm
 
 from afqmctools.observables.greens import greens_1body
@@ -399,33 +399,31 @@ First we'll manually create a non-interacting state as our RHF initial state for
 ```{code-cell} ipython3
 :id: 85b8e2f7-d035-4a12-bd53-a2eccf5ae40e
 
-ham_fname = f"hamU{U}_afqmc.h5"
-builder.get_hamiltonian().to_hdf5(scratch_dir / ham_fname)
+hamiltonian = builder.get_hamiltonian()
 ```
 
 ```{code-cell} ipython3
 :id: 10617b29-48f0-4a65-9cd2-40f6199035c1
 
-afqmc_params = {
-        "timestep": 0.005,
-        "steps": 10000,
-        "population_control_interval": 2,
-        "walker_ortho_interval": 2,
-        "num_walkers": 640,
-        "measure_interval": 2,
-        "estimator": {
-            "name": "energy",
-            "overwrite": True,
-            "print_components": True
-        },
-    }
-
-write_json(
+write_jobfile(
     scratch_dir / "afqmc.json",
-    fwfn0=scratch_dir / wfn_fname,
-    fham0=scratch_dir / ham_fname,
-    exec_opts=afqmc_params,
-    series=0
+    {
+        "execute": {
+            "wavefunction": {
+                "filename": wfn_fname
+            },
+            "hamiltonian": hamiltonian,
+            "timestep": 0.005,
+            "steps": 10000,
+            "population_control_interval": 2,
+            "walker_ortho_interval": 2,
+            "num_walkers": 640,
+            "measure_interval": 2,
+            "estimators": {
+                "energy": {}
+            }
+        }
+    }
 )
 ```
 

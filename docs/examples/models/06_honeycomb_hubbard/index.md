@@ -66,9 +66,6 @@ hamiltonian = HamiltonianBuilder.from_input(
     source=params,
     lattice=lattice
 ).get_hamiltonian()
-
-# save for AFQMC
-hamiltonian.to_hdf5(scratch_dir/"afqmc.h5")
 ```
 
 ```{code-cell} ipython3
@@ -99,7 +96,7 @@ effective_hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice
 ).get_hamiltonian()
 
-# convert afqmctools Hamitlonian to AutoHFHamiltonian
+# convert safiretools Hamiltonian to AutoHFHamiltonian
 autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)
 
 # set the number of electrons!!
@@ -127,23 +124,26 @@ For more information about the input file, see {doc}`../../../tutorials/models/0
 ```{code-cell} ipython3
 :id: pm-N_EFxInNK
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # write input file
-afqmc_execution_options = {
-    "timestep": 0.01,
-    "steps": 10000,
-    "measure_interval": 10,             # in units of steps
-    "population_control_interval" : 10, # in units of steps
-    "walker_ortho_interval" : 10 ,      # in units of steps
-    "num_walkers": 1600,
-    "seed" : 42
-}
-
-write_json(
+write_jobfile(
     scratch_dir/ "afqmc.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    exec_opts=afqmc_execution_options
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": {
+                "filename": "afqmc.h5"
+            },
+            "hamiltonian": hamiltonian,
+            "timestep": 0.01,
+            "steps": 10000,
+            "measure_interval": 10,             # in units of steps
+            "population_control_interval": 10,  # in units of steps
+            "walker_ortho_interval": 10,        # in units of steps
+            "num_walkers": 1600
+        }
+    }
 )
 ```
 

@@ -45,33 +45,28 @@ Currently, "afqmc" is the only supported option.
 Below is a sample input file for an AFQMC calculation in SAFIRE. 
 We will explore the details of this input file in the following sections.
 
-.. code-block::json
+.. code-block:: json
   :caption: Sample input file for AFQMC.
-  :name: Listing 1
+  :name: Listing 101
 
   {
-    "afqmc": {
-      "project": {
-        "id": "qmc",
-        "series": 0
+    "output_name": "qmc",
+    "execute": {
+      "walker_set": {
+        "walker_type": "collinear"
       },
-      "execute": {
-        "walker_set": {
-          "walker_type": "COLLINEAR"
-        },
-        "wavefunction": {
-          "filename": "afqmc.h5"
-        },
-        "hamiltonian": {
-          "filename": "afqmc.h5"
-        },
-        "timestep": 0.01,
-        "steps": 10000,
-        "measure_interval": 10,
-        "population_control_interval" : 10,
-        "walker_ortho_interval" : 10 ,
-        "num_walkers": 200
-      }
+      "wavefunction": {
+        "filename": "afqmc.h5"
+      },
+      "hamiltonian": {
+        "filename": "afqmc.h5"
+      },
+      "timestep": 0.01,
+      "steps": 10000,
+      "measure_interval": 10,
+      "population_control_interval": 10,
+      "walker_ortho_interval": 10,
+      "num_walkers": 200
     }
   }
 
@@ -81,68 +76,26 @@ We will explore the details of this input file in the following sections.
   The sample input file above is just one possible input file layout.
   See the :ref:`input file recipes <run_afqmc_ex_4>` example for other possible layouts.
 
-.. code-block::json
+.. code-block:: json
   :caption: Sample input file for AFQMC.
-  :name: Listing 1
+  :name: Listing 102
 
   {
-    "afqmc": {
-      "project": {
-         # project settings here
-      },
-      "execute": {
-         # execution settings here
-      }
+    /* top-level settings here */
+    "execute": {
+      /* execution settings here */
     }
   }
 
-.. _project_block:
-
-Project block
--------------
-
-The "project" block is optional and can be used to specify miscellaneous high-level settings.
-It contains the following options.
-
-.. code-block::json
-  :caption: Sample "project" block
-  :name: Listing 200
-
-  {
-    "afqmc": {
-      "project": {
-        "id": "afqmc",
-        "series": 0
-      },
-
-    ...
-
-  } 
-
-
-.. list-table::
-   :header-rows: 1
-   :widths: 25 20 55
-
-   * - **Parameter**
-     - **Default**
-     - **Description**
-   * - **id**
-     - afqmc
-     - A string used to identify the project. AFQMC output files are prefixed by "id" and "series" (below) ``[id].[series].*``
-   * - **series**
-     - 0
-     - An up to 3-digit integer which may be used to identify the specific calculation that is being performed. AFQMC output files are prefixed by "id" and "series" (below) ``[id].[series].*``
-
 .. _execute_block:
 
-Execute block
--------------
+Execute blocks
+--------------
 
-The "execute" block consists of methodological parameters for AFQMC
-and several sub-blocks which are each explained below.
-The sub-blocks within the "execute" block represent different mathematical objects 
-which are used in AFQMC such as the Hamiltonian and the trial wavefunction.
+The execute blocks contain methodological parameters for the AFQMC calculation. They specify which system is simulated
+using what trial wavefunction and walkers and what should be measured how as a result. An input file can contain more than a single
+execute block, which will then be run as multiple execution stages in sequence. This is useful for example, to complete the equilibration phase
+of a simulation with a larger time step.
 
 .. image:: /images/shared/02_input_file/input_file_02_execute.png
    :width: 800px
@@ -152,35 +105,35 @@ which are used in AFQMC such as the Hamiltonian and the trial wavefunction.
 *Execute block structure overview*
 
 
-.. code-block::json
+.. code-block:: json
   :caption: Sample input file for AFQMC with Back-Propagation
   :name: Listing 201
 
   {
-    "afqmc": {
-      ...
-      "execute": {
-        "walker_set": {
-          ...
+    /* ... */
+    "seed": 42,
+    "execute": {
+      "walker_set": {
+        /* ... */
+      },
+      "wavefunction": {
+        /* ... */
+      },
+      "hamiltonian": {
+        /* ... */
+      },
+      "timestep": 0.01,
+      "steps": 10000,
+      "population_control_interval": 10,
+      "measure_interval": 10,
+      "walker_ortho_interval": 10,
+      "num_walkers": 200,
+      "estimators": {
+        "mixed": {
+          /* ... */
         },
-        "wavefunction": {
-          ...
-        },
-        "hamiltonian": {
-          ...
-        },
-        "timestep": 0.01,
-        "steps": 10000,
-        "population_control_interval" : 10,
-        "measure_interval": 10,
-        "walker_ortho_interval" : 10 ,
-        "num_walkers": 200 ,
-        "seed" : 42,
-        "estimator": {
-          ...
-        },
-        "estimator": {
-          ...
+        "backprop": {
+          /* ... */
         }
       }
     }
@@ -199,31 +152,31 @@ For example, in the input file below, the walker_set is defined in the "walker_s
   :caption: Sample input file for AFQMC with Externally Defined Blocks
 
   {
-    "afqmc": {
-      "walker_sets": [
-        {
-          "name" : "my_walker_set"
-        }
-      ],
-      "execute": {
-        "walker_set" : "my_walker_set",
-        "wavefunction": {
+    "seed": 42,
+    "walker_sets": [
+      {
+        "name": "my_walker_set"
+      }
+    ],
+    "execute": {
+      "walker_set": "my_walker_set",
+      "wavefunction": {
+        /* ... */
+      },
+      "hamiltonian": {
+        /* ... */
+      },
+      "timestep": 0.01,
+      "steps": 10000,
+      "population_control_interval": 10,
+      "measure_interval": 10,
+      "walker_ortho_interval": 10,
+      "num_walkers": 200,
+      "estimators": {
+        "mixed": {
           /* ... */
         },
-        "hamiltonian": {
-          /* ... */
-        },
-        "timestep": 0.01,
-        "steps": 10000,
-        "population_control_interval" : 10,
-        "measure_interval": 10,
-        "walker_ortho_interval": 10,
-        "num_walkers": 200,
-        "seed" : 42,
-        "estimator": {
-          /* ... */
-        },
-        "estimator": {
+        "backprop": {
           /* ... */
         }
       }
@@ -331,11 +284,10 @@ Settings
     :name: Listing 211
 
     "wavefunction": {
-      "filename" : "afqmc.h5",
-      "rediag" : false ,
-      "ndets_to_read" : -1,
-      "algorithm" : 1,
-      "dense_trial" : true
+      "filename": "afqmc.h5",
+      "ndets_to_read": -1,
+      "algorithm": "woodbury",
+      "dense_trial": true
     }
 
   .. list-table::
@@ -377,12 +329,12 @@ the AFQMC code.
 See :ref:`Walker-classes` for more detail on the types of Slater determinant random walkers available.
 Below is a sample "walker_set" block with all settings explicitly set.
 
-.. code-block::json
+.. code-block:: json
   :caption: Sample execute.walker_set input block
   :name: Listing 202
-  
+
   "walker_set": {
-    "walker_type": "COLLINEAR"
+    "walker_type": "collinear"
   }
 
 
@@ -434,13 +386,13 @@ Settings
 
 These are the most common hamiltonian settings that a typical user will interact with.
 
-.. code-block::json
+.. code-block:: json
   :caption: Sample execute.hamiltonian input block with settings exposed
   :name: Listing 221
 
   "hamiltonian": {
-    "name" : "my_hamiltonian",
-    "filename" : "afqmc.h5",
+    "name": "my_hamiltonian",
+    "filename": "afqmc.h5"
   }
 
 
@@ -508,10 +460,8 @@ Settings
 
 .. code-block:: json
 
-  "projector": {
+  "propagator": {
     "name": "my_projector",
-    "nbatch": 0,
-    "nbatch_qr": 0,
     "vbias_bound": 50.0,
     "upper_cutoff_scale": 10.0,
     "lower_cutoff_scale": 1.0,
@@ -520,7 +470,7 @@ Settings
     "subtractMF": true,
     "hybrid": true,
     "printP1eigval": false,
-    "denseP1": false,
+    "denseP1": false
   }
 
 .. list-table::
@@ -577,12 +527,9 @@ Settings
 
   .. code-block:: json
 
-    "projector": {
+    "propagator": {
       "name": "my_projector",
-      "nbatch": 0,
-      "nbatch_qr": 0,
       "vbias_bound": 50.0,
-      "external_field_scale": 1.0,
       "upper_cutoff_scale": 10.0,
       "lower_cutoff_scale": 1.0,
       "weight_bound_floor": 100.0,

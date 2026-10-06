@@ -88,60 +88,36 @@ First, let's look at a sample input file for a typical calculation.
 
 In a typical calculation. you will only need to set a few parameters.
 In the input file below, we include the default value of each common parameter where possible.
-We use  ellipses ( `...`) for the "estimator" input block for visual simplicity.
+We use  ellipses (`...`) for the "estimator" input block for visual simplicity.
 This input block will be explored in more detail in later tutorials.
 
 ```json
 {
-    "afqmc": {
-      "project": {
-        "id": "qmc",
-        "series": 0
-      },
-      "execute": {
-        "walker_set" : {
-          "walker_type" : "CLOSED"
-        },
-        "wavefunction": {
-          "filename": "files/input.h5"
-        },
-        "hamiltonian": {
-          "filename": "files/input.h5"
-        },
-        "timestep": "0.01",
-        "steps": "1",
-        "population_control_interval": "10",
-        "measure_interval": "10",
-        "walker_ortho_interval": "10",
-        "num_walkers": "200",
-        "seed": "42",
-        "estimator" : {
-          "name" : "mixed",
-          /* ... */
-        }
-      }
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "wavefunction": {
+      "filename": "files/input.h5"
+    },
+    "hamiltonian": {
+      "filename": "files/input.h5"
+    },
+    "timestep": 0.01,
+    "steps": 1,
+    "population_control_interval": 10,
+    "measure_interval": 10,
+    "walker_ortho_interval": 10,
+    "num_walkers": 200,
+    "estimators": {
+      "mixed": { /* ... */ }
     }
   }
+}
 ```
 
 Note that we did not define a "hamiltonian" block at all.
 In this case, SAFIRE will look for the Hamiltonian in the same
 file as the trial wavefunction.
-We defined the "walker_set" block within the "execute" block.
-We could have defined it in the "walker_sets" list of the "afqmc" block and referenced it by "name"
-within the execute block instead.
-This is only necessary if
-you will use multiple execute blocks and want to use the same walker set in both.
-For example, you may want to continue a
-second AFQMC calculation starting from the final walkers of the
-first AFQMC calculation.
-
-<div class="alert alert-block alert-info">
-<b>Note:</b>
-  Essentially all parameters are able to default to some value except
-  for the "filename" parameter in the "wavefunction" block. This must always be
-  set to the name of the HDF5 file containing the trial wavefunction.
-</div>
 
 ### Minimal information needed to run.
 
@@ -164,11 +140,7 @@ For example, "id" and "series" are used to make the prefix of output
 files as `[id].s[series].scalar.dat` and `[id].s[series].stat.h5`.
 
 ```json
-"project" : {
-  "id" : "your_project_name",
-  "series" : 0,
-  "ncores" : 1
-}
+"output_name": "your_project_name"
 ```
 
 ### Most Common Settings
@@ -221,22 +193,18 @@ In addition to these blocks, the "execute" block is used to define several AFQMC
 Here is a sample execute block with options exposed and default values where appropriate.
 
 ```json
-"execute" : {
+"execute": {
   "wavefunction": { /* ... */ },
-  "hamiltonian" : { /* ... */ },
-  "walker_set" : { /* ... */ },
-  "estimator" : { /* ... */ },
-  "propagator" : { /* ... */ },
-  "timestep": "0.01",
-  "steps": "1",
-  "num_walkers": "200",
-  "measure_interval": "10",
-  "population_control_interval": "10",
-  "walker_ortho_interval": "10",
-  "seed": "42",
-  "checkpoint_interval": "-1",
-  "hdf_write_file": "",
-  "hdf_read_file": ""
+  "hamiltonian": { /* ... */ },
+  "walker_set": { /* ... */ },
+  "estimators": { /* ... */ },
+  "propagator": { /* ... */ },
+  "timestep": 0.01,
+  "steps": 1,
+  "num_walkers": 200,
+  "measure_interval": 10,
+  "population_control_interval": 10,
+  "walker_ortho_interval": 10
 }
 ```
 
@@ -295,10 +263,10 @@ holds both, the hamiltonian block has to name it.
 Here is a sample wavefunction block with options exposed and default values where appropriate.
 
 ```json
-"wavefunction" : {
-    "name": "my_wavefunction",
-    "filename": "afqmc.h5",
-    "ndets_to_read": "-1"
+"wavefunction": {
+  "name": "my_wavefunction",
+  "filename": "afqmc.h5",
+  "ndets_to_read": -1
 }
 ```
 
@@ -360,9 +328,9 @@ $$
 Here is a sample walker_set block with options exposed and default values where appropriate.
 
 ```json
-"walker_set" : {
-    "name": "your_walker_name",
-    "walker_type": "COLLINEAR"
+"walker_set": {
+  "name": "your_walker_name",
+  "walker_type": "collinear"
 }
 ```
 
@@ -408,9 +376,9 @@ Here is a sample hamiltonian input block with
 options exposed and default values where appropriate.
 
 ```json
-"hamiltonian" : {
-    "name": "my_hamiltonian",
-    "filename": "afqmc.h5"
+"hamiltonian": {
+  "name": "my_hamiltonian",
+  "filename": "afqmc.h5"
 }
 ```
 
@@ -471,12 +439,8 @@ Here is a sample input block for the energy estimator with
 options exposed and default values where appropriate.
 
 ```json
-"estimator" : {
-    "name" : "energy",
-    "print_components": "false",
-    "print_sign": "false",
-    "equil": "0",
-    "skip": "0"
+"estimators": {
+  "energy": {}
 }
 ```
 
@@ -519,11 +483,10 @@ For the "mixed" and "back-propagated" estimators, specific observables are selec
 For example, one can define a mixed estimator which computes the one-body reduces density matrix as
 
 ```json
-"estimator" : {
-    "name" : "mixed",
-    "onerdm" : {
-        "name" : "my_onerdm"
-    }
+"estimators": {
+  "mixed": {
+    "onerdm": {}
+  }
 }
 ```
 

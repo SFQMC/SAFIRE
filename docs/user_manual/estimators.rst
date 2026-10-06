@@ -32,11 +32,10 @@ Settings
 .. code-block:: json
   :caption: Sample input block for Mixed Estimator.  
   
-  "estimator": {
-    "name": "mixed",
-    "measure_interval" : 10,
-    "onerdm": {
-      "name": "one_rdm",
+  "estimators": {
+    "mixed": {
+      "measure_interval": 10,
+      "onerdm": {}
     }
   }
 
@@ -72,10 +71,10 @@ Settings
 .. code-block:: json
   :caption: Sample input block for Energy Estimator.  
   
-  "estimator": {
-    "name": "energy",
-    "measure_interval": 10,
-    "print_components": true
+  "estimators": {
+    "energy": {
+      "measure_interval": 10
+    }
   }
 
 
@@ -142,21 +141,20 @@ Sample Input File
 .. code-block:: json
     :caption: Sample input block for Back-Propagation (BP) Estimator.
 
-    "estimator": {
-        "name": "back_propagation",
+    "estimators": {
+      "backprop": {
         "path_restoration": true,
-        "bp_walker_ortho_interval": 10,
+        "walker_ortho_interval": 10,
         "propagation_steps": [800],
-        "onerdm": {
-            "name": "one_rdm"
-        }
+        "onerdm": {}
+      }
     }
 
 
 Configuration
 ~~~~~~~~~~~~~
 
-BP is invoked in SAFIRE by including a "back_propagation" estimator in the input file.
+BP is invoked in SAFIRE by including a "backprop" estimator in the input file.
 Observables are added to the BP block in the same way as for mixed estimators.
 
 Back-Propagation Lengths
@@ -182,14 +180,13 @@ to use, in steps. The longest one is how often a new window starts:
 .. code-block:: json
     :caption: Sample input block for Back-Propagation (BP) Estimator with multiple BP lengths.
 
-    "estimator": {
-        "name": "back_propagation",
+    "estimators": {
+      "backprop": {
         "path_restoration": true,
-        "bp_walker_ortho_interval": 10,
+        "walker_ortho_interval": 10,
         "propagation_steps": [600, 700, 800],
-        "onerdm": {
-            "name": "one_rdm"
-        }
+        "onerdm": {}
+      }
     }
 
 
@@ -217,7 +214,7 @@ Settings
    * - **path_restoration**
      - false
      - if true, use path restoration in the back-propagation algorithm.
-   * - **bp_walker_ortho_interval**
+   * - **walker_ortho_interval**
      - 10
      - Interval for walker orthogonalization during back-propagation.
    * - **propagation_steps**

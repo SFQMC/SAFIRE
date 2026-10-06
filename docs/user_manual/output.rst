@@ -15,7 +15,7 @@ The results file is named after the ``id`` parameter of the :ref:`project block 
 
 .. code-block:: text
 
-  [id].results.h5
+  [output_name].results.h5
 
 so the default ``id`` of ``qmc`` produces ``qmc.results.h5``.
 The ``series`` parameter is *not* part of the file name; it selects the index of the first

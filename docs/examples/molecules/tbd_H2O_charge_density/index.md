@@ -36,7 +36,7 @@ import numpy as np
 from pyscf import gto,scf,mcscf
 
 from safiretools import Wavefunction
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 from stats.scalar_dat import analyze_scalar_data
 

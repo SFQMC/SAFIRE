@@ -291,7 +291,6 @@ vis.plot_lattice(
 import numpy as np
 
 from safiretools import LatticeHamiltonian, NOMSDWavefunction
-from afqmctools.inputs.from_hdf import write_json
 from safiretools import vis
 
 
@@ -611,7 +610,10 @@ wfn = Wavefunction.from_free_electron(
 )
 
 # add noise to the initial guess
-wfn.dets += annealing_amplitude*np.random.randn(*wfn.dets.shape)
+wfn = NOMSDWavefunction(
+    coeffs=wfn.coeffs,
+    dets=wfn.dets + annealing_amplitude*np.random.randn(*wfn.dets.shape)
+)
 
 # 4. run autohf
 from autohf import lattice_hf, AutoHFHamiltonian
@@ -619,7 +621,7 @@ best_E_final = None
 for a in range(annealing_steps):
     print(f"Annealing step {a}")
 
-    slater_det = wfn.dets[0]
+    slater_det = wfn.dets[0].reshape(2*wfn.nmo, -1)
 
     hf_settings = dict(
         ansatz = 'SD',#'SD_Rot',
@@ -660,12 +662,13 @@ for a in range(annealing_steps):
     # orthonormalize! (orthonormalize() returns a new, orthonormal wavefunction)
     wfn = NOMSDWavefunction(
         coeffs=wfn.coeffs,
-        dets=slater_det[np.newaxis],
-        nelec=nelec,
-        spin_symm=SpinSymm.NONCOLLINEAR
+        dets=slater_det.reshape(1, 2, -1, slater_det.shape[-1])
     ).orthonormalize()
 
-    wfn.dets += annealing_amplitude*np.random.randn(*wfn.dets.shape)
+    wfn = NOMSDWavefunction(
+        coeffs=wfn.coeffs,
+        dets=wfn.dets + annealing_amplitude*np.random.randn(*wfn.dets.shape)
+    )
 
     L = lattice.L
 

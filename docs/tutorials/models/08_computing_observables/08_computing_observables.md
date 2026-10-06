@@ -135,10 +135,9 @@ lattice_params = {
 
 # define Hamiltonian parameters
 hamiltonian_params = {
-    't' : 1.0,
+    't': 1.0,
     'U': 8.0,
-    'spin_symm' : "closed",
-    'nelec' : nelec
+    'spin_symm': "closed"
 }
 
 params = {
@@ -148,8 +147,6 @@ params = {
 lattice = Lattice.from_dict(lattice_params)
 
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
-
-hamiltonian.to_hdf5(scratch_dir/"hamiltonian.h5")
 
 
 # autoHF does not support closed integrals to collinear integrals
@@ -195,16 +192,16 @@ autohf_to_afqmc(
 ### experiment : add a little noise to the UHF wfn ###
 import numpy as np
 
-from safiretools import Wavefunction
+from safiretools import NOMSDWavefunction, Wavefunction
 
 # 1. read the uhf wfn from file
 wfn = Wavefunction.from_hdf5(scratch_dir/"uhf_wfn.h5")
 
-# 2. add noise
-wfn.dets += 1.0e-4*np.random.rand(*wfn.dets.shape)
+# 2. add noise (a collinear wfn holds one stack of determinants per spin)
+dets = tuple(d + 1.0e-4*np.random.rand(*d.shape) for d in wfn.dets)
 
-# 3. save the uhf wfn with noise
-wfn.to_hdf5(scratch_dir/"uhf_wfn_noise.h5")
+# 3. the uhf wfn with noise
+wfn_noise = NOMSDWavefunction(coeffs=wfn.coeffs, dets=dets)
 ```
 
 +++ {"id": "dSJ9e4tRBxxx"}
@@ -219,10 +216,8 @@ You can add an energy estimator input block to your json input file in order to 
 For example, in the input block,
 
 ```json
-"estimator" : {
-  "name": "energy",
-  "print_components": true,
-  "overwrite": true
+"estimators": {
+  "energy": {}
 }
 ```
 
@@ -252,34 +247,25 @@ td, th {
 ```{code-cell} ipython3
 :id: wOOIRUtfCIfh
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
-# some shared parameters for the AFQMC run
-execute_options = {
-    "walker_set" : {
-        "walker_type" : "COLLINEAR"
-    },
-    "timestep": 0.01,
-    "steps": 10000,
-    "population_control_interval" : 10,
-    "measure_interval": 10,
-    "walker_ortho_interval" : 10 ,
-    "num_walkers": 3000,
-    "seed" : 42,
-    "estimator" : {
-        "name" : "energy",
-        "print_components" : True,
-        "overwrite" : True
+# write_jobfile also writes the wavefunction and the Hamiltonian to HDF5 files next to the input file
+write_jobfile(scratch_dir / "afqmc.json", {
+    "seed": 42,
+    "execute": {
+        "wavefunction": wfn_noise,
+        "hamiltonian": hamiltonian,
+        "timestep": 0.01,
+        "steps": 10000,
+        "population_control_interval": 10,
+        "measure_interval": 10,
+        "walker_ortho_interval": 10,
+        "num_walkers": 3000,
+        "estimators": {
+            "energy": {}
+        }
     }
-}
-
-write_json(
-    scratch_dir / "afqmc.json",
-    fwfn0=scratch_dir / "uhf_wfn_noise.h5",
-    fham0=scratch_dir / "hamiltonian.h5",
-    walker_type="COLLINEAR",
-    exec_opts=execute_options
-)
+})
 ```
 
 +++ {"id": "Yr39jGz1DCyk"}
@@ -420,14 +406,11 @@ block.
 For example, the estimator block below includes both the 1rdm, and the diagonal 2rdm.
 
 ```json
-"estimator" : {
-    "name" : "mixed",
-    "onerdm" : {
-        "name" : "my_onerdm"
-    },
-    "diag2rdm" : {
-        "name" : "my_diag2rdm"
-    }
+"estimators": {
+  "mixed": {
+    "onerdm": {},
+    "diag_twordm": {}
+  }
 }
 ```
 
@@ -455,41 +438,32 @@ colab:
 id: QcoDuWPjAZDx
 outputId: f3692576-0e97-4c3f-8440-8ed09dfeb738
 ---
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # some shared parameters for the AFQMC run
 execute_options = {
-    "walker_set" : {
-        "walker_type" : "COLLINEAR"
+    "wavefunction": {
+        "filename": "uhf_wfn.h5"
     },
+    "hamiltonian": hamiltonian,
     "timestep": 0.01,
     "steps": 10000,
-    "population_control_interval" : 10,
+    "population_control_interval": 10,
     "measure_interval": 10,
-    "walker_ortho_interval" : 10 ,
+    "walker_ortho_interval": 10,
     "num_walkers": 3000,
-    "seed" : 42,
-    "estimator" : {
-        "name" : "mixed",
-        "onerdm" : {
-            "name" : "my_onerdm"
-        },
-        "diag2rdm" : {
-            "name" : "my_diag2rdm"
+    "estimators": {
+        "mixed": {
+            "onerdm": {},
+            "diag_twordm": {}
         }
     }
 }
 
-print(execute_options)
-
-write_json(
-    scratch_dir / "afqmc_1.json",
-    fwfn0=scratch_dir / "uhf_wfn.h5",
-    fham0=scratch_dir / "hamiltonian.h5",
-    walker_type="COLLINEAR",
-    exec_opts=execute_options,
-    series=1
-)
+write_jobfile(scratch_dir / "afqmc_1.json", {
+    "seed": 42,
+    "execute": execute_options
+})
 ```
 
 +++ {"id": "TrVqnMi4AxuT"}
@@ -757,13 +731,12 @@ BP is invoked in SAFIRE by including a "back_propagation" estimator in the input
 
 ```json
 {
-  "estimator": {
-    "name": "back_propagation",
-    "path_restoration": true,
-    "bp_walker_ortho_interval": 5,
-    "propagation_steps": [200],
-    "onerdm": {
-      "name": "one_rdm"
+  "estimators": {
+    "backprop": {
+      "path_restoration": true,
+      "walker_ortho_interval": 5,
+      "propagation_steps": [200],
+      "onerdm": {}
     }
   }
 }
@@ -790,13 +763,12 @@ To define multiple BP lengths/averages, simply list all of the BP lengths that y
 
 ```json
 {
-  "estimator": {
-    "name": "back_propagation",
-    "path_restoration": true,
-    "bp_walker_ortho_interval": 10,
-    "propagation_steps": [600, 700, 800],
-    "onerdm": {
-      "name": "one_rdm"
+  "estimators": {
+    "backprop": {
+      "path_restoration": true,
+      "walker_ortho_interval": 10,
+      "propagation_steps": [600, 700, 800],
+      "onerdm": {}
     }
   }
 }
@@ -820,7 +792,7 @@ td, th {
 |<b>setting</b>|<b>default</b>|<b>description</b>|
 |--:|:-:|:--|
 | <b>        propagation_steps</b> |   required  |  The back propagation lengths, in steps. If several values are provided, BP is performed with each of them and observables are accumulated and saved for each distinct BP length; the longest one is how often a new BP window starts.  |
-| <b>        bp_walker_ortho_interval</b> |   1  |   interval for performing walker orthonormalization during back-propagation (i.e. for the left-hand side Walkers)  |
+| <b>        walker_ortho_interval</b> |   1  |   interval for performing walker orthonormalization during back-propagation (i.e. for the left-hand side Walkers)  |
 | <b>        path_restoration</b> |   false  |  If true, perform path restoration.  |
 | <b>        extra_path_restoration</b> |   false  |   If true, perform an extra path restoration.  |
 
@@ -838,7 +810,7 @@ id: 41e0454a
 outputId: adbb5a65-99ad-49a9-d8a9-3e9b0a166bad
 ---
 # Example: Setting up a BP calculation with multiple BP lengths
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # Create a scratch directory for BP calculations
 scratch_dir_bp = Path("data/bp")
@@ -846,9 +818,10 @@ scratch_dir_bp.mkdir(parents=True, exist_ok=True)
 
 # Set up AFQMC parameters with back-propagation
 execute_options_bp = {
-    "walker_set": {
-        "walker_type": "COLLINEAR"
+    "wavefunction": {
+        "filename": "../uhf_wfn.h5"
     },
+    "hamiltonian": hamiltonian,
     "timestep": 0.01,
     "steps": 10000,
     "measure_interval": 50,
@@ -856,31 +829,20 @@ execute_options_bp = {
     "population_control_interval": 10,
     "walker_ortho_interval": 10,
     "num_walkers": 3000,
-    "seed": 42,
-    "estimator": {
-        "name": "back_propagation",
-        "path_restoration": True,
-        "bp_walker_ortho_interval": 10,
-        "propagation_steps": [50, 80, 100],  # Multiple BP lengths, in steps
-        "onerdm": {
-            "name": "one_rdm"
+    "estimators": {
+        "backprop": {
+            "path_restoration": True,
+            "walker_ortho_interval": 10,
+            "propagation_steps": [50, 80, 100],  # Multiple BP lengths, in steps
+            "onerdm": {}
         }
     }
 }
 
-write_json(
-    scratch_dir_bp / "afqmc_bp.json",
-    fwfn0=scratch_dir / "uhf_wfn.h5",
-    fham0=scratch_dir / "hamiltonian.h5",
-    walker_type="COLLINEAR",
-    exec_opts=execute_options_bp,
-    series=2
-)
-
-print("Back-propagation input file created with the following BP parameters:")
-print(f"- BP lengths (steps): {execute_options_bp['estimator']['propagation_steps']}")
-print(f"- Population control interval: {execute_options_bp['population_control_interval']}")
-print(f"- Equilibration steps: {execute_options_bp['equilibration_steps']}")
+write_jobfile(scratch_dir_bp / "afqmc_bp.json", {
+    "seed": 42,
+    "execute": execute_options_bp
+})
 ```
 
 ```{code-cell} ipython3
@@ -926,7 +888,7 @@ hermitize = hermitize_factory(
 # Extract one-RDM data from all BP averages
 print("\nExtracting one-RDM data from back-propagation averages...")
 
-bp_lengths = execute_options_bp['estimator']['propagation_steps']
+bp_lengths = execute_options_bp['estimators']['backprop']['propagation_steps']
 bp_onerdm_data = {}
 
 for iav, bp_length in enumerate(bp_lengths):

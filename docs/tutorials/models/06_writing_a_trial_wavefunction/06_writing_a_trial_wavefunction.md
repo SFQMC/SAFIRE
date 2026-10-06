@@ -63,10 +63,7 @@ norb = nx * ny
 wfn_input_filename = scratch_dir / "wfn_rhf_test.h5"
 sd_rhf = np.arange(0,norb * sum(nelec)//2, 1).reshape([1, norb, sum(nelec)//2])
 ci = np.ones([1],dtype = np.float64)
-NOMSDWavefunction(coeffs=ci, dets=sd_rhf,
-                  spin_symm='closed',
-                  nelec=nelec,
-                  nmo=norb).to_hdf5(wfn_input_filename)
+NOMSDWavefunction(coeffs=ci, dets=sd_rhf).to_hdf5(wfn_input_filename)
 ```
 
 +++ {"id": "z_a86xENVXt7"}
@@ -76,7 +73,7 @@ If you use `!h5dump wfn_rhf_test.h5` to inspect the output file, you'll see the 
 In summary, to generate an RHF wavefunction, you need to provide an array `A[0, i, j]` = $\Psi_{ij}^↑$ with shape `(1, norb, nelec // 2)` as input. Setting `spin_symm='closed'` (spelled `'rhf'` if you prefer) ensures the wavefunction is constructed in a spin-identical manner, meaning the same orbitals are used for both spin components.
 
 ```{code-cell} ipython3
-!h5dump wfn_rhf_test.h5 | head -n 20
+!h5dump {scratch_dir}/wfn_rhf_test.h5 | head -n 20
 ```
 
 +++ {"id": "o6ZmCwG4XFM_"}
@@ -96,10 +93,8 @@ wfn_input_filename = scratch_dir / "wfn_uhf_test.h5"
 sd_uhf = (np.arange(0, norb * sum(nelec), 1)**1.2).reshape([1, norb, sum(nelec)])
 
 ci = np.ones([1], dtype = np.float64)
-NOMSDWavefunction(coeffs=ci, dets=sd_uhf,
-                  spin_symm='collinear',
-                  nelec=nelec,
-                  nmo=norb).to_hdf5(wfn_input_filename)
+NOMSDWavefunction(coeffs=ci,
+                  dets=(sd_uhf[:, :, :nelec[0]], sd_uhf[:, :, nelec[0]:])).to_hdf5(wfn_input_filename)
 ```
 
 +++ {"id": "rrcDcotkYRuv"}
@@ -111,7 +106,7 @@ In summary, to generate a UHF wavefunction, you need to provide an array `A` of 
 ```{code-cell} ipython3
 :id: kJbq-X4RYMeA
 
-!h5dump wfn_uhf_test.h5 | head -n 100
+!h5dump {scratch_dir}/wfn_uhf_test.h5 | head -n 100
 ```
 
 +++ {"id": "G5IzcYloYL8Z"}
@@ -131,13 +126,10 @@ nelec = (4, 0)
 # This is because the GHF wavefunction does not distinguish between spin-up and spin-down components.
 norb = nx * ny
 wfn_input_filename = scratch_dir / "wfn_ghf_test.h5"
-sd_ghf = (np.arange(0, 2 * norb * sum(nelec), 1)**1.2).reshape([1, 2 * norb, sum(nelec)])
+sd_ghf = (np.arange(0, 2 * norb * sum(nelec), 1)**1.2).reshape([1, 2, norb, sum(nelec)])
 
 ci = np.ones([1], dtype = np.float64)
-NOMSDWavefunction(coeffs=ci, dets=sd_ghf,
-                  spin_symm='noncollinear',
-                  nelec=nelec,
-                  nmo=norb).to_hdf5(wfn_input_filename)
+NOMSDWavefunction(coeffs=ci, dets=sd_ghf).to_hdf5(wfn_input_filename)
 ```
 
 +++ {"id": "0JhIJbFyadKb"}
@@ -148,7 +140,7 @@ In summary, to generate a GHF wavefunction, you need to provide an array `A[0, i
 ```{code-cell} ipython3
 :id: QtIpS_0XaSDL
 
-!h5dump wfn_ghf_test.h5 | head -n 100
+!h5dump {scratch_dir}/wfn_ghf_test.h5 | head -n 100
 ```
 
 +++ {"id": "-SQvyVx0gZm_"}
@@ -165,12 +157,9 @@ ny = 2
 nelec = (4, 0) # (3, 1) or (2, 2) or (1, 3) or (0,4) are equivalent as long as sum(nelec) is the same
 norb = nx * ny
 wfn_input_filename = scratch_dir / "wfn_multi_ghf_test.h5"
-sd_multi = (np.arange(0, 3 * 2 * norb * sum(nelec), 1)**1.4).reshape([3, 2 * norb, sum(nelec)])
+sd_multi = (np.arange(0, 3 * 2 * norb * sum(nelec), 1)**1.4).reshape([3, 2, norb, sum(nelec)])
 ci = np.array([1, -1, 4], dtype = np.float64)
-NOMSDWavefunction(coeffs=ci, dets=sd_multi,
-                  spin_symm='noncollinear',
-                  nelec=nelec,
-                  nmo=norb).to_hdf5(wfn_input_filename)
+NOMSDWavefunction(coeffs=ci, dets=sd_multi).to_hdf5(wfn_input_filename)
 ```
 
 +++ {"id": "gzWy-y5CjqG-"}
@@ -180,7 +169,7 @@ with `!h5ls -r -d wfn_multi_ghf_test.h5/Wavefunction/NOMSD ` you will see an out
 ```{code-cell} ipython3
 :id: AxSQoTIbjwSz
 
-!h5ls -r -d wfn_multi_ghf_test.h5/Wavefunction/NOMSD
+!h5ls -r -d {scratch_dir}/wfn_multi_ghf_test.h5/Wavefunction/NOMSD
 ```
 
 +++ {"id": "L4VNw2qMmwyu"}
@@ -191,11 +180,28 @@ The trial file does not store an initial walker. **By default**, the walkers sta
 ```json
 {
   "wavefunctions": [
-    {"name": "trial", "filename": "wfn.h5"},
-    {"name": "initial", "filename": "wfn_initial.h5"}
+    {
+      "name": "trial",
+      "filename": "wfn.h5"
+    },
+    {
+      "name": "initial",
+      "filename": "wfn_initial.h5"
+    }
   ],
   "execute": [
-    {"wavefunction": "trial", "walker_set": {"from": {"wavefunction": "initial"}}, "num_walkers": 200}
+    {
+      "wavefunction": "trial",
+      "hamiltonian": {
+        "filename": "hamil.h5"
+      },
+      "walker_set": {
+        "from": {
+          "wavefunction": "initial"
+        }
+      },
+      "num_walkers": 200
+    }
   ]
 }
 ```
@@ -235,7 +241,6 @@ hamiltonian = HamiltonianBuilder.from_input(source=dict(
     hamiltonian=dict(
         t=hopping,
         U=Uhubb,
-        nelec=nelec,
     )),
     lattice=lattice
 ).get_hamiltonian()

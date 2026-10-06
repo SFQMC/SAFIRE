@@ -126,8 +126,8 @@ You can add an energy estimator input block to your json input file in order to 
 For example, in the input block,
 
 ```json
-"estimators" : {
-  "energy": {},
+"estimators": {
+  "energy": {}
 }
 ```
 
@@ -169,33 +169,30 @@ td, th {
 ```{code-cell} ipython3
 :id: wOOIRUtfCIfh
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
-# some shared parameters for the AFQMC run
-execute_options = {
-    "walker_set" : {
-        "walker_type" : "COLLINEAR"
-    },
-    "timestep": 0.01,
-    "steps": 7000,
-    "population_control_interval" : 10,
-    "measure_interval": 10,
-    "walker_ortho_interval" : 10 ,
-    "num_walkers": 3000,
-    "seed" : 42,
-    "estimator" : {
-        "name" : "energy",
-        "print_components" : True,
-        "overwrite" : True
-    }
-}
-
-write_json(
+write_jobfile(
     scratch_dir / "afqmc.json",
-    fwfn0=scratch_dir / "wfn.h5",
-    fham0=scratch_dir / "hamil.h5",
-    walker_type="COLLINEAR",
-    exec_opts=execute_options
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": {
+                "filename": "wfn.h5"
+            },
+            "hamiltonian": {
+                "filename": "hamil.h5"
+            },
+            "timestep": 0.01,
+            "steps": 7000,
+            "population_control_interval": 10,
+            "measure_interval": 10,
+            "walker_ortho_interval": 10,
+            "num_walkers": 3000,
+            "estimators": {
+                "energy": {}
+            }
+        }
+    }
 )
 ```
 
@@ -329,14 +326,11 @@ block.
 For example, the estimator block below includes both the 1rdm, and the diagonal 2rdm.
 
 ```json
-"estimator" : {
-    "name" : "mixed",
-    "onerdm" : {
-        "name" : "my_onerdm"
-    },
-    "diag2rdm" : {
-        "name" : "my_diag2rdm"
-    }
+"estimators": {
+  "mixed": {
+    "onerdm": {},
+    "diag_twordm": {}
+  }
 }
 ```
 
@@ -364,40 +358,33 @@ colab:
 id: QcoDuWPjAZDx
 outputId: f3692576-0e97-4c3f-8440-8ed09dfeb738
 ---
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
-# some shared parameters for the AFQMC run
-execute_options = {
-    "walker_set" : {
-        "walker_type" : "COLLINEAR"
-    },
-    "timestep": 0.01,
-    "steps": 7000,
-    "population_control_interval" : 10,
-    "measure_interval": 10,
-    "walker_ortho_interval" : 10 ,
-    "num_walkers": 800,
-    "seed" : 42,
-    "estimator" : {
-        "name" : "mixed",
-        "onerdm" : {
-            "name" : "my_onerdm"
-        },
-        "twordm" : {
-            "name" : "my_twordm"
+write_jobfile(
+    scratch_dir / "afqmc_1.json",
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": {
+                "filename": "wfn.h5"
+            },
+            "hamiltonian": {
+                "filename": "hamil.h5"
+            },
+            "timestep": 0.01,
+            "steps": 7000,
+            "population_control_interval": 10,
+            "measure_interval": 10,
+            "walker_ortho_interval": 10,
+            "num_walkers": 800,
+            "estimators": {
+                "mixed": {
+                    "onerdm": {},
+                    "twordm": {}
+                }
+            }
         }
     }
-}
-
-print(execute_options)
-
-write_json(
-    scratch_dir / "afqmc_1.json",
-    fwfn0=scratch_dir / "wfn.h5",
-    fham0=scratch_dir / "hamil.h5",
-    walker_type="COLLINEAR",
-    exec_opts=execute_options,
-    series=1
 )
 ```
 
@@ -679,11 +666,11 @@ BP is invoked in SAFIRE by including a "back_propagation" estimator in the input
 ```json
 {
   "estimators": {
-    "backpropagation": {
-        "path_restoration": true,
-        "bp_walker_ortho_interval": 5,
-        "propagation_steps": [200],
-        "onerdm": {}
+    "backprop": {
+      "path_restoration": true,
+      "walker_ortho_interval": 5,
+      "propagation_steps": [200],
+      "onerdm": {}
     }
   }
 }
@@ -706,13 +693,12 @@ To define multiple BP lengths/averages, simply list all of the BP lengths that y
 
 ```json
 {
-  "estimator": {
-    "name": "back_propagation",
-    "path_restoration": true,
-    "bp_walker_ortho_interval": 10,
-    "propagation_steps": [600, 700, 800],
-    "onerdm": {
-      "name": "one_rdm"
+  "estimators": {
+    "backprop": {
+      "path_restoration": true,
+      "walker_ortho_interval": 10,
+      "propagation_steps": [600, 700, 800],
+      "onerdm": {}
     }
   }
 }
@@ -754,43 +740,37 @@ id: 41e0454a
 outputId: adbb5a65-99ad-49a9-d8a9-3e9b0a166bad
 ---
 # Example: Setting up a BP calculation with multiple BP lengths
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # Set up AFQMC parameters with back-propagation
-execute_options_bp = {
-    "walker_set": {
-        "walker_type": "COLLINEAR"
-    },
-    "timestep": 0.01,
-    "steps": 10000,
-    "measure_interval": 10,
-    "population_control_interval": 10,
-    "walker_ortho_interval": 10,
-    "num_walkers": 1600,
-    "seed": 42,
-    "estimator": {
-        "name": "back_propagation",
-        "path_restoration": True,
-        "bp_walker_ortho_interval": 10,
-        "propagation_steps": [40, 50, 60],  # Multiple BP lengths, in steps
-        "onerdm": {
-            "name": "one_rdm"
+write_jobfile(
+    scratch_dir / "afqmc_bp.json",
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": {
+                "filename": "wfn.h5"
+            },
+            "hamiltonian": {
+                "filename": "hamil.h5"
+            },
+            "timestep": 0.01,
+            "steps": 10000,
+            "measure_interval": 10,
+            "population_control_interval": 10,
+            "walker_ortho_interval": 10,
+            "num_walkers": 1600,
+            "estimators": {
+                "backprop": {
+                    "path_restoration": True,
+                    "walker_ortho_interval": 10,
+                    "propagation_steps": [40, 50, 60],  # Multiple BP lengths, in steps
+                    "onerdm": {}
+                }
+            }
         }
     }
-}
-
-write_json(
-    scratch_dir / "afqmc_bp.json",
-    fwfn0=scratch_dir / "wfn.h5",
-    fham0=scratch_dir / "hamil.h5",
-    walker_type="COLLINEAR",
-    exec_opts=execute_options_bp,
-    series=2
 )
-
-print("Back-propagation input file created with the following BP parameters:")
-print(f"- BP lengths (steps): {execute_options_bp['estimator']['propagation_steps']}")
-print(f"- Population control interval: {execute_options_bp['population_control_interval']}")
 ```
 
 ```{code-cell} ipython3

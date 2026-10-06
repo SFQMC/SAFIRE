@@ -167,13 +167,26 @@ parameter of the walker set names a different one, either by name or as an inlin
 
     {
       "wavefunctions": [
-        {"name": "uhf", "filename": "wfn_uhf.h5"},
-        {"name": "rohf", "filename": "wfn_rohf.h5"}
+        {
+          "name": "uhf",
+          "filename": "wfn_uhf.h5"
+        },
+        {
+          "name": "rohf",
+          "filename": "wfn_rohf.h5"
+        }
       ],
       "execute": [
         {
           "wavefunction": "uhf",
-          "walker_set": {"from": {"wavefunction": "rohf"}},
+          "hamiltonian": {
+            "filename": "ham.h5"
+          },
+          "walker_set": {
+            "from": {
+              "wavefunction": "rohf"
+            }
+          },
           "num_walkers": 200
         }
       ]

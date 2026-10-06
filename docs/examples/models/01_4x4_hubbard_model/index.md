@@ -130,9 +130,6 @@ hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice,
     source=hamiltonian_params
 ).get_hamiltonian()
-
-# AND save it!
-hamiltonian.to_hdf5(fe_scratch_dir/"afqmc.h5")
 ```
 
 +++ {"id": "MqK7sb3Z5xcn"}
@@ -215,12 +212,8 @@ fe_hamiltonian = HamiltonianBuilder.from_input(
 
 wfn = Wavefunction.from_free_electron(
     source=fe_hamiltonian,
-    nelec=nelec,
-    filling_strategy="balanced"
+    nelec=nelec
 )
-
-# and write the wavefunction for use in SAFIRE
-wfn.to_hdf5(fe_scratch_dir/"free_electron.h5")
 ```
 
 +++ {"id": "-xW_O9f35xco"}
@@ -244,6 +237,7 @@ colab:
   height: 701
 outputId: a868b2dd-398f-40d5-90b7-9a8036f6659b
 ---
+import numpy as np
 from autohf import AutoHFHamiltonian, lattice_hf
 
 autohf_results = lattice_hf(
@@ -255,7 +249,7 @@ autohf_results = lattice_hf(
         nelec=nelec,
         batch_size=1
     ),
-    initial_guess=wfn.dets[0],
+    initial_guess=np.hstack(wfn.determinant(0)),
     suppress_logo=True
 )
 
@@ -327,29 +321,26 @@ We have included reasonable AFQMC run parameters for this calculation below.
 ```{code-cell} ipython3
 :id: FCd6cFpd5xco
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
-# make an input file
-afqmc_params = {
-    "timestep": 0.01,
-    "steps": 12000,
-    "num_walkers": 1600,
-    "population_control_interval": 5,
-    "walker_ortho_interval": 5,
-    "measure_interval": 5,
-    "seed" : 42,                          # just for reproducibility
-    "propagator": {
-      "use_cp_constraint": True,
-      "project_force_bias" : True
+# make an input file, which also writes the wavefunction and the Hamiltonian to HDF5
+write_jobfile(fe_scratch_dir/"afqmc.json", {
+    "seed": 42,                          # just for reproducibility
+    "execute": {
+        "wavefunction": wfn,
+        "hamiltonian": hamiltonian,
+        "timestep": 0.01,
+        "steps": 12000,
+        "num_walkers": 1600,
+        "population_control_interval": 5,
+        "walker_ortho_interval": 5,
+        "measure_interval": 5,
+        "propagator": {
+            "use_cp_constraint": True,
+            "project_force_bias": True
+        }
     }
-}
-
-write_json(
-    fe_scratch_dir/"afqmc.json",
-    fwfn0=fe_scratch_dir/"free_electron.h5",
-    fham0=fe_scratch_dir/"afqmc.h5",
-    exec_opts=afqmc_params
-)
+})
 ```
 
 ```{code-cell} ipython3
@@ -508,29 +499,28 @@ vis.plot_lattice(
 ```{code-cell} ipython3
 :id: _9GEgLIt5xcp
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # make an input file
-afqmc_params = {
-    "timestep": 0.01,
-    "steps": 12000,
-    "num_walkers": 1600,
-    "population_control_interval": 5,
-    "walker_ortho_interval": 5,
-    "measure_interval": 5,
-    "seed" : 42,                          # just for reproducibility
-    "propagator": {
-      "use_cp_constraint": True,
-      "project_force_bias" : True
+write_jobfile(fe_scratch_dir/"afqmc.json", {
+    "seed": 42,                          # just for reproducibility
+    "execute": {
+        "wavefunction": {
+            "filename": "uhf_wfn.h5"
+        },
+        "hamiltonian": hamiltonian,
+        "timestep": 0.01,
+        "steps": 12000,
+        "num_walkers": 1600,
+        "population_control_interval": 5,
+        "walker_ortho_interval": 5,
+        "measure_interval": 5,
+        "propagator": {
+            "use_cp_constraint": True,
+            "project_force_bias": True
+        }
     }
-}
-
-write_json(
-    fe_scratch_dir/"afqmc.json",
-    fwfn0=fe_scratch_dir/"uhf_wfn.h5",
-    fham0=fe_scratch_dir/"afqmc.h5",
-    exec_opts=afqmc_params
-)
+})
 ```
 
 ```{code-cell} ipython3
@@ -602,29 +592,28 @@ amount of statistics.
 ```{code-cell} ipython3
 :id: 8IfICCwnVU8m
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # make an input file
-afqmc_params = {
-    "timestep": 0.005,
-    "steps": 24000,
-    "num_walkers": 1600,
-    "population_control_interval": 10,
-    "walker_ortho_interval": 10,
-    "measure_interval": 10,
-    "seed" : 42,                          # just for reproducibility
-    "propagator": {
-      "use_cp_constraint": True,
-      "project_force_bias" : True
+write_jobfile(fe_scratch_dir/"afqmc.json", {
+    "seed": 42,                          # just for reproducibility
+    "execute": {
+        "wavefunction": {
+            "filename": "uhf_wfn.h5"
+        },
+        "hamiltonian": hamiltonian,
+        "timestep": 0.005,
+        "steps": 24000,
+        "num_walkers": 1600,
+        "population_control_interval": 10,
+        "walker_ortho_interval": 10,
+        "measure_interval": 10,
+        "propagator": {
+            "use_cp_constraint": True,
+            "project_force_bias": True
+        }
     }
-}
-
-write_json(
-    fe_scratch_dir/"afqmc.json",
-    fwfn0=fe_scratch_dir/"uhf_wfn.h5",
-    fham0=fe_scratch_dir/"afqmc.h5",
-    exec_opts=afqmc_params
-)
+})
 ```
 
 ```{code-cell} ipython3
@@ -686,28 +675,24 @@ Here is a sample input file where an ellipsis has been used to hide the rest of 
 
 ```json
 {
-  "afqmc": {
-    
+  /* ... */
+
+  "execute": {
+
     /* ... */
-      
-    "execute": {
 
-      /* ... */
+    "population_control_interval": 10,
+    "equilibration_steps": 500,
 
-      "population_control_interval" : 10,
-      "equilibration_steps": 500,
+    /* ... */
 
-      /* ... */
-
-      "estimator": {
-        "name": "back_propagation",
+    "estimators": {
+      "backprop": {
         "path_restoration": true,
         "extra_path_restoration": true,
-        "bp_walker_ortho_interval": 5,
-        "propagation_steps": [100,150,200],
-        "onerdm": {
-            "name": "one_rdm"
-        }
+        "walker_ortho_interval": 5,
+        "propagation_steps": [100, 150, 200],
+        "onerdm": {}
       }
     }
   }
@@ -735,43 +720,38 @@ colab:
 id: CxlJYdWoREbB
 outputId: 819142c2-1650-4107-9ab3-f2bd8927f689
 ---
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # make an input file
-afqmc_params = {
-    "timestep": 0.005,
-    "steps": 24000,
-    "num_walkers": 1600,
-    "population_control_interval": 10,
-    "walker_ortho_interval": 10,
-    "measure_interval": 10,
-    "equilibration_steps": 4200,
-    "seed" : 42,                          # just for reproducibility
-    "propagator": {
-      "use_cp_constraint": True,
-      "project_force_bias" : True
-    },
-    "estimator": {
-          "name": "back_propagation",
-          "path_restoration": True,
-          "extra_path_restoration": True,
-          "bp_walker_ortho_interval": 10,
-          "propagation_steps": [200,400,600], # 🚧 Under construction 🚧 : Kyle is working on a good set of values here.
-          "onerdm": {
-              "name": "one_rdm"
+write_jobfile(fe_scratch_dir/"afqmc_3.json", {
+    "seed": 42,                          # just for reproducibility
+    "execute": {
+        "wavefunction": {
+            "filename": "uhf_wfn.h5"
+        },
+        "hamiltonian": hamiltonian,
+        "timestep": 0.005,
+        "steps": 24000,
+        "num_walkers": 1600,
+        "population_control_interval": 10,
+        "walker_ortho_interval": 10,
+        "measure_interval": 10,
+        "equilibration_steps": 4200,
+        "propagator": {
+            "use_cp_constraint": True,
+            "project_force_bias": True
+        },
+        "estimators": {
+            "backprop": {
+                "path_restoration": True,
+                "extra_path_restoration": True,
+                "walker_ortho_interval": 10,
+                "propagation_steps": [200, 400, 600], # 🚧 Under construction 🚧 : Kyle is working on a good set of values here.
+                "onerdm": {}
+            }
         }
     }
-}
-
-print(afqmc_params)
-
-write_json(
-    fe_scratch_dir/"afqmc_3.json",
-    fwfn0=fe_scratch_dir/"uhf_wfn.h5",
-    fham0=fe_scratch_dir/"afqmc.h5",
-    exec_opts=afqmc_params,
-    series=3
-)
+})
 ```
 
 ```{code-cell} ipython3

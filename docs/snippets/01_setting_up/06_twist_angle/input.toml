@@ -1,6 +1,7 @@
+nelec = [24,24]
+
 [hamiltonian]
 U = 4
-nelec = [24,24]
 
 [lattice]
 L1 = 4

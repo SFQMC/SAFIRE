@@ -84,9 +84,6 @@ hamiltonian = HamiltonianBuilder.from_input(
     source=params,
     lattice=lattice
 ).get_hamiltonian()
-
-# save for AFQMC
-hamiltonian.to_hdf5(scratch_dir/"afqmc.h5")
 ```
 
 ```{code-cell} ipython3
@@ -113,7 +110,7 @@ effective_hamiltonian = HamiltonianBuilder.from_input(
     lattice=lattice
 ).get_hamiltonian()
 
-# convert afqmctools Hamitlonian to AutoHFHamiltonian
+# convert safiretools Hamiltonian to AutoHFHamiltonian
 autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)
 ```
 
@@ -189,55 +186,50 @@ orbitals_down = results[0]['orbitals'][1]
 
 
 # The columns of the Slater matrices are the HF orbitals
-# Each Slater matrix has shape (Nsites x Nelec) where Nelec is N_up + N_down.
-# For UHF-like Slater matrices
-#     the first Nup columns are the spin-up orbitals,
-#     the last Ndown columns are the spin-down orbitals
+# A UHF-like Slater determinant is a pair of Slater matrices
+#     the spin-up orbitals, with shape (Nsites x Nup),
+#     the spin-down orbitals, with shape (Nsites x Ndown)
 #
 phi_up = orbitals_up[:,:nelec[0]]
 phi_down = orbitals_down[:,:nelec[1]]
 
 
-# numpy.hstack is a convenient way to concatenate the Slater matrices
-phi_0 = np.hstack((phi_up, phi_down)) # |phi_0> = |phi_up> X |phi_down>
+phi_0 = (phi_up, phi_down) # |phi_0> = |phi_up> X |phi_down>
 
 # now make the spin-reversed Slater determinant.
-phi_1 = np.hstack((phi_down, phi_up)) # |phi_0> = |phi_down> X |phi_up>
+phi_1 = (phi_down, phi_up) # |phi_1> = |phi_down> X |phi_up>
 
 
 C_0 = 1.0 / np.sqrt(2)
 
+# numpy.stack is a convenient way to stack the determinants of each spin channel
 wfn = NOMSDWavefunction(
     coeffs=np.array([C_0,C_0]),
-    dets=np.array([phi_0,phi_1]),
-    nelec=nelec,
-    spin_symm="uhf",
-    nmo=lattice.N_sites
+    dets=(np.stack([phi_0[0], phi_1[0]]), np.stack([phi_0[1], phi_1[1]]))
 )
-
-wfn.to_hdf5(scratch_dir/ "afqmc.h5")
 ```
 
 ```{code-cell} ipython3
 :id: OgN60HHqFJlO
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
-# write input file
-afqmc_execution_options = {
-    "timestep": 0.01,
-    "steps": 10000,
-    "measure_interval": 10,             # in units of steps
-    "population_control_interval" : 10, # in units of steps
-    "walker_ortho_interval" : 10 ,      # in units of steps
-    "num_walkers": 1600,
-    "seed" : 42
-}
-
-write_json(
+# write input file, which also writes the wavefunction and the Hamiltonian to HDF5
+write_jobfile(
     scratch_dir/ "afqmc.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    exec_opts=afqmc_execution_options
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": wfn,
+            "hamiltonian": hamiltonian,
+            "timestep": 0.01,
+            "steps": 10000,
+            "measure_interval": 10,             # in units of steps
+            "population_control_interval": 10,  # in units of steps
+            "walker_ortho_interval": 10,        # in units of steps
+            "num_walkers": 1600
+        }
+    }
 )
 ```
 

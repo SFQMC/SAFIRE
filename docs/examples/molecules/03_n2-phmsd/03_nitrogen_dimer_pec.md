@@ -37,7 +37,7 @@ from pyscf import gto,scf,mcscf
 
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 from stats.scalar_dat import analyze_scalar_data
 
@@ -109,27 +109,19 @@ SAFIRE provides a keyword in the "wavefunction" json input block to limit the nu
 
 ```json
 {
-  "afqmc": {
-    "project": {
-      "id": "qmc",
-      "series": 0
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "wavefunction": {
+      "filename": "your_wfn_file.h5",
+      "ndets_to_read": 500
     },
-    "execute": {
-      "walker_set": {
-        "walker_type": "COLLINEAR"
-      },
-      "wavefunction": {
-        "filename": "your_wfn_file.h5",
-        "ndets_to_read": 500
-      },
-      "hamiltonian": {
-        "filename": "your_hamiltonian_file.h5"
-      },
-      "timestep": 0.01,
-      "steps": 10000,
-      "num_walkers": 1600,
-      "seed": 42
-    }
+    "hamiltonian": {
+      "filename": "your_hamiltonian_file.h5"
+    },
+    "timestep": 0.01,
+    "steps": 10000,
+    "num_walkers": 1600
   }
 }
 ```
@@ -173,12 +165,12 @@ rhf = scf.RHF(mol)
 rhf.run()
 mc = mcscf.CASSCF(rhf, 12, 6).run() # (12o,6e)
 
-# write the CAS wavefunction to a file
-Wavefunction.from_pyscf_cas(
+# the CAS wavefunction
+wavefunction = Wavefunction.from_pyscf_cas(
     mc,
     tol=1.0e-3, # use a small value to save *many* determinants.
     max_det=2000
-).to_hdf5(scratch_dir / 'afqmc.h5')
+)
 ```
 
 +++ {"id": "iIgGy3gjiv0l"}
@@ -208,13 +200,13 @@ file that already holds the trial wavefunction.
 </div>
 
 ```{code-cell} ipython3
-# Save the Hamiltonian, in the basis of the CASSCF orbitals
-MolecularHamiltonian.from_pyscf(
+# the Hamiltonian, in the basis of the CASSCF orbitals
+hamiltonian = MolecularHamiltonian.from_pyscf(
     rhf,
     basis = mc,
     chol_cut = 1e-5,
     verbose=True
-).to_hdf5(scratch_dir / 'afqmc.h5')
+)
 ```
 
 +++ {"id": "I9k2Vt5g2ZiT"}
@@ -238,41 +230,51 @@ Again, we will use the "ndets_to_read" keyword in the "wavefunction" input block
 In the code block below, you will notice that we are setting,
 
 ```python
-execute_options["wavefunction"] = { "ndets_to_read" : ndet }
+"wavefunction": {
+    "filename": wavefunction,
+    "ndets_to_read": ndet
+}
 ```
 
 in the "execute_options" dictionary.
 `write_json()` will ***append*** settings within an existing input block when they are passed in this way.
 For example,
 
-```
-write_json("afqmc.json","wfn.h5",exec_opts={ "ndets_to_read" : 500 })
+```python
+write_jobfile(
+    "afqmc.json",
+    {
+        "execute": {
+            "wavefunction": {
+                "filename": "afqmc.h5",
+                "ndets_to_read": 500
+            },
+            "hamiltonian": {
+                "filename": "afqmc.h5"
+            },
+            "timestep": 0.01,
+            "steps": 10000,
+            "num_walkers": 200
+        }
+    }
+)
 ```
 
 will generate a "wavefunction" block that points to the wavefunction file, with the following contents:
 
 ```json
 {
-  "afqmc": {
-    "project": {
-      "id": "qmc",
-      "series": 0
+  "execute": {
+    "wavefunction": {
+      "filename": "afqmc.h5",
+      "ndets_to_read": 500
     },
-    "execute": {
-      "walker_set": {
-        "walker_type": "COLLINEAR"
-      },
-      "wavefunction": {
-        "filename": "afqmc.h5",
-        "ndets_to_read": 500
-      },
-      "hamiltonian": {
-        "filename": "afqmc.h5"
-      },
-      "timestep": 0.01,
-      "steps": 10000,
-      "num_walkers": 200
-    }
+    "hamiltonian": {
+      "filename": "afqmc.h5"
+    },
+    "timestep": 0.01,
+    "steps": 10000,
+    "num_walkers": 200
   }
 }
 ```
@@ -281,18 +283,6 @@ will generate a "wavefunction" block that points to the wavefunction file, with 
 Note: This might take some time. You might want to run this on a computing cluster instead.
 
 ```{code-cell} ipython3
-# some shared parameters for the AFQMC run
-execute_options = {
-    "timestep": 0.01,
-    "steps": 10000,
-    "measure_interval": 10,
-    "population_control_interval" : 10,
-    "walker_ortho_interval" : 10 ,
-    "num_walkers": 320,
-    "seed" : 42
-}
-
-
 ndets = [50,250,500,750] # list of Ndet values to run
 energies = []
 stochastic_uncertainties = []
@@ -303,12 +293,24 @@ for ndet in ndets:
     scratch_dir_local = scratch_dir / f"Ndet_{ndet}"
     scratch_dir_local.mkdir(parents=True, exist_ok=True)
 
-    execute_options["wavefunction"] = { "ndets_to_read" : ndet }
-
-    write_json(
+    write_jobfile(
         scratch_dir_local / "afqmc.json",
-        fwfn0=scratch_dir / "afqmc.h5",
-        exec_opts=execute_options
+        {
+            "seed": 42,
+            "execute": {
+                "wavefunction": {
+                    "filename": wavefunction,
+                    "ndets_to_read": ndet
+                },
+                "hamiltonian": hamiltonian,
+                "timestep": 0.01,
+                "steps": 10000,
+                "measure_interval": 10,
+                "population_control_interval": 10,
+                "walker_ortho_interval": 10,
+                "num_walkers": 320
+            }
+        }
     )
     # run AFQMC
     run_afqmc(
@@ -404,43 +406,42 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
 
     mc = mcscf.CASSCF(rhf, 12, 6).run() # (12o,6e)
 
-    # write the CAS wavefunction to a file
-    fout = scratch_dir / 'afqmc.h5'
-
-    Wavefunction.from_pyscf_cas(
+    # the CAS wavefunction
+    wavefunction = Wavefunction.from_pyscf_cas(
         mc,
         tol= 1.0e-4,
         max_det=10000
-    ).to_hdf5(fout)
+    )
 
-    # 2. write the Hamiltonian, into the same file as the wavefunction,
-    #    in the CASSCF orbital basis the determinants are expressed in
+    # 2. the Hamiltonian, in the CASSCF orbital basis the determinants are expressed in
     chol_tol = 1e-5
 
-    # write Hamiltonian
-    MolecularHamiltonian.from_pyscf(
+    hamiltonian = MolecularHamiltonian.from_pyscf(
         rhf,
         basis=mc,
         chol_cut=chol_tol,
         verbose=True
-    ).to_hdf5(fout)
+    )
 
-    # write json file
-    afqmc_execution_options = {
-        "timestep": 0.01,
-        "steps": 3200,
-        "measure_interval": 10,
-        "population_control_interval" : 10,
-        "walker_ortho_interval" : 10 ,
-        "num_walkers": 320,
-        "seed" : 42,
-        "wavefunction" : { "ndets_to_read" : ndets_to_read }
-    }
-
-    write_json(
+    # write json file, which also writes the wavefunction and the Hamiltonian to HDF5
+    write_jobfile(
         scratch_dir/ "afqmc.json",
-        fwfn0=scratch_dir / "afqmc.h5",
-        exec_opts=afqmc_execution_options
+        {
+            "seed": 42,
+            "execute": {
+                "timestep": 0.01,
+                "steps": 3200,
+                "measure_interval": 10,
+                "population_control_interval": 10,
+                "walker_ortho_interval": 10,
+                "num_walkers": 320,
+                "wavefunction": {
+                    "filename": wavefunction,
+                    "ndets_to_read": ndets_to_read
+                },
+                "hamiltonian": hamiltonian
+            }
+        }
     )
 
 
