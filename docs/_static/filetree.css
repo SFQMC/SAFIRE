@@ -1,0 +1,95 @@
+/* Nested bullet list rendered as a directory tree: put `.. rst-class:: filetree` before the list,
+   or `.. rst-class:: filetree filetree-wide` for long names.
+
+   Each entry is ``name`` followed by an optional annotation, which is any inline markup and
+   starts in a column aligned across the tree.
+
+   The file name goes above the tree, as a paragraph after `.. rst-class:: filetree-caption`. */
+p.filetree-caption {
+    margin: 0 0 4px 0;
+    font-weight: 600;
+}
+p.filetree-caption code.literal {
+    color: var(--pst-color-text-base, #404040);
+    background: none;
+    border: none;
+    padding: 0;
+}
+ul.filetree {
+    --filetree-line: var(--pst-color-border, #b0b4b8);
+    --filetree-name: var(--pst-color-text-base, #404040);
+    --filetree-note: var(--pst-color-text-muted, #6a737d);
+    --filetree-row: 24px;
+    --filetree-ul-indent: 0.6rem;
+    --filetree-li-indent: 1.5rem;
+    --filetree-tick: 1.1rem;
+    /* where the annotation column starts, measured from the tree's left edge */
+    --filetree-name-col: 18rem;
+    --filetree-indent: 0rem;
+    margin: 0 0 24px 0;
+    padding: 0;
+    color: var(--filetree-note);
+}
+ul.filetree.filetree-wide {
+    --filetree-name-col: 22rem;
+}
+ul.filetree ul {
+    margin: 0 0 0 var(--filetree-ul-indent);
+    padding: 0;
+    /* hand the enclosing entry's indent to the children; see the li rule below */
+    --filetree-parent-indent: var(--filetree-indent);
+}
+ul.filetree li {
+    list-style: none;
+    margin: 0;
+    padding-left: var(--filetree-li-indent);
+    line-height: var(--filetree-row);
+    background:
+        linear-gradient(var(--filetree-line), var(--filetree-line))
+            0 calc(var(--filetree-row) / 2) / var(--filetree-tick) 1px no-repeat,
+        linear-gradient(var(--filetree-line), var(--filetree-line))
+            0 0 / 1px 100% no-repeat;
+}
+ul.filetree ul > li {
+    --filetree-indent: calc(var(--filetree-parent-indent)
+                            + var(--filetree-ul-indent) + var(--filetree-li-indent));
+}
+/* the last sibling's vertical line stops at its own tick */
+ul.filetree li:last-child {
+    background-size: var(--filetree-tick) 1px, 1px calc(var(--filetree-row) / 2 + 1px);
+}
+/* hanging indent, so that a wrapped annotation continues in its own column; the 0.25em is
+   the space between the name and the annotation */
+ul.filetree li > p {
+    --filetree-note-indent: calc(var(--filetree-name-col) - var(--filetree-indent) + 0.25em);
+    margin: 0;
+    padding-left: var(--filetree-note-indent);
+    text-indent: calc(-1 * var(--filetree-note-indent));
+}
+/* inline-blocks inherit the negative text-indent and would shift their content out of view */
+ul.filetree mjx-container {
+    text-indent: 0;
+}
+/* the root entries hang off nothing */
+ul.filetree > li {
+    padding-left: 0;
+    background: none;
+}
+ul.filetree code.literal {
+    color: inherit;
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    font-size: 90%;
+}
+/* the name, padded out to where the annotation column starts */
+ul.filetree :is(li, li > p) > code.literal:first-child {
+    display: inline-block;
+    min-width: calc(var(--filetree-name-col) - var(--filetree-indent));
+    padding-right: 1rem;
+    text-indent: 0;
+    /* a theme's overflow-x: auto would move an inline-block's baseline to its bottom edge */
+    overflow: visible;
+    color: var(--filetree-name);
+}
