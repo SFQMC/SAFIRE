@@ -3,16 +3,22 @@
 The Job File
 ============
 
-The AFQMC executable runs AFQMC calculations based on the settings provided in an
-input file written in JSON. This page serves as a reference for its format.
+The SAFIRE executable runs :ref:`afqmc` calculations based on the settings provided in an
+input file written in JSON.
+
+.. code-block::
+
+  $ safire afqmc.json
+
+This page serves as a reference for its format.
 
 .. seealso::
 
    The :ref:`tutorials` and :ref:`user_examples` contain many examples of practical input files. Often you can use one of them as a starting point for your own calculation.
-   ``safiretools`` provides a helper function ``write_jobfile()``, that simplifies writing job files from Python.
+   ``safiretools`` provides a helper function ``write_jobfile()`` that simplifies writing job files from Python.
 
-The Minimal Job File
---------------------
+A Minimal Job File
+------------------
 
 Most parameters in the job file have sensible defaults so that for a standard calculation of the energy of a system, only a small subset of options has to be spelled out.
 
@@ -38,137 +44,122 @@ Most parameters in the job file have sensible defaults so that for a standard ca
 
 At the start of a calculation, SAFIRE will fill in all the default values and print the full job file in the log output.
 
-The Full Job File
------------------
+.. _input_file_structure:
 
-The following is an example where every possible parameter has been filled in. Below, we will list the meaning and default of every parameter.
+The Full Job File Structure
+---------------------------
 
-.. code-block:: json
-  :caption: A job file containing every possible parameter.
+The following tree shows every parameter of the job file. Below, we will list the meaning and default of every parameter.
 
-  {
-    "driver": "afqmc",
-    "output_name": "afqmc",
-    "seed": 42,
-    "wavefunctions": [
-      {
-        "name": "trial",
-        "filename": "afqmc.h5",
-        "ndets_to_read": -1
-      }
-    ],
-    "hamiltonians": [
-      {
-        "name": "hamiltonian",
-        "filename": "afqmc.h5"
-      }
-    ],
-    "walker_sets": [
-      {
-        "name": "walkers",
-        "walker_type": "collinear",
-        "from": {
-          "wavefunction": "trial"
-        }
-      }
-    ],
-    "propagators": [
-      {
-        "name": "propagator",
-        "taylor_n": 6,
-        "vbias_bound": 50.0,
-        "upper_cutoff_scale": 10.0,
-        "lower_cutoff_scale": 1.0,
-        "weight_bound_floor": 100.0,
-        "weight_bound_fraction": 0.1,
-        "subtractMF": true,
-        "hybrid": true,
-        "free_projection": false,
-        "natural_shift": true,
-        "use_cp_constraint": false,
-        "project_force_bias": false
-      }
-    ],
-    "execute": [
-      {
-        "walker_set": "walkers",
-        "wavefunction": "trial",
-        "hamiltonian": "hamiltonian",
-        "propagator": "propagator",
-        "steps": 1000,
-        "equilibration_steps": 100,
-        "binsize": 1,
-        "population_control_interval": 10,
-        "walker_ortho_interval": 10,
-        "measure_interval": 10,
-        "timestep": 0.01,
-        "num_walkers": 200,
-        "Eshift_relaxation_factor": 0.095,
-        "initial_Eshift": 0.0,
-        "estimators": {
-          "energy": {
-            "wavefunction": "trial",
-            "hamiltonian": "hamiltonian",
-            "measure_interval": 10
-          },
-          "mixed": {
-            "wavefunction": "trial",
-            "hamiltonian": "hamiltonian",
-            "measure_interval": 10,
-            "onerdm": {
-              "rotation": {
-                "filename": "rotation.h5",
-                "group": "/"
-              }
-            },
-            "diag_twordm": {},
-            "twordm": {},
-            "paircorr": {
-              "pairs": {
-                "filename": "pairs.h5",
-                "group": "/"
-              }
-            },
-            "spincorr": {}
-          },
-          "backprop": {
-            "wavefunction": "trial",
-            "hamiltonian": "hamiltonian",
-            "propagation_steps": [100, 200],
-            "walker_ortho_interval": 10,
-            "path_restoration": true,
-            "extra_path_restoration": false,
-            "onerdm": {
-              "rotation": {
-                "filename": "rotation.h5",
-                "group": "/"
-              }
-            },
-            "diag_twordm": {},
-            "twordm": {},
-            "paircorr": {
-              "pairs": {
-                "filename": "pairs.h5",
-                "group": "/"
-              }
-            },
-            "spincorr": {}
-          }
-        }
-      }
-    ]
-  }
+.. rst-class:: filetree-caption
+
+``afqmc.json``
+
+.. rst-class:: filetree filetree-wide
+
+* ``driver``
+* ``output_name``
+* ``seed``
+* ``wavefunctions`` list
+
+  * ``name``
+  * ``filename`` required
+  * ``ndets_to_read``
+
+* ``hamiltonians`` list
+
+  * ``name``
+  * ``filename`` required
+
+* ``walker_sets`` list
+
+  * ``name``
+  * ``walker_type``
+  * ``from``
+
+    * ``wavefunction`` required
+
+* ``propagators`` list
+
+  * ``name``
+  * ``taylor_n``
+  * ``vbias_bound``
+  * ``upper_cutoff_scale``
+  * ``lower_cutoff_scale``
+  * ``weight_bound_floor``
+  * ``weight_bound_fraction``
+  * ``subtractMF``
+  * ``hybrid``
+  * ``free_projection``
+  * ``natural_shift``
+  * ``use_cp_constraint``
+  * ``project_force_bias``
+
+* ``execute`` required, a block or a list of blocks
+
+  * ``walker_set``
+  * ``wavefunction`` required
+  * ``hamiltonian`` required
+  * ``propagator``
+  * ``timestep`` required
+  * ``steps`` required
+  * ``equilibration_steps``
+  * ``population_control_interval``
+  * ``measure_interval``
+  * ``binsize``
+  * ``walker_ortho_interval``
+  * ``num_walkers`` required
+  * ``initial_Eshift``
+  * ``Eshift_relaxation_factor``
+  * ``estimators``
+
+    * ``energy``
+
+      * ``wavefunction``
+      * ``hamiltonian``
+      * ``measure_interval``
+
+    * ``mixed``
+
+      * ``wavefunction``
+      * ``hamiltonian``
+      * ``measure_interval``
+      * ``onerdm``
+
+        * ``rotation``
+
+          * ``filename`` required
+          * ``group``
+
+      * ``diag_twordm``
+      * ``twordm``
+      * ``paircorr``
+
+        * ``pairs`` required
+
+          * ``filename`` required
+          * ``group``
+
+      * ``spincorr``
+
+    * ``backprop``
+
+      * ``propagation_steps`` required
+      * ``wavefunction``
+      * ``hamiltonian``
+      * ``walker_ortho_interval``
+      * ``path_restoration``
+      * ``extra_path_restoration``
+      * ``onerdm`` as in ``mixed``
+      * ``diag_twordm``
+      * ``twordm``
+      * ``paircorr`` as in ``mixed``
+      * ``spincorr``
 
 .. note::
 
-  Some of the parameters have dynamic defaults that are chosen based on the input, as explained below. In the listing they have been given a static value instead.
-
   There may be some parameters that appear in the SAFIRE log but not here. These parameters are considered experimental and changing them is not supported.
 
-.. _input_file_structure:
-
-Job File Structure
-------------------
 
 In the following we will traverse the job file structure section by section and list all the keys with their defaults at each level.
 
@@ -182,21 +173,21 @@ At the top level, we have the following general parameters.
      - **Default**
      - **Description**
    * - **driver**
-     - afqmc
-     - The driver that runs the execute blocks: "afqmc" for ground state AFQMC.
+     - ``"afqmc"``
+     - The driver that runs the execute blocks: ``"afqmc"`` for ground state AFQMC.
    * - **output_name**
      - name of the input file without its extension
-     - The results are written to ``<output_name>.results.h5``. Unlike every other path in the input, it is relative to the directory AFQMC is launched from. See :ref:`output_afqmc`.
+     - The results are written to ``<output_name>.results.h5``. Unlike every other path in the input, it is relative to the directory SAFIRE is launched from. See :ref:`output_afqmc`.
    * - **seed**
      - random
      - The seed for the random number generator. Can be used to reproduce simulations with the same random number stream. To reproduce an existing calculation, you can reuse the seed in its log.
 
-Along with the subblocks ``execute``, ``wavefunctions``, ``hamiltonians``, ``walker_sets``, and ``propagators``.
+The remaining top-level entries are the subblocks ``execute``, ``wavefunctions``, ``hamiltonians``, ``walker_sets``, and ``propagators``.
 
 .. admonition:: Inline vs Out-of-Line Definitions
   :class: note
 
-  Hamiltonians, wavefunctions, walker sets, and propagators can either be defined directly inline where they are needed, deep in the input file or declared out-of-line with a name at the top level, in the corresponding subblocks. This is useful when one input component is shared in multiple parts of the calculation. For this overview, we will assume all components are declared out-of-line.
+  Hamiltonians, wavefunctions, walker sets, and propagators can either be defined directly inline where they are needed, deep in the input file, or declared out-of-line with a name at the top level, in the corresponding subblocks. This is useful when one input component is shared in multiple parts of the calculation. For this overview, we will assume all components are declared out-of-line.
 
 .. _execute_block:
 
@@ -233,7 +224,7 @@ An execute block represents one execution stage of an AFQMC calculation. It cont
      - The Trotter step size, :math:`\Delta\tau`, in inverse energy units. The specific unit depends on what units are used to represent the Hamiltonian such that :math:`\Delta\tau \hat{H}` is dimensionless.
    * - **steps**
      - *required*
-     - The total number of propagation steps, :math:`N_\mathrm{steps}` to perform. Together, the "steps" setting and the "timestep" setting determine the total projection time :math:`\beta = N_\mathrm{steps} \Delta\tau`.
+     - The total number of propagation steps, :math:`N_\mathrm{steps}`, to perform. Together, ``steps`` and ``timestep`` determine the total projection time :math:`\beta = N_\mathrm{steps} \Delta\tau`.
    * - **equilibration_steps**
      - 100
      - The number of propagation steps at the start of the execute block during which nothing is measured.
@@ -242,7 +233,7 @@ An execute block represents one execution stage of an AFQMC calculation. It cont
      - The number of propagation steps between population control operations. Population control is relatively inexpensive, and it is typically okay to allow this interval to remain small.
    * - **measure_interval**
      - 10
-     - The number of propagation steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will speed up an AFQMC calculation, but increasing it above the Monte Carlo autocorrelation time brings no benefit.
+     - The number of propagation steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger ``measure_interval`` will speed up an AFQMC calculation, but increasing it above the Monte Carlo autocorrelation time brings no benefit.
    * - **binsize**
      - 1
      - The number of consecutive measurements averaged into one bin of the results file. Binning reduces the size of the results file and the autocorrelation between neighbouring bins. A trailing partial bin is not written out.
@@ -256,7 +247,7 @@ An execute block represents one execution stage of an AFQMC calculation. It cont
      - initial local energy of the walkers
      - The initial value of the energy shift.
    * - **Eshift_relaxation_factor**
-     - set so that :math:`E_\mathrm{shift}` relaxes within every **equilibration_steps**/10
+     - set so that :math:`E_\mathrm{shift}` relaxes on a scale of **equilibration_steps**/10 steps
      - The fraction :math:`d` of the gap to the average energy that the energy shift closes once per step of the equilibration phase under the update :math:`E_\mathrm{shift} \mathrel{+}= d (E - E_\mathrm{shift})`.
 
 .. _estimator_block:
@@ -328,6 +319,8 @@ See :ref:`estimators` for the theory behind each estimator.
      - disabled
      - The observables to measure. See :ref:`observables_block`.
 
+.. _backprop_block:
+
 ``backprop``
 """"""""""""
 
@@ -376,7 +369,7 @@ The **mixed** and **backprop** estimators measure an observable if and only if i
      - **Description**
    * - **onerdm**
      - disabled
-     - The one-body reduced density matrix. Takes an optional **rotation** block with **filename** and **group** (default ``"/"``) of an HDF5 group containing a ``RotationMatrix`` dataset of shape :math:`(n_\mathrm{spin}, n, n_\mathrm{pol} N)`. If given, the density matrix is measured in the rotated basis.
+     - The one-body reduced density matrix. Takes an optional **rotation** block with **filename** and **group** (default ``"/"``) of an HDF5 group containing a ``RotationMatrix`` dataset of shape :math:`(n_\mathrm{spin}, n, n_\mathrm{pol} M)` that maps the :math:`M` orbitals of the Hamiltonian to :math:`n` rotated orbitals. If given, the density matrix is measured in the rotated basis.
    * - **diag_twordm**
      - disabled
      - The diagonal of the two-body reduced density matrix.
@@ -397,8 +390,7 @@ See :ref:`observables` for details on each observable.
 ``wavefunctions``
 ~~~~~~~~~~~~~~~~~
 
-Wavefunction blocks can either be defined inline where they are needed or out-of-line in the top-level ``wavefunctions`` list.
-Describes a wavefunction used in SAFIRE.
+A wavefunction block describes a wavefunction used in SAFIRE. It can either be defined inline where it is needed or out-of-line in the top-level ``wavefunctions`` list.
 
 .. list-table::
    :header-rows: 1
@@ -423,8 +415,7 @@ Describes a wavefunction used in SAFIRE.
 ``hamiltonians``
 ~~~~~~~~~~~~~~~~
 
-Hamiltonian blocks can either be defined inline where they are needed or out-of-line in the top-level ``hamiltonians`` list.
-Describes a Hamiltonian used in SAFIRE.
+A Hamiltonian block describes a Hamiltonian used in SAFIRE. It can either be defined inline where it is needed or out-of-line in the top-level ``hamiltonians`` list.
 
 .. list-table::
    :header-rows: 1
@@ -445,8 +436,7 @@ Describes a Hamiltonian used in SAFIRE.
 ``walker_sets``
 ~~~~~~~~~~~~~~~
 
-Walker set blocks can either be defined inline where they are needed or out-of-line in the top-level ``walker_sets`` list.
-Describes an ensemble of AFQMC walkers that can be propagated. Walker sets are mutable. If they are shared between different execution stages, later stages will carry on the state from previous stages.
+A walker set block describes an ensemble of AFQMC walkers that can be propagated. It can either be defined inline where it is needed or out-of-line in the top-level ``walker_sets`` list. Walker sets are mutable. If they are shared between different execution stages, later stages will carry on the state from previous stages.
 
 For many basic calculations, this block can be omitted.
 
@@ -462,7 +452,7 @@ For many basic calculations, this block can be omitted.
      - The name of the walker set, required to refer to it elsewhere.
    * - **from**
      - the execute block's **wavefunction**
-     - What the walkers are initialized from, as an object with a single key. ``{"wavefunction": ...}`` starts every walker from the determinant with the largest coefficient of a NOMSD wavefunction, or the reference of a PHMSD one; the wavefunction is given by name or as an inline block. Initializing the walkers from a different wavefunction can be very beneficial for performance. See :ref:`initial_walkers`.
+     - What the walkers are initialized from, as an object with a single key. ``{"wavefunction": ...}`` starts every walker from the determinant of the wavefunction with the largest coefficient magnitude; the wavefunction is given by name or as an inline block. Initializing the walkers from a different wavefunction can be very beneficial for performance. See :ref:`initial_walkers`.
    * - **walker_type**
      - the highest spin symmetry viable for simulating all wavefunctions and Hamiltonians in the job file
      - Spin symmetry of the walkers to use in AFQMC. Options are ``"closed"``, ``"collinear"``, or ``"noncollinear"``. See :ref:`Walker-classes`.
@@ -472,6 +462,13 @@ Only the first execute block falls back to a default walker set. A later execute
 names no walker set continues with the one of the execute block before it, so consecutive
 stages share their walkers unless a stage asks for a walker set of its own.
 
+.. _initial_walkers:
+
+Initial Walkers
+^^^^^^^^^^^^^^^
+
+Initializing walkers from a different wavefunction than the trial wavefunction using the ``from`` key can be crucial for performance for symmetry-broken trials.
+For example, while an unrestricted Hartree-Fock trial wavefunction may give a better description of the ground state than a restricted one, it may be contaminated by soft Goldstone modes that are not excited in the ground state but take a long time to project out in the AFQMC propagation. In such cases, initializing the walkers from a restricted Hartree-Fock calculation can greatly reduce the equilibration time.
 
 .. _propagator_block:
 
@@ -482,8 +479,7 @@ stages share their walkers unless a stage asks for a walker set of its own.
 
   Changing propagator settings is considered advanced. Be sure that you know what you are doing.
 
-Propagator blocks can either be defined inline where they are needed or out-of-line in the top-level ``propagators`` list.
-Configure the detailed behavior of the AFQMC propagator.
+A propagator block configures the detailed behavior of the AFQMC propagator. It can either be defined inline where it is needed or out-of-line in the top-level ``propagators`` list.
 
 
 .. list-table::
@@ -521,7 +517,7 @@ Configure the detailed behavior of the AFQMC propagator.
        allowed to carry. See **weight_bound_floor**.
    * - **subtractMF**
      - true
-     - Whether to subtract mean field contribution.
+     - Whether to subtract the mean-field contribution.
    * - **hybrid**
      - true
      - Whether to use hybrid propagation method.
