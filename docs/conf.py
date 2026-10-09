@@ -42,11 +42,8 @@ release = '0.1.0'
 import sys, os
 sys.path.append(os.path.abspath('extensions'))
 
-import sphinx_rtd_theme
-
 extensions = [
     'sphinxcontrib.bibtex', 
-    'sphinx_rtd_theme', 
     'myst_nb',
     'sphinx.ext.mathjax',
     'sphinx.ext.apidoc',

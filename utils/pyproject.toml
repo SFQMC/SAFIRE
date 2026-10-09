@@ -32,7 +32,6 @@ testing = ["pytest"]
 docs = [
     "sphinx >= 8.2",
     "sphinxcontrib-bibtex",
-    "sphinx-rtd-theme",
     "sphinx-autodoc-typehints",
     "numpydoc",
     "myst-nb",
