@@ -44,7 +44,7 @@ $$
 \langle \hat{O} \rangle_\mathrm{Mixed} = \frac{1}{\sum_k W_{n,k}} \sum_k W_{n,k} \frac{\langle \Psi_\mathrm{T} | \hat{O} | \Phi_{n,k} \rangle }{\langle \Psi_\mathrm{T} | \Phi_{n,k} \rangle}
 $$
 
-where $n$ is the projection step index,
+where $n$ is the propagation step index,
 $| \Phi_{n,k} \rangle$ are Slater determinant random walkers with weight $W_{n,k}$ (from importance sampling),
 and $| \Psi_\mathrm{T} \rangle$ is the trial wavefunction.
 The mixed estimator provides an unbiased estimate for any observable which commutes with the Hamiltonian.
@@ -66,7 +66,7 @@ and $| \tilde{\Phi}_{m,k} \rangle$ are the back-propagated walkers given by,
 $$
 | \tilde{\Phi}_{m,k} \rangle = \hat{B}^\dagger( (x - \bar{x})_{n,k} ) ... \hat{B}^\dagger( (x - \bar{x})_{n+m-1,k} ) | \Psi_\mathrm{T} \rangle
 $$
-The index $n$ corresponds to the current forward projection step,
+The index $n$ corresponds to the current forward propagation step,
 and $m$ is the back-propagated step index.
 We note that each random walker has a corresponding back-propagated partner
 which share the same path in auxiliary-field space.
@@ -149,7 +149,7 @@ td, th {
 |<b>setting</b>|<b>default</b>|<b>description</b>|
 |--:|:-:|:--|
 | <b>        print_components</b> |  False |  If True, print the one-body, two-body coulomb, and two-body exchange contributions to the energy in the `*.scalar.dat` file  |
-| <b> measure_interval </b> | inherited from the execute block (10) | The number of projection steps between measurements. During the equilibration phase, whose length is the execute block's `equilibration_steps`, observables are not computed. |
+| <b> measure_interval </b> | inherited from the execute block (10) | The number of propagation steps between measurements. During the equilibration phase, whose length is the execute block's `equilibration_steps`, observables are not computed. |
 | <b>        overwrite</b> | False |   If True, overwrite the default energy estimator with the explicitly defined energy estimator |
 
 ### Less Common Settings

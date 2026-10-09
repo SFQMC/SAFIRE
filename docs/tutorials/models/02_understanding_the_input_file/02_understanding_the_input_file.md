@@ -222,7 +222,7 @@ td, th {
 | <b>timestep</b> |  0.01  |  The trotter step size in units of inverse energy (depending on the Hamiltonian's units)  |
 | <b>steps</b> |  1  |   The number of imaginary time steps to take  |
 | <b>num_walkers</b> |  required  |   total number of Slater determinant random walkers over all MPI tasks, split evenly so that the walker counts of two tasks differ by at most one  |
-| <b>measure_interval</b> |  10  |  The number of projection steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will reduce the CPU time necessary to perform AFQMC calculations.  |
+| <b>measure_interval</b> |  10  |  The number of propagation steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will reduce the CPU time necessary to perform AFQMC calculations.  |
 | <b>population_control_interval</b> |  10  |  Interval to perform population control at in units of steps.  |
 | <b>walker_ortho_interval</b> | 10  |  Interval to stabilize walkers at via a modified Gram-Schmidt procedure in units of steps |
 
@@ -461,7 +461,7 @@ The available "name" / types are:
 $$
 \langle \hat{O} ⟩_\mathrm{Mixed} = \frac{1}{\sum_k W_{n,k}} \sum_k W_{n,k} \frac{\langle \Psi_\mathrm{T} | \hat{O} | \Phi_{n,k} \rangle }{\langle \Psi_\mathrm{T} | \Phi_{n,k} \rangle}
 $$
-where $n$ is the projection step index,
+where $n$ is the propagation step index,
 $| \Phi_{n,k} \rangle$ are Slater determinant random walkers with weight $W_{n,k}$ (from importance sampling),
 and $| \Psi_\mathrm{T} \rangle$ is the trial wavefunction.
 
@@ -474,7 +474,7 @@ and $| \tilde{\Phi}_{m,k} \rangle$ are the back-propagated walkers given by,
 $$
 | \tilde{\Phi}_{m,k} \rangle = \hat{B}^\dagger( (x - \bar{x})_{n,k} ) ... \hat{B}^\dagger( (x - \bar{x})_{n+m-1,k} ) | \Psi_\mathrm{T} \rangle.
 $$
-The index $n$ corresponds to the current forward projection step,
+The index $n$ corresponds to the current forward propagation step,
 and $m$ is the back-propagated step index.
 
 ### Observables
