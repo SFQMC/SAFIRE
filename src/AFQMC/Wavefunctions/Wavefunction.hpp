@@ -52,8 +52,8 @@ public:
   explicit Wavefunction(Wfn&& other) : var(std::forward<Wfn>(other)) {}
 
   // The walker configuration a walker set initialized from this wavefunction starts out in:
-  // the determinant with the largest coefficient of a NOMSD, the reference of a PHMSD, and the
-  // identity at finite temperature. It has the walker type the wavefunction was built for.
+  // the determinant with the largest coefficient at zero temperature, and the identity at finite
+  // temperature. It has the walker type the wavefunction was built for.
   WalkerSetInitialGuess initial_guess() const;
 
   MEMORY_SPACE get_memory_space() const;

@@ -279,17 +279,24 @@ public:
   }
 
   /*
-   * The reference determinant, one Slater matrix per spin.
+   * The determinant with the largest coefficient, one Slater matrix per spin.
    */
   WalkerSetInitialGuess initial_guess() const
   {
+    int idet = 0;
+    for(int i = 1; i < abij.number_of_configurations(); ++i) {
+      if(std::abs(std::get<2>(*abij.configuration(i))) > std::abs(std::get<2>(*abij.configuration(idet)))) {
+        idet = i;
+      }
+    }
+    auto c = abij.configuration(idet);
+
     int const nspin = (walker_type == COLLINEAR ? 2 : 1);
     WalkerSetInitialGuess::slater_matrices M;
     M.reserve(nspin);
     for(int spin = 0; spin < nspin; ++spin) {
       auto psi = nda::to_host(math::sparse::to_array<'N'>(OrbMats(spin % OrbMats.extent(0))));
-      // the unique string 0 of either spin is the one of the reference
-      M.push_back(configuration_orbitals(psi, spin, 0));
+      M.push_back(configuration_orbitals(psi, spin, spin == 0 ? std::get<0>(*c) : std::get<1>(*c)));
     }
     return {.walker_type = walker_type, .payload = std::move(M)};
   }
