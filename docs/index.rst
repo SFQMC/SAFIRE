@@ -12,7 +12,6 @@ Getting Started with SAFIRE
   tutorials
   examples
   afqmctools/afqmctools
-  features
   changelog
   afqmc
 
@@ -60,7 +59,4 @@ The SAFIRE manual provides two different types of examples:
 
 Exploring the examples is a great way to familiarize yourself with the capabilities of SAFIRE and see how to apply them to your own problems.
 
-.. seealso::
-
-  * :ref:`Current SAFIRE Features <features>`
 
