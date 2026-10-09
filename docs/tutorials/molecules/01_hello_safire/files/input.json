@@ -3,7 +3,7 @@
   "seed": 42,
   "execute": {
     "wavefunction": {
-      "filename": "input.h5"
+      "filename": "wfn.h5"
     },
     "hamiltonian": {
       "filename": "hamil.h5"

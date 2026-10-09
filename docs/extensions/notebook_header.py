@@ -19,11 +19,21 @@ or ``examples/``) this extension:
   a real ``.ipynb`` (converted from the MyST source with jupytext) plus the
   notebook's ``files/`` data directory, if present.
 
-The only MyST construct that does not survive the ``.md -> .ipynb`` conversion is
-the Sphinx ``{doc}`` cross-reference role; it is rewritten into an absolute
-markdown link to the published HTML docs (using ``html_baseurl``). The source
-``.md`` files are never modified -- rewriting happens on the in-memory notebook
-that jupytext produces, before it is serialized into the zip.
+Two MyST constructs do not survive the ``.md -> .ipynb`` conversion and are
+rewritten:
+
+* ``{include}`` directives (with optional ``:start-after:``/``:end-before:``) are
+  replaced by the included text before jupytext parses the source, so cell
+  breaks inside an included region become real notebook cells. As in MyST, a
+  path starting with ``/`` is relative to the source directory, any other path
+  is relative to the including page, and relative image paths and ``{doc}``
+  targets in the included text resolve against the including page.
+  ``{literalinclude}`` directives become fenced code blocks the same way.
+* The Sphinx ``{doc}`` cross-reference role is rewritten into an absolute
+  markdown link to the published HTML docs (using ``html_baseurl``).
+
+The source ``.md`` files are never modified -- rewriting happens in memory,
+before the notebook is serialized into the zip.
 """
 
 import posixpath
@@ -45,6 +55,18 @@ NOTEBOOK_SUFFIXES = (".md", ".ipynb")
 _DOC_ROLE = re.compile(r"\{doc\}`(?:([^`<]*?)\s*<)?([^`<>]+?)>?`")
 # Matches a markdown link whose target is a sibling .md page: [text](path.md)
 _MD_LINK = re.compile(r"(\]\()([^)]+?)\.md(#[^)]*)?(\))")
+# Matches a fenced {include} or {literalinclude} directive with its option lines.
+_INCLUDE = re.compile(
+    r"^(?P<fence>`{3,}|:{3,})\{(?P<directive>include|literalinclude)\}[ \t]+(?P<path>\S+)[ \t]*\n"
+    r"(?P<options>(?::[\w-]+:.*\n)*)"
+    r"(?P=fence)[ \t]*$",
+    re.MULTILINE,
+)
+_SUPPORTED_OPTIONS = {
+    "include": {"start-after", "end-before"},
+    "literalinclude": {"language"},
+}
+_OPTION = re.compile(r"^:([\w-]+):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
 
 
 def _is_notebook(app, docname):
@@ -114,9 +136,50 @@ def _rewrite_xrefs(text, current_docname, app):
     return text
 
 
+def _expand_includes(text, page_dir, srcdir):
+    """Replace {include} and {literalinclude} directives in a MyST source by their text.
+
+    {include} becomes the included text, {literalinclude} a fenced code block.
+    Includes are expanded first, so a {literalinclude} inside included text
+    resolves against the including page, as it does in Sphinx. Options other than
+    ``:start-after:``/``:end-before:`` ({include}) and ``:language:``
+    ({literalinclude}) raise, so the notebook zip is skipped with a warning
+    instead of silently containing the wrong text.
+    """
+
+    def include_repl(match):
+        directive, target = match.group("directive"), match.group("path")
+        path = Path(srcdir) / target.lstrip("/") if target.startswith("/") else page_dir / target
+        options = dict(_OPTION.findall(match.group("options")))
+        unsupported = set(options) - _SUPPORTED_OPTIONS[directive]
+        if unsupported:
+            raise ValueError(f"unsupported {{{directive}}} options {sorted(unsupported)} for {target}")
+
+        content = path.read_text(encoding="utf-8")
+        if directive == "literalinclude":
+            fence = "`" * max([3, *(len(run) + 1 for run in re.findall(r"`+", content))])
+            return f"{fence}{options.get('language', '')}\n{content.rstrip()}\n{fence}"
+
+        for option in ("start-after", "end-before"):
+            marker = options.get(option)
+            if marker is None:
+                continue
+            index = content.find(marker)
+            if index < 0:
+                raise ValueError(f"{{include}} {option} text {marker!r} not found in {target}")
+            content = content[index + len(marker):] if option == "start-after" else content[:index]
+        return content.strip("\n")
+
+    for directive in ("include", "literalinclude"):
+        text = _INCLUDE.sub(lambda m: include_repl(m) if m.group("directive") == directive else m.group(0), text)
+    return text
+
+
 def _build_notebook_zip(app, docname, jupytext, nbformat):
     """Convert one notebook to .ipynb and bundle it (plus files/) into a zip."""
-    nb = jupytext.read(Path(app.env.doc2path(docname)))
+    src = Path(app.env.doc2path(docname))
+    text = _expand_includes(src.read_text(encoding="utf-8"), src.parent, app.srcdir)
+    nb = jupytext.reads(text, fmt=src.suffix.lstrip("."))
 
     for cell in nb.cells:
         if cell.get("cell_type") == "markdown":
