@@ -192,7 +192,7 @@ void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commun
     // is built after the wavefunction has seen the walker set
     Propagator<MEM> propagator{AFQMCBasePropagator<MEM>(
         find_block(params.propagators, propagator_name, "propagator"), mpi, wavefunction, field_rng,
-        stage.timestep)};
+        resolved(stage.timestep, "timestep"))};
 
 
     Estimators<MEM> estimators{mpi, stage_index, stage, walker_set, wavefunction, propagator, wavefunction_for};

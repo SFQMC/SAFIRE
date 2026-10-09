@@ -386,6 +386,7 @@ void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3
         // deliberately not the default and no divisor of any interval above: no measurement
         // schedule may depend on the population control interval any more
         .population_control_interval = 3,
+        .timestep = 1e-10,
         .num_walkers = nwalk * mpi->comm.size()};
 
     auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, initial_guess, nwalk);

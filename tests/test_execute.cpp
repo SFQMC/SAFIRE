@@ -94,6 +94,7 @@ void execute_build(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   auto add = [&](std::string label, ExecuteParameters exec) {
     exec.steps               = 10;
     exec.equilibration_steps = 0;
+    exec.timestep            = 0.01;
     exec.num_walkers         = 10 * mpi->comm.size();
     scenarios.push_back(std::move(label));
     params.execute.push_back(std::move(exec));
@@ -199,7 +200,7 @@ void execute_from_other_wavefunction(std::shared_ptr<utils::mpi_context_t<boost:
     params.execute.push_back(ExecuteParameters{.wavefunction = std::string{"uhf"},
                                                .hamiltonian  = std::string{"ham"},
                                                .steps = 10, .equilibration_steps = 0,
-                                               .num_walkers = 10 * mpi->comm.size()});
+                                               .timestep = 0.01, .num_walkers = 10 * mpi->comm.size()});
   }
   params.execute[0].walker_set =
       WalkerSetParameters{.walker_type = COLLINEAR, .from = WavefunctionSource{.wavefunction = std::string{"rhf"}}};
@@ -281,15 +282,20 @@ void check_unique_names(const std::vector<Params>& blocks)
 void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
                                    std::string hamil_file, std::string wfn_file)
 {
-  // the number of walkers has no default, so every execute block below brings one
-  int const nwalk = mpi->comm.size();
+  // the timestep, the number of steps and the number of walkers have no default, so every
+  // execute block below brings them
+  int const nsteps = 10;
+  double const dt  = 0.01;
+  int const nwalk  = mpi->comm.size();
 
-  // the minimal input: one nameless wavefunction, one nameless hamiltonian, and the number of
-  // walkers
+  // the minimal input: one nameless wavefunction, one nameless hamiltonian, the timestep, the
+  // number of steps and the number of walkers
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
                                         .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                                        .steps        = nsteps,
+                                        .timestep     = dt,
                                         .num_walkers  = nwalk}};
     resolve_defaults(params, *mpi);
 
@@ -363,7 +369,9 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
                                                     .hamiltonian  = "estimator_ham"},
                  .backprop =
                      BackPropEstimatorParameters{.propagation_steps = std::vector<int>{3}}},
+             .steps            = nsteps,
              .measure_interval = 7,
+             .timestep         = dt,
              .num_walkers      = nwalk,
     }};
     resolve_defaults(params, *mpi);
@@ -413,6 +421,8 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
         .estimators   =EstimatorParameters{.backprop        = BackPropEstimatorParameters{},
                                             .time_evolved_bp = BackPropEstimatorParameters{}},
+        .steps        = nsteps,
+        .timestep     = dt,
         .num_walkers  = nwalk,
     }};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
@@ -425,6 +435,8 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         .wavefunction = WavefunctionParameters{.filename = wfn_file},
         .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
         .estimators   =EstimatorParameters{.backprop = BackPropEstimatorParameters{}},
+        .steps        = nsteps,
+        .timestep     = dt,
         .num_walkers  = nwalk,
     }};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
@@ -438,8 +450,28 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
         .estimators   =EstimatorParameters{.time_evolved_bp = BackPropEstimatorParameters{
                                                 .propagation_steps = std::vector<int>{}}},
+        .steps        = nsteps,
+        .timestep     = dt,
         .num_walkers  = nwalk,
     }};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
+  }
+
+  // the timestep and the number of steps have to be given
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
+                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                                        .steps        = nsteps,
+                                        .num_walkers  = nwalk}};
+    CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
+  }
+  {
+    AFQMCParameters params{};
+    params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
+                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                                        .timestep     = dt,
+                                        .num_walkers  = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 
@@ -447,13 +479,17 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
-                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file}}};
+                                        .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                                        .steps        = nsteps,
+                                        .timestep     = dt}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
                                         .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                                        .steps        = nsteps,
+                                        .timestep     = dt,
                                         .num_walkers  = nwalk - 1}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
@@ -465,10 +501,14 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     params.execute       = {
         ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
                                .hamiltonian  = HamiltonianParameters{.filename = hamil_file},
+                               .steps        = nsteps,
+                               .timestep     = dt,
                                .num_walkers  = nwalk},
         ExecuteParameters{.wavefunction = std::string{"wavefunction_0"},
                                .hamiltonian  = HamiltonianParameters{.name     = "hamiltonian_0",
                                                                      .filename = hamil_file},
+                               .steps        = nsteps,
+                               .timestep     = dt,
                                .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
@@ -493,10 +533,16 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     params.execute       = {
         ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = wfn_file},
                           .hamiltonian  = std::string{"ham"},
+                          .steps        = nsteps,
+                          .timestep     = dt,
                           .num_walkers  = nwalk},
         ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"},
+                          .steps        = nsteps,
+                          .timestep     = dt,
                           .num_walkers  = nwalk},
         ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"},
+                          .steps        = nsteps,
+                          .timestep     = dt,
                           .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
@@ -520,12 +566,18 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "first"},
                           .wavefunction = std::string{"first_wfn"},
                           .hamiltonian  = std::string{"ham"},
+                          .steps        = nsteps,
+                          .timestep     = dt,
                           .num_walkers  = nwalk},
         ExecuteParameters{.wavefunction = std::string{"second_wfn"}, .hamiltonian = std::string{"ham"},
+                          .steps        = nsteps,
+                          .timestep     = dt,
                           .num_walkers  = nwalk},
         ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "second"},
                           .wavefunction = std::string{"second_wfn"},
                           .hamiltonian  = std::string{"ham"},
+                          .steps        = nsteps,
+                          .timestep     = dt,
                           .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
@@ -549,10 +601,14 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
         ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "inferred"},
                           .wavefunction = std::string{"wfn"},
                           .hamiltonian  = std::string{"ham"},
+                          .steps        = nsteps,
+                          .timestep     = dt,
                           .num_walkers  = nwalk},
         ExecuteParameters{.walker_set   = WalkerSetParameters{.name = "chosen", .walker_type = COLLINEAR},
                           .wavefunction = std::string{"wfn"},
                           .hamiltonian  = std::string{"ham"},
+                          .steps        = nsteps,
+                          .timestep     = dt,
                           .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
@@ -572,12 +628,16 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
             .walker_set   = WalkerSetParameters{.from = WavefunctionSource{.wavefunction = std::string{"init_wfn"}}},
             .wavefunction = WavefunctionParameters{.filename = wfn_file},
             .hamiltonian  = std::string{"ham"},
+            .steps        = nsteps,
+            .timestep     = dt,
             .num_walkers  = nwalk},
         ExecuteParameters{
             .walker_set   = WalkerSetParameters{.from = WavefunctionSource{
                                                     .wavefunction = WavefunctionParameters{.filename = wfn_file}}},
             .wavefunction = std::string{"init_wfn"},
             .hamiltonian  = std::string{"ham"},
+            .steps        = nsteps,
+            .timestep     = dt,
             .num_walkers  = nwalk},
     };
     resolve_defaults(params, *mpi);
@@ -613,14 +673,16 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     AFQMCParameters params{};
     params.wavefunctions = {WavefunctionParameters{.name = "wfn", .filename = wfn_file},
                             WavefunctionParameters{.name = "wfn", .filename = wfn_file}};
-    params.execute       = {ExecuteParameters{.wavefunction = std::string{"wfn"}, .num_walkers = nwalk}};
+    params.execute       = {ExecuteParameters{
+        .wavefunction = std::string{"wfn"}, .steps = nsteps, .timestep = dt, .num_walkers = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 
   // an execute block cannot refer to a block that is not declared
   {
     AFQMCParameters params{};
-    params.execute = {ExecuteParameters{.wavefunction = std::string{"nowhere"}, .num_walkers = nwalk}};
+    params.execute = {ExecuteParameters{
+        .wavefunction = std::string{"nowhere"}, .steps = nsteps, .timestep = dt, .num_walkers = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
 
@@ -629,6 +691,8 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
   {
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file},
+                                        .steps        = nsteps,
+                                        .timestep     = dt,
                                         .num_walkers  = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
@@ -636,6 +700,8 @@ void parameter_defaults_resolution(std::shared_ptr<utils::mpi_context_t<boost::m
     AFQMCParameters params{};
     params.execute = {ExecuteParameters{.wavefunction = WavefunctionParameters{.filename = hamil_file},
                                         .hamiltonian  = HamiltonianParameters{},
+                                        .steps        = nsteps,
+                                        .timestep     = dt,
                                         .num_walkers  = nwalk}};
     CHECK_THROWS_AS(resolve_defaults(params, *mpi), AppAbortException);
   }
