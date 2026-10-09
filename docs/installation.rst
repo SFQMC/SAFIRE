@@ -93,7 +93,7 @@ The GPU build can run both CPU and GPU calculations using the ``--compute`` CLI 
 Installing Companion Software
 -----------------------------
 
-It is highly recommended you install :ref:`afqmctools`, the companion Python package that simplifies
+It is highly recommended you install :ref:`safiretools`, the companion Python package that simplifies
 the generation of input files and the processing of output data.
 
 .. code-block::

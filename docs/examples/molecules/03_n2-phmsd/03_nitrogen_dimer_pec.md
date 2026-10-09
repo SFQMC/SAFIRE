@@ -22,7 +22,7 @@ using an appropriate trial wavefunction.
 ## What you will learn
 
 1. How to select the number of Slater determinants to include in the trial wavefunction, balancing computational cost and accuracy
-2. How to automate the computation of a potential energy curve using afqmctools within Python
+2. How to automate the computation of a potential energy curve using safiretools within Python
 
 ## Run the code block below to set up the example
 
@@ -363,7 +363,7 @@ Now, we can automate the calculation of the PEC using this value for $N_\mathrm{
 
 +++ {"id": "c4MDXZD3E6lw"}
 
-## Automating the computation of the PEC using Python / afqmctools
+## Automating the computation of the PEC using Python / safiretools
 
 Now that we have converged $E_\mathrm{AFQMC}$ in $N_\mathrm{det}$, we are ready to compute the PEC.
 In the code block below, we have included a function that performs all of the steps that we have already performed (excluding converging $E_\mathrm{AFQMC}$ in $N_\mathrm{det}$) given a value of the $N_2$ bond length, $\delta_{N-N}$.
@@ -534,4 +534,4 @@ You have computed the potential energy curve (PEC) of the $N_2$ molecule, which 
 ### What you learned
 
 1. How to select the number of Slater determinants to include in the trial wavefunction, balancing computational cost and accuracy
-2. How to automate the computation of a potential energy curve using afqmctools within Python
+2. How to automate the computation of a potential energy curve using safiretools within Python

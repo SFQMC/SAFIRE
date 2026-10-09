@@ -344,7 +344,7 @@ is well within chemical accuracy.
 
 ## Starting from a FCIDUMP
 
-`afqmctools` provides tools to convert from a Hamiltonian in a standard
+`safiretools` provides tools to convert from a Hamiltonian in a standard
 FCIDUMP file to the format used by SAFIRE.
 
 We will continue with the example of a Hydrogen dimer in an STO-3G basis to demonstrate the tooling.
@@ -438,7 +438,7 @@ to the accuracy asked for by `cholesky_tol` — the same decomposition
     ).to_hdf5(scratch_dir/"H2_hamiltonian.h5")
 ```
 
-see the {doc}`Hamiltonian reference <../../../afqmctools/lattice_models>` for more.
+see {py:meth}`safiretools.MolecularHamiltonian.from_fcidump` for more.
 
 ### Your Turn: Run the following code block to convert from the provided FCIDUMP file to the SAFIRE format
 

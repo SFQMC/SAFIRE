@@ -46,7 +46,6 @@ extensions = [
     'sphinxcontrib.bibtex', 
     'myst_nb',
     'sphinx.ext.mathjax',
-    'sphinx.ext.apidoc',
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx_autodoc_typehints',
@@ -83,15 +82,6 @@ exclude_patterns = [
     '_build',
     'Thumbs.db',
     '.DS_Store',
-    'afqmctools/api/modules.rst' # we only have one module, so we do not need this
-]
-
-apidoc_modules = [
-    {
-        'path': '../utils/afqmctools',
-        'destination': 'afqmctools/api/',
-        'exclude_patterns': ['**/qe_driver.py', '**/hamiltonian/hubbard.py'],
-    },
 ]
 
 autodoc_default_options = {

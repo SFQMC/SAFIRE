@@ -32,7 +32,7 @@ this tutorial.
 
 The tutorial is structured as follows.
 We will begin with an explanation of how to build lattice model Hamiltonians
-using the `afqmctools` Python package.
+using the `safiretools` Python package.
 Next, we will walk through computing the ground state energy of this Hamiltonian for a particular filling and value of U,
 comparing a couple of options for trial wavefunctions.
 Next, we will continue the walk through by computing the ground state charge,
@@ -56,7 +56,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 
 ## Building a lattice model Hamiltonian
 
-`afqmctools` provides a convenience lattice model Hamiltonian builder and writer which
+`safiretools` provides a convenience lattice model Hamiltonian builder and writer which
 will allow us to construct the "standard" Hubbard model with nearest-neighbor hopping and on-site U, among
 other Hamiltonians.
 The basic steps for using the lattice model Hamiltonian builder are:
@@ -315,7 +315,7 @@ which is expected for an even number of up and down electrons.
 
 Next, we will run an AFQMC calculation.
 SAFIRE uses an input file in json format to define AFQMC run parameters.
-`afqmctools` comes with a convenience function to generate a json input file as demonstrated below.
+`safiretools` comes with a convenience function to generate a json input file as demonstrated below.
 We have included reasonable AFQMC run parameters for this calculation below.
 
 ```{code-cell} ipython3

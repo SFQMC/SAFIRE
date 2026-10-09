@@ -36,7 +36,7 @@ Remember to apply one-body finite size corrections!!
 
 ## External Software
 
-In addition to SAFIRE and afqmctools, we will be using the following software packages:
+In addition to SAFIRE and safiretools, we will be using the following software packages:
 
 - [Atomic Simulation Environment (ASE)](https://ase-lib.org/ase/build/build.html#ase.build.bulk) to generate lattice structure.
 - [Quantum Espresso (QE)](https://www.quantum-espresso.org/) for density functional theory (DFT) calculations, and some integrals via its post-processing utilities

@@ -99,7 +99,7 @@ Software prerequisites
 ======================
 
 The safiretools Python package provides tools for generating a broad range of lattice model Hamiltonians.
-Additionally, afqmctools and the autoHF Hartree-Fock solver allow single-Slater determinant trial wavefunctions to be computed.
+Additionally, safiretools and the autoHF Hartree-Fock solver allow single-Slater determinant trial wavefunctions to be computed.
 In these tutorials, we will use these tools exclusively;
 however, from the tutorials, it should also be clear how to import
 and use wavefunctions and/or Hamiltonians which are generated externally by the user.

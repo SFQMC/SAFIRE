@@ -18,7 +18,7 @@ SAFIRE is a fast, efficient implementation of AFQMC written in C++. It uses a ge
    :width: 800px
    :align: center
 
-SAFIRE comes with the afqmctools command line interface (CLI) / Python package to assist the user in both setting up second quantized Hamiltonians and wavefunctions before running SAFIRE, and in post-processing the results after running SAFIRE.
+SAFIRE comes with the safiretools Python package to assist the user in both setting up second quantized Hamiltonians and wavefunctions before running SAFIRE, and in post-processing the results after running SAFIRE.
 
 Typical Workflow
 ----------------

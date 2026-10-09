@@ -592,7 +592,7 @@ $$
 
 where $\mu = (i,m)$ / $\nu = (i,p)$ are a composite lattice, $i$ / $j$, and band $m$, $p$ indices.
 
-afqmctools is able to generate a subset of interactions of this type;
+safiretools is able to generate a subset of interactions of this type;
 The $U_{\mu\nu}^1$ matrix is constructed based on what information
 the user provides.
 specifically, it handles the following cases.
@@ -648,7 +648,7 @@ where we have replaced the composite indices with site and band indices for clar
 
 #### Case 5: a list of inputs from the cases above
 
-If a user provides a list of valid inputs, then afqmctools will generate each
+If a user provides a list of valid inputs, then safiretools will generate each
 term provided <b>using the list index / position for the neighbor order "$n$."</b>
 For example, if a user provides
 
@@ -677,7 +677,7 @@ $$
 
 where $\mu = (i,m)$ / $\nu = (i,p)$ are a composite lattice, $i$ / $j$, and band $m$, $p$ indices.
 
-afqmctools is able to generate a subset of interactions of this type;
+safiretools is able to generate a subset of interactions of this type;
 The $U_{\mu\nu}^2$ matrix is constructed based on what information
 the user provides similarly to the density-density (i.e. the $U^1$) term.
 See the density-density section above for more details.
@@ -699,7 +699,7 @@ $$
 
 $\mu$ / $\nu$ are compound indices, $\mu = (i,p,m)$ / $\mu = (j,q,n)$, that include the lattice site index, ($i$ / $j$), sublattice, ($p$ / $q$) and band ($m$ / $n$) indices.
 
-afqmctools is able to generate a subset of interactions of this type;
+safiretools is able to generate a subset of interactions of this type;
 The $J_{\mu\nu}$ matrix is constructed based on what information
 the user provides similarly to the density-density (i.e. the $U^1$ term).
 See the density-density section above for more details.
@@ -774,7 +774,7 @@ $$
 
 for $n^{th}$-order neighbors.e
 
-afqmctools is able to generate a subset of interactions of this type using the
+safiretools is able to generate a subset of interactions of this type using the
 same input conventions as for $\hat{H}_{U1}$, and $\hat{H}_{U2}$.
 
 +++ {"id": "_MEnzhH0OK_X"}

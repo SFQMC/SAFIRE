@@ -11,7 +11,7 @@ Getting Started with SAFIRE
   tutorials
   examples
   user_manual
-  afqmctools/afqmctools
+  safiretools/safiretools
   changelog
   afqmc
 
@@ -24,7 +24,7 @@ The first is the SAFIRE executable which is a high-performance code
 implemented in terms of generic classes of interacting many-electron Hamiltonians 
 and wavefunctions. It is designed as generically as possible to take full advantage of
 AFQMC's flexibility in treating general interacting electron systems. 
-The second component is the afqmctools Python package which allows users to both generate the inputs used 
+The second component is the :ref:`safiretools` Python package which allows users to both generate the inputs used 
 by SAFIRE and analyze the outputs.
 A formal overview of AFQMC is provided in :ref:`afqmc`.
 
@@ -35,7 +35,7 @@ After installing SAFIRE (see :ref:`install`), a basic AFQMC calculation
 can be performed by following the steps below.
 A set of examples is provided for each step in the :ref:`user_examples`.
 
-1. Set up the AFQMC calculation by specifying a Hamiltonian and a trial wavefunction using afqmctools. See :ref:`setup_exs`
+1. Set up the AFQMC calculation by specifying a Hamiltonian and a trial wavefunction using safiretools. See :ref:`setup_exs`
 2. Run the SAFIRE executable. See :ref:`run_afqmc_exs`
 3. Analyze the stochastic data. See :ref:`analysis_exs`
 

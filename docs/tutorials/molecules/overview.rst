@@ -123,14 +123,14 @@ Typical Workflow
 
 SAFIRE reads :math:`\hat{H}` in generic second-quantized form from an HDF5 file.
 This allows SAFIRE to use any Hamiltonian that can be expressed in this form.
-The `afqmctools` CLI tools / Python package can write a Hamiltonian to the SAFIRE format
+The `safiretools` Python package can write a Hamiltonian to the SAFIRE format
 given arrays containing the matrix elements,
 or from the standard FCIDUMP format.
-If the optional dependency PySCF is installed, `afqmctools` is able to use PySCF's
+If the optional dependency PySCF is installed, `safiretools` is able to use PySCF's
 interface to `libcint` to generate the required matrix elements.
 
 The trial wavefunction is also read from an HDF5 file.
-Similar to the Hamiltonian, `afqmctools` includes tools for writing wavefunctions
+Similar to the Hamiltonian, `safiretools` includes tools for writing wavefunctions
 in this format as will be seen in the tutorials.
 
 Software prerequisites
@@ -144,7 +144,7 @@ for easy integration into existing workflows.
 
 To use SAFIRE, you will need a quantum chemistry code that can:
 
-1. generate / output Hamiltonian matrix elements, :math:`H^0`, :math:`H^1_{ij}`, and :math:`H^2_{ijjkl}`. SAFIRE comes with a converter from the common FCIDUMP format to its internal format via afqmctools.
+1. generate / output Hamiltonian matrix elements, :math:`H^0`, :math:`H^1_{ij}`, and :math:`H^2_{ijjkl}`. SAFIRE comes with a converter from the common FCIDUMP format to its internal format via safiretools.
 2. compute / output wavefunctions to use as trial wavefunctions. This can either be:
 
    - a list of CI coefficients, :math:`C_n`, and occupation strings :math:`O_\sigma = [o_0, o_1, ..., o_{N_\sigma}]`
@@ -154,7 +154,7 @@ For all of tutorials except for Hello SAFIRE we assume that you have access to a
 chemistry code that can do all of this.
 If you do not have access to a quantum chemistry code that can do all of this,
 PySCF is a possible choice which is free and open source.
-The tutorials will teach you how to input this information using the `afqmctools` CLI tools / python package.
+The tutorials will teach you how to input this information using the `safiretools` Python package.
 
 The Tutorials
 =============

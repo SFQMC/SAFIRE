@@ -29,7 +29,7 @@ References:
 
 Begin by generating a SAFIRE Hamiltonian HDF5 file.
 See the [sample script below](#sample-script-for-generating-the-safire-hamiltonian-file).
-afqmctools provides a command line tool to convert from the SAFIRE HDF5 Hamiltonian file to a FCIDUMP which can be read by many quantum chemistry codes.
+safiretools can convert the SAFIRE HDF5 Hamiltonian file to a FCIDUMP which can be read by many quantum chemistry codes.
 
 ```python
 from safiretools import MolecularHamiltonian
@@ -123,7 +123,7 @@ PTEnergy:     -24.6066408409 +/- 5.36e-06
 Time(s):       39.50
 ```
 
-Finally, `afqmctools` provides a command line tool to convert from the wavefunction printed in the Dice raw text output to the SAFIRE HDF5 wavefunction format.
+Finally, `safiretools` can convert the wavefunction printed in the Dice raw text output to the SAFIRE HDF5 wavefunction format.
 From the example directory, run
 
 ```python
