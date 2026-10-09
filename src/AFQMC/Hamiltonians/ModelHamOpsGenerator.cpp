@@ -237,6 +237,8 @@ ModelHamOpsGenerator::getHamiltonianOperations_impl(WALKER_TYPES type,
 
   }
   utils::check(one_body_term, base_error + " Missing one_body component in ModelHamiltonian.");
+  utils::check(!interactions.empty(),
+               base_error + " ModelHamiltonian needs at least one hubbard_u or hubbard_j component.");
   utils::check(hij.nnz() != 0,
                base_error + " Something went wrong, empty one_body component.");
 
