@@ -34,7 +34,7 @@ of C diamond in the primitive cell cell.
 
 ## External Software
 
-In addition to SAFIRE and afqmctools, we will be using the following software packages:
+In addition to SAFIRE and safiretools, we will be using the following software packages:
 
 - [PySCF](https://www.quantum-espresso.org/) for density functional theory (DFT) calculations, integrals, and some post-processing tools.
 - [VESTA](https://jp-minerals.org/vesta/en/) for visualizing the final density.

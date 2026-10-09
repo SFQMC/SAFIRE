@@ -315,7 +315,7 @@ class HamiltonianBuilder:
 
     Parameters
     ----------
-    lattice : ~safiretools.hamiltonian.model.lattice.Lattice
+    lattice : ~safiretools.Lattice
         Lattice describing the geometry the Hamiltonian is defined on.
     nbands : int, optional
         Number of bands. Default 1.
@@ -381,7 +381,7 @@ class HamiltonianBuilder:
         ----------
         source : dict
             Hamiltonian (and possibly lattice) parameters.
-        lattice : ~safiretools.hamiltonian.model.lattice.Lattice, optional
+        lattice : ~safiretools.Lattice, optional
             Lattice describing the geometry. Built from ``source['lattice']`` if
             omitted.
 

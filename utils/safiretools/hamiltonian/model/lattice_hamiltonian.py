@@ -295,7 +295,7 @@ class LatticeHamiltonian(Hamiltonian):
         source : dict
             Input parameters, with a ``'hamiltonian'`` section (and a
             ``'lattice'`` section unless `lattice` is given).
-        lattice : ~safiretools.hamiltonian.model.lattice.Lattice, optional
+        lattice : ~safiretools.Lattice, optional
             Lattice to build on. Built from ``source['lattice']`` if omitted.
 
         Returns
@@ -480,7 +480,7 @@ def lattice_metadata_from(lattice) -> dict:
 
     Parameters
     ----------
-    lattice : ~safiretools.hamiltonian.model.lattice.Lattice
+    lattice : ~safiretools.Lattice
         The lattice a `LatticeHamiltonian` is being built on.
 
     Returns

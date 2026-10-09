@@ -976,8 +976,11 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
 
 ### Things we will change
 
-- **Shorten the deep paths in user-facing docstrings, and document the public surface from
-  `safiretools`.** Four `lattice : ~safiretools.hamiltonian.model.lattice.Lattice` type fields
+- ~~**Shorten the deep paths in user-facing docstrings, and document the public surface from
+  `safiretools`.**~~ Resolved. `docs/safiretools/api.rst` autodocs `safiretools` and
+  `safiretools.vis`, no user-facing page autodocs an implementation module, afqmctools is no
+  longer autodoc'd at all, and the four type fields read `~safiretools.Lattice`. Whether
+  `hamiltonian_format()` is promoted is still open. Four `lattice : ~safiretools.hamiltonian.model.lattice.Lattice` type fields
   (`HamiltonianBuilder` and its `from_input`, `LatticeHamiltonian.from_dict`, and the dev-facing
   `lattice_metadata_from`) violate the rule above. They are written that way because a bare
   `Lattice` is an **ambiguous cross-reference** while both `safiretools` and `afqmctools` are

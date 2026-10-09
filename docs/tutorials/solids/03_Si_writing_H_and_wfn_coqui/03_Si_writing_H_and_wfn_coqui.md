@@ -25,7 +25,7 @@ Become acquainted with how to write a Hamiltonian to the SAFIRE HDF5 format.
 
 ## External Software
 
-In addition to SAFIRE and afqmctools, we will be using the following software packages:
+In addition to SAFIRE and safiretools, we will be using the following software packages:
 
 - [Quantum Espresso (QE)](https://www.quantum-espresso.org/) for density functional theory (DFT) calculations, and some integrals via its post-processing utilities
 - [CoQuí](https://github.com/AbInitioQHub/coqui) for generating the SAFIRE Hamiltonian and Trial wavefunction HDF5 files from the output of QE.
