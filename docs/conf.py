@@ -142,7 +142,7 @@ html_theme_options = {
     # Maximum depth rendered in the left nav (default: 4)
     # Remove the light/dark theme switcher (default: ["theme-switcher", "navbar-icon-links"])
     "navbar_end": ["navbar-icon-links"],
-    "navbar_align": "left",
+    "navbar_align": "content",
     "secondary_sidebar_items": ["page-toc"],
     "icon_links": [
         {
