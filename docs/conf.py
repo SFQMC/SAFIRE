@@ -124,6 +124,7 @@ html_static_path = ['_static']
 
 html_css_files = [
     'custom.css',
+    'filetree.css',
 ]
 
 html_theme_options = {
