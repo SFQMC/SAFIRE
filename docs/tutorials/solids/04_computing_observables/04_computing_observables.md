@@ -667,7 +667,6 @@ BP is invoked in SAFIRE by including a "back_propagation" estimator in the input
 {
   "estimators": {
     "backprop": {
-      "path_restoration": true,
       "walker_ortho_interval": 5,
       "propagation_steps": [200],
       "onerdm": {}
@@ -695,7 +694,6 @@ To define multiple BP lengths/averages, simply list all of the BP lengths that y
 {
   "estimators": {
     "backprop": {
-      "path_restoration": true,
       "walker_ortho_interval": 10,
       "propagation_steps": [600, 700, 800],
       "onerdm": {}
@@ -762,7 +760,6 @@ write_jobfile(
             "num_walkers": 1600,
             "estimators": {
                 "backprop": {
-                    "path_restoration": True,
                     "walker_ortho_interval": 10,
                     "propagation_steps": [40, 50, 60],  # Multiple BP lengths, in steps
                     "onerdm": {}

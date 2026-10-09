@@ -175,7 +175,6 @@ A back-propagated estimator block with pair correlation functions would look lik
 ```json
 "estimators": {
   "backprop": {
-    "path_restoration": true,
     "walker_ortho_interval": 10,
     "paircorr": {
       "pairs": {
@@ -221,7 +220,6 @@ instead of the above.
     "walker_ortho_interval": 10,
     "estimators": {
       "backprop": {
-        "path_restoration": true,
         "walker_ortho_interval": 10,
         "propagation_steps": [100],
         "paircorr": {
@@ -284,7 +282,6 @@ write_jobfile(
             "measure_interval": 2,
             "estimators": {
                 "backprop": {
-                    "path_restoration": True,
                     "walker_ortho_interval": 10,
                     "propagation_steps": [100],
                     "paircorr": {

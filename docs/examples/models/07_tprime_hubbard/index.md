@@ -230,7 +230,6 @@ write_jobfile(scratch_dir/"afqmc.json", {
         },
         "estimators": {
             "backprop": {
-                "path_restoration": True,
                 "walker_ortho_interval": 5,
                 "propagation_steps": [200, 400, 600, 800],
                 "onerdm": {}
