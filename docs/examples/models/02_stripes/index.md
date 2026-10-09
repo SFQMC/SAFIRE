@@ -184,8 +184,6 @@ afqmc_params = {
     "estimators": {
         "energy": {},
         "backprop": {
-            "path_restoration": True,
-            "extra_path_restoration": True,
             "walker_ortho_interval": 2,
             "propagation_steps": [500],
             "onerdm": {}

@@ -688,8 +688,6 @@ Here is a sample input file where an ellipsis has been used to hide the rest of 
 
     "estimators": {
       "backprop": {
-        "path_restoration": true,
-        "extra_path_restoration": true,
         "walker_ortho_interval": 5,
         "propagation_steps": [100, 150, 200],
         "onerdm": {}
@@ -743,8 +741,6 @@ write_jobfile(fe_scratch_dir/"afqmc_3.json", {
         },
         "estimators": {
             "backprop": {
-                "path_restoration": True,
-                "extra_path_restoration": True,
                 "walker_ortho_interval": 10,
                 "propagation_steps": [200, 400, 600], # 🚧 Under construction 🚧 : Kyle is working on a good set of values here.
                 "onerdm": {}

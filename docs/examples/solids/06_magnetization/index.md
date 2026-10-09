@@ -356,8 +356,6 @@ back-propagation algorithm.
 ```json
 "estimators": {
   "backprop": {
-    "path_restoration": true,
-    "extra_path_restoration": true,
     "walker_ortho_interval": 10,
     "propagation_steps": [200, 400],
     "onerdm": {}

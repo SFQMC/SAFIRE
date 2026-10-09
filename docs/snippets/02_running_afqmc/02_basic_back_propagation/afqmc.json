@@ -16,7 +16,6 @@
     "measure_interval": 10,
     "estimators": {
       "backprop": {
-        "path_restoration": true,
         "walker_ortho_interval": 10,
         "propagation_steps": [400],
         "onerdm": {}
