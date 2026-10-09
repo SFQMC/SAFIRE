@@ -11,9 +11,15 @@ kernelspec:
   name: python3
 ---
 
-+++ {"id": "m5yYPGDk-NIu"}
-
 # Hello SAFIRE
+
+<!--
+This is the main version of the Hello SAFIRE tutorial. The solids and lattice-model versions
+include the regions between the "BEGIN hello-NAME" and "END hello-NAME" markers below,
+so keep those regions free of system-specific content and code cells.
+-->
+
+<!-- BEGIN hello-intro -->
 
 <b>Goal:</b>
 At the end of this tutorial, you will know how to run an AFQMC calculation using SAFIRE and extract the AFQMC energy from the output
@@ -26,7 +32,7 @@ given all necessary inputs.
 3. how to extract the AFQMC energy from the outputs of SAFIRE using afqmctools
 4. how to use the tutorial helper functions to perform 2 and 3 from within an interactive Python notebook
 
-+++ {"id": "7FBZ0COY-NIw"}
++++
 
 <b>
 Inputs and outputs of SAFIRE.
@@ -43,9 +49,9 @@ Below is a schematic of the inputs and outputs of SAFIRE.
 
 ![](files/inputs_and_outputs_all.png)
 
-We will learn more about the details of all of these files in future tutorials. For this tutorial, pregenerated input files are provided in the "/molecules/files" directory relative to the root directory of the tutorials.
+We will learn more about the details of all of these files in future tutorials. For this tutorial, pregenerated input files are provided in the "files" directory relative to the directory of this tutorial.
 
-+++ {"id": "tMJ2Y4re-NIw"}
++++
 
 <b>The Inputs
 </b>
@@ -58,40 +64,26 @@ To perform a calculation, SAFIRE requires a Hamiltonian and a trial wave functio
 
 ---
 
-<!--
-<div>
-<img src="./figs/inputs_and_outputs_hamil.png" width="800"/>
-</div>
--->
-
 ![](files/inputs_and_outputs_hamil.png)
 
 This HDF5 file contains the second-quantized Hamiltonian $\hat{H}$.
+
+<!-- END hello-intro -->
 
 For this tutorial, we have supplied an HDF5 file containing the Born-Oppenheimer
 Hamiltonian for the STO-3G basis hydrogen dimer at a bondlength of $\delta_{H-H} = 1.4$ $a_0$
 in "hamil.h5".
 
-<!--
-<div>
-<img src="./figs/HyrdogenMolecule_v2.png" width="300"/>
-</div>
--->
-
 ![](files/HyrdogenMolecule_v2.png)
 
-For technical details on the Hamiltonian HDF5 format, see [the User Guide](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/afqmc.html#dense-cholesky).
+<!-- BEGIN hello-wavefunction-and-outputs -->
+
+For technical details on the Hamiltonian HDF5 format, see {doc}`/user_manual`.
 
 <b> Wavefunction file : "wfn.h5"
 </b>
 
 ---
-
-<!--
-<div>
-<img src="./figs/inputs_and_outputs_wfn.png" width="800"/>
-</div>
--->
 
 ![](files/inputs_and_outputs_wfn.png)
 
@@ -104,18 +96,12 @@ $$
 | \Psi_\mathrm{T} \rangle = | \Phi_\mathrm{RHF} \rangle
 $$
 
-For technical details on the wavefunction HDF5 format, see [the User Guide](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/afqmc.html#wavefunction-file-formats).
+For technical details on the wavefunction HDF5 format, see {doc}`/user_manual`.
 
 <b> Input file (json format) : "input.json"
 </b>
 
 ---
-
-<!--
-<div>
-<img src="./figs/inputs_and_outputs_json.png" width="800"/>
-</div>
--->
 
 ![](files/inputs_and_outputs_json.png)
 
@@ -129,28 +115,14 @@ Similarly, the `hamiltonian` input block is used to tell SAFIRE where to find th
 
 The sample json file that we have provided is reproduced here.
 
-```json
-{
-  "output_name": "qmc",
-  "seed": 42,
-  "execute": {
-    "wavefunction": {
-      "filename": "wfn.h5"
-    },
-    "hamiltonian": {
-      "filename": "hamil.h5"
-    },
-    "timestep": 0.01,
-    "steps": 10000,
-    "num_walkers": 200
-  }
-}
+```{literalinclude} files/input.json
+:language: json
 ```
-  
+
 Notice that the `wavefunction` and `hamiltonian` input blocks point to the HDF5 file where we have saved the RHF ground
 state and second-quantized Hamiltonian, respectively.
 
-+++ {"id": "dWRr3WmB-NIw"}
++++
 
 <b>The Outputs
 </b>
@@ -202,12 +174,6 @@ We will explore the output further in later tutorials.
 
 ---
 
-<!--
-<div>
-<img src="./figs/inputs_and_outputs_scalar.png" width="800"/>
-</div>
--->
-
 ![](files/inputs_and_outputs_scalar.png)
 
 A text-based file containing stochastic samples of scalar data, such as the energy.
@@ -223,12 +189,6 @@ The name of this file is derived from the `id` (string) and `series` (integer) p
 
 ---
 
-<!--
-<div>
-<img src="./figs/inputs_and_outputs_hdf5.png" width="800"/>
-</div>
--->
-
 ![](files/inputs_and_outputs_hdf5.png)
 
 An HDF5 file where stochastic samples of non-scalar data, such as the one-body reduced density matrix, are printed by SAFIRE
@@ -236,9 +196,14 @@ when requested.
 
 Similar to the `[id].s[series].scalar.dat` file, this file is not meant to be read directly by a user.
 Instead, afqmctools provides tools to extract data from this file for you.
+
+<!-- END hello-wavefunction-and-outputs -->
+
 You will learn more about this in {doc}`../05_computing_observables/05_computing_observables`.
 
-+++ {"id": "Yhdjs78S-NIx"}
+<!-- BEGIN hello-running -->
+
++++
 
 ## Running SAFIRE
 
@@ -282,17 +247,11 @@ Usage:
 Run SAFIRE with the provided input files.
 You may use either the code block below, or run SAFIRE in a terminal
 as described previously.
-In either case, you can find the json input file here
-
-```bash
-    /path/to/SAFIRE/tutorials/molecules/files/input.json
-```
-
-where `/path/to/SAFIRE` should be replaced with the path where
-you have installed SAFIRE.
+In either case, you can find the json input file in `files/input.json`
+relative to the directory of this tutorial.
 
 **The provided json input file assumes that you are running SAFIRE from
-`/path/to/SAFIRE/tutorials/mols/01_hello_safire/`**
+the directory of this tutorial.**
 
 After running with the default parameters, try changing the verbosity level to
 see what changes.
@@ -303,17 +262,13 @@ see what changes.
     a shell instead of in Python.
 </div>
 
+<!-- END hello-running -->
+
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: o-XSiSD_-NIx
-outputId: 97e5782f-d892-4426-e6d5-e7bbb118cab2
----
 !$AFQMC_EXEC files/input.json
 ```
 
-+++ {"id": "eShMF9Ab-NIy"}
+<!-- BEGIN hello-parallel -->
 
 ### Post-exercise
 
@@ -348,7 +303,7 @@ In the directory that you ran this notebook from, you should see a file called
 `qmc.s000.scalar.dat`.
 We will return to how to use the tools in `afqmctools` to extract the AFQMC energy later in this tutorial.
 
-+++ {"id": "L0YADhMN-NIy"}
++++
 
 ## Running SAFIRE in parallel
 
@@ -373,7 +328,7 @@ such that every task carries on the order of 10-50 walkers.
 ### GPU Builds
 
 To run on GPUs, you must compile SAFIRE for the GPU.
-See the [documentation](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/getting_started.html#gpu-accelerated-build-at-ccq) for instructions on compiling for GPU.
+See the [documentation](https://users.flatironinstitute.org/~beskridge/safire/installation.html) for instructions on compiling for GPU.
 
 On GPU builds of SAFIRE, the calculation is more efficient when
 the GPU is saturated.
@@ -381,16 +336,18 @@ The specific number of walkers needed to achieve this depends on how large the s
 For small systems, this could mean using on the order of 1000 walkers or more per task.
 For very large systems, this may mean on the order of 10 walkers per MPI task.
 
-+++ {"id": "ifrwtXzA-NIy"}
+<!-- END hello-parallel -->
+
+<!-- BEGIN hello-postprocessing -->
+
++++
 
 ## Basic post-processing
 
 Now that we've learned how to invoke the SAFIRE executable from the command line in serial, using MPI, and using GPU(s),
 we are ready to learn how to extract the AFQMC energy from the outputs using afqmctools.
 
-We previously ran SAFIRE on the Hamiltonian of the STO-3G basis hydrogen dimer
-with bondlength $\delta_{H-H} = 1.4 a_0$.
-This generated a scalar data file, `qmc.s000.scalar.dat`, which contains
+The run in the first exercise generated a scalar data file, `qmc.s000.scalar.dat`, which contains
 the scalar data that was accumulated during the AFQMC calculation, including the AFQMC energy.
 
 afqmctools provides the `scalar_stats` CLI tool to extract data from the scalar data file.
@@ -400,12 +357,51 @@ installed afqmctools in.
 
 By default, `scalar_stats` will compute the average AFQMC energy and the stochastic uncertainty of the
 energy based on the samples in the `*.scalar.dat` file.
-Below is an example of using `scalar_stats` where we have set the "x axis" to (AFQMC projection) time,
-and the equilibration time to 2.0 inverse energy units.
+For example,
 
 ```bash
 $ scalar_stats qmc.s000.scalar.dat -s time -e 2.0
+```
 
+sets the "x axis" to (AFQMC projection) time and the equilibration time to 2.0 inverse energy units.
+
+You can also view the AFQMC energy as a function of the projection time (sometimes referred to as the "equilibration curve") by
+adding the `-t` option to plot the data trace.
+
+Running
+
+```bash
+$ scalar_stats qmc.s000.scalar.dat -s time -e 2.0 -t
+```
+
+will generate the plot,
+
+![](files/equilibration_curve.png)
+
+One should check the equilibration curve to ensure that the equilibration
+time, `-s time -e 2.0`, is large enough to discard the samples where AFQMC is not sampling from the target many-body wavefunction yet.
+On the other hand, the equilibration length should not be so large that it discards equilibrated samples.
+
+<div class="alert alert-block alert-info">
+<b>Note:</b>
+    Using the `-t` option to plot the trace will only work when running locally;
+    you can use the `--savefig [SAVEFIG]` option to save the figure as an image
+    in the file "SAVEFIG". The file type is detected from the file extension in
+    the name. *.png is generally recommended.
+</div>
+
+### Exercise: Try Running scalar_stats
+
+Use the code block below to run scalar_stats on the data that we generated
+in the first exercise.
+Then, try changing the equilibration length such that only un-equilibrated samples
+are discarded.
+
+If you did not change any settings, the output of the code block should be
+
+<!-- END hello-postprocessing -->
+
+```bash
 ====== [analyze_scalar_data Settings] ======
 
 [+] fname            = qmc.s000.scalar.dat
@@ -429,58 +425,11 @@ $ scalar_stats qmc.s000.scalar.dat -s time -e 2.0
 AFQMC Energy    -1.135762 +/-   0.000290 7.94  2.0/100.0
 ```
 
-You can also view the AFQMC energy as a function of the projection time (sometimes referred to as the "equilibration curve") by
-adding the `-t` option to plot the data trace.
-
-Running
-
-```bash
-$ scalar_stats qmc.s000.scalar.dat -s time -e 2.0 -t
-```
-
-will generate the plot,
-
-<!--
-<div>
-<img src="./figs/HelloAuxyFields_equil.png" width="600"/>
-</div>
--->
-
-![](files/HelloAuxyFields_equil.png)
-
-One should check the equilibration curve to ensure that the equilibration
-time, `-s time -e 2.0`, is large enough to discard the samples where AFQMC is not sampling from the target many-body wavefunction yet.
-On the other hand, the equilibration length should not be so large that it discards equilibrated samples.
-
-<div class="alert alert-block alert-info">
-<b>Note:</b>
-    Using the `-t` option to plot the trace will only work when running locally;
-    you can use the `--savefig [SAVEFIG]` option to save the figure as an image
-    in the file "SAVEFIG". The file type is detected from the file extension in
-    the name. *.png is generally recommended.
-</div>
-
-### Exercise: Try Running scalar_stats
-
-Use the code block below to run scalar_stats on the data that we generated
-in the last exercise.
-You should get an AFQMC energy of `-1.135762 +/-   0.000290`
-if you did not change any settings.
-
-Now, try to changing the equilibration length such that only un-equilibrated samples
-are discarded.
-
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: -Ej94zXY-NIz
-outputId: 74fb0dab-3f45-4fac-ea34-2931de197dcb
----
 !scalar_stats qmc.s000.scalar.dat -s time -e 2.0
 ```
 
-+++ {"id": "Q7NGQf5v-NIz"}
+<!-- BEGIN hello-helpers -->
 
 ## Post Exercise
 
@@ -489,7 +438,7 @@ the predicted energy will be incorrect.
 This is due to the inclusion of un-equilibrated samples in the average.
 On the other hand, the average energy should be stable if you use too large of a value for the equilibration length.
 
-+++ {"id": "HxaTJ4Rd-NIz"}
++++
 
 ## Some Tutorial Helper Python Functions
 
@@ -514,6 +463,8 @@ For convenience, we provide the `run_afqmc()` helper function in the `tutorial_u
 Here is a typical example of using `run_afqmc()`.
 
 ```python
+    from tutorial_utils import run_afqmc
+
     scratch_dir = Path("data")
     
     run_afqmc(
@@ -537,7 +488,7 @@ Where the `np` parameter is forwarded directly to `-np [np]` and
 
 Use the code block below to run the entire calculation again.
 
-Just as before, at the end, you should get an AFQMC energy of `-1.135742 +/-   0.000286`
+Just as before, at the end, you should get the AFQMC energy from the previous exercise
 if you did not change any settings.
 
 <div class="alert alert-block alert-info">
@@ -547,14 +498,9 @@ if you did not change any settings.
     in these tutorials. See the code block below.
 </div>
 
+<!-- END hello-helpers -->
+
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 1000
-id: lFXM3f_c-NIz
-outputId: 23c92fb6-6385-46fa-a007-1b019b3bffa5
----
 from pathlib import Path
 import shutil
 
@@ -570,7 +516,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 files_dir = scratch_dir / "files"
 files_dir.mkdir(exist_ok=True)
 shutil.copy("files/input.json", scratch_dir / "files" )
-shutil.copy("files/input.h5", scratch_dir / "files" )
+shutil.copy("files/wfn.h5", scratch_dir / "files" )
 shutil.copy("files/hamil.h5", scratch_dir / "files")
 
 run_afqmc(
@@ -589,7 +535,7 @@ _ = analyze_scalar_data(dict(
 ))
 ```
 
-+++ {"id": "gGT0fdst-NIz"}
+<!-- BEGIN hello-summary -->
 
 ## Summary
 
@@ -599,3 +545,9 @@ In this tutorial we have learned,
 2. how to invoke the SAFIRE executable from the command line in serial, using MPI, and using GPU(s)
 3. how to extract the AFQMC energy from the outputs of SAFIRE using afqmctools
 4. how to use the tutorial helper functions to perform 2 and 3 from within an interactive Python notebook
+
+---
+
+Next, we will take a more detailed look at the input file in {doc}`../02_understanding_the_input_file/02_understanding_the_input_file`.
+
+<!-- END hello-summary -->
