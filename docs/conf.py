@@ -54,6 +54,7 @@ extensions = [
     'notebook_header',
     ]
 bibtex_bibfiles = ['bibs/afqmc.bib']
+bibtex_default_style = 'unsrt'
 
 def setup(app):
     # Add CSS for bold references
