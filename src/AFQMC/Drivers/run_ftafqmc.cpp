@@ -49,13 +49,16 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   // the ranks need not carry the same number of walkers, so each restores its own count
   int const nwalk_local = wset.size();
 
-  int print_interval = std::max(1, exec.steps / 20);
+  const int steps         = resolved(exec.steps, "steps");
+  const RealType timestep = resolved(exec.timestep, "timestep");
+
+  int print_interval = std::max(1, steps / 20);
 
   app_log(1, "Initial weight and number of walkers: {}, {}", w0, nwalk_ini);
   app_log(1, "Initial Eshift: {} ", Eshift);
 
   const RealType Eshift0 = Eshift;
-  const RealType beta    = exec.timestep * exec.steps;
+  const RealType beta    = timestep * steps;
 
   const double Eshift_relaxation_factor = resolved(exec.Eshift_relaxation_factor, "Eshift_relaxation_factor");
 
@@ -69,7 +72,7 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 
   for(int sweep = 0; sweep < exec.sweeps; ++sweep) {
     Eshift = Eshift0; // Eshift set to same value at the beginning of each sweep
-    for(int step = 0; step < exec.steps; ++step) {
+    for(int step = 0; step < steps; ++step) {
       auto step_time = timers.step.start();
       if(step % print_interval == 0 && exec.print_sweep_step) {
         app_log(1, "sweep {}, step {} ", sweep, step);
@@ -88,21 +91,21 @@ void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
 
       propagator.Propagate(wset, Eshift, step + 1);
 
-      if(step % exec.walker_ortho_interval == 0 && step != exec.steps - 1) {
+      if(step % exec.walker_ortho_interval == 0 && step != steps - 1) {
         auto ortho_time = timers.ortho.start();
         propagator.Orthogonalize(wset);
         ortho_time.stop();
       }
 
       // KE: should there be a check for population control interval here?
-      if(step % exec.population_control_interval == 0 || step == exec.steps - 1) {
+      if(step % exec.population_control_interval == 0 || step == steps - 1) {
         auto popcontrol_time = timers.popcontrol.start();
         population_control(mpi, *wset.getRNG(), wset);
         popcontrol_time.stop();
       }
 
       if(step < exec.equilibration_steps) {
-        Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, exec.timestep) - Eshift);
+        Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, timestep) - Eshift);
       }
 
       // resize stack pointers to match maximum buffer use

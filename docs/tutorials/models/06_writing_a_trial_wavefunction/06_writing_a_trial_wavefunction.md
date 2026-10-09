@@ -200,6 +200,8 @@ The trial file does not store an initial walker. **By default**, the walkers sta
           "wavefunction": "initial"
         }
       },
+      "timestep": 0.01,
+      "steps": 10000,
       "num_walkers": 200
     }
   ]

@@ -49,8 +49,11 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   app_log(1, "Initial weight and number of walkers: {}, {}", w0, nwalk_ini);
   app_log(1, "Initial Eshift: {} ", Eshift);
 
-  const int log_interval = std::max(1, exec.steps / 100);
-  const int step_format_width = int(std::to_string(exec.steps).size());
+  const int steps         = resolved(exec.steps, "steps");
+  const RealType timestep = resolved(exec.timestep, "timestep");
+
+  const int log_interval = std::max(1, steps / 100);
+  const int step_format_width = int(std::to_string(steps).size());
 
   const double Eshift_relaxation_factor = resolved(exec.Eshift_relaxation_factor, "Eshift_relaxation_factor");
 
@@ -63,7 +66,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
   app_log(2, log_row, "Wall clock", log_col, "Step", log_col, "Energy", log_col);
   app_log(2, hrule());
 
-  for(int step = 0; step < exec.steps; ++step) {
+  for(int step = 0; step < steps; ++step) {
     auto step_time = timers.step.start();
     propagator.Propagate(wset, Eshift);
 
@@ -85,7 +88,7 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       // its own; one that skips a step does no work on it
       estimators.measure(mpi, step, wset);
     } else {
-      Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, exec.timestep) - Eshift);
+      Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, timestep) - Eshift);
       // back propagation starts its first window here, rather than at the stale anchor its
       // constructor took before equilibration
       if(step == exec.equilibration_steps - 1) {
@@ -93,15 +96,15 @@ void run_afqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
       }
     }
 
-    if(step % log_interval == 0 || step == exec.steps-1) {
-      const double energy = averagePseudoEnergy(mpi, wset, exec.timestep);
+    if(step % log_interval == 0 || step == steps-1) {
+      const double energy = averagePseudoEnergy(mpi, wset, timestep);
       const auto now = std::chrono::current_zone()->to_local(
           std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
 
       // app_log formats through spdlog's bundled fmt, which has no chrono formatter here,
       // so the timestamp is rendered by std::format and passed on as a string
       app_log(2, log_row, std::format("{:%F %T}", now), log_col,
-              std::format("{:>{}}/{}", step+1, step_format_width, exec.steps), log_col,
+              std::format("{:>{}}/{}", step+1, step_format_width, steps), log_col,
               std::format("{:#.15g}", energy), log_col);
     }
 

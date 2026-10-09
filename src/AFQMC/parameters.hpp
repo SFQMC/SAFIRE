@@ -254,7 +254,7 @@ struct ExecuteParameters {
   std::optional<utils::BlockRef<PropagatorParameters>> propagator{};
   EstimatorParameters estimators{};
 
-  int steps{1000};
+  std::optional<int> steps{}; // required
   int equilibration_steps{100};
   int binsize{1}; // number of measurements averaged into one bin of the results file
   int sweeps{1}; // finite temperature sweeps
@@ -267,7 +267,7 @@ struct ExecuteParameters {
   std::optional<int> measure_interval{};
   bool print_sweep_step{false}; // ftafqmc only
 
-  double timestep{DEFAULT_TIME_STEP};
+  std::optional<double> timestep{}; // required
   // required: the total number of walkers over all ranks, split so that the walker counts of two
   // ranks differ by at most one
   std::optional<int> num_walkers{};

@@ -323,8 +323,11 @@ void apply_defaults(ExecuteParameters& exec, DriverType driver) {
 void resolve_defaults(AFQMCParameters& params, utils::mpi_context_t<mpi3::communicator>& mpi) {
   utils::check(!params.execute.empty(), "The input contains no execute block, so there is nothing to run.");
 
-  // the walkers are split over the ranks, so their number has no default that suits every launch
+  // the timestep and the length of the run depend on the system, and the walkers are split over
+  // the ranks, so none of the three has a default that suits every input
   for(auto const& exec : params.execute) {
+    utils::check(exec.timestep.has_value(), "Every execute block needs \"timestep\", the Trotter step size.");
+    utils::check(exec.steps.has_value(), "Every execute block needs \"steps\", the number of propagation steps.");
     utils::check(exec.num_walkers.has_value(),
                  "Every execute block needs \"num_walkers\", the total number of walkers over all ranks.");
     utils::check(*exec.num_walkers >= mpi.comm.size(),
