@@ -1,198 +1,110 @@
 .. _Wavefunction-classes:
 
-Wavefunction File formats
--------------------------
+Wavefunction Files
+------------------
 
-The trial wavefunction in AFQMC is typically a linear combination of Slater determinants,
+The wavefunction input to SAFIRE determines how the :ref:`afqmc` random walk is importance-sampled and constrained. Wavefunctions also define the initial condition of the :ref:`Walker-classes`.
+
+SAFIRE supports wavefunctions which are linear combinations
 
 .. math::
   |\Psi_\mathrm{T} \rangle = \sum^{N_\mathrm{det}}_n C_n | \Phi_n \rangle
 
-where :math:`C_n` is a complex-valued coefficient, and :math:`|\Phi_n\rangle` are Slater determinants which are not necessarily orthogonal to each other. Of course, each Slater determinant consists of some set of single-particle orbitals, :math:`\{ \psi_p \}`, such that,
+of Slater determinants :math:`|\Phi_n\rangle` with complex coefficients :math:`C_n`.
 
-.. math::
-  \psi_{p} = \sum_i \bar{C}_{ip} \phi_i
+There are two kinds of these multi determinant wavefunctions:
 
-where :math:`\{\phi_i\}` are the chosen orthonormal basis set orbitals. Slater determinants can either be represented explicitly as a Slater matrix,
+1. **Nonorthogonal multi-Slater determinant (NOMSD) wavefunctions**
+   consist of *strictly* nonorthogonal Slater determinants. Each individual determinant is specified as a complete matrix of orbitals.
+2. **Particle-hole multi-Slater determinant (PHMSD) wavefunctions**
+   are configuration-interaction-like wavefunctions where all individual Slater determinants are mutually orthogonal and specified in terms of occupancy vectors of a set of reference orbitals.
 
-.. math::
-  \Phi = \begin{bmatrix}
-    \bar{C}_{00} &\bar{C}_{01} & \bar{C}_{02} & \dots  & \bar{C}_{0N} \\
-    \bar{C}_{10} & \bar{C}_{11} & \bar{C}_{12} & \dots  & \bar{C}_{1N} \\
-    \vdots & \vdots & \vdots & \ddots & \vdots \\
-    \bar{C}_{M0} & \bar{C}_{M1} & \bar{C}_{M2} & \dots  & \bar{C}_{MN}
-  \end{bmatrix}
+General Storage Conventions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-where :math:`M,N` are the number of basis functions and electrons, respectively, or in terms of an "occupation vector", which is simply a list of orbital indices which should be occupied.
-See the :ref:`SAFIRE tutorials <tutorials>` for tutorials and examples on generating and writing trial wavefunctions.
-
-SAFIRE implements two basic types of trial wavefunction:
-
-1. **"particle-hole" multi-Slater determinant (ph-mSD) trial wavefunctions** which is a configuration interaction-like wavefunction where :math:`\langle \Phi_n |\Phi_m\rangle = \delta_{nm} \forall n,m`.
-   In this case, the Slater determinants are specified in terms of a set of orbitals, and a list of :math:`C_n` and corresponding occupancy vectors. See the HDF5 file format description in :ref:`PHMSD <phmsd_wavefunction>` for more.
-
-2. **non-orthogonal multi-slater Determinant (NOMSD) trial wavefunction** where *strictly* :math:`\langle \Phi_n |\Phi_m\rangle \neq 0 \forall n,m`. In this case, the Slater determinants are specified as a list of :math:`C_n` and corresponding Slater matrices. See the HDF5 file format description in :ref:`NOMSD <nomsd_wavefunction>` for more.
-
-We'll explore each of these wavefunction types in more detail below.
-
-.. note::
-   Using the ph-mSD trial wavefunction is recommended when using a large number of determinants since it is significantly more memory efficient than the NOMSD trial wavefunction,
-   and since, in some cases, fast Woodbury updates can be applied.
-
-.. warning::
-  When using NOMSD trial wavefunctions, it is important that each Slater determinant has a non-zero overlap with all other Slater determinants to avoid singular values. Use ph-mSD for orthogonal expansions of Slater determinants.
-
-AFQMC allows for two types of multi-determinant trial wavefunctions: non-orthogonal multi
-Slater determinants (NOMSD) or SHCI/CASSCF style particle-hole multi Slater determinants
-(PHMSD).
-
-Both carry a ``format_version`` integer attribute on ``/Wavefunction/NOMSD`` or
-``/Wavefunction/PHMSD``, which SAFIRE checks against the version it reads; a file without one,
-or with another version, is rejected and has to be regenerated. The one exception is the legacy
-layout CoQuí writes, recognized by a ``dims`` array in place of ``format_version`` and
-``spin_type``, which is still read.
-
+For general HDF5 format conventions, see :ref:`storage_conventions` in :ref:`Hamiltonian-classes`.
 
 .. _nomsd_wavefunction:
 
 NOMSD
 ~~~~~
 
-.. code-block:: text
+.. rst-class:: filetree-caption
 
-    h5dump -n wfn.h5
+``afqmc.h5``
 
-    HDF5 "wfn.h5" {
-        FILE_CONTENTS {
-            group      /
-            group      /Wavefunction
-            group      /Wavefunction/NOMSD
-            group      /Wavefunction/NOMSD/PsiT_0
-            dataset    /Wavefunction/NOMSD/PsiT_0/column_indices
-            dataset    /Wavefunction/NOMSD/PsiT_0/row_pointers
-            dataset    /Wavefunction/NOMSD/PsiT_0/shape
-            dataset    /Wavefunction/NOMSD/PsiT_0/values
-            group      /Wavefunction/NOMSD/PsiT_1
-            dataset    /Wavefunction/NOMSD/PsiT_1/column_indices
-            dataset    /Wavefunction/NOMSD/PsiT_1/row_pointers
-            dataset    /Wavefunction/NOMSD/PsiT_1/shape
-            dataset    /Wavefunction/NOMSD/PsiT_1/values
-            dataset    /Wavefunction/NOMSD/ci_coeffs
-        }
-    }
+.. rst-class:: filetree
 
-Note that the :math:`\alpha` components of the trial wavefunction are stored under
-``PsiT_{2n}`` and the :math:`\beta` components are stored under ``PsiT_{2n+1}``.
+* ``Wavefunction/``
 
--  ``/Wavefunction/NOMSD/PsiT_{2n}`` The :math:`n`-th :math:`\alpha` Slater matrix as a CSR
-   matrix. Note the **conjugate transpose** of the Slater matrix is stored, so it has
-   :math:`N_\alpha` rows and :math:`N_p M` columns (:math:`N_p = 2` for noncollinear
-   wavefunctions, 1 otherwise). Its datasets are
+  * ``NOMSD/``
 
-   -  ``shape``: :math:`[N_\alpha, N_p M]`.
-   -  ``values``: the :math:`nnz` non-zero elements.
-   -  ``column_indices``: the column index of each non-zero element.
-   -  ``row_pointers``: :math:`N_\alpha + 1` offsets; row :math:`i` holds entries
-      ``row_pointers[i]`` up to (not including) ``row_pointers[i+1]`` of ``values`` and
-      ``column_indices``.
+    * ``🏷️ format_version`` 1
+    * ``🏷️ spin_type``
+    * ``ci_coeffs`` :math:`(N_\mathrm{det},)`
+    * ``PsiT_<k>/`` :math:`(N_\sigma, n_\mathrm{pol} M)`, a :ref:`CSR matrix <csr_storage>`
 
-   The legacy layout CoQuí writes (``dims``, ``data_``, ``jdata_``, ``pointers_begin_``,
-   ``pointers_end_``) is read as well.
--  ``/Wavefunction/NOMSD/ci_coeffs`` :math:`N_D` length array of ci coefficients. Stored
-   as complex numbers.
--  ``spin_type`` attribute of ``/Wavefunction/NOMSD``: ``"closed"``, ``"collinear"`` or
-   ``"noncollinear"``.
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
 
-No sizes are stored separately. :math:`N_D` is the length of ``ci_coeffs``, :math:`M` and
-:math:`N_\alpha` are the columns and rows of ``PsiT_0``, and :math:`N_\beta` the rows of
-``PsiT_1``.
-
+  * - **Entry**
+    - **Description**
+  * - ``spin_type``
+    - The spin symmetry of the wavefunction, ``"closed"``, ``"collinear"`` or ``"noncollinear"``.
+  * - ``ci_coeffs``
+    - The complex coefficients :math:`C_n` of the determinants.
+  * - ``PsiT_<k>``
+    - The **conjugate transpose** of the orbital matrix of spin :math:`\sigma` of determinant
+      :math:`n`, with :math:`k = n_\mathrm{spin} n + \sigma`: ``PsiT_<2n>`` (:math:`\uparrow`) and
+      ``PsiT_<2n+1>`` (:math:`\downarrow`) for collinear wavefunctions, ``PsiT_<n>`` otherwise. It has one
+      row per electron of that spin, :math:`N_\sigma = N_\uparrow` or :math:`N_\downarrow`.
 
 .. _phmsd_wavefunction:
 
 PHMSD
 ~~~~~
 
-.. code-block:: text
+.. rst-class:: filetree-caption
 
-    h5dump -n wfn.h5
+``afqmc.h5``
 
-    HDF5 "wfn.h5" {
-        FILE_CONTENTS {
-            group      /
-            group      /Wavefunction
-            group      /Wavefunction/PHMSD
-            dataset    /Wavefunction/PHMSD/ci_coeffs
-            dataset    /Wavefunction/PHMSD/occa
-            dataset    /Wavefunction/PHMSD/occb
-        }
-    }
+.. rst-class:: filetree
 
--  ``/Wavefunction/PHMSD/ci_coeffs`` :math:`N_D` length array of ci coefficients. Stored
-   as complex numbers.
--  ``spin_type`` attribute of ``/Wavefunction/PHMSD``: ``"collinear"``.
--  ``number_of_orbitals`` attribute of ``/Wavefunction/PHMSD``: the number of spatial
-   orbitals :math:`M`.
--  ``/Wavefunction/PHMSD/occa``, ``/Wavefunction/PHMSD/occb`` Integer arrays of shape
-   :math:`[N_D,N_\alpha]` and :math:`[N_D,N_\beta]` describing the determinant occupancies.
-   For example if :math:`(N_\alpha=N_\beta=2)`, :math:`N_D=2`, :math:`M=4`, and
-   :math:`|\Psi_\mathrm{T}\rangle = |0,1\rangle|0,1\rangle + |0,1\rangle|0,2\rangle` then
-   occa = :math:`[[0, 1], [0, 1]]` and occb = :math:`[[0, 1], [0, 2]]`.
--  ``/Wavefunction/PHMSD/PsiT_0``, ``/Wavefunction/PHMSD/PsiT_1`` (optional) Orbital
-   references, if the occupancies refer to a different basis than the one the integrals are
-   written in. Each is the matrix of reference orbitals in the integrals' basis, stored as the
-   CSR matrix of its conjugate transpose, so it has one row per reference orbital and
-   :math:`N_p M` columns (the same datasets as a NOMSD ``PsiT``). There is either one, ``PsiT_0``, shared by both spins, or
-   ``PsiT_0`` (:math:`\alpha`) and ``PsiT_1`` (:math:`\beta`) for a spin-resolved reference.
-   Without any, the occupancies refer to the integrals' basis.
+* ``Wavefunction/``
 
-:math:`N_D` is the length of ``ci_coeffs``, :math:`N_\alpha` and :math:`N_\beta` the widths of
-``occa`` and ``occb``, and the number of orbital references the number of ``PsiT_<n>`` groups.
-:math:`M` is the one size that is stored explicitly, since the occupancies alone do not span the
-orbitals.
+  * ``PHMSD/``
 
+    * ``🏷️ format_version`` 1
+    * ``🏷️ spin_type`` ``"collinear"``
+    * ``🏷️ number_of_orbitals`` :math:`M`
+    * ``ci_coeffs`` :math:`(N_\mathrm{det},)`
+    * ``occa`` :math:`(N_\mathrm{det}, N_\uparrow)`
+    * ``occb`` :math:`(N_\mathrm{det}, N_\downarrow)`
+    * ``PsiT_<k>/`` :math:`(M_\mathrm{ref}, n_\mathrm{pol} M)`, optional, a
+      :ref:`CSR matrix <csr_storage>`
 
-.. _initial_walkers:
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
 
-Initial walkers
-~~~~~~~~~~~~~~~
-
-A trial wavefunction file does not store an initial walker. Every walker of a walker set starts
-out as a determinant derived from a wavefunction instead: the determinant with the largest
-coefficient of a NOMSD wavefunction, or the reference determinant of a PHMSD one. By default
-that is the wavefunction of the execute block that introduces the walker set; the ``from``
-parameter of the walker set names a different one, either by name or as an inline block:
-
-.. code-block:: json
-
-    {
-      "wavefunctions": [
-        {
-          "name": "uhf",
-          "filename": "wfn_uhf.h5"
-        },
-        {
-          "name": "rohf",
-          "filename": "wfn_rohf.h5"
-        }
-      ],
-      "execute": [
-        {
-          "wavefunction": "uhf",
-          "hamiltonian": {
-            "filename": "ham.h5"
-          },
-          "walker_set": {
-            "from": {
-              "wavefunction": "rohf"
-            }
-          },
-          "num_walkers": 200
-        }
-      ]
-    }
-
-Starting from an ROHF determinant rather than the UHF trial itself can speed up equilibration
-considerably. Only the first execute block falls back to a default walker set; a later execute
-block without a ``walker_set`` continues with the walker set of the one before it.
+  * - **Entry**
+    - **Description**
+  * - ``spin_type``
+    - The spin symmetry of the wavefunction, ``"collinear"``.
+  * - ``number_of_orbitals``
+    - The number of spatial orbitals :math:`M`.
+  * - ``ci_coeffs``
+    - The complex coefficients :math:`C_n` of the determinants.
+  * - ``occa``, ``occb``
+    - The occupied orbitals of each determinant, integers. For example if :math:`N_\uparrow=N_\downarrow=2`,
+      :math:`N_\mathrm{det}=2`, :math:`M=4`, and
+      :math:`|\Psi_\mathrm{T}\rangle = |0,1\rangle|0,1\rangle + |0,1\rangle|0,2\rangle` then
+      ``occa`` = :math:`[[0, 1], [0, 1]]` and ``occb`` = :math:`[[0, 1], [0, 2]]`.
+  * - ``PsiT_<k>``
+    - By default, the occupancies refer to the basis the Hamiltonian is written in. If these entries are present, they specify orbitals that should be used instead.
+      Each is the **conjugate transpose** of the matrix of the :math:`M_\mathrm{ref}`
+      reference orbitals in the basis of the Hamiltonian. There is either one, ``PsiT_0``, shared by both
+      spins, or ``PsiT_0`` (:math:`\uparrow`) and ``PsiT_1`` (:math:`\downarrow`) for a spin-resolved
+      reference.
 
