@@ -4,7 +4,7 @@ User Manual
 ===========
 
 
-This user manual is a reference description of the SAFIRE code, its components and their input and output formats. If you are a normal user just interested in running a standard calculation, refer to the :ref:`tutorials` or :ref:`user_examples` first.
+This user manual is a reference description of the SAFIRE code, its components and their input and output formats. If you are a practitioner interested in running a standard calculation, refer to the :ref:`tutorials` or :ref:`user_examples` first.
 
 Running an :ref:`afqmc` calculation requires several input files
 

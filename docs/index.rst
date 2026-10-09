@@ -8,9 +8,9 @@ Getting Started with SAFIRE
   :hidden:
 
   installation
-  user_manual
   tutorials
   examples
+  user_manual
   afqmctools/afqmctools
   changelog
   afqmc
