@@ -374,11 +374,11 @@ back-propagation algorithm.
 ```
 
 The `name` parameter tells SAFIRE what kind of estimator to use (`"back_propagation"` in this case).
-The `propagation_steps` parameter is the number of back propagation steps to use, $N^{step}$. It has no default, so a back-propagation estimator has to state it.
+The `propagation_steps` parameter is the number of back propagation steps to use, $N^\mathrm{step}$. It has no default, so a back-propagation estimator has to state it.
 
 To check for convergence in the number of back propagation steps, SAFIRE allows measuring at multiple back propagation depths at the same time.
 This feature is enabled by providing a list of integers for propagation_steps instead of a single one,
-so for the example here $N^{step}_0 = 200$ and $N^{step}_1 = 400$.
+so for the example here $N^\mathrm{step}_0 = 200$ and $N^\mathrm{step}_1 = 400$.
 A new back-propagation window starts every time the longest of them has been covered.
 
 Now we can run SAFIRE using this input file.
@@ -592,13 +592,13 @@ These errors are formally interdependent; however, good values for each paramete
 
 Accurately capturing electron correlation effects requires a large basis.
 Here, we are working the basis of Kohn-Sham bands.
-We will now converge the AFQMC ground state energy, and the charge density in the number of bands used to form the basis,$N_{bands}$.
+We will now converge the AFQMC ground state energy, and the charge density in the number of bands used to form the basis,$N_\mathrm{bands}$.
 We have already seen how to perform each step individually above;
-We will simply need to run AFQMC for a few choices of $N_{bands}$.
+We will simply need to run AFQMC for a few choices of $N_\mathrm{bands}$.
 
 As $E_\mathrm{AFQMC}$ and $\rho_\mathrm{AFQMC}(\vec{r})$ begin to converge,
 each additional band will individually make only a small contribution.
-It can be useful, then, to choose a logarithmic set of $N_{bands}$ to actually run AFQMC for.
+It can be useful, then, to choose a logarithmic set of $N_\mathrm{bands}$ to actually run AFQMC for.
 For example,
 
 ```python

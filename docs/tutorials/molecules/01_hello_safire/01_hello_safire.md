@@ -71,7 +71,7 @@ This HDF5 file contains the second-quantized Hamiltonian $\hat{H}$.
 <!-- END hello-intro -->
 
 For this tutorial, we have supplied an HDF5 file containing the Born-Oppenheimer
-Hamiltonian for the STO-3G basis hydrogen dimer at a bondlength of $\delta_{H-H} = 1.4$ $a_0$
+Hamiltonian for the STO-3G basis hydrogen dimer at a bondlength of $\delta_\mathrm{H-H} = 1.4$ $a_0$
 in `hamil.h5`.
 
 ![](files/HyrdogenMolecule_v2.png)

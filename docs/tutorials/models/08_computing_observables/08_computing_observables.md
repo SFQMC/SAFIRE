@@ -355,11 +355,11 @@ total_energy = df["EnergyEstim__nume_real"].values
 # plot the energy both ways
 
 plt.plot(total_energy,label="Total Energy from energy Estimator")
-plt.plot(one_body_energy + direct_coulomb_energy + exchange_energy, ":", label=r"$E_1 + E_{Coul} + E_{x}$")
+plt.plot(one_body_energy + direct_coulomb_energy + exchange_energy, ":", label=r"$E_1 + E_\mathrm{Coul} + E_\mathrm{x}$")
 
 plt.legend()
 plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
+plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_\mathrm{EnergyEstimator}$")
 plt.title(r"Total energy vs. sample")
 
 plt.show()
@@ -393,7 +393,7 @@ are common observables.
 It is also possible to compute the *diagonal* 2rdm which we define as,
 
 $$
-\hat{O} = \hat{\rho}^{2-diag} = \sum_{ij}\sum_{\sigma \sigma'}\hat{c}^\dagger_{i\sigma}\hat{c}^\dagger_{j\sigma'}\hat{c}_{j\sigma'}\hat{c}_{i\sigma},
+\hat{O} = \hat{\rho}^\mathrm{2-diag} = \sum_{ij}\sum_{\sigma \sigma'}\hat{c}^\dagger_{i\sigma}\hat{c}^\dagger_{j\sigma'}\hat{c}_{j\sigma'}\hat{c}_{i\sigma},
 $$
 
 This requires significantly less compute time and memory usage than the full 2-rdm and should be preferred whenever possible!
@@ -422,9 +422,9 @@ See {ref}`observables` for a complete list of currently implemented observables.
 Below, we will use a mixed estimator to compute the 1-rdm, and the diagonal 2-rdm.
 We can then directly compute each contribution to the AFQMC energy,
 
-$$E_{one-body} = \sum_{ij} \sum_{\sigma, \sigma'} H^1_{ij} \rho^1_{j\sigma', i\sigma} $$
+$$E_\mathrm{one-body} = \sum_{ij} \sum_{\sigma, \sigma'} H^1_{ij} \rho^1_{j\sigma', i\sigma} $$
 
-$$E_U = U \sum_{i} \rho^{2-diag}_{i \uparrow i \downarrow}$$
+$$E_U = U \sum_{i} \rho^\mathrm{2-diag}_{i \uparrow i \downarrow}$$
 
 and compare with the results from the energy estimator.
 **We should find exact agreement between the two if we use the same AFQMC run parameters.**
@@ -570,8 +570,8 @@ print(one_body_energy.shape)
 plt.plot(delta_E,label="1-body energy difference")
 plt.legend()
 plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
-plt.title(r"$\Delta E_{1-body}$ vs. sample")
+plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_\mathrm{EnergyEstimator}$")
+plt.title(r"$\Delta E_\mathrm{1-body}$ vs. sample")
 
 plt.show()
 ```
@@ -632,7 +632,7 @@ plt.plot(two_body_energy,label="Two-body energy from energy estimator")
 plt.plot(Energy_HubbardU,":",label="Two-body energy from mixed estimator")
 plt.legend()
 plt.xlabel("Sample")
-plt.ylabel(r"Energy $E_{Ha}$")
+plt.ylabel("Energy (Ha)")
 plt.title("Two-body energy vs. sample")
 plt.show()
 
@@ -644,8 +644,8 @@ delta_E = Energy_HubbardU[:,0] - two_body_energy
 plt.plot(delta_E,label="two-body energy difference")
 plt.legend()
 plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
-plt.title(r"$\Delta E_{2-body}$ vs. sample")
+plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_\mathrm{EnergyEstimator}$")
+plt.title(r"$\Delta E_\mathrm{2-body}$ vs. sample")
 
 plt.show()
 ```

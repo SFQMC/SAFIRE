@@ -35,7 +35,7 @@ $$
 where
 
 $$
-|\Phi_{0}\rangle = |\Phi^{UHF}\rangle = |\Phi^{\uparrow}\rangle \otimes |\Phi^{\downarrow}\rangle
+|\Phi_{0}\rangle = |\Phi^\mathrm{UHF}\rangle = |\Phi^{\uparrow}\rangle \otimes |\Phi^{\downarrow}\rangle
 $$
 
 is the UHF ground state

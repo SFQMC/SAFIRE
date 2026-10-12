@@ -330,11 +330,11 @@ total_energy = df["EnergyEstim__nume_real"].values
 import matplotlib.pyplot as plt
 
 plt.plot(total_energy,label="Total Energy from energy Estimator")
-plt.plot(one_body_energy + direct_coulomb_energy + exchange_energy, ":", label=r"$E_1 + E_{Coul} + E_{x}$")
+plt.plot(one_body_energy + direct_coulomb_energy + exchange_energy, ":", label=r"$E_1 + E_\mathrm{Coul} + E_\mathrm{x}$")
 
 plt.legend()
 plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
+plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_\mathrm{EnergyEstimator}$")
 plt.title(r"Total energy vs. sample")
 
 plt.show()
@@ -389,9 +389,9 @@ See {ref}`observables` for a complete list of currently implemented observables.
 Below, we will use a mixed estimator to compute the 1-rdm, and the 2-rdm.
 We can then directly compute each contribution to the AFQMC energy,
 
-$$E_{one-body} = \sum_{ij} H^1_{ij} \rho^1_{ji} $$
+$$E_\mathrm{one-body} = \sum_{ij} H^1_{ij} \rho^1_{ji} $$
 
-$$E_{two-body} = \sum_{ijkl} H^2_{ijkl} \rho^2_{ijkl} $$
+$$E_\mathrm{two-body} = \sum_{ijkl} H^2_{ijkl} \rho^2_{ijkl} $$
 
 and compare with the results from the energy estimator.
 **We should find exact agreement between the two if we use the same AFQMC run parameters.**
@@ -542,8 +542,8 @@ delta_E = Energy_1body[:,0] - one_body_energy
 plt.plot(delta_E,label="1-body energy difference")
 plt.legend()
 plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
-plt.title(r"$\Delta E_{1-body}$ vs. sample")
+plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_\mathrm{EnergyEstimator}$")
+plt.title(r"$\Delta E_\mathrm{1-body}$ vs. sample")
 
 plt.show()
 ```
@@ -600,7 +600,7 @@ plt.plot(two_body_energy,label="Two-body energy from energy estimator")
 plt.plot(Energy_2body_mixed,":",label="Two-body energy from mixed estimator")
 plt.legend()
 plt.xlabel("Sample")
-plt.ylabel(r"Energy $E_{Ha}$")
+plt.ylabel("Energy (Ha)")
 plt.title("Two-body energy vs. sample")
 plt.show()
 
@@ -612,8 +612,8 @@ delta_E = Energy_2body_mixed[:,0] - two_body_energy
 plt.plot(delta_E,label="two-body energy difference")
 plt.legend()
 plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
-plt.title(r"$\Delta E_{2-body}$ vs. sample")
+plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_\mathrm{EnergyEstimator}$")
+plt.title(r"$\Delta E_\mathrm{2-body}$ vs. sample")
 
 plt.show()
 ```

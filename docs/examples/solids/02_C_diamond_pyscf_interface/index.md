@@ -119,7 +119,7 @@ rho = cubegen.density(cell,'diamond_den.cube', rdm, nx=100, ny=100, nz=100)
 V = cell.vol
 nkpts = len(rhf.kpts)
 
-rho = rho * ( 1 / nkpts ) * ( V / (nx*ny*nz) ) # normalized s.t. $\sum_{\vec{n}} rho_{\vec{n}} = N_{elec} $
+rho = rho * ( 1 / nkpts ) * ( V / (nx*ny*nz) ) # normalized s.t. $\sum_{\vec{n}} rho_{\vec{n}} = N_\mathrm{elec} $
 
 data = {
      "axes": np.diag((1.0, 1.0, 1.0)),
@@ -172,20 +172,20 @@ This feature is controlled by setting `"naverages"` to a value greater than one.
 The number of steps that will be used in each average is given by,
 
 $$
-N^{step}_a = \frac{nsteps}{naverages - a},
+N^\mathrm{step}_a = \frac{nsteps}{naverages - a},
 $$
 
 where $a$ is the 0-based index of the "average", and `nsteps` and `naverages` are corresponding values from the input file.
 So, for the example here,
 
 $$
-N^{step}_0= 200
+N^\mathrm{step}_0= 200
 $$
 
 and
 
 $$
-N^{step}_1 = 400.
+N^\mathrm{step}_1 = 400.
 $$
 
 Now we can run SAFIRE using this input file.
@@ -389,13 +389,13 @@ Here we used Vesta to make the following isosurface plot (using an isosurface va
 
 Accurately capturing electron correlation effects requires a large basis.
 Here, we are working the basis of Kohn-Sham bands.
-We will now converge the AFQMC ground state energy, and the charge density in the number of bands used to form the basis,$N_{bands}$.
+We will now converge the AFQMC ground state energy, and the charge density in the number of bands used to form the basis,$N_\mathrm{bands}$.
 We have already seen how to perform each step individually above;
-We will simply need to run AFQMC for a few choices of $N_{bands}$.
+We will simply need to run AFQMC for a few choices of $N_\mathrm{bands}$.
 
 As $E_\mathrm{AFQMC}$ and $\rho_\mathrm{AFQMC}(\vec{r})$ begin to converge,
 each additional band will individually make only a small contribution.
-It can be useful, then, to choose a logarithmic set of $\N_{bands}$ to actually run AFQMC for.
+It can be useful, then, to choose a logarithmic set of $N_\mathrm{bands}$ to actually run AFQMC for.
 For example,
 
 ```python

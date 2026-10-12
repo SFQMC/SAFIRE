@@ -73,7 +73,7 @@ one using a truncated CASSCF(12o,6e) trial wavefunction.
 For AFQMC, the stochastic uncertainty is smaller than the symbol size.
 
 For bond lengths close to the equilibrium bond length of 2.118 Bohr,
-AFQMC agrees with exact results to well within chemical accuracy (  $ 1 \mathrm{kcal}/\mathrm{mol} ≈ 1.6 mE_\mathrm{Ha}$) regardless of the trial wavefunction used.
+AFQMC agrees with exact results to well within chemical accuracy (  $ 1 \mathrm{kcal}/\mathrm{mol} ≈ 1.6\,\mathrm{mHa}$) regardless of the trial wavefunction used.
 For intermediate and stretched bond lengths, the trial wavefunction from MCSCF (in this case, from CASSCF(12o,6e)) is necessary to chemical accuracy using AFQMC across the PEC.
 Still, for all nearly all bond lengths, AFQMC with a UHF trial wavefunction produces more accurate results,
 in terms of absolute error, than either the quantum chemistry gold standard method CCSD(T) or CCSDT.
@@ -356,7 +356,7 @@ plt.show()
 
 ### Result
 
-From the plot of energy vs $N_\mathrm{det}$, we have converged the AFQMC energy to within our target stochastic uncertainty of less than 1.6 m$E_\text{Ha}$ at about $N_\mathrm{det} = 500$.
+From the plot of energy vs $N_\mathrm{det}$, we have converged the AFQMC energy to within our target stochastic uncertainty of less than 1.6 mHa at about $N_\mathrm{det} = 500$.
 Since we performed this test at a point on the PEC where there are strong static correlation effects, we expect this
 value to provide converged results across the PEC.
 Now, we can automate the calculation of the PEC using this value for $N_\mathrm{det}$.
@@ -366,9 +366,9 @@ Now, we can automate the calculation of the PEC using this value for $N_\mathrm{
 ## Automating the Computation of the PEC Using Python / safiretools
 
 Now that we have converged $E_\mathrm{AFQMC}$ in $N_\mathrm{det}$, we are ready to compute the PEC.
-In the code block below, we have included a function that performs all of the steps that we have already performed (excluding converging $E_\mathrm{AFQMC}$ in $N_\mathrm{det}$) given a value of the $N_2$ bond length, $\delta_{N-N}$.
+In the code block below, we have included a function that performs all of the steps that we have already performed (excluding converging $E_\mathrm{AFQMC}$ in $N_\mathrm{det}$) given a value of the $N_2$ bond length, $\delta_\mathrm{N-N}$.
 
-Specifically, given $\delta_{N-N}$ and `ndets_to_read`, the function automates:
+Specifically, given $\delta_\mathrm{N-N}$ and `ndets_to_read`, the function automates:
 
 1. running CASSCF using PySCF (for convenience), and saving a truncated CASSCF wavefunction to the SAFIRE HDF5 format.
 2. building and saving the Hamiltonian in the basis of CASSCF orbitals to the SAFIRE HDF5 format.

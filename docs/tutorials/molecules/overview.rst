@@ -48,10 +48,10 @@ by
 
 .. math::
 
-   H_\mathrm{Born-Oppenheimer} = \sum_p^{N_e}\left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_\mathrm{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) + \frac{1}{2} \sum^{N_e}_{q \neq p} \left(\frac{1}{r_{pq}}\right) + \frac{1}{2}\sum_{A' \neq A}^{N_A} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
+   H_\mathrm{Born-Oppenheimer} = \sum_p^{N_\mathrm{e}}\left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_\mathrm{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) + \frac{1}{2} \sum^{N_\mathrm{e}}_{q \neq p} \left(\frac{1}{r_{pq}}\right) + \frac{1}{2}\sum_{A' \neq A}^{N_\mathrm{atom}} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
 
 where,
-:math:`N_e` is the number of electrons,
+:math:`N_\mathrm{e}` is the number of electrons,
 :math:`\vec{r}_p` is the position of electron :math:`p`,
 :math:`N_\mathrm{atom}` is the number of atomic nuclei,
 and :math:`Z_A` and :math:`\vec{R}_A` are the atomic number and position, respectively, of atomic nuclei, :math:`A`.
@@ -59,7 +59,7 @@ This Hamiltonian can be expressed in the language of second quantization by maki
 
 .. math::
 
-   H^0 = \frac{1}{2}\sum_{A' \neq A}^{N_A} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
+   H^0 = \frac{1}{2}\sum_{A' \neq A}^{N_\mathrm{atom}} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
 
 is the constant nuclear repulsion energy,
 

@@ -11,9 +11,9 @@ AFQMC calculates the many-body ground-state wavefunction, :math:`| \Psi_0 \rangl
 .. math::
   :label: eq-imag-time-prop
 
-  |\Psi_0⟩ \propto \lim_{\beta \to \infty} e^{-\beta H} | \Psi_I \rangle, 
+  |\Psi_0⟩ \propto \lim_{\beta \to \infty} e^{-\beta H} | \Psi_\mathrm{I} \rangle, 
 
-on an initial wavefunction :math:`| \Psi_I \rangle` with a many-body Hamiltonian, which in second quantization can be written,
+on an initial wavefunction :math:`| \Psi_\mathrm{I} \rangle` with a many-body Hamiltonian, which in second quantization can be written,
 
 .. math::
   :label: eq-h012-af
