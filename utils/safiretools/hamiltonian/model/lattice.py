@@ -732,7 +732,7 @@ class Lattice(ABC):
     def _build_distances(self):
         if self._distances is None:
             poses = np.asarray([s.position for s in self.sites])
-            self._distances = spatial.distance_matrix(poses, poses)
+            self._distances = spatial.distance.cdist(poses, poses)
 
     def _build_nth_neighbors(self, n):
         self._pairs_by_distance[n] = list()
@@ -805,7 +805,7 @@ class Lattice(ABC):
                     if shift1 == shift2 == 0:
                         continue
                     shiftvec = shift1*vShift1+shift2*vShift2
-                    distances = spatial.distance_matrix(poses, poses + shiftvec)
+                    distances = spatial.distance.cdist(poses, poses + shiftvec)
                     self._image_distances.append((shift1, shift2, shiftvec, distances))
 
     def _build_nth_image_neighbors(self, n):
@@ -882,7 +882,7 @@ class Lattice(ABC):
             positions = _positions_from_cell()
 
             # 2. get distance matrix
-            R = spatial.distance_matrix(
+            R = spatial.distance.cdist(
                 positions,
                 positions
             )

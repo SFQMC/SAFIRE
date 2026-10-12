@@ -777,7 +777,7 @@ class Lattice:
             positions = _positions_from_cell()
 
             # 2. get distance matrix
-            R = spatial.distance_matrix(
+            R = spatial.distance.cdist(
                 positions,
                 positions
             )
