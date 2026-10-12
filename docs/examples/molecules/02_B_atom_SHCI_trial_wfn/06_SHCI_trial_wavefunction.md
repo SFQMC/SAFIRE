@@ -133,7 +133,7 @@ Wavefunction.from_dice("output.dat", ndets=100).to_hdf5("shci_wfn.h5")
 ```
 
 The `-o` option sets the output HDF5 file name,
-`-i` sets the "input" to `dice_to_hdf5` (this will be an output from Dice!),
+`-i` sets the input to `dice_to_hdf5` (this will be an output from Dice!),
 `-n` sets the number of Slater determinants to save (currently a required argument!),
 and `-v` turns on verbose output.
 

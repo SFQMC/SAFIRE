@@ -11,7 +11,7 @@ a Hamiltonian and trial wavefunction.
 If not, see the examples in :ref:`setup_exs`.
 
 Here, it is assumed that a Hamiltonian and a trial wavefunction are
-both saved in an HDF5 file called `afqmc.h5`.
+both saved in an HDF5 file called ``afqmc.h5``.
 SAFIRE uses an input file in .json format to set parameters 
 in calculations.
 The input file is explained in detail in :ref:`input_afqmc`, but a minimal 
@@ -19,17 +19,17 @@ example is shown here.
 
 .. literalinclude:: afqmc.json
 
-Note that all intervals are expressed in units of "steps", 
-including those within the back_propagation block.
-The "name" field in the "estimator" block is used to specify the 
-type of estimator. Alternatively, a "mixed" estimator can be used.
-"equil" is the number of equilibration steps to use before beginning 
+Note that all intervals are expressed in units of steps,
+including those within the ``backprop`` block.
+The key in the ``estimators`` block, here ``backprop``, specifies the
+type of estimator. Alternatively, a ``mixed`` estimator can be used.
+``equil`` is the number of equilibration steps to use before beginning 
 back-propagation steps.
 Specific observables are added to the estimator by specifying them by 
-within the "estimator" block.
+within the ``backprop`` block.
 Here, we add a one-rdm observable.
 When we run the code, the output will be written to a file called
-"qmc.s000.stats.h5" where stochastic samples of the one-rdm are stored.
+``qmc.s000.stats.h5`` where stochastic samples of the one-rdm are stored.
 
 A CPU-only build of SAFIRE can be invoked on rusty using the following runscript,
 
@@ -51,7 +51,7 @@ A CPU-only build of SAFIRE can be invoked on rusty using the following runscript
     # Launch MPI code...
     srun --cpu-bind=cores $AFQMC_PATH/bin/safire --filenames afqmc.json &> afqmc.out
 
-If the Hamiltonian and trial wavefunction file from :ref:`setup_ex_1` (called "afqmc.h5") is used with the input file above,
+If the Hamiltonian and trial wavefunction file from :ref:`setup_ex_1` (called ``afqmc.h5``) is used with the input file above,
  then we will see output similar to this (perhaps with differences in the timing)
 
 .. literalinclude:: afqmc.out

@@ -29,7 +29,7 @@ A typical calculation using SAFIRE consists of three steps as shown in the flowc
    :width: 1000px
    :align: center
 
-Running the SAFIRE executable is generic and the details are largely independent of the intended application area. The most variation occurs in the first step, "Setup", since the set of possible starting points is very large. Post processing beyond simple scalar observables similarly has some dependence on the details of the application area. For example, the real-space charge density depends explicitly on the real-space representation of the underlying orbitals.
+Running the SAFIRE executable is generic and the details are largely independent of the intended application area. The most variation occurs in the first step, Setup, since the set of possible starting points is very large. Post processing beyond simple scalar observables similarly has some dependence on the details of the application area. For example, the real-space charge density depends explicitly on the real-space representation of the underlying orbitals.
 
 Common Application Areas
 ------------------------

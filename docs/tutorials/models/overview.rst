@@ -45,7 +45,7 @@ This is known as the Hubbard-Kanamori Hamiltonian.
 Many standard model Hamiltonians can be written in this language including the standard Hubbard model,
 extended Hubbard with nearest-neighbor :math:`V`, etc.
 SAFIRE is agnostic to the details of the compound indices.
-It simply accepts Hamiltonian "components" which are interpreted as above.
+It simply accepts Hamiltonian components which are interpreted as above.
 This provides great flexibility in specifying Hamiltonians; however, if Hamiltonians are generated externally, care must be taken
 to ensure that consistent index conventions are used.
 
@@ -114,7 +114,7 @@ The Tutorials
 The following tutorials will guide you through AFQMC calculations
 using SAFIRE in order to teach you the typical workflow,
 and some of the main features of SAFIRE.
-Each "basic" tutorial builds on the previous one.
+Each tutorial builds on the previous one.
 We recommend going through them in order.
 
 .. toctree::

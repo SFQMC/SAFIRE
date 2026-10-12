@@ -10,12 +10,12 @@ as SAFIRE can.
 
 A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
-Below is a sample input file, which we name `input.toml`, for a Hubbard model 
+Below is a sample input file, which we name ``input.toml``, for a Hubbard model 
 on a 2x3 square lattice with periodic boundary conditions.
 
 .. literalinclude:: input.toml
 
-if no "type" is specified in the "lattice" section, then a square lattice is used.
+if no ``type`` is specified in the ``lattice`` section, then a square lattice is used.
 
 autohf and safiretools can be invoked within a Python script as
 

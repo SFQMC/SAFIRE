@@ -20,7 +20,7 @@ kernelspec:
 
 For this tutorial, we have supplied an HDF5 file containing the Hamiltonian
 corresponding to the Hubbard model on a 4x4 lattice with periodic boundary conditions,
-and $U/t = 4$ in "hamil.h5".
+and $U/t = 4$ in `hamil.h5`.
 
 ![](files/Hubbard_4x4_tutorial.png)
 

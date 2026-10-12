@@ -19,9 +19,9 @@ Currently the following spin pinning are available:
 
   * :code:`afm_pin_type` options:
 
-    * "staggered" or "afm" - each edge has the opposite signs (*default*)
+    * ``staggered`` or ``afm`` - each edge has the opposite signs (*default*)
 
-    * "same" or "fm" - each edge has the same pinning
+    * ``same`` or ``fm`` - each edge has the same pinning
 
 * FM pinning - a constant Sz field on each edge. 
   
@@ -29,15 +29,15 @@ Currently the following spin pinning are available:
 
   * :code:`fm_pin_type` options:
 
-    * "staggered" - +1 on one edge and -1 on the other (*default*)
+    * ``staggered`` - +1 on one edge and -1 on the other (*default*)
 
-    * "same" or "fm" - +1 on both edges
+    * ``same`` or ``fm`` - +1 on both edges
 
 TODO add a picture illustrating the pinning field location!
 
 A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
-Below is a sample input file, which we name `input_afm.toml`, for a Hubbard model 
+Below is a sample input file, which we name ``input_afm.toml``, for a Hubbard model 
 on a 8x4 square lattice with periodic boundary conditions.
 
 .. literalinclude:: input_afm.toml
@@ -76,14 +76,14 @@ safiretools can be invoked within a Python script as
         nelec=params["nelec"],
     ).to_hdf5("afqmc.h5")
 
-`Wavefunction.from_free_electron()` uses the Hamiltonian exactly as given and
+``Wavefunction.from_free_electron()`` uses the Hamiltonian exactly as given and
 applies no twist of its own, so the twist belongs on the lattice you build that
-Hamiltonian from. `twist` should be a 2-d iterable containing
+Hamiltonian from. ``twist`` should be a 2-d iterable containing
 :math:`\vec{\theta}=(\theta_1,\theta_2)` in radians even if one component is
 set to 0.0.
 For an open-shell filling, an untwisted lattice leads to an abitrary choice 
 of which degenerate orbitals are occupied.
-`from_free_electron()` warns when that happens.
+``from_free_electron()`` warns when that happens.
 
 Building the trial wavefunction does not measure its energy.
 To evaluate the variational energy of a trial wavefunction with respect to the

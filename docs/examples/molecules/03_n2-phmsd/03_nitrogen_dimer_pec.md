@@ -67,16 +67,16 @@ from reference [1].
 
 ![](files/ReferenceFigure.png)
 
-We have include both the quantum chemistry "gold standard" CCSD(T) results, in orange, as well as CCSDT for reference.
-There are two AFQMC curves, one using a UHF trial wavefunction (in pink), and
-one using a truncated CASSCF(12o,6e) trial wavefunction (in violet).
+We have included both CCSD(T) results, as well as CCSDT results for reference.
+There are two AFQMC curves, one using a UHF trial wavefunction, and
+one using a truncated CASSCF(12o,6e) trial wavefunction.
 For AFQMC, the stochastic uncertainty is smaller than the symbol size.
 
 For bond lengths close to the equilibrium bond length of 2.118 Bohr,
-AFQMC agrees with exact results to well within chemical accuracy (  $ 1 kcal/mol ≈ 1.6 mE_{Ha}$) regardless of the trial wavefunction used.
+AFQMC agrees with exact results to well within chemical accuracy (  $ 1 \mathrm{kcal}/\mathrm{mol} ≈ 1.6 mE_\mathrm{Ha}$) regardless of the trial wavefunction used.
 For intermediate and stretched bond lengths, the trial wavefunction from MCSCF (in this case, from CASSCF(12o,6e)) is necessary to chemical accuracy using AFQMC across the PEC.
 Still, for all nearly all bond lengths, AFQMC with a UHF trial wavefunction produces more accurate results,
-in terms of absolute error, than either the quantum chemistry "gold standard" method CCSD(T) or CCSDT.
+in terms of absolute error, than either the quantum chemistry gold standard method CCSD(T) or CCSDT.
 AFQMC with a CASSCF(12o,6e) trial wavefunction outperforms both CCSD(T) and CCSDT in terms of accuracy at all bond lengths.
 
 Next, we will reproduce the PEC of the Nitrogen dimer using AFQMC / CASSCF(12o,6e) trial wavefunctions.
@@ -101,11 +101,11 @@ Typically, CI trial wavefunctions are truncated CASSCF or selected CI (SCI) wave
 
 For quantum chemistry, AFQMC uses the phaseless approximation in order to control the fermionic sign / phase problem at the cost of introducing a removable bias.
 This bias can be systematically removed by using a better trial wavefunction.
-If we start with a decent CASSCF or SCI wavefunction, then we can characterize the "quality" of a trial wavefunction by the number of Slater determinants that are included in the trial wavefunction, $N_\mathrm{det}$.
+If we start with a decent CASSCF or SCI wavefunction, then we can characterize the quality of a trial wavefunction by the number of Slater determinants that are included in the trial wavefunction, $N_\mathrm{det}$.
 
 <b>A critical step in achieving high-accuracy results, therefore, is to converge the AFQMC energy in $N_\mathrm{det}$</b>
 
-SAFIRE provides a keyword in the "wavefunction" json input block to limit the number of Slater determinants, "ndets_to_read", that are actually read from the HDF5 wavefunction file. Here is a sample json input block.
+SAFIRE provides a keyword in the `wavefunction` json input block to limit the number of Slater determinants, `ndets_to_read`, that are actually read from the HDF5 wavefunction file. Here is a sample json input block.
 
 ```json
 {
@@ -126,10 +126,10 @@ SAFIRE provides a keyword in the "wavefunction" json input block to limit the nu
 }
 ```
 
-In this case, a maximum of 500 Slater determinants will be read from "your_wfn_file.h5" regardless of how many Slater determinants were
+In this case, a maximum of 500 Slater determinants will be read from `your_wfn_file.h5` regardless of how many Slater determinants were
 written to the file.
 We will save significantly more Slater determinants to the wavefunction HDF5 file than we expect to need.
-This allows us to reuse the same wavefunction file while controlling the trial wavefunction quality via the "ndets_to_read" parameter.
+This allows us to reuse the same wavefunction file while controlling the trial wavefunction quality via the `ndets_to_read` parameter.
 
 +++ {"id": "IQBeUJTghyNm"}
 
@@ -177,7 +177,7 @@ wavefunction = Wavefunction.from_pyscf_cas(
 
 ### Checkpoint
 
-At this point, you should have a CASSCF trial wavefunction saved in an SAFIRE HDF5 file (we used "afqmc.h5" as our filename, but you are free to use whatever name you would like).
+At this point, you should have a CASSCF trial wavefunction saved in an SAFIRE HDF5 file (we used `afqmc.h5` as our filename, but you are free to use whatever name you would like).
 
 You will also need the CASSCF orbitals in order to represent the Hamiltonian in that basis.
 They are held by the `mc` object itself.
@@ -213,7 +213,7 @@ hamiltonian = MolecularHamiltonian.from_pyscf(
 
 ### Checkpoint
 
-In addition to the trial wavefunction HDF5 file from before, you should also now have a Hamiltonian HDF5 file. We saved both the trial wavefunction and the Hamiltonian into a file called "afqmc.h5", but you can use whatever file name(s) you would like. Simply update the code blocks based on your filenames.
+In addition to the trial wavefunction HDF5 file from before, you should also now have a Hamiltonian HDF5 file. We saved both the trial wavefunction and the Hamiltonian into a file called `afqmc.h5`, but you can use whatever file name(s) you would like. Simply update the code blocks based on your filenames.
 
 +++ {"id": "hDAoo29kE6lv"}
 
@@ -226,7 +226,7 @@ on the PEC.
 
 <b>We will automate this using Python and the tutorial helper function, run_afqmc().</b>
 
-Again, we will use the "ndets_to_read" keyword in the "wavefunction" input block to limit the number of Slater determinants.
+Again, we will use the `ndets_to_read` keyword in the `wavefunction` input block to limit the number of Slater determinants.
 In the code block below, you will notice that we are setting,
 
 ```python
@@ -236,7 +236,7 @@ In the code block below, you will notice that we are setting,
 }
 ```
 
-in the "execute_options" dictionary.
+in the `execute_options` dictionary.
 `write_json()` will ***append*** settings within an existing input block when they are passed in this way.
 For example,
 
@@ -260,7 +260,7 @@ write_jobfile(
 )
 ```
 
-will generate a "wavefunction" block that points to the wavefunction file, with the following contents:
+will generate a `wavefunction` block that points to the wavefunction file, with the following contents:
 
 ```json
 {
@@ -376,7 +376,7 @@ Specifically, given $\delta_{N-N}$ and `ndets_to_read`, the function automates:
 4. Extracting the AFQMC energy using the stats module.
 
 <b>
-Run the cell block below in order to load the "run_afqmc_on_dimer()" function into memory.
+Run the cell block below in order to load the `run_afqmc_on_dimer()` function into memory.
 </b>
 
 ```{code-cell} ipython3

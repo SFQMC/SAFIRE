@@ -20,19 +20,19 @@ Become acquainted with how to compute general observables with SAFIRE.
 
 ## What you will learn
 
-1. What an "estimator" is and how to set one up in the json input file
+1. What an estimator is and how to set one up in the json input file
 2. What a mixed estimator is and when to use one to compute an observable
 3. What a back-propagated estimator is and when to use one to compute an observable
 4. How to compute observables in post-processing with afqmctools
 
 ## Introduction
 
-AuxiliaryFiels uses "estimators" to compute observables.
+AuxiliaryFiels uses estimators to compute observables.
 Each estimator corresponds to a formal method for computing an observable - i.e. mixed estimators, back-propagated estimators, etc. - We will explain each of the these in the next section.
 As we mentioned in {doc}`../02_understanding_the_input_file/02_understanding_the_input_file`,
 
-you can add estimators to an AFQMC calculation using an "estimator" input block.
-By default, an "energy" estimator is included which is a specialized mixed estimator.
+you can add estimators to an AFQMC calculation using an `estimators` input block.
+By default, an `energy` estimator is included which is a specialized mixed estimator.
 Other estimators allow you to specify one or more additional observables to compute.
 
 ## Formal Background
@@ -178,9 +178,9 @@ wavefunction = NOMSDWavefunction(
 
 +++ {"id": "dSJ9e4tRBxxx"}
 
-## The "Energy" Estimator
+## The Energy Estimator
 
-By default, SAFIRE will include an "energy estimator" in the calculation.
+By default, SAFIRE will include an energy estimator in the calculation.
 This is formally a mixed estimator where $\hat{O} = \hat{H}$.
 The Hamiltonian trivially commutes with itself, so a mixed estimator of the energy is unbiased.
 
@@ -193,11 +193,11 @@ For example, in the input block,
 }
 ```
 
-the "name" keyword tells us what kind of estimator we want.
-In this case, we want an "energy" estimator.
-We are setting the "print_components" and "overwrite" flags to true.
-"print_components" tells SAFIRE to print the one-body, two-body coulomb, and two-body exchange contributions to the energy separately.
-"overwrite" tells SAFIRE to overwrite the default energy estimator
+the `name` keyword tells us what kind of estimator we want.
+In this case, we want an `energy` estimator.
+We are setting the `print_components` and `overwrite` flags to true.
+`print_components` tells SAFIRE to print the one-body, two-body coulomb, and two-body exchange contributions to the energy separately.
+`overwrite` tells SAFIRE to overwrite the default energy estimator
 with the one that we have defined.
 
 ### Most Common Settings
@@ -342,7 +342,7 @@ plt.show()
 
 +++ {"id": "yzpB-AJrAZ24"}
 
-## Computing Observables using a "Mixed" Estimator
+## Computing Observables using a Mixed Estimator
 
 SAFIRE also includes a mixed estimator that periodically evaluates,
 
@@ -438,7 +438,7 @@ write_jobfile(
 +++ {"id": "TrVqnMi4AxuT"}
 
 Now, we can run AFQMC with a Mixed Estimator in order to compute the 1-rdm.
-**This will probably take a while!** To finish the tutorial more quickly, remove the "twordm" block from the input and just compute the one-body energy.
+**This will probably take a while!** To finish the tutorial more quickly, remove the `twordm` block from the input and just compute the one-body energy.
 
 ```{code-cell} ipython3
 ---
@@ -461,7 +461,7 @@ run_afqmc(
 
 afqmctools provides several tools for extracting data - i.e. retrieving data from the SAFIRE output files - and analyzing data - arriving at a final average with stochastic uncertainty.
 
-Since some observables require a large amount of memory to store, `afqmctools` also provides "transforms" which are applied to the raw observables as they are read from disk.
+Since some observables require a large amount of memory to store, `afqmctools` also provides transforms which are applied to the raw observables as they are read from disk.
 For example, in the cell below, a energy evaluation transform is used to compute the one-body energy, a scalar, on the fly as one-rdm samples are read from the *.h5 data file.
 This dramatically reduces the memory needed to analyze the AFQMC results from SAFIRE.
 
@@ -555,13 +555,13 @@ This is no surprise since the energy estimator is simply a specialized mixed est
 
 ### 📝 Your Turn : Extract the 2rdm and compute the 2-body energy
 
-Note: You can skip this section if you chose to not compute the "twordm"
+Note: You can skip this section if you chose to not compute the `twordm`
 observable above.
 
 Repeat the same exercise for the two-body energy.
 As we saw in the energy estimator section, the exchange and direct coulomb energies are printed to file separately by the energy estimator.
 
-To compute the two-body energy, you will need to measure the "twordm" observable during AFQMC, and extract and transform it.
+To compute the two-body energy, you will need to measure the `twordm` observable during AFQMC, and extract and transform it.
 
 We provide code for setting up the appropriate transform functions in the code block below.
 
@@ -631,7 +631,7 @@ Averaging observables computed using AFQMC requires some care.
 First, one must make sure that the data is equilibrated.
 
 Second, in AFQMC, successive samples are not independent since they depend on the recent history of each walker.
-This is known as "autocorrelation".
+This is known as *autocorrelation*.
 Care must be take to remove autocorrelation effects or the stochastic uncertainty will be underestimated.
 
 The former can be achieved by visualizing the observable over imaginary time, and finding the equilibration time by inspection.
@@ -680,7 +680,7 @@ Mixed estimators are biased for observables $\hat{O}$ such that $[\hat{O},\hat{H
 
 ### Basic BP Configuration
 
-BP is invoked in SAFIRE by including a "back_propagation" estimator in the input file:
+BP is invoked in SAFIRE by including a `backprop` estimator in the input file:
 
 ```json
 {
@@ -709,7 +709,7 @@ is never inherited from the execute block -- so a BP estimator has to state it.
 ### Multiple BP Lengths
 
 SAFIRE implements the capability of running BP with multiple BP measurement lengths.
-We call each measurement with a different BP length an "average".
+We call each measurement with a different BP length an *average*.
 This allows the forward projection to be reused while checking for convergence in the BP length.
 To define multiple BP lengths/averages, simply list all of the BP lengths that you would like to use, in steps:
 

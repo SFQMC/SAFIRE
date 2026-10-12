@@ -53,7 +53,7 @@ We can automate the local embedding workflow, for a given O atom height, $h$, an
 
 1. define the atomic positions
 2. run ROHF to obtain both a trial wavefunction, and a basis
-3. unitarily localize the set of ROHF orbitals using so-called "split localization". This can be done by partitioning the ROHF orbitals into the following sets, and localizing each set separately via Foster-Boys localization for example).
+3. unitarily localize the set of ROHF orbitals using so-called split localization. This can be done by partitioning the ROHF orbitals into the following sets, and localizing each set separately via Foster-Boys localization for example).
     - energetic core orbitals (no need to localize, we will freeze these no mater what)
     - occupied orbitals (including singly-occupied orbitals here; however, it is also possible to partition the singly-occupied orbitals from the doubly-occupied orbitals)
     - virtual orbitals

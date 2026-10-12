@@ -20,7 +20,7 @@ kernelspec:
 
 For this tutorial, we have supplied an HDF5 file containing the Born-Oppenheimer
 Hamiltonian for Si in its primitive cell at equilibrium
-in "hamil.h5".
+in `hamil.h5`.
 
 ![](files/Si_primitive.png)
 

@@ -16,7 +16,7 @@ kernelspec:
 # Emery model on the Lieb lattice
 
 Status:
-- we can reproduce Adam's energy for the 4x4 "tilted" Lieb lattice (2 Cu per unit cell)!!
+- we can reproduce Adam's energy for the 4x4 tilted Lieb lattice (2 Cu per unit cell)!!
 
 ```{code-cell} ipython3
 :editable: true

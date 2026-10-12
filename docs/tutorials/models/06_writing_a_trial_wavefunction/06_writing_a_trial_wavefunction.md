@@ -45,7 +45,7 @@ from safiretools import NOMSDWavefunction
 
 ### RHF wavefunction
 
-Generate a wavefunction of the form $\Psi = \Psi^\uparrow \otimes \Psi^\downarrow$ with $\Psi^\downarrow_{ij} = \Psi^\uparrow_{ij}$. This means the two spin sectors are identical. Such a wavefunction is commonly referred to as an "RHF" (Restricted Hartree-Fock) wavefunction, and the corresponding walker is called an "RHF walker."
+Generate a wavefunction of the form $\Psi = \Psi^\uparrow \otimes \Psi^\downarrow$ with $\Psi^\downarrow_{ij} = \Psi^\uparrow_{ij}$. This means the two spin sectors are identical. Such a wavefunction is commonly referred to as an *RHF* (Restricted Hartree-Fock) wavefunction, and the corresponding walker is called an *RHF walker*.
 
 ```{code-cell} ipython3
 :id: TdBbEZh8TeCS
@@ -80,7 +80,7 @@ In summary, to generate an RHF wavefunction, you need to provide an array `A[0, 
 
 ### UHF wavefunction
 
-Generate a wavefunction of the form $\Psi = \Psi^\uparrow \otimes \Psi^\downarrow$, where $\Psi^\downarrow_{ij}$ can differ from $\Psi^\uparrow_{ij}$. This means the two spin sectors are separate and may have distinct wavefunctions. Such a wavefunction is commonly referred to as a "UHF" (Unrestricted Hartree-Fock) wavefunction, and the corresponding walker is called a "UHF walker."
+Generate a wavefunction of the form $\Psi = \Psi^\uparrow \otimes \Psi^\downarrow$, where $\Psi^\downarrow_{ij}$ can differ from $\Psi^\uparrow_{ij}$. This means the two spin sectors are separate and may have distinct wavefunctions. Such a wavefunction is commonly referred to as a *UHF* (Unrestricted Hartree-Fock) wavefunction, and the corresponding walker is called a *UHF walker*.
 
 ```{code-cell} ipython3
 :id: EakDm--aMwYt
@@ -113,7 +113,7 @@ In summary, to generate a UHF wavefunction, you need to provide an array `A` of 
 
 ### GHF wavefunction
 
-Generate a wavefunction of the general form $\Psi = \Psi^{\uparrow,\downarrow}$, where the spin sectors are mixed. This form typically arises in systems with spin-orbit coupling or magnetic order in the $xy$ plane. Such wavefunctions are commonly referred to as "GHF" (Generalized Hartree-Fock) wavefunctions, and the associated walkers are called "GHF walkers."
+Generate a wavefunction of the general form $\Psi = \Psi^{\uparrow,\downarrow}$, where the spin sectors are mixed. This form typically arises in systems with spin-orbit coupling or magnetic order in the $xy$ plane. Such wavefunctions are commonly referred to as *GHF* (Generalized Hartree-Fock) wavefunctions, and the associated walkers are called *GHF walkers*.
 
 ```{code-cell} ipython3
 :id: TfA8vPFKaOUH
@@ -212,7 +212,7 @@ The trial file does not store an initial walker. **By default**, the walkers sta
 
 ## Example: free electron trial wavefunction
 
-We can generate a free-electron trial wavefunction using `Wavefunction.from_free_electron` within `safiretools`. First, we set up the lattice using `Lattice.from_dict` (in this case a square 4 x 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file "wfn.h5".
+We can generate a free-electron trial wavefunction using `Wavefunction.from_free_electron` within `safiretools`. First, we set up the lattice using `Lattice.from_dict` (in this case a square 4 x 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file `wfn.h5`.
 
 ```{code-cell} ipython3
 :id: XDDPCMhvHKRc

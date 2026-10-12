@@ -47,13 +47,13 @@ This is known as the Hubbard-Kanamori Hamiltonian.
 Many standard model Hamiltonians can be written in this language including the standard Hubbard model,
 extended Hubbard with nearest-neighbor $V$, etc.
 SAFIRE is agnostic to the details of the compound indices.
-It simply accepts Hamiltonian "components" which are interpreted as above.
+It simply accepts Hamiltonian components which are interpreted as above.
 This provides great flexibility in specifying Hamiltonians, however care must be taken outside of SAFIRE to ensure that consistent index conventions are used.
 
 safiretools provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
 on a variety of lattices, using consistent conventions for indexing.
 The framework consists of a Lattice class which is responsible for geometry (see {doc}`../03_setting_up_a_lattice/03_setting_up_a_lattice`),
-and a Hamiltonian "Builder" which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
+and a `HamiltonianBuilder` which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
 The `HamiltonianBuilder.from_input()` classmethod accepts a set of input Hamiltonian parameters (as a Python
 dict or a toml file) and automatically runs the corresponding build steps, which covers most use cases.
 Users who want direct control over the Hamiltonian build steps can instead construct a `HamiltonianBuilder`
@@ -200,7 +200,7 @@ For the remainder of the tutorial, we will be working directly with Python withi
 
 ### ✨ Example : Standard Hubbard Model
 
-Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for "t".
+Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
 We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
 Note that the default hopping matrix shape is $2N_{sites} \times N_{sites}$ where the first $N_{sites}$ rows correspond to the spin-up sector and the last $N_{sites}$ rows correspond to the spin-down sector.
 
@@ -342,7 +342,7 @@ where $\langle i,j \rangle^n$ indicates that the sum is constrained to run over 
 
 #### ✨ Example : Hubbard Model with $t'$
 
-Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for "t".
+Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
 We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
 Note that the default hopping matrix shape is $2N_{sites} \times N_{sites}$ where the first $N_{sites}$ rows correspond to the spin-up sector and the last $N_{sites}$ rows correspond to the spin-down sector.
 
@@ -649,7 +649,7 @@ where we have replaced the composite indices with site and band indices for clar
 #### Case 5: a list of inputs from the cases above
 
 If a user provides a list of valid inputs, then safiretools will generate each
-term provided <b>using the list index / position for the neighbor order "$n$."</b>
+term provided <b>using the list index / position for the neighbor order $n$.</b>
 For example, if a user provides
 
 ```toml

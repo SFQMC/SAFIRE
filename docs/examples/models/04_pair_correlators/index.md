@@ -111,7 +111,7 @@ hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_
 ## Saving index offsets in the HDF5 input
 
 The Lattice class from safiretools can be directly used to find the pairs that we need via the `.get_directed_pairs()` function.
-`.get_directed_pairs()` needs a list of "directions", and it returns a `DirectedPairs` whose `.offsets` maps each requested direction to a list of index offsets, $\bar{i}_\alpha [i]$, such that $\bar{i}_{\alpha} [i] = i + e_\alpha$.
+`.get_directed_pairs()` needs a list of `directions`, and it returns a `DirectedPairs` whose `.offsets` maps each requested direction to a list of index offsets, $\bar{i}_\alpha [i]$, such that $\bar{i}_{\alpha} [i] = i + e_\alpha$.
 
 Every direction has to run along a periodic axis. Stepping off an open edge would wrap around to the far side and pair sites that are not neighbours at all, so that is rejected rather than quietly measured.
 
@@ -160,8 +160,8 @@ The pair correlation function observable may be requested as any other observabl
 However, the pair correlation function observable has a few unique parameters that must be set.
 They are:
 
-- "filename" which is the name of the HDF5 file where the pairing offsets were saved. These can saved in the same file as the Wavefunction, and/or Hamiltonian or in their own independent input file. Whichever you prefer.
-- "pair_type" is a list of the names of the types of pairing you want to measure. For example, to measure all of the types of pairing that we defined above, we would use `"pair_type" : ["s","+x","-x","+y","-y","xy"]`.
+- `filename` which is the name of the HDF5 file where the pairing offsets were saved. These can saved in the same file as the Wavefunction, and/or Hamiltonian or in their own independent input file. Whichever you prefer.
+- `pair_type` is a list of the names of the types of pairing you want to measure. For example, to measure all of the types of pairing that we defined above, we would use `"pair_type" : ["s","+x","-x","+y","-y","xy"]`.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>

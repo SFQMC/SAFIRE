@@ -119,7 +119,7 @@ is the constant nuclear repulsion energy,
 $$
 H^1_{ij} = \int d\vec{r}_p  \phi^*_i (\vec{r}_p) \left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) \phi_j (\vec{r}_p),
 $$
-contains the "one-body" kinetic term and electron-nuclei interactions,
+contains the one-body kinetic term and electron-nuclei interactions,
 and
 $$
 H^2_{ijkl} = (il|jk) = \frac{1}{2} \int \int d\vec{r}_p d\vec{r}_q  \left( \phi^*_i (\vec{r}_p)  \phi_l (\vec{r}_p)  \frac{1}{|\vec{r}_p - \vec{r}_q|}  \phi^*_j (\vec{r}_q) \phi_k (\vec{r}_q)  \right)
@@ -377,9 +377,9 @@ It can be used as
 
 +++ {"id": "qYRe4bEt1xSN"}
 
-which reads the "input" (`-i`) Hamiltonian from `H2_FCIDUMP`,
+which reads the input (`-i`) Hamiltonian from `H2_FCIDUMP`,
 performs a Cholesky decomposition with a tolerance (`-t`) of `1.e-5`,
-and saves the Hamiltonian to the "output" (`-o`) HDF5 file, ` H2_Hamiltonian.h5`.
+and saves the Hamiltonian to the output (`-o`) HDF5 file, ` H2_Hamiltonian.h5`.
 
 Additionally, you can use the `--help` option to see what other options are available.
 

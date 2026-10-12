@@ -20,8 +20,8 @@ The Hamiltonian builder requires a Lattice instance to build the Hamiltonian on
 We assume familiarity with the Lattice class in this tutorial.
 
 The Hamiltonian builder (`HamiltonianBuilder` class in safiretools) is
-responsible for performing "build steps".
-A "build step" consists of constructing a Hamiltonian component (i.e. term),
+responsible for performing build steps.
+A *build step* consists of constructing a Hamiltonian component (i.e. term),
 and adding it to the `Hamiltonian` that it has.
 As we saw in the previous tutorial ({doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`),
 `HamiltonianBuilder.from_input()` can be used to build a lattice model Hamiltonian by
@@ -34,7 +34,7 @@ TODO: add in figure with the builder highlighted.
 
 ## Part I: Hamiltonian builder Overview
 
-"Build steps" are implemented as methods of the `HamiltonianBuilder` class
+Build steps are implemented as methods of the `HamiltonianBuilder` class
 and correspond to a specific type of Hamiltonian term.
 We'll cover which specific build steps are implemented below.
 
@@ -57,15 +57,15 @@ Let's begin with a quick overview of how the build steps work:
 
 3. While each build step has it's own respective input parameters and conventions, there are a few general rules that apply to nearly all build steps.
 
-    - Each term's primary input parameters can generally be provided as one of the following input "units":
+    - Each term's primary input parameters can generally be provided as one of the following input units:
         - a floating point number, implying that it should be applied uniformly
         - a 2d-array with shape nband x nband, implying a band-dependent Hamiltonian term.
     - For each term, the input parameter can be either:
-        - a single "unit" as defined above
-        - a list of "units"
+        - a single unit as defined above
+        - a list of units
     
     In the of case of a list of input units, the input is interpreted as multiple Hamiltonian terms where the list
-    position is the "neighbor order" that the term will be constructed for. For example, the code snippet below will
+    position is the neighbor order that the term will be constructed for. For example, the code snippet below will
     generate both nearest (t=1.0), and next-nearest (t'=0.5) neighbor-hopping.
 
     ```python

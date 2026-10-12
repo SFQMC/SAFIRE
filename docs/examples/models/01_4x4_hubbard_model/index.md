@@ -57,7 +57,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 ## Building a lattice model Hamiltonian
 
 `safiretools` provides a convenience lattice model Hamiltonian builder and writer which
-will allow us to construct the "standard" Hubbard model with nearest-neighbor hopping and on-site U, among
+will allow us to construct the standard Hubbard model with nearest-neighbor hopping and on-site U, among
 other Hamiltonians.
 The basic steps for using the lattice model Hamiltonian builder are:
 1. define lattice parameters
@@ -134,7 +134,7 @@ hamiltonian = HamiltonianBuilder.from_input(
 
 +++ {"id": "MqK7sb3Z5xcn"}
 
-We now have a "standard" Hubbard model with nearest-neighbor hopping and onsite U saved in an HDF5 file, "afqmc.h5"
+We now have a standard Hubbard model with nearest-neighbor hopping and onsite U saved in an HDF5 file, `afqmc.h5`
 which can be directly read by SAFIRE.
 Next, we'll walk through an AFQMC calculation where we'll compute the ground state energy.
 
@@ -142,7 +142,7 @@ Next, we'll walk through an AFQMC calculation where we'll compute the ground sta
 
 ## AFQMC Walkthrough : ground state energy
 
-Here, we will compute the ground state energy of the "standard" Hubbard model
+Here, we will compute the ground state energy of the standard Hubbard model
 based on the Hamiltonian that we made previously - i.e.
 $$
 \hat{H} = -t \sum_{\langle i,j\rangle} \hat{c}^\dagger_i \hat{c}_j + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
@@ -669,7 +669,7 @@ which is off by about 0.0035 t compared with the exact energy, -13.62185. We can
 
 General second-quantized observables can be computed using AFQMC via the back-propagation algorithm.
 See {ref}`backprop_estimator` for more information on back-propagated observables.
-To "turn on" back-propagation, add an `"estimator"` block with `"name": "back_propagation"` to an `"execute"`
+To turn on back-propagation, add a `backprop` block to the `estimators` of an `execute`
 block in the input file.
 Here is a sample input file where an ellipsis has been used to hide the rest of the input.
 
@@ -699,11 +699,11 @@ Here is a sample input file where an ellipsis has been used to hide the rest of 
 
 For back-propagation (BP), we will need to provide a BP length.
 We will need to check for convergence in this parameter.
-Notice that a BP estimator has no "measure_interval": the back-propagation length, in steps, is
-given by "propagation_steps", and it doubles as the measurement interval;
+Notice that a BP estimator has no `measure_interval`: the back-propagation length, in steps, is
+given by `propagation_steps`, and it doubles as the measurement interval;
 unlike the default estimator, the BP estimator accepts several values as shown in the example above.
 In this case, BP will be run with each of the BP lengths provided and saved in an output HDF5 file separately.
-This simplifies checking for convergence in the BP length by allowing us to re-use the "forward" propagation run for each BP length.
+This simplifies checking for convergence in the BP length by allowing us to re-use the forward propagation run for each BP length.
 
 +++ {"id": "ZjxOUIHUQeuD"}
 
@@ -769,7 +769,7 @@ run_afqmc(
 
 ### Analyze the AFQMC output
 
-The AFQMC code saves "scalar" data, such at the energy, in a file called `qmc.s000.scalar.dat` (a text file)
+The AFQMC code saves scalar data, such at the energy, in a file called `qmc.s000.scalar.dat` (a text file)
 and non-scalar data, such as the one-rdm and other observables, in a file called `qmc.s000.stat.h5` (HDF5 file).
 The AFQMC code includes tools to analyze both.
 We have already analyzed the energy in the `qmc.s000.scalar.dat` file using `analyze_scalar_data()`.
@@ -782,8 +782,8 @@ We will now focus on analyzing observables saved in the HDF5 output file, `qmc.s
 afqmctools provides tools to directly average observables from the HDF5 output
 in the `afqmctools.analysis.average` module.
 At the core of the module is the `average_observable()` function which extracts samples of a user specified observable from the HDF5 output file, and averages the samples while accounting for autocorrelation automatically.
-Additionally, it users may provide one or more "transform" functions which are applied to the data samples immediately after reading from HDF5.
-afqmctools provides a few transform function "factories"for generating common transforms.
+Additionally, it users may provide one or more transform functions which are applied to the data samples immediately after reading from HDF5.
+afqmctools provides a few transform function factories for generating common transforms.
 We will use the `hermitize_factory()` to hermitize the one-rdm samples since SAFIRE measures only the upper-triangular part of the one-rdm.
 
 In the code block below, we will plot the diagonal of the one-rdm for each BP average (i.e. for each BP length) in order to check for convergence in BP length.
