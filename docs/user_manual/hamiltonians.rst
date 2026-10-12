@@ -46,8 +46,8 @@ Sparse matrices are stored in the compressed sparse row (CSR) format, as a group
 * ``<matrix>/``
 
   * ``shape`` :math:`(2,)`
-  * ``values`` :math:`(N_{nz},)`
-  * ``column_indices`` :math:`(N_{nz},)`
+  * ``values`` :math:`(N_\mathrm{nz},)`
+  * ``column_indices`` :math:`(N_\mathrm{nz},)`
   * ``row_pointers`` :math:`(M_1 + 1,)`
 
 .. list-table::
@@ -59,13 +59,13 @@ Sparse matrices are stored in the compressed sparse row (CSR) format, as a group
   * - ``shape``
     - The dimensions :math:`(M_1, M_2)` of the matrix.
   * - ``values``
-    - The :math:`N_{nz}` non-zero matrix elements.
+    - The :math:`N_\mathrm{nz}` non-zero matrix elements.
   * - ``column_indices``
     - The column index of each element of ``values``.
   * - ``row_pointers``
     - Row :math:`i` holds the entries ``row_pointers[i]`` up to (not including)
       ``row_pointers[i+1]`` of ``values`` and ``column_indices``, so ``row_pointers[0] = 0`` and
-      ``row_pointers[M_1]`` :math:`= N_{nz}`.
+      ``row_pointers[M_1]`` :math:`= N_\mathrm{nz}`.
 
 .. _dense-cholesky:
 
@@ -81,8 +81,8 @@ tensor:
 
   v_{pqrs} = V_{(pr),(sq)} \approx \sum_n^{N_{\mathrm{chol}}} L_{pr,n} L^{*}_{sq,n},
 
-where the sum is truncated at :math:`N_{\mathrm{chol}} = x_c M`,
-:math:`x_c` is typically between :math:`5` and :math:`10`, and :math:`M` is
+where the sum is truncated at :math:`N_{\mathrm{chol}} = x_\mathrm{c} M`,
+:math:`x_\mathrm{c}` is typically between :math:`5` and :math:`10`, and :math:`M` is
 the number of single-particle basis functions. The storage requirement
 thus scales like :math:`\mathcal{O}(M^3)`. 
 
@@ -200,7 +200,7 @@ factorization is as follows:
   * - **Entry**
     - **Description**
   * - ``nuclear_energy``, ``frozen_core_energy``, ``madelung_constant``
-    - Energy offset :math:`E_0 = E_\mathrm{nuclear} + E_\mathrm{frozen-core} - N_{e} E_\mathrm{Madelung}`, where the electron self-interaction is scaled by the number of electrons :math:`N_{e}`.
+    - Energy offset :math:`E_0 = E_\mathrm{nuclear} + E_\mathrm{frozen-core} - N_\mathrm{e} E_\mathrm{Madelung}`, where the electron self-interaction is scaled by the number of electrons :math:`N_\mathrm{e}`.
   * - ``hcore``
     - The one-body Hamiltonian :math:`h_{(\mathbf{k}p)(\mathbf{k}q)}`, one block per :math:`k`-point.
   * - ``KPFactorized/L<j>``
@@ -220,7 +220,7 @@ factorization is as follows:
     - Connects the computational basis to the natural basis of the Hamiltonian, of size
       :math:`N_\mathrm{AO}`, at each :math:`k`-point.
 
-The number of electrons :math:`N_e` in the electron self-interaction offset is taken from the trial wavefunction.
+The number of electrons :math:`N_\mathrm{e}` in the electron self-interaction offset is taken from the trial wavefunction.
 
 .. seealso::
 
@@ -417,7 +417,7 @@ THC Hamiltonians are stored in HDF5 using the following format:
     - The number of basis functions :math:`M` and of spin sectors :math:`n_\mathrm{spin}`, the same
       in ``System`` and ``Interaction``.
   * - ``nuclear_energy``, ``frozen_core_energy``, ``madelung_constant``
-    - Energy offset :math:`E_0 = E_\mathrm{nuclear} + E_\mathrm{frozen-core} - N_e E_\mathrm{Madelung}`,
+    - Energy offset :math:`E_0 = E_\mathrm{nuclear} + E_\mathrm{frozen-core} - N_\mathrm{e} E_\mathrm{Madelung}`,
       as in :ref:`k_point_factorized`.
   * - ``number_of_kpoints``, ``number_of_qpoints``
     - Must be 1: this format holds a single :math:`k`-point.
@@ -431,7 +431,7 @@ THC Hamiltonians are stored in HDF5 using the following format:
     - The full Coulomb matrix :math:`M_{uu'}`, which allows reusing
       the same collocation matrix for both electron coordinates.
 
-The number of electrons :math:`N_e` is taken from the wavefunction.
+The number of electrons :math:`N_\mathrm{e}` is taken from the wavefunction.
 
 The THC factorization provides substantial memory and computational savings compared to storing the full four-index ERI tensor, especially for large systems where the number of interpolation points :math:`N_u \ll M^2`.
 

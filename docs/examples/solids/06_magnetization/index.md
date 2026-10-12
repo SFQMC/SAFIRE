@@ -161,7 +161,7 @@ pwscf.save  pwscf.xml  VKB  VLTOT  VSC
 
 +++ {"id": "qELxzaWcjjlh"}
 
-## Writing the 2nd-Quantized Hamiltonian and Trial Wavefunction
+## Writing the Second-Quantized Hamiltonian and Trial Wavefunction
 
 CoQuí is able to directly generate a Hamiltonian HDF5 file for SAFIRE using the data output by QE.
 Additionally, it can write a trial wavefunction based on the DFT solution from QE.
@@ -371,20 +371,20 @@ This feature is controlled by setting `"naverages"` to a value greater than one.
 The number of steps that will be used in each average is given by,
 
 $$
-N^{step}_a = \frac{nsteps}{naverages - a},
+N^\mathrm{step}_a = \frac{nsteps}{naverages - a},
 $$
 
 where $a$ is the 0-based index of the "average", and `nsteps` and `naverages` are corresponding values from the input file.
 So, for the example here,
 
 $$
-N^{step}_0= 200
+N^\mathrm{step}_0= 200
 $$
 
 and
 
 $$
-N^{step}_1 = 400
+N^\mathrm{step}_1 = 400
 $$.
 
 Now we can run SAFIRE using this input file.

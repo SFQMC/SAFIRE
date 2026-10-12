@@ -202,7 +202,7 @@ For the remainder of the tutorial, we will be working directly with Python withi
 
 Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
 We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
-Note that the default hopping matrix shape is $2N_{sites} \times N_{sites}$ where the first $N_{sites}$ rows correspond to the spin-up sector and the last $N_{sites}$ rows correspond to the spin-down sector.
+Note that the default hopping matrix shape is $2N_\mathrm{sites} \times N_\mathrm{sites}$ where the first $N_\mathrm{sites}$ rows correspond to the spin-up sector and the last $N_\mathrm{sites}$ rows correspond to the spin-down sector.
 
 ```{code-cell} ipython3
 ---
@@ -344,7 +344,7 @@ where $\langle i,j \rangle^n$ indicates that the sum is constrained to run over 
 
 Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
 We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
-Note that the default hopping matrix shape is $2N_{sites} \times N_{sites}$ where the first $N_{sites}$ rows correspond to the spin-up sector and the last $N_{sites}$ rows correspond to the spin-down sector.
+Note that the default hopping matrix shape is $2N_\mathrm{sites} \times N_\mathrm{sites}$ where the first $N_\mathrm{sites}$ rows correspond to the spin-up sector and the last $N_\mathrm{sites}$ rows correspond to the spin-down sector.
 
 ```{code-cell} ipython3
 ---
@@ -753,7 +753,7 @@ hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_
 
 ### Adding an Extended Hubbard V Interaction
 
-The $n^{th}$-order neighbor extended Hubbard interaction,
+The $n^\mathrm{th}$-order neighbor extended Hubbard interaction,
 
 $$
 \hat{H}_V = \sum_{\langle i<j \rangle^n} \sum_{\sigma \sigma'} V_{\mu \nu} \hat{n}_{\mu \sigma } \hat{n}_{\nu \sigma'},
@@ -772,7 +772,7 @@ $$
 \hat{H}_V = \hat{H}_{U1}[U1 = V] + \hat{H}_{U2}[U2 = V],
 $$
 
-for $n^{th}$-order neighbors.e
+for $n^\mathrm{th}$-order neighbors.e
 
 safiretools is able to generate a subset of interactions of this type using the
 same input conventions as for $\hat{H}_{U1}$, and $\hat{H}_{U2}$.

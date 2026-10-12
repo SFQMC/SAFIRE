@@ -41,7 +41,7 @@ The workflow includes the following steps:
       $ scalar_stats qmc.s000.scalar.dat -s time -t -e 15.0
       
    
-   This computes the average AFQMC energy and stochastic uncertainty, using an equilibration time of 15.0 :math:`Ha^{-1}`.
+   This computes the average AFQMC energy and stochastic uncertainty, using an equilibration time of 15.0 :math:`\mathrm{Ha}^{-1}`.
    The ``-t`` flag generates a plot of the energy as a function of imaginary time if running locally.
    If running remotely, you can save the plot of the energy vs imaginary time to a file using the ``--savefig [name].png`` option.
    In either case, you should see output similar to the following if you used the same settings as in the provided ``afqmc.json`` file and

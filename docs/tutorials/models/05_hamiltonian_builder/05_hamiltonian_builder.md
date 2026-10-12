@@ -108,7 +108,7 @@ $$
 \hat{H} = \sum_{\langle i,j\rangle^1} -(1.0) \hat{c}^\dagger_i \hat{c}_j + \sum_{\langle i,j\rangle^2} -(0.5) \hat{c}^\dagger_i \hat{c}_j + \sum_i (4.0) \hat{n}_{i\uparrow} \hat{n}_{i\downarrow}
 $$
 
-where the notation $\langle i,j\rangle^n$ indicates that only pairs of indices corresponding to $n^{th}$-order neighbors
+where the notation $\langle i,j\rangle^n$ indicates that only pairs of indices corresponding to $n^\mathrm{th}$-order neighbors
 are included.
 
 ```{code-cell} ipython3

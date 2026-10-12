@@ -19,7 +19,7 @@ In this tutorial, we will learn how to set up a lattice to define a Model Hamilt
 The `safiretools` Python package implements a Lattice class which is responsible for answering geometric questions about a specific lattice such as:
 
 - what are the boundary conditions
-- what are the $n^{th}$-nearest neighbors
+- what are the $n^\mathrm{th}$-nearest neighbors
 - which of those neighbors are direct neighbors, and which are image neighbors
 
 and more.
@@ -348,9 +348,9 @@ vis.plot_lattice(lattice,title="Lieb lattice with tilted cell",show_labels=False
 ## Visualizing nth-Order Neighbors
 
 The `vis.plot_lattice()` function can be used to visualize which pairs of sites
-are $n^{th}$-order neighbors.
+are $n^\mathrm{th}$-order neighbors.
 As you will see in the {doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`,
-$n_{th}$-order neighbor hopping and interactions are available in the lattice model Hamiltonian builder tools.
+$n^\mathrm{th}$-order neighbor hopping and interactions are available in the lattice model Hamiltonian builder tools.
 Visualizing the neighbors can be helpful or ensuring that the desired hopping / interactions are being included,
 especially when dealing with complicated lattices.
 

@@ -95,12 +95,12 @@ from RHF as a basis.
 We are often interested in the electronic ground state of the Born-Oppenheimer Hamiltonian which is given in first quantization
 by
 $$
-H_\mathrm{Born-Oppenheimer} = \sum_p^{N_e}\left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_{A}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) + \frac{1}{2} \sum^{N_e}_{q \neq p} \left(\frac{1}{r_{pq}}\right) + \frac{1}{2}\sum_{A' \neq A}^{N_A} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
+H_\mathrm{Born-Oppenheimer} = \sum_p^{N_\mathrm{e}}\left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_\mathrm{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) + \frac{1}{2} \sum^{N_\mathrm{e}}_{q \neq p} \left(\frac{1}{r_{pq}}\right) + \frac{1}{2}\sum_{A' \neq A}^{N_\mathrm{atom}} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
 $$
 where,
-$N_e$ is the number of electrons,
+$N_\mathrm{e}$ is the number of electrons,
 $\vec{r}_p$ is the position of electron $p$,
-$N_{A}$ is the number of atomic nuclei,
+$N_\mathrm{atom}$ is the number of atomic nuclei,
 and $Z_A$ and $\vec{R}_A$ are the atomic number and position, respectively, of atomic nuclei, $A$.
 
 AFQMC is formulated in terms of the second quantized Hamiltonian.
@@ -113,11 +113,11 @@ $$
 $$
 where
 $$
-H^0 = \frac{1}{2}\sum_{A' \neq A}^{N_A} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
+H^0 = \frac{1}{2}\sum_{A' \neq A}^{N_\mathrm{atom}} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
 $$
 is the constant nuclear repulsion energy,
 $$
-H^1_{ij} = \int d\vec{r}_p  \phi^*_i (\vec{r}_p) \left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) \phi_j (\vec{r}_p),
+H^1_{ij} = \int d\vec{r}_p  \phi^*_i (\vec{r}_p) \left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_\mathrm{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) \phi_j (\vec{r}_p),
 $$
 contains the one-body kinetic term and electron-nuclei interactions,
 and
@@ -131,7 +131,7 @@ For this tutorial, we will use the minimal basis Hydrogen dimer since it can be 
 See, for example, section 3.5.2 in ref. 1.
 
 The code block below contains the Hamiltonian for the $H_2$ molecule at a
-bond length of $\delta_{H-H} = 1.4$ Bohr radii in a standard sto-3g basis.
+bond length of $\delta_\mathrm{H-H} = 1.4$ Bohr radii in a standard sto-3g basis.
 **Run the code block below to load the Hamiltonian into memory**
 
 1. Szabo, A., & Ostlund, N. S. (1996). Modern quantum chemistry: Introduction to advanced electronic structure theory. Dover Publications.
@@ -146,7 +146,7 @@ from safiretools import MolecularHamiltonian
 number_of_electrons = (1,1) # up, down
 number_of_orbitals = 2
 
-# all energy units are E_Hartree
+# all energy units are Ha
 
 # nuclear repulsion energy
 H0 = 0.714285714285714
@@ -174,7 +174,7 @@ H2_ijkl[1,1,:,:] = np.array([[6.63461552e-01, 0.0],
 phi_hf = np.array([[ 0.54893404,  1.21146407],
                    [ 0.54893404, -1.21146407]])
 
-# and the STO-3G basis overlap matrix for $\delta_{H-H}=1.4 Bohr$ is
+# and the STO-3G basis overlap matrix for $\delta_\mathrm{H-H}=1.4 Bohr$ is
 # Sij = <g_\mu | g_\nu>
 Sij = np.array([[1.,         0.65931821],
                 [0.65931821, 1.        ]])
@@ -194,8 +194,8 @@ $$
 Any decomposition of this form can be used in AFQMC.
 Density fitting integrals, for example can be written in this form.
 A typical strategy in the AFQMC literature is to perform a Cholesky decomposition of the super-matrix $H^2_{(i,l),(j,k)}$
-using a Cholesky tolerance of $\delta_{Chol}$ where a smaller
-value of $\delta_{Chol}$ produces a more accurate representation.
+using a Cholesky tolerance of $\delta_\mathrm{Chol}$ where a smaller
+value of $\delta_\mathrm{Chol}$ produces a more accurate representation.
 
 The Cholesky decomposition is automatically performed within
 `MolecularHamiltonian.from_integrals()` if you provide it with the electron Coulomb
@@ -534,7 +534,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 number_of_electrons = (1,1) # up, down
 number_of_orbitals = 2
 
-# all energy units are E_Hartree
+# all energy units are Ha
 
 # nuclear repulsion energy
 H0 = 0.714285714285714
@@ -562,7 +562,7 @@ H2_ijkl[1,1,:,:] = np.array([[6.63461552e-01, 0.0],
 phi_hf = np.array([[ 0.54893404,  1.21146407],
                    [ 0.54893404, -1.21146407]])
 
-# and the STO-3G basis overlap matrix for $\delta_{H-H}=1.4 Bohr$ is
+# and the STO-3G basis overlap matrix for $\delta_\mathrm{H-H}=1.4 Bohr$ is
 # Sij = <g_\mu | g_\nu>
 Sij = np.array([[1.,         0.65931821],
                 [0.65931821, 1.        ]])

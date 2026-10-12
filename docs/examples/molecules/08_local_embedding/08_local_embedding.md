@@ -49,7 +49,7 @@ MPI_TASKS = 16
 
 ### Automate the AFQMC
 
-We can automate the local embedding workflow, for a given O atom height, $h$, and localization radii $R_o$, and $R_v$, using a Python function. The workflow consists of the following steps.
+We can automate the local embedding workflow, for a given O atom height, $h$, and localization radii $R_\mathrm{o}$, and $R_\mathrm{v}$, using a Python function. The workflow consists of the following steps.
 
 1. define the atomic positions
 2. run ROHF to obtain both a trial wavefunction, and a basis
@@ -57,7 +57,7 @@ We can automate the local embedding workflow, for a given O atom height, $h$, an
     - energetic core orbitals (no need to localize, we will freeze these no mater what)
     - occupied orbitals (including singly-occupied orbitals here; however, it is also possible to partition the singly-occupied orbitals from the doubly-occupied orbitals)
     - virtual orbitals
-4. Select active orbitals using the $R_o$ and $R_v$ localization radii which apply to the occupied and virtual orbitals, respectively. An orbital is included in the active space if its centroid is localized within the applicable localization radius. Here, we use the 2-dimensional projection of the orbital centroid positions onto the $xy$-plane instead of the full 3-dimensional position.
+4. Select active orbitals using the $R_\mathrm{o}$ and $R_\mathrm{v}$ localization radii which apply to the occupied and virtual orbitals, respectively. An orbital is included in the active space if its centroid is localized within the applicable localization radius. Here, we use the 2-dimensional projection of the orbital centroid positions onto the $xy$-plane instead of the full 3-dimensional position.
 5. perform a frozen core transformation on the many-body Hamiltonian based on the chosen active / inactive orbitals, and save the effective Hamiltonian to a SAFIRE HDF5 input file.
 6. Write the ROHF determinant to the SAFIRE HDF5 format to use as a trial wavefunction.
 7. Generate the json input file for SAFIRE
@@ -259,7 +259,7 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
 
 ## AFQMC Potential Energy Curve
 
-Let's use the function that we defined to compute $E[h]$ for $(R_o,R_v) = (3.8,6.2)$ Bohr.
+Let's use the function that we defined to compute $E[h]$ for $(R_\mathrm{o},R_\mathrm{v}) = (3.8,6.2)$ Bohr.
 
 ```{code-cell} ipython3
 ---

@@ -24,7 +24,7 @@ $$
 \hat{H} = -t \sum_{\langle i,j\rangle^{(1)}} \hat{c}^\dagger_i \hat{c}_j -t' \sum_{\langle i,j\rangle^{(2)}} \hat{c}^\dagger_i \hat{c}_j + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
 $$
 where $i,j$ are lattice site indices, angle brackets with superscript $(n)$ indicate
-that sums are constrained to $n^{th}$-order neighbors,
+that sums are constrained to $n^\mathrm{th}$-order neighbors,
 $\hat{c}^\dagger_i$/$\hat{c}_i$ are electronic creation/annihilation operators,
 and $\hat{n}^{\sigma}_i$ are spin-resolved number operators corresponding to site $i$.
 The 4x4 lattice is small enough to make exact diagonalization possible.
@@ -291,7 +291,7 @@ analysis_settings = dict(
 
 E,dE = analyze_scalar_data(analysis_settings)
 
-print(f"The AFQMC energy is {E:.6f} +/- {dE:.6f} Hartree")
+print(f"The AFQMC energy is {E:.6f} +/- {dE:.6f} Ha")
 ```
 
 +++ {"id": "da4dfc0c-047c-43b7-9568-5494c48067b2"}
@@ -299,8 +299,8 @@ print(f"The AFQMC energy is {E:.6f} +/- {dE:.6f} Hartree")
 ## Analysis - Compute the Average 1-RDM
 
 To check for convergence here, we will compute the average 1-rdm for each back-propagation length saved in the
-output HDF5 file, and plot `\rho(i,j)` vs $N_{steps}$ for a line cut of the lattice.
-We should see the average 1-rdm converge for some value of $N_{steps}$.
+output HDF5 file, and plot `\rho(i,j)` vs $N_\mathrm{steps}$ for a line cut of the lattice.
+We should see the average 1-rdm converge for some value of $N_\mathrm{steps}$.
 
 ```{code-cell} ipython3
 :id: 46011340-4ae4-41a9-ae29-e97568264d04
