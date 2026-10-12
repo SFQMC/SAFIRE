@@ -328,7 +328,7 @@ such that every task carries on the order of 10-50 walkers.
 ### GPU Builds
 
 To run on GPUs, you must compile SAFIRE for the GPU.
-See the [documentation](https://users.flatironinstitute.org/~beskridge/safire/installation.html) for instructions on compiling for GPU.
+See {ref}`install` for instructions on compiling for GPU.
 
 On GPU builds of SAFIRE, the calculation is more efficient when
 the GPU is saturated.

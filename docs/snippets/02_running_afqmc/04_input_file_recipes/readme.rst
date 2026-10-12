@@ -110,7 +110,7 @@ where the first 2 samples come from the first execute block (up to total imagina
 based on the 20 steps, with $\tau = 0.05$, and the remaining samples are from the second
 execution block.
 
-For more detail on the input file, see the [input file description](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/input_description_afqmc.html)
+For more detail on the input file, see :ref:`input_afqmc`.
 
 
 Input file with most parameters exposed

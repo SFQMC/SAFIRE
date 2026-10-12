@@ -244,8 +244,7 @@ write_jobfile(scratch_dir/"afqmc.json", {
 ### Running AFQMC
 
 Below, we provide a cell that will run AFQMC here; however, for this calculation, you might prefer to submit the job to Slurm.
-You can copy the runscript from `/mnt/home/beskridge/ceph/software/SAFIRE/local_scripts/run_afqmc_cpu.sh` to your scratch
-directory for this tutorial and use
+You can copy the runscript {download}`run_afqmc_cpu.sh` from this example into the `data` directory and use
 
 ```bash
 sbatch run_afqmc_cpu.sh

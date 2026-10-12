@@ -184,8 +184,7 @@ we can use the `h5dump` utility to inspect the contents of the file that we just
 view the actual data.
 
 Note that the NOMSD format is a compressed sparse row (CSR) format.
-See the wavefunction formats in the [user manual](https://users.flatironinstitute.org/~beskridge/safire/user_manual/wavefunctions.html) for
-details on the expected data.
+See {ref}`Wavefunction-classes` for details on the expected data.
 
 ```{code-cell} ipython3
 !h5dump -n {scratch_dir}/rhf_wfn.h5

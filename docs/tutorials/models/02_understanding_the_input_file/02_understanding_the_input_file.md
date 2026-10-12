@@ -411,7 +411,7 @@ The propagator block is used to set properties of the AFQMC propagator.
 A typical user will not need to interact with this input block;
 however, we include it here for completeness.
 
-See the [input file description](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/input_description_afqmc.html) of the User manual for more information.
+See {ref}`propagator_block` for more information.
 
 +++ {"id": "a59c54b9"}
 
@@ -510,9 +510,8 @@ td, th {
 
 While there are many possible ways to set up an input file,
 some structures will come up more often than others.
-The [User manual](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/examples/02_running_afqmc/04_input_file_recipes/readme.html)
-includes
-several input file "recipes" / templates that you can use as a starting point for your calculations.
+The {ref}`run_afqmc_ex_4` example collects
+several input file templates that you can use as a starting point for your calculations.
 We recommend taking a look at them to complete the information provided here.
 
 +++ {"id": "17b6510b"}
@@ -525,7 +524,7 @@ In this tutorial, you learned
 2. The minimal amount of information needed to run an AFQMC calculation using SAFIRE
 3. The most common parameters that you will interact with as a user
 
-See the [input file description](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/input_description_afqmc.html) of the User manual for more information on the input file.
+See {ref}`input_afqmc` for more information on the input file.
 
 ```{code-cell} ipython3
 :id: 7rqqHZirH3zt
