@@ -151,7 +151,7 @@ The input file assumes that you ran CoQuí within the `2_hamiltonian_coqui` dire
 If you ran it elsewhere, you will need to update the path to the HDF5 file
 in `wavefunction` accordingly
 
-A key part of the input file is the "estimator" block for the
+A key part of the input file is the `backprop` estimator block for the
 back-propagation algorithm.
 
 ```json
@@ -164,8 +164,8 @@ back-propagation algorithm.
 }
 ```
 
-The "name" parameter tells SAFIRE what kind of estimator to use (`"back_propagation"` in this case).
-The "nsteps" parameter determines the number of back propagation steps to use.
+The `name` parameter tells SAFIRE what kind of estimator to use (`"back_propagation"` in this case).
+The `nsteps` parameter determines the number of back propagation steps to use.
 
 To check for convergence in the number of back propagation steps, SAFIRE allows multiple "averages" to be set up which each use a different number of steps.
 This feature is controlled by setting `"naverages"` to a value greater than one.
@@ -175,7 +175,7 @@ $$
 N^{step}_a = \frac{nsteps}{naverages - a},
 $$
 
-where $a$ is the 0-based index of the "average", and "nsteps" and "naverages" are corresponding values from the input file.
+where $a$ is the 0-based index of the "average", and `nsteps` and `naverages` are corresponding values from the input file.
 So, for the example here,
 
 $$

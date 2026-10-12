@@ -298,7 +298,7 @@ print(f"The AFQMC energy is {E:.6f} +/- {dE:.6f} Hartree")
 
 ## Analysis - compute the Average 1-rdm
 
-To check for convergence here, we will compute the average 1-rdm for each "average" saved in the
+To check for convergence here, we will compute the average 1-rdm for each back-propagation length saved in the
 output HDF5 file, and plot `\rho(i,j)` vs $N_{steps}$ for a line cut of the lattice.
 We should see the average 1-rdm converge for some value of $N_{steps}$.
 

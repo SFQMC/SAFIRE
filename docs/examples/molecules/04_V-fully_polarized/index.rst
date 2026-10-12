@@ -29,7 +29,7 @@ The workflow follows these steps:
       total energy against the value above.
 
    It then generates the SAFIRE inputs.
-   Note that script uses an active space for AFQMC of `cas_afqmc = (3,32)`.
+   Note that script uses an active space for AFQMC of ``cas_afqmc = (3,32)``.
    This treats the system as having all electrons in the spin-up channel.
    The script writes both the Hamiltonian and a fully polarized trial wavefunction to ``afqmc.h5``.
    A trial with no beta electrons is collinear with ``ndown == 0``, so ``walker_type`` in
@@ -37,13 +37,13 @@ The workflow follows these steps:
 
 2. **Run SAFIRE**: Execute SAFIRE using the provided ``afqmc.json`` input file:
 
-   First, go to the `inputs` directory, then run SAFIRE with the following command:
+   First, go to the ``inputs`` directory, then run SAFIRE with the following command:
 
    .. code-block:: bash
 
       mpirun -n 64 safire afqmc.json
 
-3. **analyze the results**: Use the `scalar_stats` command-line tool to analyze the energy output:
+3. **analyze the results**: Use the ``scalar_stats`` command-line tool to analyze the energy output:
 
    .. code-block:: bash
 
@@ -72,9 +72,9 @@ The workflow follows these steps:
       AFQMC Energy   -942.901682 +/-   0.000151 32.25  5.0/35.0
 
    This will compute the average AFQMC energy and stochastic uncertainty, using an equilibration time of 5.0 Ha^{-1}.
-   The `-t` flag will generate a plot of the energy as a function of imaginary time if running locally.
-   If running remotely, you can save the plot of the energy vs imaginary time to a file using the `--savefig [name].png` option.
-   In either case, you should see the following output if you used the same settings as in the provided `afqmc.json` file and
+   The ``-t`` flag will generate a plot of the energy as a function of imaginary time if running locally.
+   If running remotely, you can save the plot of the energy vs imaginary time to a file using the ``--savefig [name].png`` option.
+   In either case, you should see the following output if you used the same settings as in the provided ``afqmc.json`` file and
    above.
 
       .. image:: energy_vs_beta.png

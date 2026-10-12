@@ -67,7 +67,7 @@ is the constant nuclear repulsion energy,
 
    H^1_{ij} = \int d\vec{r}_p  \phi^*_i (\vec{r}_p) \left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_\mathrm{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) \phi_j (\vec{r}_p),
 
-contains the "one-body" kinetic term and electron-nuclei interactions,
+contains the one-body kinetic term and electron-nuclei interactions,
 and
 
 .. math::
@@ -123,14 +123,14 @@ Typical Workflow
 
 SAFIRE reads :math:`\hat{H}` in generic second-quantized form from an HDF5 file.
 This allows SAFIRE to use any Hamiltonian that can be expressed in this form.
-The `safiretools` Python package can write a Hamiltonian to the SAFIRE format
+The ``safiretools`` Python package can write a Hamiltonian to the SAFIRE format
 given arrays containing the matrix elements,
 or from the standard FCIDUMP format.
-If the optional dependency PySCF is installed, `safiretools` is able to use PySCF's
-interface to `libcint` to generate the required matrix elements.
+If the optional dependency PySCF is installed, ``safiretools`` is able to use PySCF's
+interface to ``libcint`` to generate the required matrix elements.
 
 The trial wavefunction is also read from an HDF5 file.
-Similar to the Hamiltonian, `safiretools` includes tools for writing wavefunctions
+Similar to the Hamiltonian, ``safiretools`` includes tools for writing wavefunctions
 in this format as will be seen in the tutorials.
 
 Software prerequisites
@@ -154,7 +154,7 @@ For all of tutorials except for Hello SAFIRE we assume that you have access to a
 chemistry code that can do all of this.
 If you do not have access to a quantum chemistry code that can do all of this,
 PySCF is a possible choice which is free and open source.
-The tutorials will teach you how to input this information using the `safiretools` Python package.
+The tutorials will teach you how to input this information using the ``safiretools`` Python package.
 
 The Tutorials
 =============

@@ -8,16 +8,16 @@ This example assumes that you have already run an AFQMC calculation using
 using SAFIRE.
 If not, see :ref:`run_afqmc_exs` for examples on running it.
 While the AFQMC executable runs, it prints scalar data samples to a text-based file.
-The name of the file depends on the parameters set in the "project" block of 
-the AFQMC input file and follows the pattern, "[id].s[###].scalar.dat" where "[id]" is replaced by the "id" string and "[###]" is replaced by the value of "series" but at a fixed width of 3.
+The name of the file depends on the parameters set in the ``project`` block of
+the AFQMC input file and follows the pattern, ``[id].s[###].scalar.dat`` where ``[id]`` is replaced by the ``id`` string and ``[###]`` is replaced by the value of ``series`` but at a fixed width of 3.
 
-For example, using the sample "project" block here,
+For example, using the sample ``project`` block here,
 
 .. code-block:: json
 
     "output_name": "qmc"
 
-the data will be written to a file called, "qmc.s000.scalar.dat".
+the data will be written to a file called, ``qmc.s000.scalar.dat``.
 We assume this name for the remainder of the example.
 
 The scalar data file is organized as a series of columns, corresponding to scalar data, 
@@ -25,13 +25,13 @@ and rows, corresponding to samples to taken at each measurement.
 There are many columns included in the scalar datafile.
 A typical user will usually be most interested in the following columns.
 
-* "time" gives the total projection time, in units of inverse energy, at which the current sample was taken.
-* "EnergyEstim__nume_real" is the energy sample.
-* "weight" gives the total walker weight. This can be useful for troubleshooting.
-* "LogOvlpFactor" gives the log of the overlap of the trial wavefunction and the stochastic representation of the many-body wavefunction.
+* ``time`` gives the total projection time, in units of inverse energy, at which the current sample was taken.
+* ``EnergyEstim__nume_real`` is the energy sample.
+* ``weight`` gives the total walker weight. This can be useful for troubleshooting.
+* ``LogOvlpFactor`` gives the log of the overlap of the trial wavefunction and the stochastic representation of the many-body wavefunction.
 
 
-The "afqmctools" Python package includes functions to assist in analyzing the scalar data.
+The ``afqmctools`` Python package includes functions to assist in analyzing the scalar data.
 The following sample Python script can be used to compute the average AFQMC energy and stochastic
 uncertainty.
 
@@ -64,14 +64,14 @@ and the following plot
 where the left panel shows the scalar data vs total imaginary projection time,
 and the right panel shows a histogram of the stochastic samples of the scalar data.
 The vertical dotted line in the left panel illustrates the end of the equilibration phase, 
-as specified by the "nequil" setting passed to "analyze_scalar_data" via the 
-"analysis_settings" dictionary.
+as specified by the ``nequil`` setting passed to ``analyze_scalar_data`` via the
+``analysis_settings`` dictionary.
 This plot should be visually inspected to check that the AFQMC energy has equilibrated
 by the end of the equilibration phase, and that the histogram resembles a normal distribution.
 
 
-Any other scalar data column can be analyzed Similarly by setting "column" to the desired value
-within "analysis_settings" as show below:
+Any other scalar data column can be analyzed Similarly by setting ``column`` to the desired value
+within ``analysis_settings`` as show below:
 
 .. code-block:: python
 

@@ -74,12 +74,12 @@ $$
 $$
 
 where $M,N$ are the number of basis functions and electrons, respectively,
-or in terms of an "occupation vector", which is simply a list of orbital indices which should be occupied.
+or in terms of an *occupation vector*, which is simply a list of orbital indices which should be occupied.
     
 
 SAFIRE implements two basic types of trial wavefunction.
 
-1. <b>"particle-hole" multi-Slater determinant (ph-mSD) trial wavefunctions</b>
+1. <b>particle-hole multi-Slater determinant (ph-mSD) trial wavefunctions</b>
 which is a configuration interaction-like wavefunction
 where  $\langle \Phi_n |\Phi_m\rangle = \delta_{nm} \forall n,m$. In this case,
 the Slater determinants are specified in terms of a set of orbitals, and a list

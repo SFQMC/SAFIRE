@@ -12,11 +12,11 @@ and generating a free-electron trial wavefunction.
 
 A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
-Below is a sample input file, which we name `input.toml`
+Below is a sample input file, which we name ``input.toml``
 
 .. literalinclude:: input.toml
 
-if no "type" is specified in the "lattice" section, then a square lattice is used.
+if no ``type`` is specified in the ``lattice`` section, then a square lattice is used.
 
 safiretools can be invoked within a Python script as
 
@@ -61,14 +61,14 @@ safiretools can be invoked within a Python script as
 
 
 
-`Wavefunction.from_free_electron()` uses the Hamiltonian exactly as given and
+``Wavefunction.from_free_electron()`` uses the Hamiltonian exactly as given and
 applies no twist of its own, so the twist belongs on the lattice you build that
-Hamiltonian from. `twist` should be a 2-d iterable containing
+Hamiltonian from. ``twist`` should be a 2-d iterable containing
 :math:`\vec{\theta}=(\theta_1,\theta_2)` in radians even if one component is
 set to 0.0.
 For an open-shell filling, an untwisted lattice leads to an abitrary choice 
 of which degenerate orbitals are occupied.
-`from_free_electron()` warns when that happens.
+``from_free_electron()`` warns when that happens.
 
 Building the trial wavefunction does not measure its energy.
 To evaluate the variational energy of a trial wavefunction with respect to the

@@ -49,7 +49,7 @@ Below is a schematic of the inputs and outputs of SAFIRE.
 
 ![](files/inputs_and_outputs_all.png)
 
-We will learn more about the details of all of these files in future tutorials. For this tutorial, pregenerated input files are provided in the "files" directory relative to the directory of this tutorial.
+We will learn more about the details of all of these files in future tutorials. For this tutorial, pregenerated input files are provided in the `files` directory relative to the directory of this tutorial.
 
 +++
 
@@ -57,9 +57,9 @@ We will learn more about the details of all of these files in future tutorials. 
 </b>
 
 ---
-To perform a calculation, SAFIRE requires a Hamiltonian and a trial wave function. Both are provided as inputs using the files "hamil.h5" and "wfn.h5", respectively. The file "input.json" references these two files and provides further information about how the simulation should be run.
+To perform a calculation, SAFIRE requires a Hamiltonian and a trial wave function. Both are provided as inputs using the files `hamil.h5` and `wfn.h5`, respectively. The file `input.json` references these two files and provides further information about how the simulation should be run.
 
-<b> Hamiltonian file : "hamil.h5"
+<b> Hamiltonian file : `hamil.h5`
 </b>
 
 ---
@@ -72,7 +72,7 @@ This HDF5 file contains the second-quantized Hamiltonian $\hat{H}$.
 
 For this tutorial, we have supplied an HDF5 file containing the Born-Oppenheimer
 Hamiltonian for the STO-3G basis hydrogen dimer at a bondlength of $\delta_{H-H} = 1.4$ $a_0$
-in "hamil.h5".
+in `hamil.h5`.
 
 ![](files/HyrdogenMolecule_v2.png)
 
@@ -80,7 +80,7 @@ in "hamil.h5".
 
 For technical details on the Hamiltonian HDF5 format, see {doc}`/user_manual`.
 
-<b> Wavefunction file : "wfn.h5"
+<b> Wavefunction file : `wfn.h5`
 </b>
 
 ---
@@ -98,7 +98,7 @@ $$
 
 For technical details on the wavefunction HDF5 format, see {doc}`/user_manual`.
 
-<b> Input file (json format) : "input.json"
+<b> Input file (json format) : `input.json`
 </b>
 
 ---
@@ -363,9 +363,9 @@ For example,
 $ scalar_stats qmc.s000.scalar.dat -s time -e 2.0
 ```
 
-sets the "x axis" to (AFQMC projection) time and the equilibration time to 2.0 inverse energy units.
+sets the x axis to (AFQMC projection) time and the equilibration time to 2.0 inverse energy units.
 
-You can also view the AFQMC energy as a function of the projection time (sometimes referred to as the "equilibration curve") by
+You can also view the AFQMC energy as a function of the projection time (sometimes referred to as the *equilibration curve*) by
 adding the `-t` option to plot the data trace.
 
 Running

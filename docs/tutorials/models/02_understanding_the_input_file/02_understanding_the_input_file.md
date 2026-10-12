@@ -49,19 +49,19 @@ We will explore the most common settings in each input block as well.
 
 ![](files/input_file_01_all.png)
 
-The name of the highest level block tells SAFIRE which "driver" to run.
-In this case, we are running with the "afqmc" driver.
+The name of the highest level block tells SAFIRE which driver to run.
+In this case, we are running with the `afqmc` driver.
 
-Below the "afqmc" block are the "project" block and
-one or more "execute" block(s).
-We saw the "project" block in the previous tutorial,
-where we used it to set the names of the output files via the "id" and "series" parameters.
+Below the `afqmc` block are the `project` block and
+one or more `execute` block(s).
+We saw the `project` block in the previous tutorial,
+where we used it to set the names of the output files via the `id` and `series` parameters.
 As a reminder, the output files are named:
 
 - `[id].s[series].scalar.dat` for scalar output data (energy, overlap, etc.)
 - `[id].s[series].stat.h5` for non-scalar output data (one-body reduced density matrix, etc.)
 
-"execute" block(s) define an actual calculation.
+`execute` block(s) define an actual calculation.
 They consist of both AFQMC runtime parameters and references to the following five low-level blocks:
 
 1. wavefunction - **always required!**
@@ -72,10 +72,10 @@ They consist of both AFQMC runtime parameters and references to the following fi
 
 The wavefunction, hamiltonian, and walker_set blocks can be defined either directly within
 an execute block, by providing a json input block,
-or defined in the "afqmc" block and referenced by "name" within one
-or more "execute" blocks.
+or defined in the `afqmc` block and referenced by `name` within one
+or more `execute` blocks.
 In the later case, these blocks must be named by setting the
-"name" parameter in the corresponding input block.
+`name` parameter in the corresponding input block.
 
 We will explain each type of block in more detail below
 including the most common settings that you will use.
@@ -88,7 +88,7 @@ First, let's look at a sample input file for a typical calculation.
 
 In a typical calculation. you will only need to set a few parameters.
 In the input file below, we include the default value of each common parameter where possible.
-We use  ellipses (`...`) for the "estimator" input block for visual simplicity.
+We use  ellipses (`...`) for the `estimators` input block for visual simplicity.
 This input block will be explored in more detail in later tutorials.
 
 ```json
@@ -115,7 +115,7 @@ This input block will be explored in more detail in later tutorials.
 }
 ```
 
-Note that we did not define a "hamiltonian" block at all.
+Note that we did not define a `hamiltonian` block at all.
 In this case, SAFIRE will look for the Hamiltonian in the same
 file as the trial wavefunction.
 
@@ -128,15 +128,15 @@ The bare minimum input blocks to run is
 
 Usually, one will also often provide:
 
-1. a "walker_set" block
-2. an "estimator" block (for any observables beside the energy)
+1. a `walker_set` block
+2. an `estimators` block (for any observables beside the energy)
 
 +++ {"id": "d79cb60c"}
 
-## The "project" block
+## The `project` block
 
 The project block is used to set some project-level information.
-For example, "id" and "series" are used to make the prefix of output
+For example, `id` and `series` are used to make the prefix of output
 files as `[id].s[series].scalar.dat` and `[id].s[series].stat.h5`.
 
 ```json
@@ -153,7 +153,7 @@ td, th {
   
 | <b>Parameter</b>   |  Default | Description |
 |--:|---|:--|
-| <b>id</b> |  "afqmc" | The base name for the `[id].s[series].scalar.dat` and `[id].s[series].stat.h5` files  |
+| <b>id</b> |  `afqmc` | The base name for the `[id].s[series].scalar.dat` and `[id].s[series].stat.h5` files  |
 | <b>series</b> |0 |  The series number for the `[id].s[series].scalar.dat` and `[id].s[series].stat.h5` files. The filename will print as width three, padded with 0s if needed  |
 
 ### Less Common Settings
@@ -170,7 +170,7 @@ td, th {
 
 +++ {"id": "6981f73f"}
 
-## The "execute" block
+## The `execute` block
 
 <!--
 <div>
@@ -184,11 +184,11 @@ The execute block is used to define an AFQMC calculation.
 As described earlier, it needs a wavefunction, walker_set, hamiltonian,
 propagator, and estimator.
 Of these, **the wavefunction must always be defined** while the others have default values.
-The blocks can either be defined within the "execute" block, or defined
-outside, in the "wavefunctions", "walker_sets", "hamiltonians" and "propagators" lists,
+The blocks can either be defined within the `execute` block, or defined
+outside, in the `wavefunctions`, `walker_sets`, `hamiltonians` and `propagators` lists,
 and referenced by name.
 
-In addition to these blocks, the "execute" block is used to define several AFQMC methodological parameters.
+In addition to these blocks, the `execute` block is used to define several AFQMC methodological parameters.
 
 Here is a sample execute block with options exposed and default values where appropriate.
 
@@ -222,7 +222,7 @@ td, th {
 | <b>timestep</b> |  0.01  |  The trotter step size in units of inverse energy (depending on the Hamiltonian's units)  |
 | <b>steps</b> |  1  |   The number of imaginary time steps to take  |
 | <b>num_walkers</b> |  required  |   total number of Slater determinant random walkers over all MPI tasks, split evenly so that the walker counts of two tasks differ by at most one  |
-| <b>measure_interval</b> |  10  |  The number of propagation steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger "measure_interval" will reduce the CPU time necessary to perform AFQMC calculations.  |
+| <b>measure_interval</b> |  10  |  The number of propagation steps between measurements, for every estimator that does not set one of its own. Measurement is the most expensive operation in AFQMC, so a larger `measure_interval` will reduce the CPU time necessary to perform AFQMC calculations.  |
 | <b>population_control_interval</b> |  10  |  Interval to perform population control at in units of steps.  |
 | <b>walker_ortho_interval</b> | 10  |  Interval to stabilize walkers at via a modified Gram-Schmidt procedure in units of steps |
 
@@ -243,7 +243,7 @@ td, th {
 
 +++ {"id": "c9d95fca"}
 
-## The "wavefunction" block
+## The `wavefunction` block
 
 <!--
 <div>
@@ -256,7 +256,7 @@ td, th {
 The wavefunction and the hamiltonian blocks are the only of the 5 low-level blocks
 that must always be specified.
 The wavefunction block is used to point to the input HDF5 file containing
-the desired trial wavefunction via the "filename" keyword.
+the desired trial wavefunction via the `filename` keyword.
 The Hamiltonian is never read from this file implicitly: even if the same HDF5 file
 holds both, the hamiltonian block has to name it.
 
@@ -286,7 +286,7 @@ td, th {
 
 +++ {"id": "67898650"}
 
-## The "walker_set" block
+## The `walker_set` block
 
 <!--
 <div>
@@ -297,7 +297,7 @@ td, th {
 ![](files/input_file_04_walker.png)
 
 The walker_set block is used to set general properties of the random walkers.
-The most common setting that you will change is the "walker_type" keyword
+The most common setting that you will change is the `walker_type` keyword
 which allows you to specify the type of walker to use.
 The possible walker types are as follows:
 
@@ -337,7 +337,7 @@ Here is a sample walker_set block with options exposed and default values where 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
     Successive execute blocks share their walkers by default: an execute block that names
-    no walker_set continues with the one of the execute block before it. Setting the "name"
+    no walker_set continues with the one of the execute block before it. Setting the `name`
     parameter allows the current walker_set block to be referenced explicitly in other
     execute blocks.
 </div>
@@ -358,7 +358,7 @@ td, th {
 
 +++ {"id": "b003de2e"}
 
-## The "hamiltonian" block
+## The `hamiltonian` block
 
 <!--
 <div>
@@ -370,7 +370,7 @@ td, th {
 
 The hamiltonian block is used to provide settings related to the Hamiltonian.
 This mostly entails pointing to the input HDF5 file containing
-the desired hamiltonian via the "filename" keyword, which is mandatory.
+the desired hamiltonian via the `filename` keyword, which is mandatory.
 
 Here is a sample hamiltonian input block with
 options exposed and default values where appropriate.
@@ -397,7 +397,7 @@ td, th {
 
 +++ {"id": "72f853ff"}
 
-## The "propagator" block
+## The `propagator` block
 
 <!--
 <div>
@@ -415,7 +415,7 @@ See {ref}`propagator_block` for more information.
 
 +++ {"id": "a59c54b9"}
 
-## The "estimator" block
+## The `estimators` block
 
 <!--
 <div>
@@ -444,20 +444,20 @@ options exposed and default values where appropriate.
 }
 ```
 
-**It it important to note that the "name" parameter works very differently in the "estimator" blocks
-than in "wavefunction", "walker_set", and "hamiltonian".**
-In the later cases, "name" is used as an identifier to refer to blocks within a "execute" block.
-For estimators, "name" is used to define the type of estimator being used.
-Valid names include "energy", "mixed", and "back_propagated".
+**It it important to note that the `name` parameter works very differently in the `estimators` blocks
+than in `wavefunction`, `walker_set`, and `hamiltonian`.**
+In the later cases, `name` is used as an identifier to refer to blocks within a `execute` block.
+For estimators, `name` is used to define the type of estimator being used.
+Valid names include `energy`, `mixed`, and `backprop`.
 
 ### Estimator types
 
-The estimator type is selected using the "name" parameter.
-The available "name" / types are:
+The estimator type is selected using the `name` parameter.
+The available `name` / types are:
 
-- **"energy"** : this is a specialized mixed-estimator which specifically evaluates the energy. It also provides some granular control over what details of the energy are printed. For example, you can print the 1-body, exchange, and direct Coulomb interaction energies, in addition to the total energy, by setting `"print_components" : true` within an energy estimator input block.
+- **`energy`** : this is a specialized mixed-estimator which specifically evaluates the energy. It also provides some granular control over what details of the energy are printed. For example, you can print the 1-body, exchange, and direct Coulomb interaction energies, in addition to the total energy, by setting `"print_components" : true` within an energy estimator input block.
 
-- **"mixed"** : This adds a generic mixed estimator where the user may select which observables to compute. For observable, $\hat{O}$. the mixed estimator is given by
+- **`mixed`** : This adds a generic mixed estimator where the user may select which observables to compute. For observable, $\hat{O}$. the mixed estimator is given by
 $$
 \langle \hat{O} ⟩_\mathrm{Mixed} = \frac{1}{\sum_k W_{n,k}} \sum_k W_{n,k} \frac{\langle \Psi_\mathrm{T} | \hat{O} | \Phi_{n,k} \rangle }{\langle \Psi_\mathrm{T} | \Phi_{n,k} \rangle}
 $$
@@ -465,7 +465,7 @@ where $n$ is the propagation step index,
 $| \Phi_{n,k} \rangle$ are Slater determinant random walkers with weight $W_{n,k}$ (from importance sampling),
 and $| \Psi_\mathrm{T} \rangle$ is the trial wavefunction.
 
-- **"back-propagated"** : Similar to the "mixed" estimator, but the back-propagation algorithm is used to evaluate user-specified observables. The back-propagated estimator has the form,
+- **`backprop`** : Similar to the `mixed` estimator, but the back-propagation algorithm is used to evaluate user-specified observables. The back-propagated estimator has the form,
 $$
 \langle O_\mathrm{BP} \rangle = \frac{1}{\sum_k W_{n+m,k}} \sum_k W_{n+m,k} \frac{\langle \tilde{\Phi}_{m,k} | \hat{O} | \Phi_{n,k} \rangle }{\langle \tilde{\Phi}_{m,k} |\Phi_{n,k}\rangle}
 $$
@@ -479,7 +479,7 @@ and $m$ is the back-propagated step index.
 
 ### Observables
 
-For the "mixed" and "back-propagated" estimators, specific observables are selected by defining the corresponding input block within the desired estimator block.
+For the `mixed` and `backprop` estimators, specific observables are selected by defining the corresponding input block within the desired estimator block.
 For example, one can define a mixed estimator which computes the one-body reduces density matrix as
 
 ```json
@@ -500,7 +500,7 @@ td, th {
 
 | <b>        Parameter</b>   |  Default | Description |
 |--:|---|:--|
-| <b>name</b> |  n/a  |  The type of estimator to use. Choices are  "energy", "mixed", and "back_propagated" (see brief descriptions above)  |
+| <b>name</b> |  n/a  |  The type of estimator to use. Choices are  `energy`, `mixed`, and `backprop` (see brief descriptions above)  |
 | <b> print_components </b> |  false  | (energy estimator) If true, print the one-body, direct Coulomb, and exchange energy components to the *.scalar.dat file in addition to the total energy.   |
 | <b> equil </b> |  0  | The number of initial steps to skip (i.e. the size of the Equilibration phase)   |
 

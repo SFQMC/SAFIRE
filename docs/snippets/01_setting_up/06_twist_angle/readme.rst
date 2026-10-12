@@ -8,13 +8,13 @@ twist angles applied and generating a free-electron trial wavefunction.
 
 A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
-Below is a sample input file, which we name `input.toml`, for a Hubbard model
+Below is a sample input file, which we name ``input.toml``, for a Hubbard model
 on a 4x8 square lattice with periodic boundary conditions.
 
 .. literalinclude:: input.toml
 
-We note that both the symbol 'Pi' and fractions 
-of the form "numerator/denominator" are parsed and converted
+We note that both the symbol ``Pi`` and fractions
+of the form ``numerator/denominator`` are parsed and converted
 when included as strings.
 Explicit decimal inputs are, of course, also allowed
 
@@ -45,14 +45,14 @@ safiretools can be invoked within a Python script as
     ).to_hdf5("afqmc.h5")
 
 The twist is a property of the **lattice**:
-`Wavefunction.from_free_electron()` uses the Hamiltonian exactly as given and
+``Wavefunction.from_free_electron()`` uses the Hamiltonian exactly as given and
 applies no twist of its own.
 
 In this example, the lattice we want to
 simulate at the AFQMC level of theory is already twisted.
 When the lattice of interest carries no twist, an open-shell free-electron
 which orbitals of a degenerate shell you occupy is
-arbitrary, and `from_free_electron()` warns when it has to make that choice.
+arbitrary, and ``from_free_electron()`` warns when it has to make that choice.
 The fix is to build a **second**, twisted Hamiltonian for the trial
 wavefunction alone, and to hand AFQMC the untwisted one. The block below and
 the other examples in this section all follow that pattern.

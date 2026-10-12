@@ -7,7 +7,7 @@ and generating a free-electron trial wavefunction.
 
 A lattice model Hamiltonian can be generated using safiretools and
 a toml-based input file.
-Below is a sample input file, which we name `input.toml`, for a Hubbard model 
+Below is a sample input file, which we name ``input.toml``, for a Hubbard model 
 on a 3x2 square lattice with periodic boundary conditions.
 
 .. literalinclude:: input.toml
@@ -46,14 +46,14 @@ safiretools can be invoked within a Python script as
         nelec=params["nelec"],
     ).to_hdf5("afqmc.h5")
 
-`Wavefunction.from_free_electron()` uses the Hamiltonian exactly as given and
+``Wavefunction.from_free_electron()`` uses the Hamiltonian exactly as given and
 applies no twist of its own, so the twist belongs on the lattice you build that
-Hamiltonian from. `twist` should be a 2-d iterable containing
+Hamiltonian from. ``twist`` should be a 2-d iterable containing
 :math:`\vec{\theta}=(\theta_1,\theta_2)` in radians even if one component is
 set to 0.0.
 For an open-shell filling, an untwisted lattice leads to an abitrary choice 
 of which degenerate orbitals are occupied.
-`from_free_electron()` warns when that happens.
+``from_free_electron()`` warns when that happens.
 
 Building the trial wavefunction does not measure its energy.
 To evaluate the variational energy of a trial wavefunction with respect to the

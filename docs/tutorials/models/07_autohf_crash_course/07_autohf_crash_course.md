@@ -110,7 +110,7 @@ hamiltonian = HamiltonianBuilder.from_input(
 
 +++ {"id": "MqK7sb3Z5xcn"}
 
-We now have a "standard" Hubbard model with nearest-neighbor hopping and onsite U in the `hamiltonian` object.
+We now have a standard Hubbard model with nearest-neighbor hopping and onsite U in the `hamiltonian` object.
 
 +++ {"id": "tsMzr8175xcp"}
 

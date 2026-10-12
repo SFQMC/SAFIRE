@@ -178,7 +178,7 @@ We assume that you are familiar with typical electronic structure calculations u
 We also assume that you
 have access to Coquí
 and that you are familiar with its basic use.
-Each "basic" tutorial builds on the previous one.
+Each tutorial builds on the previous one.
 We recommend going through them in order.
 
 .. toctree::

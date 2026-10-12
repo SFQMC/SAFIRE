@@ -20,7 +20,7 @@ The `safiretools` Python package implements a Lattice class which is responsible
 
 - what are the boundary conditions
 - what are the $n^{th}$-nearest neighbors
-- which of those neighbors are "direct" neighbors, and which are image neighbors
+- which of those neighbors are direct neighbors, and which are image neighbors
 
 and more.
 `Lattice` is an abstract base class with one concrete subclass per lattice type; its
@@ -29,15 +29,15 @@ In this tutorial, we will explore how the Lattice class works, and the available
 
 ## Lattice formalism
 
-We consider lattices with primitive lattice vectors $\vec{a}_1$, and $\vec{a}_2$ (as determined by the lattice "type") which may have a basis, $\{ \delta_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the full cell has dimension $L_1$ x $L_2$.
+We consider lattices with primitive lattice vectors $\vec{a}_1$, and $\vec{a}_2$ (as determined by the lattice `type`) which may have a basis, $\{ \delta_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the full cell has dimension $L_1$ x $L_2$.
 The positions of lattice sites on sublattice $p$ are given by  
 $$
 \vec{r}_p = n_1 \vec{a}_1 + n_2 \vec{a}_2  + \vec{\delta}_p,
 $$
 where $n_1$, and $n_2$ are integers.
 Additionally, boundaries are defined normal to the primitive vectors and are labelled according to the primitive vector which they are normal to.
-For example, "boundary 1" is normal to $\vec{a}_1$.
-Finally, when boundaries are crossed, a "twist" angle $\vec{\theta} = (\theta_1,\theta_2)$
+For example, *boundary 1* is normal to $\vec{a}_1$.
+Finally, when boundaries are crossed, a twist angle $\vec{\theta} = (\theta_1,\theta_2)$
 is used to apply a phase where $\theta_1$/$\theta_2$ is applied when boundary 1 / boundary 2 are crossed, respectively.
 
 <div class="alert alert-block alert-info">
@@ -50,7 +50,7 @@ TODO add a figure illustrating this.
 
 ## Summary of Lattice.from_dict()
 
-The `Lattice.from_dict()` classmethod takes a Python dictionary containing "lattice parameters" as an argument and returns a Lattice instance based on the provided "lattice parameters".
+The `Lattice.from_dict()` classmethod takes a Python dictionary containing lattice parameters as an argument and returns a Lattice instance based on the provided lattice parameters.
 
 We'll explore the available options individually, but possible lattice parameters are:
 
@@ -154,7 +154,7 @@ lattice_params = dict(
     When using periodic boundary conditions,
     lattice sites are not allowed to be their own
     image neighbors. So, for example, a 1-dimensional
-    lattice can only have PBCs in the "long" direction.
+    lattice can only have PBCs in the long direction.
     A ValueError will be raised if any sites are found to be
     image neighbors of themselves.
 </div>
@@ -190,7 +190,7 @@ vis.plot_lattice(lattice)
 
 ### Twists
 
-When using periodic boundary conditions (PBCs), a "twist" angle, $\theta = (\theta_1,\theta_2)$ can be set such that, for image neighbors $i,j$,
+When using periodic boundary conditions (PBCs), a twist angle, $\theta = (\theta_1,\theta_2)$ can be set such that, for image neighbors $i,j$,
 $$
 c^{\dagger}_i c_j = e^{i \theta_1} c^{\dagger}_i c_j
 $$
@@ -312,7 +312,7 @@ Play around with setting a basis, using the `custom` type below.
 ## Custom lattices
 
 If the lattice that you want is not specifically implemented, you can use the
-"custom" lattice.
+`custom` lattice.
 This is the one type for which `a1`, `a2` and `basis` are accepted; `a1` and `a2`
 are required, and `basis` defaults to a single site at the cell origin.
 
