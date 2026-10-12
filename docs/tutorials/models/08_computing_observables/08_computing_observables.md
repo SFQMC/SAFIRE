@@ -415,7 +415,7 @@ For example, the estimator block below includes both the 1rdm, and the diagonal 
 ```
 
 As we will see later, this is exactly how observables are specified for the BP estimator as well.
-See the [User Manual](https://users.flatironinstitute.org/~beskridge/safire/user_manual/observables.html#observables) for a complete list of currently implemented observables.
+See {ref}`observables` for a complete list of currently implemented observables.
 
 ### Pedagogical Demonstration
 

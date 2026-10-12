@@ -104,7 +104,7 @@ In these tutorials, we will use these tools exclusively;
 however, from the tutorials, it should also be clear how to import
 and use wavefunctions and/or Hamiltonians which are generated externally by the user.
 
-See the User manual for details on `the Hamiltonian HDF5 format <https://users.flatironinstitute.org/~beskridge/auxiliary_fields/afqmc.html#lattice-model-hamiltonian>`_ and the possible `Trial wavefunction formats <https://users.flatironinstitute.org/~beskridge/auxiliary_fields/afqmc.html#wavefunction-file-formats>`_.
+See :ref:`lattice_model_hamiltonian` for details on the Hamiltonian HDF5 format and :ref:`Wavefunction-classes` for the possible trial wavefunction formats.
 
 |
 

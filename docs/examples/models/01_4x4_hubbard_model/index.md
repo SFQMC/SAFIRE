@@ -668,7 +668,7 @@ which is off by about 0.0035 t compared with the exact energy, -13.62185. We can
 ## Computing Observables with Back-Propagation
 
 General second-quantized observables can be computed using AFQMC via the back-propagation algorithm.
-See the [SAFIRE documentation](https://users.flatironinstitute.org/~beskridge/safire/user_manual/estimators.html#back-propagation-bp-estimators) for more information on Back-propagated observables.
+See {ref}`backprop_estimator` for more information on back-propagated observables.
 To "turn on" back-propagation, add an `"estimator"` block with `"name": "back_propagation"` to an `"execute"`
 block in the input file.
 Here is a sample input file where an ellipsis has been used to hide the rest of the input.

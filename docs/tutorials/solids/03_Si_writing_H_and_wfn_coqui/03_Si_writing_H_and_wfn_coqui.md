@@ -275,7 +275,7 @@ interaction = "eri"
 output      = "hamil.h5"
 ```
 
-Here, we are using the Cholesky form of interaction (see the [User manual for details on the K-point factorized Cholesky Hamiltonian](https://users.flatironinstitute.org/~beskridge/safire/user_manual/hamiltonians.html#k-point-factorized-kp).
+Here, we are using the Cholesky form of interaction (see {ref}`k_point_factorized`).
 
 The key details to note are:
 
@@ -415,7 +415,7 @@ directly read in SAFIRE to get the Hamiltonian.
 
 ### More Information
 
-For larger supercells, it is highly recommended that you use the [tensor hypercontraction (THC) form of the interaction](https://users.flatironinstitute.org/~beskridge/safire/user_manual/hamiltonians.html#tensor-hyper-contraction-thc) instead.
+For larger supercells, it is highly recommended that you use the tensor hypercontraction (THC) form of the interaction instead (see {ref}`thc_hamiltonian`).
 **CoQuí can also generate these integrals** by using an input block such as the following.
 
 ```toml
