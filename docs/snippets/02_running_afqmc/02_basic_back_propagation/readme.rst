@@ -1,6 +1,6 @@
 .. _run_afqmc_ex_2:
 
-Basic Back-propagation with CPU build
+Basic Back-Propagation with CPU Build
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This example covers running AFQMC for a generic input

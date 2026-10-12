@@ -58,7 +58,7 @@ We will perform the following calculations with QE:
   <b>Note:</b> CoQuí expects to find all of `VLOT`, `VSC`, and `VKB` in the same QE output directory. Double check that the output paths of the post-processing tools are all set to the same directory.
 </div>
 
-### Step 1 : self-consistent DFT
+### Step 1: Self-Consistent DFT
 
 To generate the Hamiltonian for SAFIRE, we need
 to set `force_symmorphic=.true.` in the `&system` input card.
@@ -84,7 +84,7 @@ You should see a final energy of,
      ewald contribution        =     -67.18340230 Ry
 ```
 
-### Step 2 : One-shot DFT
+### Step 2: One-Shot DFT
 
 The goal here is generate the orbitals we need to generate the second
 quantized Hamiltonian for AFQMC.
@@ -134,7 +134,7 @@ Band Structure Calculation
 
 +++ {"id": "_uliHCdtig7m"}
 
-### Step 3: QE post-processing utilities
+### Step 3: QE Post-Processing Utilities
 
 CoQuí reads some of the details of the pseudopotential from QE.
 We need to dump the relevant data to a file using the QE post-processing utilities.
@@ -161,7 +161,7 @@ pwscf.save  pwscf.xml  VKB  VLTOT  VSC
 
 +++ {"id": "qELxzaWcjjlh"}
 
-## Writing the 2nd-quantized Hamiltonian and Trial wavefunction
+## Writing the 2nd-Quantized Hamiltonian and Trial Wavefunction
 
 CoQuí is able to directly generate a Hamiltonian HDF5 file for SAFIRE using the data output by QE.
 Additionally, it can write a trial wavefunction based on the DFT solution from QE.
@@ -518,7 +518,7 @@ afqmc.json  afqmc.out  qmc.s000.scalar.dat  qmc.s000.stat.h5
 
 ## Analyze
 
-### Ground state energy
+### Ground State Energy
 
 `afqmctools` includes a command line tool for analyzing the scalar data output.
 Fun the following command.

@@ -32,7 +32,7 @@ to gain more control over the build steps.
 
 TODO: add in figure with the builder highlighted.
 
-## Part I: Hamiltonian builder Overview
+## Part I: Hamiltonian Builder Overview
 
 Build steps are implemented as methods of the `HamiltonianBuilder` class
 and correspond to a specific type of Hamiltonian term.
@@ -94,7 +94,7 @@ The terms for which rule 3 do not currently apply are:
 
 +++ {"id": "2ce4ac1b-1c09-48e4-84da-a294502421a9"}
 
-## Part II: Using the Hamiltonian builder
+## Part II: Using the Hamiltonian Builder
 
 The Hamiltonian builder must be used in conjunction with a Lattice instance.
 In addition, the Hamiltonian that the builder produces can write itself directly into
@@ -150,7 +150,7 @@ into a single term.
 
 +++ {"id": "ac73ed88-8485-4885-ae6b-ca20955c0b51"}
 
-## Part III: Hamiltonian build steps
+## Part III: Hamiltonian Build Steps
 
 Now that we understand the role of the Hamiltonian builder, and how it will typically be used in a Python script,
 we will cover the specific terms that can be built.
@@ -243,7 +243,7 @@ to cover:
 
 +++ {"id": "ddd63dd5-fc60-4bb0-9eea-b80758e17024"}
 
-## How to handle more general Hamiltonians
+## How to Handle More General Hamiltonians
 
 to cover:
 - combining `from_input()`-style build steps with fully custom build steps

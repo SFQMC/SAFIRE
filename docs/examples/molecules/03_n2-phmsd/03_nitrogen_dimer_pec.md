@@ -13,18 +13,18 @@ kernelspec:
 
 +++ {"id": "W94B8DFIE6lu"}
 
-# N₂ molecule: bond stretching and multi-Slater trial wavefunctions
+# N₂ Molecule: Bond Stretching and Multi-Slater Trial Wavefunctions
 
 <b>Goal:</b>
 This example demonstrates how to compute the potential energy curve (PEC) of a diatomic molecule
 using an appropriate trial wavefunction.
 
-## What you will learn
+## What You Will Learn
 
 1. How to select the number of Slater determinants to include in the trial wavefunction, balancing computational cost and accuracy
 2. How to automate the computation of a potential energy curve using safiretools within Python
 
-## Run the code block below to set up the example
+## Run the Code Block Below to Set Up the Example
 
 ```{code-cell} ipython3
 :id: ljFeTy3vE6ls
@@ -51,7 +51,7 @@ num_mpi_tasks = 16 # adjust based on your resources
 
 +++ {"id": "6ZBVQf-6E6lv"}
 
-## The Nitrogen dimer
+## The Nitrogen Dimer
 
 Diatomic molecules display strong static electron correlation effects (i.e. correlation due to many energetically proximate electron configurations)
 in the intermediate bond length regime.
@@ -81,13 +81,13 @@ AFQMC with a CASSCF(12o,6e) trial wavefunction outperforms both CCSD(T) and CCSD
 
 Next, we will reproduce the PEC of the Nitrogen dimer using AFQMC / CASSCF(12o,6e) trial wavefunctions.
 
-### References:
+### References
 
 [1] W. A. Al-Saidi, S. Zhang, H. Krakauer. "Bond breaking with auxiliary-field quantum Monte Carlo." *J. Chem. Phys.* **127**, 144101 (2007).
 
 +++ {"id": "ESezCWGWE6lv"}
 
-## Converging AFQMC in the quality of the trial wavefunction
+## Converging AFQMC in the Quality of the Trial Wavefunction
 
 As we saw in {doc}`../02_B_atom_SHCI_trial_wfn/06_SHCI_trial_wavefunction`, AFQMC trial wavefunctions are typically multi-Slater determinant expansions of the form form
 
@@ -133,7 +133,7 @@ This allows us to reuse the same wavefunction file while controlling the trial w
 
 +++ {"id": "IQBeUJTghyNm"}
 
-### Getting an orthonormal basis and a trial wavefunction
+### Getting an Orthonormal Basis and a Trial Wavefunction
 
 We will now setup an AFQMC calculation. As you should now be familiar with from previous tutorials, we will need to choose an orthonormal orbital basis to work within.
 Since we will be using CASSCF trial wavefunctions, it is convenient to use the set of optimized CASSCF orbitals,
@@ -363,7 +363,7 @@ Now, we can automate the calculation of the PEC using this value for $N_\mathrm{
 
 +++ {"id": "c4MDXZD3E6lw"}
 
-## Automating the computation of the PEC using Python / safiretools
+## Automating the Computation of the PEC Using Python / safiretools
 
 Now that we have converged $E_\mathrm{AFQMC}$ in $N_\mathrm{det}$, we are ready to compute the PEC.
 In the code block below, we have included a function that performs all of the steps that we have already performed (excluding converging $E_\mathrm{AFQMC}$ in $N_\mathrm{det}$) given a value of the $N_2$ bond length, $\delta_{N-N}$.
@@ -531,7 +531,7 @@ Compare this with the PEC generated using the data from the original paper.
 
 You have computed the potential energy curve (PEC) of the $N_2$ molecule, which is a standard benchmarking system in quantum chemistry.
 
-### What you learned
+### What You Learned
 
 1. How to select the number of Slater determinants to include in the trial wavefunction, balancing computational cost and accuracy
 2. How to automate the computation of a potential energy curve using safiretools within Python

@@ -1,6 +1,6 @@
 .. _setup_ex_9:
 
-Hartree-Fock trial wavefunctions with autoHF
+Hartree-Fock Trial Wavefunctions with autoHF
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This example covers generating a Hartree-Fock trial wavefunction

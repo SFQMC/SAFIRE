@@ -23,7 +23,7 @@ the water molecule at its equilibrium geometry.
 
 - need to figure out how to get the unit volume from PySCF.
 
-## **Run the code block below to set up the example**
+## **Run the Code Block Below to Set Up the Example**
 
 ```{code-cell} ipython3
 :id: ljFeTy3vE6ls
@@ -143,7 +143,7 @@ dir(rho)
 
 +++ {"id": "0Y-83DT3L-r9"}
 
-# analyze with afqmctools
+# Analyze with afqmctools
 
 ```{code-cell} ipython3
 :id: YtU1MnKiL-22

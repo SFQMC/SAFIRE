@@ -1,6 +1,6 @@
 .. _examples_models:
 
-Lattice models
+Lattice Models
 ~~~~~~~~~~~~~~
 
 For lattice models, we provide the following worked examples, where we use autoHF to perform

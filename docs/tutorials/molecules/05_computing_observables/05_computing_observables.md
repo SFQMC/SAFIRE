@@ -13,12 +13,12 @@ kernelspec:
 
 +++ {"id": "82e12143-bd3a-4c82-9a51-bcf96abd6950"}
 
-# Computing general observables
+# Computing General Observables
 
 <b>Goal:</b>
 Become acquainted with how to compute general observables with SAFIRE.
 
-## What you will learn
+## What You Will Learn
 
 1. What an estimator is and how to set one up in the json input file
 2. What a mixed estimator is and when to use one to compute an observable
@@ -74,7 +74,7 @@ It is important to note that the two Slater determinants are
 distinct from each other since the propagator $B(x - \bar{x})$ is applied differently to each.
 i.e. the propagator is applied to different Slater determinants when moving in the forward-, and backward-directions.
 
-### ▶️ Run the cell below to setup the tutorial
+### Run the Cell Below to Set Up the Tutorial
 
 ```{code-cell} ipython3
 :id: 616ca764-f070-434a-8146-e1511f273342
@@ -91,7 +91,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 
 +++ {"id": "4d4d8135-bc2d-4caa-bbaf-c88ab045176c"}
 
-## Setup the Test System
+## Set Up the Test System
 
 In this tutorial, we will use PySCF for convenience; however, you can use the knowledge that you've gained in the previous tutorials to use a different quantum chemistry code if desired.
 
@@ -108,7 +108,7 @@ These were all covered in previous tutorials.
 
 ![](files/NitrogenDimer.png)
 
-### ▶️ Run the code block below to perform all of the steps above
+### Run the Code Block Below to Perform All of the Steps Above
 
 ```{code-cell} ipython3
 ---
@@ -215,7 +215,7 @@ td, th {
 
 +++
 
-### ▶️ Run the code block below to write an input file
+### Run the Code Block Below to Write an Input File
 
 ```{code-cell} ipython3
 :id: wOOIRUtfCIfh
@@ -246,7 +246,7 @@ write_jobfile(
 
 +++ {"id": "Yr39jGz1DCyk"}
 
-### 📝 Your Turn : Run SAFIRE with an explicit energy estimator block
+### Your Turn: Run SAFIRE with an Explicit Energy Estimator Block
 
 Now you can run SAFIRE, and you should see the following column headers in the `*scalar.dat` file.
 
@@ -285,7 +285,7 @@ outputId: acb22087-0747-4430-8dc9-03ef1ff115a2
 
 +++ {"id": "rrop2GLPGDmQ"}
 
-## Extracting and Analyzing the AFQMC energy.
+## Extracting and Analyzing the AFQMC Energy
 
 We learned about basic energy analysis using the CLI and the `analyze_scalar_data()` Python function in the Hello SAFIRE tutorial.
 We can use the same tools here to get the average AFQMC energy and the stochastic uncertainty.
@@ -294,7 +294,7 @@ For pedagogical reasons, we will instead read the entire scalar data file so tha
 In the code block below, the total energy (solid blue line) is plotted against as well as the sum of the three individual columns (dotted orange line) corresponding to the one-body energy, the Coulomb energy, and the exchange energy.
 The two curves agree with each other to machine precision.
 
-### ▶️ Run the code block below to extract and plot energy samples
+### Run the Code Block Below to Extract and Plot Energy Samples
 
 ```{code-cell} ipython3
 ---
@@ -342,7 +342,7 @@ plt.show()
 
 +++ {"id": "yzpB-AJrAZ24"}
 
-## Computing Observables using a Mixed Estimator
+## Computing Observables Using a Mixed Estimator
 
 SAFIRE also includes a mixed estimator that periodically evaluates,
 
@@ -399,7 +399,7 @@ and compare with the results from the energy estimator.
 We note that computing the 2rdm is very memory intensive since many samples of the 2rdm will be saved.
 It is not typically computed unless absolutely necessary.
 
-### ▶️ Run the code block below to write an input file with mixed estimator
+### Run the Code Block Below to Write an Input File with a Mixed Estimator
 
 ```{code-cell} ipython3
 ---
@@ -465,7 +465,7 @@ Since some observables require a large amount of memory to store, `afqmctools` a
 For example, in the cell below, a energy evaluation transform is used to compute the one-body energy, a scalar, on the fly as one-rdm samples are read from the *.h5 data file.
 This dramatically reduces the memory needed to analyze the AFQMC results from SAFIRE.
 
-### ▶️ Run the code below to evaluate the one-body energy from the one-rdm, and compare with the energy estimator
+### Run the Code Below to Evaluate the One-Body Energy from the One-RDM and Compare with the Energy Estimator
 
 ```{code-cell} ipython3
 ---
@@ -525,7 +525,7 @@ plt.title("Total energy vs. sample")
 plt.show()
 ```
 
-### ▶️ Run the code block below to plot the difference between the mixed, and energy estimator
+### Run the Code Block Below to Plot the Difference Between the Mixed and Energy Estimators
 
 ```{code-cell} ipython3
 ---
@@ -553,7 +553,7 @@ plt.show()
 As we can see, the energy computed using the one-body reduced density matrix with a mixed estimator yields the exact same one-body energies as the energy estimator to very high precision.
 This is no surprise since the energy estimator is simply a specialized mixed estimator.
 
-### 📝 Your Turn : Extract the 2rdm and compute the 2-body energy
+### Your Turn: Extract the 2-RDM and Compute the 2-Body Energy
 
 Note: You can skip this section if you chose to not compute the `twordm`
 observable above.
@@ -755,7 +755,7 @@ The BP-estimated one-body energy is unbiased, and represents a better estimate o
 
 +++
 
-### ▶️ Run the code block below to write an input file with a BP Estimator
+### Run the Code Block Below to Write an Input File with a BP Estimator
 
 ```{code-cell} ipython3
 ---
@@ -798,7 +798,7 @@ write_jobfile(
 )
 ```
 
-### ▶️ Run SAFIRE with BP
+### Run SAFIRE with BP
 
 ```{code-cell} ipython3
 ---
@@ -819,7 +819,7 @@ run_afqmc(
 )
 ```
 
-### ▶️ Run the code below to evaluate the one-body energy from the one-rdm, and compare with the BP estimator
+### Run the Code Below to Evaluate the One-Body Energy from the One-RDM and Compare with the BP Estimator
 
 ```{code-cell} ipython3
 :id: 39c23cf1
@@ -970,7 +970,7 @@ This demonstrates why BP is essential for computing unbiased estimates of observ
 
 In this tutorial, you were acquainted with how to compute general observables with SAFIRE.
 
-## What you learned
+## What You Learned
 
 1. What a mixed estimator is and when to use one to compute an observable
 2. What a back-propagated estimator is and when to use one to compute an observable

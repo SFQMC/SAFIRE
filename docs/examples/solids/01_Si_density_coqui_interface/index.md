@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "NudwCmJzZWxz"}
 
-# Si ground state energy and charge density
+# Si Ground State Energy and Charge Density
 
 In this example, we will compute the ground state energy and charge density
 of solid Si in the conventional cell.
@@ -54,7 +54,7 @@ We will perform the following calculations with QE:
   <b>Note:</b> CoQuí expects to find `[prefix].coqui.h5` in the QE output directory. Double check that the output path of the post-processing tools are all set to the same directory.
 </div>
 
-### Step 1 : self-consistent DFT
+### Step 1: Self-Consistent DFT
 
 To generate the Hamiltonian for SAFIRE, we need
 to set `force_symmorphic=.true.` in the `&system` input card.
@@ -80,7 +80,7 @@ You should see a final energy of,
      ewald contribution        =     -67.18340230 Ry
 ```
 
-### Step 2 : One-shot DFT
+### Step 2: One-Shot DFT
 
 The goal here is generate the orbitals we need to generate the second
 quantized Hamiltonian for AFQMC.
@@ -130,7 +130,7 @@ Band Structure Calculation
 
 +++ {"id": "_uliHCdtig7m"}
 
-### Step 3: QE post-processing utilities
+### Step 3: QE Post-Processing Utilities
 
 CoQuí reads some of the details of the pseudopotential from QE.
 We need to dump the relevant data to a file using the pw2coqui.x QE post-processing utility.
@@ -171,7 +171,7 @@ pwscf.coqui.h5 pwscf.save
 
 +++ {"id": "qELxzaWcjjlh"}
 
-## Writing the second-quantized Hamiltonian and Trial wavefunction
+## Writing the Second-Quantized Hamiltonian and Trial Wavefunction
 
 CoQuí is able to directly generate a Hamiltonian HDF5 file for SAFIRE using the data output by QE.
 Additionally, it can write a trial wavefunction based on the DFT solution from QE.
@@ -512,7 +512,7 @@ afqmc.json  afqmc.out  qmc.s000.scalar.dat  qmc.s000.stat.h5
 
 ## Analyze
 
-### Ground state energy
+### Ground State Energy
 
 `afqmctools` includes a command line tool for analyzing the scalar data output.
 Fun the following command.
@@ -588,7 +588,7 @@ These errors are formally interdependent; however, good values for each paramete
 
 +++ {"id": "Fm5vwrfIodNf"}
 
-### Converging in the basis set size
+### Converging in the Basis Set Size
 
 Accurately capturing electron correlation effects requires a large basis.
 Here, we are working the basis of Kohn-Sham bands.

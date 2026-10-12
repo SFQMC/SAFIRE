@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "e9d26b92-e165-4baf-8fc1-dd312330f9d0"}
 
-# Lattice class tutorial
+# Lattice Class Tutorial
 
 In this tutorial, we will learn how to set up a lattice to define a Model Hamiltonian (See __LATTICE_HAMIL_TUTORIAL__ for details on building a Hamiltonian).
 The `safiretools` Python package implements a Lattice class which is responsible for answering geometric questions about a specific lattice such as:
@@ -27,7 +27,7 @@ and more.
 `Lattice.from_dict()` classmethod builds the right one for you given a set of geometric parameters.
 In this tutorial, we will explore how the Lattice class works, and the available options for building a Lattice via `Lattice.from_dict()`.
 
-## Lattice formalism
+## Lattice Formalism
 
 We consider lattices with primitive lattice vectors $\vec{a}_1$, and $\vec{a}_2$ (as determined by the lattice `type`) which may have a basis, $\{ \delta_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the full cell has dimension $L_1$ x $L_2$.
 The positions of lattice sites on sublattice $p$ are given by  
@@ -96,7 +96,7 @@ the lattice coordinate $n_1,n_2$,
 and the lattice site index, $i$,
 are shown for convenience as well.
 
-### Exercise 1: Play with dimensions
+### Exercise 1: Play with Dimensions
 
 Rerun the cell above with different lattice dimensions.
 Try:
@@ -159,7 +159,7 @@ lattice_params = dict(
     image neighbors of themselves.
 </div>
 
-### Exercise 2: Play with boundary conditions
+### Exercise 2: Play with Boundary Conditions
 
 Try setting different combinations of boundary conditions
 in `lattice_params` in the code block below.
@@ -273,7 +273,7 @@ vis.plot_lattice(lattice,title="Honeycomb lattice",show_labels=False)
 
 +++ {"id": "f4903dd8-53d6-4fff-86b9-66e75098fd22"}
 
-## Lattice basis
+## Lattice Basis
 
 The lattice vectors $\vec{a}_1$, $\vec{a}_2$ and the basis $\{ \delta_p \}$ are
 fixed by the lattice `type` — they are what *makes* a type that type.
@@ -309,7 +309,7 @@ Play around with setting a basis, using the `custom` type below.
 
 +++ {"id": "67ef466a-2411-4d21-8fa1-8a2516db44e4"}
 
-## Custom lattices
+## Custom Lattices
 
 If the lattice that you want is not specifically implemented, you can use the
 `custom` lattice.
@@ -345,7 +345,7 @@ vis.plot_lattice(lattice,title="Lieb lattice with tilted cell",show_labels=False
 
 +++ {"id": "2431a7fd-8a39-4172-9f68-b9bf3f7294c2"}
 
-## Visualizing nth-order neighbors
+## Visualizing nth-Order Neighbors
 
 The `vis.plot_lattice()` function can be used to visualize which pairs of sites
 are $n^{th}$-order neighbors.
@@ -387,7 +387,7 @@ vis.plot_lattice(
 
 ## Archive of Possible Examples
 
-### a water molecule:
+### A Water Molecule
 
 TODO: write an intro. The goal here is to shift everyone's brains to thinking
 about mapping atoms in a solid onto a lattice model without the complication of multiple sites.

@@ -362,10 +362,10 @@ ___________________________
 
 .. _thc_hamiltonian:
 
-Tensor Hyper Contraction
-~~~~~~~~~~~~~~~~~~~~~~~~
+Tensor Hypercontraction
+~~~~~~~~~~~~~~~~~~~~~~~
 
-The tensor hyper contraction (THC) factorization is an efficient method for representing two-electron integrals that exploits the low-rank structure of the electron repulsion integral (ERI) tensor :cite:`HohensteinTHCI2012,ParrishTHCII2012,HohensteinTHCIII2012`. THC factorizes the four-center electron repulsion integrals into a multi-tensor product :cite:`MaloneISDF2019`
+The tensor hypercontraction (THC) factorization is an efficient method for representing two-electron integrals that exploits the low-rank structure of the electron repulsion integral (ERI) tensor :cite:`HohensteinTHCI2012,ParrishTHCII2012,HohensteinTHCIII2012`. THC factorizes the four-center electron repulsion integrals into a multi-tensor product :cite:`MaloneISDF2019`
 
 .. math::
   :label: eq-thc

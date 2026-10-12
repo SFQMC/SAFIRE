@@ -18,7 +18,7 @@ kernelspec:
 <b>Goal:</b>
 Become acquainted with how to write a Hamiltonian to the SAFIRE HDF5 format.
 
-## What you will learn
+## What You Will Learn
 
 1.  How to write a Hamiltonian to the SAFIRE HDF5 format starting from one-body, and two-body integrals
 2.  How to convert from a FCIDUMP file to the SAFIRE HDF5 format both using the CLI tools and within a Python script
@@ -72,7 +72,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 
 +++ {"id": "J8ieYi3YyCNe"}
 
-##  Setting up
+## Setting Up
 
 As we have seen in previous tutorials, the SAFIRE executable is implemented for generic second quantized Hamiltonians, and wavefunctions.
 Before we can run an AFQMC calculation, we must generate:
@@ -273,7 +273,7 @@ write_jobfile(scratch_dir / "afqmc.json", {
 
 +++ {"id": "CXQ3jT_pyCNf"}
 
-## Your Turn: Compute the AFQMC energy
+## Your Turn: Compute the AFQMC Energy
 
 At this point, you should run an AFQMC calculation using SAFIRE
 as we covered earlier in {doc}`../01_hello_safire/01_hello_safire`,
@@ -330,7 +330,7 @@ E_exact = -1.1372759436170439
 
 +++ {"id": "U9KLdBoByCNg"}
 
-### Check your result
+### Check Your Result
 
 Your AFQMC energy should agree with $-1.137024 \pm 0.000195$ Ha
 to within 1-2 $\sigma$.
@@ -342,7 +342,7 @@ is well within chemical accuracy.
 
 +++ {"id": "jnupX3Uz1l4q"}
 
-## Starting from a FCIDUMP
+## Starting from an FCIDUMP
 
 `safiretools` provides tools to convert from a Hamiltonian in a standard
 FCIDUMP file to the format used by SAFIRE.
@@ -362,7 +362,7 @@ For simplicity, we provide a FCIDUMP file which, starting from the GitHub repo r
 
 +++ {"id": "qYRe4bEt1xSN"}
 
-## CLI: Covert from FCIDUMP to the SAFIRE format.
+## CLI: Convert from FCIDUMP to the SAFIRE Format
 
 The `fcidump_to_afqmc` CLI script can be used to directly convert
 from a FCIDUMP file to the HDF5 format used by SAFIRE.
@@ -393,7 +393,7 @@ Additionally, you can use the `--help` option to see what other options are avai
 
 +++ {"id": "pX0yckNd2j9A"}
 
-### CLI: Also write a trial wavefunction
+### CLI: Also Write a Trial Wavefunction
 
 The next input that we will need for AFQMC is a trial wavefunction.
 The `fcidump_to_afqmc` CLI script can also write either an RHF- or ROHF-like
@@ -416,7 +416,7 @@ Run the following codeblock to output the Wavefunction to an HDF5 file via the C
 
 +++ {"id": "7NLzntps2CS7"}
 
-## Python: Covert from FCIDUMP to the SAFIRE format.
+## Python: Convert from FCIDUMP to the SAFIRE Format
 
 `MolecularHamiltonian.from_fcidump()` does the conversion in the `safiretools` Python package:
 it builds a Hamiltonian from a FCIDUMP file, which `.to_hdf5()` then writes in the form the
@@ -440,7 +440,7 @@ to the accuracy asked for by `cholesky_tol` — the same decomposition
 
 see {py:meth}`safiretools.MolecularHamiltonian.from_fcidump` for more.
 
-### Your Turn: Run the following code block to convert from the provided FCIDUMP file to the SAFIRE format
+### Your Turn: Run the Following Code Block to Convert from the Provided FCIDUMP File to the SAFIRE Format
 
 ```{code-cell} ipython3
 :id: 6ej77YPU2JmI
@@ -455,7 +455,7 @@ MolecularHamiltonian.from_fcidump(
 
 +++ {"id": "jNDV-Ersu9ul"}
 
-## Generate and write the Hamiltonian using PySCF and safiretools
+## Generate and Write the Hamiltonian Using PySCF and safiretools
 
 Instead of defining the Hamiltonian and the wavefunction from scratch, one can also utilize `PySCF` to obtain the Hamiltonian in a given basis (in this case, the molecular orbital basis) and the trial wavefunction.
 Here, we use `PySCF` to run RHF for the hydrogen dimer, then hand the SCF object to `safiretools` to obtain the Hamiltonian and the trial wavefunction.
@@ -503,14 +503,14 @@ In this tutorial, you set up and ran a quantum chemistry AFQMC calculation in wh
 
 The AFQMC code needs a Hamiltonian, a trial wavefunction, and a file containing settings as input, and it outputs stochastic samples as specified in the input file.
 
-### What you learned
+### What You Learned
 
 1. How to write a Hamiltonian to the SAFIRE HDF5 format starting from one-body, and two-body integrals
 2. How to convert from a FCIDUMP file to the SAFIRE HDF5 format both using the CLI tools and within a Python script
 
 +++ {"id": "NaDbzk1jSEB1"}
 
-### Sample Script - Full workflow
+### Sample Script - Full Workflow
 
 Below is a single script based on what you have learned.
 

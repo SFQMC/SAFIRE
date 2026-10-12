@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "NudwCmJzZWxz"}
 
-# C ground state energy and Density
+# C Ground State Energy and Density
 
 In this example, we will compute the ground state energy and charge density
 of C diamond in the primitive cell cell.
@@ -319,7 +319,7 @@ afqmc.json  afqmc.out  qmc.s000.scalar.dat  qmc.s000.stat.h5
 
 ## Analyze
 
-### Ground state energy
+### Ground State Energy
 
 `afqmctools` includes a command line tool for analyzing the scalar data output.
 Fun the following command.
@@ -385,7 +385,7 @@ Here we used Vesta to make the following isosurface plot (using an isosurface va
 
 +++ {"id": "Fm5vwrfIodNf"}
 
-## Converging in the basis set size
+## Converging in the Basis Set Size
 
 Accurately capturing electron correlation effects requires a large basis.
 Here, we are working the basis of Kohn-Sham bands.

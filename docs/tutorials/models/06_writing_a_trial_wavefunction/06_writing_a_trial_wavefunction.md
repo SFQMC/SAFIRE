@@ -18,7 +18,7 @@ kernelspec:
 <b>Goal:</b>
 Become acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 format.
 
-## What you will learn
+## What You Will Learn
 
 1. How to write a single Slater determinant trial wavefunction given the Slater Matrix
 2. How to write a single Slater determinant given orbital occupancies
@@ -27,7 +27,7 @@ Become acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 form
 
 +++ {"id": "kj82RGwRNJRe"}
 
-## Interacting with the trial wavefunction HDF5 format
+## Interacting with the Trial Wavefunction HDF5 Format
 
 In this section, we begin by demonstrating how to manually generate wavefunction inputs and examine the structure of the resulting HDF5 files. This helps build an understanding of what is actually done behind the scenes when preparing a trial wavefunction.
 
@@ -43,7 +43,7 @@ from safiretools import NOMSDWavefunction
 
 +++ {"id": "v_pr4nnnTgqA"}
 
-### RHF wavefunction
+### RHF Wavefunction
 
 Generate a wavefunction of the form $\Psi = \Psi^\uparrow \otimes \Psi^\downarrow$ with $\Psi^\downarrow_{ij} = \Psi^\uparrow_{ij}$. This means the two spin sectors are identical. Such a wavefunction is commonly referred to as an *RHF* (Restricted Hartree-Fock) wavefunction, and the corresponding walker is called an *RHF walker*.
 
@@ -78,7 +78,7 @@ In summary, to generate an RHF wavefunction, you need to provide an array `A[0, 
 
 +++ {"id": "o6ZmCwG4XFM_"}
 
-### UHF wavefunction
+### UHF Wavefunction
 
 Generate a wavefunction of the form $\Psi = \Psi^\uparrow \otimes \Psi^\downarrow$, where $\Psi^\downarrow_{ij}$ can differ from $\Psi^\uparrow_{ij}$. This means the two spin sectors are separate and may have distinct wavefunctions. Such a wavefunction is commonly referred to as a *UHF* (Unrestricted Hartree-Fock) wavefunction, and the corresponding walker is called a *UHF walker*.
 
@@ -111,7 +111,7 @@ In summary, to generate a UHF wavefunction, you need to provide an array `A` of 
 
 +++ {"id": "G5IzcYloYL8Z"}
 
-### GHF wavefunction
+### GHF Wavefunction
 
 Generate a wavefunction of the general form $\Psi = \Psi^{\uparrow,\downarrow}$, where the spin sectors are mixed. This form typically arises in systems with spin-orbit coupling or magnetic order in the $xy$ plane. Such wavefunctions are commonly referred to as *GHF* (Generalized Hartree-Fock) wavefunctions, and the associated walkers are called *GHF walkers*.
 
@@ -145,7 +145,7 @@ In summary, to generate a GHF wavefunction, you need to provide an array `A[0, i
 
 +++ {"id": "-SQvyVx0gZm_"}
 
-### Multi-Slater wavefunction
+### Multi-Slater Wavefunction
 
 Multi-Slater trial wavefunctions are also supported in lattice models. To enable this, the input variable `ci` is provided, which is a 1D array representing the coefficients of the Slater determinants. Correspondingly, the Slater determinant inputs include an extra dimension to stack multiple Slater matrices. To generate a multi-Slater trial wavefunction, simply supply the `ci` array as the list of coefficients and stack the individual Slater matrices along the first dimension—everything else will be handled automatically.
 
@@ -210,7 +210,7 @@ The trial file does not store an initial walker. **By default**, the walkers sta
 
 +++ {"id": "NYbUINg6HQyx"}
 
-## Example: free electron trial wavefunction
+## Example: Free Electron Trial Wavefunction
 
 We can generate a free-electron trial wavefunction using `Wavefunction.from_free_electron` within `safiretools`. First, we set up the lattice using `Lattice.from_dict` (in this case a square 4 x 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file `wfn.h5`.
 
@@ -267,7 +267,7 @@ wfn.to_hdf5(scratch_dir / "wfn.h5")
 
 In this tutorial, you became acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 format.
 
-### What you learned
+### What You Learned
 
 1. How to write a single Slater determinant trial wavefunction given the Slater Matrix
 2. How to write a single Slater determinant given orbital occupancies

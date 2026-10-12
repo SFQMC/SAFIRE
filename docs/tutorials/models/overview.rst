@@ -1,6 +1,6 @@
 .. _lattice_model_overview:
 
-SAFIRE for lattice models
+SAFIRE for Lattice Models
 ==========================
 
 .. image:: /images/shared/00_top_level/lattice_model.png
@@ -8,7 +8,7 @@ SAFIRE for lattice models
 
 |
 
-Some preliminaries
+Some Preliminaries
 ==================
 
 SAFIRE can handle model Hamiltonians of the form
@@ -65,7 +65,7 @@ Imaginary-Time Propagation
 Explain the Trotterization, and Hubbard-Stratonovich transformation for the lattice Hamiltonian. 
 Be sure to explicitly show each type of Hubbard-Stratonovich transformation (discrete spin, continuous charge, discrete charge, continuous spin).
 
-Trial wavefunctions
+Trial Wavefunctions
 -------------------
 
 A trial wavefunction is used in AFQMC which is, in general, some linear
@@ -95,7 +95,7 @@ Typical Workflow
 
 |
 
-Software prerequisites
+Software Prerequisites
 ======================
 
 The safiretools Python package provides tools for generating a broad range of lattice model Hamiltonians.

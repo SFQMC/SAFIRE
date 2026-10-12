@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "af3003d3-6a86-4f3b-aedd-d2fcc19a22bc"}
 
-# Stripes and the square Hubbard Model
+# Stripes and the Square Hubbard Model
 
 Author: Ryan Levy
 
@@ -73,7 +73,7 @@ We'll explore how to see this with AFQMC and the role of the trial wave function
 
 +++ {"id": "e8420a88-5a19-4b32-996d-21b3d85aa58c"}
 
-## Obtaining the Spin density
+## Obtaining the Spin Density
 
 Let's look at a 10x4 system with 0.2 doping at $U=6$ with a staggered AFM pinning field at the edges. The pinning breaks symmetry in order to understand the response of the system to the applied field.
 
@@ -317,7 +317,7 @@ plt.show()
 
 +++ {"id": "e9fbcc21-8216-4f25-a64e-54f84dc4023c"}
 
-## Self Consistency w/ Hartree-Fock
+## Self-Consistency with Hartree-Fock
 
 The idea behind self-consistent AFQMC is to have the trial wave function match as much as possible the output of AFQMC.
 
@@ -439,7 +439,7 @@ for Ueff,rho_avg,delta_rho in zip(Ueffs,rhos,deltas):
 
 +++ {"id": "8445abd3-e472-4406-9c2a-9ca3a8c8d3a3"}
 
-## Self-Consistent Condition
+## Self-Consistency Condition
 
 We'll now measure the error between the trial wave function's observable and the output from AFQMC
 
@@ -560,7 +560,7 @@ In our original study, we found the optimal $U_\text{eff} \approx 2.77$
 
 ## Your Turn
 
-### Part 1 – Recreate Fig 1.
+### Part 1 - Recreate Fig. 1
 
 +++ {"editable": true, "id": "0ac955ea-ab2d-49fb-b9dd-9a0fafdaf159"}
 
@@ -576,7 +576,7 @@ Let's recreate figure 1 from Xu et al, by changing
 
 +++ {"id": "edc3a318-40a1-40cb-86bf-b85ae366fc9b"}
 
-### Part 2 - Try different settings
+### Part 2 - Try Different Settings
 
 Lets use this as a test bed to explore how AFQMC responds to different settings. Some questions to consider
 

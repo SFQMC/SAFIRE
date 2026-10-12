@@ -28,7 +28,7 @@ The second component is the :ref:`safiretools` Python package which allows users
 by SAFIRE and analyze the outputs.
 A formal overview of AFQMC is provided in :ref:`afqmc`.
 
-How to run an AFQMC calculation
+How to Run an AFQMC Calculation
 -------------------------------
 
 After installing SAFIRE (see :ref:`install`), a basic AFQMC calculation

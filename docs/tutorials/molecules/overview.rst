@@ -76,7 +76,7 @@ and
 
 is the electron-electron interaction.
 
-Trial wavefunctions
+Trial Wavefunctions
 -------------------
 
 A trial wavefunction is used in AFQMC which is, in general, some linear
@@ -107,7 +107,7 @@ Common methods for computing a trial wavefunction include:
 - Hartree-Fock (HF)
 - Kohn-Sham density functional theory (DFT)
 - Complete-active space self-consistent field (CASSCF)
-- Semistochastic heatbath configuration interaction (SHCI)
+- Semistochastic heat-bath configuration interaction (SHCI)
 
 among others.
 
@@ -133,7 +133,7 @@ The trial wavefunction is also read from an HDF5 file.
 Similar to the Hamiltonian, ``safiretools`` includes tools for writing wavefunctions
 in this format as will be seen in the tutorials.
 
-Software prerequisites
+Software Prerequisites
 ======================
 
 Many mature quantum chemistry codes exist and are widely used in the quantum chemistry community.

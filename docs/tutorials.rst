@@ -47,7 +47,7 @@ Molecules using standard quantum chemistry basis sets
    :width: 500px
    :align: center
 
-Ab initio solids
+Ab Initio Solids
 ~~~~~~~~~~~~~~~~
 
 :ref:`solids_overview`.
@@ -58,7 +58,7 @@ Ab initio solids using Kohn-Sham orbital basis sets
    :width: 500px
    :align: center
 
-Lattice models
+Lattice Models
 ~~~~~~~~~~~~~~
 
 :ref:`lattice_model_overview`
