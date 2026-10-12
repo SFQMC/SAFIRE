@@ -54,7 +54,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 
 +++ {"id": "dfgyQ5OC5xcn"}
 
-## Building a lattice model Hamiltonian
+## Building a Lattice Model Hamiltonian
 
 `safiretools` provides a convenience lattice model Hamiltonian builder and writer which
 will allow us to construct the standard Hubbard model with nearest-neighbor hopping and on-site U, among
@@ -140,7 +140,7 @@ Next, we'll walk through an AFQMC calculation where we'll compute the ground sta
 
 +++ {"id": "9KnqEEIS5xcn"}
 
-## AFQMC Walkthrough : ground state energy
+## AFQMC Walkthrough: Ground State Energy
 
 Here, we will compute the ground state energy of the standard Hubbard model
 based on the Hamiltonian that we made previously - i.e.
@@ -167,7 +167,7 @@ to unrestricted Hartree-Fock trial wavefunctions.
 
 +++ {"id": "Clkg0_nE5xcn"}
 
-### Free-electron Trial Wavefunction
+### Free-Electron Trial Wavefunction
 
 `safiretools` provides a convenience classmethod, `Wavefunction.from_free_electron()`,
 for calculating free-electron trial wavefunctions.
@@ -582,7 +582,7 @@ Let's rerun with a smaller $\tau = 0.005$
 
 +++ {"id": "Q-t-66BmVVn5"}
 
-## Rerun AFQMC with a smaller τ
+## Rerun AFQMC with a Smaller τ
 
 When we decrease the step size, we will
 also need to increase the number of steps, and
@@ -707,7 +707,7 @@ This simplifies checking for convergence in the BP length by allowing us to re-u
 
 +++ {"id": "ZjxOUIHUQeuD"}
 
-### Run AFQMC with Back-propagation
+### Run AFQMC with Back-Propagation
 
 Run SAFIRE using the following input file to compute the one-rdm using back-propagation.
 
@@ -767,7 +767,7 @@ run_afqmc(
 
 +++ {"id": "WFUPHBHt5xcp"}
 
-### Analyze the AFQMC output
+### Analyze the AFQMC Output
 
 The AFQMC code saves scalar data, such at the energy, in a file called `qmc.s000.scalar.dat` (a text file)
 and non-scalar data, such as the one-rdm and other observables, in a file called `qmc.s000.stat.h5` (HDF5 file).

@@ -7,7 +7,7 @@ This example shows a few recipes for input files to run SAFIRE.
 
 
 
-Nested structure with a single HDF5 file
+Nested Structure with a Single HDF5 File
 ----------------------------------------
 
 In this input file, we use a nested structure in which we
@@ -36,7 +36,7 @@ wavefunctions in separate HDF5 files.
       }
     }
 
-Flat structure with multiple ``execute`` blocks
+Flat Structure with Multiple ``execute`` Blocks
 -----------------------------------------------
 
 In the input file below we use a flat input structure in the
@@ -113,7 +113,7 @@ execution block.
 For more detail on the input file, see :ref:`input_afqmc`.
 
 
-Input file with most parameters exposed
+Input File with Most Parameters Exposed
 ---------------------------------------
 
 Here, we provide a sample input file where we expose most of the possible input blocks.

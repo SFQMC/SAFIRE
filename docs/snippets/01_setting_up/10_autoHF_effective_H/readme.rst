@@ -1,4 +1,4 @@
 .. _setup_ex_10:
 
-using an effective H for autoHF
+Using an Effective H for autoHF
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

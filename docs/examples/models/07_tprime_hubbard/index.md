@@ -53,7 +53,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 
 +++ {"id": "b8153eeb-0f28-4151-ad09-af65db81f358"}
 
-## Setup - Make a lattice
+## Setup - Make a Lattice
 
 ```{code-cell} ipython3
 :id: 254dc31a-b763-4cb3-9867-5129279b9c2b
@@ -108,7 +108,7 @@ hamiltonian = builder.get_hamiltonian()
 
 +++ {"id": "81220323-65d6-4438-91db-87cc44e71047"}
 
-## Setup - Trial Wavefunction.
+## Setup - Trial Wavefunction
 
 ```{code-cell} ipython3
 # First, let's compute the Free-Electron trial wavefunction
@@ -206,7 +206,7 @@ vis.plot_lattice(
 
 +++ {"id": "a42d9aa5-0a4d-45f4-a2cf-96e3949afb8d"}
 
-## Setup - Write an SAFIRE input file
+## Setup - Write a SAFIRE Input File
 
 ```{code-cell} ipython3
 # make a json input file
@@ -266,7 +266,7 @@ run_afqmc(
 
 +++ {"id": "3cb4eb7a-0137-4f7c-b73a-adae570c2cd7"}
 
-## Analysis - compute the AFQMC energy
+## Analysis - Compute the AFQMC Energy
 
 we're looking for −27.271⁢(1) from reference [1]
 
@@ -296,7 +296,7 @@ print(f"The AFQMC energy is {E:.6f} +/- {dE:.6f} Hartree")
 
 +++ {"id": "da4dfc0c-047c-43b7-9568-5494c48067b2"}
 
-## Analysis - compute the Average 1-rdm
+## Analysis - Compute the Average 1-RDM
 
 To check for convergence here, we will compute the average 1-rdm for each back-propagation length saved in the
 output HDF5 file, and plot `\rho(i,j)` vs $N_{steps}$ for a line cut of the lattice.
@@ -336,7 +336,7 @@ plt.show()
 
 +++ {"id": "12337ed8-7b39-4712-b99a-154aac89a650"}
 
-## Improved Trial via Natural orbitals
+## Improved Trial via Natural Orbitals
 
 ```{code-cell} ipython3
 :id: cf8d2b64-4ac4-4322-a9d1-b5360d9795e0

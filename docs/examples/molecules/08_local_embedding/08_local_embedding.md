@@ -24,7 +24,7 @@ https://pubs.acs.org/doi/10.1021/acs.jctc.8b01244
 This example uses the freely available [embeddingAFQMC](https://github.com/bkesk/embeddingAFQMC) Python package
 which, among other things, provides tools to analyze the locality of a set of orbitals.
 
-## O adsorption on $H_{20}$ chain
+## O Adsorption on $H_{20}$ Chain
 
 ```{code-cell} ipython3
 :id: v08YqIkR2r02

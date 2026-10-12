@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "OOwNuHohKYWT"}
 
-# Emery model on the Lieb lattice
+# Emery Model on the Lieb Lattice
 
 Status:
 - we can reproduce Adam's energy for the 4x4 tilted Lieb lattice (2 Cu per unit cell)!!
@@ -32,7 +32,7 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 
 +++ {"id": "d13e8127-0310-46e7-8546-f7e2d7bed54e"}
 
-## Set up the lattice
+## Set Up the Lattice
 
 ```{code-cell} ipython3
 :id: 3f6aeee9-53bd-41a8-be26-f00472aaf8f5
@@ -63,7 +63,7 @@ vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
 
 +++ {"id": "492caf81-ff32-4a5a-aac3-c2b957feb84e"}
 
-## Set up the Hamiltonian
+## Set Up the Hamiltonian
 
 ```{code-cell} ipython3
 :id: 3e9badc9-ba8b-4de9-b71a-b663683060e6
@@ -206,7 +206,7 @@ autohf_to_afqmc(
 
 +++ {"id": "f21331fb-142c-42e4-87d5-40a61cd7757b"}
 
-##  Analyze the HF results
+## Analyze the HF Results
 
 Before proceeding, it's important to check that the HF solution is correct.
 First, check that AutoHF actually converged.
@@ -283,7 +283,7 @@ vis.plot_lattice(
 
 +++ {"id": "54616d5a-2831-45da-bd5f-b68621efc8f1"}
 
-## 🚧 Old Scratch work below!! 🚧
+## Old Scratch Work Below!!
 
 ```{code-cell} ipython3
 :id: 68d02ad8-c469-49b2-a54c-f8611c4ecb68
@@ -393,7 +393,7 @@ hamiltonian.to_hdf5(scratch_dir/"lieb.h5")
 
 +++ {"id": "uGiiaPd0K_YG"}
 
-### Tilted Lieb Lattice : Annealing
+### Tilted Lieb Lattice: Annealing
 
 ```{code-cell} ipython3
 ---

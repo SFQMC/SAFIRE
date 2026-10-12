@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "bxazkxe2X9Wx"}
 
-# Electron Affinity of Pb: spin-orbit coupling (SOC) in ab initio AFQMC
+# Electron Affinity of Pb: Spin-Orbit Coupling (SOC) in Ab Initio AFQMC
 
 At the end of this example, you will know how to include SOC in ab initio AFQMC calculations.
 
@@ -47,7 +47,7 @@ We we will use the relativistic Stuttgart effective core potentials (ECPs), in o
 capture both spin-orbit coupling (SOC) and scalar relativistic effects, as
 well as the corresponding augmented cGTO basis sets [2-5].
 
-### ▶️ Run the code block below to load the ECP and basis definitions
+### Run the Code Block Below to Load the ECP and Basis Definitions
 
 ```{code-cell} ipython3
 :id: XSXP8e2IYxFb
@@ -125,11 +125,11 @@ END
 
 +++ {"id": "WFTquom2i2Xb"}
 
-## Generate inputs for the Neutral atom
+## Generate Inputs for the Neutral Atom
 
 We will begin by generating the Hamiltonian and trial wavefunction for the neutral Pb atom.
 
-### ▶️ Run PySCF for the neutral atom to generate a basis and SOC-GHF trial wavefunction
+### Run PySCF for the Neutral Atom to Generate a Basis and SOC-GHF Trial Wavefunction
 
 ```{code-cell} ipython3
 :id: FZrF4OuWi2Xc
@@ -192,7 +192,7 @@ print(f"SOC-GHF electronic energy: {ghf_soc.energy_elec()}")
 
 +++ {"id": "H-m_KAsri2Xc"}
 
-### ▶️ Generate and Write Hamiltonian and Trial wavefunction for Neutral Atom
+### Generate and Write Hamiltonian and Trial Wavefunction for Neutral Atom
 
 We generate the Hamiltonian and trial wavefunction in the usual way. The spin-orbit
 coupling enters through the SCF object the Hamiltonian is built from: the SOC-GHF
@@ -250,7 +250,7 @@ wavefunction = Wavefunction.from_pyscf(
 
 +++ {"id": "atWbeuX8i2Xd"}
 
-### ▶️ Run SAFIRE
+### Run SAFIRE
 
 ```{code-cell} ipython3
 :id: PsAy09S7i2Xd
@@ -299,9 +299,9 @@ E,dE = analyze_scalar_data(settings)
 
 +++ {"id": "QnNlY3KVi2Xd"}
 
-## Repeat for Charged $Pb^-$ ion
+## Repeat for Charged $Pb^-$ Ion
 
-### ▶️ Run PySCF
+### Run PySCF
 
 ```{code-cell} ipython3
 ---
@@ -367,7 +367,7 @@ print(f"SOC-GHF electronic energy: {ghf_soc.energy_elec()}")
 
 +++ {"id": "ivaijztJi2Xe"}
 
-### ▶️ Generate and Write Hamiltonian and trial wavefunction
+### Generate and Write Hamiltonian and Trial Wavefunction
 
 ```{code-cell} ipython3
 ---
@@ -426,7 +426,7 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 
 +++ {"id": "6RUWlygXi2Xe"}
 
-### ▶️ Run SAFIRE
+### Run SAFIRE
 
 ```{code-cell} ipython3
 :id: JWAr64xIi2Xe

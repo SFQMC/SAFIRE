@@ -1,6 +1,6 @@
 .. _setup_ex_6:
 
-Adding twist angles
+Adding Twist Angles
 ^^^^^^^^^^^^^^^^^^^
 
 This example covers building a Hubbard model Hamiltonian on square Lattice with 

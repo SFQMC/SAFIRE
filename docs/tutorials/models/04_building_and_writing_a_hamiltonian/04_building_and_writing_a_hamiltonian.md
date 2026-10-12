@@ -65,7 +65,7 @@ We will explore the possible input parameters and their respective meanings/conv
 
 +++ {"id": "pGSnNnm7Rr54"}
 
-## ▶️ Setup : Run me
+## Setup: Run Me
 
 Run the cell below to setup a scratch directory.
 
@@ -198,7 +198,7 @@ For the remainder of the tutorial, we will be working directly with Python withi
 
 +++ {"id": "uincH8ATOK_X"}
 
-### ✨ Example : Standard Hubbard Model
+### Example: Standard Hubbard Model
 
 Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
 We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
@@ -288,7 +288,7 @@ outputId: bfe2522e-2996-43d9-88b3-ed2cd7b84350
 
 +++ {"id": "HEbY-vNOOK_W"}
 
-## Adding more terms to the Hamiltonian
+## Adding More Terms to the Hamiltonian
 
 ### Adding Hopping
 
@@ -340,7 +340,7 @@ where $\langle i,j \rangle^n$ indicates that the sum is constrained to run over 
 
 +++ {"id": "Tk2-PveROK_X"}
 
-#### ✨ Example : Hubbard Model with $t'$
+#### Example: Hubbard Model with $t'$
 
 Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
 We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
@@ -384,7 +384,7 @@ plt.show()
 
 +++ {"id": "09Ir9dWeOK_W"}
 
-### Adding onsite Hubbard U
+### Adding Onsite Hubbard U
 
 SAFIRE supports arbitrary onsite interactions of the from
 
@@ -396,7 +396,7 @@ where, again, the combined index $\mu$ may include both lattice site and band in
 We've already seen how to add a basic nearest-neighbor onsite Hubbard U, now we see see how to provide a site-, and/or band-dependent onsite interaction.
 <b>This input parameter, $U$, is in general an array. The band/site dependence of the interaction is deduced based on the shape of the $U$ array</b>.
 
-#### Band- and site-dependence deduction rules
+#### Band- and Site-Dependence Deduction Rules
 
 1. if U is a scalar (or an array with a single entry), then the onsite Hubbard interaction term is included with strength U and applied to all sites and bands uniformly.
 
@@ -408,7 +408,7 @@ We've already seen how to add a basic nearest-neighbor onsite Hubbard U, now we 
 
 +++ {"id": "BskmJL_Kn9Fm"}
 
-#### ✨ Example: site-dependent U
+#### Example: Site-Dependent U
 
 In the example below, we build a site-dependent U with a checkerboard pattern.
 
@@ -461,7 +461,7 @@ vis.plot_lattice(
 
 +++ {"id": "r53E1XbMoJM8"}
 
-#### ✨ Example: band-dependent U
+#### Example: Band-Dependent U
 
 Now we will construct a band-dependent U which is *uniform* across lattice sites.
 We will use two bands and the first band will have $U/t = 1$
@@ -582,7 +582,7 @@ vis.plot_lattice(
 
 +++ {"id": "pqLN_brHOK_X"}
 
-### Adding Density-Density interaction
+### Adding Density-Density Interaction
 
 SAFIRE supports general interactions of the form,
 
@@ -597,7 +597,7 @@ The $U_{\mu\nu}^1$ matrix is constructed based on what information
 the user provides.
 specifically, it handles the following cases.
 
-#### Case 1: Uniform intrasite interaction
+#### Case 1: Uniform Intrasite Interaction
 
 The user provides a single value for $U^1$ and keeps the default $n=0$.
 
@@ -609,7 +609,7 @@ $$
 
 where we have replaced the composite indices with site and band indices for clarity.
 
-#### Case 2: Band-dependent intrasite interaction
+#### Case 2: Band-Dependent Intrasite Interaction
 
 The user provides a matrix with shape $nbands \times nbands$,
 
@@ -627,9 +627,9 @@ $$
 
 where we have replaced the composite indices with site and band indices for clarity.
 
-#### Case 3: Uniform nth-order neighbor interaction
+#### Case 3: Uniform nth-Order Neighbor Interaction
 
-#### Case 4: Band-dependent nth-order neighbor interaction
+#### Case 4: Band-Dependent nth-Order Neighbor Interaction
 
 The user provides the neighbor order, $n$, and a
  matrix with shape $nbands \times nbands$,
@@ -646,7 +646,7 @@ $$
 
 where we have replaced the composite indices with site and band indices for clarity.
 
-#### Case 5: a list of inputs from the cases above
+#### Case 5: A List of Inputs from the Cases Above
 
 If a user provides a list of valid inputs, then safiretools will generate each
 term provided <b>using the list index / position for the neighbor order $n$.</b>
@@ -667,7 +667,7 @@ Hamiltonian.
 
 +++ {"id": "_BXfk70iudQJ"}
 
-### Adding Spin-Spin interaction
+### Adding Spin-Spin Interaction
 
 SAFIRE supports general interactions of the form,
 
@@ -684,7 +684,7 @@ See the density-density section above for more details.
 
 +++ {"id": "L-D4VJuBOK_X"}
 
-### Adding a Hund's J term
+### Adding a Hund's J Term
 
 SAFIRE supports general interactions of the form,
 
@@ -706,7 +706,7 @@ See the density-density section above for more details.
 
 +++ {"id": "CIbAdbiaOK_X"}
 
-#### ✨ Example: 3-band Hubbard-Kanamori Hamiltonian
+#### Example: 3-Band Hubbard-Kanamori Hamiltonian
 
 Below we construct a 3-band Hubbard-Kanamori model using uniform values for U,U1,U2, and J as in Table I of [PRB 99, 235142 (2019)](https://doi.org/10.1103/PhysRevB.99.235142)
 
@@ -751,7 +751,7 @@ hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_
 
 +++ {"id": "W-TfLNDJOK_W"}
 
-### Adding an extended Hubbard V interaction
+### Adding an Extended Hubbard V Interaction
 
 The $n^{th}$-order neighbor extended Hubbard interaction,
 
@@ -779,7 +779,7 @@ same input conventions as for $\hat{H}_{U1}$, and $\hat{H}_{U2}$.
 
 +++ {"id": "_MEnzhH0OK_X"}
 
-#### ✨ Example: Extended Hubbard Model
+#### Example: Extended Hubbard Model
 
 Below, we build an extended Hubbard model including nearest-neighbor V.
 

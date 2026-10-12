@@ -1,13 +1,13 @@
 .. _solids_overview:
 
-SAFIRE for ab initio solids
+SAFIRE for Ab Initio Solids
 ============================
 
 .. image:: /images/shared/00_top_level/solid.png
    :width: 500
 
 
-Some preliminaries
+Some Preliminaries
 ==================
 
 The Hamiltonian
@@ -42,7 +42,7 @@ plane-wave basis and computes the necessary Hamiltonian matrix elements in the f
 
 |
 
-Trial wavefunctions
+Trial Wavefunctions
 -------------------
 
 A trial wavefunction is used in AFQMC which is, in general, some linear
@@ -112,7 +112,7 @@ A typical AFQMC calculation for solids using SAFIRE follows these steps:
 
 |
 
-Software prerequisites
+Software Prerequisites
 ======================
 
 Many mature electronic structure codes exist and are widely used for solid-state calculations.

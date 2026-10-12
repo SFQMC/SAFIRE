@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "UwuNT7DqI_rN"}
 
-# B atom – Semistochastic heatbath CI (SHCI) trial wavefunction
+# B Atom – Semistochastic Heat-Bath CI (SHCI) Trial Wavefunction
 
 In this example, we will compute the ground state energy of the Boron (B) atom.
 This is an open-shell atom with a single p-electron.

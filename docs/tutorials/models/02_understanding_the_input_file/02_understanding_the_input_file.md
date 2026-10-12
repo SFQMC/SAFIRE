@@ -13,12 +13,12 @@ kernelspec:
 
 +++ {"id": "16a2dc3c-fe26-455b-bade-b59769494e25"}
 
-# Understanding the input file
+# Understanding the Input File
 
 <b>Goal:</b>
 Understand how to control SAFIRE via the input file.
 
-## What you will learn
+## What You Will Learn
 
 1. The structure of the json input file for SAFIRE
 2. The minimal amount of information needed to run an AFQMC calculation using SAFIRE
@@ -39,7 +39,7 @@ We will explore the most common settings in each input block as well.
 
 +++ {"id": "30febdd4"}
 
-## Input block hierarchy
+## Input Block Hierarchy
 
 <!--
 <div>
@@ -84,7 +84,7 @@ First, let's look at a sample input file for a typical calculation.
 
 +++ {"id": "15c30cf5"}
 
-## Sample input file - typical calculation
+## Sample Input File - Typical Calculation
 
 In a typical calculation. you will only need to set a few parameters.
 In the input file below, we include the default value of each common parameter where possible.
@@ -119,7 +119,7 @@ Note that we did not define a `hamiltonian` block at all.
 In this case, SAFIRE will look for the Hamiltonian in the same
 file as the trial wavefunction.
 
-### Minimal information needed to run.
+### Minimal Information Needed to Run
 
 The bare minimum input blocks to run is
 
@@ -133,7 +133,7 @@ Usually, one will also often provide:
 
 +++ {"id": "d79cb60c"}
 
-## The `project` block
+## The `project` Block
 
 The project block is used to set some project-level information.
 For example, `id` and `series` are used to make the prefix of output
@@ -170,7 +170,7 @@ td, th {
 
 +++ {"id": "6981f73f"}
 
-## The `execute` block
+## The `execute` Block
 
 <!--
 <div>
@@ -243,7 +243,7 @@ td, th {
 
 +++ {"id": "c9d95fca"}
 
-## The `wavefunction` block
+## The `wavefunction` Block
 
 <!--
 <div>
@@ -286,7 +286,7 @@ td, th {
 
 +++ {"id": "67898650"}
 
-## The `walker_set` block
+## The `walker_set` Block
 
 <!--
 <div>
@@ -358,7 +358,7 @@ td, th {
 
 +++ {"id": "b003de2e"}
 
-## The `hamiltonian` block
+## The `hamiltonian` Block
 
 <!--
 <div>
@@ -397,7 +397,7 @@ td, th {
 
 +++ {"id": "72f853ff"}
 
-## The `propagator` block
+## The `propagator` Block
 
 <!--
 <div>
@@ -415,7 +415,7 @@ See {ref}`propagator_block` for more information.
 
 +++ {"id": "a59c54b9"}
 
-## The `estimators` block
+## The `estimators` Block
 
 <!--
 <div>
@@ -450,7 +450,7 @@ In the later cases, `name` is used as an identifier to refer to blocks within a 
 For estimators, `name` is used to define the type of estimator being used.
 Valid names include `energy`, `mixed`, and `backprop`.
 
-### Estimator types
+### Estimator Types
 
 The estimator type is selected using the `name` parameter.
 The available `name` / types are:
@@ -506,7 +506,7 @@ td, th {
 
 +++ {"id": "2e46faa0"}
 
-## Some input file recipes
+## Some Input File Recipes
 
 While there are many possible ways to set up an input file,
 some structures will come up more often than others.

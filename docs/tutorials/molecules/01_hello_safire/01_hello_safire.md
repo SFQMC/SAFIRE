@@ -25,7 +25,7 @@ so keep those regions free of system-specific content and code cells.
 At the end of this tutorial, you will know how to run an AFQMC calculation using SAFIRE and extract the AFQMC energy from the output
 given all necessary inputs.
 
-## What you will learn
+## What You Will Learn
 
 1. what are the inputs and outputs of SAFIRE.
 2. how to invoke the SAFIRE executable from the command line in serial, using MPI, and using GPU(s)
@@ -210,7 +210,7 @@ You will learn more about this in {doc}`../05_computing_observables/05_computing
 Now that we have learned what the inputs and outputs of SAFIRE are,
 we are ready to learn how to run the SAFIRE executable given the inputs.
 
-### Running SAFIRE in serial
+### Running SAFIRE in Serial
 
 SAFIRE can be invoked from the command line as
 
@@ -242,7 +242,7 @@ Usage:
       --filenames arg  input filenames
 ```
 
-### Exercise: Try Running SAFIRE.
+### Exercise: Try Running SAFIRE
 
 Run SAFIRE with the provided input files.
 You may use either the code block below, or run SAFIRE in a terminal
@@ -270,7 +270,7 @@ see what changes.
 
 <!-- BEGIN hello-parallel -->
 
-### Post-exercise
+### Post-Exercise
 
 You should see the following a the top of the
 output after running SAFIRE.
@@ -305,7 +305,7 @@ We will return to how to use the tools in `afqmctools` to extract the AFQMC ener
 
 +++
 
-## Running SAFIRE in parallel
+## Running SAFIRE in Parallel
 
 ### Using MPI
 
@@ -342,7 +342,7 @@ For very large systems, this may mean on the order of 10 walkers per MPI task.
 
 +++
 
-## Basic post-processing
+## Basic Post-Processing
 
 Now that we've learned how to invoke the SAFIRE executable from the command line in serial, using MPI, and using GPU(s),
 we are ready to learn how to extract the AFQMC energy from the outputs using afqmctools.
@@ -431,7 +431,7 @@ AFQMC Energy    -1.135762 +/-   0.000290 7.94  2.0/100.0
 
 <!-- BEGIN hello-helpers -->
 
-## Post Exercise
+## Post-Exercise
 
 If you play around with the equilibration length, you will see that, for very small equilibration length,
 the predicted energy will be incorrect.
@@ -484,7 +484,7 @@ Where the `np` parameter is forwarded directly to `-np [np]` and
     directly in the command line other than convenience.
 </div>
 
-### Exercise: Run the full sample calculation using the convenience wrappers.
+### Exercise: Run the Full Sample Calculation Using the Convenience Wrappers
 
 Use the code block below to run the entire calculation again.
 

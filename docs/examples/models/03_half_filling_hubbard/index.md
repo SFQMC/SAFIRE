@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "a9e290f7-823f-4240-8398-1e11040ab402"}
 
-# The square Hubbard Model at half filling
+# The Square Hubbard Model at Half Filling
 
 Author: Ryan Levy
 
@@ -163,7 +163,7 @@ T = builderHF.get_hamiltonian().get_one_body().toarray().reshape(2,lattice.N_sit
 
 +++ {"id": "d96b5df9-c26f-4dcc-87f6-bee7ed16e205"}
 
-## Version 1: GHF trial
+## Version 1: GHF Trial
 
 +++ {"id": "1f18437f-875d-486e-8ecc-22c8ec5f5ca8"}
 
@@ -176,7 +176,7 @@ where $M_i= (-1)^i\Delta_i$
 
 +++ {"id": "95189cf3-a880-41d1-aa34-dfd8a9af4713"}
 
-### Aside: custom Hartree-Fock solver
+### Aside: Custom Hartree-Fock Solver
 
 We'll want to optimize $M$ directly, and to do this we'll use AutoHF's custom ansatz power to build a modification of the `DIAG` ansatz
 
@@ -390,7 +390,7 @@ So we see we've reached a minimum, and that a constant $M$ is the same as our ne
 
 +++ {"id": "5afb0278-218c-4d88-9bea-b1c0f2ce8b15"}
 
-### Constructing the input file
+### Constructing the Input File
 
 +++ {"id": "6a2b6690-bb9c-4704-bd6c-91979a34c480"}
 
@@ -482,7 +482,7 @@ plt.show()
 
 +++ {"id": "70543110-d3bc-44ab-a30b-0bff04ba81ea"}
 
-### For further thinking
+### For Further Thinking
 
 * What if we didn't use the correct signs ($M_i = (-1)^i\Delta_i$) for the HF ansatz? Could we construct an even more constrained wave function?
 * What do the local spin/charge observables of the optimized ansatz look like?
@@ -491,7 +491,7 @@ plt.show()
 
 +++ {"id": "f7eab26a-3624-402e-83de-00ee38daf267"}
 
-## Version 2: multi-Slater trial
+## Version 2: Multi-Slater Trial
 
 +++ {"id": "ec6849d2-44e2-4e02-89c1-826a54fe9719"}
 
@@ -505,7 +505,7 @@ To take advantage of particle hole symmetry at half filling with a spin decompos
 
 +++ {"id": "382b53bd-c986-497e-b362-e72bcd29fc23"}
 
-## Version 3: Charge decomposition
+## Version 3: Charge Decomposition
 
 +++ {"id": "27b1d4ad-ffd1-47ff-b31a-ac2bb5a40f37"}
 

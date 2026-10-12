@@ -13,12 +13,12 @@ kernelspec:
 
 +++ {"id": "m5yYPGDk-NIu"}
 
-# Observables: Pair Correlation functions
+# Observables: Pair Correlation Functions
 
 <b>Goal:</b>
 At the end of this tutorial, you will know how to measure pair correlation functions using SAFIRE for a lattice models.
 
-## What you will learn
+## What You Will Learn
 
 1. How to set up the HDF5 and json input files to request pair correlation functions
 2. how to post process the correlation functions
@@ -108,7 +108,7 @@ hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_
 
 +++ {"id": "Np-zIkGusNIP"}
 
-## Saving index offsets in the HDF5 input
+## Saving Index Offsets in the HDF5 Input
 
 The Lattice class from safiretools can be directly used to find the pairs that we need via the `.get_directed_pairs()` function.
 `.get_directed_pairs()` needs a list of `directions`, and it returns a `DirectedPairs` whose `.offsets` maps each requested direction to a list of index offsets, $\bar{i}_\alpha [i]$, such that $\bar{i}_{\alpha} [i] = i + e_\alpha$.
@@ -154,7 +154,7 @@ pairs.to_hdf5(scratch_dir / "afqmc.h5")
 
 +++ {"id": "iwp3CeLownyV"}
 
-## Requesting the pair correlation function in the json input file
+## Requesting the Pair Correlation Function in the JSON Input File
 
 The pair correlation function observable may be requested as any other observable within an estimator block.
 However, the pair correlation function observable has a few unique parameters that must be set.
@@ -199,7 +199,7 @@ If we decided we only wanted s-wave pair correlations, we could use
 
 instead of the above.
 
-### Full sample input file
+### Full Sample Input File
 
 ```json
 {
@@ -311,7 +311,7 @@ run_afqmc(
 
 +++ {"id": "WIxdjnH-zopo"}
 
-## Post-processing pair correlations functions
+## Post-Processing Pair Correlation Functions
 
 ```{code-cell} ipython3
 :id: eh8JuNVdag-o
@@ -354,7 +354,7 @@ vis.plot_lattice(
 
 ## Summary
 
-### What you learned
+### What You Learned
 
 1. How to set up the HDF5 and json input files to request pair correlation functions
 2. how to post process the correlation functions

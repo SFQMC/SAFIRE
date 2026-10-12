@@ -1,6 +1,6 @@
 .. _setup_ex_4:
 
-Hubbard with nth-order hopping
+Hubbard with nth-Order Hopping
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This example covers building a Hubbard model Hamiltonian on square Lattice with a t' (i.e next-nearest neighbor hopping), 

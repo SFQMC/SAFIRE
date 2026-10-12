@@ -13,12 +13,12 @@ kernelspec:
 
 +++ {"id": "NudwCmJzZWxz"}
 
-# Writing a Hamiltonian file and a Trial Wavefunction using CoQuí
+# Writing a Hamiltonian File and a Trial Wavefunction Using CoQuí
 
 <b>Goal:</b>
 Become acquainted with how to write a Hamiltonian to the SAFIRE HDF5 format.
 
-## What you will learn
+## What You Will Learn
 
 1.  How to write a Hamiltonian to the SAFIRE HDF5 format, using CoQui, starting from a Quantum Espresso calculation
 2.  How to write a Trial wavefunction to the SAFIRE HDF5 format, using CoQui, starting from a Quantum Espresso calculation
@@ -114,7 +114,7 @@ We will perform the following calculations with QE:
   <b>Note:</b> CoQuí expects to find `[prefix].coqui.h5` in the QE output directory. Double check that the output path of the post-processing tools are all set to the same directory.
 </div>
 
-### Step 1 : self-consistent DFT
+### Step 1: Self-Consistent DFT
 
 To generate the Hamiltonian for SAFIRE, we need
 to set `force_symmorphic=.true.` in the `&system` input card.
@@ -143,7 +143,7 @@ highest occupied, lowest unoccupied level (ev):     6.2533    6.8167
 
 ```
 
-### Step 2 : One-shot DFT
+### Step 2: One-Shot DFT
 
 The goal here is generate the orbitals we need to generate the second
 quantized Hamiltonian for AFQMC.
@@ -193,7 +193,7 @@ You should see something like the following,
 
 +++ {"id": "_uliHCdtig7m"}
 
-### Step 3: QE post-processing utilities
+### Step 3: QE Post-Processing Utilities
 
 CoQuí reads some of the details of the pseudopotential from QE.
 We need to dump the relevant data to a file using the pw2coqui.x QE post-processing utility.
@@ -241,7 +241,7 @@ within this tutorial's directory before moving on.
 
 +++ {"id": "qELxzaWcjjlh"}
 
-## Writing the second-quantized Hamiltonian and Trial wavefunction
+## Writing the Second-Quantized Hamiltonian and Trial Wavefunction
 
 CoQuí is able to directly generate a Hamiltonian HDF5 file for SAFIRE using the data output by QE.
 Additionally, it can write a trial wavefunction based on the DFT solution from QE.
@@ -523,7 +523,7 @@ output = 'wfn.h5'
 
 +++ {"id": "-QQPlGsMnzeJ"}
 
-## Your Turn : Run SAFIRE
+## Your Turn: Run SAFIRE
 
 You now have all the ingredients for an AFQMC calculation.
 Next, we'll run SAFIRE using the Hamiltonian and trial wavefunction that we wrote using CoQuí.

@@ -13,12 +13,12 @@ kernelspec:
 
 +++ {"id": "82e12143-bd3a-4c82-9a51-bcf96abd6950"}
 
-# Computing general observables
+# Computing General Observables
 
 <b>Goal:</b>
 Become acquainted with how to compute general observables with SAFIRE.
 
-## What you will learn
+## What You Will Learn
 
 1. What an estimator is and how to set one up in the json input file
 2. What a mixed estimator is and when to use one to compute an observable
@@ -74,7 +74,7 @@ It is important to note that the two Slater determinants are
 distinct from each other since the propagator $B(x - \bar{x})$ is applied differently to each.
 i.e. the propagator is applied to different Slater determinants when moving in the forward-, and backward-directions.
 
-## ▶️ Run the cell below to setup the tutorial
+## Run the Cell Below to Set Up the Tutorial
 
 ```{code-cell} ipython3
 :id: 616ca764-f070-434a-8146-e1511f273342
@@ -103,7 +103,7 @@ _ = shutil.copy("files/wfn.h5", scratch_dir)
 
 +++ {"id": "4d4d8135-bc2d-4caa-bbaf-c88ab045176c"}
 
-## Setup the Test System
+## Set Up the Test System
 
 We will again use Si in its primitive cell at equilibrium represent in a basis of Kohn-Sham bands as a toy case to run
 concrete calculations on.
@@ -198,7 +198,7 @@ write_jobfile(
 
 +++ {"id": "Yr39jGz1DCyk"}
 
-### ▶️ Your Turn: Run SAFIRE with an explicit energy estimator block
+### Your Turn: Run SAFIRE with an Explicit Energy Estimator Block
 
 Now you can run AFQMC, and you should see the following column headers in the `*scalar.dat` file.
 
@@ -237,7 +237,7 @@ outputId: 7512ec28-72d3-47be-d34a-4bc9fe34bb8a
 
 +++ {"id": "rrop2GLPGDmQ"}
 
-## Extracting and Analyzing the AFQMC energy.
+## Extracting and Analyzing the AFQMC Energy
 
 We learned about basic energy analysis using the CLI and the `analyze_scalar_data()` Python function in {doc}`../01_hello_afqmc_solids/01_hello_afqmc_solids`.
 We can use the same tools here to get the average AFQMC energy and the stochastic uncertainty.
@@ -295,7 +295,7 @@ plt.show()
 
 +++ {"id": "yzpB-AJrAZ24"}
 
-## Computing Observables using a Mixed Estimator
+## Computing Observables Using a Mixed Estimator
 
 SAFIRE also includes a mixed estimator that periodically evaluates,
 
@@ -513,7 +513,7 @@ plt.show()
 As we can see, the energy computed using the one-body reduced density matrix with a mixed estimator yields the exact same one-body energies as the energy estimator to very high precision.
 This is no surprise since the energy estimator is simply a specialized mixed estimator.
 
-### Your Turn : Extract the 2rdm and compute the 2-body energy
+### Your Turn: Extract the 2-RDM and Compute the 2-Body Energy
 
 Repeat the same exercise for the two-body energy.
 As we saw in the energy estimator section, the exchange and direct coulomb energies are printed to file separately by the energy estimator.
@@ -903,7 +903,7 @@ This demonstrates why BP is essential for computing unbiased estimates of observ
 
 In this tutorial, you were acquainted with how to compute general observables with SAFIRE.
 
-## What you learned
+## What You Learned
 
 1. What a mixed estimator is and when to use one to compute an observable
 2. What a back-propagated estimator is and when to use one to compute an observable
