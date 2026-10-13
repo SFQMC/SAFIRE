@@ -10,7 +10,7 @@ Running an :ref:`afqmc` calculation requires several input files
 
 .. code-block::
 
-  $ ls tutorials/solids/01_hello_afqmc_solids/files/
+  $ ls tutorials/solids/01_hello_safire/files/
 
   afqmc.json
   hamiltonian.h5

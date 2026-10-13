@@ -214,6 +214,8 @@ where the spin block :math:`b = 0, 1, 2` is :math:`\sigma\sigma' = {\uparrow\upa
 Note the index order: the pair :math:`(i, k)` belongs to spin :math:`\sigma` and :math:`(j, l)` to :math:`\sigma'`.
 The :math:`{\downarrow\uparrow}` block follows from
 :math:`\langle c^\dagger_{i\downarrow} c^\dagger_{j\uparrow} c_{l\uparrow} c_{k\downarrow} \rangle = \mathtt{TwoRDM}[1, j, l, i, k]`.
+Closed walkers omit the :math:`{\downarrow\downarrow}` block, which equals the :math:`{\uparrow\uparrow}` block, so
+only :math:`b = 0, 1` are stored.
 
 .. caution::
 
@@ -231,7 +233,7 @@ _____________
   * - **Wavefunctions**
     - **Spin Symmetry**
   * - NOMSD
-    - collinear
+    - closed, collinear
   * - PHMSD
     - collinear
 
