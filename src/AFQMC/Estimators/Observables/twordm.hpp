@@ -27,13 +27,14 @@
 namespace sfqmc::afqmc {
 
 /// Walker averaged 2 RDM, as [spinblock][i][k][j][l] with the spin blocks ordered
-/// (a,a,a,a), (a,a,b,b), (b,b,b,b).
+/// (a,a,a,a), (a,a,b,b), (b,b,b,b). Closed walkers omit (b,b,b,b), which equals (a,a,a,a).
 template<MEMORY_SPACE MEM>
 class TwoRDM {
 public:
   TwoRDM(utils::mpi_context_t<boost::mpi3::communicator>&, TwoRDMParameters const&, WALKER_TYPES walker_type,
          int /*NMO*/) {
-    utils::check(walker_type == COLLINEAR, "TwoRDM is only implemented for collinear walkers, not {}",
+    utils::check(walker_type == CLOSED || walker_type == COLLINEAR,
+                 "TwoRDM is only implemented for closed and collinear walkers, not {}",
                  walkerTypeToString(walker_type));
   }
 
@@ -43,11 +44,12 @@ public:
     using nda::ellipsis;
     auto all = nda::range::all;
 
+    int nspin = std::get<0>(walkerTypeToDims(inputs.walkerType));
     int nwalk = inputs.weights.size();
     int NMO   = inputs.NMO;
 
     memory::buffered_array<MEM, ComplexType, 1> weightedCoeff(nwalk);
-    memory::buffered_array<MEM, ComplexType, 5> avg(3, NMO, NMO, NMO, NMO);
+    memory::buffered_array<MEM, ComplexType, 5> avg(nspin + 1, NMO, NMO, NMO, NMO);
     avg() = 0.0;
 
     inputs.referenceLoop([&](memory::array_view<MEM, ComplexType, 1> refCoeff,
@@ -59,14 +61,15 @@ public:
       nda::tensor::contract(weightedCoeff(), "w", singleRefG, "wsij", XwG, "wsij");
 
       // (ikjl) = G_ik G_jl - (same spin only) G_il G_jk
-      for(int spin = 0; spin < 2; ++spin) {
+      for(int spin = 0; spin < nspin; ++spin) {
         auto XwGs = XwG(all, spin, ellipsis{});
         auto Gs   = singleRefG(all, spin, ellipsis{});
         nda::tensor::contract(1.0, XwGs, "wik", Gs, "wjl", 1.0, avg(2 * spin, ellipsis{}), "ikjl");
         nda::tensor::contract(-1.0, XwGs, "wil", Gs, "wjk", 1.0, avg(2 * spin, ellipsis{}), "ikjl");
       }
-      nda::tensor::contract(1.0, XwG(all, 0, ellipsis{}), "wik", singleRefG(all, 1, ellipsis{}), "wjl", 1.0,
-                            avg(1, ellipsis{}), "ikjl");
+      // closed walkers carry a single spin block that stands in for both spins
+      nda::tensor::contract(1.0, XwG(all, 0, ellipsis{}), "wik", singleRefG(all, nspin - 1, ellipsis{}), "wjl",
+                            1.0, avg(1, ellipsis{}), "ikjl");
     });
 
     output.measure(mpi, "TwoRDM", avg);

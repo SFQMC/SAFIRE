@@ -289,8 +289,8 @@ TEST_CASE("estimators: reduced density matrix", "[estimators]")
 template<MEMORY_SPACE MEM>
 void estimators_all_observables(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi)
 {
-  // collinear walkers are the only ones every observable supports: TwoRDM is implemented for
-  // them alone, and PairCorr rejects CLOSED
+  // collinear walkers are the only ones every observable supports: TwoRDM rejects
+  // NONCOLLINEAR, and PairCorr rejects CLOSED
   std::string const inputs = utils::unit_test_base() + "BH/";
   std::string const hamil_file = inputs + "afqmc_H_rhf_collinear.h5";
   std::string const wfn_file   = inputs + "afqmc_uhf_nomsd.h5";

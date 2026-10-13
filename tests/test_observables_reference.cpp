@@ -197,6 +197,46 @@ void observables_reference_twordm()
   CHECK_THAT(got, utils::Approx(normalized(ref_two_rdm, denom)));
 }
 
+/// There is no closed reference for the full 2RDM, so the closed walkers are checked against
+/// collinear ones that carry the same Green function in both spin blocks.
+template<MEMORY_SPACE MEM>
+void observables_reference_twordm_closed() {
+  auto& mpi = utils::make_unit_test_mpi_context();
+  auto all  = nda::range::all;
+
+  ReferenceInputs closed = load_reference("closed", CLOSED);
+  int const NMO          = closed.NMO;
+
+  ReferenceInputs collinear{.NMO   = NMO,
+                            .nwalk = closed.nwalk,
+                            .G     = nda::array<ComplexType, 4>(g_shape(closed.nwalk, NMO, COLLINEAR)),
+                            .Xw    = closed.Xw};
+  for(int spin = 0; spin < 2; ++spin) {
+    collinear.G(all, spin, nda::ellipsis{}) = closed.G(all, 0, nda::ellipsis{});
+  }
+
+  auto measured = [&](ReferenceInputs const& ref, WALKER_TYPES wt) {
+    TwoRDM<MEM> obs(*mpi, TwoRDMParameters{}, wt, NMO);
+    Measurements meas;
+    measure_reference<MEM>(*mpi, obs, ref, wt, meas);
+
+    nda::array<ComplexType, 6> bins;
+    h5::file file = written(meas);
+    h5::group root(file);
+    utils::h5_read(root, "TwoRDM/bins", bins);
+    return bins;
+  };
+
+  auto got      = measured(closed, CLOSED);
+  auto expected = measured(collinear, COLLINEAR);
+  utils::check_shape(got, "closed TwoRDM/bins", 1, 2, NMO, NMO, NMO, NMO);
+  utils::check_shape(expected, "collinear TwoRDM/bins", 1, 3, NMO, NMO, NMO, NMO);
+
+  nda::array<ComplexType, 5> expected_blocks = expected(0, nda::range(2), nda::ellipsis{});
+  CHECK_THAT(got(0, nda::ellipsis{}), utils::Approx(expected_blocks));
+  CHECK(nda::max_element(nda::abs(got)) > 1e-12);
+}
+
 template<MEMORY_SPACE MEM>
 void observables_reference_diagonal_twordm(std::string const& case_group, WALKER_TYPES wt)
 {
@@ -385,6 +425,13 @@ TEST_CASE("observables_reference: twordm", "[observables_reference][twordm]")
   observables_reference_twordm<HOST_MEMORY>();
 #if defined(ENABLE_DEVICE)
   observables_reference_twordm<DEVICE_MEMORY>();
+#endif
+}
+
+TEST_CASE("observables_reference: twordm closed", "[observables_reference][twordm]") {
+  observables_reference_twordm_closed<HOST_MEMORY>();
+#if defined(ENABLE_DEVICE)
+  observables_reference_twordm_closed<DEVICE_MEMORY>();
 #endif
 }
 
