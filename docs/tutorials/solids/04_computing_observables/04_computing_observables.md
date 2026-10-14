@@ -39,14 +39,14 @@ _ = shutil.copy("files/wfn.h5", scratch_dir)
 :id: 5943e22b-4312-40ac-98a4-d0cbaf65316d
 :outputId: b00e1736-2ab7-4ffe-c35d-fb663a2c6277
 
-!ls  -al {scratch_dir}
+!ls -al {scratch_dir}
 ```
 
 +++ {"id": "4d4d8135-bc2d-4caa-bbaf-c88ab045176c"}
 
 ## Set Up the Test System
 
-We will again use Si in its primitive cell at equilibrium represent in a basis of Kohn-Sham bands as a toy case to run
+We will again use Si in its primitive cell at equilibrium represented in a basis of Kohn-Sham bands as a toy case to run
 concrete calculations on.
 
 ![](files/Si_primitive.png)
@@ -197,6 +197,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Cholesky vectors of momentum transfer Q = 0 at the Gamma point
+# Because the Hamiltonian in this tutorial is defined in the supercell,
+# the full interaction tensor can be recovered from the Q=0 cholesky operator.
 L = hamiltonian.chol[0][0].reshape(M, M, -1)
 # v_ijkl = sum_g L^g_ik (L^g_lj)^*, stored in the [i, k, j, l] index order of the TwoRDM
 v = np.einsum("ikg,ljg->ikjl", L, L.conj())

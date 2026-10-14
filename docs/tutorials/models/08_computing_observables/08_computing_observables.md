@@ -32,20 +32,13 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 
 +++ {"id": "4d4d8135-bc2d-4caa-bbaf-c88ab045176c"}
 
-## Set Up the Test System
+## Set Up the System
 
-In this tutorial, we will use safiretools to generate a Hamiltonian and AutoHF to generate a trial wavefunction.
-We will again use the Hubbard model with $U/t = 4$ on a 4x4 lattice with periodic boundary conditions and $n_\uparrow = n_\downarrow = 5$ to perform concrete calculations on.
+For this tutorial, our starting point will be to use safiretools to generate a Hamiltonian and AutoHF to generate a trial wavefunction for the Hubbard model with $U/t = 4$ on a 4Ã—4 lattice with periodic boundary conditions and $n_\uparrow = n_\downarrow = 5$. For details on the set up steps, refer to the previous tutorials.
 
 ![](files/Hubbard_4x4_tutorial.png)
 
-All of the code in the code block below should look familiar after go through the earlier tutorials.
-The code block below will:
-
-*   setup the Hamiltonian
-*   run AutoHF to generate a trial wavefunction
-
-### Run the Code Block Below to Perform All of the Steps Above
+### Run the Code Block to Set Up the Hamiltonian and Wavefunction
 
 ```{code-cell} ipython3
 ---
@@ -128,26 +121,12 @@ wfn = NOMSDWavefunction(
 )
 ```
 
-```{code-cell} ipython3
-### experiment : add a little noise to the UHF wfn ###
-
-# a collinear wfn holds one stack of determinants per spin
-dets = tuple(d + 1.0e-4*np.random.rand(*d.shape) for d in wfn.dets)
-
-wfn_noise = NOMSDWavefunction(coeffs=wfn.coeffs, dets=dets)
-```
-
 +++ {"id": "dSJ9e4tRBxxx"}
 
 ```{include} /tutorials/molecules/05_computing_observables/05_computing_observables.md
 :start-after: <!-- BEGIN observables-mixed -->
 :end-before: <!-- END observables-mixed -->
 ```
-
-It is also possible to compute only the *diagonal* 2rdm,
-$D^{\sigma\sigma'}_{ij} = \langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{j\sigma'} c_{i\sigma} \rangle$ (see {ref}`diag_twordm_obs`).
-This requires significantly less compute time and memory usage than the full 2-rdm and should be preferred whenever possible!
-It is requested with a `diag_twordm` observable block.
 
 ### Pedagogical Example: Calculating the Energy from the Mixed Estimator
 
@@ -158,7 +137,7 @@ $$\langle H_1 \rangle = \sum_{ij} h_{ij} \langle c^\dagger_i c_j \rangle$$
 
 $$\langle H_2 \rangle = U \sum_{i} D^{\uparrow\downarrow}_{ii}$$
 
-where the indices of the one-body term are combined orbital and spin indices as in {ref}`afqmc`,
+where the indices of the one-body term are combined orbital and spin indices,
 and compare with the results from the energy estimator. The two should agree exactly.
 
 ### Run the Code Block Below to Write an Input File with a Mixed Estimator
@@ -234,7 +213,6 @@ h = hamiltonian.get_one_body().toarray()
 M = h.shape[0]
 
 def onebody_energy(onerdm):
-    # lattice models run with collinear walkers, which store both spin blocks
     return np.einsum("ij,sij->", h, onerdm)
 
 results = Results(scratch_dir / "afqmc_mixed.results.h5")
@@ -256,15 +234,14 @@ print(f"one-body energy, mixed estimator (jackknife):  {E1_jackknife.real:.8f} Â
 
 +++ {"id": "wDMvF0aT04_x"}
 
-As we can see, the energy computed using the one-body reduced density matrix with a mixed estimator yields the exact same one-body energies as the energy estimator to very high precision.
-This is no surprise since the energy estimator is simply a specialized mixed estimator.
+```{include} /tutorials/molecules/05_computing_observables/05_computing_observables.md
+:start-after: <!-- BEGIN observables-1rdm-conclusion -->
+:end-before: <!-- END observables-1rdm-conclusion -->
+```
 
-### Your Turn: Extract the Diagonal 2-RDM and Compute the 2-Body Energy
+### Your Turn: Extract the Diagonal 2-RDM and Compute the Two-Body Energy
 
-Repeat the same exercise for the two-body energy.
-As we saw in the energy estimator section, the exchange and direct coulomb energies are printed to file separately by the energy estimator.
-
-To compute the two-body energy, you will need to measure the `diag_twordm` observable during AFQMC, and extract and transform it.
+In this section it is your turn to repeat the above for the two-body energy from the diagonal 2-rdm.
 
 We provide code for setting up the appropriate transform function in the code block below.
 Note that `DiagonalTwoRDM` is stored as a flat array that holds only the upper triangle of the same-spin blocks (see {ref}`diag_twordm_obs`).

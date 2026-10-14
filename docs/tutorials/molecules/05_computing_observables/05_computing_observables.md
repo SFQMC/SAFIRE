@@ -5,6 +5,10 @@ jupytext:
     format_name: myst
     format_version: 0.13
     jupytext_version: 1.19.1
+kernelspec:
+  display_name: Python 3 (ipykernel)
+  language: ipython3
+  name: python3
 ---
 
 +++ {"id": "82e12143-bd3a-4c82-9a51-bcf96abd6950"}
@@ -161,8 +165,13 @@ Setting the observable to `{}` means to measure it with its default settings.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
-    Computing the 2rdm is very time and memory intensive; this should only be done for small systems.
+    Computing the 2-rdm is very time and memory intensive; this should only be done for small systems.
 </div>
+
+It is also possible to compute only the *diagonal* 2-rdm,
+$D^{\sigma\sigma'}_{ij} = \langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{j\sigma'} c_{i\sigma} \rangle$ (see {ref}`diag_twordm_obs`).
+This requires significantly less compute time and memory usage than the full 2-rdm and should be preferred whenever possible!
+It is requested with a `diag_twordm` observable block.
 
 <!-- END observables-mixed -->
 
@@ -234,7 +243,7 @@ outputId: 47d9ccce-e999-47e9-f36c-2a4005cd87a0
 
 ### Data Extraction and Analysis
 
-After the calculation is over, a `afqmc_mixed.results.h5` file should have been written containing the measurements of the energy and the mixed estimator.
+After the calculation is over, an `afqmc_mixed.results.h5` file should have been written containing the measurements of the energy and the mixed estimator.
 
 To extract the averages, we can use the same {py:class}`safiretools.Results` class we have been using in previous examples. Additionally the function {py:meth}`safiretools.Results.evaluate` will be useful to evaluate a function of observables and obtain the correct errorbars in the result through a jackknife analysis. The jackknife takes care e.g. of correlations between RDM components or between different observables. For nonlinear functions, it would also add a bias correction.
 
@@ -284,10 +293,14 @@ print(f"one-body energy, mixed estimator (jackknife):  {E1_jackknife.real:.8f} Â
 
 <!-- BEGIN observables-mixed-2rdm -->
 
+<!-- BEGIN observables-1rdm-conclusion -->
+
 As we can see, the energy computed using the one-body reduced density matrix with a mixed estimator yields the exact same one-body energies as the energy estimator to very high precision.
 This is no surprise since the energy estimator is simply a specialized mixed estimator.
 
-### Your Turn: Extract the 2-RDM and Compute the 2-Body Energy
+<!-- END observables-1rdm-conclusion -->
+
+### Your Turn: Extract the 2-RDM and Compute the Two-Body Energy
 
 *Note:* You can skip this section if you chose to not compute the `twordm`
 observable above.
@@ -297,7 +310,7 @@ As we saw in the energy estimator section, the exchange and direct coulomb energ
 
 To compute the two-body energy, you will need to measure the `twordm` observable during AFQMC, and extract and transform it.
 
-We provide code for setting up the appropriate transform functions in the code block below.
+We provide code for setting up the appropriate transform function in the code block below.
 
 <!-- END observables-mixed-2rdm -->
 
