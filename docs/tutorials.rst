@@ -7,7 +7,7 @@ As a practical starting point for using SAFIRE, we provide an extensive set of t
 
 For more advanced use-cases, we also provide a wide range of :ref:`user_examples` that can serve -- along with the tutorials -- as a base for further customization. The :ref:`user_manual` and :ref:`safiretools` documentation act like a complementary references that cover the details of available configuration options, file formats and python tools. 
 
-To get started, choose one of the tracks and read its overview section.
+To get started, choose one of the tracks and start at the top.
 
 Quantum Chemistry
 ~~~~~~~~~~~~~~~~~
@@ -19,6 +19,7 @@ Quantum Chemistry
 The Quantum Chemistry track covers the simulation of molecules using standard quantum chemistry basis sets.   
 
 .. toctree::
+   :maxdepth: 2
 
    tutorials/molecules/overview
 
@@ -34,6 +35,7 @@ Ab Initio Solids
 The Ab Initio Solids track covers the simulations of solids starting from a Kohn-Sham basis set. 
 
 .. toctree::
+   :maxdepth: 2
 
    tutorials/solids/overview
 
@@ -48,5 +50,6 @@ Lattice Models
 The Lattice Models tracks covers Model Hamiltonians defined on a lattice such as the Hubbard model
 
 .. toctree::
+   :maxdepth: 2
 
    tutorials/models/overview
