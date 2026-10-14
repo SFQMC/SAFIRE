@@ -60,7 +60,7 @@ We can automate the local embedding workflow, for a given O atom height, $h$, an
 4. Select active orbitals using the $R_\mathrm{o}$ and $R_\mathrm{v}$ localization radii which apply to the occupied and virtual orbitals, respectively. An orbital is included in the active space if its centroid is localized within the applicable localization radius. Here, we use the 2-dimensional projection of the orbital centroid positions onto the $xy$-plane instead of the full 3-dimensional position.
 5. perform a frozen core transformation on the many-body Hamiltonian based on the chosen active / inactive orbitals, and save the effective Hamiltonian to a SAFIRE HDF5 input file.
 6. Write the ROHF determinant to the SAFIRE HDF5 format to use as a trial wavefunction.
-7. Generate the json input file for SAFIRE
+7. Generate the JSON job file for SAFIRE
 8. run AFQMC using SAFIRE
 9. Compute the average AFQMC energy using afqmctools's analysis tooling
 
@@ -215,7 +215,7 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
         dets=np.array([active_det_up])
     )
 
-    # 6. write json input file, which also writes the Hamiltonian and the wavefunction to HDF5
+    # 6. write JSON job file, which also writes the Hamiltonian and the wavefunction to HDF5
     write_jobfile(
         local_scratch / "afqmc.json",
         {

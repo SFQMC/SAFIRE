@@ -259,7 +259,7 @@ wavefunction = Wavefunction.from_pyscf(
 from safiretools import write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
-# Write json input file, which also writes the wavefunction and the Hamiltonian to HDF5
+# Write JSON job file, which also writes the wavefunction and the Hamiltonian to HDF5
 write_jobfile(
     local_scratch_dir/ "afqmc.json",
     {
@@ -435,7 +435,7 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 ### from safiretools import write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
-# Write json input file
+# Write JSON job file
 write_jobfile(
     local_scratch_dir/ "afqmc.json",
     {

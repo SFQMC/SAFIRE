@@ -1,11 +1,11 @@
 .. _run_afqmc_ex_3:
 
-Generating a JSON Input File
+Generating a JSON Job File
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-SAFIRE uses an input file in .json format to set parameters 
+SAFIRE uses a JSON job file to set parameters 
 in calculations.
-This example covers generating a .json input file for AFQMC.
+This example covers generating a JSON job file for AFQMC.
 It assumes that you already have an HDF5 file containing 
 a Hamiltonian and trial wavefunction.
 If not, see the examples in :ref:`setup_exs`.

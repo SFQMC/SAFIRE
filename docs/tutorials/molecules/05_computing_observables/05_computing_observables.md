@@ -29,7 +29,7 @@ Become acquainted with how to compute general observables with SAFIRE.
 
 ## What You Will Learn
 
-1. What an estimator is and how to set one up in the json input file
+1. What an estimator is and how to set one up in the JSON job file
 2. What a mixed estimator is and when to use one to compute an observable
 3. What a back-propagated estimator is and when to use one to compute an observable
 4. How to compute observables in post-processing with safiretools
@@ -510,7 +510,7 @@ In this tutorial, you were acquainted with how to compute general observables wi
 
 ## What You Learned
 
-1. What an estimator is and how to set one up in the json input file
+1. What an estimator is and how to set one up in the JSON job file
 2. What a mixed estimator is and when to use one to compute an observable
 3. What a back-propagated estimator is and when to use one to compute an observable
 4. How to compute observables in post-processing with safiretools

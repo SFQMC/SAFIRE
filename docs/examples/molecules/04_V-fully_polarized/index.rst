@@ -35,7 +35,7 @@ The workflow follows these steps:
    A trial with no beta electrons is collinear with ``ndown == 0``, so ``walker_type`` in
    ``afqmc.json`` is ``"collinear"`` and the wavefunction's beta blocks are written with zero width.
 
-2. **Run SAFIRE**: Execute SAFIRE using the provided ``afqmc.json`` input file:
+2. **Run SAFIRE**: Execute SAFIRE using the provided JSON job file ``afqmc.json``:
 
    First, go to the ``inputs`` directory, then run SAFIRE with the following command:
 

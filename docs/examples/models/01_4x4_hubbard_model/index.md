@@ -315,7 +315,7 @@ which is expected for an even number of up and down electrons.
 
 Next, we will run an AFQMC calculation.
 SAFIRE uses an input file in json format to define AFQMC run parameters.
-`safiretools` comes with a convenience function to generate a json input file as demonstrated below.
+`safiretools` comes with a convenience function to generate a JSON job file as demonstrated below.
 We have included reasonable AFQMC run parameters for this calculation below.
 
 ```{code-cell} ipython3

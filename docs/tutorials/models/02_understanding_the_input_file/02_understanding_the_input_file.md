@@ -20,7 +20,7 @@ Understand how to control SAFIRE via the input file.
 
 ## What You Will Learn
 
-1. The structure of the json input file for SAFIRE
+1. The structure of the JSON job file for SAFIRE
 2. The minimal amount of information needed to run an AFQMC calculation using SAFIRE
 3. The most common parameters that you will interact with as a user
 
@@ -28,7 +28,7 @@ Understand how to control SAFIRE via the input file.
 
 ## Introduction
 
-SAFIRE uses a json-based input file with modular input blocks to control AFQMC calculations.
+SAFIRE uses a JSON job file with modular input blocks to control AFQMC calculations.
 The input file is organized into several hierarchical input blocks.
 Certain types of block may be defined at different levels of the
 hierarchy.
@@ -520,7 +520,7 @@ We recommend taking a look at them to complete the information provided here.
 
 In this tutorial, you learned
 
-1. The structure of the json input file for SAFIRE
+1. The structure of the JSON job file for SAFIRE
 2. The minimal amount of information needed to run an AFQMC calculation using SAFIRE
 3. The most common parameters that you will interact with as a user
 

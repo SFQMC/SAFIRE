@@ -11,7 +11,7 @@ If not, see the examples in :ref:`setup_exs`.
 
 Here, it is assumed that a Hamiltonian and a trial wavefunction are
 both saved in an HDF5 file called ``afqmc.h5``.
-SAFIRE uses an input file in .json format to set parameters 
+SAFIRE uses a JSON job file to set parameters 
 in calculations.
 The input file is explained in detail in :ref:`input_afqmc`, but a minimal 
 example is shown here.
