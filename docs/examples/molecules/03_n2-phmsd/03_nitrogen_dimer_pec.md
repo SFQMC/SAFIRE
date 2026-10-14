@@ -372,7 +372,7 @@ Specifically, given $\delta_\mathrm{N-N}$ and `ndets_to_read`, the function auto
 
 1. running CASSCF using PySCF (for convenience), and saving a truncated CASSCF wavefunction to the SAFIRE HDF5 format.
 2. building and saving the Hamiltonian in the basis of CASSCF orbitals to the SAFIRE HDF5 format.
-3. writing the json input file, with our chosen value of `ndets_to_read`, and running SAFIRE.
+3. writing the JSON job file, with our chosen value of `ndets_to_read`, and running SAFIRE.
 4. Extracting the AFQMC energy using the stats module.
 
 <b>
@@ -423,7 +423,7 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
         verbose=True
     )
 
-    # write json file, which also writes the wavefunction and the Hamiltonian to HDF5
+    # write JSON job file, which also writes the wavefunction and the Hamiltonian to HDF5
     write_jobfile(
         scratch_dir/ "afqmc.json",
         {

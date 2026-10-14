@@ -209,7 +209,7 @@ vis.plot_lattice(
 ## Setup - Write a SAFIRE Input File
 
 ```{code-cell} ipython3
-# make a json input file
+# make a JSON job file
 from safiretools import write_jobfile
 
 write_jobfile(scratch_dir/"afqmc.json", {

@@ -44,7 +44,7 @@ The purpose of this tutorial is to run a first AFQMC calculation without going i
 
 AFQMC is formulated in terms of a generic second quantized Hamiltonian and trial wavefunction. 
 In order to take advantage of this flexibility, SAFIRE accepts a generic second quantized Hamiltonian and wavefunction, 
-saved in HDF5 files, as input along with AFQMC algorithmic parameters in a json-based input file.
+saved in HDF5 files, as input along with AFQMC algorithmic parameters in a JSON job file.
 Below is a schematic of the inputs and outputs of SAFIRE.
 
 ![](files/inputs_and_outputs_all.png)
@@ -105,7 +105,7 @@ For technical details on the wavefunction HDF5 format, see {doc}`/user_manual`.
 
 ![](files/inputs_and_outputs_json.png)
 
-The JSON input file sets AFQMC run parameters and references the locations of the Hamiltonian and trial wavefunction files. It is organized into a hierarchy of input blocks which each control specific
+The JSON job file sets AFQMC run parameters and references the locations of the Hamiltonian and trial wavefunction files. It is organized into a hierarchy of input blocks which each control specific
 details of the calculation. Understanding the details of the input file is the goal of the next tutorial, {doc}`../02_understanding_the_input_file/02_understanding_the_input_file`.
 
 **For now, we focus on the `wavefunction` and `hamiltonian` blocks.**
@@ -113,7 +113,7 @@ details of the calculation. Understanding the details of the input file is the g
 The `wavefunction` input block is used to tell SAFIRE where to find the HDF5 file containing the trial wavefunction.
 Similarly, the `hamiltonian` input block is used to tell SAFIRE where to find the HDF5 file containing the Hamiltonian.  
 
-The sample json file that we have provided is reproduced here.
+The sample JSON job file that we have provided is reproduced here.
 
 ```{literalinclude} files/input.json
 :language: json
@@ -182,7 +182,7 @@ This file is not meant to be read directly by the user.
 Instead, afqmctools provides tools to extract information from this file.
 **We will learn how to extract the AFQMC energy from this file later in this tutorial.**
 
-The name of this file is derived from the `id` (string) and `series` (integer) parameters set in the json input file. Setting these parameters allows running multiple AFQMC calculations in a single directory without output file collisions.
+The name of this file is derived from the `id` (string) and `series` (integer) parameters set in the JSON job file. Setting these parameters allows running multiple AFQMC calculations in a single directory without output file collisions.
 
 <b> observables output HDF5 file : [id].s[series].stat.h5
 </b>
@@ -218,7 +218,7 @@ SAFIRE can be invoked from the command line as
     $ /path/to/SAFIRE/build/bin/safire input.json
 ```
 
-where `input.json` is the json input file.
+where `input.json` is the JSON job file.
 The input file can have an arbitrary name, but must end with `.json`.
 When you run the above, an AFQMC calculation will be performed based on the contents of input.json,
 using the Hamiltonian and trial wavefunction specified there.
@@ -247,10 +247,10 @@ Usage:
 Run SAFIRE with the provided input files.
 You may use either the code block below, or run SAFIRE in a terminal
 as described previously.
-In either case, you can find the json input file in `files/input.json`
+In either case, you can find the JSON job file in `files/input.json`
 relative to the directory of this tutorial.
 
-**The provided json input file assumes that you are running SAFIRE from
+**The provided JSON job file assumes that you are running SAFIRE from
 the directory of this tutorial.**
 
 After running with the default parameters, try changing the verbosity level to

@@ -20,7 +20,7 @@ At the end of this tutorial, you will know how to measure pair correlation funct
 
 ## What You Will Learn
 
-1. How to set up the HDF5 and json input files to request pair correlation functions
+1. How to set up the HDF5 and JSON job files to request pair correlation functions
 2. how to post process the correlation functions
 
 +++ {"id": "7FBZ0COY-NIw"}
@@ -67,7 +67,7 @@ $$
 
 SAFIRE implements this form of pair correlation function.
 It requires a set of $\bar{i}_\alpha = i + e_\alpha$, in the HDF5 input file.
-Additionally, specific pairings may be selected in the json input file.
+Additionally, specific pairings may be selected in the JSON job file.
 This allows the user to skip some of the offsets saved in the HDF5 file if desired.
 We will explore this in more detail below.
 
@@ -154,7 +154,7 @@ pairs.to_hdf5(scratch_dir / "afqmc.h5")
 
 +++ {"id": "iwp3CeLownyV"}
 
-## Requesting the Pair Correlation Function in the JSON Input File
+## Requesting the Pair Correlation Function in the JSON Job File
 
 The pair correlation function observable may be requested as any other observable within an estimator block.
 However, the pair correlation function observable has a few unique parameters that must be set.
@@ -356,5 +356,5 @@ vis.plot_lattice(
 
 ### What You Learned
 
-1. How to set up the HDF5 and json input files to request pair correlation functions
+1. How to set up the HDF5 and JSON job files to request pair correlation functions
 2. how to post process the correlation functions

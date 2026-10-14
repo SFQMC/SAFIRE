@@ -26,7 +26,7 @@ The workflow includes the following steps:
    You should see that the RHF energy of the full system is -14.8694988585082 Ha,
 
 
-2. **Run SAFIRE**: Execute the AFQMC calculation using the provided JSON input file:
+2. **Run SAFIRE**: Execute the AFQMC calculation using the provided JSON job file:
 
    .. code-block:: bash
 
@@ -95,4 +95,4 @@ This all-in-one script:
 .. literalinclude:: afqmc.json
    :language: json
 
-This JSON file configures the AFQMC calculation parameters, including time step, number of walkers, and measurement settings.
+This JSON job file configures the AFQMC calculation parameters, including time step, number of walkers, and measurement settings.

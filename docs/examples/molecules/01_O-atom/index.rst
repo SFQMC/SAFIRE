@@ -19,7 +19,7 @@ The workflow includes the following steps:
    ``Wavefunction.from_pyscf()`` directly handles the change of basis as demonstrated in
     this example. This produces ``afqmc.h5`` containing the Hamiltonian and trial wavefunction. 
 
-2. **Run SAFIRE**: Run SAFIRE using the provided json input file (see below):
+2. **Run SAFIRE**: Run SAFIRE using the provided JSON job file (see below):
 
    .. code-block:: bash
 

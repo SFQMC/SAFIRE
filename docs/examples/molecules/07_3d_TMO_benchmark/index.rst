@@ -19,7 +19,7 @@ Perform the following steps to run the example. You can see each file below for 
 
    The script creates a scratch directory for calculation files along with a subdirectory for each TMO system.
    The script creates a separate HDF5 file (``afqmc.h5``) for each transition metal oxide system containing both the Hamiltonian and trial wavefunction.
-   Additionally, the script will generate an AFQMC JSON input file (``afqmc.json``) in each system's scratch directory for running SAFIRE.   
+   Additionally, the script will generate an AFQMC JSON job file (``afqmc.json``) in each system's scratch directory for running SAFIRE.   
 
 2. **Run SAFIRE**: Execute AFQMC calculations for each system using the HDF5 files:
 

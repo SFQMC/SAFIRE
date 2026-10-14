@@ -79,7 +79,7 @@ Before we can run an AFQMC calculation, we must generate:
 
 1. A Hamiltonian
 2. A trial wavefunction
-3. A json input file
+3. A JSON job file
 
 Implicit in items 1. and 2. is the need for an orthonormal basis in
 which to compute matrix elements of the Hamiltonian,
