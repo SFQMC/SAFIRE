@@ -58,10 +58,21 @@ The code block above should have copied them to your scratch directory.
 We will need the Hamiltonian again to evaluate the energy from the measured observables, so we read it here.
 
 ```{code-cell} ipython3
-from safiretools import Hamiltonian
+import h5py
+import numpy as np
 
-# TODO: Hamiltonian.from_hdf5 does not read CoQuí's format yet
-hamiltonian = Hamiltonian.from_hdf5(scratch_dir / "hamil.h5")
+with h5py.File(scratch_dir / "hamil.h5", "r") as f:
+    system = f["System"].attrs
+    M = int(system["number_of_bands"])
+    # constant energy: nuclear repulsion and the Madelung self-interaction of the electrons
+    econst = system["nuclear_energy"] - system["number_of_elec"] * system["madelung_constant"]
+
+    H0 = f["System/H0"][0, 0]  # spin 0, Gamma point
+    h = H0[..., 0] + 1j * H0[..., 1]
+
+    # Cholesky vectors of momentum transfer Q = 0 at the Gamma point
+    Vq0 = f["Interaction/Vq0"][:, 0, 0]
+    L = np.moveaxis(Vq0[..., 0] + 1j * Vq0[..., 1], 0, -1)  # (M, M, nchol)
 ```
 
 +++ {"id": "dSJ9e4tRBxxx"}
@@ -149,12 +160,6 @@ import numpy as np
 from safiretools import Results
 
 
-M = hamiltonian.nmo
-h = hamiltonian.hcore[0]  # Gamma point only for this tutorial
-
-# constant energy: nuclear repulsion and the Madelung self-interaction of the 8 electrons
-econst = hamiltonian.enuc - 8 * hamiltonian.madelung_constant
-
 def onebody_energy(onerdm):
     # factor 2 because this calculation runs with closed walkers
     return 2 * np.einsum("ij,ij->", h, onerdm[0])
@@ -196,10 +201,8 @@ outputId: b681facb-f520-49ed-a2c2-cfceff7c2d40
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Cholesky vectors of momentum transfer Q = 0 at the Gamma point
 # Because the Hamiltonian in this tutorial is defined in the supercell,
 # the full interaction tensor can be recovered from the Q=0 cholesky operator.
-L = hamiltonian.chol[0][0].reshape(M, M, -1)
 # v_ijkl = sum_g L^g_ik (L^g_lj)^*, stored in the [i, k, j, l] index order of the TwoRDM
 v = np.einsum("ikg,ljg->ikjl", L, L.conj())
 
