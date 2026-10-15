@@ -20,16 +20,31 @@ kernelspec:
 
 For this tutorial, we have supplied an HDF5 file containing the Hamiltonian
 corresponding to the Hubbard model on a 4x4 lattice with periodic boundary conditions,
-and $U/t = 4$ in `hamil.h5`.
+and $U/t = 4$ in `hamiltonian.h5`.
 
 ![](files/Hubbard_4x4_tutorial.png)
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
-:start-after: <!-- BEGIN hello-wavefunction-and-outputs -->
-:end-before: <!-- END hello-wavefunction-and-outputs -->
+:start-after: <!-- BEGIN hello-wavefunction -->
+:end-before: <!-- END hello-wavefunction -->
 ```
 
-You will learn more about this in {doc}`../08_computing_observables/08_computing_observables`.
+For this tutorial, we have supplied an HDF5 file containing the free-electron ($U = 0$)
+ground state with 5 spin-up and 5 spin-down electrons as the trial wavefunction.
+
+$$
+| \Psi_\mathrm{T} \rangle = | \Phi_{U=0} \rangle
+$$
+
+```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
+:start-after: <!-- BEGIN hello-jobfile-and-running -->
+:end-before: <!-- END hello-jobfile-and-running -->
+```
+
+```{code-cell} ipython3
+!echo Path to SAFIRE: $AFQMC_EXEC
+!$AFQMC_EXEC --help
+```
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
 :start-after: <!-- BEGIN hello-running -->
@@ -37,20 +52,12 @@ You will learn more about this in {doc}`../08_computing_observables/08_computing
 ```
 
 ```{code-cell} ipython3
-!safire files/input.json --verbosity 1
+!mpirun -n 4 $AFQMC_EXEC files/afqmc.json
 ```
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
-:start-after: <!-- BEGIN hello-parallel -->
-:end-before: <!-- END hello-parallel -->
-```
-
-### Your Turn
-
-Try running SAFIRE with MPI! To get the same numbers as us, you will need to use the same number of MPI processes as we did, 16.
-
-```{code-cell} ipython3
-!mpirun -np 16 safire files/input.json --verbosity 1
+:start-after: <!-- BEGIN hello-run-output -->
+:end-before: <!-- END hello-run-output -->
 ```
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
@@ -58,72 +65,43 @@ Try running SAFIRE with MPI! To get the same numbers as us, you will need to use
 :end-before: <!-- END hello-postprocessing -->
 ```
 
-```bash
-====== [analyze_scalar_data Settings] ======
-
-[+] fname            = qmc.s000.scalar.dat
-[+] mark_header      = #               
-[+] series_column    = time            
-[+] nequil           = 2.0             
-[+] estimate_equil   = False           
-[+] column           = LocalEnergy     
-[+] reblock          = 1               
-[+] ndiscard         = None            
-[+] list             = False           
-[+] trace            = False           
-[+] append           = None            
-[+] dump             = False           
-[+] dump_fname       = trace.dat       
-[+] verbose          = True            
-[+] autocorr         = None            
-[+] savefig          = None            
-[+] dump_avail_columns = False           
-
-AFQMC Energy   -19.580848 +/-   0.000669 3.56  2.0/100.0
-```
-
 ```{code-cell} ipython3
-!scalar_stats qmc.s000.scalar.dat -s time -e 2.0
+from safiretools import Results
+
+results = Results("afqmc.results.h5")
+
+energy, energy_err = results.average("Energy")
+
+print(f"E = {energy.real} ± {energy_err.real}")
 ```
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
-:start-after: <!-- BEGIN hello-helpers -->
-:end-before: <!-- END hello-helpers -->
+:start-after: <!-- BEGIN hello-timeseries -->
+:end-before: <!-- END hello-timeseries -->
 ```
 
 ```{code-cell} ipython3
-from pathlib import Path
-import shutil
+# manual
+import matplotlib.pyplot as plt
+plt.plot(results.timeseries("ProjectionTime"), results.timeseries("Energy").real)
+plt.show()
 
-import numpy as np
-
-from tutorial_utils import run_afqmc
-from stats.scalar_dat import analyze_scalar_data
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-
-# copy the provided files
-files_dir = scratch_dir / "files"
-files_dir.mkdir(exist_ok=True)
-shutil.copy("files/input.json", files_dir)
-shutil.copy("files/wfn.h5", files_dir)
-shutil.copy("files/hamil.h5", files_dir)
-
-run_afqmc(
-    run_dir=scratch_dir,
-    input_file="files/input.json",   # the location of the sample input file.
-    np=16,                                         # to run in serial just as before!
-)
-
-# post process!
-_ = analyze_scalar_data(dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,
-    trace = True
-))
+# visualization helper
+from safiretools import vis
+vis.plot_timeseries(results, skip=0)
+plt.show()
 ```
+
+You should get an output compatible with `Energy = -19.5801 ± 0.0023`.
+
+```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
+:start-after: <!-- BEGIN hello-equilibration -->
+:end-before: <!-- END hello-equilibration -->
+```
+
+You will learn how to measure observables other than the energy in {doc}`../08_computing_observables/08_computing_observables`.
+
++++
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
 :start-after: <!-- BEGIN hello-summary -->
