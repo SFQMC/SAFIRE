@@ -49,7 +49,7 @@ A CPU-only build of SAFIRE can be invoked on rusty using the following runscript
     source $AFQMC_PATH/env.bash
 
     # Launch MPI code...
-    srun --cpu-bind=cores $AFQMC_PATH/bin/safire --filenames afqmc.json &> afqmc.out
+    srun --cpu-bind=cores $AFQMC_PATH/bin/safire afqmc.json &> afqmc.out
 
 If the Hamiltonian and trial wavefunction file from :ref:`setup_ex_1` (called ``afqmc.h5``) is used with the input file above,
  then we will see output similar to this (perhaps with differences in the timing)

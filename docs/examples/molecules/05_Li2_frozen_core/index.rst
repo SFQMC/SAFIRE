@@ -30,7 +30,7 @@ The workflow includes the following steps:
 
    .. code-block:: bash
 
-      mpirun -n 16 safire --filenames afqmc.json
+      mpirun -n 16 safire afqmc.json
 
    The calculation runs only in the valence space with the core electrons frozen, significantly reducing computational cost.
 

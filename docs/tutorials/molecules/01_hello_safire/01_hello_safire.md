@@ -233,13 +233,12 @@ You can see the possible command line options for SAFIRE by using the `-h`/`--he
 
 SAFIRE
 Usage:
-  /path/to/SAFIRE/build/bin/safire [OPTION...] [optional args]
+  /path/to/SAFIRE/build/bin/safire [OPTION...] <job file>
 
   -h, --help           print help message
   -v, --version        print version message
       --verbosity arg  0, 1, 2, ...: higher means more (default: 2)
       --debug arg      0, 1, 2, ...: higher means more (default: 0)
-      --filenames arg  input filenames
 ```
 
 ### Exercise: Try Running SAFIRE
@@ -313,7 +312,7 @@ SAFIRE can be run with MPI in the usual ways.
 For example, using mpirun, we could run SAFIRE with 64 MPI tasks as
 
 ```bash
-    $ mpirun -np 64 safire --filenames input.json
+    $ mpirun -np 64 safire input.json
 ```
 
 It is important to note that `num_walkers` in the input file is the total number of walkers
@@ -451,7 +450,7 @@ For convenience, we provide the `run_afqmc()` helper function in the `tutorial_u
 `run_afqmc(input_file=input_file, np=np)` runs the SAFIRE executable as
 
 ```bash
-    $ mpirun -np [np] safire --filenames [input_file]
+    $ mpirun -np [np] safire [input_file]
 ```
 
 <div class="alert alert-block alert-warning">
@@ -476,7 +475,7 @@ Here is a typical example of using `run_afqmc()`.
 ```
 
 Where the `np` parameter is forwarded directly to `-np [np]` and
-`input_file` is passed to `safire --filenames [input_file]`.
+`input_file` is passed to `safire [input_file]`.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>

@@ -50,11 +50,11 @@ def run_afqmc(run_dir:Path=None,timeout_mins=None,run_mode="local_cpu",output_fi
         timeout_mins = timeout_mins*60
     
     if run_mode == "slurm_cpu":
-        sp_list = ["srun","--cpu-bind=cores",AFQMC_EXEC,"--filenames",input_file]
+        sp_list = ["srun","--cpu-bind=cores",AFQMC_EXEC,input_file]
     elif run_mode == 'local_cpu':
         np = str(kwargs.get("np",16))
         print(f"Running AFQMC locally with {np} mpi tasks")
-        sp_list = ["mpirun","-np",np,AFQMC_EXEC,"--filenames",input_file]
+        sp_list = ["mpirun","-np",np,AFQMC_EXEC,input_file]
     else:
         
         raise ValueError(f"run_mode {run_mode} not recognized")
