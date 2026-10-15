@@ -282,7 +282,7 @@ and use `afqmctools` to obtain the AFQMC energy.
 As a reminder, you can run SAFIRE in any of the following ways:
 
 1. the `run_afqmc()` convenience wrapper - we've included a template in the next code cell.
-2. run from the command line as `$ mpirun -np [number of MPI tasks] safire --filenames [input file].json`
+2. run from the command line as `$ mpirun -np [number of MPI tasks] safire [input file].json`
 3. (if you are running on a computing cluster) submit a job via a runscript.
 
 As an additional reminder, the `analyze_scalar_data` tool can be invoked by either
