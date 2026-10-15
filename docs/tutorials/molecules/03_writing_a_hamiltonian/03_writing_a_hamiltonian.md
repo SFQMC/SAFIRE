@@ -57,17 +57,12 @@ the minimal basis hydrogen dimer with a bond length of 1.4 Bohr radii.
 ```{code-cell} ipython3
 :id: zMSdfeQqyCNd
 
-from pathlib import Path
-
-
 from safiretools import MolecularHamiltonian
 from safiretools import NOMSDWavefunction
 from safiretools import write_jobfile
 
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 ```
 
 +++ {"id": "J8ieYi3YyCNe"}
@@ -260,7 +255,7 @@ wavefunction = NOMSDWavefunction(
 )
 
 # write_jobfile also writes the wavefunction and the Hamiltonian to HDF5 files next to the input file
-write_jobfile(scratch_dir / "afqmc.json", {
+write_jobfile("afqmc.json", {
     "execute": {
         "wavefunction": wavefunction,
         "hamiltonian": hamiltonian,
@@ -279,13 +274,7 @@ At this point, you should run an AFQMC calculation using SAFIRE
 as we covered earlier in {doc}`../01_hello_safire/01_hello_safire`,
 and use `afqmctools` to obtain the AFQMC energy.
 
-As a reminder, you can run SAFIRE in any of the following ways:
-
-1. the `run_afqmc()` convenience wrapper - we've included a template in the next code cell.
-2. run from the command line as `$ mpirun -np [number of MPI tasks] safire [input file].json`
-3. (if you are running on a computing cluster) submit a job via a runscript.
-
-As an additional reminder, the `analyze_scalar_data` tool can be invoked by either
+As a reminder, the `analyze_scalar_data` tool can be invoked by either
 
 1. calling it from the CLI as `$ scalar_stats [id].s[series].scalar.dat`
 2. in a Python script / notebook with `analyze_scalar_data()` - we've also included a template in a code block below that you can use for this exercise.
@@ -296,14 +285,10 @@ colab:
   base_uri: https://localhost:8080/
 id: VhPYIHxeyCNf
 outputId: f8c272ce-fe42-4727-be4e-2abd163c3a79
+scrolled: true
+tags: [scroll-output]
 ---
-# Use this to run SAFIRE
-run_afqmc(
-    run_dir=scratch_dir,
-    input_file = "afqmc.json",#"your_input_file.json",
-    np=16,             # number of MPI tasks
-    output_file=None,
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
@@ -317,7 +302,7 @@ outputId: 703d5b1c-4596-4fdd-e544-3708040007de
 from stats.scalar_dat import analyze_scalar_data
 
 settings = dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",
     nequil = 5,     # remember to check the equilibration!
     trace = True
@@ -372,7 +357,7 @@ If you follow the official installation instructions for `afqmctools`, then
 It can be used as
 
 ```{code-cell} ipython3
-!fcidump_to_afqmc -i files/H2_FCIDUMP  -t 1.0e-5 -o data/H2_Hamiltonian.h5
+!fcidump_to_afqmc -i ../files/H2_FCIDUMP  -t 1.0e-5 -o H2_Hamiltonian.h5
 ```
 
 +++ {"id": "qYRe4bEt1xSN"}
@@ -411,7 +396,7 @@ Run the following codeblock to output the Wavefunction to an HDF5 file via the C
 :id: 8JgG5DbH24kR
 
 # Use the Command Line Interface (CLI) to convert the Hamiltonian AND write a trial wavefunction
-!fcidump_to_afqmc -i files/H2_FCIDUMP -o {scratch_dir}/H2.h5 --add_wfn --occ_up 0 --occ_down 0
+!fcidump_to_afqmc -i ../files/H2_FCIDUMP -o H2.h5 --add_wfn --occ_up 0 --occ_down 0
 ```
 
 +++ {"id": "7NLzntps2CS7"}
@@ -435,7 +420,7 @@ to the accuracy asked for by `cholesky_tol` — the same decomposition
     MolecularHamiltonian.from_fcidump(
         "H2_FCIDUMP",
         cholesky_tol=1.0e-5
-    ).to_hdf5(scratch_dir/"H2_hamiltonian.h5")
+    ).to_hdf5("H2_hamiltonian.h5")
 ```
 
 see {py:meth}`safiretools.MolecularHamiltonian.from_fcidump` for more.
@@ -448,9 +433,9 @@ see {py:meth}`safiretools.MolecularHamiltonian.from_fcidump` for more.
 from safiretools import MolecularHamiltonian
 
 MolecularHamiltonian.from_fcidump(
-    "files/H2_FCIDUMP",
+    "../files/H2_FCIDUMP",
     cholesky_tol=1.0e-5
-).to_hdf5(scratch_dir/"H2_hamiltonian.h5")
+).to_hdf5("H2_hamiltonian.h5")
 ```
 
 +++ {"id": "jNDV-Ersu9ul"}
@@ -483,7 +468,7 @@ from safiretools import Wavefunction
 from safiretools import MolecularHamiltonian
 
 # dump the Hamiltonian and the wavefunction to the same h5df
-fout = f"{scratch_dir}/h2_from_pyscf.h5"
+fout = "h2_from_pyscf.h5"
 MolecularHamiltonian.from_pyscf(
     mf,
     chol_cut=1e-6,
@@ -516,8 +501,8 @@ Below is a single script based on what you have learned.
 
 ```{code-cell} ipython3
 :id: 8FhPN8ETyCNg
-
-from pathlib import Path
+:tags: [scroll-output]
+:scrolled: true
 
 import numpy as np
 
@@ -525,11 +510,6 @@ from safiretools import MolecularHamiltonian
 from safiretools import NOMSDWavefunction
 from safiretools import write_jobfile
 from stats.scalar_dat import analyze_scalar_data
-
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
 
 number_of_electrons = (1,1) # up, down
 number_of_orbitals = 2
@@ -591,7 +571,7 @@ wavefunction = NOMSDWavefunction(
 
 # make an input file, which also writes the Hamiltonian and the wavefunction to HDF5
 write_jobfile(
-    scratch_dir/ "H2_afqmc_input.json",
+    "H2_afqmc_input.json",
     {
         "seed": 42,
         "execute": {
@@ -608,18 +588,12 @@ write_jobfile(
 )
 
 # run afqmc
-run_afqmc(
-    run_dir=scratch_dir,
-    run_mode="local_cpu",
-    input_file="H2_afqmc_input.json",
-    np=12,             # number of MPI tasks
-    output_file=None   # optionally direct output to file instead of here
-)
+!mpirun -n 12 $AFQMC_EXEC H2_afqmc_input.json
 
 # post process
 
 settings = dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",
     nequil = 5,
     trace = True

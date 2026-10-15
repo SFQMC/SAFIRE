@@ -79,10 +79,9 @@ We will explore this in more detail below.
 from safiretools import Lattice
 from safiretools import vis
 from safiretools import HamiltonianBuilder
-from pathlib import Path
 
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 
 lattice = Lattice.from_dict(
     params=dict(
@@ -135,7 +134,7 @@ for key,value in pairs.offsets.items():
 `DirectedPairs` writes itself to HDF5 in the format the estimator reads. It may go in the same file as the Wavefunction and Hamiltonian, or in one of its own.
 
 ```{code-cell} ipython3
-pairs.to_hdf5(scratch_dir / "afqmc.h5")
+pairs.to_hdf5("afqmc.h5")
 ```
 
 +++ {"id": "lkkZMHMWvFAU"}
@@ -149,7 +148,7 @@ For example, we can manually add "+x+y" pairing to `pairs.offsets` as
 pairs.offsets["xy"] = [ 5, 6 , 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0]
 
 # update hdf5 - the whole map is rewritten, so every direction is still there
-pairs.to_hdf5(scratch_dir / "afqmc.h5")
+pairs.to_hdf5("afqmc.h5")
 ```
 
 +++ {"id": "iwp3CeLownyV"}
@@ -262,12 +261,12 @@ wfn = autohf.solver.lattice_hf(
 
 autohf_to_afqmc(
     wfn,
-    output_fname = scratch_dir / "afqmc.h5"
+    output_fname = "afqmc.h5"
 )
 
 
 write_jobfile(
-    scratch_dir / "afqmc.json",
+    "afqmc.json",
     {
         "execute": {
             "wavefunction": {
@@ -299,14 +298,10 @@ write_jobfile(
 
 ```{code-cell} ipython3
 :id: SrM8syoYzUeS
+:scrolled: true
+:tags: [scroll-output]
 
-from tutorial_utils import run_afqmc
-run_afqmc(
-        run_dir = scratch_dir,
-        input_file = "afqmc.json",
-        np = 16,
-        output_file = None
-    )   
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 +++ {"id": "WIxdjnH-zopo"}

@@ -115,10 +115,9 @@ are included.
 :id: fdf7cd0e-b553-4ac1-8f0f-1730a3faf403
 
 from safiretools import HamiltonianBuilder, Lattice
-from pathlib import Path
 
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 
 lattice = Lattice.from_dict(
     params={
@@ -139,7 +138,7 @@ builder.onsite_hubbard(4.0)
 builder.finalize()
 
 # save for latter use
-builder.get_hamiltonian().to_hdf5(scratch_dir / 'hamiltonian.h5')
+builder.get_hamiltonian().to_hdf5('hamiltonian.h5')
 ```
 
 +++ {"id": "d95754b7-05ef-40a0-9632-c660f535d095"}

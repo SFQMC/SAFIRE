@@ -47,13 +47,10 @@ from afqmctools.observables.greens import greens_1body
 import afqmctools.observables.spin as spobs
 from afqmctools.inputs.from_autohf import autohf_to_afqmc
 
-from tutorial_utils import run_afqmc
-
 import autohf
 
-from pathlib import Path
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 ```
 
 +++ {"editable": true, "id": "083d8f36-02de-4281-a56c-7cd3d5add077"}
@@ -196,7 +193,7 @@ afqmc_params = {
 }
 
 write_jobfile(
-    scratch_dir / "afqmc.json",
+    "afqmc.json",
     {
         "seed": 42,                          # just for reproducibility
         "execute": {
@@ -214,8 +211,10 @@ id: 96ec3330-42f6-4b14-af45-7e18a5225f7f
 outputId: 8c812e11-d1f3-454d-82c4-0322455b50bb
 colab:
   base_uri: https://localhost:8080/
+scrolled: true
+tags: [scroll-output]
 ---
-!cd data; mpirun -np 16 $AFQMC_EXEC afqmc.json
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
@@ -232,7 +231,7 @@ from stats.scalar_dat import analyze_scalar_data
 nequil = 20.0
 
 analysis_settings = dict(
-    fname = scratch_dir / "qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",     # use units of imaginary time for equilibration
     nequil = 5,    # length of equilibration phase (in units of imaginary time)
     trace = True,       # plots a trace of the scalar data
@@ -261,7 +260,7 @@ def averageOverCols(Sz,Nx,Ny):
 ```{code-cell} ipython3
 :id: 0a52fe29-2397-4436-b84d-48b95ac5f777
 
-rho_avg, delta_rho = average_afqmc_rdm(rdm_file=scratch_dir / "qmc.s000.stat.h5")
+rho_avg, delta_rho = average_afqmc_rdm(rdm_file="qmc.s000.stat.h5")
 ```
 
 ```{code-cell} ipython3
@@ -292,7 +291,7 @@ plt.show()
 :id: 1f80b790-9e93-4c4a-b043-f2aea22a0e11
 
 # DMRG data of the form: site Sz Nup Ndn
-SzDmrg = np.loadtxt("data_10x4_Ne16U6.0_15360.dat",usecols=(1,))
+SzDmrg = np.loadtxt("../data_10x4_Ne16U6.0_15360.dat",usecols=(1,))
 ```
 
 ```{code-cell} ipython3
@@ -347,7 +346,7 @@ for Ueff in Ueffs:
     # NOTICE: we must be careful here! We can either keep around the
     # original Hamiltonian (U=6) and keep the wf and its Hamiltonian together
     # or we have one file with afqmc_Ueff which has both the wf and builder.get_hamiltonian()
-    builder_eff.get_hamiltonian().to_hdf5(scratch_dir / f"afqmc_{Ueff}.h5")
+    builder_eff.get_hamiltonian().to_hdf5(f"afqmc_{Ueff}.h5")
 
     hf_settings = dict(
         steps = 2000,
@@ -365,11 +364,11 @@ for Ueff in Ueffs:
     )
     autohf_to_afqmc(
         results,
-        output_fname = scratch_dir / f"afqmc_{Ueff}.h5"
+        output_fname = f"afqmc_{Ueff}.h5"
     )
 
     write_jobfile(
-        scratch_dir / f"afqmc_{Ueff}.json",
+        f"afqmc_{Ueff}.json",
         {
             "output_name": f"afqmc_{Ueff}",
             "seed": 42,
@@ -387,14 +386,11 @@ for Ueff in Ueffs:
 
 ```{code-cell} ipython3
 :id: 3d68db2c-e000-4c4f-8b48-2f4bd5836749
+:scrolled: true
+:tags: [scroll-output]
 
 for Ueff in Ueffs:
-    run_afqmc(
-        run_dir = scratch_dir,
-        input_file = f"afqmc_{Ueff}.json",
-        np = 16,
-        output_file = None
-    )        
+    !mpirun -n 16 $AFQMC_EXEC afqmc_{Ueff}.json
 ```
 
 ```{code-cell} ipython3
@@ -407,7 +403,7 @@ for Ueff in Ueffs:
         fname = "qmc.s000.stat.h5"
     else:
         fname = f"afqmc_{Ueff}.s000.stat.h5"
-    rho_avg, delta_rho = average_afqmc_rdm(rdm_file=scratch_dir / fname)
+    rho_avg, delta_rho = average_afqmc_rdm(rdm_file=fname)
     rhos.append(rho_avg)
     deltas.append(delta_rho)
 ```
@@ -452,7 +448,7 @@ for Ueff in Ueffs:
         fname = "afqmc.h5"
     else:
         fname = f"afqmc_{Ueff}.h5"
-    trial = Wavefunction.from_hdf5(scratch_dir / fname)
+    trial = Wavefunction.from_hdf5(fname)
     # determinant() gives the leading determinant's alpha and beta orbitals
     alpha, beta = trial.determinant(0)
     o = np.stack([alpha.real, beta.real])

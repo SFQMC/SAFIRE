@@ -51,16 +51,15 @@ Generate a wavefunction of the form $\Psi = \Psi^\uparrow \otimes \Psi^\downarro
 :id: TdBbEZh8TeCS
 
 import numpy as np
-from pathlib import Path
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 
 nx = 2
 ny = 2
 nelec = (2,2)
 assert (nelec[0]==nelec[1])
 norb = nx * ny
-wfn_input_filename = scratch_dir / "wfn_rhf_test.h5"
+wfn_input_filename = "wfn_rhf_test.h5"
 sd_rhf = np.arange(0,norb * sum(nelec)//2, 1).reshape([1, norb, sum(nelec)//2])
 ci = np.ones([1],dtype = np.float64)
 NOMSDWavefunction(coeffs=ci, dets=sd_rhf).to_hdf5(wfn_input_filename)
@@ -73,7 +72,7 @@ If you use `!h5dump wfn_rhf_test.h5` to inspect the output file, you'll see the 
 In summary, to generate an RHF wavefunction, you need to provide an array `A[0, i, j]` = $\Psi_{ij}^↑$ with shape `(1, norb, nelec // 2)` as input. Setting `spin_symm='closed'` (spelled `'rhf'` if you prefer) ensures the wavefunction is constructed in a spin-identical manner, meaning the same orbitals are used for both spin components.
 
 ```{code-cell} ipython3
-!h5dump {scratch_dir}/wfn_rhf_test.h5 | head -n 20
+!h5dump wfn_rhf_test.h5 | head -n 20
 ```
 
 +++ {"id": "o6ZmCwG4XFM_"}
@@ -89,7 +88,7 @@ nx = 2
 ny = 2
 nelec = (2, 3)
 norb = nx * ny
-wfn_input_filename = scratch_dir / "wfn_uhf_test.h5"
+wfn_input_filename = "wfn_uhf_test.h5"
 sd_uhf = (np.arange(0, norb * sum(nelec), 1)**1.2).reshape([1, norb, sum(nelec)])
 
 ci = np.ones([1], dtype = np.float64)
@@ -106,7 +105,7 @@ In summary, to generate a UHF wavefunction, you need to provide an array `A` of 
 ```{code-cell} ipython3
 :id: kJbq-X4RYMeA
 
-!h5dump {scratch_dir}/wfn_uhf_test.h5 | head -n 100
+!h5dump wfn_uhf_test.h5 | head -n 100
 ```
 
 +++ {"id": "G5IzcYloYL8Z"}
@@ -125,7 +124,7 @@ nelec = (4, 0)
 # as long as the total number of electrons is the same
 # This is because the GHF wavefunction does not distinguish between spin-up and spin-down components.
 norb = nx * ny
-wfn_input_filename = scratch_dir / "wfn_ghf_test.h5"
+wfn_input_filename = "wfn_ghf_test.h5"
 sd_ghf = (np.arange(0, 2 * norb * sum(nelec), 1)**1.2).reshape([1, 2, norb, sum(nelec)])
 
 ci = np.ones([1], dtype = np.float64)
@@ -140,7 +139,7 @@ In summary, to generate a GHF wavefunction, you need to provide an array `A[0, i
 ```{code-cell} ipython3
 :id: QtIpS_0XaSDL
 
-!h5dump {scratch_dir}/wfn_ghf_test.h5 | head -n 100
+!h5dump wfn_ghf_test.h5 | head -n 100
 ```
 
 +++ {"id": "-SQvyVx0gZm_"}
@@ -156,7 +155,7 @@ nx = 2
 ny = 2
 nelec = (4, 0) # (3, 1) or (2, 2) or (1, 3) or (0,4) are equivalent as long as sum(nelec) is the same
 norb = nx * ny
-wfn_input_filename = scratch_dir / "wfn_multi_ghf_test.h5"
+wfn_input_filename = "wfn_multi_ghf_test.h5"
 sd_multi = (np.arange(0, 3 * 2 * norb * sum(nelec), 1)**1.4).reshape([3, 2, norb, sum(nelec)])
 ci = np.array([1, -1, 4], dtype = np.float64)
 NOMSDWavefunction(coeffs=ci, dets=sd_multi).to_hdf5(wfn_input_filename)
@@ -169,7 +168,7 @@ with `!h5ls -r -d wfn_multi_ghf_test.h5/Wavefunction/NOMSD ` you will see an out
 ```{code-cell} ipython3
 :id: AxSQoTIbjwSz
 
-!h5ls -r -d {scratch_dir}/wfn_multi_ghf_test.h5/Wavefunction/NOMSD
+!h5ls -r -d wfn_multi_ghf_test.h5/Wavefunction/NOMSD
 ```
 
 +++ {"id": "L4VNw2qMmwyu"}
@@ -249,7 +248,7 @@ hamiltonian = HamiltonianBuilder.from_input(source=dict(
 
 nbasis = lattice.N_sites
 
-hamiltonian.to_hdf5(scratch_dir / "hamil.h5")
+hamiltonian.to_hdf5("hamil.h5")
 
 # compute a free-electron trial wfn
 wfn = Wavefunction.from_free_electron(
@@ -258,7 +257,7 @@ wfn = Wavefunction.from_free_electron(
 )
 
 # and write the wavefunction for use in SAFIRE
-wfn.to_hdf5(scratch_dir / "wfn.h5")
+wfn.to_hdf5("wfn.h5")
 ```
 
 +++ {"id": "FoovlUVcFqxX"}

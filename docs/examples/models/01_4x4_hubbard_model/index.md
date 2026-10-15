@@ -41,17 +41,6 @@ Next, we will demonstrated how to obtain exact results using AFQMC
 for the special case of half filling for which, if care is taken,
 there is no sign problem.
 
-```{code-cell} ipython3
-:id: d3YMrpqs5xcm
-
-from pathlib import Path
-# simple setup
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "dfgyQ5OC5xcn"}
 
 ## Building a Lattice Model Hamiltonian
@@ -81,6 +70,9 @@ colab:
   height: 855
 outputId: c0edb976-6ddc-4ada-eb2f-66c8587a93b7
 ---
+%mkdir -p data
+%cd -q data
+
 from safiretools import Lattice
 from safiretools import vis
 
@@ -108,11 +100,6 @@ colab:
 outputId: 601a13a7-15f4-49d9-ba6a-01fb4ba3b173
 ---
 from safiretools import HamiltonianBuilder
-
-print(scratch_dir)
-
-fe_scratch_dir = scratch_dir / "fe"
-fe_scratch_dir.mkdir(exist_ok=True)
 
 # set the number of electrons - we'll use this again
 nelec = (8,8)
@@ -324,7 +311,7 @@ We have included reasonable AFQMC run parameters for this calculation below.
 from safiretools import write_jobfile
 
 # make an input file, which also writes the wavefunction and the Hamiltonian to HDF5
-write_jobfile(fe_scratch_dir/"afqmc.json", {
+write_jobfile("afqmc.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
         "wavefunction": wfn,
@@ -349,12 +336,10 @@ id: 5YJevKw85xco
 colab:
   base_uri: https://localhost:8080/
 outputId: 601aa3a3-9001-40d2-84fe-7cc725c17dff
+scrolled: true
+tags: [scroll-output]
 ---
-run_afqmc(
-    run_dir=fe_scratch_dir,
-    np=16,
-    output_file=None # this will put output here!
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
@@ -371,7 +356,7 @@ from stats.scalar_dat import analyze_scalar_data
 nequil = 5.0
 
 analysis_settings = dict(
-    fname = fe_scratch_dir /"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",     # use units of imaginary time for equilibration
     nequil = nequil,    # length of equilibration phase (in units of imaginary time)
     trace = True,       # plots a trace of the scalar data
@@ -432,7 +417,7 @@ results = lattice_hf(
 
 autohf_to_afqmc(
     results,
-    output_fname = fe_scratch_dir/"uhf_wfn.h5"
+    output_fname = "uhf_wfn.h5"
 )
 ```
 
@@ -502,7 +487,7 @@ vis.plot_lattice(
 from safiretools import write_jobfile
 
 # make an input file
-write_jobfile(fe_scratch_dir/"afqmc.json", {
+write_jobfile("afqmc.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
         "wavefunction": {
@@ -529,12 +514,10 @@ id: DIYwZYvz5xcp
 colab:
   base_uri: https://localhost:8080/
 outputId: 5414bf9b-a425-4e44-c469-c1b29b5f34d1
+scrolled: true
+tags: [scroll-output]
 ---
-run_afqmc(
-    run_dir=fe_scratch_dir,
-    np=16,
-    output_file=None # this will put output here!
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
@@ -551,7 +534,7 @@ from stats.scalar_dat import analyze_scalar_data
 nequil = 20.0
 
 analysis_settings = dict(
-    fname = fe_scratch_dir /"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",     # use units of imaginary time for equilibration
     nequil = nequil,    # length of equilibration phase (in units of imaginary time)
     trace = True,       # plots a trace of the scalar data
@@ -595,7 +578,7 @@ amount of statistics.
 from safiretools import write_jobfile
 
 # make an input file
-write_jobfile(fe_scratch_dir/"afqmc.json", {
+write_jobfile("afqmc.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
         "wavefunction": {
@@ -622,12 +605,10 @@ colab:
   base_uri: https://localhost:8080/
 id: 3g8uLM4_V5Vo
 outputId: fa772c06-bf39-46ac-e81d-e57e14cc7449
+scrolled: true
+tags: [scroll-output]
 ---
-run_afqmc(
-    run_dir=fe_scratch_dir,
-    np=16,
-    output_file=None # this will put output here!
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
@@ -642,7 +623,7 @@ outputId: 1d4d7374-5c21-43a7-eae5-46bafc88d52d
 from stats.scalar_dat import analyze_scalar_data
 
 analysis_settings = dict(
-    fname = fe_scratch_dir /"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",     # use units of imaginary time for equilibration
     nequil = nequil,    # length of equilibration phase (in units of imaginary time)
     trace = True,       # plots a trace of the scalar data
@@ -721,7 +702,7 @@ outputId: 819142c2-1650-4107-9ab3-f2bd8927f689
 from safiretools import write_jobfile
 
 # make an input file
-write_jobfile(fe_scratch_dir/"afqmc_3.json", {
+write_jobfile("afqmc_3.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
         "wavefunction": {
@@ -756,13 +737,10 @@ colab:
   base_uri: https://localhost:8080/
 id: IIFG3vyw4WLr
 outputId: fb551b42-39fd-4dd1-905f-015d1237d024
+scrolled: true
+tags: [scroll-output]
 ---
-run_afqmc(
-    input_file="afqmc_3.json",
-    run_dir=fe_scratch_dir,
-    np=16,
-    output_file=None # this will put output here!
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc_3.json
 ```
 
 +++ {"id": "WFUPHBHt5xcp"}
@@ -805,7 +783,7 @@ import matplotlib.pyplot as plt
 from afqmctools.analysis.transform import hermitize_factory
 from afqmctools.analysis.average import WALKER_TYPE,get_metadata,average_observable
 
-SAFIRE_hdf5_output = fe_scratch_dir / "qmc.s003.stat.h5"
+SAFIRE_hdf5_output = "qmc.s003.stat.h5"
 nspins = 1 # this is a noncollinear calculation, so one (combined) spin sector!
 M = lattice.N_sites # get the number of sites to help with plotting
 

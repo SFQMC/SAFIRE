@@ -11,14 +11,6 @@ kernelspec:
   name: python3
 ---
 
-```{code-cell} ipython3
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "0WrZ0hFmBbdm"}
 
 # Multi-Slater Determinant Trial Wavefunction
@@ -52,6 +44,9 @@ Since the Hamiltonian is spin-independent, this trial wavefunction should have t
 id: 1rz5sWn3Ecsc
 outputId: 51107f5c-4186-4817-9e97-990b46c79acc
 ---
+%mkdir -p data
+%cd -q data
+
 # setup the Hamiltonian
 import numpy as np
 
@@ -216,7 +211,7 @@ from safiretools import write_jobfile
 
 # write input file, which also writes the wavefunction and the Hamiltonian to HDF5
 write_jobfile(
-    scratch_dir/ "afqmc.json",
+    "afqmc.json",
     {
         "seed": 42,
         "execute": {
@@ -236,15 +231,10 @@ write_jobfile(
 ```{code-cell} ipython3
 ---
 id: SJ-EP0itFLgE
+scrolled: true
+tags: [scroll-output]
 ---
-# run SAFIRE
-run_afqmc(
-    run_dir=scratch_dir,
-    run_mode="local_cpu",
-    input_file="afqmc.json",
-    np=16,             # number of MPI tasks
-    output_file=None   # optionally direct output to file instead of here
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
@@ -255,7 +245,7 @@ id: IZizKYGAFNvS
 from stats.scalar_dat import analyze_scalar_data
 
 _ = analyze_scalar_data(dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",
     nequil = 5,
     trace = True

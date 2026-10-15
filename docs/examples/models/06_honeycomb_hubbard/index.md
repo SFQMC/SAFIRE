@@ -18,20 +18,12 @@ kernelspec:
 ## Set Up the Hamiltonian
 
 ```{code-cell} ipython3
-:id: G8BN6a14EL83
-
-# setup scratch dir
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
-```{code-cell} ipython3
 ---
 id: djut2ei2D6d-
 ---
+%mkdir -p data
+%cd -q data
+
 # setup the Hamiltonian
 import numpy as np
 
@@ -112,7 +104,7 @@ settings = dict(
 
 results = lattice_hf(hamiltonian=autohf_hamiltonian,settings=settings)
 
-autohf_to_afqmc(results,output_fname=scratch_dir/"afqmc.h5")
+autohf_to_afqmc(results,output_fname="afqmc.h5")
 ```
 
 +++ {"id": "vYmHYe-nIm_Q"}
@@ -128,7 +120,7 @@ from safiretools import write_jobfile
 
 # write input file
 write_jobfile(
-    scratch_dir/ "afqmc.json",
+    "afqmc.json",
     {
         "seed": 42,
         "execute": {
@@ -154,15 +146,10 @@ write_jobfile(
 ```{code-cell} ipython3
 ---
 id: xvJVj1DGJeW0
+scrolled: true
+tags: [scroll-output]
 ---
-# run SAFIRE
-run_afqmc(
-    run_dir=scratch_dir,
-    run_mode="local_cpu",
-    input_file="afqmc.json",
-    np=16,             # number of MPI tasks
-    output_file=None   # optionally direct output to file instead of here
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 +++ {"id": "9YE2JAdlJesB"}
@@ -177,7 +164,7 @@ id: eADuTKxlJgfx
 from stats.scalar_dat import analyze_scalar_data
 
 _ = analyze_scalar_data(dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",
     nequil = 5,
     trace = True

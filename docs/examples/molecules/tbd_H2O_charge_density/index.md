@@ -40,8 +40,6 @@ from safiretools import write_jobfile
 
 from stats.scalar_dat import analyze_scalar_data
 
-from tutorial_utils import run_afqmc
-
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
 ```

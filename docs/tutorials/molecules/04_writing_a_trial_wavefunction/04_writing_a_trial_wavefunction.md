@@ -24,21 +24,6 @@ Become acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 form
 2.  How to write a non-orthogonal multi-Slater determinant trial wavefunction given the expansion coefficients and Slater matrices
 3.  How to write a configuration-interaction (CI) type trial wavefunction given CI coefficients and a corresponding occupancy strings
 
-+++
-
-## Run the Cell Below to Set Up the Tutorial
-
-```{code-cell} ipython3
-# Run me (shift+enter or click the play button) to setup the tutorial!
-from pathlib import Path
-
-# simple setup
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "vt9PbuQhpw4u"}
 
 ## Introduction
@@ -141,7 +126,7 @@ from safiretools import NOMSDWavefunction
 NOMSDWavefunction(
     coeffs=np.array([C_0]),
     dets=phi_0
-).to_hdf5(scratch_dir/ "rhf_wavefunction.h5")
+).to_hdf5("rhf_wavefunction.h5")
 ```
 
 Note that `coeffs` is a 1-dimensional array with the CI coefficient, and `dets` is a 3 dimensional array where the first index corresponds to the Slater determinant index, the second index corresponds to the basis set index, and the third index corresponds to the electron index.
@@ -156,6 +141,9 @@ colab:
 id: locAjSqZsYSI
 outputId: b67f9653-4cfe-4ef4-ad16-1b9b5502444f
 ---
+%mkdir -p data
+%cd -q data
+
 import numpy as np
 
 from safiretools import NOMSDWavefunction
@@ -176,7 +164,7 @@ C_0 = 1.0
 NOMSDWavefunction(
     coeffs=np.array([C_0]),
     dets=phi_0
-).to_hdf5(scratch_dir/ "rhf_wfn.h5")
+).to_hdf5("rhf_wfn.h5")
 ```
 
 we can use the `h5dump` utility to inspect the contents of the file that we just generated. 
@@ -187,15 +175,15 @@ Note that the NOMSD format is a compressed sparse row (CSR) format.
 See {ref}`Wavefunction-classes` for details on the expected data.
 
 ```{code-cell} ipython3
-!h5dump -n {scratch_dir}/rhf_wfn.h5
+!h5dump -n rhf_wfn.h5
 ```
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/values {scratch_dir}/rhf_wfn.h5
+!h5dump -d /Wavefunction/NOMSD/PsiT_0/values rhf_wfn.h5
 ```
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/column_indices {scratch_dir}/rhf_wfn.h5
+!h5dump -d /Wavefunction/NOMSD/PsiT_0/column_indices rhf_wfn.h5
 ```
 
 +++ {"id": "VJfGuez4rsE-"}
@@ -237,7 +225,7 @@ from safiretools import NOMSDWavefunction
 NOMSDWavefunction(
     coeffs=np.array([C_0,C_1]),
     dets=phi_nomsd
-).to_hdf5(scratch_dir/ "NOMSD_wfn.h5")
+).to_hdf5("NOMSD_wfn.h5")
 ```
 
 We put all of this together in the code block below.
@@ -263,11 +251,11 @@ C_1 = 1.0
 NOMSDWavefunction(
     coeffs=np.array([C_0,C_1]),
     dets=phi_nomsd
-).to_hdf5(scratch_dir/ "NOMSD_wfn.h5")
+).to_hdf5("NOMSD_wfn.h5")
 ```
 
 ```{code-cell} ipython3
-!h5dump -n {scratch_dir}/NOMSD_wfn.h5
+!h5dump -n NOMSD_wfn.h5
 ```
 
 notice that there are two Slater determinants in the HDF5 file! We note that
@@ -275,11 +263,11 @@ notice that there are two Slater determinants in the HDF5 file! We note that
 corresponding to up (down) sector Slater determinants.
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/values {scratch_dir}/NOMSD_wfn.h5
+!h5dump -d /Wavefunction/NOMSD/PsiT_0/values NOMSD_wfn.h5
 ```
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_1/values {scratch_dir}/NOMSD_wfn.h5
+!h5dump -d /Wavefunction/NOMSD/PsiT_1/values NOMSD_wfn.h5
 ```
 
 +++ {"id": "YtBpL-q8rlGT"}
@@ -343,22 +331,22 @@ PHMSDWavefunction(
     occb=occb,
     nelec=number_of_electrons,
     nmo=number_of_orbitals
-).to_hdf5(scratch_dir/ "PHMSD_wfn.h5")
+).to_hdf5("PHMSD_wfn.h5")
 ```
 
 ```{code-cell} ipython3
-!h5dump -n {scratch_dir}/PHMSD_wfn.h5
+!h5dump -n PHMSD_wfn.h5
 ```
 
 here, the interesting information is the orbital occupancies in `/Wavefunction/PHMSD/occs` and
 the CI coefficients in `/Wavefunction/PHMSD/ci_coeffs`.
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/PHMSD/occa {scratch_dir}/PHMSD_wfn.h5
+!h5dump -d /Wavefunction/PHMSD/occa PHMSD_wfn.h5
 ```
 
 ```{code-cell} ipython3
-!h5dump -d /Wavefunction/PHMSD/ci_coeffs {scratch_dir}/PHMSD_wfn.h5
+!h5dump -d /Wavefunction/PHMSD/ci_coeffs PHMSD_wfn.h5
 ```
 
 +++ {"id": "FoovlUVcFqxX"}

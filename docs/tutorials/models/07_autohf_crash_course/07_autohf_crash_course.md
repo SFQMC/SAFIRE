@@ -36,25 +36,6 @@ However, it is able to convert SAFIRE format hamiltonians to it's own internal f
 In this tutorial, we will exclusively use safiretools to build Hamiltonians,
 then use the SAFIRE to AutoHF converter to provide AutoHF with the desired Hamiltonian.
 
-## Run the Cell Below to Set Up the Tutorial
-
-```{code-cell} ipython3
----
-id: d3YMrpqs5xcm
-colab:
-  base_uri: https://localhost:8080/
-outputId: ababa026-ef02-445e-cde1-fc1d1c20b9f5
----
-%load_ext autoreload
-%autoreload
-from pathlib import Path
-# simple setup
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "dfgyQ5OC5xcn"}
 
 ## Set Up the Model
@@ -77,6 +58,9 @@ colab:
   height: 979
 outputId: 20f4b568-da4f-4137-fb6f-575426ee0d09
 ---
+%mkdir -p data
+%cd -q data
+
 from safiretools import HamiltonianBuilder, Lattice
 from safiretools import vis
 
@@ -249,7 +233,7 @@ You should have gotten a HF energy of -17.7499999549238 $t$ (to within about $1 
 
 autohf_to_afqmc(
     results,
-    output_fname = scratch_dir/"uhf_wfn.h5"
+    output_fname = "uhf_wfn.h5"
 )
 ```
 

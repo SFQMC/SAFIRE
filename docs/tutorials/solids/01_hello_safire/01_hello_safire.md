@@ -52,6 +52,9 @@ $$
 ```
 
 ```{code-cell} ipython3
+:tags: [scroll-output]
+:scrolled: true
+
 !mpirun -n 4 $AFQMC_EXEC files/afqmc.json
 ```
 
