@@ -1,15 +1,15 @@
 {
-  "output_name": "qmc",
-  "seed": 42,
   "execute": {
     "wavefunction": {
-      "filename": "wfn.h5"
+      "filename": "wavefunction.h5"
     },
     "hamiltonian": {
-      "filename": "hamil.h5"
+      "filename": "hamiltonian.h5"
     },
     "timestep": 0.01,
     "steps": 10000,
+    "equilibration_steps": 1000,
+    "measure_interval": 10,
     "num_walkers": 200
   }
 }

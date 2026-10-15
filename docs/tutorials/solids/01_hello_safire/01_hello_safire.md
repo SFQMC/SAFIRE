@@ -20,16 +20,31 @@ kernelspec:
 
 For this tutorial, we have supplied an HDF5 file containing the Born-Oppenheimer
 Hamiltonian for Si in its primitive cell at equilibrium
-in `hamil.h5`.
+in `hamiltonian.h5`.
 
 ![](files/Si_primitive.png)
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
-:start-after: <!-- BEGIN hello-wavefunction-and-outputs -->
-:end-before: <!-- END hello-wavefunction-and-outputs -->
+:start-after: <!-- BEGIN hello-wavefunction -->
+:end-before: <!-- END hello-wavefunction -->
 ```
 
-You will learn more about this in {doc}`../04_computing_observables/04_computing_observables`.
+For this tutorial, we have supplied an HDF5 file containing the Kohn-Sham Slater determinant
+of a Quantum ESPRESSO DFT calculation as the trial wavefunction.
+
+$$
+| \Psi_\mathrm{T} \rangle = | \Phi_\mathrm{DFT} \rangle
+$$
+
+```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
+:start-after: <!-- BEGIN hello-jobfile-and-running -->
+:end-before: <!-- END hello-jobfile-and-running -->
+```
+
+```{code-cell} ipython3
+!echo Path to SAFIRE: $AFQMC_EXEC
+!$AFQMC_EXEC --help
+```
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
 :start-after: <!-- BEGIN hello-running -->
@@ -37,12 +52,12 @@ You will learn more about this in {doc}`../04_computing_observables/04_computing
 ```
 
 ```{code-cell} ipython3
-!$AFQMC_EXEC files/input.json
+!mpirun -n 4 $AFQMC_EXEC files/afqmc.json
 ```
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
-:start-after: <!-- BEGIN hello-parallel -->
-:end-before: <!-- END hello-parallel -->
+:start-after: <!-- BEGIN hello-run-output -->
+:end-before: <!-- END hello-run-output -->
 ```
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
@@ -50,73 +65,43 @@ You will learn more about this in {doc}`../04_computing_observables/04_computing
 :end-before: <!-- END hello-postprocessing -->
 ```
 
-```bash
-====== [analyze_scalar_data Settings] ======
-
-[+] fname            = qmc.s000.scalar.dat
-[+] mark_header      = #               
-[+] series_column    = time           
-[+] nequil           = 2.0             
-[+] estimate_equil   = False           
-[+] column           = LocalEnergy     
-[+] reblock          = 1               
-[+] ndiscard         = None            
-[+] list             = False           
-[+] trace            = False           
-[+] append           = None            
-[+] dump             = False           
-[+] dump_fname       = trace.dat       
-[+] verbose          = True            
-[+] autocorr         = None            
-[+] savefig          = None            
-[+] dump_avail_columns = False           
-
-AFQMC Energy    -1.135742 +/-   0.000286 7.87  2.0/100.0
-```
-
 ```{code-cell} ipython3
-!scalar_stats qmc.s000.scalar.dat -s time -e 2.0 -t
+from safiretools import Results
+
+results = Results("afqmc.results.h5")
+
+energy, energy_err = results.average("Energy")
+
+print(f"E = {energy.real} ± {energy_err.real}")
 ```
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
-:start-after: <!-- BEGIN hello-helpers -->
-:end-before: <!-- END hello-helpers -->
+:start-after: <!-- BEGIN hello-timeseries -->
+:end-before: <!-- END hello-timeseries -->
 ```
 
 ```{code-cell} ipython3
-from pathlib import Path
-import shutil
+# manual
+import matplotlib.pyplot as plt
+plt.plot(results.timeseries("ProjectionTime"), results.timeseries("Energy").real)
+plt.show()
 
-import numpy as np
-
-from tutorial_utils import run_afqmc
-from stats.scalar_dat import analyze_scalar_data
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-
-# copy the provided files
-files_dir = scratch_dir / "files"
-files_dir.mkdir(exist_ok=True)
-shutil.copy("files/input.json", files_dir)
-shutil.copy("files/wfn.h5", files_dir)
-shutil.copy("files/hamil.h5", files_dir)
-
-run_afqmc(
-    run_dir=scratch_dir,
-    input_file="files/input.json",   # the location of the sample input file.
-    np=16,                                         # to run in serial just as before!
-    output_file=None
-)
-
-# post process!
-_ = analyze_scalar_data(dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
-    series_column = "time",
-    nequil = 10,
-    trace = True
-))
+# visualization helper
+from safiretools import vis
+vis.plot_timeseries(results, skip=0)
+plt.show()
 ```
+
+You should get an output compatible with `Energy = -0.7299 ± 0.0017`.
+
+```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
+:start-after: <!-- BEGIN hello-equilibration -->
+:end-before: <!-- END hello-equilibration -->
+```
+
+You will learn how to measure observables other than the energy in {doc}`../04_computing_observables/04_computing_observables`.
+
++++
 
 ```{include} /tutorials/molecules/01_hello_safire/01_hello_safire.md
 :start-after: <!-- BEGIN hello-summary -->
