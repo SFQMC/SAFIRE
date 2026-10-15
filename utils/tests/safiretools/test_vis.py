@@ -59,8 +59,9 @@ def test_plot_lattice_draws_into_given_axes():
 def test_density_shapes_agree():
     lattice = _lattice('honeycomb')
     density = np.arange(lattice.N_sites, dtype=float)
-    flat = _site_colors(vis.plot_lattice(lattice, density=density))
-    cell = _site_colors(vis.plot_lattice(lattice, density=density.reshape(3, 3, 2)))
+    flat = _site_colors(vis.plot_lattice(lattice, ax=plt.figure().gca(), density=density))
+    cell = _site_colors(vis.plot_lattice(lattice, ax=plt.figure().gca(),
+                                         density=density.reshape(3, 3, 2)))
     np.testing.assert_array_equal(flat, cell)
 
 
