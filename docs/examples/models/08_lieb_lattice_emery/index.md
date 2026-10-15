@@ -746,6 +746,7 @@ if True:
     )
     ax.figure.savefig("charge.png")
 
+    plt.figure()
     ax = vis.plot_lattice(
         lattice,
         density=rho_spin.real,

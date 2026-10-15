@@ -25,9 +25,67 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import LogNorm, Normalize
 from matplotlib.patches import Circle
 from matplotlib.patheffects import withStroke
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import MaxNLocator, MultipleLocator
+from scipy.interpolate import interp1d
 
 _HALO = [withStroke(linewidth=7, foreground='white')]
+
+
+def plot_timeseries(results, *, ax=None, obs="Energy", skip=0):
+    """
+    Plot the Monte Carlo time series of a scalar observable with its average.
+
+    The real part of each bin is plotted against the projection time, with the
+    mean and its error band over the bins after `skip`, and a dashed line where
+    they start. A secondary axis on top shows the bin index. The mean and error
+    are also printed, rounded to two significant digits of the error.
+
+    Parameters
+    ----------
+    results : Results
+        The results of a run.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw into. Default the current axes.
+    obs : str, optional
+        Name of a scalar observable. Default "Energy".
+    skip : int, optional
+        Leading bins to drop as equilibration from the average. Default 0.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+    """
+    tau = results.timeseries("ProjectionTime")
+    y = results.timeseries(obs).real
+    mean, error = results.average(obs, skip=skip)
+    mean, error = np.real(mean), np.real(error)
+    if np.isfinite(error) and error > 0:
+        # two significant digits on the error, the mean to the same decimal place
+        digits = 1 - int(np.floor(np.log10(error)))
+        decimals = max(digits, 0)
+        print(f"{obs} = {round(mean, digits):.{decimals}f} ± {round(error, digits):.{decimals}f}")
+    else:
+        print(f"{obs} = {mean} ± {error}")
+
+
+    if ax is None:
+        ax = plt.gca()
+    ax.axvline(tau[skip], ls="dashed", color="#aaa")
+    ax.axhspan(mean - error, mean + error, color="tab:blue", alpha=0.3, linewidth=0)
+    ax.plot(tau, y, color="#444")
+    ax.axhline(mean, color="tab:blue")
+    ax.set_xlabel(r"$\tau$")
+    ax.set_ylabel(obs)
+
+    bins = np.arange(len(tau))
+    top = ax.secondary_xaxis(
+        "top",
+        functions=(interp1d(tau, bins, fill_value="extrapolate"),
+                   interp1d(bins, tau, fill_value="extrapolate")))
+    top.xaxis.set_major_locator(MaxNLocator(integer=True))
+    top.set_xlabel("Bins")
+
+    return ax
 
 
 def plot_lattice(
@@ -46,7 +104,6 @@ def plot_lattice(
         show_labels=True,
         show_lattice_vecs=True,
         title=None,
-        fig_scale=2,
 ):
     """
     Plot the sites of a lattice and the bonds to their nth-nearest neighbors.
@@ -58,8 +115,7 @@ def plot_lattice(
     lattice : Lattice
         A built lattice.
     ax : matplotlib.axes.Axes, optional
-        Axes to draw into. By default a new figure is created, sized to the
-        lattice.
+        Axes to draw into. Default the current axes.
     density : array_like, optional
         One value per site, used to color it. Either flat in site order or
         shaped ``(L1, L2, nb)``; ``(L1, L2)`` works when ``nb == 1``.
@@ -82,19 +138,13 @@ def plot_lattice(
         True.
     title : str, optional
         Axes title. Default the lattice size and type.
-    fig_scale : float, optional
-        Figure inches per unit length, when a figure is created. Default 2.
 
     Returns
     -------
     matplotlib.axes.Axes
     """
-    positions = np.array([site.position for site in lattice.get_sites()])
-
     if ax is None:
-        width, height = fig_scale*(np.ptp(positions, axis=0) + 1)
-        fig, ax = plt.subplots(figsize=(width, height))
-        fig.patch.set(linewidth=4, edgecolor='0.5')
+        ax = plt.gca()
 
     ax.set_aspect(1.)
     ax.xaxis.set_major_locator(MultipleLocator(1.0))
