@@ -1,0 +1,1 @@
+../../01_hello_safire/files/make_inputs.sh
