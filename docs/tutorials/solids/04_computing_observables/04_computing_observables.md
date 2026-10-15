@@ -20,26 +20,26 @@ kernelspec:
 :end-before: <!-- END observables-intro -->
 ```
 
+## Run the Cell Below to Set Up the Tutorial
+
 ```{code-cell} ipython3
 :id: 616ca764-f070-434a-8146-e1511f273342
 
 # Run me (shift+enter or click the play button) to setup the tutorial!
-from pathlib import Path
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 
 # copy files to scratch
 import shutil
-_ = shutil.copy("files/hamil.h5", scratch_dir)
-_ = shutil.copy("files/wfn.h5", scratch_dir)
+_ = shutil.copy("../files/hamil.h5", ".")
+_ = shutil.copy("../files/wfn.h5", ".")
 ```
 
 ```{code-cell} ipython3
 :id: 5943e22b-4312-40ac-98a4-d0cbaf65316d
 :outputId: b00e1736-2ab7-4ffe-c35d-fb663a2c6277
 
-!ls -al {scratch_dir}
+!ls -al
 ```
 
 +++ {"id": "4d4d8135-bc2d-4caa-bbaf-c88ab045176c"}
@@ -61,7 +61,7 @@ We will need the Hamiltonian again to evaluate the energy from the measured obse
 import h5py
 import numpy as np
 
-with h5py.File(scratch_dir / "hamil.h5", "r") as f:
+with h5py.File("hamil.h5", "r") as f:
     system = f["System"].attrs
     M = int(system["number_of_bands"])
     # constant energy: nuclear repulsion and the Madelung self-interaction of the electrons
@@ -99,7 +99,7 @@ outputId: f3692576-0e97-4c3f-8440-8ed09dfeb738
 from safiretools import write_jobfile
 
 write_jobfile(
-    scratch_dir / "afqmc_mixed.json",
+    "afqmc_mixed.json",
     {
         "seed": 42,
         "execute": {
@@ -137,8 +137,10 @@ colab:
   base_uri: https://localhost:8080/
 id: 6fnE-_O_HUgs
 outputId: 3345a1e5-a201-4ba0-f6c0-ea04425aa41c
+scrolled: true
+tags: [scroll-output]
 ---
-! cd data && mpirun -n 16 $AFQMC_EXEC afqmc_mixed.json
+!mpirun -n 16 $AFQMC_EXEC afqmc_mixed.json
 ```
 
 +++ {"id": "fgJ_Pp2EA7oA"}
@@ -164,7 +166,7 @@ def onebody_energy(onerdm):
     # factor 2 because this calculation runs with closed walkers
     return 2 * np.einsum("ij,ij->", h, onerdm[0])
 
-results = Results(scratch_dir / "afqmc_mixed.results.h5")
+results = Results("afqmc_mixed.results.h5")
 
 rebinsize = 60 # chosen automatically by default. only required here to get exact numerical agreement between different observables
 
@@ -252,7 +254,7 @@ dt = 0.01
 bp_lengths = [40, 50, 60]  # Multiple BP lengths, in steps
 # Set up AFQMC parameters with back-propagation
 write_jobfile(
-    scratch_dir / "afqmc_bp.json",
+    "afqmc_bp.json",
     {
         "seed": 42,
         "execute": {
@@ -289,11 +291,13 @@ colab:
   base_uri: https://localhost:8080/
 id: 918df5d4
 outputId: af566232-d9fd-434f-f6ad-951e8242c35f
+scrolled: true
+tags: [scroll-output]
 ---
 # Run AFQMC with back-propagation
 print("Running AFQMC with back-propagation estimator...")
 print("This will take longer than mixed estimators due to the additional back-propagation steps.")
-! cd data && mpirun -n 16 $AFQMC_EXEC afqmc_bp.json
+!mpirun -n 16 $AFQMC_EXEC afqmc_bp.json
 ```
 
 ### Run the Code Below to Evaluate the One-Body Energy from the One-RDM and Compare with the BP Estimator
@@ -305,7 +309,7 @@ colab:
 id: 39c23cf1
 outputId: 9db77855-7355-4009-f299-6dd441e3e317
 ---
-results_bp = Results(scratch_dir / "afqmc_bp.results.h5")
+results_bp = Results("afqmc_bp.results.h5")
 
 bp_onebody_energy, bp_onebody_energy_err = np.transpose([
    results_bp.evaluate(onebody_energy, [f"BackPropEstimator/Steps={bp_length}/OneRDM"])

@@ -18,18 +18,6 @@ kernelspec:
 Status:
 - we can reproduce Adam's energy for the 4x4 tilted Lieb lattice (2 Cu per unit cell)!!
 
-```{code-cell} ipython3
-:editable: true
-:id: c40c0266-bc19-4216-a70a-44d62234e9fd
-
-from pathlib import Path
-
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "d13e8127-0310-46e7-8546-f7e2d7bed54e"}
 
 ## Set Up the Lattice
@@ -37,6 +25,9 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 ```{code-cell} ipython3
 :id: 3f6aeee9-53bd-41a8-be26-f00472aaf8f5
 :outputId: 41c1c867-f098-44c7-d47d-dfcb8232728e
+
+%mkdir -p data
+%cd -q data
 
 from safiretools import Lattice
 from safiretools import vis
@@ -161,7 +152,7 @@ hamiltonian = LatticeHamiltonian.from_dict(
     source=hamiltonian_params
 )
 
-hamiltonian.to_hdf5(scratch_dir/"afqmc.h5")
+hamiltonian.to_hdf5("afqmc.h5")
 ```
 
 +++ {"id": "ef2ed76f-26fe-4818-9c90-8e74476d2bef"}
@@ -200,7 +191,7 @@ results = lattice_hf(
 
 autohf_to_afqmc(
     results,
-    output_fname = scratch_dir/"ghf_wfn.h5"
+    output_fname = "ghf_wfn.h5"
 )
 ```
 
@@ -382,7 +373,7 @@ hamiltonian = LatticeHamiltonian.from_dict(
     source=hamiltonian_params
 )
 
-hamiltonian.to_hdf5(scratch_dir/"lieb.h5")
+hamiltonian.to_hdf5("lieb.h5")
 ```
 
 ```{code-cell} ipython3

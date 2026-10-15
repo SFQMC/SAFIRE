@@ -54,11 +54,8 @@ well as the corresponding augmented cGTO basis sets [2-5].
 :outputId: 6c4e562d-b891-4890-fe3c-45c7898cfbfd
 
 # setup the tutorials by runnig this block
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 
 ecp_soc = {
     'Pb' : '''
@@ -137,9 +134,6 @@ We will begin by generating the Hamiltonian and trial wavefunction for the neutr
 
 from pyscf import gto, scf
 
-neutral_scratch_dir = scratch_dir / "neutral_atom"
-neutral_scratch_dir.mkdir(exist_ok=True, parents=True)
-
 ## Run SOC-GHF using PySCF
 mol = gto.M(
     atom="Pb 0. 0. 0.",
@@ -215,12 +209,11 @@ from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 
 # inputs
-local_scratch_dir = neutral_scratch_dir
 chol_tol = 1e-5
 
 # output
-fout = local_scratch_dir / 'afqmc_sf.h5'
-fout_soc = local_scratch_dir / 'afqmc_soc.h5'
+fout = 'neutral_afqmc_sf.h5'
+fout_soc = 'neutral_afqmc_soc.h5'
 
 #####################################
 #                                   #
@@ -255,13 +248,15 @@ wavefunction = Wavefunction.from_pyscf(
 ```{code-cell} ipython3
 :id: PsAy09S7i2Xd
 :outputId: 1ef1d7f2-a846-4794-b2cd-1d91df0bf49d
+:tags: [scroll-output]
+:scrolled: true
 
 from safiretools import write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
 # Write JSON job file, which also writes the wavefunction and the Hamiltonian to HDF5
 write_jobfile(
-    local_scratch_dir/ "afqmc.json",
+    "neutral_afqmc.json",
     {
         "seed": 42,
         "execute": {
@@ -277,18 +272,10 @@ write_jobfile(
     }
 )
 
-# run AFQMC
-run_afqmc(
-    run_dir=local_scratch_dir,
-    run_mode="local_cpu",
-    timeout_mins=100,
-    input_file="afqmc.json",
-    np=16,             # number of MPI tasks
-    output_file=None,
-)
+!mpirun -n 16 $AFQMC_EXEC neutral_afqmc.json
 
 settings = dict(
-    fname = local_scratch_dir/"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",
     nequil = 8,
     trace = True
@@ -311,9 +298,6 @@ id: 8rI2HhjiZRWO
 outputId: 4d9b87d0-91f6-4828-9d9a-67d86d9730a4
 ---
 from pyscf import gto, scf
-
-charged_scratch_dir = scratch_dir / "charged_atoms"
-charged_scratch_dir.mkdir(exist_ok=True, parents=True)
 
 ## Run SOC-GHF using PySCF
 mol = gto.M(
@@ -383,12 +367,11 @@ from safiretools import Wavefunction
 
 
 # inputs
-local_scratch_dir = charged_scratch_dir
 chol_tol = 1e-5
 
 # output
-fout = local_scratch_dir / 'afqmc_sf.h5'
-fout_soc = local_scratch_dir / 'afqmc_soc.h5'
+fout = 'charged_afqmc_sf.h5'
+fout_soc = 'charged_afqmc_soc.h5'
 
 #####################################
 #                                   #
@@ -416,14 +399,6 @@ wavefunction = Wavefunction.from_pyscf(
 )
 ```
 
-```{code-cell} ipython3
-:id: pN8NwsiSi2Xe
-
-charged_scratch_dir = scratch_dir / "charged_atoms"
-local_scratch_dir = charged_scratch_dir
-fout_soc = local_scratch_dir / 'afqmc_soc.h5'
-```
-
 +++ {"id": "6RUWlygXi2Xe"}
 
 ### Run SAFIRE
@@ -431,13 +406,15 @@ fout_soc = local_scratch_dir / 'afqmc_soc.h5'
 ```{code-cell} ipython3
 :id: JWAr64xIi2Xe
 :outputId: 0f831053-5571-4d5f-88ca-1a7c8f7edd61
+:tags: [scroll-output]
+:scrolled: true
 
 ### from safiretools import write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
 # Write JSON job file
 write_jobfile(
-    local_scratch_dir/ "afqmc.json",
+    "charged_afqmc.json",
     {
         "seed": 42,
         "execute": {
@@ -453,16 +430,10 @@ write_jobfile(
     }
 )
 
-# run AFQMC
-run_afqmc(
-    run_dir=local_scratch_dir,
-    input_file="afqmc.json",
-    np=16,
-    output_file=None
-)
+!mpirun -n 16 $AFQMC_EXEC charged_afqmc.json
 
 settings = dict(
-    fname = local_scratch_dir/"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",
     nequil = 8,
     trace = True

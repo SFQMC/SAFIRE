@@ -29,8 +29,6 @@ using an appropriate trial wavefunction.
 ```{code-cell} ipython3
 :id: ljFeTy3vE6ls
 
-from pathlib import Path
-
 import h5py as h5
 import numpy as np
 from pyscf import gto,scf,mcscf
@@ -41,10 +39,8 @@ from safiretools import write_jobfile
 
 from stats.scalar_dat import analyze_scalar_data
 
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 
 num_mpi_tasks = 16 # adjust based on your resources
 ```
@@ -224,8 +220,6 @@ To avoid doing this for every point on the PEC, we will simply choose a point on
 This avoids running many calculations at each point on the PEC to check convergence at the cost of perhaps too many Slater determinants at some points
 on the PEC.
 
-<b>We will automate this using Python and the tutorial helper function, run_afqmc().</b>
-
 Again, we will use the `ndets_to_read` keyword in the `wavefunction` input block to limit the number of Slater determinants.
 In the code block below, you will notice that we are setting,
 
@@ -283,18 +277,16 @@ will generate a `wavefunction` block that points to the wavefunction file, with 
 Note: This might take some time. You might want to run this on a computing cluster instead.
 
 ```{code-cell} ipython3
+:tags: [scroll-output]
+:scrolled: true
+
 ndets = [50,250,500,750] # list of Ndet values to run
 energies = []
 stochastic_uncertainties = []
 # compute E(N_det) for the CAS trial wavefunction
 for ndet in ndets:
-
-    # make a sub-scratch dir for better book keeping
-    scratch_dir_local = scratch_dir / f"Ndet_{ndet}"
-    scratch_dir_local.mkdir(parents=True, exist_ok=True)
-
     write_jobfile(
-        scratch_dir_local / "afqmc.json",
+        f"afqmc_ndet{ndet}.json",
         {
             "seed": 42,
             "execute": {
@@ -312,18 +304,10 @@ for ndet in ndets:
             }
         }
     )
-    # run AFQMC
-    run_afqmc(
-        run_dir=scratch_dir_local,
-        run_mode="local_cpu",
-        timeout_mins=100,
-        input_file="afqmc.json",
-        np=num_mpi_tasks,         # number of MPI tasks
-        output_file="afqmc.out"   # optionally direct output to file instead of here
-    )
+    !mpirun -n {num_mpi_tasks} $AFQMC_EXEC afqmc_ndet{ndet}.json
 
     settings = dict(
-        fname = scratch_dir_local/"qmc.s000.scalar.dat",
+        fname = "qmc.s000.scalar.dat",
         xaxis = "time",
         nequil = 5,
         trace = True
@@ -384,9 +368,6 @@ Run the cell block below in order to load the `run_afqmc_on_dimer()` function in
 
 def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
 
-    scratch_dir = Path("data") / f"N2_bondlength_{delta:.4f}"
-    scratch_dir.mkdir(parents=True, exist_ok=True)
-
     print(f"Running AFQMC on dimer with bond length {delta:.4f} Angstroms")
 
     # 1. run CASSCF to get a basis and a trial wavefunction
@@ -425,7 +406,7 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
 
     # write JSON job file, which also writes the wavefunction and the Hamiltonian to HDF5
     write_jobfile(
-        scratch_dir/ "afqmc.json",
+        f"afqmc_{delta:.4f}.json",
         {
             "seed": 42,
             "execute": {
@@ -447,18 +428,10 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
 
     print("Running AFQMC",flush=True)
 
-    # run afqmc
-    run_afqmc(
-        run_dir=scratch_dir,
-        run_mode="local_cpu",
-        timeout_mins=100,
-        input_file="afqmc.json",
-        np=num_mpi_tasks,             # number of MPI tasks
-        output_file="afqmc.out"   # optionally direct output to file instead of here
-    )
+    !mpirun -n {num_mpi_tasks} $AFQMC_EXEC afqmc_{delta:.4f}.json
 
     settings = dict(
-        fname = scratch_dir/"qmc.s000.scalar.dat",
+        fname = "qmc.s000.scalar.dat",
         xaxis = "time",
         nequil = 5,
         trace = True
@@ -479,6 +452,8 @@ Now we can use the `run_afqmc_on_dimer()` function to compute the PEC of the $N_
 
 ```{code-cell} ipython3
 :id: HAXNMGv0fmdE
+:tags: [scroll-output]
+:scrolled: true
 
 # we can simply use the automation function above to compute the PEC
 

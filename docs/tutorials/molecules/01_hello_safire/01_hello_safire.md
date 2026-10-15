@@ -165,6 +165,9 @@ Run SAFIRE with the provided input files on 4 MPI tasks.
 <!-- END hello-running -->
 
 ```{code-cell} ipython3
+:tags: [scroll-output]
+:scrolled: true
+
 !mpirun -n 4 $AFQMC_EXEC files/afqmc.json
 ```
 

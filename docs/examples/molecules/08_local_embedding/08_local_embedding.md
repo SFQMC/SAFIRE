@@ -30,14 +30,11 @@ which, among other things, provides tools to analyze the locality of a set of or
 :id: v08YqIkR2r02
 
 # Some setup
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
 # from embeddingAFQMC
 from embedding.orbital.assign import euclid_nd, gen_orbital_stats, print_stats
 
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 
 Hartree = 27.211407953 # eV
 Bohr = 0.529177        # Angstrom
@@ -77,8 +74,6 @@ from pyscf import gto, scf, lo
 from safiretools import MolecularHamiltonian, NOMSDWavefunction, write_jobfile
 from stats.scalar_dat import analyze_scalar_data
 
-from tutorial_utils import run_afqmc
-
 
 # custom metric to take the projection of the orbital position onto the xy plane
 def euclid_2d(r1, r2):
@@ -90,9 +85,6 @@ def euclid_2d(r1, r2):
 def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=None):
     # 1. generate underlying CMO basis
     # run initial HF calculation to generate basis
-
-    local_scratch = scratch_dir / f"h={h:5.5f}"
-    local_scratch.mkdir(parents=True, exist_ok=True)
 
     def get_atomic_positions(h):
         """
@@ -217,7 +209,7 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
 
     # 6. write JSON job file, which also writes the Hamiltonian and the wavefunction to HDF5
     write_jobfile(
-        local_scratch / "afqmc.json",
+        f"afqmc_h{h:5.5f}.json",
         {
             "seed": 42,
             "execute": {
@@ -234,19 +226,11 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
     )
 
     # 7. run AFQMC
-    # run the AFQMC calculation...
-    run_afqmc(
-        run_dir=local_scratch,
-        run_mode="local_cpu",
-        timeout_mins=100,
-        input_file="afqmc.json",
-        np=MPI_TASKS,             # number of MPI tasks
-        output_file="afqmc.out"   # optionally include output here by setting to None
-    )
+    !mpirun -n {MPI_TASKS} $AFQMC_EXEC afqmc_h{h:5.5f}.json
 
     # 8. analyze results
     settings = dict(
-        fname = local_scratch/"qmc.s000.scalar.dat",
+        fname = "qmc.s000.scalar.dat",
         xaxis = "time",
         nequil = 10,
         trace = True
@@ -268,6 +252,8 @@ colab:
   height: 1000
 id: AsrchZED9FfD
 outputId: d46cbef5-7b91-4c67-9ae3-c5217e07894c
+scrolled: true
+tags: [scroll-output]
 ---
 o_atom_heights = [ 1.247, 1.436, 1.814, 2.381, 3.326, 3.893]
 
@@ -297,7 +283,7 @@ for h in o_atom_heights:
     print(f"E_rhf = {Erhf*Hartree} eV")
     print(f"correlation E = {(E - Erhf)*Hartree}")
 
-    with h5.File(scratch_dir / "afqmc_results.h5", "a") as f:
+    with h5.File("afqmc_results.h5", "a") as f:
         save_results(f, "h", data=o_atom_heights)
         save_results(f, "E", data=E_list)
         save_results(f, "dE", data=dE_list)
@@ -318,7 +304,7 @@ id: d74PFj8g8pAR
 outputId: 91e568eb-80d6-4e00-8e5e-0596bf3bfa65
 ---
 # read results from file to allow saving / re-analysis.
-with h5.File(scratch_dir / "afqmc_results.h5", "r") as f:
+with h5.File("afqmc_results.h5", "r") as f:
     o_atom_heights = f["h"][:]
     E_list = f["E"][:]
     dE_list = f["dE"][:]
@@ -332,7 +318,7 @@ plt.legend()
 plt.xlabel('h (Bohr)')
 plt.ylabel('E (eV)')
 plt.title('Energy vs O atom height')
-plt.savefig(scratch_dir / "energy_vs_height.png")
+plt.savefig("energy_vs_height.png")
 plt.show()
 ```
 
@@ -415,7 +401,7 @@ id: 9QDuUutS9BwO
 outputId: f5afcd28-81bc-4dcc-927c-0bdc3e332daf
 ---
 # read results from file to allow saving / re-analysis.
-with h5.File(scratch_dir / "afqmc_results.h5", "r") as f:
+with h5.File("afqmc_results.h5", "r") as f:
     o_atom_heights = f["h"][:]
     E_list = f["E"][:]
     dE_list = f["dE"][:]
@@ -485,6 +471,6 @@ plt.legend()
 plt.xlabel('h (Bohr)')
 plt.ylabel('E (eV)')
 plt.title('Energy vs O atom height')
-plt.savefig(scratch_dir / "energy_vs_height.png")
+plt.savefig("energy_vs_height.png")
 plt.show()
 ```

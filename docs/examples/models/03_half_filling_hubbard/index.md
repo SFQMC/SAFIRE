@@ -49,14 +49,11 @@ import afqmctools.observables.spin as spobs
 
 from stats.scalar_dat import analyze_scalar_data
 
-from tutorial_utils import run_afqmc
-
 import autohf
 from afqmctools.inputs.from_autohf import autohf_to_afqmc
 
-from pathlib import Path
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+%mkdir -p data
+%cd -q data
 ```
 
 +++ {"editable": true, "id": "f91cf26c-5663-416e-9802-aeb1aa5a77c6"}
@@ -327,7 +324,7 @@ dataHFC2 = autohf.solver.lattice_hf(
 
 autohf_to_afqmc(
     dataHFC2,
-    output_fname = scratch_dir / wfn_fname
+    output_fname = wfn_fname
 )
 ```
 
@@ -406,7 +403,7 @@ hamiltonian = builder.get_hamiltonian()
 :id: 10617b29-48f0-4a65-9cd2-40f6199035c1
 
 write_jobfile(
-    scratch_dir / "afqmc.json",
+    "afqmc.json",
     {
         "execute": {
             "wavefunction": {
@@ -430,20 +427,17 @@ write_jobfile(
 ```{code-cell} ipython3
 :id: 33a63a5d-ea54-4b9c-bbdd-14a281bb5d73
 :outputId: cc66b225-6079-444f-d976-160bae2fe148
+:scrolled: true
+:tags: [scroll-output]
 
-run_afqmc(
-    run_dir = scratch_dir,
-    input_file = "afqmc.json",
-    np = 16,
-    output_file = None,
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
 :id: 66d213fc-1f02-41e4-adc3-e1449a04b403
 :outputId: b9242712-fde9-4c91-a990-61cc5cf271f0
 
-!energy_stats {scratch_dir / "qmc.s000.scalar.dat"} -t -e 20.0
+!energy_stats qmc.s000.scalar.dat -t -e 20.0
 ```
 
 ```{code-cell} ipython3
@@ -451,7 +445,7 @@ run_afqmc(
 :outputId: 02f67500-9f6f-4c12-a4d9-a5a206ddc890
 
 settings = dict(
-    fname = scratch_dir / "qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     nequil = 14,
     trace = True,
     return_data= True,

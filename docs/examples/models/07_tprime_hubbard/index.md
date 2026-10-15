@@ -40,17 +40,6 @@ References:
 
 1. https://journals.aps.org/prresearch/abstract/10.1103/PhysRevResearch.3.013065
 
-```{code-cell} ipython3
-:id: 418bd9e4-4da9-4612-889f-6f365fc667a6
-
-# simple setup
-from tutorial_utils import run_afqmc
-from pathlib import Path
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "b8153eeb-0f28-4151-ad09-af65db81f358"}
 
 ## Setup - Make a Lattice
@@ -58,6 +47,9 @@ scratch_dir.mkdir(parents=True, exist_ok=True)
 ```{code-cell} ipython3
 :id: 254dc31a-b763-4cb3-9867-5129279b9c2b
 :outputId: c065dd3d-6070-4a49-80ef-e02029ba7b13
+
+%mkdir -p data
+%cd -q data
 
 from safiretools import Lattice
 from safiretools import vis
@@ -212,7 +204,7 @@ vis.plot_lattice(
 # make a JSON job file
 from safiretools import write_jobfile
 
-write_jobfile(scratch_dir/"afqmc.json", {
+write_jobfile("afqmc.json", {
     "seed": 42,                          # for reproducibility
     "execute": {
         "wavefunction": wfn,
@@ -255,13 +247,10 @@ to submit the job (perhaps adjusting the run time).
 ```{code-cell} ipython3
 :id: c5ec3cf1-78cc-428e-8436-c3ddef25451e
 :outputId: 3544767c-4beb-4497-a895-92af2c2becc8
+:scrolled: true
+:tags: [scroll-output]
 
-run_afqmc(
-    run_dir=scratch_dir,
-    output_file=None,       # this will dump the output from AFQMC here
-    np=16,                   # set number of MPI tasks
-    timeout_mins=20
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 +++ {"id": "3cb4eb7a-0137-4f7c-b73a-adae570c2cd7"}
@@ -283,7 +272,7 @@ from stats.scalar_dat import analyze_scalar_data
 nequil = 2.0 #t^{-1}
 
 analysis_settings = dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
+    fname = "qmc.s000.scalar.dat",
     xaxis = "time",     # use units of imaginary time for equilibration
     nequil = nequil,    # length of equilibration phase (in units of imaginary time)
     trace = True,       # plots a trace of the scalar data
@@ -309,7 +298,7 @@ from afqmctools.analysis.rdm import average_afqmc_rdm
 
 naverages = 4
 
-rho_avg, delta_rho = average_afqmc_rdm(rdm_file=scratch_dir/"qmc.s000.stat.h5")
+rho_avg, delta_rho = average_afqmc_rdm(rdm_file="qmc.s000.stat.h5")
 
 rho_up = rho_avg[:,0,:,:].diagonal().reshape((naverages,4,8))
 delta_rho_up = delta_rho[:,0,:,:].diagonal().reshape((naverages,4,8))

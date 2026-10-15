@@ -20,16 +20,6 @@ kernelspec:
 :end-before: <!-- END observables-intro -->
 ```
 
-```{code-cell} ipython3
-:id: 616ca764-f070-434a-8146-e1511f273342
-
-# Run me (shift+enter or click the play button) to setup the tutorial!
-from pathlib import Path
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "4d4d8135-bc2d-4caa-bbaf-c88ab045176c"}
 
 ## Set Up the System
@@ -47,6 +37,9 @@ colab:
 id: c844616d-45c5-498a-b6f9-c995027965e6
 outputId: 855ebc93-90d5-4e84-94ff-e974f19587fc
 ---
+%mkdir -p data
+%cd -q data
+
 import numpy as np
 
 from safiretools import HamiltonianBuilder, Lattice, NOMSDWavefunction
@@ -152,7 +145,7 @@ outputId: f3692576-0e97-4c3f-8440-8ed09dfeb738
 from safiretools import write_jobfile
 
 write_jobfile(
-    scratch_dir / "afqmc_mixed.json",
+    "afqmc_mixed.json",
     {
         "seed": 42,
         "execute": {
@@ -186,8 +179,10 @@ colab:
   base_uri: https://localhost:8080/
 id: 6fnE-_O_HUgs
 outputId: 3345a1e5-a201-4ba0-f6c0-ea04425aa41c
+scrolled: true
+tags: [scroll-output]
 ---
-! cd data && mpirun -n 16 $AFQMC_EXEC afqmc_mixed.json
+!mpirun -n 16 $AFQMC_EXEC afqmc_mixed.json
 ```
 
 +++ {"id": "fgJ_Pp2EA7oA"}
@@ -215,7 +210,7 @@ M = h.shape[0]
 def onebody_energy(onerdm):
     return np.einsum("ij,sij->", h, onerdm)
 
-results = Results(scratch_dir / "afqmc_mixed.results.h5")
+results = Results("afqmc_mixed.results.h5")
 
 rebinsize = 90 # chosen automatically by default. only required here to get exact numerical agreement between different observables
 
@@ -308,7 +303,7 @@ dt = 0.01
 bp_lengths = [50, 80, 100]  # Multiple BP lengths, in steps
 # Set up AFQMC parameters with back-propagation
 write_jobfile(
-    scratch_dir / "afqmc_bp.json",
+    "afqmc_bp.json",
     {
         "seed": 42,
         "execute": {
@@ -341,11 +336,13 @@ colab:
   base_uri: https://localhost:8080/
 id: 918df5d4
 outputId: af566232-d9fd-434f-f6ad-951e8242c35f
+scrolled: true
+tags: [scroll-output]
 ---
 # Run AFQMC with back-propagation
 print("Running AFQMC with back-propagation estimator...")
 print("This will take longer than mixed estimators due to the additional back-propagation steps.")
-! cd data && mpirun -n 16 $AFQMC_EXEC afqmc_bp.json
+!mpirun -n 16 $AFQMC_EXEC afqmc_bp.json
 ```
 
 ### Run the Code Below to Evaluate the One-Body Energy from the One-RDM and Compare with the BP Estimator
@@ -357,7 +354,7 @@ colab:
 id: 39c23cf1
 outputId: 9db77855-7355-4009-f299-6dd441e3e317
 ---
-results_bp = Results(scratch_dir / "afqmc_bp.results.h5")
+results_bp = Results("afqmc_bp.results.h5")
 
 bp_onebody_energy, bp_onebody_energy_err = np.transpose([
    results_bp.evaluate(onebody_energy, [f"BackPropEstimator/Steps={bp_length}/OneRDM"])

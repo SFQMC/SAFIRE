@@ -63,23 +63,6 @@ more detail.
 <b>In this tutorial, we focus on building Hamiltonian terms via `HamiltonianBuilder.from_input()`.</b>
 We will explore the possible input parameters and their respective meanings/conventions.
 
-+++ {"id": "pGSnNnm7Rr54"}
-
-## Setup: Run Me
-
-Run the cell below to setup a scratch directory.
-
-```{code-cell} ipython3
-:id: bD2Kcg2dRq0C
-
-# setup scratch dir
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "WcOH6y7xOK_V"}
 
 ## Building Hamiltonians from Input Parameters
@@ -212,6 +195,9 @@ colab:
 id: 6QgfLv7kOK_V
 outputId: c3552c28-5791-45f0-ae57-39f29435e27d
 ---
+%mkdir -p data
+%cd -q data
+
 from safiretools import HamiltonianBuilder, Lattice
 from safiretools import vis
 
@@ -252,7 +238,7 @@ all of them. We will not repeat this below.
 ```{code-cell} ipython3
 :id: 1ugXKZ5QQ7ug
 
-hamiltonian.to_hdf5(scratch_dir/"hamiltonian.h5")
+hamiltonian.to_hdf5("hamiltonian.h5")
 ```
 
 +++
@@ -283,7 +269,7 @@ colab:
 id: xrykuJS4SnBR
 outputId: bfe2522e-2996-43d9-88b3-ed2cd7b84350
 ---
-! ls -l {scratch_dir}
+!ls -l
 ```
 
 +++ {"id": "HEbY-vNOOK_W"}

@@ -875,10 +875,8 @@ writer could be reintroduced without touching the solver.
   survives. This is what lets a Hamiltonian and a wavefunction share one file **in either order**,
   which is the common case. (HDF5 unlinks rather than reclaims, so repeatedly rewriting into one
   file grows it.)
-- `AFQMC_EXEC` must never be required just to import safiretools (today's
-  `RuntimeError: AFQMC_EXEC environment variable is not set` fires at import time in
-  `tutorial_utils/helper.py` — becomes a lazy check, only triggered when something actually
-  invokes SAFIRE). A future thin binding to invoke SAFIRE in-process (possibly nanobind) is
+- `AFQMC_EXEC` must never be required just to import safiretools; the docs read it only in the
+  `!mpirun -n … $AFQMC_EXEC` lines that launch SAFIRE. A future thin binding to invoke SAFIRE in-process (possibly nanobind) is
   planned — whatever "run SAFIRE" API safiretools exposes should not hard-code a
   subprocess/executable-path assumption that would preclude that later.
 - Dependency cleanup: drop `pytables` (`stats/config_h5.py`'s only reason for it, rewritten onto
