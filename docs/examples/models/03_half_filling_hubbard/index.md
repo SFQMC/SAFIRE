@@ -29,21 +29,9 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 # use x64 numbers
 from jax import config
 config.update("jax_enable_x64", True)
-import jax
-import jax.numpy as jnp
 
 import matplotlib.pyplot as plt
 import numpy as np
-
-# all the imports used later in the tutorial, but put here for convenience
-
-from safiretools import HamiltonianBuilder, Lattice
-from safiretools import vis
-
-from safiretools import Wavefunction
-from safiretools import write_jobfile
-
-import autohf
 
 %mkdir -p data
 %cd -q data
@@ -88,6 +76,8 @@ lattice_params = {
 :id: b2a30f8a-5c48-4272-b0df-14d9c2062e59
 :outputId: 9a69fa7d-1093-4d5a-8245-f57f3639017c
 
+from safiretools import Lattice
+
 lattice = Lattice.from_dict(params=lattice_params)
 
 Ne = int(lattice.N_sites)//2
@@ -98,6 +88,8 @@ nelec
 ```{code-cell} ipython3
 :id: 9a18f6e5-68f2-46cd-ae51-3bf8826dc679
 :outputId: 47dcfa86-4f49-4688-b813-cc11bcc1c244
+
+from safiretools import vis
 
 vis.plot_lattice(lattice)
 plt.show()
@@ -118,6 +110,8 @@ $$
 ```{code-cell} ipython3
 :id: 7416bbce-9541-46bb-bc52-1e6a42e2d001
 :outputId: 8bcb041d-4e1e-4a10-9bd2-d5a7a2385793
+
+from safiretools import HamiltonianBuilder
 
 builder = HamiltonianBuilder(
           lattice=lattice,
@@ -177,6 +171,10 @@ To do that we'll need:
 
 ```{code-cell} ipython3
 :id: 37602e67-9b8b-4b66-8a1a-33b184a670bc
+
+import jax.numpy as jnp
+
+import autohf
 
 # get the (-1)^i which is really the checkerboard pattern for a 4x4
 signs = np.array([ (-1)**np.sum(s.coord) for s in lattice.sites])
@@ -369,6 +367,8 @@ Next, we will use the Hamiltonian and AutoHF wavefunction to construct a wavefun
 ```{code-cell} ipython3
 :id: 85b8e2f7-d035-4a12-bd53-a2eccf5ae40e
 
+from safiretools import Wavefunction
+
 hamiltonian = builder.get_hamiltonian()
 wavefunction = Wavefunction.from_single_determinant(np.array(dataHFC2[0]["orbitals"].reshape(2,N,np.sum(nelec))))
 
@@ -376,6 +376,8 @@ wavefunction = Wavefunction.from_single_determinant(np.array(dataHFC2[0]["orbita
 
 ```{code-cell} ipython3
 :id: 10617b29-48f0-4a65-9cd2-40f6199035c1
+
+from safiretools import write_jobfile
 
 write_jobfile(
     "afqmc.json",

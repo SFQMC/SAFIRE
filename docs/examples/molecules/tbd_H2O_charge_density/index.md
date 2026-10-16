@@ -31,13 +31,6 @@ the water molecule at its equilibrium geometry.
 # Run me (shift+enter or click the play button) to setup the tutorial!
 from pathlib import Path
 
-import h5py as h5
-import numpy as np
-from pyscf import gto,scf,mcscf
-
-from safiretools import Wavefunction
-from safiretools import write_jobfile
-
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
 ```
@@ -61,12 +54,9 @@ the total number of electrons...
 
 """
 
-from pathlib import Path
-
 import numpy as np
 from pyscf import gto,scf
 
-from pyscf.scf.hf import dip_moment
 from pyscf.tools import cubegen
 
 scratch = scratch_dir
@@ -144,14 +134,9 @@ dir(rho)
 ```{code-cell} ipython3
 :id: YtU1MnKiL-22
 
-from pathlib import Path
-
-from pyscf.tools import cubegen
-import numpy as np
 import h5py as h5
 import matplotlib.pyplot as plt
-from pyscf import gto, lib
-
+from pyscf import lib
 from pyscf.scf.hf import dip_moment
 
 scratch = Path("./scratch")

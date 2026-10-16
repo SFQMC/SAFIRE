@@ -49,10 +49,8 @@ import h5py
 import numpy as np
 from pyscf.pbc import gto as pgto
 from pyscf.pbc import scf
-from mpi4py import MPI
 
 from afqmctools.utils.linalg import get_ortho_ao
-from afqmctools.inputs.from_pyscf import pyscf_to_afqmc
 
 ### Some parameters for the calculation ###
 mesh = (25,)*3  # defines ecut

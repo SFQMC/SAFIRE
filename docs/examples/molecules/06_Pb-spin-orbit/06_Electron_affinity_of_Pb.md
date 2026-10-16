@@ -202,9 +202,6 @@ the SOC-GHF or ROHF solution for the initial wavefunction.
 :id: 8I_FH4jPi2Xc
 :outputId: 308f3c0b-a95a-4fac-bb4f-10a6a5c45241
 
-import h5py as h5
-import numpy as np
-
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 
@@ -293,8 +290,6 @@ colab:
 id: 8rI2HhjiZRWO
 outputId: 4d9b87d0-91f6-4828-9d9a-67d86d9730a4
 ---
-from pyscf import gto, scf
-
 ## Run SOC-GHF using PySCF
 mol = gto.M(
     atom="Pb 0. 0. 0.",
@@ -356,12 +351,6 @@ colab:
 id: gAqSvXG3aB8I
 outputId: 8a825787-6626-44d1-97c4-ee738d109252
 ---
-import numpy as np
-
-from safiretools import MolecularHamiltonian
-from safiretools import Wavefunction
-
-
 # inputs
 chol_tol = 1e-5
 

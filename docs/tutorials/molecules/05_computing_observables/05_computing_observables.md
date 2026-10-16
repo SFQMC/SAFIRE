@@ -251,7 +251,6 @@ colab:
 id: c9LgOOxOA_xI
 outputId: 0305b057-ca8b-4c5d-e70c-7cd43158dc5a
 ---
-import numpy as np
 from safiretools import Results
 
 
@@ -314,9 +313,6 @@ colab:
 id: afFNaJpQdymb
 outputId: 56bc5ba2-1416-4468-ec0e-d7e74a7e87fc
 ---
-import numpy as np
-import matplotlib.pyplot as plt
-
 L = hamiltonian.chol.reshape(M, M, hamiltonian.nchol)
 # v_ijkl = sum_g L^g_ik (L^g_lj)^*, stored in the [i, k, j, l] index order of the TwoRDM
 v = np.einsum("ikg,ljg->ikjl", L, L.conj())
@@ -404,8 +400,6 @@ id: 41e0454a
 outputId: fbf1e8a4-bc84-40c5-9135-0d6a6571b8e8
 ---
 # Example: Setting up a BP calculation with multiple BP lengths
-from safiretools import write_jobfile
-
 dt = 0.005
 bp_lengths = [1, 10, 20, 40]  # Multiple BP lengths, in steps
 # Set up AFQMC parameters with back-propagation
@@ -456,6 +450,8 @@ print("This will take longer than mixed estimators due to the additional back-pr
 
 ```{code-cell} ipython3
 :id: 39c23cf1
+
+import matplotlib.pyplot as plt
 
 results_bp = Results("afqmc_bp.results.h5")
 

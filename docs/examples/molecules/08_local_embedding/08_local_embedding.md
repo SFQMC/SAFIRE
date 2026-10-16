@@ -30,9 +30,6 @@ which, among other things, provides tools to analyze the locality of a set of or
 :id: v08YqIkR2r02
 
 # Some setup
-# from embeddingAFQMC
-from embedding.orbital.assign import euclid_nd, gen_orbital_stats, print_stats
-
 %mkdir -p data
 %cd -q data
 
@@ -65,12 +62,13 @@ See the codeblock below.
 :id: b7gcg4ZA6-kD
 
 import numpy as np
-import h5py as h5
-import matplotlib.pyplot as plt
 from pyscf import gto, scf, lo
 
 from safiretools import MolecularHamiltonian, NOMSDWavefunction, write_jobfile
 from safiretools import Results
+
+# from embeddingAFQMC
+from embedding.orbital.assign import euclid_nd, gen_orbital_stats, print_stats
 
 
 # custom metric to take the projection of the orbital position onto the xy plane
@@ -250,6 +248,8 @@ outputId: d46cbef5-7b91-4c67-9ae3-c5217e07894c
 scrolled: true
 tags: [scroll-output]
 ---
+import h5py as h5
+
 o_atom_heights = [ 1.247, 1.436, 1.814, 2.381, 3.326, 3.893]
 
 Ro = 3.8 # Bohr
@@ -298,6 +298,8 @@ colab:
 id: d74PFj8g8pAR
 outputId: 91e568eb-80d6-4e00-8e5e-0596bf3bfa65
 ---
+import matplotlib.pyplot as plt
+
 # read results from file to allow saving / re-analysis.
 with h5.File("afqmc_results.h5", "r") as f:
     o_atom_heights = f["h"][:]

@@ -48,8 +48,6 @@ outputId: 51107f5c-4186-4817-9e97-990b46c79acc
 %cd -q data
 
 # setup the Hamiltonian
-import numpy as np
-
 from safiretools import HamiltonianBuilder, Lattice
 from safiretools import vis
 

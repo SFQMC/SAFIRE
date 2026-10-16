@@ -169,9 +169,6 @@ neighbors with a black dotted line.
 ```{code-cell} ipython3
 :id: 08d214dc-f42a-48ca-9215-f17f86f481fa
 
-from safiretools import Lattice
-from safiretools import vis
-
 lattice_params = dict(
     L1 = 4,
     L2 = 4,
@@ -221,9 +218,6 @@ consistent with the boundaries.
 For example, in the code block
 
 ```python
-from safiretools import Lattice
-from safiretools import vis
-
 lattice_params = dict(
     L1 = 4,
     L2 = 4,
@@ -252,9 +246,6 @@ Try building a few of these in the code block below.
 
 ```{code-cell} ipython3
 :id: 590508fb-00bd-4bb6-9e3a-03b95a19ba01
-
-from safiretools import Lattice
-from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -285,8 +276,6 @@ Consequently, setting `a1`, `a2` or `basis` in `lattice_params` for any of these
 types raises an error rather than being silently ignored:
 
 ```{code-cell} ipython3
-from safiretools import Lattice
-
 try:
     Lattice.from_dict(dict(L1=4, L2=4, type="square", basis=[[0.0,0.0],[0.5,0.5]]))
 except ValueError as e:
@@ -321,8 +310,6 @@ are required, and `basis` defaults to a single site at the cell origin.
 :outputId: 220c8539-682a-473b-ce17-592734b4f775
 
 import numpy as np
-from safiretools import Lattice
-from safiretools import vis
 
 basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
 
@@ -395,9 +382,6 @@ about mapping atoms in a solid onto a lattice model without the complication of 
 ```{code-cell} ipython3
 :id: 3c519903-9583-4236-9e64-192a8026b087
 
-from safiretools import Lattice
-from safiretools import vis
-
 lattice_params = dict(
     L1 = 1,
     L2 = 1,
@@ -424,9 +408,6 @@ The Cu and O atoms are arranged in the Lieb lattice as shown below.
 ```{code-cell} ipython3
 :id: d4955fae-dac3-4197-a3b5-f35bf51b103e
 
-from safiretools import Lattice
-from safiretools import vis
-
 lattice_params = dict(
     L1 = 4,
     L2 = 4,
@@ -450,9 +431,6 @@ vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 3eac1b2a-f2e9-4416-81bb-88d02fb5952b
 
-from safiretools import Lattice
-from safiretools import vis
-
 lattice_params = dict(
     L1 = 4,
     L2 = 4,
@@ -470,9 +448,6 @@ vis.plot_lattice(lattice,title="Kagome Lattice",show_labels=False)
 
 ```{code-cell} ipython3
 :id: ae7e9e7c-896b-4ce4-86c7-98f6951756f7
-
-from safiretools import Lattice
-from safiretools import vis
 
 lattice_params = dict(
     L1 = 4,
@@ -492,9 +467,6 @@ vis.plot_lattice(lattice,title="Triangular Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 9767452c-454d-4e3f-99a6-42a35f501b35
 
-from safiretools import Lattice
-from safiretools import vis
-
 lattice_params = dict(
     L1 = 4,
     L2 = 4,
@@ -512,9 +484,6 @@ vis.plot_lattice(lattice,title="Honeycomb Lattice",show_labels=False)
 
 ```{code-cell} ipython3
 :id: 669f3165-f665-4fbc-940b-5783f111b1a9
-
-from safiretools import Lattice
-from safiretools import vis
 
 lattice_params = dict(
     L1 = 8,

@@ -216,7 +216,7 @@ We can generate a free-electron trial wavefunction using `Wavefunction.from_free
 ```{code-cell} ipython3
 :id: XDDPCMhvHKRc
 
-from safiretools import HamiltonianBuilder, Lattice, SpinSymm, Wavefunction
+from safiretools import HamiltonianBuilder, Lattice, Wavefunction
 
 # define lattice
 lattice = Lattice.from_dict(

@@ -299,8 +299,6 @@ In our example, if we enumerate the orbitals in set starting with 0, we have:
 ```{code-cell} ipython3
 :id: 9u7rGYAqrlrV
 
-import numpy as np
-
 from safiretools import PHMSDWavefunction
 
 number_of_electrons = (1,1)

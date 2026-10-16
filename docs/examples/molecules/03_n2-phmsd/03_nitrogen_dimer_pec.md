@@ -29,15 +29,6 @@ using an appropriate trial wavefunction.
 ```{code-cell} ipython3
 :id: ljFeTy3vE6ls
 
-import h5py as h5
-import numpy as np
-from pyscf import gto,scf,mcscf
-
-from safiretools import MolecularHamiltonian
-from safiretools import Wavefunction
-from safiretools import write_jobfile
-from safiretools import Results
-
 %mkdir -p data
 %cd -q data
 ```
@@ -139,6 +130,10 @@ as a basis.
 (alternatively, run your favorite Quantum Chemistry code, and save the CASSCF wavefunction in the wavefunction HDF5 file).
 
 ```{code-cell} ipython3
+from pyscf import gto,scf,mcscf
+
+from safiretools import Wavefunction
+
 # Here, we'll generate the mol object
 
 delta = 3.0 # Bohr
@@ -193,6 +188,8 @@ file that already holds the trial wavefunction.
 </div>
 
 ```{code-cell} ipython3
+from safiretools import MolecularHamiltonian
+
 # the Hamiltonian, in the basis of the CASSCF orbitals
 hamiltonian = MolecularHamiltonian.from_pyscf(
     rhf,
@@ -276,6 +273,8 @@ Note: This might take some time. You might want to run this on a computing clust
 ```{code-cell} ipython3
 :tags: [scroll-output]
 :scrolled: true
+
+from safiretools import Results, write_jobfile
 
 ndets = [50,250,500,750] # list of Ndet values to run
 energies = []
@@ -468,8 +467,6 @@ Now, we are ready to plot the PEC to see our results.
 
 ```{code-cell} ipython3
 :id: XdQyhYsTgRV6
-
-import matplotlib.pyplot as plt
 
 plt.errorbar(bondlengths, energies, yerr=stochastic_uncertainties, fmt='o:', label="AFQMC/CASSCF")
 plt.xlabel("Bond length (Bohr)")

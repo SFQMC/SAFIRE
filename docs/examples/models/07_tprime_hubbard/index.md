@@ -142,7 +142,6 @@ L = lattice.L
 :outputId: 55190e94-44ed-4b7c-9f28-7cdcd5d151ba
 
 import numpy as np
-from safiretools import vis
 from autohf import AutoHFHamiltonian, lattice_hf
 
 # building the wavefunction does not measure anything, so run the HF solver
@@ -305,9 +304,6 @@ delta_rho_down = delta_rho[:,1,:,:].diagonal().reshape((naverages,4,8))
 ```{code-cell} ipython3
 :id: bd4b242e-81b2-40d0-86fe-ec6b25866a45
 :outputId: b0b06b69-d141-45b0-fafb-1bb6092d9d21
-
-import matplotlib.pyplot as plt
-import numpy as np
 
 ix = 3
 iy = np.array(range(8))

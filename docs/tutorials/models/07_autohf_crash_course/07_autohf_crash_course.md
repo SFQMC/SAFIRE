@@ -296,8 +296,6 @@ colab:
   height: 690
 outputId: c19b35c5-7840-45a6-e527-d9f4f27d12b5
 ---
-from afqmctools.observables.spin import local_spin
-
 vis.plot_lattice(
     lattice,
     density=rho_spin,

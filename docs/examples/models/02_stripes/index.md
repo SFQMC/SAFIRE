@@ -37,17 +37,6 @@ config.update("jax_enable_x64", True)
 import matplotlib.pyplot as plt
 import numpy as np
 
-from safiretools import HamiltonianBuilder, Lattice
-from safiretools import vis
-
-from safiretools import Wavefunction
-from afqmctools.analysis.rdm import average_afqmc_rdm
-
-from afqmctools.observables.greens import greens_1body
-import afqmctools.observables.spin as spobs
-
-import autohf
-
 %mkdir -p data
 %cd -q data
 ```
@@ -98,6 +87,8 @@ nelec
 ```
 
 ```{code-cell} ipython3
+from safiretools import vis
+
 vis.plot_lattice(lattice)
 ```
 
@@ -123,6 +114,8 @@ outputId: 731af8f0-e234-49d5-cfc5-d38fb5483845
 colab:
   base_uri: https://localhost:8080/
 ---
+from safiretools import HamiltonianBuilder
+
 builder = HamiltonianBuilder(
           lattice=lattice,
           spin_symm="collinear", # we have no spin-flip terms
@@ -147,6 +140,8 @@ outputId: a0cc1270-40df-46ca-fc5a-094aae93aa2b
 colab:
   base_uri: https://localhost:8080/
 ---
+from safiretools import Wavefunction
+
 # get a trial wavefunction: First, let's try a free-electron (i.e. non-interacting) wavefunction.
 # from_free_electron() takes the Hamiltonian itself.
 #
@@ -249,11 +244,15 @@ def averageOverCols(Sz,Nx,Ny):
 ```{code-cell} ipython3
 :id: 0a52fe29-2397-4436-b84d-48b95ac5f777
 
+from afqmctools.analysis.rdm import average_afqmc_rdm
+
 rho_avg, delta_rho = average_afqmc_rdm(rdm_file="qmc.s000.stat.h5")
 ```
 
 ```{code-cell} ipython3
 :id: 6c223f77-f3f4-42a5-bacb-a0f84a868f2b
+
+import afqmctools.observables.spin as spobs
 
 Xs,Ys,Zs = spobs.local_spin(np.vstack(rho_avg[0]),"collinear").real
 
@@ -318,6 +317,8 @@ _Note:_ The Hartree-Fock code is faster if you use a GPU
 ```{code-cell} ipython3
 :id: ee2b575c-7d27-4a1d-a9b9-e9b02a682f8f
 :outputId: 743ad05d-6d2a-4eba-ec3c-92e78bcbe2e3
+
+import autohf
 
 Ueffs = [1,2,3,4]
 trial_wfns = {}
@@ -424,6 +425,8 @@ We'll now measure the error between the trial wave function's observable and the
 
 ```{code-cell} ipython3
 :id: eff15403-1be8-4f08-8ed8-9ccf212e1d9f
+
+from afqmctools.observables.greens import greens_1body
 
 trial_rhos = []
 for Ueff in Ueffs:

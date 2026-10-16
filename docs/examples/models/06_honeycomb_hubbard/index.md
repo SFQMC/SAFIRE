@@ -25,8 +25,6 @@ id: djut2ei2D6d-
 %cd -q data
 
 # setup the Hamiltonian
-import numpy as np
-
 from safiretools import Lattice
 from safiretools import vis
 from safiretools import HamiltonianBuilder
@@ -65,6 +63,8 @@ hamiltonian = HamiltonianBuilder.from_input(
 id: bYkD4o3sHwP9
 ---
 # run autoHF and save wavefunction as trial wavefunction
+import numpy as np
+
 from autohf import solve_hf
 from autohf.hamiltonian import AutoHFHamiltonian
 from safiretools import Wavefunction

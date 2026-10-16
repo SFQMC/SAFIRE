@@ -280,12 +280,6 @@ vis.plot_lattice(
 ```{code-cell} ipython3
 :id: 68d02ad8-c469-49b2-a54c-f8611c4ecb68
 
-import numpy as np
-
-from safiretools import LatticeHamiltonian, NOMSDWavefunction
-from safiretools import vis
-
-
 # define the problem
 nelec = (5,5)
 nbands = 3
@@ -398,30 +392,14 @@ outputId: ef58caef-bf77-47a0-abdb-73e4c7df5ed9
 """
 This is a benchmarking script, so we'll keep things basic
 """
-import numpy as np
 import h5py as h5
 
-from safiretools import (HamiltonianBuilder, Lattice, NOMSDWavefunction, SpinSymm,
-                         Wavefunction)
-from safiretools import vis
+from safiretools import HamiltonianBuilder, NOMSDWavefunction, SpinSymm
 
-
-import faulthandler; faulthandler.enable()
-
-import scipy.sparse as sps
-
-import jax.numpy as jnp
-import jax
-
-import jax
 # Set the default device to CPU
 #jax.config.update('jax_platform_name', 'cpu')
 
 print("JAX devices : ",jax.devices())
-
-
-import matplotlib.pyplot as plt
-import pdb
 
 #### Some input params ######
 recompute = True
@@ -608,7 +586,7 @@ wfn = NOMSDWavefunction(
 )
 
 # 4. run autohf
-from autohf import lattice_hf, AutoHFHamiltonian
+from autohf import lattice_hf
 best_E_final = None
 for a in range(annealing_steps):
     print(f"Annealing step {a}")

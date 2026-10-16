@@ -54,7 +54,6 @@ Other approaches can, of course, be used instead if desired.
 id: UtOIurUTrTNJ
 ---
 from ase.build import bulk
-from ase.visualize import view
 
 
 def get_qe_input(a, Nkpt, twist=(0. ,0., 0.), nbands=20*8):

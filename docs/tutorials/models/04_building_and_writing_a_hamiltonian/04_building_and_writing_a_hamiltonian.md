@@ -342,9 +342,6 @@ outputId: 731d316b-7dbb-4990-f273-0ad6da75081a
 ---
 import matplotlib.pyplot as plt
 
-from safiretools import HamiltonianBuilder, Lattice
-from safiretools import vis
-
 # define Hamiltonian parameters
 params = {
     'lattice': {
@@ -406,11 +403,6 @@ colab:
 id: i0l8VxorOK_W
 outputId: 4113cab3-7b9d-4366-edb5-ff8b22bd89fd
 ---
-from safiretools import HamiltonianBuilder, Lattice
-from safiretools import vis
-
-import numpy as np
-
 lattice_params = {
     'L1': 2,
     'L2': 4,
@@ -463,9 +455,6 @@ colab:
 id: jN42bp5cOK_W
 outputId: d257ba45-6561-41df-a581-8a19e1f73a2a
 ---
-from safiretools import HamiltonianBuilder, Lattice
-from safiretools import vis
-
 import numpy as np
 
 lattice_params = {
@@ -512,11 +501,6 @@ vis.plot_lattice(
 
 ```{code-cell} ipython3
 :id: _6grG3FOOK_X
-
-from safiretools import HamiltonianBuilder, Lattice
-from safiretools import vis
-
-import numpy as np
 
 lattice_params = {
     'L1': 2,
@@ -704,9 +688,6 @@ colab:
 id: D72pRPc6OK_X
 outputId: b6f1c99c-e33b-4574-d108-3a2ea7f66d89
 ---
-from safiretools import HamiltonianBuilder, Lattice
-from safiretools import vis
-
 # Define the lattice parameters
 lattice_params = {
     'L1': 6,
@@ -778,11 +759,6 @@ colab:
 id: lAw6245ub5GZ
 outputId: c5bfa756-3d14-4865-ddb6-2c4d9fac99e0
 ---
-import matplotlib.pyplot as plt
-
-from safiretools import HamiltonianBuilder, Lattice
-from safiretools import vis
-
 # define Hamiltonian parameters
 params = {
     'lattice': {
