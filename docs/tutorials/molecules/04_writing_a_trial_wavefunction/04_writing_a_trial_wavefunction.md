@@ -24,6 +24,13 @@ Become acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 form
 2.  How to write a non-orthogonal multi-Slater determinant trial wavefunction given the expansion coefficients and Slater matrices
 3.  How to write a configuration-interaction (CI) type trial wavefunction given CI coefficients and a corresponding occupancy strings
 
+## Setup
+
+```{code-cell} ipython3
+%mkdir -p data
+%cd -q data
+```
+
 +++ {"id": "vt9PbuQhpw4u"}
 
 ## Introduction
@@ -34,14 +41,8 @@ $$
 |\Psi_\mathrm{T} \rangle = \sum^{N_\mathrm{det}}_n C_n | \Phi_n \rangle,
 $$
 
-where
-
-$C_n$
-
-is a complex-valued coefficient,
-and $|\Phi_n\rangle$ are Slater determinants which are not necessarily
-orthogonal to each other.
-Of course, each Slater determinant consists of some set of single-particle orbitals, $\{ \psi_p \}$, such that,
+where $C_n$ are complex-valued coefficients, and $|\Phi_n\rangle$ are Slater determinants which are not necessarily
+orthogonal to each other. Each Slater determinant consists of some set of single-particle orbitals, $\{ \psi_p \}$, such that,
 $$
 \psi_{p} = \sum_i \bar{C}_{ip} \phi_i,
 $$
@@ -92,46 +93,8 @@ Use PHMSD for orthogonal expansions of Slater determinants.
 
 ## Single Slater Determinant Trial Wavefunction
 
-We've already seen examples of writing a single Slater determinant trial wavefunction in previous tutorials.
-Here, we will explain the code blocks that you have already seen which we have reproduced below.
-
-Technically, we have been writing single Slater determinant trial wavefunctions as a non-orthogonal multi-Slater determinant (NOMSD) expansion with only a single determinant.
-To accomplish this, we wrote down a set of orbitals in the chosen orthonormal orbital basis as,
-
-```python
-import numpy as np
-
-orbitals = np.array(
-    [[1.0,0.0],
-    [0.0,1.0]]
-)
-```
-
-where we are using the RHF orbitals as a basis to represent the RHF orbitals.
-
-Next, we constructed the Slater matrix, $\Phi_{ip}$, and wrote down a trivial expansion coefficient with,
-
-```python
-phi_0 = np.array([
-    orbitals[:, :number_of_electrons[0]]
-])
-C_0 = 1.0
-```
-
-Finally, we build a `NOMSDWavefunction` and write it to an HDF5 file in the SAFIRE format with `to_hdf5()` as,
-
-```python
-from safiretools import NOMSDWavefunction
-
-NOMSDWavefunction(
-    coeffs=np.array([C_0]),
-    dets=phi_0
-).to_hdf5("rhf_wavefunction.h5")
-```
-
-Note that `coeffs` is a 1-dimensional array with the CI coefficient, and `dets` is a 3 dimensional array where the first index corresponds to the Slater determinant index, the second index corresponds to the basis set index, and the third index corresponds to the electron index.
-
-We put all of this together in the following code block.
+We have already seen examples of writing a single Slater determinant trial wavefunction using {py:meth}`safiretools.Wavefunction.from_single_determinant` in previous tutorials.
+Under the hood this creates a NOMSD wavefunction with a single determinant, as the code block below shows.
 
 ```{code-cell} ipython3
 ---
@@ -141,12 +104,9 @@ colab:
 id: locAjSqZsYSI
 outputId: b67f9653-4cfe-4ef4-ad16-1b9b5502444f
 ---
-%mkdir -p data
-%cd -q data
-
 import numpy as np
 
-from safiretools import NOMSDWavefunction
+from safiretools import NOMSDWavefunction, Wavefunction
 
 number_of_electrons = (1,1)
 number_of_orbitals = 2
@@ -156,18 +116,27 @@ orbitals = np.array(
     [0.0,1.0]]
 )
 
+# shorthand
+wavefunction = Wavefunction.from_single_determinant(orbitals[:, :number_of_electrons[0]])
+
+# under the hood: NOMSD with 1 determinant and 1 expansion coefficient
 phi_0 = np.array([
     orbitals[:, :number_of_electrons[0]]
 ])
 C_0 = 1.0
 
-NOMSDWavefunction(
+wavefunction = NOMSDWavefunction(
     coeffs=np.array([C_0]),
     dets=phi_0
-).to_hdf5("rhf_wfn.h5")
+)
+
+# write to HDF5
+wavefunction.to_hdf5("rhf_wfn.h5")
 ```
 
-we can use the `h5dump` utility to inspect the contents of the file that we just generated. 
+In the `NOMSDWavefunction` constructor, `coeffs` is a 1-dimensional array of expansion coefficients, and `dets` is a 3-dimensional array where the first index corresponds to the Slater determinant index, the second index corresponds to the basis set index, and the third index corresponds to the electron index.
+
+We can use the `h5dump` utility to inspect the contents of the file that we just generated. 
 `h5dump -n [filename]` will show us which datasets exist, and we can use `h5dump -d [dataset] [filename]` to
 view the actual data.
 
@@ -178,73 +147,24 @@ See {ref}`Wavefunction-classes` for details on the expected data.
 !h5dump -n rhf_wfn.h5
 ```
 
-```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/values rhf_wfn.h5
-```
-
-```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/column_indices rhf_wfn.h5
-```
-
 +++ {"id": "VJfGuez4rsE-"}
 
 ## NOMSD Trial Wavefunction
 
 In the previous example, we learned how to specify a trial wavefunction with a single Slater determinant. Here, we will see how to we can write a suitable non-orthogonal multi-Slater trial wavefunction for the AFQMC code.
 
-Similarly to the single Slater determinant case, we begin by specifying a set of orbitals. In this case, however, we chose a set of non-orthogonal orbitals represented in a common basis:
-
-```python
-import numpy as np
-
-orbitals = np.array(
-    [[1.0,0.7071],
-    [0.0,0.7071]]
-)
-```
-Note that each column of the `orbitals` object are normalized, but they are not orthogonal to each other.
-
-Next, we construct two determinants with a single electron each. The first determinant will be specified by the orbital, whereas the second orbital will be used in the other determinant.
-
-```python
-phi_nomsd = np.array([
-    orbitals[:, :number_of_electrons[0]], # Representing the first determinant, with the first orbital occupied
-    orbitals[:, 1:number_of_electrons[0]], # Representing the second determinant, with the second orbital occupied
-])
-C_0 = 1.0
-C_1 = 1.0
-```
-
-The dimensions of `phi_nomsd` should be (N$_\mathrm{dets}$,N$_\mathrm{basis}$,N$_\mathrm{elec}$), as previously indicated in the single determinant case.
-
-Finally, we build a `NOMSDWavefunction` and write it to an HDF5 file in the SAFIRE format with `to_hdf5()` as,
-
-```python
-from safiretools import NOMSDWavefunction
-
-NOMSDWavefunction(
-    coeffs=np.array([C_0,C_1]),
-    dets=phi_nomsd
-).to_hdf5("NOMSD_wfn.h5")
-```
-
-We put all of this together in the code block below.
+We take two determinants with one electron per spin, each occupying a different orbital. The two orbitals are normalized but not orthogonal to each other.
+As in the single determinant case, `phi_nomsd` has the dimensions (N$_\mathrm{dets}$,N$_\mathrm{basis}$,N$_\mathrm{elec}$).
 
 ```{code-cell} ipython3
 :id: 8Y0sDP2wr1vk
 
-number_of_electrons = (1,1)
-number_of_orbitals = 2
-
-orbitals = np.array(
-    [[1.0,0.7071],
-    [0.0,0.7071]]
-)
-
+# two nonorthogonal RHF determinants with one orbital each
 phi_nomsd = np.array([
-    orbitals[:, :number_of_electrons[0]],                                                # Representing the first determinant, with the first orbital occupied
-    orbitals[:, number_of_electrons[0]:number_of_electrons[0] + number_of_electrons[1]], # Representing the second determinant, with the second orbital occupied
+    [[1.0], [0.0]],
+    [[1/np.sqrt(2)], [1/np.sqrt(2)]],
 ])
+
 C_0 = 1.0
 C_1 = 1.0
 
@@ -258,17 +178,9 @@ NOMSDWavefunction(
 !h5dump -n NOMSD_wfn.h5
 ```
 
-notice that there are two Slater determinants in the HDF5 file! We note that
-, in the collinear format, the spin up and spin down Slater determinants are stored as separate data sets with even (odd) indices
+notice that there are two Slater determinants in the HDF5 file, `PsiT_0` and `PsiT_1`! In this closed-shell example, both spins share the same determinant.
+For collinear wavefunctions, the spin up and spin down Slater determinants are stored as separate data sets with even (odd) indices
 corresponding to up (down) sector Slater determinants.
-
-```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_0/values NOMSD_wfn.h5
-```
-
-```{code-cell} ipython3
-!h5dump -d /Wavefunction/NOMSD/PsiT_1/values NOMSD_wfn.h5
-```
 
 +++ {"id": "YtBpL-q8rlGT"}
 
