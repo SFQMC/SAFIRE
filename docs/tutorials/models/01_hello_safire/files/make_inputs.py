@@ -13,7 +13,7 @@ from safiretools import HamiltonianBuilder, Lattice, Wavefunction
 
 def main():
     """
-    hamiltonian.h5 and wavefunction.h5: the 4x4 periodic Hubbard model at
+    hamiltonian.h5 and wavefunction.h5: the 4×4 periodic Hubbard model at
     U/t = 4 with 5+5 electrons, and its free-electron trial wavefunction.
     """
     lattice = Lattice.from_dict(

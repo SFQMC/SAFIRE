@@ -211,7 +211,7 @@ The trial file does not store an initial walker. **By default**, the walkers sta
 
 ## Example: Free Electron Trial Wavefunction
 
-We can generate a free-electron trial wavefunction using `Wavefunction.from_free_electron` within `safiretools`. First, we set up the lattice using `Lattice.from_dict` (in this case a square 4 x 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file `wfn.h5`.
+We can generate a free-electron trial wavefunction using `Wavefunction.from_free_electron` within `safiretools`. First, we set up the lattice using `Lattice.from_dict` (in this case a square 4 × 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file `wfn.h5`.
 
 ```{code-cell} ipython3
 :id: XDDPCMhvHKRc

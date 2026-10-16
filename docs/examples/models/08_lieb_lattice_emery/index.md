@@ -16,7 +16,7 @@ kernelspec:
 # Emery Model on the Lieb Lattice
 
 Status:
-- we can reproduce Adam's energy for the 4x4 tilted Lieb lattice (2 Cu per unit cell)!!
+- we can reproduce Adam's energy for the 4×4 tilted Lieb lattice (2 Cu per unit cell)!!
 
 +++ {"id": "d13e8127-0310-46e7-8546-f7e2d7bed54e"}
 
@@ -716,7 +716,6 @@ if True:
     )
     ax.figure.savefig("charge.png")
 
-    plt.figure()
     ax = vis.plot_lattice(
         lattice,
         density=rho_spin.real,

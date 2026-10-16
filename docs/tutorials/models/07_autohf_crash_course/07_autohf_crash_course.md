@@ -41,7 +41,7 @@ then use the SAFIRE to AutoHF converter to provide AutoHF with the desired Hamil
 ## Set Up the Model
 
 In this tutorial, we will perform Hartree-Fock calculations using AutoHF for the Hubbard model on
-a 4x4 lattice.
+a 4×4 lattice.
 The Hamiltonian is given by,
 $$
 \hat{H} = -t \sum_{\langle i,j\rangle} \hat{c}^\dagger_i \hat{c}_j + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
@@ -179,7 +179,7 @@ When you run AutoHF, it will echo the settings. See sample output below.
 
 +++ {"id": "4TZMwRGlXmA_"}
 
-## Your Turn: Try Running AutoHF for the 4x4 Hubbard Model
+## Your Turn: Try Running AutoHF for the 4×4 Hubbard Model
 
 Complete the labelled line of code and run the cell below.
 

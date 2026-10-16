@@ -59,7 +59,7 @@ Let's begin with a quick overview of how the build steps work:
 
     - Each term's primary input parameters can generally be provided as one of the following input units:
         - a floating point number, implying that it should be applied uniformly
-        - a 2d-array with shape nband x nband, implying a band-dependent Hamiltonian term.
+        - a 2d-array with shape nband × nband, implying a band-dependent Hamiltonian term.
     - For each term, the input parameter can be either:
         - a single unit as defined above
         - a list of units
@@ -102,7 +102,7 @@ an HDF5 file that can be used by SAFIRE, via its `.to_hdf5()` method.
 Therefore, a typical use of the `HamiltonianBuilder` class in a Python script will look like the
 code block below.
 
-Here, we construct the Hubbard model on a 4x4 square lattice with $t=1.0$, $t'=0.5$, and $U=4.0$.
+Here, we construct the Hubbard model on a 4×4 square lattice with $t=1.0$, $t'=0.5$, and $U=4.0$.
 
 $$
 \hat{H} = \sum_{\langle i,j\rangle^1} -(1.0) \hat{c}^\dagger_i \hat{c}_j + \sum_{\langle i,j\rangle^2} -(0.5) \hat{c}^\dagger_i \hat{c}_j + \sum_i (4.0) \hat{n}_{i\uparrow} \hat{n}_{i\downarrow}

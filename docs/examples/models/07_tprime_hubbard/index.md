@@ -18,7 +18,7 @@ kernelspec:
 Author: Kyle Eskridge
 
 In this tutorial, we will perform AFQMC calculations for the Hubbard model with $t'$ on
-a 4x8 lattice.
+a 4×8 lattice.
 The Hamiltonian is given by,
 $$
 \hat{H} = -t \sum_{\langle i,j\rangle^{(1)}} \hat{c}^\dagger_i \hat{c}_j -t' \sum_{\langle i,j\rangle^{(2)}} \hat{c}^\dagger_i \hat{c}_j + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
@@ -27,12 +27,12 @@ where $i,j$ are lattice site indices, angle brackets with superscript $(n)$ indi
 that sums are constrained to $n^\mathrm{th}$-order neighbors,
 $\hat{c}^\dagger_i$/$\hat{c}_i$ are electronic creation/annihilation operators,
 and $\hat{n}^{\sigma}_i$ are spin-resolved number operators corresponding to site $i$.
-The 4x4 lattice is small enough to make exact diagonalization possible.
+The 4×4 lattice is small enough to make exact diagonalization possible.
 We will use exact results for this system as reference data throughout
 this tutorial.
 
 See Table I of reference [1]
-The AFQMC energy using a free-electron Trial wavefunction is, for $U=4$ on a 4x8 square lattice
+The AFQMC energy using a free-electron Trial wavefunction is, for $U=4$ on a 4×8 square lattice
 with $N_{\uparrow} = N_{\downarrow} = 16$, $−27.271⁢(1)$ versus $−27.6924$ from DMRG.
 (Better AFQMC results exist there when using a self-consistent procedure).
 
@@ -113,7 +113,7 @@ input_params = dict(
     hamiltonian = hamiltonian_params["hamiltonian"]     # from step 2. above
 )
 
-# twist from ref 1: this twist was used for 4x16 with t' = 0.3t
+# twist from ref 1: this twist was used for 4×16 with t' = 0.3t
 twist = (0.01,0.01)
 
 # The trial wavefunction is built from the *un-pinned* Hamiltonian - the pinning
