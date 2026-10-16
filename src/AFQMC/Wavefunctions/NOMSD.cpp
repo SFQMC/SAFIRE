@@ -338,7 +338,6 @@ memory::const_shared_array<HOST_MEMORY,ComplexType,3> NOMSD<MEM,devPsiT>::G_MF()
   using nda::range;
   auto all = range::all;
 
-  int nel   = (walker_type==COLLINEAR ? nup+ndown : nup);
   int nspin = (walker_type==COLLINEAR ? 2 : 1);
   int npol  = (walker_type==NONCOLLINEAR ? 2 : 1);
   int ndet  = ci.size();
@@ -383,10 +382,10 @@ memory::const_shared_array<HOST_MEMORY,ComplexType,3> NOMSD<MEM,devPsiT>::G_MF()
     { // control buffer lifetime
       memory::buffered_array<MEM,ComplexType,1> Ov(1);
       memory::buffered_array<MEM,ComplexType,2> G(1,nspin*npol*NMO*npol*NMO);
-      auto G3d = nda::reshape(G,std::array<long,3>{1,nspin*npol*NMO,npol*NMO});
+      auto G4d = nda::reshape(G,std::array<long,4>{1,nspin,npol*NMO,npol*NMO});
       memory::buffered_array<MEM,ComplexType,3> PsiT(1,npol*NMO,nup);
       memory::buffered_array<MEM,ComplexType,3> PsiTB;
-      if( walker_type == COLLINEAR ) 
+      if( walker_type == COLLINEAR )
         PsiTB.resize(1,npol*NMO,ndown);
       auto Ov_h = nda::to_host(Ov);
 
@@ -394,19 +393,19 @@ memory::const_shared_array<HOST_MEMORY,ComplexType,3> NOMSD<MEM,devPsiT>::G_MF()
         for(int q=p; q<ndet; ++q, ++pq) {
 
           if( pq < n0 ) continue;
-          if( pq >= n1 ) break; 
+          if( pq >= n1 ) break;
           if( last_p != p ) {
             last_p = p;
             PsiT(0,all,all) = math::sparse::to_array<'H'>(OrbMats(p,0)());
-            if( walker_type == COLLINEAR ) 
+            if( walker_type == COLLINEAR )
               PsiTB(0,all,all) = math::sparse::to_array<'H'>(OrbMats(p,1)());
           }
 
-          Ov() = ComplexType(0.0);
-          G() = ComplexType(0.0);
-          det_ops::MixedDensityMatrix(OrbMats(q,0)(),PsiT,G3d(all,nda::range(nup),all),Ov,false);
-          if( walker_type == COLLINEAR ) 
-            det_ops::MixedDensityMatrix(OrbMats(q,1)(),PsiTB,G3d(all,nda::range(nup,nel),all),Ov,false);
+          Ov() = 0.0;
+          G() = 0.0;
+          det_ops::MixedDensityMatrix(OrbMats(q,0)(),PsiT,G4d(all,0,all,all),Ov,false);
+          if( walker_type == COLLINEAR )
+            det_ops::MixedDensityMatrix(OrbMats(q,1)(),PsiTB,G4d(all,1,all,all),Ov,false);
           Ov_h() = nda::to_host(Ov);
           if( std::abs(Ov_h(0)) == ComplexType(0.0) and not found ) {
             found = true;
