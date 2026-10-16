@@ -290,10 +290,10 @@ print(f"E - E_exact = {E.real-E_exact} ± {E_err.real}")
 
 ### Check Your Result
 
-Your AFQMC energy should agree with $-1.137024 \pm 0.000195$ Ha
+Your AFQMC energy should agree with -1.137024 ± 0.000195 Ha
 to within 3 $\sigma$.
 
-For comparison, the FCI energy in the STO-3G basis set used here is $-1.1369935173864893$ Ha.
+For comparison, the FCI energy in the STO-3G basis set used here is -1.1369935173864893 Ha.
 
 Our AFQMC result agrees with FCI to within 0.00003(20) Ha, which
 is well within chemical accuracy.
