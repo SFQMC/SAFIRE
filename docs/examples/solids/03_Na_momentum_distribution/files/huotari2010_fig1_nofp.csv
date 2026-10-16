@@ -1,0 +1,94 @@
+# Huotari et al., Phys. Rev. Lett. 105, 086403 (2010); arXiv:1006.5591 -- Figure 1
+# Valence-electron momentum distribution n(p) per spin state of solid Na.
+# Extracted from the vector paths of the arXiv v1 PDF (not pixel-digitized):
+#   marker centres and error-bar endpoints mapped to data units via the axis tick marks.
+#   Coordinate precision ~1e-4 in both p and n. Values are what is plotted, not the authors' raw tables.
+# p in atomic units (bohr^-1). n(p) dimensionless; ideal Fermi gas step at p_F = 0.49 a.u.
+# Experiment: n(p) from derivative of the measured valence Compton profile, Eq. (2), averaged over +/-p
+#   and over adjacent points. Run 1: Si(555), E2=9.9 keV, eff. q-resolution 0.08 a.u.
+#   Run 2: 2x Si(880), E2=12.9 keV, eff. q-resolution 0.04 a.u.  Error bars are +/- 1 sigma as plotted.
+#   Run 2 (triangle markers): n taken as error-bar midpoint (triangle bbox centre is offset ~0.008).
+# QMC: pseudopotential DMC, Slater-Jastrow, QMCPACK, finite-size corrected, direction averaged.
+# G0W0: one-shot from DFT-LDA (ABINIT). DFT_LDA: Kohn-Sham n(p).
+series,p_au,n,n_err
+exp_run1,0.3456,0.8462,0.0611
+exp_run1,0.3761,0.7480,0.0543
+exp_run1,0.4067,0.7821,0.0493
+exp_run1,0.4371,0.7393,0.0441
+exp_run1,0.5286,0.0432,0.0310
+exp_run1,0.5592,0.0723,0.0291
+exp_run1,0.5896,-0.0150,0.0272
+exp_run1,0.6201,0.0711,0.0256
+exp_run1,0.6506,0.0540,0.0241
+exp_run1,0.6811,0.0108,0.0229
+exp_run2,0.3440,0.7884,0.0703
+exp_run2,0.3737,0.8293,0.0601
+exp_run2,0.4083,0.8501,0.0534
+exp_run2,0.4380,0.7154,0.0484
+exp_run2,0.5271,0.1185,0.0383
+exp_run2,0.5568,0.0376,0.0360
+exp_run2,0.5864,0.0434,0.0339
+exp_run2,0.6162,0.0493,0.0335
+exp_run2,0.6459,0.0177,0.0331
+exp_run2,0.6755,0.0222,0.0314
+QMC,0.3358,0.9098,
+QMC,0.3494,0.9048,
+QMC,0.3627,0.9006,
+QMC,0.3877,0.8844,
+QMC,0.3996,0.8832,
+QMC,0.4112,0.8778,
+QMC,0.4224,0.8724,
+QMC,0.4335,0.8657,
+QMC,0.4442,0.8557,
+QMC,0.4546,0.8441,
+QMC,0.4748,0.8112,
+QMC,0.4846,0.7347,
+QMC,0.4942,0.0877,
+QMC,0.5036,0.0723,
+QMC,0.5219,0.0570,
+QMC,0.5308,0.0499,
+QMC,0.5482,0.0470,
+QMC,0.5567,0.0416,
+QMC,0.5651,0.0391,
+QMC,0.5734,0.0366,
+QMC,0.5815,0.0320,
+QMC,0.5896,0.0279,
+QMC,0.5975,0.0283,
+QMC,0.6129,0.0237,
+QMC,0.6206,0.0274,
+QMC,0.6281,0.0225,
+QMC,0.6356,0.0212,
+QMC,0.6429,0.0191,
+QMC,0.6502,0.0183,
+QMC,0.6573,0.0170,
+QMC,0.6715,0.0150,
+QMC,0.6785,0.0141,
+G0W0,0.3875,0.8678,
+G0W0,0.4332,0.8553,
+G0W0,0.4543,0.8125,
+G0W0,0.4744,0.7800,
+G0W0,0.5305,0.0911,
+G0W0,0.5479,0.0607,
+G0W0,0.5812,0.0441,
+G0W0,0.6425,0.0175,
+G0W0,0.6711,0.0133,
+DFT_LDA,0.3360,0.9867,
+DFT_LDA,0.3620,0.9863,
+DFT_LDA,0.3870,0.9859,
+DFT_LDA,0.4110,0.9846,
+DFT_LDA,0.4330,0.9834,
+DFT_LDA,0.4540,0.9821,
+DFT_LDA,0.4749,0.9805,
+DFT_LDA,0.4939,0.0000,
+DFT_LDA,0.5309,0.0000,
+DFT_LDA,0.5479,0.0000,
+DFT_LDA,0.5649,0.0000,
+DFT_LDA,0.5810,0.0000,
+DFT_LDA,0.5970,0.0000,
+DFT_LDA,0.6129,0.0000,
+DFT_LDA,0.6279,0.0000,
+DFT_LDA,0.6430,0.0000,
+DFT_LDA,0.6569,0.0000,
+DFT_LDA,0.6710,0.0000,
+DFT_LDA,0.6849,0.0008,
+DFT_LDA,0.6990,0.0046,
