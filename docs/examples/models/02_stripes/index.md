@@ -45,7 +45,6 @@ from afqmctools.analysis.rdm import average_afqmc_rdm
 
 from afqmctools.observables.greens import greens_1body
 import afqmctools.observables.spin as spobs
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
 
 import autohf
 
@@ -179,7 +178,6 @@ afqmc_params = {
     "measure_interval": 2,
     "equilibration_steps": 2000,
     "estimators": {
-        "energy": {},
         "backprop": {
             "walker_ortho_interval": 2,
             "propagation_steps": [500],
@@ -225,19 +223,10 @@ colab:
   height: 921
 outputId: 78be3a24-0f0c-4577-cb48-6ad867cb1f1b
 ---
-# analyze
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
 
-nequil = 20.0
-
-analysis_settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",     # use units of imaginary time for equilibration
-    nequil = 5,    # length of equilibration phase (in units of imaginary time)
-    trace = True,       # plots a trace of the scalar data
-)
-
-E,dE = analyze_scalar_data(analysis_settings)
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
 ```
 
 +++ {"id": "e5e2892a-59fe-412e-9d8b-42f42c05ff79"}
@@ -331,6 +320,7 @@ _Note:_ The Hartree-Fock code is faster if you use a GPU
 :outputId: 743ad05d-6d2a-4eba-ec3c-92e78bcbe2e3
 
 Ueffs = [1,2,3,4]
+trial_wfns = {}
 for Ueff in Ueffs:
 
     builder_eff = HamiltonianBuilder(
@@ -343,11 +333,6 @@ for Ueff in Ueffs:
     builder_eff.afm_pinning(0.5)
     builder_eff.finalize()
 
-    # NOTICE: we must be careful here! We can either keep around the
-    # original Hamiltonian (U=6) and keep the wf and its Hamiltonian together
-    # or we have one file with afqmc_Ueff which has both the wf and builder.get_hamiltonian()
-    builder_eff.get_hamiltonian().to_hdf5(f"afqmc_{Ueff}.h5")
-
     hf_settings = dict(
         steps = 2000,
         opt_method="lbfgs",
@@ -357,14 +342,14 @@ for Ueff in Ueffs:
         seed = 1,
         noncollinear = False
     )
-    results = autohf.solver.lattice_hf(
+    results = autohf.solve_hf(
         hamiltonian=autohf.AutoHFHamiltonian(builder_eff.get_hamiltonian()),
         lattice=lattice,
         settings=hf_settings,
     )
-    autohf_to_afqmc(
-        results,
-        output_fname = f"afqmc_{Ueff}.h5"
+    # the trial solves the Ueff model, but AFQMC runs with the original Hamiltonian (U=6)
+    trial_wfns[Ueff] = Wavefunction.from_single_determinant(
+        tuple(np.asarray(o) for o in results[0]["orbitals"])
     )
 
     write_jobfile(
@@ -373,9 +358,7 @@ for Ueff in Ueffs:
             "output_name": f"afqmc_{Ueff}",
             "seed": 42,
             "execute": {
-                "wavefunction": {
-                    "filename": f"afqmc_{Ueff}.h5"
-                },
+                "wavefunction": trial_wfns[Ueff],
                 "hamiltonian": hamiltonian,
                 **afqmc_params
             }
@@ -390,7 +373,7 @@ for Ueff in Ueffs:
 :tags: [scroll-output]
 
 for Ueff in Ueffs:
-    !mpirun -n 16 $AFQMC_EXEC afqmc_{Ueff}.json
+    !mpirun -n 16 $$AFQMC_EXEC afqmc_{Ueff}.json
 ```
 
 ```{code-cell} ipython3
@@ -445,10 +428,9 @@ We'll now measure the error between the trial wave function's observable and the
 trial_rhos = []
 for Ueff in Ueffs:
     if Ueff==0:
-        fname = "afqmc.h5"
+        trial = wavefunction
     else:
-        fname = f"afqmc_{Ueff}.h5"
-    trial = Wavefunction.from_hdf5(fname)
+        trial = trial_wfns[Ueff]
     # determinant() gives the leading determinant's alpha and beta orbitals
     alpha, beta = trial.determinant(0)
     o = np.stack([alpha.real, beta.real])

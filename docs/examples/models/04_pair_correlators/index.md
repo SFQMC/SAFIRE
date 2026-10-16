@@ -234,8 +234,8 @@ instead of the above.
 ```
 
 ```{code-cell} ipython3
-from safiretools import write_jobfile
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
+import numpy as np
+from safiretools import Wavefunction, write_jobfile
 import autohf
 
 nelec = (8, 8)
@@ -253,25 +253,23 @@ hf_settings = {
     "nelec": nelec,
 }
     
-wfn = autohf.solver.lattice_hf(
+results = autohf.solve_hf(
     hamiltonian=autohf.AutoHFHamiltonian(hamiltonian),
     lattice=lattice,
     settings=hf_settings,
 )
 
-autohf_to_afqmc(
-    wfn,
-    output_fname = "afqmc.h5"
+# the noncollinear orbitals are spinors, spin-up components first
+orbitals, = results[0]["orbitals"]
+wavefunction = Wavefunction.from_single_determinant(
+    np.asarray(orbitals).reshape(2, lattice.N_sites, sum(nelec))
 )
-
 
 write_jobfile(
     "afqmc.json",
     {
         "execute": {
-            "wavefunction": {
-                "filename": "afqmc.h5"
-            },
+            "wavefunction": wavefunction,
             "hamiltonian": hamiltonian,
             "timestep": 0.005,
             "steps": 10000,

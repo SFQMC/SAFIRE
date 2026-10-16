@@ -55,11 +55,8 @@ In this case, we are running with the `afqmc` driver.
 Below the `afqmc` block are the `project` block and
 one or more `execute` block(s).
 We saw the `project` block in the previous tutorial,
-where we used it to set the names of the output files via the `id` and `series` parameters.
-As a reminder, the output files are named:
-
-- `[id].s[series].scalar.dat` for scalar output data (energy, overlap, etc.)
-- `[id].s[series].stat.h5` for non-scalar output data (one-body reduced density matrix, etc.)
+where we used it to set the name of the output file via the `output_name` parameter.
+As a reminder, SAFIRE saves all of its results in the `[output_name].results.h5` file.
 
 `execute` block(s) define an actual calculation.
 They consist of both AFQMC runtime parameters and references to the following five low-level blocks:
@@ -136,8 +133,8 @@ Usually, one will also often provide:
 ## The `project` Block
 
 The project block is used to set some project-level information.
-For example, `id` and `series` are used to make the prefix of output
-files as `[id].s[series].scalar.dat` and `[id].s[series].stat.h5`.
+For example, `output_name` is used to make the name of the results file
+as `[output_name].results.h5`.
 
 ```json
 "output_name": "your_project_name"
@@ -153,8 +150,7 @@ td, th {
   
 | <b>Parameter</b>   |  Default | Description |
 |--:|---|:--|
-| <b>id</b> |  `afqmc` | The base name for the `[id].s[series].scalar.dat` and `[id].s[series].stat.h5` files  |
-| <b>series</b> |0 |  The series number for the `[id].s[series].scalar.dat` and `[id].s[series].stat.h5` files. The filename will print as width three, padded with 0s if needed  |
+| <b>output_name</b> |  name of the job file without `.json` | The base name for the `[output_name].results.h5` file  |
 
 ### Less Common Settings
 

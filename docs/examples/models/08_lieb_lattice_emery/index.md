@@ -168,9 +168,9 @@ hamiltonian.to_hdf5("afqmc.h5")
 import jax
 jax.config.update('jax_platform_name', 'cpu')
 
-from autohf import lattice_hf, AutoHFHamiltonian
+from autohf import solve_hf, AutoHFHamiltonian
 
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
+from safiretools import Wavefunction
 
 nelec = (8,8)
 
@@ -184,14 +184,15 @@ hf_settings = dict(
     noncollinear = True
 )
 
-results = lattice_hf(
+results = solve_hf(
     hamiltonian=AutoHFHamiltonian(hamiltonian),
     settings=hf_settings
 )
 
-autohf_to_afqmc(
-    results,
-    output_fname = "ghf_wfn.h5"
+# the noncollinear orbitals are spinors, spin-up components first
+orbitals, = results[0]["orbitals"]
+ghf_wfn = Wavefunction.from_single_determinant(
+    np.asarray(orbitals).reshape(2, -1, sum(nelec))
 )
 ```
 

@@ -38,8 +38,6 @@ from pyscf import gto,scf,mcscf
 from safiretools import Wavefunction
 from safiretools import write_jobfile
 
-from stats.scalar_dat import analyze_scalar_data
-
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
 ```

@@ -43,44 +43,23 @@ The workflow follows these steps:
 
       mpirun -n 64 safire afqmc.json
 
-3. **analyze the results**: Use the ``scalar_stats`` command-line tool to analyze the energy output:
+3. **Analyze the results**: Use ``safiretools`` to analyze the energy in the results file ``inputs/qmc.results.h5``:
 
-   .. code-block:: bash
+   .. code-block:: python
 
-      $ scalar_stats qmc.s000.scalar.dat -s time -e 5.0 -t --savefig energy_vs_beta.png
+      from safiretools import Results, vis
 
-      ====== [analyze_scalar_data Settings] ======
+      results = Results("qmc.results.h5")
+      vis.plot_timeseries(results)
 
-      [+] fname            = qmc.s000.scalar.dat
-      [+] mark_header      = #               
-      [+] series_column    = time            
-      [+] nequil           = 5.0             
-      [+] estimate_equil   = False           
-      [+] column           = LocalEnergy     
-      [+] reblock          = 1               
-      [+] ndiscard         = None            
-      [+] list             = False           
-      [+] trace            = True            
-      [+] append           = None            
-      [+] dump             = False           
-      [+] dump_fname       = trace.dat       
-      [+] verbose          = True            
-      [+] autocorr         = None            
-      [+] savefig          = energy_vs_beta.png
-      [+] dump_avail_columns = False           
+   This prints the average AFQMC energy and its stochastic uncertainty and plots the energy as a function of imaginary time.
+   The first 1000 steps (an imaginary time of 5.0 :math:`\mathrm{Ha}^{-1}`) are discarded as equilibration, as set by
+   ``equilibration_steps`` in the provided ``afqmc.json``.
+   If you used the same settings, you should get an output compatible with
 
-      AFQMC Energy   -942.901682 +/-   0.000151 32.25  5.0/35.0
+   .. code-block:: text
 
-   This will compute the average AFQMC energy and stochastic uncertainty, using an equilibration time of 5.0 :math:`\mathrm{Ha}^{-1}`.
-   The ``-t`` flag will generate a plot of the energy as a function of imaginary time if running locally.
-   If running remotely, you can save the plot of the energy vs imaginary time to a file using the ``--savefig [name].png`` option.
-   In either case, you should see the following output if you used the same settings as in the provided ``afqmc.json`` file and
-   above.
-
-      .. image:: energy_vs_beta.png
-         :alt: AFQMC local energy as a function of imaginary time for the fully polarized vanadium example.
-         :width: 80%
-         :align: center
+      Energy = -942.90168 ± 0.00015
 
 
 4. compare with the reference CASCI energy: The AFQMC energy, -942.9017(2) Ha, agrees with the CASCI energy, -942.902127 Ha,

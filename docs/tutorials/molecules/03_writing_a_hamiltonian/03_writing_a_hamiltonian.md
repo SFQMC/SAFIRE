@@ -261,6 +261,7 @@ write_jobfile("afqmc.json", {
         "hamiltonian": hamiltonian,
         "timestep": 0.005,
         "steps": 20000,
+        "equilibration_steps": 200,
         "num_walkers": 200
     }
 })
@@ -270,14 +271,8 @@ write_jobfile("afqmc.json", {
 
 ## Your Turn: Compute the AFQMC Energy
 
-At this point, you should run an AFQMC calculation using SAFIRE
-as we covered earlier in {doc}`../01_hello_safire/01_hello_safire`,
-and use `afqmctools` to obtain the AFQMC energy.
-
-As a reminder, the `analyze_scalar_data` tool can be invoked by either
-
-1. calling it from the CLI as `$ scalar_stats [id].s[series].scalar.dat`
-2. in a Python script / notebook with `analyze_scalar_data()` - we've also included a template in a code block below that you can use for this exercise.
+At this point, you should run an AFQMC calculation using SAFIRE as we covered earlier in {doc}`../01_hello_safire/01_hello_safire`,
+and use `safiretools` to obtain the AFQMC energy.
 
 ```{code-cell} ipython3
 ---
@@ -285,7 +280,6 @@ colab:
   base_uri: https://localhost:8080/
 id: VhPYIHxeyCNf
 outputId: f8c272ce-fe42-4727-be4e-2abd163c3a79
-scrolled: true
 tags: [scroll-output]
 ---
 !mpirun -n 16 $AFQMC_EXEC afqmc.json
@@ -299,18 +293,18 @@ colab:
 id: heaiDcvRyCNg
 outputId: 703d5b1c-4596-4fdd-e544-3708040007de
 ---
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
+from safiretools import vis
+import matplotlib.pyplot as plt
 
-settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,     # remember to check the equilibration!
-    trace = True
-)
+results = Results("afqmc.results.h5")
 
-E, dE = analyze_scalar_data(settings)
+vis.plot_timeseries(results)
+plt.axhline(E_exact, color="crimson")
+E, E_err = results.average("Energy")
+
 E_exact = -1.1372759436170439
-(E-E_exact)/dE
+print(f"z = (E - E_exact)/E_err = {(E-E_exact)/E_err}")
 ```
 
 +++ {"id": "U9KLdBoByCNg"}
@@ -492,118 +486,3 @@ The AFQMC code needs a Hamiltonian, a trial wavefunction, and a file containing 
 
 1. How to write a Hamiltonian to the SAFIRE HDF5 format starting from one-body, and two-body integrals
 2. How to convert from a FCIDUMP file to the SAFIRE HDF5 format both using the CLI tools and within a Python script
-
-+++ {"id": "NaDbzk1jSEB1"}
-
-### Sample Script - Full Workflow
-
-Below is a single script based on what you have learned.
-
-```{code-cell} ipython3
-:id: 8FhPN8ETyCNg
-:tags: [scroll-output]
-:scrolled: true
-
-import numpy as np
-
-from safiretools import MolecularHamiltonian
-from safiretools import NOMSDWavefunction
-from safiretools import write_jobfile
-from stats.scalar_dat import analyze_scalar_data
-
-number_of_electrons = (1,1) # up, down
-number_of_orbitals = 2
-
-# all energy units are Ha
-
-# nuclear repulsion energy
-H0 = 0.714285714285714
-
-# One-Body Integrals in the basis of canonical RHF orbitals
-H1_ij = np.array([[-1.25279706e+00,  0.0           ],
-                  [ 0.0           , -4.75602313e-01]])
-
-# two-body integrals in the basis of canonical RHF orbitals
-H2_ijkl = np.zeros((2,2,2,2))
-H2_ijkl[0,0,:,:] = np.array([[ 6.74976525e-01, 0.0],
-                             [0.0, 6.63461552e-01]])
-
-H2_ijkl[0,1,:,:] = np.array([[ 0.0,  1.81606342e-01],
-                             [ 1.81606342e-01, 0.0]])
-# equivalent by symmetry
-H2_ijkl[1,0,:,:] = H2_ijkl[0,1,:,:]
-H2_ijkl[1,1,:,:] = np.array([[6.63461552e-01, 0.0],
-                             [0.0, 6.96162129e-01]])
-
-
-
-# For reference, the RHF orbitals in the STO-3G basis are
-# phi_i(\vec{r}) = \sum_\mu C_{\mu i} g_\mu (\vec{r})
-phi_hf = np.array([[ 0.54893404,  1.21146407],
-                   [ 0.54893404, -1.21146407]])
-
-# and the STO-3G basis overlap matrix for $\delta_\mathrm{H-H}=1.4 Bohr$ is
-# Sij = <g_\mu | g_\nu>
-Sij = np.array([[1.,         0.65931821],
-                [0.65931821, 1.        ]])
-
-# the Hamiltonian
-hamiltonian = MolecularHamiltonian.from_integrals(
-    hcore=H1_ij,
-    eri=H2_ijkl,
-    enuc=H0
-)
-
-# a trial wavefunction
-orbitals = np.array(
-    [[1.0,0.0],
-    [0.0,1.0]]
-)
-
-phi_0 = np.array([
-    orbitals[:, :number_of_electrons[0]]
-])
-C_0 = 1.0
-wavefunction = NOMSDWavefunction(
-    coeffs=np.array([C_0]),
-    dets=phi_0
-)
-
-# make an input file, which also writes the Hamiltonian and the wavefunction to HDF5
-write_jobfile(
-    "H2_afqmc_input.json",
-    {
-        "seed": 42,
-        "execute": {
-            "wavefunction": wavefunction,
-            "hamiltonian": hamiltonian,
-            "timestep": 0.01,
-            "steps": 10000,
-            "population_control_interval": 10, # in units of steps
-            "measure_interval": 10,            # in units of steps
-            "walker_ortho_interval": 10,       # in units of steps
-            "num_walkers": 2400
-        }
-    }
-)
-
-# run afqmc
-!mpirun -n 12 $AFQMC_EXEC H2_afqmc_input.json
-
-# post process
-
-settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,
-    trace = True
-)
-
-_ = analyze_scalar_data(settings)
-```
-
-```{code-cell} ipython3
-:id: 1dykyPFNyCNg
-
-
-```

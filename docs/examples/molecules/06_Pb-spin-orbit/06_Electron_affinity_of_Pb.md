@@ -252,7 +252,7 @@ wavefunction = Wavefunction.from_pyscf(
 :scrolled: true
 
 from safiretools import write_jobfile
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results, vis
 
 # Write JSON job file, which also writes the wavefunction and the Hamiltonian to HDF5
 write_jobfile(
@@ -264,6 +264,7 @@ write_jobfile(
             "hamiltonian": hamiltonian,
             "timestep": 0.005,
             "steps": 7000,
+            "equilibration_steps": 1600,
             "measure_interval": 5,
             "population_control_interval": 5,
             "walker_ortho_interval": 10,
@@ -274,14 +275,9 @@ write_jobfile(
 
 !mpirun -n 16 $AFQMC_EXEC neutral_afqmc.json
 
-settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 8,
-    trace = True
-)
-
-E,dE = analyze_scalar_data(settings)
+results = Results("neutral_afqmc.results.h5")
+vis.plot_timeseries(results)
+E, dE = results.average("Energy")
 ```
 
 +++ {"id": "QnNlY3KVi2Xd"}
@@ -409,9 +405,6 @@ wavefunction = Wavefunction.from_pyscf(
 :tags: [scroll-output]
 :scrolled: true
 
-### from safiretools import write_jobfile
-from stats.scalar_dat import analyze_scalar_data
-
 # Write JSON job file
 write_jobfile(
     "charged_afqmc.json",
@@ -422,6 +415,7 @@ write_jobfile(
             "hamiltonian": hamiltonian,
             "timestep": 0.005,
             "steps": 7000,
+            "equilibration_steps": 1600,
             "measure_interval": 5,
             "population_control_interval": 5,
             "walker_ortho_interval": 10,
@@ -432,14 +426,9 @@ write_jobfile(
 
 !mpirun -n 16 $AFQMC_EXEC charged_afqmc.json
 
-settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 8,
-    trace = True
-)
-
-E_charged,dE_charged = analyze_scalar_data(settings)
+results = Results("charged_afqmc.results.h5")
+vis.plot_timeseries(results)
+E_charged, dE_charged = results.average("Energy")
 ```
 
 +++ {"id": "bM8pXy_ui2Xe"}
@@ -457,8 +446,8 @@ import numpy as np
 
 eV = 27.211407953
 
-EA = E - E_charged
-dEA = np.sqrt( np.power(dE,2) + np.power(dE_charged,2))
+EA = (E - E_charged).real
+dEA = np.sqrt(dE.real**2 + dE_charged.real**2)
 
 print(f"The electron affinity is {EA*eV} +/- {dEA*eV} eV")
 ```

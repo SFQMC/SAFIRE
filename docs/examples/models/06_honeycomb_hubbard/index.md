@@ -65,9 +65,9 @@ hamiltonian = HamiltonianBuilder.from_input(
 id: bYkD4o3sHwP9
 ---
 # run autoHF and save wavefunction as trial wavefunction
-from autohf import lattice_hf
+from autohf import solve_hf
 from autohf.hamiltonian import AutoHFHamiltonian
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
+from safiretools import Wavefunction
 
 # Typically, we want to use a Ueff to generate a trial wavefunction
 #    since HF's critical U is lower than the correct critical U
@@ -102,9 +102,11 @@ settings = dict(
     seed = 42
 )
 
-results = lattice_hf(hamiltonian=autohf_hamiltonian,settings=settings)
+results = solve_hf(hamiltonian=autohf_hamiltonian,settings=settings)
 
-autohf_to_afqmc(results,output_fname="afqmc.h5")
+wavefunction = Wavefunction.from_single_determinant(
+    tuple(np.asarray(o) for o in results[0]["orbitals"])
+)
 ```
 
 +++ {"id": "vYmHYe-nIm_Q"}
@@ -124,12 +126,11 @@ write_jobfile(
     {
         "seed": 42,
         "execute": {
-            "wavefunction": {
-                "filename": "afqmc.h5"
-            },
+            "wavefunction": wavefunction,
             "hamiltonian": hamiltonian,
             "timestep": 0.01,
             "steps": 10000,
+            "equilibration_steps": 500,
             "measure_interval": 10,             # in units of steps
             "population_control_interval": 10,  # in units of steps
             "walker_ortho_interval": 10,        # in units of steps
@@ -161,60 +162,8 @@ tags: [scroll-output]
 id: eADuTKxlJgfx
 ---
 # analyze results
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
 
-_ = analyze_scalar_data(dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,
-    trace = True
-))
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
 ```

@@ -318,6 +318,7 @@ write_jobfile("afqmc.json", {
         "hamiltonian": hamiltonian,
         "timestep": 0.01,
         "steps": 12000,
+        "equilibration_steps": 500,
         "num_walkers": 1600,
         "population_control_interval": 5,
         "walker_ortho_interval": 5,
@@ -350,22 +351,14 @@ colab:
   height: 921
 outputId: 6de71736-72b7-4efa-bc41-8e0985c0759d
 ---
-# analyze
-from stats.scalar_dat import analyze_scalar_data
+import matplotlib.pyplot as plt
+from safiretools import Results
 
-nequil = 5.0
+E_exact = -13.62185
 
-analysis_settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",     # use units of imaginary time for equilibration
-    nequil = nequil,    # length of equilibration phase (in units of imaginary time)
-    trace = True,       # plots a trace of the scalar data
-)
-
-E,dE = analyze_scalar_data(analysis_settings)
-
-# we will use this value in Exercise 1.1.2 as well
-ref_stoch_uncertainty = dE
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
+plt.axhline(E_exact, color="crimson")
 ```
 
 +++ {"id": "LRmDOsA-S8og"}
@@ -395,8 +388,7 @@ colab:
   base_uri: https://localhost:8080/
 outputId: 88d99bd1-dd65-4ca9-a2d1-4943aef286af
 ---
-from autohf import lattice_hf,AutoHFHamiltonian
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
+from autohf import solve_hf, AutoHFHamiltonian
 
 hf_settings = dict(
     ansatz = 'SD',
@@ -410,14 +402,15 @@ hf_settings = dict(
     verbose = False
 )
 
-results = lattice_hf(
+results = solve_hf(
     hamiltonian=AutoHFHamiltonian(source=hamiltonian),
     settings=hf_settings
 )
 
-autohf_to_afqmc(
-    results,
-    output_fname = "uhf_wfn.h5"
+# the noncollinear orbitals are spinors, spin-up components first
+orbitals, = results[0]["orbitals"]
+uhf_wfn = Wavefunction.from_single_determinant(
+    np.asarray(orbitals).reshape(2, lattice.N_sites, sum(nelec))
 )
 ```
 
@@ -490,12 +483,11 @@ from safiretools import write_jobfile
 write_jobfile("afqmc.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
-        "wavefunction": {
-            "filename": "uhf_wfn.h5"
-        },
+        "wavefunction": uhf_wfn,
         "hamiltonian": hamiltonian,
         "timestep": 0.01,
         "steps": 12000,
+        "equilibration_steps": 2000,
         "num_walkers": 1600,
         "population_control_interval": 5,
         "walker_ortho_interval": 5,
@@ -528,29 +520,17 @@ colab:
   height: 921
 outputId: 78be3a24-0f0c-4577-cb48-6ad867cb1f1b
 ---
-# analyze
-from stats.scalar_dat import analyze_scalar_data
-
-nequil = 20.0
-
-analysis_settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",     # use units of imaginary time for equilibration
-    nequil = nequil,    # length of equilibration phase (in units of imaginary time)
-    trace = True,       # plots a trace of the scalar data
-)
-
-E,dE = analyze_scalar_data(analysis_settings)
-
-print(f"The AFQMC energy is {E:.6f} +/- {dE:.6f}")
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
+plt.axhline(E_exact, color="crimson")
 ```
 
 +++ {"id": "0vF3gnwWSgir"}
 
-If you used all of our settings, you should get see
+If you used all of our settings, you should get an output compatible with
 
 ```
-The AFQMC energy is -13.614404 +/- 0.004229
+Energy = -13.6144 ± 0.0042
 ```
 
 Again, we expect to achieve very close to the exact energy for the Hubbard model at half filling which is -13.62185 for U/t=4.
@@ -581,12 +561,11 @@ from safiretools import write_jobfile
 write_jobfile("afqmc.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
-        "wavefunction": {
-            "filename": "uhf_wfn.h5"
-        },
+        "wavefunction": uhf_wfn,
         "hamiltonian": hamiltonian,
         "timestep": 0.005,
         "steps": 24000,
+        "equilibration_steps": 4000,
         "num_walkers": 1600,
         "population_control_interval": 10,
         "walker_ortho_interval": 10,
@@ -619,27 +598,17 @@ colab:
 id: 8L0WKycOV9L4
 outputId: 1d4d7374-5c21-43a7-eae5-46bafc88d52d
 ---
-# analyze
-from stats.scalar_dat import analyze_scalar_data
-
-analysis_settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",     # use units of imaginary time for equilibration
-    nequil = nequil,    # length of equilibration phase (in units of imaginary time)
-    trace = True,       # plots a trace of the scalar data
-)
-
-E,dE = analyze_scalar_data(analysis_settings)
-
-print(f"The AFQMC energy is {E:.6f} +/- {dE:.6f}")
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
+plt.axhline(E_exact, color="crimson")
 ```
 
 +++ {"id": "SVS5nLE7YvBi"}
 
-Now, you should see
+Now, you should see an energy of about
 
 ```
--13.618391
+Energy = -13.6184
 ```
 
 which is off by about 0.0035 t compared with the exact energy, -13.62185. We can continue to smaller step sizes to remove the remaining disagreement.
@@ -705,9 +674,7 @@ from safiretools import write_jobfile
 write_jobfile("afqmc_3.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
-        "wavefunction": {
-            "filename": "uhf_wfn.h5"
-        },
+        "wavefunction": uhf_wfn,
         "hamiltonian": hamiltonian,
         "timestep": 0.005,
         "steps": 24000,
@@ -747,11 +714,9 @@ tags: [scroll-output]
 
 ### Analyze the AFQMC Output
 
-The AFQMC code saves scalar data, such at the energy, in a file called `qmc.s000.scalar.dat` (a text file)
-and non-scalar data, such as the one-rdm and other observables, in a file called `qmc.s000.stat.h5` (HDF5 file).
-The AFQMC code includes tools to analyze both.
-We have already analyzed the energy in the `qmc.s000.scalar.dat` file using `analyze_scalar_data()`.
-We will now focus on analyzing observables saved in the HDF5 output file, `qmc.s000.stat.h5`.
+SAFIRE saves all of its results in the `afqmc_3.results.h5` file.
+We have already analyzed the energy using `safiretools.Results`.
+We will now focus on analyzing the back-propagated observables.
 
 +++ {"id": "-Y7bGG0xwFOh"}
 

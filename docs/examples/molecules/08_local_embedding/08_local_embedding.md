@@ -38,8 +38,6 @@ from embedding.orbital.assign import euclid_nd, gen_orbital_stats, print_stats
 
 Hartree = 27.211407953 # eV
 Bohr = 0.529177        # Angstrom
-
-MPI_TASKS = 16
 ```
 
 +++ {"id": "vDrFukfq5u0t"}
@@ -59,7 +57,7 @@ We can automate the local embedding workflow, for a given O atom height, $h$, an
 6. Write the ROHF determinant to the SAFIRE HDF5 format to use as a trial wavefunction.
 7. Generate the JSON job file for SAFIRE
 8. run AFQMC using SAFIRE
-9. Compute the average AFQMC energy using afqmctools's analysis tooling
+9. Compute the average AFQMC energy using `safiretools`
 
 See the codeblock below.
 
@@ -72,7 +70,7 @@ import matplotlib.pyplot as plt
 from pyscf import gto, scf, lo
 
 from safiretools import MolecularHamiltonian, NOMSDWavefunction, write_jobfile
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
 
 
 # custom metric to take the projection of the orbital position onto the xy plane
@@ -208,13 +206,15 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
     )
 
     # 6. write JSON job file, which also writes the Hamiltonian and the wavefunction to HDF5
+    name = f"afqmc_h{h:5.5f}"
     write_jobfile(
-        f"afqmc_h{h:5.5f}.json",
+        f"{name}.json",
         {
             "seed": 42,
             "execute": {
                 "timestep": 0.01,
                 "steps": 6000,
+                "equilibration_steps": 1000,
                 "population_control_interval": 10,
                 "measure_interval": 10,
                 "walker_ortho_interval": 10,
@@ -226,17 +226,12 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
     )
 
     # 7. run AFQMC
-    !mpirun -n {MPI_TASKS} $AFQMC_EXEC afqmc_h{h:5.5f}.json
+    !mpirun -n 16 $$AFQMC_EXEC {name}.json
 
     # 8. analyze results
-    settings = dict(
-        fname = "qmc.s000.scalar.dat",
-        xaxis = "time",
-        nequil = 10,
-        trace = True
-    )
+    E, dE = Results(f"{name}.results.h5").average("Energy")
 
-    return *analyze_scalar_data(settings),Erhf,rhf_rdm
+    return E.real, dE.real, Erhf, rhf_rdm
 ```
 
 +++ {"id": "siRKdtkN9GVZ"}
