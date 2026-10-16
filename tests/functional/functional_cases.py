@@ -128,7 +128,7 @@ def build_systems() -> Dict[str, System]:
                 ("dense_rhf_basis_closed", "rcasci_uhf_nomsd", S.COLLINEAR),
                 ("dense_rhf_basis_closed", "rcasci_uhf_nomsd", S.NONCOLLINEAR),
                 ("dense_rhf_basis_closed", "rcasci_uhf_phmsd", S.COLLINEAR),
-                # ph-MSD over an explicit orbital reference
+                # PHMSD over an explicit orbital reference
                 ("dense_rhf_basis_closed", "rcasci_rhf_phmsd", S.COLLINEAR),
             ],
         ),

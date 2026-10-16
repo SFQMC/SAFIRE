@@ -124,7 +124,7 @@ def _rotation_within_spaces(mol, mo_coeff, spaces, rng, scale=0.3):
 
 def build_bh(ctx: BuildContext) -> None:
     """BH at a stretched bond: one RHF-basis hamiltonian in three symmetries,
-    plus twelve trial wavefunctions covering NOMSD and ph-MSD in each symmetry.
+    plus twelve trial wavefunctions covering NOMSD and PHMSD in each symmetry.
 
     The CASCI expansion is taken in the *RHF* orbital basis on purpose, so every
     wavefunction here can be paired with every hamiltonian here.
@@ -187,12 +187,12 @@ def build_bh(ctx: BuildContext) -> None:
                           nelec=nelec, spin_symm=spin_symm, **kwargs
                           ).to_hdf5(out / filename)
 
-    # ph-MSD, collinear: the honest form of the expansion.
+    # PHMSD, collinear: the honest form of the expansion.
     write_phmsd("afqmc_casci_uhf_phmsd.h5", ci, occa, occb, SpinSymm.COLLINEAR)
     write_phmsd("afqmc_casci_uhf_1phmsd.h5", ci[:1], occa[:1], occb[:1],
                 SpinSymm.COLLINEAR)
 
-    # ph-MSD, noncollinear: beta occupations folded into the spinor index, so
+    # PHMSD, noncollinear: beta occupations folded into the spinor index, so
     # both polarizations live in the alpha channel and the beta one is empty.
     occ_noco = np.array([np.append(oa, ob + nmo) for oa, ob in zip(occa, occb)])
     empty = np.empty((len(occ_noco), 0), dtype=int)
@@ -201,7 +201,7 @@ def build_bh(ctx: BuildContext) -> None:
     write_phmsd("afqmc_casci_ghf_1phmsd.h5", ci[:1], occ_noco[:1], empty[:1],
                 SpinSymm.NONCOLLINEAR)
 
-    # ph-MSD over an explicit orbital reference, the PsiT_0 path in readWfn.cpp.
+    # PHMSD over an explicit orbital reference, the PsiT_0 path in readWfn.cpp.
     # The occupation numbers index the reference's columns, so it carries every
     # orbital, not just the occupied ones.
     #
@@ -275,7 +275,7 @@ def build_bh(ctx: BuildContext) -> None:
 def build_n2(ctx: BuildContext) -> None:
     """Stretched N2 (3.0 Bohr) with a CASSCF(12o,6e) reference.
 
-    Both the orbital basis and the ph-MSD trial come from the same CASSCF run,
+    Both the orbital basis and the PHMSD trial come from the same CASSCF run,
     so this is the case that exercises a genuine multi-determinant trial.
     """
     from pyscf import gto, mcscf, scf
