@@ -57,10 +57,6 @@ the minimal basis hydrogen dimer with a bond length of 1.4 Bohr radii.
 ```{code-cell} ipython3
 :id: zMSdfeQqyCNd
 
-from safiretools import MolecularHamiltonian
-from safiretools import NOMSDWavefunction
-from safiretools import write_jobfile
-
 %mkdir -p data
 %cd -q data
 ```
@@ -136,8 +132,6 @@ bond length of $\delta_\mathrm{H-H} = 1.4$ Bohr radii in a standard sto-3g basis
 
 import numpy as np
 
-from safiretools import MolecularHamiltonian
-
 number_of_electrons = (1,1) # up, down
 number_of_orbitals = 2
 
@@ -207,6 +201,8 @@ colab:
 id: JyCauZJfyCNe
 outputId: 5e7b4b17-4e40-4189-ac2e-633cfb904805
 ---
+from safiretools import MolecularHamiltonian
+
 hamiltonian = MolecularHamiltonian.from_integrals(
     hcore=H1_ij,
     eri=H2_ijkl,
@@ -232,8 +228,6 @@ in the same HDF5 file as the Hamiltonian.**
 
 ```{code-cell} ipython3
 :id: Jn_ITkJiyCNf
-
-import numpy as np
 
 from safiretools import NOMSDWavefunction
 from safiretools import write_jobfile
@@ -293,9 +287,12 @@ colab:
 id: heaiDcvRyCNg
 outputId: 703d5b1c-4596-4fdd-e544-3708040007de
 ---
+import matplotlib.pyplot as plt
+
 from safiretools import Results
 from safiretools import vis
-import matplotlib.pyplot as plt
+
+E_exact = -1.1372759436170439
 
 results = Results("afqmc.results.h5")
 
@@ -303,7 +300,6 @@ vis.plot_timeseries(results)
 plt.axhline(E_exact, color="crimson")
 E, E_err = results.average("Energy")
 
-E_exact = -1.1372759436170439
 print(f"z = (E - E_exact)/E_err = {(E-E_exact)/E_err}")
 ```
 
@@ -424,8 +420,6 @@ see {py:meth}`safiretools.MolecularHamiltonian.from_fcidump` for more.
 ```{code-cell} ipython3
 :id: 6ej77YPU2JmI
 
-from safiretools import MolecularHamiltonian
-
 MolecularHamiltonian.from_fcidump(
     "../files/H2_FCIDUMP",
     cholesky_tol=1.0e-5
@@ -459,7 +453,6 @@ mf = scf.RHF(mol)
 mf.kernel()
 
 from safiretools import Wavefunction
-from safiretools import MolecularHamiltonian
 
 # dump the Hamiltonian and the wavefunction to the same h5df
 fout = "h2_from_pyscf.h5"

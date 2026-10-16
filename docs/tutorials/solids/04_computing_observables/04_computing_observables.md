@@ -138,7 +138,6 @@ colab:
 id: c9LgOOxOA_xI
 outputId: b3c1c8c5-e7ac-4ffb-c212-1e7aec371f79
 ---
-import numpy as np
 from safiretools import Results
 
 
@@ -180,9 +179,6 @@ colab:
 id: afFNaJpQdymb
 outputId: b681facb-f520-49ed-a2c2-cfceff7c2d40
 ---
-import numpy as np
-import matplotlib.pyplot as plt
-
 # Because the Hamiltonian in this tutorial is defined in the supercell,
 # the full interaction tensor can be recovered from the Q=0 cholesky operator.
 # v_ijkl = sum_g L^g_ik (L^g_lj)^*, stored in the [i, k, j, l] index order of the TwoRDM
@@ -228,8 +224,6 @@ id: 41e0454a
 outputId: adbb5a65-99ad-49a9-d8a9-3e9b0a166bad
 ---
 # Example: Setting up a BP calculation with multiple BP lengths
-from safiretools import write_jobfile
-
 dt = 0.01
 bp_lengths = [40, 50, 60]  # Multiple BP lengths, in steps
 # Set up AFQMC parameters with back-propagation
@@ -289,6 +283,8 @@ colab:
 id: 39c23cf1
 outputId: 9db77855-7355-4009-f299-6dd441e3e317
 ---
+import matplotlib.pyplot as plt
+
 results_bp = Results("afqmc_bp.results.h5")
 
 bp_onebody_energy, bp_onebody_energy_err = np.transpose([

@@ -188,8 +188,6 @@ To cover:
 ```{code-cell} ipython3
 :id: 8b6da842-a3a2-4a30-a408-b3af7a185ad2
 
-from safiretools import HamiltonianBuilder
-
 hamiltonian_params = {
     "lattice" : dict(
         L1 = 4,
@@ -253,7 +251,7 @@ to cover:
 import random
 import scipy.sparse as sps
 import numpy as np
-from safiretools import HamiltonianBuilder, Lattice, SpinSymm
+from safiretools import SpinSymm
 
 lattice = Lattice.from_dict(
     params=dict(

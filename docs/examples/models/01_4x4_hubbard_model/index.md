@@ -273,8 +273,6 @@ colab:
   height: 690
 outputId: 76c9590a-d19b-42dc-d78f-08d0ed538197
 ---
-from afqmctools.observables.spin import local_spin
-
 rho_spin = 0.5*(rho_up - rho_down)
 
 vis.plot_lattice(
@@ -388,7 +386,7 @@ colab:
   base_uri: https://localhost:8080/
 outputId: 88d99bd1-dd65-4ca9-a2d1-4943aef286af
 ---
-from autohf import solve_hf, AutoHFHamiltonian
+from autohf import solve_hf
 
 hf_settings = dict(
     ansatz = 'SD',
@@ -462,8 +460,6 @@ colab:
   height: 690
 outputId: 335549e0-8890-4318-a08e-d7468c4fac09
 ---
-from afqmctools.observables.spin import local_spin
-
 vis.plot_lattice(
     lattice,
     density=rho_spin,
@@ -476,8 +472,6 @@ vis.plot_lattice(
 
 ```{code-cell} ipython3
 :id: _9GEgLIt5xcp
-
-from safiretools import write_jobfile
 
 # make an input file
 write_jobfile("afqmc.json", {
@@ -554,8 +548,6 @@ amount of statistics.
 
 ```{code-cell} ipython3
 :id: 8IfICCwnVU8m
-
-from safiretools import write_jobfile
 
 # make an input file
 write_jobfile("afqmc.json", {
@@ -668,8 +660,6 @@ colab:
 id: CxlJYdWoREbB
 outputId: 819142c2-1650-4107-9ab3-f2bd8927f689
 ---
-from safiretools import write_jobfile
-
 # make an input file
 write_jobfile("afqmc_3.json", {
     "seed": 42,                          # just for reproducibility
@@ -739,12 +729,6 @@ colab:
 id: fqLt304CwKks
 outputId: 4593e5a7-2e66-446b-e2b1-483f5193b453
 ---
-from pathlib import Path
-from types import SimpleNamespace
-
-import numpy as np
-import matplotlib.pyplot as plt
-
 from afqmctools.analysis.transform import hermitize_factory
 from afqmctools.analysis.average import WALKER_TYPE,get_metadata,average_observable
 
@@ -829,8 +813,6 @@ colab:
 id: 8I7F7yFX22Ya
 outputId: 3eb88439-52df-4ab6-989f-edb3fc5d0aad
 ---
-from safiretools import vis
-
 avg_to_plot = 2
 
 rho_up = rho_ups[avg_to_plot]
@@ -848,8 +830,6 @@ vis.plot_lattice(
 ```
 
 ```{code-cell} ipython3
-from safiretools import vis
-
 avg_to_plot = 1
 
 rho_up = rho_ups[avg_to_plot]

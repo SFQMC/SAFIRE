@@ -309,11 +309,6 @@ write_jobfile(
 ```{code-cell} ipython3
 :id: eh8JuNVdag-o
 
-import numpy as np
-from warnings import warn
-
-from safiretools import Lattice
-from safiretools import vis
 from afqmctools.analysis.average import average_pair_correlation
 
 

@@ -69,7 +69,6 @@ from pathlib import Path
 import json
 import time
 
-import h5py as h5
 import numpy as np
 from pyscf import gto,scf,mcscf
 import jax
