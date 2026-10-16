@@ -84,7 +84,7 @@ hamiltonian = HamiltonianBuilder.from_input(
 id: dCFJvp57FBV6
 ---
 # run autoHF to get UHF solution
-from autohf.hamiltonian import AutoHFHamiltonian
+from autohf import AutoHFHamiltonian
 
 Ueff = 2.75
 
@@ -111,19 +111,19 @@ autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)
 ---
 id: ZitUaYnfV2p8
 ---
-from autohf import lattice_hf
+from autohf import solve_hf
 
 nelec=(18,18)
 
 settings = dict(
     ansatz = 'SD_ROT',
-    numSteps = 100,
+    steps = 100,
     nelec = nelec,
-    numTrials = 100,
+    batch_size = 100,
     seed = 42
 )
 
-results = lattice_hf(hamiltonian=autohf_hamiltonian,settings=settings)
+results = solve_hf(hamiltonian=autohf_hamiltonian,settings=settings)
 ```
 
 +++ {"id": "BQRI3y5nygEF"}

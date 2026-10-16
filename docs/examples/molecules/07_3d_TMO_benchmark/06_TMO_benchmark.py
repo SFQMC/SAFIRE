@@ -76,6 +76,7 @@ import jax.numpy as jnp
 
 import afqmctools
 import autohf
+from autohf import solve_hf, AutoHFHamiltonian
 
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
@@ -144,7 +145,7 @@ def setup_benchmark(key:str, case:dict):
 
     T = np.zeros((norb, norb))
 
-    H = autohf.AutoHFHamiltonian(T=(T, T), U=0)
+    H = AutoHFHamiltonian(T=(T, T), U=0)
 
     nelec = mol.nelec
     Nup = nelec[0]
@@ -205,7 +206,7 @@ def setup_benchmark(key:str, case:dict):
     state0 = state0_ref + rng.normal(scale=0.05, size=(hf_settings["batch_size"], N, Ne))
 
     ts_autohf = time.time()
-    data, data_functions = autohf.lattice_hf(
+    data, data_functions = solve_hf(
         H, 
         settings=hf_settings, 
         custom_energy_term=molecular_energy,

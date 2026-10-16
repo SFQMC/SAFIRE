@@ -176,9 +176,9 @@ nelec = (8,8)
 
 hf_settings = dict(
     ansatz = 'SD',
-    numSteps = 400,
+    steps = 400,
     nelec = nelec,
-    numTrials = 20,
+    batch_size = 20,
     seed = 42,
     measure_spin = True,
     noncollinear = True
@@ -586,7 +586,6 @@ wfn = NOMSDWavefunction(
 )
 
 # 4. run autohf
-from autohf import lattice_hf
 best_E_final = None
 for a in range(annealing_steps):
     print(f"Annealing step {a}")
@@ -595,10 +594,10 @@ for a in range(annealing_steps):
 
     hf_settings = dict(
         ansatz = 'SD',#'SD_Rot',
-        steps = 500, #numSteps = 500,
+        steps = 500,
         #output = f"ghf_wfn_step_{a}.h5",
         nelec = nelec,
-        batch_size = 20, #numTrials = 20,
+        batch_size = 20,
         #seed = 42,
         measure_spin = False,
         noncollinear =  True,
@@ -606,7 +605,7 @@ for a in range(annealing_steps):
         state0_scale = 1.0e-3,
     )
 
-    results, functions = lattice_hf(
+    results, functions = solve_hf(
         hamiltonian=AutoHFHamiltonian(hamiltonian),
         lattice=lattice,
         settings=hf_settings,

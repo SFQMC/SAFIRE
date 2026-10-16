@@ -24,7 +24,7 @@ autohf and safiretools can be invoked within a Python script as
     import tomllib
 
     from safiretools import HamiltonianBuilder
-    from autohf import AutoHFHamiltonian, lattice_hf
+    from autohf import AutoHFHamiltonian, solve_hf
 
     infile = "input.toml"
     with open(infile, "rb") as f:
@@ -39,14 +39,14 @@ autohf and safiretools can be invoked within a Python script as
 
     settings = dict(
         ansatz = 'SD_ROT',
-        numSteps = 100,
+        steps = 100,
         output = "afqmc.h5",
         nelec = params["nelec"],
-        numTrials = 10,
+        batch_size = 10,
         seed = 42
     )
 
-    lattice_hf(
+    solve_hf(
         hamiltonian=AutoHFHamiltonian(source=hamiltonian),
         lattice=lattice,
         settings=settings
@@ -78,8 +78,8 @@ should be present at the end of the output.
             opt_method                                               grad
             seed                                                       42
             eta                                                       0.1
-            numSteps                                                  100
-            numTrials                                                  10
+            steps                                                     100
+            batch_size                                                 10
             plot                                                    False
             verbose                                                 False
             output                                               afqmc.h5

@@ -174,7 +174,8 @@ To do that we'll need:
 
 import jax.numpy as jnp
 
-import autohf
+from autohf import solve_hf, AutoHFHamiltonian
+from autohf.solver import sd_to_rdm_noncollinear
 
 # get the (-1)^i which is really the checkerboard pattern for a 4×4
 signs = np.array([ (-1)**np.sum(s.coord) for s in lattice.sites])
@@ -196,7 +197,7 @@ def orbitalFunc(state):
 
 def rdmFunc(state):
     o = orbitalFunc(state)
-    return autohf.solver.sd_to_rdm_noncollinear(o)
+    return sd_to_rdm_noncollinear(o)
 ```
 
 ```{code-cell} ipython3
@@ -235,8 +236,8 @@ state0_ref = 0.0 * np.arange(N).reshape(N)
 state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["batch_size"], N))
 
 
-dataHFC = autohf.solve_hf(
-    hamiltonian=autohf.AutoHFHamiltonian(builderHF.get_hamiltonian()),
+dataHFC = solve_hf(
+    hamiltonian=AutoHFHamiltonian(builderHF.get_hamiltonian()),
     lattice=lattice,
     settings=hf_settings,
     state2orbitals=orbitalFunc,
@@ -292,8 +293,8 @@ state0_ref = 0.0 * np.arange(N).reshape(N)
 state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["batch_size"], N))
 
 
-dataHFC2 = autohf.solve_hf(
-    hamiltonian=autohf.AutoHFHamiltonian(builderHF.get_hamiltonian()),
+dataHFC2 = solve_hf(
+    hamiltonian=AutoHFHamiltonian(builderHF.get_hamiltonian()),
     lattice=lattice,
     settings=hf_settings,
     state2orbitals=orbitalFunc,

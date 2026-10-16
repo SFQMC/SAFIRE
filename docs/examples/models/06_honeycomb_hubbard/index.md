@@ -65,8 +65,7 @@ id: bYkD4o3sHwP9
 # run autoHF and save wavefunction as trial wavefunction
 import numpy as np
 
-from autohf import solve_hf
-from autohf.hamiltonian import AutoHFHamiltonian
+from autohf import solve_hf, AutoHFHamiltonian
 from safiretools import Wavefunction
 
 # Typically, we want to use a Ueff to generate a trial wavefunction
@@ -96,9 +95,9 @@ nelec=(16-1,16-1)
 
 settings = dict(
     ansatz = 'SD_ROT',
-    numSteps = 100,
+    steps = 100,
     nelec = nelec,
-    numTrials = 100,
+    batch_size = 100,
     seed = 42
 )
 
