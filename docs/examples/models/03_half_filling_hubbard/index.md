@@ -41,7 +41,7 @@ import numpy as np
 
 ## Physics Background
 
-The Hubbard model at Half Filling ($n=1$) has a special symmetry known as particle-hole symmetry, that allows auxiliary field methods to be sign free. However, care must be taken to make sure that phaseless/constrained path AFQMC is used properly to exploit said symmetry.
+The Hubbard model at half filling ($n=1$) has a special symmetry known as particle-hole symmetry, that allows auxiliary field methods to be sign free. However, care must be taken to make sure that phaseless/constrained path AFQMC is used properly to exploit said symmetry.
 
 [1]: _Benchmark study of the two-dimensional Hubbard model with auxiliary-field quantum Monte Carlo method_  
 M Qin, H Shi, S Zhang Phys. Rev. B 94, 085103 4 August, 2016  
@@ -150,7 +150,7 @@ T = builderHF.get_hamiltonian().get_one_body().toarray().reshape(2,lattice.N_sit
 
 +++ {"id": "1f18437f-875d-486e-8ecc-22c8ec5f5ca8"}
 
-Because of the open shell at half filling, we'll follow Ref. 1 and use a GHF trial w/ AFM constrained to the X-Y plane (eq 14)
+Because of the open shell at half filling, we'll follow Ref. 1 and use a GHF trial with AFM constrained to the X-Y plane (eq 14)
 
 $$
 H_\mathrm{GHF} = -t\sum_{\langle ij\rangle \sigma} c^\dagger_{i\sigma}c_{j\sigma} + \text{h.c.} + \sum_{i}M_i c^\dagger_{i\uparrow}c_{i\downarrow} + \text{h.c.}
@@ -176,11 +176,11 @@ import jax.numpy as jnp
 
 import autohf
 
-# get the (-1)^i which is really the checkerboard pattern for a 4x4
+# get the (-1)^i which is really the checkerboard pattern for a 4×4
 signs = np.array([ (-1)**np.sum(s.coord) for s in lattice.sites])
 N = lattice.N_sites
 # convert T -> GHF format
-# TODO this should be in afqmctools
+# TODO this should be in safiretools
 TGHF_ = np.block([[T[0],np.zeros_like(T[1])],
                [np.zeros_like(T[0]),T[1]]])
 TGHF_ = jnp.array(TGHF_)
@@ -266,15 +266,13 @@ plt.imshow(dataHFC[0]["state"].reshape(4,4))
 
 +++ {"id": "7956d434-41e8-4d69-b88e-4d4dc2f364cb"}
 
-Hmm... This looks like we haven't fully converged into a translationally invariant solution, but's close. Let's increase the precision!
+Hmm... This looks like we haven't fully converged into a translationally invariant solution, but it's close. Let's increase the precision!
 
-**⚠️ Warning** This notebook is setup for the CPU, the following cell takes a while (the GPU is a bit faster if you have one)
+**⚠️ Warning** This notebook is set up for the CPU, the following cell takes a while (the GPU is a bit faster if you have one)
 
 ```{code-cell} ipython3
 :id: bf090735-faac-4b21-90da-72283a85641f
 :outputId: ca57afd7-0a3b-4d87-c125-5fe04e926178
-
-wfn_fname = "autoHF_wfn.h5"
 
 hf_settings = {
     "verbose": False,
@@ -285,13 +283,13 @@ hf_settings = {
     "gpu": False,
     "ansatz": "CUSTOM",
     "opt_method": "lbfgs",
-    "num_batches": 16,
+    "batch_size": 16,
     "nelec": nelec,
 }
 
 rng = np.random.default_rng(42)
 state0_ref = 0.0 * np.arange(N).reshape(N)
-state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["num_batches"], N))
+state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["batch_size"], N))
 
 
 dataHFC2 = autohf.solve_hf(
@@ -336,7 +334,6 @@ Let's check that this is a better energy than the previous energy
 :outputId: 64057b24-c950-4eea-8870-709650f095cc
 
 dataHFC2[0]["E"] < dataHFC[0]["E"]
-dataHFC2[0]["orbitals"].shape
 ```
 
 +++ {"id": "d7142e2a-a771-496a-8300-8547e0eec68d"}
@@ -346,10 +343,11 @@ Great!
 Now let's check if we can guess a better state, by explicitly restoring translation invariance
 
 ```{code-cell} ipython3
-:id: 8f623772-48d7-4b53-a629-70d668e830c1
-:outputId: 00efbe7f-e45a-48bd-f6ec-77c17b0813b1
+:id: b02b905f-2789-4a5d-bac2-5847467d31a4
+:outputId: 693f28ca-8e55-4eb7-e17e-1a95e26d77ad
 
-dataHFC2[1]["energy_func"](dataHFC2[0]["state"]) < dataHFC2[1]["energy_func"](dataHFC2[0]["state"]/np.abs(dataHFC2[0]["state"]))
+uni_state = np.ones(lattice.N_sites)*np.mean(np.abs(dataHFC2[0]["state"]))
+np.isclose(dataHFC2[1]["energy_func"](dataHFC2[0]["state"]),dataHFC2[1]["energy_func"](uni_state))
 ```
 
 +++ {"id": "8944c9a6-fc6c-4cb0-9e07-8b8712bb5f45"}
@@ -358,11 +356,11 @@ So we see we've reached a minimum, and that a constant $M$ is the same as our ne
 
 +++ {"id": "5afb0278-218c-4d88-9bea-b1c0f2ce8b15"}
 
-### Preparing the SAFIRE input files
+### Preparing the SAFIRE Input Files
 
 +++ {"id": "6a2b6690-bb9c-4704-bd6c-91979a34c480"}
 
-Next, we will use the Hamiltonian and AutoHF wavefunction to construct a wavefunction.
+Next, we turn the AutoHF orbitals into a SAFIRE trial wavefunction.
 
 ```{code-cell} ipython3
 :id: 85b8e2f7-d035-4a12-bd53-a2eccf5ae40e
@@ -370,8 +368,7 @@ Next, we will use the Hamiltonian and AutoHF wavefunction to construct a wavefun
 from safiretools import Wavefunction
 
 hamiltonian = builder.get_hamiltonian()
-wavefunction = Wavefunction.from_single_determinant(np.array(dataHFC2[0]["orbitals"].reshape(2,N,np.sum(nelec))))
-
+wavefunction = Wavefunction.from_single_determinant(np.array(dataHFC2[0]["orbitals"][0].reshape(2, N, -1)))
 ```
 
 ```{code-cell} ipython3
@@ -422,7 +419,7 @@ plt.axhline(E_ref, color="crimson")
 * What if we didn't use the correct signs ($M_i = (-1)^i\Delta_i$) for the HF ansatz? Could we construct an even more constrained wave function?
 * What do the local spin/charge observables of the optimized ansatz look like?
 * What happens for $U=8$? Do we need a different wave function?
-* What happens if you start from a free electron state instead of the HF state? (`free_wfn = Wavefunction.from_free_electron(builder.get_hamiltonian(), nelec, spin_symm="nc")`) — at half filling the untwisted lattice is open-shell, so this warns; build the trial's Hamiltonian on a lattice with a small twist to make the determinant well defined.
+* What happens if you start from a free electron state instead of the HF state? (`free_wfn = Wavefunction.from_free_electron(builder.get_hamiltonian(), nelec, spin_symm="nc")`; this warns, since the untwisted lattice is open-shell at half filling)
 
 +++ {"id": "f7eab26a-3624-402e-83de-00ee38daf267"}
 
