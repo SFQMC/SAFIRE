@@ -40,6 +40,8 @@
 #include "utilities/check.hpp"
 #include "test_utils.hpp"
 #include "AFQMC/Utilities/readWfn.h"
+#include "AFQMC/Utilities/format_version.hpp"
+#include "AFQMC/parameter_defaults.hpp"
 
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "AFQMC/Wavefunctions/Wavefunction.hpp"
@@ -308,7 +310,77 @@ TEST_CASE("wfn_factory: sdet", "[wfn_factory]")
       }
     }
   }, UTEST_HAMIL, UTEST_WFN, TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::FINITE_T | TestFiles::ALL_SYSTEMS);
-  
+
+}
+
+// Write a two-determinant copy of a single-determinant NOMSD file whose second determinant
+// duplicates the first. Every determinant pair then has the same transition density matrix,
+// so the multi-determinant G_MF has to reproduce the single-determinant one.
+inline void duplicate_nomsd_determinant(std::string const& src_file, std::string const& out_path) {
+  h5::file fin(src_file, 'r');
+  h5::group nin = h5::group(fin).open_group("Wavefunction").open_group("NOMSD");
+
+  auto const info = read_wavefunction_info(nin);
+  utils::check(info.ndets == 1, "expected a single-determinant source, got {} determinants", info.ndets);
+  int nspin = (info.walker_type == COLLINEAR ? 2 : 1);
+
+  h5::file fout(out_path, 'w');
+  h5::group nout = h5::group(fout).create_group("Wavefunction").create_group("NOMSD");
+
+  nda::array<ComplexType, 1> ci{0.6, 0.8};
+
+  write_format_version(nout);
+  h5::h5_write_attribute(nout, "spin_type", walkerTypeToString(info.walker_type));
+  nda::h5_write(nout, "ci_coeffs", ci);
+
+  for(int is = 0; is < nspin; ++is) {
+    auto psi = math::sparse::HDF2CSR<ComplexType, HOST_MEMORY, int, int>(nin.open_group(std::format("PsiT_{}", is)));
+    for(int id = 0; id < 2; ++id) {
+      h5::group g = nout.create_group(std::format("PsiT_{}", id * nspin + is));
+      math::sparse::CSR2HDF(g, psi);
+    }
+  }
+}
+
+template<MEMORY_SPACE MEM>
+void wfn_factory_multidet_gmf(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                              std::string const& hamil_file, std::string const& wfn_file) {
+  WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "any");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
+
+  auto make_wfn = [&](std::string const& filename) {
+    WavefunctionParameters params{.name = "wfn0", .filename = filename};
+    apply_defaults(params, ham.getHamType());
+    return Wavefunction<MEM>::from_params(mpi, params, type, false, ham, 1);
+  };
+
+  utils::TemporaryDirectory tmpdir;
+  std::string multidet_file = (tmpdir / "multidet.h5").string();
+  if(mpi->comm.root()) {
+    duplicate_nomsd_determinant(wfn_file, multidet_file);
+  }
+  mpi->comm.barrier();
+
+  auto single = make_wfn(wfn_file);
+  auto multi  = make_wfn(multidet_file);
+  // tmpdir removes the file on the root rank alone, so no rank may still be reading it
+  mpi->comm.barrier();
+
+  auto gMF_single = single.G_MF();
+  auto gMF_multi  = multi.G_MF();
+  CHECK_THAT(gMF_multi(), utils::Approx(nda::make_regular(gMF_single())));
+}
+
+TEST_CASE("wfn_factory: multi-determinant G_MF", "[wfn_factory]") {
+  auto& mpi = utils::make_unit_test_mpi_context();
+
+  using namespace utils;
+
+  run_test_with_files([&]<auto MEM>(std::string hamil_file, std::string wfn_file, WALKER_TYPES, bool) {
+    wfn_factory_multidet_gmf<MEM>(mpi, hamil_file, wfn_file);
+  }, UTEST_HAMIL, UTEST_WFN,
+     // no solids: the KP and THC Hamiltonians all reject ndet > 1
+     TestFiles::RHF | TestFiles::UHF | TestFiles::GHF | TestFiles::NOMSD | TestFiles::MOLECULES | TestFiles::LATTICES);
 }
 
 
