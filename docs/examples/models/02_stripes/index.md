@@ -291,7 +291,7 @@ plt.show()
 :id: 1f80b790-9e93-4c4a-b043-f2aea22a0e11
 
 # DMRG data of the form: site Sz Nup Ndn
-SzDmrg = np.loadtxt("../data_10x4_Ne16U6.0_15360.dat",usecols=(1,))
+SzDmrg = np.loadtxt("../files/data_10x4_Ne16U6.0_15360.dat",usecols=(1,))
 ```
 
 ```{code-cell} ipython3
