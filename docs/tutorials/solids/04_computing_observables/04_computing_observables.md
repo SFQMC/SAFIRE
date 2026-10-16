@@ -20,28 +20,6 @@ kernelspec:
 :end-before: <!-- END observables-intro -->
 ```
 
-## Run the Cell Below to Set Up the Tutorial
-
-```{code-cell} ipython3
-:id: 616ca764-f070-434a-8146-e1511f273342
-
-# Run me (shift+enter or click the play button) to setup the tutorial!
-%mkdir -p data
-%cd -q data
-
-# copy files to scratch
-import shutil
-_ = shutil.copy("../files/hamil.h5", ".")
-_ = shutil.copy("../files/wfn.h5", ".")
-```
-
-```{code-cell} ipython3
-:id: 5943e22b-4312-40ac-98a4-d0cbaf65316d
-:outputId: b00e1736-2ab7-4ffe-c35d-fb663a2c6277
-
-!ls -al
-```
-
 +++ {"id": "4d4d8135-bc2d-4caa-bbaf-c88ab045176c"}
 
 ## Set Up the Test System
@@ -53,15 +31,17 @@ concrete calculations on.
 
 The trial wavefunction is also derived from the DFT solution.
 We have provided HDF5 files containing the Hamiltonian and trial wavefunctions, respectively.
-The code block above should have copied them to your scratch directory.
 
 We will need the Hamiltonian again to evaluate the energy from the measured observables, so we read it here.
 
 ```{code-cell} ipython3
+%mkdir -p data
+%cd -q data
+
 import h5py
 import numpy as np
 
-with h5py.File("hamil.h5", "r") as f:
+with h5py.File("../files/hamil.h5", "r") as f:
     system = f["System"].attrs
     M = int(system["number_of_bands"])
     # constant energy: nuclear repulsion and the Madelung self-interaction of the electrons
@@ -104,10 +84,10 @@ write_jobfile(
         "seed": 42,
         "execute": {
             "wavefunction": {
-                "filename": "wfn.h5"
+                "filename": "../files/wfn.h5"
             },
             "hamiltonian": {
-                "filename": "hamil.h5"
+                "filename": "../files/hamil.h5"
             },
             "timestep": 0.01,
             "steps": 7000,
@@ -259,10 +239,10 @@ write_jobfile(
         "seed": 42,
         "execute": {
             "wavefunction": {
-                "filename": "wfn.h5"
+                "filename": "../files/wfn.h5"
             },
             "hamiltonian": {
-                "filename": "hamil.h5"
+                "filename": "../files/hamil.h5"
             },
             "timestep": dt,
             "steps": 10000,
