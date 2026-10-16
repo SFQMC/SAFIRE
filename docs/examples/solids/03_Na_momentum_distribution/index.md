@@ -42,7 +42,6 @@ The density matrix does not commute with the Hamiltonian, so we use the back-pro
 (see {doc}`../../../tutorials/solids/04_computing_observables/04_computing_observables`).
 The plane-wave coefficients come from the QE wavefunction files, and `files/nq_tools.py` does the unfolding.
 
-The settings below run on a laptop with 12 MPI ranks: QE takes seconds, CoQuí about 2.5 h and SAFIRE about 1.75 h.
 Each step is skipped when its output already exists in `data/`.
 Set `QE_BIN` to the directory holding `pw.x` and `pw2coqui.x`, and `COQUI_EXEC` and `AFQMC_EXEC` to the
 CoQuí and SAFIRE executables.
