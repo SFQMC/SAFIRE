@@ -1,0 +1,26 @@
+&control
+  verbosity = 'high'
+  outdir = 'OUT'
+  pseudo_dir = '.'
+/
+&system
+  ibrav = 1
+  celldm(1) = 8.103621   ! bcc at r_s = 3.99 (Huotari 2010), a = 4.28825 A
+  nat = 2
+  ntyp = 1
+  ecutwfc = 30
+  force_symmorphic=.true.
+  occupations = 'smearing'
+  degauss = 0.0063336
+/
+&electrons
+/
+ATOMIC_SPECIES
+  Na 22.99  Na.ccECP.upf
+
+ATOMIC_POSITIONS crystal
+  Na 0.00 0.00 0.00
+  Na 0.50 0.50 0.50
+
+K_POINTS automatic
+  8 8 8 0 0 0
