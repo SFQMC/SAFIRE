@@ -114,7 +114,7 @@ options:
 The primary option that we are interested in here is `-i` which allows an input file (in .toml format) containing Hamiltonian parameters to be specified.
 The parameter input conventions are the same whether we use the `make_model_ham` CLI tool, or use `HamiltonianBuilder.from_input()` within a Python script.
 
-Here is a sample input file which will generate a Hubbard model with nearest-neighbor hopping, on a 4x4 square lattice with periodic boundary conditions.
+Here is a sample input file which will generate a Hubbard model with nearest-neighbor hopping, on a 4×4 square lattice with periodic boundary conditions.
 
 ```toml
 [hamiltonian]
@@ -183,7 +183,7 @@ For the remainder of the tutorial, we will be working directly with Python withi
 
 ### Example: Standard Hubbard Model
 
-Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
+Below, we construct a Hubbard model on a 4×4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
 We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
 Note that the default hopping matrix shape is $2N_\mathrm{sites} \times N_\mathrm{sites}$ where the first $N_\mathrm{sites}$ rows correspond to the spin-up sector and the last $N_\mathrm{sites}$ rows correspond to the spin-down sector.
 
@@ -328,7 +328,7 @@ where $\langle i,j \rangle^n$ indicates that the sum is constrained to run over 
 
 #### Example: Hubbard Model with $t'$
 
-Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
+Below, we construct a Hubbard model on a 4×4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for `t`.
 We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
 Note that the default hopping matrix shape is $2N_\mathrm{sites} \times N_\mathrm{sites}$ where the first $N_\mathrm{sites}$ rows correspond to the spin-up sector and the last $N_\mathrm{sites}$ rows correspond to the spin-down sector.
 
@@ -356,7 +356,7 @@ params = {
     }
 }
 
-# this will make a Hubbard model on a 4x4 lattice with PBCs
+# this will make a Hubbard model on a 4×4 lattice with PBCs
 hamiltonian = HamiltonianBuilder.from_input(source=params).get_hamiltonian()
 
 hopping = hamiltonian.get_one_body()
@@ -423,7 +423,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-# this will make a Hubbard model on a 4x4 lattice with PBCs
+# this will make a Hubbard model on a 4×4 lattice with PBCs
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 
 # let's take a look at the U term:
@@ -477,7 +477,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-# this will make a Hubbard model on a 4x4 lattice with PBCs
+# this will make a Hubbard model on a 4×4 lattice with PBCs
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 
 # let's take a look at the U term:
@@ -522,7 +522,7 @@ params = {
     'hamiltonian': hamiltonian_params
 }
 
-# this will make a Hubbard model on a 4x4 lattice with PBCs
+# this will make a Hubbard model on a 4×4 lattice with PBCs
 hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
 
 # let's take a look at the U term:

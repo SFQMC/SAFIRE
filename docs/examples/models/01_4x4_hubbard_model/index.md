@@ -13,12 +13,12 @@ kernelspec:
 
 +++ {"id": "-CSom7nd5xcl"}
 
-# 4x4 Square Lattice Hubbard Model
+# 4×4 Square Lattice Hubbard Model
 
 Author: Kyle Eskridge
 
 In this tutorial, we will perform AFQMC calculations for the Hubbard model on
-a 4x4 lattice.
+a 4×4 lattice.
 The Hamiltonian is given by,
 $$
 \hat{H} = -t \sum_{\langle i,j\rangle} \hat{c}^\dagger_i \hat{c}_j + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
@@ -26,7 +26,7 @@ $$
 where $i,j$ are lattice site indices, angle brackets indicate nearest-neighbors,
 $\hat{c}^\dagger_i$/$\hat{c}_i$ are electronic creation/annihilation operators,
 and $\hat{n}^{\sigma}_i$ are spin-resolved number operators corresponding to site $i$.
-The 4x4 lattice is small enough to make exact diagonalization possible.
+The 4×4 lattice is small enough to make exact diagonalization possible.
 We will use exact results for this system as reference data throughout
 this tutorial.
 
@@ -159,7 +159,7 @@ to unrestricted Hartree-Fock trial wavefunctions.
 `safiretools` provides a convenience classmethod, `Wavefunction.from_free_electron()`,
 for calculating free-electron trial wavefunctions.
 
-At half filling this 4x4 lattice is open-shell: the highest occupied level is
+At half filling this 4×4 lattice is open-shell: the highest occupied level is
 six-fold degenerate and holds only three electrons per spin, so *which* three you
 occupy is arbitrary. A small twist on the
 lattice breaks that degeneracy and fixes the choice.

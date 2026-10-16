@@ -21,9 +21,9 @@ Author: Ryan Levy
 :id: 6d86eb21-7fcb-4c98-9780-3d657dff85a2
 
 import os
-# This are in case you have a GPU enabled JAX but are running on CPU.
+# This is in case you have a GPU-enabled JAX but are running on CPU.
 os.environ['JAX_PLATFORMS'] = 'cpu'
-# If you want to use GPU enabled Jax in multiply notebooks with the same
+# Don't preallocate GPU memory, so that several notebooks can share the same GPU
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 # use x64 numbers

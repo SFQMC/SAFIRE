@@ -15,7 +15,7 @@ kernelspec:
 
 # Multi-Slater Determinant Trial Wavefunction
 
-In this example, we will compute the AFQMC energy of the Hubbard model with U=8 on a 6x6x square lattice with open boundary conditions
+In this example, we will compute the AFQMC energy of the Hubbard model with U=8 on a 6×6 square lattice with open boundary conditions
 at half-filling.
 We will use a trial wavefunction consisting of two Slater determinants.
 Specifically, we will use
@@ -180,8 +180,8 @@ orbitals_down = results[0]['orbitals'][1]
 
 # The columns of the Slater matrices are the HF orbitals
 # A UHF-like Slater determinant is a pair of Slater matrices
-#     the spin-up orbitals, with shape (Nsites x Nup),
-#     the spin-down orbitals, with shape (Nsites x Ndown)
+#     the spin-up orbitals, with shape (Nsites × Nup),
+#     the spin-down orbitals, with shape (Nsites × Ndown)
 #
 phi_up = orbitals_up[:,:nelec[0]]
 phi_down = orbitals_down[:,:nelec[1]]

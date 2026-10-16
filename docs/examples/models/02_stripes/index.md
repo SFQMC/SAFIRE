@@ -60,7 +60,7 @@ We'll explore how to see this with AFQMC and the role of the trial wave function
 
 ## Obtaining the Spin Density
 
-Let's look at a 10x4 system with 0.2 doping at $U=6$ with a staggered AFM pinning field at the edges. The pinning breaks symmetry in order to understand the response of the system to the applied field.
+Let's look at a 10×4 system with 0.2 doping at $U=6$ with a staggered AFM pinning field at the edges. The pinning breaks symmetry in order to understand the response of the system to the applied field.
 
 When confronted with a new problem, the first thing we generally do is use a non-interacting (free electron) wave function as the trial. Let's do that now
 
@@ -147,7 +147,7 @@ from safiretools import Wavefunction
 #
 # No twist is needed here: the open boundary along axis 1 and the pinning field
 # already split the shells, so the determinant is well defined. On a fully
-# periodic, unpinned lattice it would not be. See the 4x4 Hubbard example.
+# periodic, unpinned lattice it would not be. See the 4×4 Hubbard example.
 wavefunction = Wavefunction.from_free_electron(
     source=hamiltonian,
     nelec=nelec
