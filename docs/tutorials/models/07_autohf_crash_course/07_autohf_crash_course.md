@@ -190,8 +190,7 @@ colab:
   base_uri: https://localhost:8080/
 outputId: 97e045dc-de4e-410b-98ba-c376957f4c67
 ---
-from autohf import lattice_hf,AutoHFHamiltonian
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
+from autohf import solve_hf,AutoHFHamiltonian
 
 # "hamiltonian" contains the safiretools format Hamiltonian
 hamiltonian_autohf = AutoHFHamiltonian(hamiltonian) # Your Turn: convert to the autoHF format
@@ -209,7 +208,7 @@ hf_settings = dict(
     verbose = False
 )
 
-results = lattice_hf(
+results = solve_hf(
     hamiltonian=hamiltonian_autohf,
     settings=hf_settings
 )
@@ -231,9 +230,13 @@ You should have gotten a HF energy of -17.7499999549238 $t$ (to within about $1 
 ```{code-cell} ipython3
 :id: fFMgfc_zU4oW
 
-autohf_to_afqmc(
-    results,
-    output_fname = "uhf_wfn.h5"
+import numpy as np
+from safiretools import Wavefunction
+
+# the noncollinear orbitals are spinors, spin-up components first
+orbitals, = results[0]["orbitals"]
+wavefunction = Wavefunction.from_single_determinant(
+    np.asarray(orbitals).reshape(2, lattice.N_sites, sum(hf_settings["nelec"]))
 )
 ```
 

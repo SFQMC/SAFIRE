@@ -154,6 +154,7 @@ for this case.
     },
     "timestep": 0.01,
     "steps": 10000,
+    "equilibration_steps": 2000,
     "num_walkers": 1280,
     "measure_interval": 10,
     "population_control_interval": 10,
@@ -168,38 +169,20 @@ Finally, we can run AFQMC using SAFIRE by running
 $ mpirun -np 64 /path/to/SAFIRE/build/safire afqmc.json
 ```
 
-When that has finished, we can use afqmctools to analyze the result,
+When that has finished, we can use `safiretools` to analyze the result,
 
-```bash
-$ scalar_stats qmc.s000.scalar.dat -s time -t -e 20.0 -t --savefig energy_vs_beta.png
+```python
+from safiretools import Results, vis
 
-
-====== [analyze_scalar_data Settings] ======
-
-[+] fname            = qmc.s000.scalar.dat
-[+] mark_header      = #               
-[+] series_column    = time            
-[+] nequil           = 20.0            
-[+] estimate_equil   = False           
-[+] column           = LocalEnergy     
-[+] reblock          = 1               
-[+] ndiscard         = None            
-[+] list             = False           
-[+] trace            = True            
-[+] append           = None            
-[+] dump             = False           
-[+] dump_fname       = trace.dat       
-[+] verbose          = True            
-[+] autocorr         = None            
-[+] savefig          = energy_vs_beta.png
-[+] dump_avail_columns = False           
-
-AFQMC Energy   -24.602724 +/-   0.000208 9.08 20.0/100.0
+results = Results("qmc.results.h5")
+vis.plot_timeseries(results)
 ```
 
-This will also generate the following plot within the `energy_vs_beta.png`. The plot will also open in a new interactive window if run locally.
+This plots the energy as a function of imaginary time and prints an output compatible with
 
-![Energy vs Beta](energy_vs_beta.png)
+```
+Energy = -24.60272 ± 0.00021
+```
 
 +++
 

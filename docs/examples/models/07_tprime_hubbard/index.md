@@ -268,19 +268,14 @@ Let's double check the paper.
 :id: 4d782d47-030b-4baa-97f7-d5727575dca7
 :outputId: 9141e891-875b-46db-9a23-ed9581f6442e
 
-from stats.scalar_dat import analyze_scalar_data
-nequil = 2.0 #t^{-1}
+import matplotlib.pyplot as plt
+from safiretools import Results
 
-analysis_settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",     # use units of imaginary time for equilibration
-    nequil = nequil,    # length of equilibration phase (in units of imaginary time)
-    trace = True,       # plots a trace of the scalar data
-)
+E_ref = -27.271 # reference [1]
 
-E,dE = analyze_scalar_data(analysis_settings)
-
-print(f"The AFQMC energy is {E:.6f} +/- {dE:.6f} Ha")
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
+plt.axhline(E_ref, color="crimson")
 ```
 
 +++ {"id": "da4dfc0c-047c-43b7-9568-5494c48067b2"}

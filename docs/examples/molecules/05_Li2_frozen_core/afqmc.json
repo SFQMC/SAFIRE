@@ -10,6 +10,7 @@
     },
     "timestep": 0.01,
     "steps": 7000,
+    "equilibration_steps": 1500,
     "num_walkers": 1600,
     "population_control_interval": 10
   }

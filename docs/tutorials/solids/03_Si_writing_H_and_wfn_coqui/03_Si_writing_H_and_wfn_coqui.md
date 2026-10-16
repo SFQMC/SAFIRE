@@ -533,11 +533,11 @@ Your steps:
 
 1. make an input file for SAFIRE to run using the Hamiltonian in `hamil.h5` and the trial wavefunction in `wfn.h5`. Use CLOSED walkers.
 2. Run SAFIRE using that input file
-3. use `scalar_data` to obtain the AFQMC energy
+3. use `safiretools` to obtain the AFQMC energy
 
 <details>
 <summary>Hint:</summary>
-  <p>This is the same calculation as in Tutorial 1: Hello Safire. Your energy should match the result there, `-0.729271 +/- 0.000532`, to within stochastic uncertainty.</p>
+  <p>This is the same calculation as in Tutorial 1: Hello Safire. Your energy should match the result there, `Energy = -0.7299 ± 0.0017`, to within stochastic uncertainty.</p>
 </details>
 
 +++ {"id": "QybItZ2_98uJ"}

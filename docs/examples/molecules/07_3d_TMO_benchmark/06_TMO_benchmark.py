@@ -279,6 +279,7 @@ def setup_benchmark(key:str, case:dict):
                 "hamiltonian": hamiltonian,
                 "timestep": 0.005,
                 "steps": 7000,
+                "equilibration_steps": 1600,
                 "measure_interval": 10,
                 "population_control_interval": 10,
                 "walker_ortho_interval": 10,

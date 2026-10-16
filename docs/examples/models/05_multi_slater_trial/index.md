@@ -219,6 +219,7 @@ write_jobfile(
             "hamiltonian": hamiltonian,
             "timestep": 0.01,
             "steps": 10000,
+            "equilibration_steps": 500,
             "measure_interval": 10,             # in units of steps
             "population_control_interval": 10,  # in units of steps
             "walker_ortho_interval": 10,        # in units of steps
@@ -242,12 +243,8 @@ tags: [scroll-output]
 id: IZizKYGAFNvS
 ---
 # analyze results
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
 
-_ = analyze_scalar_data(dict(
-    fname = "qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,
-    trace = True
-))
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
 ```

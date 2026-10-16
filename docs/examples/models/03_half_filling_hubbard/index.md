@@ -42,15 +42,8 @@ from safiretools import vis
 
 from safiretools import Wavefunction
 from safiretools import write_jobfile
-from afqmctools.analysis.rdm import average_afqmc_rdm
-
-from afqmctools.observables.greens import greens_1body
-import afqmctools.observables.spin as spobs
-
-from stats.scalar_dat import analyze_scalar_data
 
 import autohf
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
 
 %mkdir -p data
 %cd -q data
@@ -82,13 +75,12 @@ E0_n1_lookup = {4 : -13.62185,
 :id: 55293f57-e436-47c6-bef7-1b095b690f57
 
 U = 4.0
-lattice_dims = (4,4)
 
 lattice_params = {
-    'L1' : lattice_dims[0],
-    'L2' : lattice_dims[1],
+    'L1' : 4,
+    'L2' : 4,
     'boundary1' : 'PBC',
-    'boundary2' : 'PBC'
+    'boundary2' : 'PBC',
 }
 ```
 
@@ -144,7 +136,7 @@ builder.finalize()
 builderHF = HamiltonianBuilder(
           lattice=lattice,
           spin_symm="collinear", # we have no spin-flip terms
-              )
+)
 # add standard Hubbard terms
 builderHF.nth_neighbor_hopping(1.0)
 builderHF.onsite_hubbard(4) # if you want an effective U, you can change this
@@ -186,12 +178,9 @@ To do that we'll need:
 ```{code-cell} ipython3
 :id: 37602e67-9b8b-4b66-8a1a-33b184a670bc
 
-N = lattice.N_sites # will be captured by closure
-Ne = N//2 # n_up = n_dn = Ne
-
 # get the (-1)^i which is really the checkerboard pattern for a 4x4
 signs = np.array([ (-1)**np.sum(s.coord) for s in lattice.sites])
-
+N = lattice.N_sites
 # convert T -> GHF format
 # TODO this should be in afqmctools
 TGHF_ = np.block([[T[0],np.zeros_like(T[1])],
@@ -240,7 +229,7 @@ hf_settings = {
     "ansatz": "CUSTOM",
     "opt_method": "lbfgs",
     "batch_size": 16,
-    "nelec": [Ne, Ne],
+    "nelec": nelec,
 }
 
 rng = np.random.default_rng(42)
@@ -248,7 +237,7 @@ state0_ref = 0.0 * np.arange(N).reshape(N)
 state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["batch_size"], N))
 
 
-dataHFC = autohf.solver.lattice_hf(
+dataHFC = autohf.solve_hf(
     hamiltonian=autohf.AutoHFHamiltonian(builderHF.get_hamiltonian()),
     lattice=lattice,
     settings=hf_settings,
@@ -284,26 +273,22 @@ Hmm... This looks like we haven't fully converged into a translationally invaria
 **⚠️ Warning** This notebook is setup for the CPU, the following cell takes a while (the GPU is a bit faster if you have one)
 
 ```{code-cell} ipython3
-:id: 6c40673b-bdb8-4091-a6c6-26d0308a32db
-
-wfn_fname = "autoHF_wfn.h5"
-```
-
-```{code-cell} ipython3
 :id: bf090735-faac-4b21-90da-72283a85641f
 :outputId: ca57afd7-0a3b-4d87-c125-5fe04e926178
+
+wfn_fname = "autoHF_wfn.h5"
 
 hf_settings = {
     "verbose": False,
     "plot": False,
     "steps": 2000,  # increase
-    "seed": 1479,
+    "seed": 149,
     "noncollinear": True,
     "gpu": False,
     "ansatz": "CUSTOM",
     "opt_method": "lbfgs",
     "num_batches": 16,
-    "nelec": [Ne, Ne],
+    "nelec": nelec,
 }
 
 rng = np.random.default_rng(42)
@@ -311,7 +296,7 @@ state0_ref = 0.0 * np.arange(N).reshape(N)
 state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["num_batches"], N))
 
 
-dataHFC2 = autohf.solver.lattice_hf(
+dataHFC2 = autohf.solve_hf(
     hamiltonian=autohf.AutoHFHamiltonian(builderHF.get_hamiltonian()),
     lattice=lattice,
     settings=hf_settings,
@@ -319,12 +304,7 @@ dataHFC2 = autohf.solver.lattice_hf(
     state2rdm=rdmFunc,
     state0=state0,
     state0_ref=state0_ref,
-    jaxoptargs=dict(tol=1e-14),  # secret sauce
-)
-
-autohf_to_afqmc(
-    dataHFC2,
-    output_fname = wfn_fname
+    jaxoptargs=dict(tol=1e-8), # tune to get closer to the minimum
 )
 ```
 
@@ -358,13 +338,14 @@ Let's check that this is a better energy than the previous energy
 :outputId: 64057b24-c950-4eea-8870-709650f095cc
 
 dataHFC2[0]["E"] < dataHFC[0]["E"]
+dataHFC2[0]["orbitals"].shape
 ```
 
 +++ {"id": "d7142e2a-a771-496a-8300-8547e0eec68d"}
 
 Great!
 
-Now let's check if we can guess a better state, by removing translation invariance
+Now let's check if we can guess a better state, by explicitly restoring translation invariance
 
 ```{code-cell} ipython3
 :id: 8f623772-48d7-4b53-a629-70d668e830c1
@@ -373,30 +354,24 @@ Now let's check if we can guess a better state, by removing translation invarian
 dataHFC2[1]["energy_func"](dataHFC2[0]["state"]) < dataHFC2[1]["energy_func"](dataHFC2[0]["state"]/np.abs(dataHFC2[0]["state"]))
 ```
 
-```{code-cell} ipython3
-:id: b02b905f-2789-4a5d-bac2-5847467d31a4
-:outputId: 693f28ca-8e55-4eb7-e17e-1a95e26d77ad
-
-uni_state = np.ones(lattice.N_sites)*np.mean(np.abs(dataHFC2[0]["state"]))
-np.isclose(dataHFC2[1]["energy_func"](dataHFC2[0]["state"]),dataHFC2[1]["energy_func"](uni_state))
-```
-
 +++ {"id": "8944c9a6-fc6c-4cb0-9e07-8b8712bb5f45"}
 
 So we see we've reached a minimum, and that a constant $M$ is the same as our nearly constant optimized $M_i$
 
 +++ {"id": "5afb0278-218c-4d88-9bea-b1c0f2ce8b15"}
 
-### Constructing the Input File
+### Preparing the SAFIRE input files
 
 +++ {"id": "6a2b6690-bb9c-4704-bd6c-91979a34c480"}
 
-First we'll manually create a non-interacting state as our RHF initial state for the walkers
+Next, we will use the Hamiltonian and AutoHF wavefunction to construct a wavefunction.
 
 ```{code-cell} ipython3
 :id: 85b8e2f7-d035-4a12-bd53-a2eccf5ae40e
 
 hamiltonian = builder.get_hamiltonian()
+wavefunction = Wavefunction.from_single_determinant(np.array(dataHFC2[0]["orbitals"].reshape(2,N,np.sum(nelec))))
+
 ```
 
 ```{code-cell} ipython3
@@ -406,19 +381,12 @@ write_jobfile(
     "afqmc.json",
     {
         "execute": {
-            "wavefunction": {
-                "filename": wfn_fname
-            },
+            "wavefunction": wavefunction,
             "hamiltonian": hamiltonian,
             "timestep": 0.005,
-            "steps": 10000,
-            "population_control_interval": 2,
-            "walker_ortho_interval": 2,
+            "steps": 20000,
+            "equilibration_steps": 1000,
             "num_walkers": 640,
-            "measure_interval": 2,
-            "estimators": {
-                "energy": {}
-            }
         }
     }
 )
@@ -427,51 +395,22 @@ write_jobfile(
 ```{code-cell} ipython3
 :id: 33a63a5d-ea54-4b9c-bbdd-14a281bb5d73
 :outputId: cc66b225-6079-444f-d976-160bae2fe148
-:scrolled: true
 :tags: [scroll-output]
 
 !mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
-:id: 66d213fc-1f02-41e4-adc3-e1449a04b403
-:outputId: b9242712-fde9-4c91-a990-61cc5cf271f0
-
-!energy_stats qmc.s000.scalar.dat -t -e 20.0
-```
-
-```{code-cell} ipython3
 :id: bb38d13d-6e93-4bcb-b6f2-e3a02fbc0827
 :outputId: 02f67500-9f6f-4c12-a4d9-a5a206ddc890
 
-settings = dict(
-    fname = "qmc.s000.scalar.dat",
-    nequil = 14,
-    trace = True,
-    return_data= True,
-    verbose = False,
-)
+from safiretools import Results
+results = Results("afqmc.results.h5")
 
-data = analyze_scalar_data(settings)
-E = data["mean_real"]
-err = data["error_real"]
-```
-
-```{code-cell} ipython3
-:id: 13292e5d-d485-4504-aae8-d8ae1f1ee6df
-:outputId: 680bd92e-3786-4192-bdef-4302e9c420c9
-
-E0_n1_lookup[U]
-```
-
-```{code-cell} ipython3
-:id: 328d849f-f076-4442-8f44-cec585e8c2cc
-:outputId: 3803d445-a19f-4f7c-92fe-87e4e1a1a57a
-
-plt.errorbar([0],[E],yerr=[err],capsize=6,fmt='o-')
-plt.axhline(y=E0_n1_lookup[U],ls='--')
-plt.ylim(-13.63,-13.6)
-plt.show()
+vis.plot_timeseries(results, skip=250)
+E_ref = E0_n1_lookup[U]
+print(E_ref)
+plt.axhline(E_ref, color="crimson")
 ```
 
 +++ {"id": "70543110-d3bc-44ab-a30b-0bff04ba81ea"}

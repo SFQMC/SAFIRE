@@ -308,11 +308,11 @@ debug_verbosity: false
 
 ```
 
-When SAFIRE has finished running, you should see the `qmc.s000.scalar.dat`, and `qmc.s000.stat.h5` output data files.
+When SAFIRE has finished running, you should see the `afqmc.results.h5` output data file.
 
 ```
 $ ls 3_afqmc
-afqmc.json  afqmc.out  qmc.s000.scalar.dat  qmc.s000.stat.h5
+afqmc.json  afqmc.out  afqmc.results.h5
 ```
 
 +++ {"id": "KLWinWxMscWQ"}
@@ -321,11 +321,9 @@ afqmc.json  afqmc.out  qmc.s000.scalar.dat  qmc.s000.stat.h5
 
 ### Ground State Energy
 
-`afqmctools` includes a command line tool for analyzing the scalar data output.
-Fun the following command.
-If you are running locally, the `-t` option will cause a plot of the scalar data samples versus total projection time to be generated as seen below.
-If you are running remotely, you can add the `--savefig [filename].png` option to save the figure.
-Note, you must still use `-t` to generate the plot.
+`safiretools` can read the results file to analyze the energy.
+The code below plots the energy samples versus the projection time and prints the average energy with its stochastic uncertainty.
+If the energy is still equilibrating at the start of the series, pass `skip` to discard the leading bins from the average.
 
 ```{code-cell} ipython3
 ---
@@ -334,12 +332,11 @@ colab:
 id: pmR1rRGJAenu
 outputId: 7466d116-0938-47e7-ef6a-87d8e736010a
 ---
-!scalar_stats 3_afqmc/qmc.s000.scalar.dat -s time -t -e 5.0 --savefig 3_afqmc/energy_vs_beta.png
+from safiretools import Results, vis
+
+results = Results("3_afqmc/afqmc.results.h5")
+vis.plot_timeseries(results)
 ```
-
-+++ {"id": "tq9vNkeZDhw2"}
-
-Your plot should look similar to the following.
 
 +++ {"id": "NYRwlRYYEh79"}
 

@@ -36,13 +36,10 @@ from pyscf import gto,scf,mcscf
 from safiretools import MolecularHamiltonian
 from safiretools import Wavefunction
 from safiretools import write_jobfile
-
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
 
 %mkdir -p data
 %cd -q data
-
-num_mpi_tasks = 16 # adjust based on your resources
 ```
 
 +++ {"id": "6ZBVQf-6E6lv"}
@@ -297,6 +294,7 @@ for ndet in ndets:
                 "hamiltonian": hamiltonian,
                 "timestep": 0.01,
                 "steps": 10000,
+                "equilibration_steps": 500,
                 "measure_interval": 10,
                 "population_control_interval": 10,
                 "walker_ortho_interval": 10,
@@ -304,16 +302,10 @@ for ndet in ndets:
             }
         }
     )
-    !mpirun -n {num_mpi_tasks} $AFQMC_EXEC afqmc_ndet{ndet}.json
+    !mpirun -n 16 $$AFQMC_EXEC afqmc_ndet{ndet}.json
 
-    settings = dict(
-        fname = "qmc.s000.scalar.dat",
-        xaxis = "time",
-        nequil = 5,
-        trace = True
-    )
-
-    E,dE = analyze_scalar_data(settings)
+    E, dE = Results(f"afqmc_ndet{ndet}.results.h5").average("Energy")
+    E, dE = E.real, dE.real
 
     energies.append(E)
     stochastic_uncertainties.append(dE)
@@ -357,7 +349,7 @@ Specifically, given $\delta_\mathrm{N-N}$ and `ndets_to_read`, the function auto
 1. running CASSCF using PySCF (for convenience), and saving a truncated CASSCF wavefunction to the SAFIRE HDF5 format.
 2. building and saving the Hamiltonian in the basis of CASSCF orbitals to the SAFIRE HDF5 format.
 3. writing the JSON job file, with our chosen value of `ndets_to_read`, and running SAFIRE.
-4. Extracting the AFQMC energy using the stats module.
+4. Extracting the AFQMC energy using `safiretools`.
 
 <b>
 Run the cell block below in order to load the `run_afqmc_on_dimer()` function into memory.
@@ -366,7 +358,7 @@ Run the cell block below in order to load the `run_afqmc_on_dimer()` function in
 ```{code-cell} ipython3
 :id: 8u68vNTFE6lw
 
-def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
+def run_afqmc_on_dimer(delta,ndets_to_read=None):
 
     print(f"Running AFQMC on dimer with bond length {delta:.4f} Angstroms")
 
@@ -405,13 +397,15 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
     )
 
     # write JSON job file, which also writes the wavefunction and the Hamiltonian to HDF5
+    name = f"afqmc_{delta:.4f}"
     write_jobfile(
-        f"afqmc_{delta:.4f}.json",
+        f"{name}.json",
         {
             "seed": 42,
             "execute": {
                 "timestep": 0.01,
                 "steps": 3200,
+                "equilibration_steps": 500,
                 "measure_interval": 10,
                 "population_control_interval": 10,
                 "walker_ortho_interval": 10,
@@ -428,16 +422,10 @@ def run_afqmc_on_dimer(delta,ndets_to_read=None, num_mpi_tasks=16):
 
     print("Running AFQMC",flush=True)
 
-    !mpirun -n {num_mpi_tasks} $AFQMC_EXEC afqmc_{delta:.4f}.json
+    !mpirun -n 16 $$AFQMC_EXEC {name}.json
 
-    settings = dict(
-        fname = "qmc.s000.scalar.dat",
-        xaxis = "time",
-        nequil = 5,
-        trace = True
-    )
-
-    E,dE = analyze_scalar_data(settings)
+    E, dE = Results(f"{name}.results.h5").average("Energy")
+    E, dE = E.real, dE.real
 
     print(f" [Result] {delta}  {E} {dE}")
 
@@ -457,8 +445,6 @@ Now we can use the `run_afqmc_on_dimer()` function to compute the PEC of the $N_
 
 # we can simply use the automation function above to compute the PEC
 
-num_mpi_tasks = 16 # set this based on your resources!
-
 # full dataset from the paper
 # bondlengths = [2.118,2.4,2.7,3.0,3.6,4.2]
 # reduced dataset for the example
@@ -469,7 +455,7 @@ ndets_to_read = 500
 energies = []
 stochastic_uncertainties = []
 for delta in bondlengths:
-  _, E, dE = run_afqmc_on_dimer(delta,ndets_to_read, num_mpi_tasks=num_mpi_tasks)
+  _, E, dE = run_afqmc_on_dimer(delta,ndets_to_read)
   energies.append(E)
   stochastic_uncertainties.append(dE)
 ```

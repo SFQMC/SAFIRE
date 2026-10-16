@@ -105,10 +105,10 @@ to equilibrate faster, then switch to a smaller trotter timestep in the second e
 while collecting samples.
 Defining the ``wavefunction`` input outside of either execute block allows is to be read in
 only once, and re-used in both calculations.
-This input file will lead to AFQMC energy samples being saved into a file called ``qmc.s000.scalar.dat``
-where the first 2 samples come from the first execute block (up to total imaginary time $\beta = 1.0$
-based on the 20 steps, with $\tau = 0.05$, and the remaining samples are from the second
-execution block.
+This input file will lead to AFQMC energy samples being saved into a file called ``qmc.results.h5``,
+where each execute block writes its samples to a stage of its own: ``Stage0`` holds the samples of the first
+execute block (up to total imaginary time $\beta = 1.0$ based on the 20 steps, with $\tau = 0.05$), and ``Stage1``
+holds those of the second execute block.
 
 For more detail on the input file, see :ref:`input_afqmc`.
 
