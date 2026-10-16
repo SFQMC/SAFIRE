@@ -225,9 +225,9 @@ colab:
 outputId: a868b2dd-398f-40d5-90b7-9a8036f6659b
 ---
 import numpy as np
-from autohf import AutoHFHamiltonian, lattice_hf
+from autohf import AutoHFHamiltonian, solve_hf
 
-autohf_results = lattice_hf(
+autohf_results = solve_hf(
     AutoHFHamiltonian(source=fe_hamiltonian),
     settings=dict(
         ansatz='SD',

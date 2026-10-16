@@ -318,7 +318,7 @@ _Note:_ The Hartree-Fock code is faster if you use a GPU
 :id: ee2b575c-7d27-4a1d-a9b9-e9b02a682f8f
 :outputId: 743ad05d-6d2a-4eba-ec3c-92e78bcbe2e3
 
-import autohf
+from autohf import solve_hf, AutoHFHamiltonian
 
 Ueffs = [1,2,3,4]
 trial_wfns = {}
@@ -343,8 +343,8 @@ for Ueff in Ueffs:
         seed = 1,
         noncollinear = False
     )
-    results = autohf.solve_hf(
-        hamiltonian=autohf.AutoHFHamiltonian(builder_eff.get_hamiltonian()),
+    results = solve_hf(
+        hamiltonian=AutoHFHamiltonian(builder_eff.get_hamiltonian()),
         lattice=lattice,
         settings=hf_settings,
     )

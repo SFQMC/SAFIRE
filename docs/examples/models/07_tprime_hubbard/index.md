@@ -142,11 +142,11 @@ L = lattice.L
 :outputId: 55190e94-44ed-4b7c-9f28-7cdcd5d151ba
 
 import numpy as np
-from autohf import AutoHFHamiltonian, lattice_hf
+from autohf import AutoHFHamiltonian, solve_hf
 
 # building the wavefunction does not measure anything, so run the HF solver
 # explicitly to get the trial wavefunction's density matrices
-results = lattice_hf(
+results = solve_hf(
     AutoHFHamiltonian(source=fe_hamiltonian),
     settings=dict(
         ansatz='SD',

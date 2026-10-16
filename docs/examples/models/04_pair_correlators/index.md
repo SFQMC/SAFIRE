@@ -236,7 +236,7 @@ instead of the above.
 ```{code-cell} ipython3
 import numpy as np
 from safiretools import Wavefunction, write_jobfile
-import autohf
+from autohf import solve_hf, AutoHFHamiltonian
 
 nelec = (8, 8)
 
@@ -253,8 +253,8 @@ hf_settings = {
     "nelec": nelec,
 }
     
-results = autohf.solve_hf(
-    hamiltonian=autohf.AutoHFHamiltonian(hamiltonian),
+results = solve_hf(
+    hamiltonian=AutoHFHamiltonian(hamiltonian),
     lattice=lattice,
     settings=hf_settings,
 )
