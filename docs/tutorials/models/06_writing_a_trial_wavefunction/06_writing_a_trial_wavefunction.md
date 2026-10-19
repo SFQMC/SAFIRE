@@ -211,22 +211,15 @@ The trial file does not store an initial walker. **By default**, the walkers sta
 
 ## Example: Free Electron Trial Wavefunction
 
-We can generate a free-electron trial wavefunction using `Wavefunction.from_free_electron` within `safiretools`. First, we set up the lattice using `Lattice.from_dict` (in this case a square 4 × 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file `wfn.h5`.
+We can generate a free-electron trial wavefunction using `Wavefunction.from_free_electron` within `safiretools`. First, we set up the lattice using `Lattice.from_type` (in this case a square 4 × 4 lattice with periodic boundary conditions in both directions) and then define other relevant parameters (`nelec`, `Uhubb`, `hopping`). We then build the Hamiltonian that we will simulate with AFQMC. Finally, the trial wavefunction is computed from the one-body part of the Hamiltonian and written in HDF5 format to the file `wfn.h5`.
 
 ```{code-cell} ipython3
 :id: XDDPCMhvHKRc
 
-from safiretools import HamiltonianBuilder, Lattice, Wavefunction
+from safiretools import Lattice, LatticeHamiltonian, Wavefunction
 
 # define lattice
-lattice = Lattice.from_dict(
-    params=dict(
-        L1 = 4,
-        L2 = 4,
-        boundary1 = "PBC",
-        boundary2 = "PBC"
-    )
-)
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
 
 nelec = (5,5)
 Uhubb = 4.0
@@ -238,13 +231,7 @@ Uhubb = 4.0
 #    hopping[n-1] is 't^{n}'
 hopping = [1.0,0.0]
 
-hamiltonian = HamiltonianBuilder.from_input(source=dict(
-    hamiltonian=dict(
-        t=hopping,
-        U=Uhubb,
-    )),
-    lattice=lattice
-).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=hopping, U=Uhubb)
 
 nbasis = lattice.N_sites
 

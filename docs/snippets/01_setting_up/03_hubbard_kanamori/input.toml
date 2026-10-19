@@ -9,7 +9,7 @@ U2 = 1.0
 J = 0.5
 
 [lattice]
-L1 = 6
-L2 = 1
-boundary1 = "PBC"
-# boundary condidtions default to "open"
+type = "square"
+Ls = [6, 1]
+boundaries = ["periodic", "open"]
+twists = [0.0, 0.0]

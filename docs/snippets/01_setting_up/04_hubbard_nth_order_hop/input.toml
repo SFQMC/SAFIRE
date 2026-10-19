@@ -5,7 +5,7 @@ t = [1.0,0.5] # a 't' array of length n give nth-order neighbor hoping
 U = 2.0
 
 [lattice]
-L1 = 2
-L2 = 3
-boundary1 = "PBC" # or "open" for open boundaries
-boundary2 = "PBC" # or "open" for open boundaries
+type = "square"
+Ls = [2, 3]
+boundaries = ["periodic", "periodic"] # or "open" for open boundaries
+twists = [0.0, 0.0]

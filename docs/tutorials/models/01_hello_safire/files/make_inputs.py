@@ -8,7 +8,7 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-from safiretools import HamiltonianBuilder, Lattice, Wavefunction
+from safiretools import Lattice, LatticeHamiltonian, Wavefunction
 
 
 def main():
@@ -16,14 +16,11 @@ def main():
     hamiltonian.h5 and wavefunction.h5: the 4×4 periodic Hubbard model at
     U/t = 4 with 5+5 electrons, and its free-electron trial wavefunction.
     """
-    lattice = Lattice.from_dict(
-        params=dict(L1=4, L2=4, boundary1="PBC", boundary2="PBC")
+    lattice = Lattice.from_type(
+        "square", (4, 4), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
     )
 
-    hamiltonian = HamiltonianBuilder.from_input(
-        source=dict(hamiltonian=dict(t=1.0, U=4.0, spin_symm="collinear")),
-        lattice=lattice
-    ).get_hamiltonian()
+    hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
     hamiltonian.to_hdf5("hamiltonian.h5")
 
     Wavefunction.from_free_electron(

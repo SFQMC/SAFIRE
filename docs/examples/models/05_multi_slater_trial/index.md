@@ -48,35 +48,18 @@ outputId: 51107f5c-4186-4817-9e97-990b46c79acc
 %cd -q data
 
 # setup the Hamiltonian
-from safiretools import HamiltonianBuilder, Lattice
+from safiretools import Lattice, LatticeHamiltonian
 from safiretools import vis
 
-lattice = Lattice.from_dict(
-    params=dict(
-        L1 = 6,
-        L2 = 6,
-        boundary1 = "open",
-        boundary2 = "open"
-    )
+lattice = Lattice.from_type(
+    "square", (6, 6), boundaries=("open", "open"), twists=(0.0, 0.0)
 )
 
 # plot the lattice for reality checks!
 vis.plot_lattice(lattice)
 
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'U': 8.0
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
 # make the Hamiltonian
-hamiltonian = HamiltonianBuilder.from_input(
-    source=params,
-    lattice=lattice
-).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=8.0)
 ```
 
 ```{code-cell} ipython3
@@ -88,20 +71,8 @@ from autohf import AutoHFHamiltonian
 
 Ueff = 2.75
 
-# define effective Hamiltonian parameters
-hamiltonian_params = {
-    'U': 2.75
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# make the Hamiltonian
-effective_hamiltonian = HamiltonianBuilder.from_input(
-    source=params,
-    lattice=lattice
-).get_hamiltonian()
+# make the effective Hamiltonian
+effective_hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=Ueff)
 
 # convert safiretools Hamiltonian to AutoHFHamiltonian
 autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)

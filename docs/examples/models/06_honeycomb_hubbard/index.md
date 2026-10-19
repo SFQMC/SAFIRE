@@ -27,35 +27,17 @@ id: djut2ei2D6d-
 # setup the Hamiltonian
 from safiretools import Lattice
 from safiretools import vis
-from safiretools import HamiltonianBuilder
+from safiretools import LatticeHamiltonian
 
-lattice = Lattice.from_dict(
-    params=dict(
-        L1 = 4,
-        L2 = 4,
-        boundary1 = "pbc",
-        boundary2 = "pbc",
-        type = "honeycomb"
-    )
+lattice = Lattice.from_type(
+    "honeycomb", (4, 4), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
 )
 
 # plot the lattice for reality checks!
 vis.plot_lattice(lattice)
 
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'U': 6.0
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
 # make the Hamiltonian
-hamiltonian = HamiltonianBuilder.from_input(
-    source=params,
-    lattice=lattice
-).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=6.0)
 ```
 
 ```{code-cell} ipython3
@@ -72,20 +54,8 @@ from safiretools import Wavefunction
 #    since HF's critical U is lower than the correct critical U
 Ueff = 3.0
 
-# define effective Hamiltonian parameters
-hamiltonian_params = {
-    'U': Ueff
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# make the Hamiltonian
-effective_hamiltonian = HamiltonianBuilder.from_input(
-    source=params,
-    lattice=lattice
-).get_hamiltonian()
+# make the effective Hamiltonian
+effective_hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=Ueff)
 
 # convert safiretools Hamiltonian to AutoHFHamiltonian
 autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)

@@ -24,8 +24,8 @@ from safiretools import Lattice, vis
 
 
 def _lattice(lattice_type, L1=3, L2=3):
-    return Lattice.from_dict(dict(
-        type=lattice_type, L1=L1, L2=L2, boundary1='pbc', boundary2='pbc'))
+    return Lattice.from_type(lattice_type, (L1, L2), boundaries=('periodic', 'periodic'),
+                             twists=(0.0, 0.0))
 
 
 def _site_colors(ax):

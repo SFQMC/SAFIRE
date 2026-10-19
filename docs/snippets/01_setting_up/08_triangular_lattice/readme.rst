@@ -16,7 +16,8 @@ Below is a sample input file, which we name ``input.toml``
 
 .. literalinclude:: input.toml
 
-if no ``type`` is specified in the ``lattice`` section, then a square lattice is used.
+The ``type`` in the ``lattice`` section selects the unit cell: ``"square"``,
+``"triangular"``, ``"honeycomb"`` or ``"kagome"``.
 
 safiretools can be invoked within a Python script as
 
@@ -24,7 +25,7 @@ safiretools can be invoked within a Python script as
 
     import tomllib
 
-    from safiretools import HamiltonianBuilder, Lattice, Wavefunction, vis
+    from safiretools import Lattice, LatticeHamiltonian, Wavefunction, vis
     from safiretools.wavefunction.free_electron import DEFAULT_TWIST
 
     infile = "input.toml"
@@ -32,9 +33,8 @@ safiretools can be invoked within a Python script as
         params = tomllib.load(f)
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian_builder = HamiltonianBuilder.from_input(source=params)
-    lattice = hamiltonian_builder.get_lattice()
-    hamiltonian = hamiltonian_builder.get_hamiltonian()
+    lattice = Lattice.from_type(**params["lattice"])
+    hamiltonian = LatticeHamiltonian.from_lattice(lattice, **params["hamiltonian"])
 
     # makes a visualization of the lattice and saves it "lattice.png"
     ax = vis.plot_lattice(lattice)
@@ -45,13 +45,8 @@ safiretools can be invoked within a Python script as
     # The trial wavefunction needs its *own* Hamiltonian, built on a lattice
     #   carrying a small irrational twist.
     #   The AFQMC run itself uses the untwisted Hamiltonian above.
-    fe_lattice = Lattice.from_dict(
-        dict(hamiltonian.lattice_params, twist=list(DEFAULT_TWIST))
-    )
-    fe_hamiltonian = HamiltonianBuilder.from_input(
-        params,
-        lattice=fe_lattice,
-    ).get_hamiltonian()
+    fe_lattice = Lattice(**dict(hamiltonian.lattice_params, twists=DEFAULT_TWIST))
+    fe_hamiltonian = LatticeHamiltonian.from_lattice(fe_lattice, **params["hamiltonian"])
 
     # compute and save a free-electron trial wfn, into the same file
     Wavefunction.from_free_electron(
@@ -63,7 +58,7 @@ safiretools can be invoked within a Python script as
 
 ``Wavefunction.from_free_electron()`` uses the Hamiltonian exactly as given and
 applies no twist of its own, so the twist belongs on the lattice you build that
-Hamiltonian from. ``twist`` should be a 2-d iterable containing
+Hamiltonian from. ``twists`` should be a 2-d iterable containing
 :math:`\vec{\theta}=(\theta_1,\theta_2)` in radians even if one component is
 set to 0.0.
 For an open-shell filling, an untwisted lattice leads to an abitrary choice 

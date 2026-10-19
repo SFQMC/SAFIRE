@@ -5,8 +5,7 @@ t = 1.0 # defaults to 1.0
 U = 2.0
 
 [lattice]
-L1 = 3
-L2 = 3
-boundary1 = "PBC" # or "open" for open boundaries
-boundary2 = "PBC" # or "open" for open boundaries
-type = "triangular" # defaults to square
+type = "triangular" # or "square", "honeycomb", "kagome"
+Ls = [3, 3]
+boundaries = ["periodic", "periodic"] # or "open" for open boundaries
+twists = [0.0, 0.0]

@@ -137,7 +137,7 @@ def plot_lattice(
         Draw ``a1`` and ``a2``, unless the lattice is one cell wide. Default
         True.
     title : str, optional
-        Axes title. Default the lattice size and type.
+        Axes title. Default the lattice size.
 
     Returns
     -------
@@ -153,7 +153,7 @@ def plot_lattice(
     ax.grid(linestyle="--", linewidth=0.5, color='.25', zorder=-10)
 
     if title is None:
-        title = f"{lattice.L[0]}x{lattice.L[1]} {lattice._type} Lattice"
+        title = f"{lattice.L[0]}x{lattice.L[1]} Lattice"
     ax.set_title(title, fontsize=20, verticalalignment='bottom', pad=20)
     ax.set_xlabel("x", fontsize=14)
     ax.set_ylabel("y", fontsize=14)
@@ -223,8 +223,8 @@ def plot_lattice(
 
     if show_lattice_vecs and lattice.L[0] > 1 and lattice.L[1] > 1:
         origin = np.array([-0.825, -0.825])
-        for vec, label, ha, va in ((lattice.a1, r'$\vec{a}_1$', 'center', 'top'),
-                                   (lattice.a2, r'$\vec{a}_2$', 'right', 'center')):
+        for vec, label, ha, va in ((lattice.A[:, 0], r'$\vec{a}_1$', 'center', 'top'),
+                                   (lattice.A[:, 1], r'$\vec{a}_2$', 'right', 'center')):
             ax.arrow(*origin, *vec, color='black', width=0.04, head_width=0.1, shape='full')
             ax.text(*(origin + vec/2), label, color='black', fontsize=16, ha=ha, va=va)
 

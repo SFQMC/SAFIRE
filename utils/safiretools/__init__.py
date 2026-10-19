@@ -9,7 +9,7 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 
 from safiretools.hamiltonian.base import Hamiltonian
-from safiretools.hamiltonian.model.builder import HamiltonianBuilder
+from safiretools.hamiltonian.model.builder import HamiltonianBuilder, PinningField
 from safiretools.hamiltonian.model.lattice import Lattice
 from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
 from safiretools.hamiltonian.molecular import MolecularHamiltonian
@@ -30,6 +30,7 @@ __all__ = [
     'NOMSDWavefunction',
     'PHMSDWavefunction',
     'PeriodicHamiltonian',
+    'PinningField',
     'SpinSymm',
     'Wavefunction',
     'Results',

@@ -21,14 +21,15 @@ safiretools can be invoked within a Python script as
 
     import tomllib
 
-    from safiretools import HamiltonianBuilder, Wavefunction
+    from safiretools import Lattice, LatticeHamiltonian, Wavefunction
 
     infile = "input.toml"
     with open(infile, "rb") as f:
         params = tomllib.load(f)
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian = HamiltonianBuilder.from_input(source=params).get_hamiltonian()
+    lattice = Lattice.from_type(**params["lattice"])
+    hamiltonian = LatticeHamiltonian.from_lattice(lattice, **params["hamiltonian"])
     hamiltonian.to_hdf5("afqmc.h5")
 
     # compute and save a free-electron trial wfn, into the same file

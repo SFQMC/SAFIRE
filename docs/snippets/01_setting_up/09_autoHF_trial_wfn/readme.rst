@@ -15,15 +15,13 @@ on a 2x3 square lattice with periodic boundary conditions.
 
 .. literalinclude:: input.toml
 
-if no ``type`` is specified in the ``lattice`` section, then a square lattice is used.
-
 autohf and safiretools can be invoked within a Python script as
 
 .. code-block:: python
 
     import tomllib
 
-    from safiretools import HamiltonianBuilder
+    from safiretools import Lattice, LatticeHamiltonian
     from autohf import AutoHFHamiltonian, solve_hf
 
     infile = "input.toml"
@@ -31,9 +29,8 @@ autohf and safiretools can be invoked within a Python script as
         params = tomllib.load(f)
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian_builder = HamiltonianBuilder.from_input(source=params)
-    lattice = hamiltonian_builder.get_lattice()
-    hamiltonian = hamiltonian_builder.get_hamiltonian()
+    lattice = Lattice.from_type(**params["lattice"])
+    hamiltonian = LatticeHamiltonian.from_lattice(lattice, **params["hamiltonian"])
 
     hamiltonian.to_hdf5("afqmc.h5")
 

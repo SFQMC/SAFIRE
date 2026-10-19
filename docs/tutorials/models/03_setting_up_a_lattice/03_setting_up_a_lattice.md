@@ -23,20 +23,20 @@ The `safiretools` Python package implements a Lattice class which is responsible
 - which of those neighbors are direct neighbors, and which are image neighbors
 
 and more.
-`Lattice` is an abstract base class with one concrete subclass per lattice type; its
-`Lattice.from_dict()` classmethod builds the right one for you given a set of geometric parameters.
-In this tutorial, we will explore how the Lattice class works, and the available options for building a Lattice via `Lattice.from_dict()`.
+The `Lattice` constructor builds a lattice from any unit cell, given by its lattice vectors and basis;
+the `Lattice.from_type()` classmethod supplies the unit cell of one of the built-in lattice types.
+In this tutorial, we will explore how the Lattice class works, and the available options for building a Lattice.
 
 ## Lattice Formalism
 
-We consider lattices with primitive lattice vectors $\vec{a}_1$, and $\vec{a}_2$ (as determined by the lattice `type`) which may have a basis, $\{ \delta_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the full cell has dimension $L_1$ x $L_2$.
+We consider lattices with primitive lattice vectors $\vec{a}_1$, and $\vec{a}_2$ (given explicitly or by a built-in lattice type) which may have a basis, $\{ \delta_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the full cell has dimension $L_1$ x $L_2$.
 The positions of lattice sites on sublattice $p$ are given by  
 $$
 \vec{r}_p = n_1 \vec{a}_1 + n_2 \vec{a}_2  + \vec{\delta}_p,
 $$
 where $n_1$, and $n_2$ are integers.
-Additionally, boundaries are defined normal to the primitive vectors and are labelled according to the primitive vector which they are normal to.
-For example, *boundary 1* is normal to $\vec{a}_1$.
+Additionally, each boundary is labelled by the primitive vector along which it is crossed.
+For example, *boundary 1* is crossed along $\vec{a}_1$; it is the pair of edges at $0 * \vec{a}_1$ and $L_1 * \vec{a}_1$, which run parallel to $\vec{a}_2$.
 Finally, when boundaries are crossed, a twist angle $\vec{\theta} = (\theta_1,\theta_2)$
 is used to apply a phase where $\theta_1$/$\theta_2$ is applied when boundary 1 / boundary 2 are crossed, respectively.
 
@@ -48,25 +48,29 @@ is used to apply a phase where $\theta_1$/$\theta_2$ is applied when boundary 1 
 
 TODO add a figure illustrating this.
 
-## Summary of Lattice.from_dict()
+## Building a Lattice
 
-The `Lattice.from_dict()` classmethod takes a Python dictionary containing lattice parameters as an argument and returns a Lattice instance based on the provided lattice parameters.
+The constructor `Lattice(lattice_vectors, basis, Ls, *, boundaries, twists=(0.0, 0.0))` takes
 
-We'll explore the available options individually, but possible lattice parameters are:
+- `lattice_vectors` : the lattice vectors $\vec{a}_1$ and $\vec{a}_2$, one per row of a 2 × 2 array
+- `basis` : the list of site positions $\vec{\delta}_p$ within the unit cell
+- `Ls` : the lattice dimensions $(L_1, L_2)$ along $\vec{a}_1$ and $\vec{a}_2$, in units of the unit cell
+- `boundaries` : the boundary *types* along $\vec{a}_1$ (at $0 * \vec{a}_1$ and $L_1 * \vec{a}_1$)
+  and along $\vec{a}_2$ (at $0 * \vec{a}_2$ and $L_2 * \vec{a}_2$)
+- `twists` : the twist angles to apply, given as $\vec{\theta} = (\theta_1,\theta_2)$ in units of radians;
+  optional, no twist by default
 
-- `type` : specifying the lattice type; `square` by default
-- `L1` : the lattice dimension along the lattice vector $\vec{a}_1$
-- `L2` : the lattice dimension along the lattice vector $\vec{a}_2$
-- `boundary1` : the boundary *type* of the boundary normal to $\vec{a}_1$ (at $0 * \vec{a}_1$ and $L_1 * \vec{a}_1$ ). Defaults to an open boundary if not specified.
-- `boundary2` : the boundary *type* of the boundary normal to $\vec{a}_2$ (at $0 * \vec{a}_2$ and $L_2 * \vec{a}_2$ ). Defaults to an open boundary if not specified.
-- `twist` : the twist angle to apply, given as $\vec{\theta} = (\theta_1,\theta_2)$ in units of radians. Defaults to (0.0,0.0)
-- `a1`, `a2`, `basis` : the lattice vectors and basis. **Only for `type='custom'`** — every other type
-  defines its own geometry, and setting these for one of them is an error. See
-  [Lattice basis](#lattice-basis) and [Custom lattices](#custom-lattices) below.
-- `cyl_mode` : reshape the unit cell to be rectangular, `'XC'` or `'YC'`. **Only for
-  `type='triangular'`**, since the reshaping is hardcoded for hexagonal geometry.
+`boundaries` and `twists` are keyword-only. `boundaries` has no default, so every lattice states it explicitly.
 
-Below is a minimal example of building a lattice allowing most parameters to take on default values.
+For the built-in lattice types, `Lattice.from_type(type, Ls, *, boundaries, twists=(0.0, 0.0))` fills in
+`lattice_vectors` and `basis` for you. It takes the same `Ls`, `boundaries` and `twists`, plus
+
+- `type` : the lattice type, one of `'square'`, `'triangular'`, `'honeycomb'` or `'kagome'`
+
+The supercell is the parallelogram spanned by $L_1 \vec{a}_1$ and $L_2 \vec{a}_2$.
+
+We'll explore these options individually below.
+Here is a minimal example of building a square lattice with open boundaries.
 We also use `vis.plot_lattice()` so that we can visualize what we have made.
 
 ```{code-cell} ipython3
@@ -75,13 +79,11 @@ We also use `vis.plot_lattice()` so that we can visualize what we have made.
 from safiretools import Lattice
 from safiretools import vis
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'square',
+    (4, 4),
+    boundaries=('open', 'open'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice)
@@ -111,42 +113,26 @@ Try:
 ## Boundary Conditions
 
 In this section, we will explore the available options for boundary conditions.
-To select a boundary type, set `boundary1` and/or `boundary2` in the `lattice_params`
-dictionary to a string describing the boundary type.
-This is a case insensitive parameter.
+The boundary types are selected by `boundaries`, a pair of strings describing the boundary type
+along $\vec{a}_1$ and $\vec{a}_2$.
+The strings are case insensitive.
 
-As we saw previously, the default boundaries are open.
-This can be made explicit by setting
+The example above used open boundaries,
 
 ```python
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1= "open",
-    boundary2= "open"
-)
+boundaries = ("open", "open")
 ```
 
-alternatively, periodic boundary conditions (PBC) can be used by setting
+alternatively, periodic boundary conditions can be used by setting
 
 ```python
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1= "pbc",
-    boundary2= "pbc"
-)
+boundaries = ("periodic", "periodic")
 ```
 
 or mixed boundary conditions can be used by setting, for example,
 
 ```python
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1= "open",
-    boundary2= "pbc"
-)
+boundaries = ("open", "periodic")
 ```
 
 <div class="alert alert-block alert-warning">
@@ -154,7 +140,7 @@ lattice_params = dict(
     When using periodic boundary conditions,
     lattice sites are not allowed to be their own
     image neighbors. So, for example, a 1-dimensional
-    lattice can only have PBCs in the long direction.
+    lattice can only be periodic along the long direction.
     A ValueError will be raised if any sites are found to be
     image neighbors of themselves.
 </div>
@@ -162,22 +148,18 @@ lattice_params = dict(
 ### Exercise 2: Play with Boundary Conditions
 
 Try setting different combinations of boundary conditions
-in `lattice_params` in the code block below.
+in `boundaries` in the code block below.
 The `vis.plot_lattice()` function will indicate the position of nearest image
 neighbors with a black dotted line.
 
 ```{code-cell} ipython3
 :id: 08d214dc-f42a-48ca-9215-f17f86f481fa
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "open",
-    boundary2 = "pbc",
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'square',
+    (4, 4),
+    boundaries=('open', 'periodic'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice)
@@ -187,7 +169,7 @@ vis.plot_lattice(lattice)
 
 ### Twists
 
-When using periodic boundary conditions (PBCs), a twist angle, $\theta = (\theta_1,\theta_2)$ can be set such that, for image neighbors $i,j$,
+When using periodic boundary conditions, a twist angle, $\theta = (\theta_1,\theta_2)$ can be set such that, for image neighbors $i,j$,
 $$
 c^{\dagger}_i c_j = e^{i \theta_1} c^{\dagger}_i c_j
 $$
@@ -205,29 +187,23 @@ if they are set.
 All of the following are valid twist inputs:
 
 ```python
-twist = [0.0,0.0]
-twist = [3.14,0.0]
-twist = [0.0, 0.5]
-twist = ["1/2 Pi", "3/2 Pi"]
+twists = (0.0, 0.0)
+twists = (3.14, 0.0)
+twists = (0.0, 0.5)
+twists = ("1/2 Pi", "3/2 Pi")
 ```
 
-If a twist is provide in `lattice_params`, then
-it will be saved as the relative phase between image neighbors
+The twists are saved as the relative phase between image neighbors
 consistent with the boundaries.
 
 For example, in the code block
 
 ```python
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "open",
-    boundary2 = "pbc",
-    twist = ["1/2 Pi", "1/2 Pi"]
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'square',
+    (4, 4),
+    boundaries=('open', 'periodic'),
+    twists=('1/2 Pi', '1/2 Pi')
 )
 ```
 
@@ -239,24 +215,19 @@ boundary 1 is not periodic.
 
 ## Lattice Types
 
-We provide a few lattice types which can be selected by setting `"type"` to one of `"square"`,
-`"triangular"`, `"honeycomb"`, or `"kagome"` in `lattice_params`
+We provide a few lattice types which can be selected by passing one of `"square"`,
+`"triangular"`, `"honeycomb"`, or `"kagome"` as the `type` of `Lattice.from_type()`.
 
 Try building a few of these in the code block below.
 
 ```{code-cell} ipython3
 :id: 590508fb-00bd-4bb6-9e3a-03b95a19ba01
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = "honeycomb"
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'honeycomb',
+    (4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Honeycomb lattice",show_labels=False)
@@ -272,38 +243,29 @@ A `square` lattice is square precisely because its lattice vectors are the unit
 x- and y-vectors and it has one site per cell; the honeycomb and kagome lattices
 are the triangular lattice with a predefined 2- and 3-site basis, respectively.
 
-Consequently, setting `a1`, `a2` or `basis` in `lattice_params` for any of these
-types raises an error rather than being silently ignored:
+Consequently, `Lattice.from_type()` takes no lattice vectors or basis; the lattice
+it builds exposes them as `lattice.A`, whose columns are $\vec{a}_1$ and $\vec{a}_2$,
+and `lattice.basis`:
 
 ```{code-cell} ipython3
-try:
-    Lattice.from_dict(dict(L1=4, L2=4, type="square", basis=[[0.0,0.0],[0.5,0.5]]))
-except ValueError as e:
-    print("ValueError:", e)
+lattice = Lattice.from_type('honeycomb', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
+print("A =", lattice.A)
+print("basis =", lattice.basis)
 ```
 
-To choose your own lattice vectors and basis, use the `custom` lattice type
-described in the next section.
-
-<div class="alert alert-block alert-info">
-<b>Note:</b>
-    Earlier versions of this tooling accepted <code>a1</code>/<code>a2</code>/<code>basis</code>
-    for the built-in types and then discarded them, so a lattice could quietly
-    differ from the one you asked for. Those keys are now rejected.
-</div>
+To choose your own lattice vectors and basis, pass them to the `Lattice`
+constructor as described in the next section.
 
 ### Exercise
 
-Play around with setting a basis, using the `custom` type below.
+Play around with setting a basis, using the `Lattice` constructor below.
 
 +++ {"id": "67ef466a-2411-4d21-8fa1-8a2516db44e4"}
 
 ## Custom Lattices
 
-If the lattice that you want is not specifically implemented, you can use the
-`custom` lattice.
-This is the one type for which `a1`, `a2` and `basis` are accepted; `a1` and `a2`
-are required, and `basis` defaults to a single site at the cell origin.
+If the lattice that you want is not one of the built-in types, pass its lattice
+vectors and basis to the `Lattice` constructor directly.
 
 ```{code-cell} ipython3
 :id: 1f3486b9-62ab-4687-a322-295de51b8ae8
@@ -313,19 +275,12 @@ import numpy as np
 
 basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 8,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = "custom",
-    basis = basis,
-    a1=np.array((1.0,-1.0)),
-    a2=np.array((1.0,1.0)),
-)
-
-lattice = Lattice.from_dict(
-    lattice_params
+lattice = Lattice(
+    lattice_vectors=np.array([(1.0, -1.0), (1.0, 1.0)]),
+    basis=basis,
+    Ls=(4, 8),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 vis.plot_lattice(lattice,title="Lieb lattice with tilted cell",show_labels=False)
 ```
@@ -348,19 +303,12 @@ especially when dealing with complicated lattices.
 
 basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = "custom",
-    basis = basis,
-    a1=np.array((1.0,-1.0)),
-    a2=np.array((1.0,1.0)),
-)
-
-lattice = Lattice.from_dict(
-    lattice_params
+lattice = Lattice(
+    lattice_vectors=np.array([(1.0, -1.0), (1.0, 1.0)]),
+    basis=basis,
+    Ls=(4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 vis.plot_lattice(
     lattice,
@@ -382,17 +330,12 @@ about mapping atoms in a solid onto a lattice model without the complication of 
 ```{code-cell} ipython3
 :id: 3c519903-9583-4236-9e64-192a8026b087
 
-lattice_params = dict(
-    L1 = 1,
-    L2 = 1,
-    type = 'custom',
-    a1 = [1.0,0.0],
-    a2 = [0.0,1.0],
-    basis = [[0.,0.],[-0.5,-0.5],[0.5,-0.5]]
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice(
+    lattice_vectors=[[1.0, 0.0], [0.0, 1.0]],
+    basis=[[0., 0.], [-0.5, -0.5], [0.5, -0.5]],
+    Ls=(1, 1),
+    boundaries=('open', 'open'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Water Molecule",show_labels=False)
@@ -408,17 +351,12 @@ The Cu and O atoms are arranged in the Lieb lattice as shown below.
 ```{code-cell} ipython3
 :id: d4955fae-dac3-4197-a3b5-f35bf51b103e
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    type = 'custom',
-    a1 = [1.0,0.0],
-    a2 = [0.0,1.0],
-    basis = [[0.,0.],[0.5,0.0],[0.0,0.5]]
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice(
+    lattice_vectors=[[1.0, 0.0], [0.0, 1.0]],
+    basis=[[0., 0.], [0.5, 0.0], [0.0, 0.5]],
+    Ls=(4, 4),
+    boundaries=('open', 'open'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
@@ -431,16 +369,11 @@ vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 3eac1b2a-f2e9-4416-81bb-88d02fb5952b
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = 'kagome'
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'kagome',
+    (4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Kagome Lattice",show_labels=False)
@@ -449,16 +382,11 @@ vis.plot_lattice(lattice,title="Kagome Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: ae7e9e7c-896b-4ce4-86c7-98f6951756f7
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = 'triangular'
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'triangular',
+    (4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Triangular Lattice",show_labels=False)
@@ -467,16 +395,11 @@ vis.plot_lattice(lattice,title="Triangular Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 9767452c-454d-4e3f-99a6-42a35f501b35
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = 'honeycomb'
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'honeycomb',
+    (4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Honeycomb Lattice",show_labels=False)
@@ -485,16 +408,11 @@ vis.plot_lattice(lattice,title="Honeycomb Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 669f3165-f665-4fbc-940b-5783f111b1a9
 
-lattice_params = dict(
-    L1 = 8,
-    L2 = 8,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = 'square'
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'square',
+    (8, 8),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Square Lattice",show_labels=False)

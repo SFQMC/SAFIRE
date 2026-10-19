@@ -32,21 +32,19 @@ Status:
 from safiretools import Lattice
 from safiretools import vis
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    type = 'custom',   # a basis of our own choosing means a custom lattice
-    a1 = [1.0,0.0],
-    a2 = [0.0,1.0],
-    basis = [
+lattice = Lattice(
+    lattice_vectors=[
+        [1.0,0.0],  # a1
+        [0.0,1.0]   # a2
+    ],
+    basis=[
         [0.,0.],    # Cu 3d_{x^2 - y^2}
         [0.5,0.0],  # O 2p_x
         [0.0,0.5]   # O 2p_y
-    ]
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
+    ],
+    Ls=(4, 4),
+    boundaries=('open', 'open'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
@@ -139,17 +137,11 @@ for i in range(lattice.N_sites):
 
 from safiretools import LatticeHamiltonian
 
-hamiltonian_params = {
-    'hamiltonian' : dict(
-        t = 0.0,
-        U = U_emery,
-        custom_one_body = hopping,
-    )
-}
-
-hamiltonian = LatticeHamiltonian.from_dict(
-    lattice=lattice,
-    source=hamiltonian_params
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    t = 0.0,
+    U = U_emery,
+    custom_one_body = hopping,
 )
 
 hamiltonian.to_hdf5("afqmc.h5")
@@ -288,16 +280,7 @@ nbands = 3
 t_pd = t = 1.0
 t_pp = tprime = 0.5
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = 'PBC',
-    boundary2 = 'PBC'
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
-)
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
 
 nearest_neighbors = lattice.get_nth_neighbors(n=1)
 sites = lattice.sites
@@ -355,17 +338,11 @@ plt.colorbar()
 ```{code-cell} ipython3
 :id: f050037a-c4b8-4944-a0b2-b8a7b9fde92b
 
-hamiltonian_params = {
-    'hamiltonian' : dict(
-        nbands = nbands,
-        t = hopping,
-        U = 8.0
-    )
-}
-
-hamiltonian = LatticeHamiltonian.from_dict(
-    lattice=lattice,
-    source=hamiltonian_params
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    nbands = nbands,
+    t = hopping,
+    U = 8.0
 )
 
 hamiltonian.to_hdf5("lieb.h5")
@@ -534,16 +511,13 @@ def make_emery(lattice, show_mats=False):
 # 1. define the lattice
 basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
 
-lattice = Lattice.from_dict(dict(
-    L1=4,
-    L2=4,
-    type='custom',
-    a1=np.array((1.0,-1.0)),
-    a2=np.array((1.0,1.0)),
+lattice = Lattice(
+    lattice_vectors=[(1.0,-1.0), (1.0,1.0)],
     basis=basis,
-    boundary1='pbc',
-    boundary2='pbc',
-))
+    Ls=(4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0),
+)
 
 if show_lattice_before:
     vis.plot_lattice(
@@ -561,15 +535,13 @@ THETA_X = 1/np.sqrt(592560607) # 592560607 is prime
 THETA_Y = 1/np.sqrt(47603)     # 47603 is prime
 twist = np.array((THETA_X,THETA_Y))
 
-lattice_wt_twist = Lattice.from_dict(dict(
-    L1=4,
-    L2=4,
-    type='custom',
-    a1=np.array((1.0,-1.0)),
-    a2=np.array((1.0,1.0)),
+lattice_wt_twist = Lattice(
+    lattice_vectors=[(1.0,-1.0), (1.0,1.0)],
     basis=basis,
-    twist=twist,
-))
+    Ls=(4, 4),
+    boundaries=('open', 'open'),
+    twists=twist,
+)
 
 hamiltonian2 = make_emery(lattice_wt_twist)
 

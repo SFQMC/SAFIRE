@@ -49,18 +49,10 @@ there is no sign problem.
 will allow us to construct the standard Hubbard model with nearest-neighbor hopping and on-site U, among
 other Hamiltonians.
 The basic steps for using the lattice model Hamiltonian builder are:
-1. define lattice parameters
-2. define Hamiltonian parameters
-3. build the lattice model Hamiltonian
+1. build the lattice
+2. build the lattice model Hamiltonian from the lattice and the Hamiltonian parameters
 
-Step 3. can optionally be broken into two sub-steps:  
-
-- construct the lattice instance using the lattice parameters
-- construct the Hamiltonian using the lattice instance, and the Hamiltonian parameters
-
-Breaking step 3. into substeps gives us easy access to the lattice instance
-which will facilitate visualizing the charge and spin densities latter on,
-so we will use this approach.
+The lattice instance will also facilitate visualizing the charge and spin densities later on.
 
 ```{code-cell} ipython3
 ---
@@ -76,17 +68,12 @@ outputId: c0edb976-6ddc-4ada-eb2f-66c8587a93b7
 from safiretools import Lattice
 from safiretools import vis
 
-# Step 1. define the lattice parameters
-lattice_params = dict(
-    L1 = 4,              # lattice dimension along a1
-    L2 = 4,              # lattice dimension along a2
-    boundary1 = 'PBC',   # boundary condition for the boundary *normal to* a1
-    boundary2 = 'PBC',    # similarly for a2
-)
-
-# Step 3.a. build the lattice
-lattice = Lattice.from_dict(
-    params=lattice_params
+# Step 1. build the lattice
+lattice = Lattice.from_type(
+    'square',
+    (4, 4),                               # lattice dimensions along a1 and a2
+    boundaries=('periodic', 'periodic'),  # boundary conditions along a1 and a2
+    twists=(0.0, 0.0),                    # twist angles in radians along a1 and a2
 )
 
 vis.plot_lattice(lattice)
@@ -99,24 +86,17 @@ colab:
   base_uri: https://localhost:8080/
 outputId: 601a13a7-15f4-49d9-ba6a-01fb4ba3b173
 ---
-from safiretools import HamiltonianBuilder
+from safiretools import LatticeHamiltonian
 
 # set the number of electrons - we'll use this again
 nelec = (8,8)
 
-# Step 2. define Hamiltonian parameters
-hamiltonian_params = {
-    'hamiltonian' : {
-        "t" : 1.0,  # note: we could omit this, nearest-neighbor hoping with t=1 is included by default
-        "U" : 4.0,
-    }
-}
-
-# Step 3.b. build the lattice model Ha
-hamiltonian = HamiltonianBuilder.from_input(
-    lattice=lattice,
-    source=hamiltonian_params
-).get_hamiltonian()
+# Step 2. build the lattice model Hamiltonian
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    t=1.0,  # note: we could omit this, nearest-neighbor hoping with t=1 is included by default
+    U=4.0,
+)
 ```
 
 +++ {"id": "MqK7sb3Z5xcn"}
@@ -183,19 +163,11 @@ outputId: e6000516-1e4f-4ae3-db34-af0b0c4d03f7
 from safiretools import Wavefunction
 from safiretools.wavefunction.free_electron import DEFAULT_TWIST
 
-input_params = dict(
-    lattice = lattice_params,                           # from step 1. above
-    hamiltonian = hamiltonian_params["hamiltonian"]     # from step 2. above
-)
-
 # a small irrational twist, in radians per axis, breaks the k-space degeneracy
 twist = DEFAULT_TWIST
 
-fe_lattice = Lattice.from_dict(params=dict(lattice_params, twist=list(twist)))
-fe_hamiltonian = HamiltonianBuilder.from_input(
-    source=input_params,
-    lattice=fe_lattice
-).get_hamiltonian()
+fe_lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=twist)
+fe_hamiltonian = LatticeHamiltonian.from_lattice(fe_lattice, t=1.0, U=4.0)
 
 wfn = Wavefunction.from_free_electron(
     source=fe_hamiltonian,

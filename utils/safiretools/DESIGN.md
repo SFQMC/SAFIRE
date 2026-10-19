@@ -79,9 +79,10 @@ decision.
 
 **Lattice**
 
-- Lattice geometry (`a1`/`a2`/`basis`) *is* the lattice type: immutable, and caller-supplied only
-  on `CustomLattice`.
-- `Lattice.from_dict()` is the factory; concrete subclasses are not re-exported.
+- One `Lattice` class: the constructor takes the geometry (`lattice_vectors`, `basis`, `Ls`) and
+  the required `boundaries` and optional `twists`; `Lattice.from_type()` supplies the built-in
+  unit cells.
+  The geometry is immutable.
 - `build()` validates the basis and runs once per instance.
 
 **Statistics and conventions**
@@ -184,10 +185,9 @@ safiretools/
 ├── hamiltonian/
 │   ├── base.py               # Hamiltonian ABC: to_hdf5()/from_hdf5() pattern
 │   ├── model/
-│   │   ├── builder.py         # HamiltonianBuilder — public, used internally by from_dict()
+│   │   ├── builder.py         # HamiltonianBuilder — public, used internally by from_lattice()
 │   │   ├── lattice_hamiltonian.py  # LatticeHamiltonian(Hamiltonian), HamiltonianComponent
-│   │   └── lattice.py         # Lattice (ABC) + SquareLattice/TriangularLattice/
-│   │                          #   HoneycombLattice/KagomeLattice/CustomLattice, moved from
+│   │   └── lattice.py         # Lattice + LATTICE_TYPES unit cells, moved from
 │   │                          #   afqmctools/systems/lattice.py
 │   ├── molecular.py           # MolecularHamiltonian(Hamiltonian) — from hamiltonian/mol.py
 │   ├── periodic.py            # PeriodicHamiltonian(Hamiltonian) — merges kpoint.py+supercell.py
@@ -335,45 +335,38 @@ and is checked whole. `Wavefunction.nelec_per_spin` supplies the split, as every
 untouched, and otherwise takes the `Q` of a reduced QR decomposition. The sign convention is pinned
 so `R`'s diagonal is real and non-negative, which makes `Q` unique.
 
-**`Lattice`** follows the same shape too: an ABC with concrete subclasses per lattice type
-(`SquareLattice`/`TriangularLattice`/`HoneycombLattice`/`KagomeLattice`, plus `CustomLattice`), a
-`Lattice.from_dict()` classmethod replacing today's free-function `get_lattice()` factory, and no
-standalone `to_hdf5()`/`from_hdf5()` — a lattice is only ever persisted embedded in a
-`LatticeHamiltonian`'s file. Only the base class is re-exported (`from safiretools import Lattice`),
-since users may want to construct or inspect lattice geometry independent of building a full
-Hamiltonian; `from_dict()` handles dispatch.
+**`Lattice`** is a single class with no standalone `to_hdf5()`/`from_hdf5()` — a lattice is only
+ever persisted embedded in a `LatticeHamiltonian`'s file. It is re-exported
+(`from safiretools import Lattice`), since users may want to construct or inspect lattice geometry
+independent of building a full Hamiltonian.
 
-### Unit-cell geometry belongs to the lattice type
+### One constructor, built-in unit cells by name
 
-`a1`, `a2` and `basis` **always exist** on a `Lattice` instance, but for the built-in types they
-are not caller-settable: they *are* the type. A `SquareLattice` is square precisely because its
-lattice vectors are the unit x- and y-vectors, and a `HoneycombLattice` is a honeycomb precisely
-because of its 2-site basis.
+`Lattice(lattice_vectors, basis, Ls, *, boundaries, twists=(0.0, 0.0), build=True)` takes any unit
+cell. `boundaries` has no default (user call): an open or periodic boundary is never picked
+silently. `twists` defaults to no twist. `Lattice.from_type(type, Ls, **kwargs)` looks the unit cell up in `LATTICE_TYPES`
+(square, triangular, honeycomb, kagome) and forwards the rest. There used to be one subclass per
+type, a `CustomLattice` for caller-supplied cells and a `from_dict()` factory; the subclasses
+differed only in their unit cell, so a table replaces them.
 
-**`CustomLattice` is the one subclass that takes `a1`/`a2`/`basis`**, and it is therefore the
-supported way to build a lattice whose geometry isn't one of the built-in types.
+**The geometry is immutable.** `A` (the lattice vectors as columns, so a position is
+`A @ (n1, n2) + basis[b]`) and `basis` are read-only properties over private backing
+state; the arrays they return have `writeable=False` and `basis` is a tuple, so the geometry can be
+neither replaced nor edited in place. The constructor copies its arguments before freezing them, so
+freezing never reaches an array the caller still holds. Building twice raises `RuntimeError`.
 
-Mechanically: each concrete type implements an abstract `_unitcell() -> (a1, a2, basis)` hook, and
-the `Lattice` constructor takes no geometry arguments at all, so the built-in types cannot accept
-them even by accident. Passing `a1`/`a2`/`basis` to a built-in type raises `TypeError`; the
-equivalent keys in a `from_dict()` parameter dict raise `ValueError` (a key present but set to
-`None` is fine, so parameter templates carrying unused keys still work).
-
-**The geometry is also immutable, not merely un-settable at construction.** `a1`/`a2`/`basis` are
-read-only properties over private backing state; the arrays they return have `writeable=False` and
-`basis` is a tuple, so the geometry can be neither replaced nor edited in place. Construction copies
-whatever `_unitcell()` returns before freezing it, so freezing never reaches an array the caller
-still holds. `cyl_mode` reshaping the cell inside `build()` is the one place the geometry changes,
-it is derived from the type's own `_unitcell()` rather than from the caller, and building twice
-raises `RuntimeError`. (`L` also changes under `cyl_mode` and is left a plain attribute; only the
-three geometry members are locked down.)
+**`cyl_mode` is a `from_type` option, applied before construction.** The XC/YC reshaping rotates
+`a2` onto `-a1 + 2*a2` and doubles the basis along `a2`, which is only the correct cell for hexagonal
+geometry, so it is restricted to `'triangular'`. It used to run inside `build()`, changing `L` after
+the boundaries had been made with the old sizes; on a twisted lattice that left some boundary
+crossings without their twist phase.
 
 ### Basis validation
 
 `build()` validates the basis and raises `ValueError` for two failure cases:
 
 1. **Two basis vectors differing by a lattice translation** describe the same site, so sites
-   coincide and `_to_lattice_basis` cannot tell which sublattice a position belongs to.
+   coincide and the neighbor lists are wrong.
 2. **A basis offset reaching a full supercell or more.** `_build_image_distances` shifts by only one
    supercell in each direction, so beyond that the true image is never tested.
 
@@ -389,15 +382,6 @@ admissible offset depends on the lattice, not on a magnitude.
 > per boundary crossing and are deliberately not deduplicated by minimum image, because the twist
 > phase depends on which way the boundary is crossed — on a 2x2 periodic lattice site *i* reaches
 > site *j* both inside the cell and across the boundary, with phases 0 and +theta.
-
-`cyl_mode` is restricted to `TriangularLattice`. The XC/YC reshaping rotates `a2` onto `-a1 + 2*a2`
-and doubles the basis along `a2`, which is only the correct cell for hexagonal geometry. It raises
-`ValueError` for every other type, `CustomLattice` included.
-
-`get_lattice()`'s `a1`/`a2` overrides were silently discarded for every built-in lattice type
-(absorbed into `**kwargs`, never applied), and the same held for `basis` on the two types that
-define a default one. Per the rule above the fix is to **reject** them loudly, not to start
-honoring them.
 
 ### `min_distance` filters the neighbor-distance map but keeps the self-distance
 
@@ -586,8 +570,8 @@ so on — which is the only thing that works for every file: older ones, CoQuí 
 `Hamiltonian` group, but nothing reads it yet.
 
 **Scalars are attributes, arrays are datasets** — the rule CoQuí's files follow, which we cannot
-change, so ours follow it too. That makes `spin_type`, `model_type`, `hst_type`, the lattice
-`type` and `cyl_mode`, and the counts attributes, named `number_of_*` as CoQuí names its counts
+change, so ours follow it too. That makes `spin_type`, `model_type`, `hst_type` and the counts
+attributes, named `number_of_*` as CoQuí names its counts
 (`number_of_sites`, `number_of_bands`). The constant energy uses CoQuí's names as well: optional
 `nuclear_energy` and `frozen_core_energy` attributes of `Hamiltonian`, where CoQuí puts them on
 `System`, replacing the two-slot `Energies` array. The executable reads both with one function,
@@ -622,8 +606,9 @@ than a second public enum. That is also what lets its docstring name
 the *shape* of the lattice it was built on under `Hamiltonian/ModelHamiltonian/Lattice`, written in
 the dimension-agnostic form a future N-dimensional `Lattice` will need — `L` and `boundaries` and
 `twist` as per-axis sequences, the unit cell as a `lattice_vectors` matrix — rather than as
-`L1`/`L2`/`a1`/`a2` pairs. Today `ndim` is always 2. `LatticeHamiltonian.lattice_params` flattens the metadata back into
-the keys `Lattice.from_dict` takes, so a lattice can be rebuilt from a Hamiltonian file. All of this
+`L1`/`L2`/`a1`/`a2` pairs. Today `ndim` is always 2. `LatticeHamiltonian.lattice_params` returns the
+metadata as `Lattice` constructor arguments, so `Lattice(**hamiltonian.lattice_params)` rebuilds the
+lattice from a Hamiltonian file. A lattice type name is not recorded: the unit cell is. All of this
 is additive — the executable ignores groups it does not read.
 
 **A model file's `Uij` splits back into `U`/`U1`/`U2` exactly.** The three terms share one dataset
@@ -833,7 +818,7 @@ writer could be reintroduced without touching the solver.
     cross-references. Autodoc'ing the same classes from their implementation modules instead makes
     the top-level path unresolvable — which is why the deep paths are in the docstrings today; see
     **Future changes**.
-- **Construction**: classmethod factories (`from_dict`, `from_hdf5`, `from_fcidump`, ...) over
+- **Construction**: classmethod factories (`from_lattice`, `from_hdf5`, `from_fcidump`, ...) over
   parsing inside `__init__`. `__init__` is for already-fully-formed, validated in-memory data.
 - **Serialization**: instance method + classmethod pair — `obj.to_hdf5(path) -> None`,
   `Cls.from_hdf5(path) -> Cls` (classmethod, dispatches to the right concrete subclass). Applies
@@ -841,7 +826,9 @@ writer could be reintroduced without touching the solver.
   since their formats genuinely differ; `Wavefunction`'s base class implements it once and
   subclasses don't override.
 - **`HamiltonianBuilder`** stays public (importable, usable for advanced/custom term
-  composition); `LatticeHamiltonian.from_dict(params)` wraps it internally for the common case.
+  composition); `LatticeHamiltonian.from_lattice(lattice, **params)` wraps it internally for the
+  common case. Hamiltonian parameters are explicit keyword arguments of
+  `HamiltonianBuilder.from_input`, so a misspelled key raises instead of being dropped.
 - Avoid bare mutable-attribute access on builder-style objects (`builder.hamiltonian`) — prefer
   explicit accessor methods (`builder.get_hamiltonian()`).
 - **`HamiltonianComponent` is not part of the public surface, and no documentation tells a user to
@@ -897,7 +884,7 @@ writer could be reintroduced without touching the solver.
 that differently** (user call):
 
 - **`Hamiltonian`** keeps only `from_hdf5` on the base class. Every domain factory is defined on the
-  subclass that builds it — `LatticeHamiltonian.from_dict`,
+  subclass that builds it — `LatticeHamiltonian.from_lattice`,
   `MolecularHamiltonian.from_integrals`/`.from_pyscf`/`.from_fcidump`,
   `PeriodicHamiltonian.from_pyscf`/`.write_from_pyscf`.
 - **`Wavefunction`** puts *every* factory on the base class, which picks the representation.
@@ -937,7 +924,7 @@ resolving the format.
 | factory | lives on | target decided by |
 |---|---|---|
 | `Hamiltonian.from_hdf5` | base — shared | `hamiltonian_format(path)`, then `issubclass(target, cls)` |
-| `LatticeHamiltonian.from_dict` | subclass | the class named at the call site |
+| `LatticeHamiltonian.from_lattice` | subclass | the class named at the call site |
 | `MolecularHamiltonian.from_integrals` / `.from_pyscf` / `.from_fcidump` | subclass | the class named at the call site |
 | `PeriodicHamiltonian.from_pyscf` | subclass | the class named at the call site |
 | `Wavefunction.from_hdf5` | base | `wavefunction_format(path)`, then `issubclass(target, cls)` |
@@ -979,7 +966,7 @@ mistakes them for accidents. Add to these lists rather than widening a phase in 
   `safiretools.vis`, no user-facing page autodocs an implementation module, afqmctools is no
   longer autodoc'd at all, and the four type fields read `~safiretools.Lattice`. Whether
   `hamiltonian_format()` is promoted is still open. Four `lattice : ~safiretools.hamiltonian.model.lattice.Lattice` type fields
-  (`HamiltonianBuilder` and its `from_input`, `LatticeHamiltonian.from_dict`, and the dev-facing
+  (`HamiltonianBuilder` and its `from_input`, `LatticeHamiltonian.from_lattice`, and the dev-facing
   `lattice_metadata_from`) violate the rule above. They are written that way because a bare
   `Lattice` is an **ambiguous cross-reference** while both `safiretools` and `afqmctools` are
   autodoc'd, and the short `safiretools.Lattice` only resolves once the public surface is documented

@@ -13,7 +13,7 @@ U1 = "discrete_spin"  # choices: "discrete_spin", "discrete_charge",
 # ... only overrides HST type for the terms which are explicitly set
 
 [lattice]
-L1 = 3
-L2 = 3
-boundary1 = "PBC"
-boundary2 = "PBC"
+type = "square"
+Ls = [3, 3]
+boundaries = ["periodic", "periodic"]
+twists = [0.0, 0.0]

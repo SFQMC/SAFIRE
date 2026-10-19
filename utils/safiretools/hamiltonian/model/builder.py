@@ -17,7 +17,7 @@ Each build-step method (`nth_neighbor_hopping`, `onsite_hubbard`,
 the components that can be combined, keeping terms with different
 Hubbard-Stratonovich transformations separate.
 
-`LatticeHamiltonian.from_dict` wraps this class for the common case of a
+`LatticeHamiltonian.from_lattice` wraps this class for the common case of a
 declarative input. Use the builder directly to compose terms no input key
 covers.
 """
@@ -26,6 +26,8 @@ import functools
 import inspect
 import itertools
 import logging
+from dataclasses import dataclass
+from typing import Callable
 from warnings import warn
 
 import numpy as np
@@ -250,63 +252,62 @@ def iterate_nth_order(start_n=1):
     return decorator
 
 
-def _parse_ham_input(source: dict):
+@dataclass(frozen=True)
+class PinningField:
+    r"""
+    A pinning field on the two edges at the ends of one lattice axis.
+
+    Parameters
+    ----------
+    func : callable(n, edge) -> (h_up, h_down)
+        On-site potential of each spin at the edge site with coordinate `n`
+        along the edge, on edge 0 (lattice coordinate 0) or edge 1 (coordinate
+        L-1) of the pinned axis. Applied to every band of the site.
+
+    Examples
+    --------
+    An AFM field of strength 0.5 with the same sign pattern on both edges,
+    written out by hand. It equals ``PinningField.afm(0.5, staggered=False)``:
+
+    >>> field = PinningField(lambda n, edge: (0.25 * (-1)**n, -0.25 * (-1)**n))
     """
-    Translate a ``'hamiltonian'`` input mapping into the Hamiltonian attributes
-    to set and the sequence of build steps to run.
+    func: Callable
 
-    Returns
-    -------
-    ham_params : dict
-        ``nbands`` and the pin types, for the `HamiltonianBuilder` constructor.
-    build_steps : list[tuple[str, list]]
-        ``(builder method name, positional args)`` pairs, in order.
-    """
-    source = dict(source)
+    @classmethod
+    def afm(cls, h, *, staggered: bool) -> "PinningField":
+        r"""
+        Antiferromagnetic field :math:`\pm h/2` alternating along the edge.
 
-    _known_params = {
-        'nbands': 1,
-        'afm_pin_type': "staggered",
-        'fm_pin_type': "staggered",
-    }
+        If `staggered`, the two edges have opposite signs.
+        """
+        def func(n, edge):
+            s = 0.5 * h * (-1)**(n + edge if staggered else n)
+            return s, -s
+        return cls(func)
 
-    if 'twist' in source:
-        raise ValueError("'twist' is a property of the lattice; set it in the "
-                         "'lattice' section rather than the 'hamiltonian' one")
+    @classmethod
+    def fm(cls, h, *, staggered: bool) -> "PinningField":
+        r"""
+        Ferromagnetic field :math:`\pm h/2`, constant along the edge.
 
-    _supported_steps = {
-        'nth_neighbor_hopping': 't',
-        'custom_one_body': 'custom_one_body',
-        'onsite_hubbard': 'U',
-        'hubbard_U1_density_density': 'U1',
-        'hubbard_U2_spin_spin': 'U2',
-        'hubbard_Jij': 'J',
-        'heisenberg_J': 'J_heisenberg',
-        'nth_order_hubbard_Vij': "V",
-        'afm_pinning': 'h_afm_pin',
-        'fm_pinning': 'h_fm_pin',
-        'charge_pinning': 'h_charge_pin',
-    }
+        If `staggered`, the two edges have opposite signs.
+        """
+        def func(n, edge):
+            s = 0.5 * h * (-1 if staggered and edge == 0 else 1)
+            return s, -s
+        return cls(func)
 
-    hst_type_overrides = source.get("hst_types", None)
+    @classmethod
+    def charge(cls, h, *, staggered: bool) -> "PinningField":
+        r"""
+        Charge field :math:`\pm h/2` on both spins, constant along the edge.
 
-    # TODO: consider how we want to handle defaulting to 1.0 AND allowing there
-    #        to be no hopping!
-    if source.get('t') is None:
-        source['t'] = 1.0
-
-    ham_params = {param: source.get(param, default)
-                  for param, default in _known_params.items()}
-
-    build_steps = []
-    for step, key in _supported_steps.items():
-        if key in source:
-            args = [source[key]]
-            if hst_type_overrides is not None and key in hst_type_overrides:
-                args.append(hst_type_overrides[key])
-            build_steps.append((step, args))
-
-    return ham_params, build_steps
+        If `staggered`, the two edges have opposite signs.
+        """
+        def func(n, edge):
+            s = 0.5 * h * (-1 if staggered and edge == 0 else 1)
+            return s, s
+        return cls(func)
 
 
 class HamiltonianBuilder:
@@ -322,9 +323,6 @@ class HamiltonianBuilder:
     spin_symm : SpinSymm or str or int, optional
         Spin symmetry the Hamiltonian is expressed in. Default
         `SpinSymm.COLLINEAR`.
-    afm_pin_type, fm_pin_type : str, optional
-        Default ``pin_type`` of `afm_pinning` and `fm_pinning`. Default
-        ``'staggered'``.
 
     Raises
     ------
@@ -343,15 +341,11 @@ class HamiltonianBuilder:
             lattice: Lattice,
             nbands: int = 1,
             spin_symm=SpinSymm.COLLINEAR,
-            afm_pin_type: str = "staggered",
-            fm_pin_type: str = "staggered",
     ) -> None:
         if lattice is None:
             raise ValueError("A Hamiltonian must be defined on a 'Lattice' instance.")
 
         self._lattice = lattice
-        self.afm_pin_type = afm_pin_type
-        self.fm_pin_type = fm_pin_type
         self._hamiltonian = LatticeHamiltonian(
             nsites=lattice.N_sites,
             nbands=nbands,
@@ -368,104 +362,106 @@ class HamiltonianBuilder:
         return self._lattice
 
     @classmethod
-    def from_input(cls, source, lattice: Lattice = None) -> "HamiltonianBuilder":
+    def from_input(cls, lattice: Lattice, *, nbands: int = 1,
+                   spin_symm=SpinSymm.COLLINEAR, t=1.0, custom_one_body=None,
+                   U=None, U1=None, U2=None, J=None, J_heisenberg=None, V=None,
+                   pinning=None, hst_types: dict = None) -> "HamiltonianBuilder":
         r"""
-        Construct and fully build a `HamiltonianBuilder` from a declarative
-        input.
+        Construct and fully build a `HamiltonianBuilder` from keyword input.
 
-        Parses a ``'hamiltonian'`` (and optionally ``'lattice'``) description,
-        runs the corresponding build steps, and finalizes. Use
-        `get_hamiltonian` on the result.
+        Runs the build step of every given term and finalizes. Use
+        `get_hamiltonian` on the result. Nearest-neighbor hopping is included by
+        default; every other term must be requested explicitly. The build-step
+        methods document finer control and the full input conventions.
 
         Parameters
         ----------
-        source : dict
-            Hamiltonian (and possibly lattice) parameters.
-        lattice : ~safiretools.Lattice, optional
-            Lattice describing the geometry. Built from ``source['lattice']`` if
-            omitted.
+        lattice : ~safiretools.Lattice
+            Lattice describing the geometry.
+        nbands : int, optional
+            Number of bands. Default 1.
+        spin_symm : SpinSymm or str or int, optional
+            Spin symmetry the Hamiltonian is expressed in. Default
+            `SpinSymm.COLLINEAR`.
+        t : float or array_like, optional
+            nth-order neighbor hopping (`nth_neighbor_hopping`). Default 1.0;
+            ``None`` means no hopping.
 
-        Notes
-        -----
-        The Hamiltonian is built by a sequence of build steps named as key-value
-        pairs in the ``'hamiltonian'`` section. Nearest-neighbor hopping is
-        included by default; every interaction term must be requested
-        explicitly. The build-step methods document finer control and the full
-        input conventions.
+            - a scalar gives nearest-neighbor hopping with strength t
+            - a 1-dimensional list ``[t1, t2, ..., tn]`` gives up to nth-order hopping
+            - a 2-dimensional array with shape (nbands, nbands) is an on-site
+              inter-band hopping matrix
+            - a list of 2-dimensional arrays is a list of on-site inter-band hopping
+              matrices. This is functionally the same as
+              :math:`t_{mn} = \sum t^{(i)}_{mn}` where :math:`t^{(i)}` is the ith
+              element of the list and :math:`m,n` are band indices.
+        custom_one_body : array_like, optional
+            One-body matrix added as is (`custom_one_body`).
+        U : float or array_like, optional
+            Onsite Hubbard interaction (`onsite_hubbard`).
 
-        The following build steps are supported, listed as `key : description`:
-
-        - t : nth-order neighbor hopping term; input convention are as follows:
-
-          - if t is a scalar, then nearest-neighbor hopping is included with strength t
-          - if t is a 1-dimensional list (i.e. [t1,t2,...,tn]), then up to nth-order hopping is included
-          - if t is a 2-dimensional with shape (nbands, nbands), then
-            the t is interpreted as an on-site inter-band hopping matrix
-          - if t is a list of 2-dimensional arrays, then each element is interpreted as an on-site
-            inter-band hopping matrix. This is functionally the same as :math:`t_{mn} = \sum t^{(i)}_{mn}`
-            where :math:`t^{(i)}` is the ith element of the list and :math:`m,n` are band indices.
-
-        - U : onsite Hubbard interaction term; input convention are as follows:
-
-          - if U is a scalar, then the onsite Hubbard interaction term is included with strength U
-            and applied to all sites and bands.
-          - if U is 1-dimensional with length nbands (i.e. [U1,U2,...,Um] where for an m-band model),
-            then the onsite Hubbard interaction term is included with strength U_i applied to band i
-            and uniformly across sites.
-          - if U is 1-dimensional with length nsites (i.e. [U1,U2,...,Un] where n is the number of sites),
-            then the onsite Hubbard interaction term is included with strength U_i applied to site i
-            and uniformly across bands.
-
-        - U1 : Hubbard density-density interaction term. Input convention are as follows:
-
-          - if U1 is a scalar, then the Hubbard density-density interaction term is included with strength U1
-            and is applied to all sites, and is uniform across bands.
-          - if U1 is a 2-dimensional with shape (nbands, nbands), then U1 is used as an intrasite density-density
-            interaction, and is applied uniformly across sites.
-
-        - U2 : Hubbard spin-spin interaction term. Input convention are as follows:
-
-          - if U2 is a scalar, then the Hubbard spin-spin interaction term is included with strength U2
-            and is applied to all sites, and is uniform across bands.
-          - if U2 is a 2-dimensional with shape (nbands, nbands), then U2 is used as an intrasite spin-spin
-            interaction, and is applied uniformly across sites.
-
-        - J : Hund's coupling interaction term. Input convention are as follows:
-
-          - if J is a scalar, then the Hund's coupling interaction term is included with strength J
-            and is applied to all sites, and is uniform across bands.
-          - if J is a 2-dimensional with shape (nbands, nbands), then J is used as an intrasite
-            Hund's coupling interaction, and is applied uniformly across sites.
+            - a scalar applies to all sites and bands
+            - a 1-dimensional list of length nbands gives U_i on band i, uniformly
+              across sites
+            - a 1-dimensional list of length nsites gives U_i on site i, uniformly
+              across bands
+        U1 : float or array_like, optional
+            Hubbard density-density interaction (`hubbard_U1_density_density`). A
+            scalar applies to all sites, uniformly across bands; an (nbands, nbands)
+            matrix is an intrasite density-density interaction, applied uniformly
+            across sites.
+        U2 : float or array_like, optional
+            Hubbard spin-spin interaction (`hubbard_U2_spin_spin`), with the same
+            conventions as U1.
+        J : float or array_like, optional
+            Hund's coupling (`hubbard_Jij`), with the same conventions as U1.
+        J_heisenberg : float or array_like, optional
+            Heisenberg exchange (`heisenberg_J`).
+        V : float or array_like, optional
+            Inter-site Hubbard interaction (`nth_order_hubbard_Vij`). A list gives
+            up to nth-order neighbors.
+        pinning : sequence of two PinningField or None, optional
+            Edge pinning fields per lattice axis (`pinning`).
+        hst_types : dict, optional
+            Hubbard-Stratonovich type overrides, keyed by the interaction keyword
+            (``'U'``, ``'U1'``, ...). Inferred from the sign of the interaction by
+            default.
 
         Examples
         --------
-        >>> builder = HamiltonianBuilder.from_input({
-        ...     'lattice': dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'),
-        ...     'hamiltonian': dict(t=1.0, U=4.0),
-        ... })
+        >>> lattice = Lattice.from_type('square', (4, 4),
+        ...                             boundaries=('periodic', 'periodic'),
+        ...                             twists=(0.0, 0.0))
+        >>> builder = HamiltonianBuilder.from_input(lattice, t=1.0, U=4.0)
         >>> hamiltonian = builder.get_hamiltonian()
         """
-        if not isinstance(source, dict):
-            raise ValueError(
-                f"Invalid parameter source: must be a dict, not {type(source).__name__}"
-            )
+        builder = cls(lattice=lattice, nbands=nbands, spin_symm=spin_symm)
 
-        ham_input = source['hamiltonian']
-        ham_params, build_steps = _parse_ham_input(ham_input)
+        one_body_steps = [
+            ('nth_neighbor_hopping', t),
+            ('custom_one_body', custom_one_body),
+        ]
+        interaction_steps = [
+            ('onsite_hubbard', 'U', U),
+            ('hubbard_U1_density_density', 'U1', U1),
+            ('hubbard_U2_spin_spin', 'U2', U2),
+            ('hubbard_Jij', 'J', J),
+            ('heisenberg_J', 'J_heisenberg', J_heisenberg),
+            ('nth_order_hubbard_Vij', 'V', V),
+        ]
+        hst_types = hst_types or {}
+        unknown = set(hst_types) - {key for _, key, _ in interaction_steps}
+        if unknown:
+            raise ValueError(f"hst_types given for non-interaction terms: {sorted(unknown)}")
 
-        if lattice is None:
-            logger.info("no lattice instance supplied: building from parameters")
-            lattice = Lattice.from_dict(params=source['lattice'])
-
-        builder = cls(
-            lattice=lattice,
-            spin_symm=ham_input.get('spin_symm', SpinSymm.COLLINEAR),
-            **ham_params,
-        )
-
-        for step, args in build_steps:
-            logger.info("running build step %s(%s)", step, args)
-            getattr(builder, step)(*args)
+        for step, value in one_body_steps:
+            if value is not None:
+                getattr(builder, step)(value)
+        for step, key, value in interaction_steps:
+            if value is not None:
+                getattr(builder, step)(value, hst_type=hst_types.get(key))
+        if pinning is not None:
+            builder.pinning(pinning)
 
         builder.finalize()
 
@@ -680,9 +676,9 @@ class HamiltonianBuilder:
         --------
         >>> import numpy as np
         >>> from safiretools import HamiltonianBuilder, Lattice
-        >>> lattice = Lattice.from_dict(
-        ...     params=dict(L1=3, L2=2, boundary1="PBC", boundary2="PBC")
-        ... )
+        >>> lattice = Lattice.from_type('square', (3, 2),
+        ...                             boundaries=('periodic', 'periodic'),
+        ...                             twists=(0.0, 0.0))
         >>> builder = HamiltonianBuilder(lattice=lattice)
         >>> nbasis = lattice.N_sites
         >>> one_body_matrix = 0.0001*np.random.rand(nbasis, nbasis)
@@ -834,181 +830,51 @@ class HamiltonianBuilder:
             spin_symm=spin_symm,
         ))
 
-    def afm_pinning(self, h_afm_pin, axis=0, spin_symm=None, pin_type=None):
-        r"""adds anti-ferromagnetic (AFM) pinning to the Hamiltonian
+    def pinning(self, pinning, spin_symm=None):
+        r"""Adds edge pinning fields to the Hamiltonian
 
-        Builds an anti-ferromagnetic (AFM) pinning term of the type:
-        :math:`\sum_{i \sigma} v_{i\sigma} \hat{n}_{i\sigma}`,
-        where :math:`v_{i \downarrow} = - v_{i \uparrow} = 1/2(-1)^(h(i)) h_afm_pin`
-        and h_afm_pin is the pinning field strength,
-        and adds it to the Hamiltonian.
+        Builds the one-body term :math:`\sum_{i \sigma} v_{i\sigma} \hat{n}_{i\sigma}`
+        on the edge sites, lattice coordinate 0 or L-1, of each pinned axis.
 
         Parameters
         ----------
-        h_afm_pin : float
-            the amplitude of the pinning field
-        axis : int, optional, default = 0
-            the axis to apply pinning along
+        pinning : sequence of two PinningField or None
+            The field on the edges at the ends of axis 0 and of axis 1. ``None``
+            leaves that axis unpinned. A site on the edges of both axes gets the
+            sum of the two fields.
         spin_symm : SpinSymm, optional
-            an override for the default spin symmetry enumerate type for the hopping matrix.
+            an override for the default spin symmetry enumerate type for the pinning matrix.
             If not given, the spin symmetry of the Hamiltonian will be used.
-        pin_type : str, optional
-            overrides the builder's ``afm_pin_type``.
 
         Raises
         ------
         ValueError
-            when the pin type is invalid
-
-        Notes
-        -----
-        available pinning functions:
-
-        - staggered: :math:`h(i) = i_1+i_2`
-        - same: :math:`h(i)` is the coordinate along the other axis
-
-        pinning is applied to an edge,
-        with lattice coordinate 0 or L-1, on the given axis.
+            if `pinning` does not have one entry per lattice axis
         """
-        if pin_type is None:
-            pin_type = self.afm_pin_type
-        pin_type = pin_type.lower()
-        logger.info("using afm pin type: %s", pin_type)
+        if len(pinning) != 2:
+            raise ValueError(f"pinning needs one entry per lattice axis, got {len(pinning)}")
+        if all(field is None for field in pinning):
+            return
 
-        if pin_type in ("staggered", "afm"):
-            def pinning_func(coord):
-                return 0.5 * (-1)**(sum(coord))
-        elif pin_type in ("same", "matching", "fm"):
-            def pinning_func(coord):
-                return 0.5 * (-1)**(coord[(axis + 1) % 2])
-        else:
-            raise ValueError(
-                f"Attempted to build AFM pinning with invalid pin_type '{pin_type}'"
-            )
-
-        self.edge_pinning(pinning_func, h_afm_pin, False, axis, spin_symm)
-
-    def fm_pinning(self, h_fm_pin, axis=0, spin_symm=None, pin_type=None):
-        r"""adds ferromagnetic (FM) pinning to the Hamiltonian
-
-        builds an FM pinning term of the type:
-        :math:`\sum_{i \sigma} v_{i\sigma} \hat{n}_{i\sigma}`,
-        where :math:`v_{i \downarrow} = - v_{i \uparrow} = 1/2 h(i) h_fm_pin`
-        and h_fm_pin is the pinning field strength.
-
-        Parameters
-        ----------
-        h_fm_pin : float
-            the amplitude of the pinning field
-        axis : int, optional, default = 0
-            the axis to apply pinning along
-        spin_symm : SpinSymm, optional
-            an override for the default spin symmetry enumerate type for the hopping matrix.
-            If not given, the spin symmetry of the Hamiltonian will be used.
-        pin_type : str, optional
-            overrides the builder's ``fm_pin_type``.
-
-        Raises
-        ------
-        ValueError
-            when the pin type is invalid
-
-        Notes
-        -----
-        available functions:
-
-        - staggered: :math:`h(i) = (-1)^{(i_\text{axis}==0)}`
-        - same: :math:`h(i) = 1`
-
-        pinning is applied to an edge,
-        with lattice coordinate 0 or L-1, on the given axis.
-        """
-        if pin_type is None:
-            pin_type = self.fm_pin_type
-        pin_type = pin_type.lower()
-        logger.info("using fm pin type: %s", pin_type)
-
-        if pin_type in ("staggered", "afm", "opposite"):
-            def pinning_func(coord):
-                return 0.5 * (-1)**(coord[axis] == 0)
-        elif pin_type in ("same", "matching", "fm"):
-            def pinning_func(coord):
-                return 0.5
-        else:
-            raise ValueError(
-                f"Attempted to build FM pinning with invalid pin_type '{pin_type}'"
-            )
-
-        self.edge_pinning(pinning_func, h_fm_pin, False, axis, spin_symm)
-
-    def charge_pinning(self, h_charge_pin, axis=0, spin_symm=None):
-        r"""Adds charge pinning to the Hamiltonian
-
-        builds a charge pinning term of the type:
-        :math:`\sum_{i \sigma} v_{i\sigma} \hat{n}_{i\sigma}`,
-        where :math:`v_{i \downarrow} = v_{i \uparrow} = 1/2 h_charge_pin`
-        and h_charge_pin is the pinning field strength.
-
-        Parameters
-        ----------
-        h_charge_pin : float
-            the amplitude of the pinning field
-        axis : int, optional, default = 0
-            the axis to apply pinning along
-        spin_symm : SpinSymm, optional
-            an override for the default spin symmetry enumerate type for the hopping matrix.
-            If not given, the spin symmetry of the Hamiltonian will be used.
-
-        Notes
-        -----
-        pinning is applied to an edge,
-        with lattice coordinate 0 or L-1, on the given axis.
-        """
-        self.edge_pinning(lambda coord: 0.5, h_charge_pin, True, axis, spin_symm)
-
-    def edge_pinning(self, pinning_func, h_pin, same_sign=False, axis=0, spin_symm=None):
-        """Add general pinning, at the edge, to the Hamiltonian
-
-        Generalized pinning function: apply `pinning_func` to sites at the edge.
-        `pinning_func` takes a lattice coordinate.
-
-        Parameters
-        ----------
-        pinning_func : callable(coord) -> float
-            a modulation function for the pinning field
-        h_pin : float
-            the amplitude of the pinning field
-        same_sign : bool
-            if True, spin up and spin down sectors have the same sign.
-            if False, spin up and spin down sectors have opposite signs.
-        axis : int, optional, default = 0
-            the axis to apply pinning along
-        spin_symm : SpinSymm, optional
-            an override for the default spin symmetry enumerate type for the hopping matrix.
-            If not given, the spin symmetry of the Hamiltonian will be used.
-
-        Notes
-        -----
-        pinning is applied to an edge,
-        with lattice coordinate 0 or L-1, on the given axis.
-        """
         if spin_symm is None:
             spin_symm = self._hamiltonian.spin_symm
 
-        nbands = self._hamiltonian.nbands
-        shape = (self._hamiltonian.nbasis, self._hamiltonian.nbasis)
-
-        row, column, data = [], [], []
+        v_up = np.zeros(self._hamiltonian.nbasis)
+        v_down = np.zeros(self._hamiltonian.nbasis)
         for site in self._lattice.get_sites():
-            r = site.coord
-            if r[axis] == 0 or r[axis] == self._lattice.L[axis] - 1:
-                for m in range(nbands):
-                    row.append(self._index_map(site.index, m))
-                    column.append(self._index_map(site.index, m))
-                    data.append(pinning_func(site.coord) * h_pin)
+            for axis, field in enumerate(pinning):
+                r = site.coord[axis]
+                if field is None or r not in (0, self._lattice.L[axis] - 1):
+                    continue
+                h_up, h_down = field.func(int(site.coord[(axis + 1) % 2]), int(r != 0))
+                for m in range(self._hamiltonian.nbands):
+                    v_up[self._index_map(site.index, m)] += h_up
+                    v_down[self._index_map(site.index, m)] += h_down
 
-        H_pin_up = sps.csr_array((data, (row, column)), shape=shape)
-        H_pin_down = H_pin_up if same_sign else -1 * H_pin_up
+        H_pin_up = sps.diags_array(v_up, format='csr')
+        H_pin_down = sps.diags_array(v_down, format='csr')
+        H_pin_up.eliminate_zeros()
+        H_pin_down.eliminate_zeros()
 
         self._hamiltonian.add_term('tij', HamiltonianComponent(
             csr_array=self._wrap_one_body_spin_structure(H_pin_up, spin_symm, H_pin_down),

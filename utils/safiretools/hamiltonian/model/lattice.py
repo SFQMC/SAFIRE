@@ -13,11 +13,8 @@ Lattice geometry for the lattice-model Hamiltonian builder.
 
 A ``Lattice`` is a 2-D lattice with an optional multi-site basis, a
 boundary condition (open or periodic, optionally twisted) per axis, and lazily
-computed neighbor lists. Concrete subclasses differ only in their lattice
-vectors and basis; everything else lives on the ABC.
-
-``CustomLattice`` is the type used to define your own unit cell; see `Lattice`
-for the full rule.
+computed neighbor lists. `Lattice.from_type` supplies the unit cell of the
+built-in lattice types; the constructor takes any unit cell.
 
 Lattices are never serialized on their own. They are persisted as embedded
 state inside a ``LatticeHamiltonian``'s HDF5 file, so there is no
@@ -27,7 +24,6 @@ derived from a lattice but written as an estimator's own input file.
 
 import itertools
 import logging
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from fractions import Fraction
 from warnings import warn
@@ -39,9 +35,6 @@ import scipy.spatial as spatial
 from safiretools.hdf5 import replace_group
 
 logger = logging.getLogger(__name__)
-
-UNITCELL_KEYS = ('a1', 'a2', 'basis')
-"""Unit-cell geometry keys, settable only for `CustomLattice`."""
 
 
 @dataclass(order=True)
@@ -163,7 +156,7 @@ def _angle_str_to_float(angle_string: str):
     return angle
 
 
-def _parse_twist(twist):
+def _parse_twists(twists):
     """
     parse the twist angle iterable based on what types are within the tuple
 
@@ -172,34 +165,34 @@ def _parse_twist(twist):
     - number : interpreted as the twist angle in radians
     """
 
-    # Check if twist is iterable (but not a string, which is iterable but should be rejected)
-    if isinstance(twist, (int, float)):
+    # Check if twists is iterable (but not a string, which is iterable but should be rejected)
+    if isinstance(twists, (int, float)):
         raise TypeError(
-            "Invalid 'twist' parameter: expected a 2-element iterable (tuple or list), "
-            f"but got a single number: {twist}"
+            "Invalid 'twists' parameter: expected a 2-element iterable (tuple or list), "
+            f"but got a single number: {twists}"
         )
 
-    if isinstance(twist, str):
+    if isinstance(twists, str):
         raise TypeError(
-            "Invalid 'twist' parameter: expected a 2-element iterable (tuple or list), "
-            f"but got a string: '{twist}'"
+            "Invalid 'twists' parameter: expected a 2-element iterable (tuple or list), "
+            f"but got a string: '{twists}'"
         )
 
-    # Check if twist has the __len__ attribute to avoid TypeError
-    if not hasattr(twist, '__len__'):
+    # Check if twists has the __len__ attribute to avoid TypeError
+    if not hasattr(twists, '__len__'):
         raise TypeError(
-            "Invalid 'twist' parameter: expected a 2-element iterable (tuple or list), "
-            f"but got type {type(twist).__name__}"
+            "Invalid 'twists' parameter: expected a 2-element iterable (tuple or list), "
+            f"but got type {type(twists).__name__}"
         )
 
-    if len(twist) != 2:
+    if len(twists) != 2:
         raise ValueError(
-            f"Invalid 'twist' parameter given: must have length 2, got length {len(twist)}"
+            f"Invalid 'twists' parameter given: must have length 2, got length {len(twists)}"
         )
 
     _twist = [0., 0.]
 
-    for i, t in enumerate(twist):
+    for i, t in enumerate(twists):
         if isinstance(t, str):
             _twist[i] = _angle_str_to_float(t)
         elif isinstance(t, float):
@@ -213,130 +206,80 @@ def _parse_twist(twist):
     return _twist
 
 
-class Lattice(ABC):
+class Lattice:
     """
-    Base class for representing lattices.
+    A two-dimensional lattice: a unit cell repeated ``Ls[0] x Ls[1]`` times.
 
-    **The unit-cell geometry belongs to the lattice type, not to the caller.**
-    Every instance always has an ``a1``, an ``a2`` and a ``basis``, but for the
-    built-in types those define the type. The geometry is supplied by the type's
-    `_unitcell()` implementation, and the constructor below — the only one —
-    takes no geometry arguments at all.
+    Parameters
+    ----------
+    lattice_vectors : array_like, shape (2, 2)
+        The lattice vectors ``a1`` and ``a2``, one per row.
+    basis : array_like, shape (nb, 2)
+        Positions of the sites within the unit cell.
+    Ls : iterable(int)
+        2-element lattice size, in units of the unit cell.
+    boundaries : iterable(str)
+        Boundary condition along each lattice vector: ``'open'`` or
+        ``'periodic'`` (``'pbc'`` is accepted as an alias).
+    twists : iterable, optional
+        Twist angle in radians along each lattice vector, picked up when
+        crossing a periodic boundary. Elements are numbers or strings such as
+        ``'1/2 pi'``. Default is no twist, ``(0.0, 0.0)``.
+    build : bool, optional
+        Build the lattice sites immediately. Default is True.
 
-    `CustomLattice` is used to define a custom lattice geometry: it is the
-    one subclass whose constructor accepts ``a1``/``a2``/``basis``, and the only
-    supported way to build a lattice whose geometry is not one of the built-in
-    types. Passing ``a1``/``a2``/``basis`` to any other type raises `TypeError`,
-    and `Lattice.from_dict` raises `ValueError` for the equivalent keys in a
-    parameter dict.
-
-    ``a1``, ``a2`` and ``basis`` are read-only properties, and the arrays they
+    Notes
+    -----
+    ``A`` and ``basis`` are read-only properties, and the arrays they
     return are themselves immutable, so the geometry cannot be replaced or
-    edited in place after construction. `build()` applying `cyl_mode` is
-    the sole exception.
+    edited in place after construction.
+
+    `build()` raises `ValueError` for a basis the neighbor search cannot handle:
+    two basis vectors differing by a lattice translation, or an offset reaching
+    a full supercell. See `_validate_basis`.
+
+    Examples
+    --------
+    A Lieb lattice, a square lattice with a three-site basis:
+
+    >>> lattice = Lattice([[1, 0], [0, 1]], [[0, 0], [0.5, 0], [0, 0.5]], (4, 4),
+    ...                   boundaries=('periodic', 'periodic'))
     """
 
-    _type = None
-    """Lattice type name, for reference only. Set by each concrete subclass."""
-
-    @abstractmethod
-    def _unitcell(self):
-        """
-        Return this lattice type's ``(a1, a2, basis)``.
-
-        ``a1`` and ``a2`` are required. ``basis`` may be ``None``, meaning a
-        single site at the cell origin.
-        """
-
-    def __init__(
-            self,
-            L=None,
-            *,
-            axis1_boundary=None,
-            axis2_boundary=None,
-            build=True,
-            twist=None,
-            cyl_mode=None,
-            _dist_map_min_distance=None,
-    ) -> None:
-        """
-        Initialize with an "empty" lattice containing no sites; ``build()``
-        populates them.
-
-        Parameters
-        ----------
-        L : iterable(int)
-            2-element lattice size, (L1, L2), in units of the unit cell.
-        axis1_boundary, axis2_boundary : type(Boundary), optional
-            Boundary *classes* (not instances) applied along a1 and a2.
-            Default is `OpenBoundary`.
-        build : bool, optional
-            Build the lattice sites immediately. Default is True.
-        twist : iterable, optional
-            2-element twist angle, one per axis. See `_parse_twist` for the
-            accepted element types.
-        cyl_mode : {None, 'XC', 'YC'}, optional
-            Reshape the unit cell to be rectangular. The reshaping is hardcoded
-            for hexagonal (triangular) geometry, so it is accepted **only** by
-            `TriangularLattice` and raises `ValueError` for any other type.
-            This is the one supported way the geometry changes after
-            construction — `build()` applies it.
-        _dist_map_min_distance : float, optional
-            Smallest nonzero distance to keep in the neighbor distance map.
-            Applied when the map is first built. See `_neighbor_distance_map`.
-        """
-        a1, a2, basis = self._unitcell()
-
-        if a1 is None or a2 is None:
+    def __init__(self, lattice_vectors, basis, Ls, *, boundaries, twists=(0.0, 0.0),
+                 build=True) -> None:
+        lattice_vectors = np.array(lattice_vectors, dtype=float)
+        if lattice_vectors.shape != (2, 2):
             raise ValueError(
-                f"{type(self).__name__}._unitcell() returned no lattice vectors; "
-                "every lattice type must define both 'a1' and 'a2'"
-            )
-        self._set_unitcell(a1, a2, [np.zeros(2)] if basis is None else basis)
+                f"lattice_vectors must have shape (2, 2), got {lattice_vectors.shape}")
+        self._A = lattice_vectors.T.copy()
+        self._basis = [np.array(b, dtype=float) for b in basis]
+        if not self._basis or any(b.shape != (2,) for b in self._basis):
+            raise ValueError("basis must be a non-empty list of 2-vectors")
+        for array in (self._A, *self._basis):
+            array.setflags(write=False)
+        self._nb = len(self._basis)
+
+        if not (hasattr(Ls, '__len__') and len(Ls) == 2):
+            raise ValueError("Ls must be a 2-d Array-like")
+        if Ls[0] < 1 or Ls[1] < 1:
+            raise ValueError("Invalid lattice size; both entries of Ls must be >= 1")
+        self.L = tuple(int(size) for size in Ls)
+
+        if len(boundaries) != 2:
+            raise ValueError(f"boundaries must have length 2, got {len(boundaries)}")
+        twists = _parse_twists(twists)
+        self.axis1_boundary = _boundary_from_str(boundaries[0])(
+            L=self.L[0], direction=0, phase=twists[0])
+        self.axis2_boundary = _boundary_from_str(boundaries[1])(
+            L=self.L[1], direction=1, phase=twists[1])
 
         self._pairs_by_distance = dict()
         self._image_pairs_by_distance = dict()
         self.sites = list()
         self.N_sites = 0
 
-        # Change unit cell to be rectangular
-        # default is nothing
-        # with XC y dim is longer (1 in x dim)
-        # and YC x is longer (1 in y dim)
-        if cyl_mode not in ("XC", "YC", None):
-            raise ValueError(f"Unsupported cylinder mode {cyl_mode=}"
-                             "\n Try None, 'XC', or 'YC'")
-        if cyl_mode in ("XC", "YC") and self._type != "triangular":
-            # the reshaping in build() rotates a2 onto -a1+2*a2 and doubles the
-            #   basis along a2, which is only the right cell for hexagonal
-            #   (triangular) geometry
-            raise ValueError(
-                f"Unsupported cylinder mode {cyl_mode=} for lattice type "
-                f"'{self._type}': XC/YC cell reshaping is hardcoded for hexagonal "
-                "(triangular) geometry and is only available on TriangularLattice"
-            )
-        self.cyl_mode = cyl_mode
-
-        if not (hasattr(L, '__len__') and len(L) == 2):
-            raise ValueError("L must be a 2-d Array-like")
-        self.L = L
-
-        if twist is None:
-            twist = (0.0, 0.0)
-        else:
-            twist = _parse_twist(twist)
-
-        if axis1_boundary is None:
-            axis1_boundary = OpenBoundary
-
-        if axis2_boundary is None:
-            axis2_boundary = OpenBoundary
-
-        self.axis1_boundary = axis1_boundary(L=L[0], direction=0, phase=twist[0])
-        self.axis2_boundary = axis2_boundary(L=L[1], direction=1, phase=twist[1])
-
         self._dist_map = None
-        self._dist_map_min_distance = _dist_map_min_distance
 
         self._distances = None
         self._image_distances = None
@@ -346,141 +289,71 @@ class Lattice(ABC):
             self.build()
 
     @classmethod
-    def from_dict(cls, params: dict, build=None):
+    def from_type(cls, type: str, Ls, *, cyl_mode=None, **kwargs) -> "Lattice":
         """
-        Build a lattice from a parameter dictionary, dispatching on
-        ``params['type']``.
+        A lattice with the unit cell of a built-in lattice type.
 
         Parameters
         ----------
-        params : dict
-            Lattice parameters. ``L1`` and ``L2`` are required. Recognized
-            optional keys: ``type`` ('square', 'triangular', 'honeycomb',
-            'kagome', 'custom'; default 'square'), ``boundary1``/``boundary2``
-            ('open', 'pbc'/'periodic'; default 'open'), ``build``, ``twist``,
-            ``cyl_mode``, and — for ``type='custom'`` only — ``a1``, ``a2`` and
-            ``basis``.
-        build : bool, optional
-            Build the lattice sites immediately, overriding ``params['build']``.
-
-        Returns
-        -------
-        Lattice
-            An instance of the concrete subclass named by ``params['type']``.
-
-        Raises
-        ------
-        ValueError
-            If ``a1``, ``a2`` or ``basis`` is given for a type other than
-            'custom' (see `Lattice`). A key present but set to ``None`` is fine,
-            so parameter templates that carry unused keys still work.
+        type : str
+            'square', 'triangular', 'honeycomb' or 'kagome'.
+        Ls : iterable(int)
+            2-element lattice size, in units of the unit cell.
+        cyl_mode : {None, 'XC', 'YC'}, optional
+            Reshape the triangular unit cell into a rectangular one of twice the
+            size, ``a2 -> -a1 + 2*a2``. 'XC' halves ``Ls[1]``. 'YC' halves
+            ``Ls[0]`` and swaps the x and y components of the cell, so the lattice
+            is ``(Ls[1], Ls[0] // 2)`` cells. Only for 'triangular'.
+        **kwargs
+            Forwarded to the `Lattice` constructor: ``boundaries``, ``twists``
+            and ``build``.
 
         Examples
         --------
-        This is the usual way to build any lattice. A 4x4 square lattice, fully
-        periodic:
-
-        >>> lattice = Lattice.from_dict(dict(
-        ...     L1=4,
-        ...     L2=4,
-        ...     boundary1='pbc',
-        ...     boundary2='pbc',
-        ... ))
-
         A honeycomb lattice with a twist, open along the second axis:
 
-        >>> lattice = Lattice.from_dict(dict(
-        ...     type='honeycomb',
-        ...     L1=6,
-        ...     L2=6,
-        ...     boundary1='pbc',
-        ...     boundary2='open',
-        ...     twist=('1/2 pi', 0.0),
-        ... ))
-
-        A custom lattice — see `CustomLattice`:
-
-        >>> lattice = Lattice.from_dict(dict(
-        ...     type='custom',
-        ...     L1=4,
-        ...     L2=4,
-        ...     boundary1='pbc',
-        ...     boundary2='pbc',
-        ...     a1=[1.0, 0.0],
-        ...     a2=[0.0, 1.0],
-        ...     basis=[[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]],
-        ... ))
+        >>> lattice = Lattice.from_type('honeycomb', (6, 6),
+        ...                             boundaries=('periodic', 'open'),
+        ...                             twists=('1/2 pi', 0.0))
         """
-        lattice_type = str(params.get('type', 'square')).lower()
-        if lattice_type not in _LATTICE_TYPES:
+        if type.lower() not in LATTICE_TYPES:
             raise ValueError(
-                f"Unknown lattice type '{lattice_type}': supported types are "
-                f"{sorted(_LATTICE_TYPES)}"
-            )
-        lattice_cls = _LATTICE_TYPES[lattice_type]
+                f"Unknown lattice type '{type}': supported types are {sorted(LATTICE_TYPES)}")
+        lattice_vectors, basis = LATTICE_TYPES[type.lower()]
 
-        unitcell = {
-            key: params[key] for key in UNITCELL_KEYS
-            if params.get(key) is not None
-        }
-        if unitcell and not issubclass(lattice_cls, CustomLattice):
-            raise ValueError(
-                f"Lattice type '{lattice_type}' defines its own unit-cell geometry; "
-                f"{sorted(unitcell)} can only be set for type='custom'"
-            )
+        if cyl_mode is not None:
+            if cyl_mode not in ("XC", "YC"):
+                raise ValueError(f"Unsupported cylinder mode {cyl_mode=}; try None, 'XC' or 'YC'")
+            if type.lower() != 'triangular':
+                # the reshaping is only the right rectangular cell for hexagonal geometry
+                raise ValueError(
+                    f"Unsupported cylinder mode {cyl_mode=} for lattice type '{type}': "
+                    "XC/YC cell reshaping is only available for 'triangular'"
+                )
+            a1, a2 = np.array(lattice_vectors)
+            basis = [np.array(b) for b in basis]
+            basis = basis + [b + a2 for b in basis]
+            lattice_vectors = [a1, -a1 + 2 * a2]
+            if cyl_mode == "XC":
+                Ls = (Ls[0], Ls[1] // 2)
+            else:
+                Ls = (Ls[1], Ls[0] // 2)
+                lattice_vectors = [v[::-1] for v in lattice_vectors]
+                basis = [b[::-1] for b in basis]
 
-        L = (
-            params['L1'],
-            params['L2']
-        )
-
-        if L[0] < 1 or L[1] < 1:
-            raise ValueError("Invalid lattice size; L1 and L2 must be >= 1")
-
-        if build is None:
-            build = params.get("build", True)
-
-        return lattice_cls(
-            L=L,
-            axis1_boundary=_boundary_from_str(params.get("boundary1")),
-            axis2_boundary=_boundary_from_str(params.get("boundary2")),
-            build=build,
-            twist=params.get("twist", None),
-            cyl_mode=params.get("cyl_mode", None),
-            **unitcell,
-        )
+        return cls(lattice_vectors, basis, Ls, **kwargs)
 
     def __getitem__(self, index):
         return self.sites[index]
 
-    def _set_unitcell(self, a1, a2, basis):
-        """
-        Install the unit-cell geometry, as immutable copies.
-
-        The only two callers are `__init__` and `build()`'s `cyl_mode` reshaping;
-        the geometry never changes after a lattice is built. Copies are taken so
-        that freezing them cannot reach an array the caller still holds.
-        """
-        self._a1 = np.array(a1, dtype=float)
-        self._a2 = np.array(a2, dtype=float)
-        self._basis = [np.array(b, dtype=float) for b in basis]
-        for array in (self._a1, self._a2, *self._basis):
-            array.setflags(write=False)
-        self._nb = len(self._basis)
-
     @property
-    def a1(self):
+    def A(self):
         """
-        First lattice vector. Read-only; see `Lattice`.
+        The lattice vectors ``a1`` and ``a2`` as the *columns* of a 2x2 matrix,
+        so a site at cell ``(n1, n2)`` sits at ``A @ (n1, n2) + basis[b]``.
+        Read-only; see `Lattice`.
         """
-        return self._a1
-
-    @property
-    def a2(self):
-        """
-        Second lattice vector. Read-only; see `Lattice`.
-        """
-        return self._a2
+        return self._A
 
     @property
     def basis(self):
@@ -576,18 +449,18 @@ class Lattice(ABC):
         get b1,b2 the Bravais lattice vectors
         """
         self._fail_if_not_built()
-        return 2*np.pi*np.linalg.inv(np.array([self.a1, self.a2])).T
+        return 2*np.pi*np.linalg.inv(self.A)
 
     def get_planewaves(self, returnKVecs=False):
         """
         return unitary exp(ik*r) for each site, corresponding
-        to the unit cell r. Currently fixed to PBC/PBC only
+        to the unit cell r. Currently fixed to periodic/periodic only
         """
         self._fail_if_not_built()
         periodicX = isinstance(self.axis1_boundary, PBCBoundary)
         periodicY = isinstance(self.axis2_boundary, PBCBoundary)
         if not (periodicX and periodicY):
-            warn("get_planewaves() is only implemented for PBC/PBC")
+            warn("get_planewaves() is only implemented for periodic/periodic boundaries")
         kvecs = self.get_kvecs()
         twist = np.array([self.axis1_boundary.phase,
                           self.axis2_boundary.phase])
@@ -609,39 +482,14 @@ class Lattice(ABC):
         """
         Populate the lattice sites.
 
-        Applying `cyl_mode` here is the one place the unit-cell geometry changes
-        after construction, and it is derived from the type's own `_unitcell()`
-        rather than supplied by the caller. Building twice is an error: neither
-        the geometry nor the site list changes once a lattice is built.
+        Building twice is an error: the site list does not change once a
+        lattice is built.
         """
         if self._built:
             raise RuntimeError(
-                "Lattice instance is already built; the unit-cell geometry and "
-                "the site list do not change once built"
+                "Lattice instance is already built; the site list does not "
+                "change once built"
             )
-
-        # Change unit cell to be 2x and make unit vectors match rectangular
-        if self.cyl_mode == "XC" or self.cyl_mode == "YC":
-            basis = self._basis + [b+self.a2 for b in self._basis]
-            a1, a2 = self.a1, -self.a1+2*self.a2
-            if not (np.allclose(a1[1], 0.) and np.allclose(a2[0], 0.)):
-                warn("Warning, XC/YC mode is not perfectly rectangular. "
-                     "\nCurrently hardcoded for hexagonal (triangular) lattices"
-                     f"\n(new {a1=} new {a2=})")
-            if self.cyl_mode == "XC":
-                self.L = (self.L[0], self.L[1]//2)
-            elif self.cyl_mode == "YC":
-                self.L = (self.L[0]//2, self.L[1])
-                self.L = self.L[::-1]
-                a1, a2 = a1[::-1], a2[::-1]
-                basis = [b[::-1] for b in basis]
-
-            self._set_unitcell(a1, a2, basis)
-
-        # promised to have a1,a2 by now, so we can
-        # do manipulations on them
-        self.A = np.array([self.a1, self.a2]).T
-        self.Ainv = np.linalg.inv(self.A)
 
         self._validate_basis()
 
@@ -656,8 +504,7 @@ class Lattice(ABC):
 
         1. **Two basis vectors differing by a lattice translation.** They
            describe the *same* site, so the lattice holds coincident sites and
-           `_to_lattice_basis` cannot tell which sublattice a position belongs
-           to and image neighbors get mapped onto the wrong site index.
+           the neighbor lists are wrong.
         2. **A basis offset reaching a full supercell or more.**
            `_build_image_distances` only shifts by one supercell in each
            direction, so for larger offsets the true minimum image is never
@@ -674,7 +521,7 @@ class Lattice(ABC):
         """
         periodic = (isinstance(self.axis1_boundary, PBCBoundary),
                     isinstance(self.axis2_boundary, PBCBoundary))
-        fractional = [self.Ainv @ b for b in self._basis]
+        fractional = np.linalg.solve(self.A, np.transpose(self._basis)).T
 
         for (i, first), (j, second) in itertools.combinations(enumerate(fractional), 2):
             offset = second - first
@@ -727,7 +574,7 @@ class Lattice(ABC):
         return coord[0]*self.L[1]*self._nb + coord[1]*self._nb + coord[2]
 
     def _position(self, coord):
-        return coord[0]*self.a1 + coord[1]*self.a2 + self.basis[coord[2]]
+        return self.A @ coord[:2] + self._basis[coord[2]]
 
     def _build_distances(self):
         if self._distances is None:
@@ -774,12 +621,6 @@ class Lattice(ABC):
                     RuntimeWarning, stacklevel=4)
                 break
 
-    def _get_image_axes(self, r):
-        """The axes (0 for a1, 1 for a2) along which `r` is a valid image."""
-        return [axis for axis, boundary
-                in enumerate((self.axis1_boundary, self.axis2_boundary))
-                if boundary.is_valid_image(r)]
-
     def is_image(self, r) -> bool:
         """True if `r`, in lattice coordinates, lies outside the lattice."""
         return self.axis1_boundary.is_image(r) or self.axis2_boundary.is_image(r)
@@ -795,7 +636,7 @@ class Lattice(ABC):
             periodicX = isinstance(self.axis1_boundary, PBCBoundary)
             periodicY = isinstance(self.axis2_boundary, PBCBoundary)
             xShifts, yShifts = [0], [0]
-            vShift1, vShift2 = self.L[0]*self.a1, self.L[1]*self.a2
+            vShift1, vShift2 = (self.A * self.L).T
             if periodicX:
                 xShifts = [-1, 0, 1]
             if periodicY:
@@ -823,25 +664,15 @@ class Lattice(ABC):
         Md = np.zeros((self.N_sites, self.N_sites))
         for shift1, shift2, shiftvec, distances in self._image_distances:
             pairs = np.where(np.isclose(distances, dist_to_find))
+            # crossing a boundary forward (shift +1) picks up -phase, backward +phase;
+            #   only periodic axes are ever shifted
+            phase = -(shift1*self.axis1_boundary.phase + shift2*self.axis2_boundary.phase)
             # check if we found this yet, otherwise add
             for p in zip(*pairs):
                 if Md[p] == 0:
                     pair = NeighborPair(*p)
                     r1 = self.sites[pair.i].position
                     r2 = self.sites[pair.j].position+shiftvec
-                    r = self._to_lattice_basis(r2)
-                    image_axes = self._get_image_axes(r)
-                    phase = 0.0
-
-                    for axis in image_axes:
-                        # for twists, we need +/- depending on which direction we
-                        #    cross the boundary in.
-                        if r[axis] > 1:
-                            sign = -1
-                        else:
-                            sign = 1
-                        phase += sign*getattr(self, f"axis{axis+1}_boundary").phase
-
                     image_pair = NeighborPair(pair.i, pair.j, phase=phase,
                                               _shift=(shift1, shift2),
                                               r_relative=r2-r1)
@@ -860,9 +691,8 @@ class Lattice(ABC):
         min_distance : float, optional
             smallest nonzero distance to keep in the map; shorter nonzero
             distances (e.g. small intra-cell basis separations) are dropped so
-            that they do not occupy a neighbor shell. Defaults to the
-            `_dist_map_min_distance` given at construction. Only has an effect
-            on the call that first builds the map.
+            that they do not occupy a neighbor shell. Only has an effect on the
+            call that first builds the map.
 
         Returns
         -------
@@ -897,8 +727,6 @@ class Lattice(ABC):
             # 5. optionally drop separations that are too short to be a shell.
             #    The zero self-distance is kept so that _dist_map[n] remains the
             #    nth-neighbor separation.
-            if min_distance is None:
-                min_distance = self._dist_map_min_distance
             if min_distance is not None:
                 self._dist_map = [
                     d for d in self._dist_map if d == 0.0 or d >= min_distance
@@ -909,193 +737,41 @@ class Lattice(ABC):
             raise ValueError(f"{distance=} has no/multiple valid indices!")
         return spot[0]
 
-    def _to_lattice_basis(self, r):
-        r"""
-        convert from a position vector, r = r_x \hat{x} + r_y \hat{y}
-            to a position vector expressed in the lattice basis,
-            r = c_1 \hat{a}_1 + c_2 \hat{a}_2 + \hat{b}_{c_3}.
-
-            For a set of non-orthogonal lattice vectors, this
-                requires the solution to the linear equation:
-
-            r_(position basis) = A r_(lattice basis) where A is
-                matrix consisting of the lattice unit vectors.
-        """
-        candidates = [self.Ainv@(r-b) for b in self.basis]
-        # find which basis vector brought us exactly to the correct spot
-        basis_idx = np.argmin([np.linalg.norm(c-c.round().astype(int)) for c in candidates])
-        return np.array((*candidates[basis_idx].round().astype(int), basis_idx))
-
-
-class SquareLattice(Lattice):
-    """
-    Specialization of Lattice to a square lattice.
-
-    Here, we define a square lattice as a lattice in
-      which sites are equidistant in the x-, and y-directions.
-    """
-
-    _type = "square"
-
-    def _unitcell(self):
-        return np.array([1., 0.]), np.array([0., 1.]), None
-
     def get_directed_pairs(self, directions=None, nbands: int = 1):
         """
         The `DirectedPairs` the ``PairCorrelator`` estimator reads — see
         `get_directed_pairs`.
-
-        Only the square lattice has directions defined; the triangular ones
-        still need working out.
         """
         return get_directed_pairs(self, directions=directions, nbands=nbands)
 
 
-class TriangularLattice(Lattice):
-    """
-    Specialization of Lattice to a triangular lattice.
-
-    For a triangular Bravais lattice with a multi-site basis, use
-    `HoneycombLattice` or `KagomeLattice`, which are implemented separately;
-    `CustomLattice` can express other bases.
-
-    This is the only lattice type that accepts `cyl_mode`: the XC/YC cell
-    reshaping `build()` performs is hardcoded for hexagonal geometry.
-    """
-
-    _type = "triangular"
-
-    def _unitcell(self):
-        return np.array([1., 0.]), np.array([0.5, np.sqrt(3)/2]), None
-
-
-class HoneycombLattice(Lattice):
-    """
-    Specialization of Lattice to a Honeycomb lattice.
-    The underlying lattice is a triangular lattice with an "extra"
-    site per cell
-    """
-
-    _type = "honeycomb"
-
-    def _unitcell(self):
-        # a1/a2 closer to the original triangular cell would be
-        #   [1.,0.] and [0.5,sqrt(3)/2] with basis [(0,0),(0,1/sqrt(3))];
-        #   the more square-like cell below follows netket's choices.
-        return (
-            np.array([1., 0.]),
-            np.array([1/2, 0.75**0.5]),
-            [np.array([0.5, 0.5 / 3**0.5]),
-             np.array([1, 1 / 3**0.5])],
-        )
-
-
-class KagomeLattice(Lattice):
-    """
-    Specialization of Lattice to a Kagome lattice.
-    The underlying lattice is a triangular lattice with 3
-    site per cell
-    """
-
-    _type = "kagome"
-
-    def _unitcell(self):
-        # as for the honeycomb lattice, the more square-like cell here follows
-        #   netket's choices rather than the original triangular cell.
-        return (
-            np.array([1., 0.]),
-            np.array([1/2, np.sqrt(0.75)]),
-            [np.array([0.5, 0]),
-             np.array([0.25, np.sqrt(0.75) / 2]),
-             np.array([0.75, np.sqrt(0.75) / 2])],
-        )
-
-
-class CustomLattice(Lattice):
-    """
-    The lattice type whose geometry the caller defines.
-
-    This is the **only** subclass that accepts ``a1``/``a2``/``basis`` — every
-    other type rejects them (see `Lattice`).
-
-    Prefer `Lattice.from_dict` with ``type='custom'`` over calling this
-    constructor directly, as in the example below. The parameters below are the
-    constructor's; `from_dict` spells the lattice size ``L1``/``L2`` rather than
-    ``L``, and takes boundaries as strings.
-
-    Parameters
-    ----------
-    L : iterable(int)
-        2-element lattice size, (L1, L2), in units of the unit cell.
-    a1, a2 : array_like
-        The two lattice vectors. Required.
-    basis : list(array_like), optional
-        Basis vectors within the unit cell. Default is a single site at the
-        cell origin.
-    **kwargs
-        Forwarded to `Lattice`; see that constructor for `build`,
-        `axis1_boundary`/`axis2_boundary`, `twist` and `cyl_mode`.
-
-    Examples
-    --------
-    Build one the usual way, through `Lattice.from_dict`:
-
-    >>> lattice = Lattice.from_dict(dict(
-    ...     type='custom',
-    ...     L1=2,
-    ...     L2=2,
-    ...     a1=[1, 1],
-    ...     a2=[1, -1],
-    ...     basis=[[0, 0], [0, 0.5]],
-    ...     boundary1='pbc',
-    ...     boundary2='pbc',
-    ... ))
-
-    Notes
-    -----
-    Currently only supports 2D lattices. Higher dimensions will be added in the
-    future. Please contact the developers if you need this feature.
-
-    `build()` raises `ValueError` for a basis the neighbor search cannot handle:
-    two basis vectors differing by a lattice translation, or an offset reaching
-    a full supercell. See `Lattice._validate_basis`.
-    """
-
-    _type = "custom"
-
-    def __init__(self, L=None, *, a1, a2, basis=None, **kwargs) -> None:
-        self._custom_unitcell = (a1, a2, basis)
-        super().__init__(L=L, **kwargs)
-
-    def _unitcell(self):
-        return self._custom_unitcell
-
-
-_LATTICE_TYPES = {
-    'square': SquareLattice,
-    'triangular': TriangularLattice,
-    'honeycomb': HoneycombLattice,
-    'kagome': KagomeLattice,
-    'custom': CustomLattice,
+LATTICE_TYPES = {
+    'square': ([[1., 0.], [0., 1.]],
+               [[0., 0.]]),
+    'triangular': ([[1., 0.], [0.5, np.sqrt(3) / 2]],
+                   [[0., 0.]]),
+    # the honeycomb and kagome cells are the square-like ones netket uses, rather
+    #   than the triangular cell with basis [(0, 0), (0, 1/sqrt(3))] and so on
+    'honeycomb': ([[1., 0.], [0.5, 0.75**0.5]],
+                  [[0.5, 0.5 / 3**0.5], [1., 1 / 3**0.5]]),
+    'kagome': ([[1., 0.], [0.5, np.sqrt(0.75)]],
+               [[0.5, 0.], [0.25, np.sqrt(0.75) / 2], [0.75, np.sqrt(0.75) / 2]]),
 }
+"""Lattice vectors and basis of each `Lattice.from_type` type."""
 
 _BOUNDARY_TYPES = {
     'open': OpenBoundary,
-    'pbc': PBCBoundary,
     'periodic': PBCBoundary,
+    'pbc': PBCBoundary,
 }
 
 
 def _boundary_from_str(boundary_type):
     """
-    Get the Boundary class named by the string `boundary_type`, or None if
-    `boundary_type` is None.
+    Get the Boundary class named by the string `boundary_type`.
 
     Raises a ValueError for an unknown boundary type.
     """
-    if boundary_type is None:
-        return None
-
     if boundary_type.lower() not in _BOUNDARY_TYPES:
         raise ValueError(
             f"Unknown boundary type '{boundary_type}': supported types are "

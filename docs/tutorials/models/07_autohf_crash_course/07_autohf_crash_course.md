@@ -61,35 +61,18 @@ outputId: 20f4b568-da4f-4137-fb6f-575426ee0d09
 %mkdir -p data
 %cd -q data
 
-from safiretools import HamiltonianBuilder, Lattice
+from safiretools import Lattice, LatticeHamiltonian
 from safiretools import vis
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = 'PBC',
-    boundary2 = 'PBC',
-)
-
-lattice = Lattice.from_dict(
-    params=lattice_params
-)
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
 
 vis.plot_lattice(lattice)
 
-# Step 2. define Hamiltonian parameters
-hamiltonian_params = {
-    'hamiltonian' : {
-        "t" : 1.0,  # note: we could omit this, nearest-neighbor hoping with t=1 is included by default
-        "U" : 4.0
-    }
-}
-
-# Step 3.b. build the lattice model Ha
-hamiltonian = HamiltonianBuilder.from_input(
-    lattice=lattice,
-    source=hamiltonian_params
-).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    t=1.0,  # note: we could omit this, nearest-neighbor hoping with t=1 is included by default
+    U=4.0,
+)
 ```
 
 +++ {"id": "MqK7sb3Z5xcn"}

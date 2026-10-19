@@ -54,14 +54,7 @@ References:
 from safiretools import Lattice
 from safiretools import vis
 
-lattice_params = {
-    "L1" : 4,
-    "L2" : 8,
-    "boundary1" : "pbc",
-    "boundary2" : "open"
-}
-
-lattice = Lattice.from_dict(lattice_params)
+lattice = Lattice.from_type("square", (4, 8), boundaries=("periodic", "open"), twists=(0.0, 0.0))
 
 vis.plot_lattice(lattice)
 ```
@@ -76,26 +69,16 @@ vis.plot_lattice(lattice)
 :id: 364ee811-8242-45ce-88ee-69fcaa6901fd
 :outputId: b64b276a-cae9-4c47-a315-e9c015fc264a
 
-from safiretools import HamiltonianBuilder, SpinSymm
+from safiretools import LatticeHamiltonian, PinningField
 
-#TODO: need AFM (staggered) pinning at y=1 and  y=Ly with h_pin = 0.25 only for AFQMC!!
-
-hamiltonian_params = {
-    "hamiltonian" : {
-        "t" : [1.0,0.3],
-        "U" : 4
-    }
-}
-
-# afm_pinning() needs axis=1 and pin_type="same", which HamiltonianBuilder.from_input()
-# cannot express, so we call the build steps directly instead and finalize once at the end
-builder = HamiltonianBuilder(lattice=lattice,spin_symm=SpinSymm.COLLINEAR)
-builder.nth_neighbor_hopping(hamiltonian_params["hamiltonian"]["t"])
-builder.onsite_hubbard(hamiltonian_params["hamiltonian"]["U"])
-builder.afm_pinning(h_afm_pin=0.25,axis=1,pin_type="same")
-builder.finalize()
-
-hamiltonian = builder.get_hamiltonian()
+# AFM pinning with h_pin = 0.25 on the open edges y=1 and y=Ly, with the same
+# sign pattern on both. Only the AFQMC Hamiltonian is pinned.
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    t=[1.0, 0.3],
+    U=4,
+    pinning=(None, PinningField.afm(0.25, staggered=False)),
+)
 ```
 
 +++ {"id": "81220323-65d6-4438-91db-87cc44e71047"}
@@ -108,11 +91,6 @@ from safiretools import Wavefunction
 
 nelec = (16,16)
 
-input_params = dict(
-    lattice = lattice_params,                           # from step 1. above
-    hamiltonian = hamiltonian_params["hamiltonian"]     # from step 2. above
-)
-
 # twist from ref 1: this twist was used for 4×16 with t' = 0.3t
 twist = (0.01,0.01)
 
@@ -122,11 +100,8 @@ twist = (0.01,0.01)
 # degenerate and only partly filled, so the determinant would not be well
 # defined and from_free_electron() would warn. Build it explicitly so that the
 # same Hamiltonian can be handed to the HF solver below.
-fe_lattice = Lattice.from_dict(dict(lattice_params, twist=twist))
-fe_hamiltonian = HamiltonianBuilder.from_input(
-    source=input_params,
-    lattice=fe_lattice
-).get_hamiltonian()
+fe_lattice = Lattice.from_type("square", (4, 8), boundaries=("periodic", "open"), twists=twist)
+fe_hamiltonian = LatticeHamiltonian.from_lattice(fe_lattice, t=[1.0, 0.3], U=4)
 
 wfn = Wavefunction.from_free_electron(
     source=fe_hamiltonian,

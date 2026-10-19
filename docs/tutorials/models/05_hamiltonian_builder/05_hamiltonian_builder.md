@@ -24,8 +24,8 @@ responsible for performing build steps.
 A *build step* consists of constructing a Hamiltonian component (i.e. term),
 and adding it to the `Hamiltonian` that it has.
 As we saw in the previous tutorial ({doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`),
-`HamiltonianBuilder.from_input()` can be used to build a lattice model Hamiltonian by
-automatically running the build steps implied by a set of input Hamiltonian parameters.
+`LatticeHamiltonian.from_lattice()` can be used to build a lattice model Hamiltonian by
+automatically running the build steps implied by the Hamiltonian parameters given as keyword arguments.
 This is the recommended way of building lattice model Hamiltonians;
 however, the Hamiltonian builder may be used directly
 to gain more control over the build steps.
@@ -86,11 +86,7 @@ The terms for which rule 3 do not currently apply are:
 - onsite_hubbard()
 - custom_one_body()
 - rashba_soc()
-- pinning field terms:
-    - afm_pinning()
-    - fm_pinning()
-    - charge_pinning()
-    - edge_pinning()
+- pinning()
 
 +++ {"id": "2ce4ac1b-1c09-48e4-84da-a294502421a9"}
 
@@ -114,20 +110,12 @@ are included.
 ```{code-cell} ipython3
 :id: fdf7cd0e-b553-4ac1-8f0f-1730a3faf403
 
-from safiretools import HamiltonianBuilder, Lattice
+from safiretools import HamiltonianBuilder, Lattice, LatticeHamiltonian
 
 %mkdir -p data
 %cd -q data
 
-lattice = Lattice.from_dict(
-    params={
-        'L1' : 4,
-        'L2' : 4,
-        'boundary1' : 'PBC',
-        'boundary2' : 'PBC',
-        'type' : 'square'
-    }
-)
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
 
 builder = HamiltonianBuilder(lattice=lattice)
 
@@ -155,7 +143,7 @@ Now that we understand the role of the Hamiltonian builder, and how it will typi
 we will cover the specific terms that can be built.
 We will also cover any term specific details that have not been covered so far.
 
-**We note that the same input conventions for parameters are used by `HamiltonianBuilder.from_input()` since it simply forwards parameters to these build steps.**
+**We note that the same input conventions for parameters are used by `LatticeHamiltonian.from_lattice()` since it simply forwards its keyword arguments to these build steps.**
 
 Each term is explored in it's own respective subsection.
 A minimal list of sections that should be covered are,
@@ -188,20 +176,9 @@ To cover:
 ```{code-cell} ipython3
 :id: 8b6da842-a3a2-4a30-a408-b3af7a185ad2
 
-hamiltonian_params = {
-    "lattice" : dict(
-        L1 = 4,
-        L2 = 4,
-        boundary1 = "pbc",
-        boundary2 = "pbc"
-    ),
-    "hamiltonian" : dict(
-        t = [1.0,0.5,0.1],
-        U = 4.0
-    )
-}
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
 
-hamiltonian = HamiltonianBuilder.from_input(hamiltonian_params).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=[1.0,0.5,0.1], U=4.0)
 ```
 
 +++ {"id": "668e3150-2f46-4f71-81c2-16845b15188e"}
@@ -243,7 +220,7 @@ to cover:
 ## How to Handle More General Hamiltonians
 
 to cover:
-- combining `from_input()`-style build steps with fully custom build steps
+- combining the build steps run by `LatticeHamiltonian.from_lattice()` with fully custom build steps
 
 ```{code-cell} ipython3
 :id: da9c7b01-bc46-448d-b4dd-9d057bfac5b7
@@ -253,16 +230,9 @@ import scipy.sparse as sps
 import numpy as np
 from safiretools import SpinSymm
 
-lattice = Lattice.from_dict(
-    params=dict(
-        L1 = 4,
-        L2 = 4,
-        boundary1 = "pbc",
-        boundary2 = "pbc"
-    )
-)
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
 
-# equivalent to HamiltonianBuilder.from_input() with hamiltonian=dict(t=1.0, U=4.0),
+# equivalent to LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0),
 # but invoked step-by-step so that we can add a custom term below
 builder = HamiltonianBuilder(lattice=lattice, spin_symm=SpinSymm.COLLINEAR)
 builder.nth_neighbor_hopping(1.0)
@@ -297,7 +267,7 @@ disorder_down = sps.csr_array((data, (row, col)), shape=(nbasis, nbasis))
 # add the disorder term to the Hamiltonian
 builder.custom_one_body(sps.vstack([disorder_up, disorder_down]))
 
-# finalize once, after all build steps (both from_input()-style and custom) have been invoked
+# finalize once, after all build steps (both standard and custom) have been invoked
 builder.finalize()
 
 hamiltonian = builder.get_hamiltonian()
@@ -308,7 +278,7 @@ hamiltonian = builder.get_hamiltonian()
 ### Some Notes
 
 Since custom build steps are just method calls on the same `HamiltonianBuilder` instance as
-`from_input()`-style ones, they can be freely interleaved in any order you like.
+the standard ones, they can be freely interleaved in any order you like.
 The only rule is to call `.finalize()`
 once, after every build step has been invoked.
 

@@ -15,7 +15,7 @@ kernelspec:
 
 # Building Lattice Model Hamiltonians
 
-In {docs}`TODO: ref to previous tutorial`, we learned how to create a {py:class}`safiretools.Lattice` object. The `Lattice` object only describes the geometry of a lattice. To build a lattice model Hamiltonian from a lattice, we need to supply additional information about the physical couplings between electrons on the lattice sites. In this tutorial, we will see how the {py:class}`safiretools.HamiltonianBuilder` can be used to do this and create lattice model Hamiltonian inputs for SAFIRE.
+In {docs}`TODO: ref to previous tutorial`, we learned how to create a {py:class}`safiretools.Lattice` object. The `Lattice` object only describes the geometry of a lattice. To build a lattice model Hamiltonian from a lattice, we need to supply additional information about the physical couplings between electrons on the lattice sites. In this tutorial, we will see how {py:meth}`safiretools.LatticeHamiltonian.from_lattice` can be used to do this and create lattice model Hamiltonian inputs for SAFIRE.
 
 
 SAFIRE can handle model Hamiltonians of the form
@@ -40,31 +40,13 @@ outputId: c3552c28-5791-45f0-ae57-39f29435e27d
 %mkdir -p data
 %cd -q data
 
-from safiretools import HamiltonianBuilder, Lattice
+from safiretools import Lattice, LatticeHamiltonian
 from safiretools import vis
 
-# Define the lattice parameters
-lattice_params = {
-    'L1': 4,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
-
-# define Hamiltonian parameters
-hamiltonian_params = {
-    't': 1.0,
-    'U': 4.0
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-lattice = Lattice.from_dict(lattice_params)
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'))
 vis.plot_lattice(lattice)
 
-hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
 ```
 
 +++ {"id": "_7Wg-_UGQuXr"}
@@ -85,23 +67,6 @@ hamiltonian.to_hdf5("hamiltonian.h5")
 
 +++
 
-`.to_hdf5()` takes only the file name — the electron count and spin symmetry are
-properties of the Hamiltonian itself, set when it is built. Give `nelec` in the
-`hamiltonian` section of the input parameters (or to `HamiltonianBuilder`) if you
-want them recorded in the file:
-
-```{code-cell} ipython3
-hamiltonian_with_nelec = HamiltonianBuilder.from_input(
-    source={'hamiltonian': dict(hamiltonian_params, nelec=(8,8))},
-    lattice=lattice
-).get_hamiltonian()
-
-print("nelec      :", hamiltonian_with_nelec.nelec)
-print("spin_symm  :", hamiltonian_with_nelec.spin_symm)
-```
-
-+++ {"id": "wgronaqPSgXY"}
-
 Now, let's check the contents of the scratch directory to see that the Hamiltonian has been generated.
 
 ```{code-cell} ipython3
@@ -120,7 +85,7 @@ outputId: bfe2522e-2996-43d9-88b3-ed2cd7b84350
 
 ### Adding Hopping
 
-`HamiltonianBuilder.from_input()` supports nth-order neighbor hopping and band-dependent hopping.
+`LatticeHamiltonian.from_lattice()` supports nth-order neighbor hopping and band-dependent hopping.
 $n$ is limited by the condition that sites are not allowed to be their own neighbors via
 periodic boundary conditions.
 In this case, an error will be raised.
@@ -130,24 +95,13 @@ nearest-neighbor hopping with $t$ = 1, is included in the Hamiltonian by default
 For multiband Hamiltonians, the hopping is uniform across bands and it is assumed that
 there is no intrasite hopping.
 This is handles by a different Hamiltonian term, which we refer to as $\epsilon$.
-You can change this value by providing a different value of $t$ as
-
-```toml
-[hamiltonian]
-t = 0.5
-```
-
-or as a Python dictionary
+You can change this value by providing a different value of $t$,
 
 ```python
-params = {
-    'hamiltonian': {
-        't': 0.5
-    }
-}
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=0.5)
 ```
 
-hopping can be turned off by either setting $t$ to 0, or (in Python only) setting t to `None`.
+hopping can be turned off by setting $t$ to either 0 or `None`.
 
 nth-order neighbor hopping can be included by setting $t$ to a list of length $n$
 where the nth-entry is interpreted as the hopping strength for nth-order neighbors.
@@ -184,22 +138,14 @@ outputId: 731d316b-7dbb-4990-f273-0ad6da75081a
 ---
 import matplotlib.pyplot as plt
 
-# define Hamiltonian parameters
-params = {
-    'lattice': {
-        'L1': 4,
-        'L2': 4,
-        'boundary1': 'PBC',
-        'boundary2': 'PBC'
-    },
-    'hamiltonian': {
-        'U': 4.0,
-        't' : [1.0,0.5] # implicit minus sign!
-    }
-}
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'))
 
-# this will make a Hubbard model on a 4×4 lattice with PBCs
-hamiltonian = HamiltonianBuilder.from_input(source=params).get_hamiltonian()
+# this will make a Hubbard model on a 4×4 lattice with periodic boundaries
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    U=4.0,
+    t=[1.0, 0.5] # implicit minus sign!
+)
 
 hopping = hamiltonian.get_one_body()
 plt.matshow(hopping.toarray())
@@ -245,28 +191,15 @@ colab:
 id: i0l8VxorOK_W
 outputId: 4113cab3-7b9d-4366-edb5-ff8b22bd89fd
 ---
-lattice_params = {
-    'L1': 2,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
-
-lattice = Lattice.from_dict(lattice_params)
+lattice = Lattice.from_type('square', (2, 4), boundaries=('periodic', 'periodic'))
 
 
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'nbands' : 1,
-    'U': [1.0,2.0,1.0,2.0,2.0,1.0,2.0,1.0]
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# this will make a Hubbard model on a 4×4 lattice with PBCs
-hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
+# this will make a Hubbard model on a 2×4 lattice with periodic boundaries
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    nbands=1,
+    U=[1.0,2.0,1.0,2.0,2.0,1.0,2.0,1.0]
+)
 
 # let's take a look at the U term:
 U = hamiltonian.get_U().toarray().diagonal().reshape(lattice.L)
@@ -299,31 +232,19 @@ outputId: d257ba45-6561-41df-a581-8a19e1f73a2a
 ---
 import numpy as np
 
-lattice_params = {
-    'L1': 2,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
-lattice = Lattice.from_dict(lattice_params)
+lattice = Lattice.from_type('square', (2, 4), boundaries=('periodic', 'periodic'))
 
 
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'nbands' : 2,
-    't' : [np.array([[1.0, -0.2], [-0.2, 1.0]])], # bonus: band-dependent hopping
-    'U': [1.0,2.0]
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# this will make a Hubbard model on a 4×4 lattice with PBCs
-hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
+# this will make a Hubbard model on a 2×4 lattice with periodic boundaries
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    nbands=2,
+    t=[np.array([[1.0, -0.2], [-0.2, 1.0]])], # bonus: band-dependent hopping
+    U=[1.0,2.0]
+)
 
 # let's take a look at the U term:
-U_shape = (lattice.L[0],lattice.L[1],hamiltonian_params['nbands'])
+U_shape = (lattice.L[0],lattice.L[1],hamiltonian.nbands)
 U = hamiltonian.get_U().toarray().diagonal().reshape(U_shape)
 vis.plot_lattice(
     lattice,
@@ -344,31 +265,19 @@ vis.plot_lattice(
 ```{code-cell} ipython3
 :id: _6grG3FOOK_X
 
-lattice_params = {
-    'L1': 2,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
-lattice = Lattice.from_dict(lattice_params)
+lattice = Lattice.from_type('square', (2, 4), boundaries=('periodic', 'periodic'))
 
 
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'nbands' : 2,
-    't' : [np.array([[1.0, -0.2], [-0.2, 1.0]])], # bonus: band-dependent hopping
-    'U': [1.0,2.0]
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# this will make a Hubbard model on a 4×4 lattice with PBCs
-hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
+# this will make a Hubbard model on a 2×4 lattice with periodic boundaries
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    nbands=2,
+    t=[np.array([[1.0, -0.2], [-0.2, 1.0]])], # bonus: band-dependent hopping
+    U=[1.0,2.0]
+)
 
 # let's take a look at the U term:
-U_shape = (lattice.L[0],lattice.L[1],hamiltonian_params['nbands'])
+U_shape = (lattice.L[0],lattice.L[1],hamiltonian.nbands)
 U = hamiltonian.get_U().toarray().diagonal().reshape(U_shape)
 vis.plot_lattice(
     lattice,
@@ -464,13 +373,14 @@ If a user provides a list of valid inputs, then safiretools will generate each
 term provided <b>using the list index / position for the neighbor order $n$.</b>
 For example, if a user provides
 
-```toml
-[hamiltonian]
-nbands = 2
-U1= [ 2.0,
-      [[ 0.5, 1.0 ],
-       [ 1.0, 0.5 ]]
-    ]
+```python
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    nbands=2,
+    U1=[2.0,
+        [[0.5, 1.0],
+         [1.0, 0.5]]]
+)
 ```
 
 Both a uniform intrasite interaction with U1 = 2.0 (n=0 / onsite),
@@ -530,32 +440,18 @@ colab:
 id: D72pRPc6OK_X
 outputId: b6f1c99c-e33b-4574-d108-3a2ea7f66d89
 ---
-# Define the lattice parameters
-lattice_params = {
-    'L1': 6,
-    'L2': 1,
-    'boundary1': 'PBC',
-    'boundary2': 'open'
-}
-
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'nbands' : 3,
-    't' : 1.0,
-    'U': 4.0,
-    'U1': 1.5,
-    'U2': 1.0,
-    'J': 0.5
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-lattice = Lattice.from_dict(lattice_params)
+lattice = Lattice.from_type('square', (6, 1), boundaries=('periodic', 'open'))
 vis.plot_lattice(lattice)
 
-hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    nbands=3,
+    t=1.0,
+    U=4.0,
+    U1=1.5,
+    U2=1.0,
+    J=0.5
+)
 ```
 
 +++ {"id": "W-TfLNDJOK_W"}
@@ -601,22 +497,9 @@ colab:
 id: lAw6245ub5GZ
 outputId: c5bfa756-3d14-4865-ddb6-2c4d9fac99e0
 ---
-# define Hamiltonian parameters
-params = {
-    'lattice': {
-        'L1': 4,
-        'L2': 4,
-        'boundary1': 'PBC',
-        'boundary2': 'PBC'
-    },
-    'hamiltonian': {
-        't' : 1.0,
-        'U': 4.0,
-        'V' : 1.0
-    }
-}
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'))
 
-hamiltonian = HamiltonianBuilder.from_input(source=params).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, V=1.0)
 ```
 
 ```{code-cell} ipython3

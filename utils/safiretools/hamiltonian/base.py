@@ -128,7 +128,7 @@ class Hamiltonian(ABC):
     -----
     ``__init__`` takes already-formed, validated in-memory data. Build a
     Hamiltonian from an external description with one of the classmethod
-    factories on the concrete subclasses (``from_dict``, ``from_hdf5``,
+    factories on the concrete subclasses (``from_lattice``, ``from_hdf5``,
     ...).
     """
 

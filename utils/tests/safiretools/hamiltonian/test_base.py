@@ -20,6 +20,7 @@ from safiretools.hamiltonian.base import (
     read_hamiltonian_header,
     write_hamiltonian_header,
 )
+from safiretools.hamiltonian.model.lattice import Lattice
 from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
 from safiretools.hamiltonian.molecular import MolecularHamiltonian
 from safiretools.hamiltonian.periodic import PeriodicHamiltonian
@@ -148,10 +149,9 @@ class TestWritingPreservesTheRestOfTheFile:
 
     @staticmethod
     def _hamiltonian(**kwargs):
-        return LatticeHamiltonian.from_dict({
-            'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
-            'hamiltonian': dict(t=1.0, **kwargs),
-        })
+        lattice = Lattice.from_type('square', (2, 2), boundaries=('periodic', 'periodic'),
+                                    twists=(0.0, 0.0))
+        return LatticeHamiltonian.from_lattice(lattice, t=1.0, **kwargs)
 
     def test_a_wavefunction_written_first_survives(self, tmp_path):
         path = tmp_path / 'afqmc.h5'

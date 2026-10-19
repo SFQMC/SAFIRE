@@ -35,17 +35,16 @@ def _lattices(model: Dict):
     """
     from safiretools import Lattice
 
-    return (Lattice.from_dict(model["lattice"]),
-            Lattice.from_dict({**model["lattice"], "twist": FREE_ELECTRON_TWIST}))
+    return (Lattice.from_type(**model["lattice"]),
+            Lattice.from_type(**{**model["lattice"], "twists": FREE_ELECTRON_TWIST}))
 
 
 def _hamiltonian(model: Dict, spin_symm, lattice):
     """`model` built on `lattice` in `spin_symm`."""
     from safiretools import LatticeHamiltonian
 
-    return LatticeHamiltonian.from_dict(
-        {**model, "hamiltonian": {**model["hamiltonian"], "spin_symm": spin_symm}},
-        lattice=lattice)
+    return LatticeHamiltonian.from_lattice(
+        lattice, **{**model["hamiltonian"], "spin_symm": spin_symm})
 
 
 # ============================================================================
@@ -54,7 +53,8 @@ def _hamiltonian(model: Dict, spin_symm, lattice):
 
 HUBBARD_4X4 = {
     "hamiltonian": {"t": 1.0, "U": 6.0},
-    "lattice": {"L1": 4, "L2": 4, "boundary1": "PBC", "boundary2": "PBC"},
+    "lattice": {"type": "square", "Ls": (4, 4), "boundaries": ("periodic", "periodic"),
+                "twists": (0.0, 0.0)},
     "misc_params": {"nelec": (5, 5)},
 }
 
@@ -130,8 +130,8 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     within the optimiser's tolerance, which is a cheap way of catching a solve
     that has wandered off.
     """
-    from safiretools import (LatticeHamiltonian, NOMSDWavefunction, SpinSymm,
-                             Wavefunction)
+    from safiretools import (Lattice, LatticeHamiltonian, NOMSDWavefunction,
+                             SpinSymm, Wavefunction)
 
     try:
         from autohf.hamiltonian import AutoHFHamiltonian
@@ -149,7 +149,8 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     nelec = weak["misc_params"]["nelec"]
     norb = 16
 
-    hamiltonian = LatticeHamiltonian.from_dict(weak)
+    hamiltonian = LatticeHamiltonian.from_lattice(Lattice.from_type(**weak["lattice"]),
+                                                  **weak["hamiltonian"])
 
     # Untwisted, so the starting determinant - and the solution - stays real.
     initial_alpha, initial_beta = Wavefunction.from_free_electron(
@@ -220,7 +221,8 @@ def _check_spans_free_electron(orbitals, reference, label: str,
 HUBBARD_KANAMORI_6X1 = {
     "hamiltonian": {"nbands": 2, "t": 1.0, "U": 2.0,
                     "U1": 1.5, "U2": 1.0, "J": 0.5},
-    "lattice": {"L1": 6, "L2": 1, "boundary1": "pbc", "boundary2": "open"},
+    "lattice": {"type": "square", "Ls": (6, 1), "boundaries": ("periodic", "open"),
+                "twists": (0.0, 0.0)},
     "misc_params": {"nelec": (6, 6)},
 }
 
@@ -265,7 +267,7 @@ def build_rashba_soc(ctx: BuildContext) -> None:
     noncollinear code path has a model test at all. Hamiltonian and trial share
     a single file, which is what ``functional_cases.py`` expects.
 
-    Rashba is not an input key of ``LatticeHamiltonian.from_dict``, so the
+    Rashba is not a keyword of ``LatticeHamiltonian.from_lattice``, so the
     builder is driven directly here.
     """
     from safiretools import HamiltonianBuilder, Lattice, SpinSymm, Wavefunction
@@ -277,11 +279,8 @@ def build_rashba_soc(ctx: BuildContext) -> None:
 
     filename = ctx.out_dir / "afqmc_U1.0_lambda0.1sqrt3_free_elec_trial.h5"
 
-    lattice = Lattice.from_dict({
-        "type": "honeycomb",
-        "L1": 3, "L2": 3,
-        "boundary1": "PBC", "boundary2": "PBC",
-    })
+    lattice = Lattice.from_type("honeycomb", (3, 3), boundaries=("periodic", "periodic"),
+                                twists=(0.0, 0.0))
 
     builder = HamiltonianBuilder(lattice=lattice, spin_symm=SpinSymm.NONCOLLINEAR)
     builder.nth_neighbor_hopping(t)
