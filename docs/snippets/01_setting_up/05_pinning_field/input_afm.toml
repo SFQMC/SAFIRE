@@ -3,11 +3,9 @@ nelec = [16,16]
 [hamiltonian]
 t = [1.0,0.5] # a 't' array of length n give nth-order neighbor hoping
 U = 2.0
-h_afm_pin = 0.5 # NOTE: syntax likely to change in the near future
-afm_pin_type = "staggered" # "afm"; alternative is "fm"
 
 [lattice]
-L1 = 8
-L2 = 4
-boundary1 = "PBC" # or "open" for open boundaries
-boundary2 = "PBC" # or "open" for open boundaries
+type = "square"
+Ls = [8, 4]
+boundaries = ["periodic", "periodic"] # or "open" for open boundaries
+twists = [0.0, 0.0]

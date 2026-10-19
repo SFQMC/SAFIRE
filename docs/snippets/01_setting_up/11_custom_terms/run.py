@@ -7,13 +7,8 @@ from safiretools import HamiltonianBuilder, Lattice, Wavefunction
 # safiretools reports what it builds through the standard logging module
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-lattice = Lattice.from_dict(
-    params=dict(
-        L1 = 3,
-        L2 = 2,
-        boundary1 = "PBC",
-        boundary2 = "PBC"
-    )
+lattice = Lattice.from_type(
+    "square", (3, 2), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
 )
 nelec = (2,2)
 

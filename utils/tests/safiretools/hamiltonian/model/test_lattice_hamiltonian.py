@@ -28,29 +28,33 @@ from safiretools.hamiltonian.model.lattice_hamiltonian import (
 
 CASES = {
     'hubbard': dict(
-        lattice=dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'),
+        lattice=Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'),
+                                  twists=(0.0, 0.0)),
         hamiltonian=dict(t=1.0, U=4.0),
     ),
     'attractive_hubbard': dict(
-        lattice=dict(L1=3, L2=3, boundary1='pbc', boundary2='open'),
+        lattice=Lattice.from_type('square', (3, 3), boundaries=('periodic', 'open'),
+                                  twists=(0.0, 0.0)),
         hamiltonian=dict(t=1.0, U=-4.0),
     ),
     'kanamori': dict(
-        lattice=dict(L1=6, L2=1, boundary1='pbc', boundary2='open'),
+        lattice=Lattice.from_type('square', (6, 1), boundaries=('periodic', 'open'),
+                                  twists=(0.0, 0.0)),
         hamiltonian=dict(nbands=2, t=1.0, U=4.0, U1=2.0, U2=1.0, J=0.5),
     ),
     'heisenberg': dict(
-        lattice=dict(L1=4, L2=2, boundary1='pbc', boundary2='pbc'),
+        lattice=Lattice.from_type('square', (4, 2), boundaries=('periodic', 'periodic'),
+                                  twists=(0.0, 0.0)),
         hamiltonian=dict(t=1.0, J_heisenberg=1.0),
     ),
     'twisted_honeycomb': dict(
-        lattice=dict(type='honeycomb', L1=3, L2=3, boundary1='pbc', boundary2='pbc',
-                     twist=('1/2 pi', 0.0)),
+        lattice=Lattice.from_type('honeycomb', (3, 3), boundaries=('periodic', 'periodic'),
+                                  twists=('1/2 pi', 0.0)),
         hamiltonian=dict(t=1.0, U=4.0),
     ),
     'custom': dict(
-        lattice=dict(type='custom', L1=3, L2=3, boundary1='pbc', boundary2='open',
-                     a1=[1.0, 0.0], a2=[0.0, 1.0], basis=[[0.0, 0.0], [0.5, 0.0]]),
+        lattice=Lattice([[1.0, 0.0], [0.0, 1.0]], [[0.0, 0.0], [0.5, 0.0]], (3, 3),
+                        boundaries=('periodic', 'open'), twists=(0.0, 0.0)),
         hamiltonian=dict(t=1.0, U=2.0),
     ),
 }
@@ -91,14 +95,19 @@ def h5_fingerprint(path):
     return out
 
 
+def build(source):
+    """The `LatticeHamiltonian` a `CASES` entry describes."""
+    return LatticeHamiltonian.from_lattice(source['lattice'], **source['hamiltonian'])
+
+
 @pytest.fixture(params=sorted(CASES))
 def case(request):
     return request.param, CASES[request.param]
 
 
-def test_from_dict_builds_a_finalized_hamiltonian(case):
+def test_from_lattice_builds_a_finalized_hamiltonian(case):
     _, source = case
-    hamiltonian = LatticeHamiltonian.from_dict(source)
+    hamiltonian = build(source)
 
     assert isinstance(hamiltonian, LatticeHamiltonian)
     assert hamiltonian.num_components == sum(
@@ -108,7 +117,7 @@ def test_from_dict_builds_a_finalized_hamiltonian(case):
 
 def test_the_basis_rotation_is_the_identity(case):
     _, source = case
-    hamiltonian = LatticeHamiltonian.from_dict(source)
+    hamiltonian = build(source)
 
     assert np.array_equal(hamiltonian.basis_rotation,
                           np.eye(hamiltonian.spin_symm.npol * hamiltonian.nbasis))
@@ -127,7 +136,7 @@ def test_hdf5_round_trip_preserves_the_terms(case, tmp_path):
     the merge. Re-finalizing the split terms must reproduce the original.
     """
     name, source = case
-    hamiltonian = LatticeHamiltonian.from_dict(source)
+    hamiltonian = build(source)
 
     path = tmp_path / f'{name}.h5'
     hamiltonian.to_hdf5(path)
@@ -144,7 +153,7 @@ def test_hdf5_round_trip_preserves_the_terms(case, tmp_path):
 
 def test_hdf5_round_trip_reproduces_the_file(case, tmp_path):
     name, source = case
-    hamiltonian = LatticeHamiltonian.from_dict(source)
+    hamiltonian = build(source)
 
     first = tmp_path / f'{name}.h5'
     second = tmp_path / f'{name}_again.h5'
@@ -174,7 +183,7 @@ class TestHubbardSplit:
 
     @pytest.fixture
     def kanamori(self, tmp_path):
-        hamiltonian = LatticeHamiltonian.from_dict(CASES['kanamori'])
+        hamiltonian = build(CASES['kanamori'])
         path = tmp_path / 'kanamori.h5'
         hamiltonian.to_hdf5(path)
         return hamiltonian, Hamiltonian.from_hdf5(path)
@@ -219,28 +228,26 @@ class TestHubbardSplit:
 
 class TestLatticeMetadata:
     """
-    Lattice shape is recorded dimension-agnostically (``L``/``boundaries`` as
+    Lattice shape is recorded dimension-agnostically (``Ls``/``boundaries`` as
     per-axis sequences, the unit cell as a ``lattice_vectors`` matrix), so files
     written now stay readable when `Lattice` becomes N-dimensional.
     """
 
     def test_metadata_is_extracted_from_the_lattice(self):
-        lattice = Lattice.from_dict(dict(type='honeycomb', L1=3, L2=4,
-                                         boundary1='pbc', boundary2='open',
-                                         twist=('1/2 pi', 0.0)))
+        lattice = Lattice.from_type('honeycomb', (3, 4), boundaries=('periodic', 'open'),
+                                    twists=('1/2 pi', 0.0))
         metadata = lattice_metadata_from(lattice)
 
-        assert metadata['type'] == 'honeycomb'
-        assert metadata['L'] == [3, 4]
-        assert metadata['boundaries'] == ['pbc', 'open']
-        assert np.isclose(metadata['twist'][0], np.pi / 2)
-        assert np.isclose(metadata['twist'][1], 0.0)
-        assert np.allclose(metadata['lattice_vectors'], [lattice.a1, lattice.a2])
+        assert metadata['Ls'] == [3, 4]
+        assert metadata['boundaries'] == ['periodic', 'open']
+        assert np.isclose(metadata['twists'][0], np.pi / 2)
+        assert np.isclose(metadata['twists'][1], 0.0)
+        assert np.allclose(metadata['lattice_vectors'], lattice.A.T)
         assert np.allclose(metadata['basis'], lattice.basis)
 
     def test_metadata_survives_the_round_trip(self, case, tmp_path):
         name, source = case
-        hamiltonian = LatticeHamiltonian.from_dict(source)
+        hamiltonian = build(source)
 
         path = tmp_path / f'{name}.h5'
         hamiltonian.to_hdf5(path)
@@ -250,17 +257,18 @@ class TestLatticeMetadata:
 
     def test_lattice_params_rebuild_the_same_lattice(self, case):
         _, source = case
-        hamiltonian = LatticeHamiltonian.from_dict(source)
+        hamiltonian = build(source)
 
-        original = Lattice.from_dict(source['lattice'])
-        rebuilt = Lattice.from_dict(hamiltonian.lattice_params)
+        original = source['lattice']
+        rebuilt = Lattice(**hamiltonian.lattice_params)
 
         assert rebuilt.N_sites == original.N_sites
-        assert np.allclose(rebuilt.a1, original.a1)
-        assert np.allclose(rebuilt.a2, original.a2)
+        assert np.allclose(rebuilt.A, original.A)
         assert np.allclose(rebuilt.basis, original.basis)
         assert np.allclose([site.position for site in rebuilt.get_sites()],
                            [site.position for site in original.get_sites()])
+        assert ([pair.phase for pair in rebuilt.get_nth_image_neighbors(1)]
+                == pytest.approx([pair.phase for pair in original.get_nth_image_neighbors(1)]))
 
     def test_a_hamiltonian_with_no_metadata_writes_no_lattice_group(self, tmp_path):
         hamiltonian = LatticeHamiltonian(nsites=4, spin_symm=SpinSymm.CLOSED)
@@ -283,16 +291,16 @@ class TestRealValued:
     """
 
     def test_a_real_hamiltonian_is_real_valued(self):
-        hamiltonian = LatticeHamiltonian.from_dict(CASES['hubbard'])
+        hamiltonian = build(CASES['hubbard'])
         assert hamiltonian.real_valued
 
     def test_a_twisted_hamiltonian_is_not(self):
-        hamiltonian = LatticeHamiltonian.from_dict(CASES['twisted_honeycomb'])
+        hamiltonian = build(CASES['twisted_honeycomb'])
         assert not hamiltonian.real_valued
 
     def test_a_real_hamiltonian_writes_rank_1_data(self, tmp_path):
         path = tmp_path / 'real.h5'
-        LatticeHamiltonian.from_dict(CASES['hubbard']).to_hdf5(path)
+        build(CASES['hubbard']).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
             data = fh5['Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/values']
@@ -300,7 +308,7 @@ class TestRealValued:
 
     def test_a_complex_hamiltonian_writes_complex_data(self, tmp_path):
         path = tmp_path / 'complex.h5'
-        LatticeHamiltonian.from_dict(CASES['twisted_honeycomb']).to_hdf5(path)
+        build(CASES['twisted_honeycomb']).to_hdf5(path)
 
         with h5.File(path, 'r') as fh5:
             data = fh5['Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/values']
@@ -371,7 +379,7 @@ def test_the_electron_count_is_not_recorded(tmp_path):
 def test_scalars_are_attributes_and_arrays_datasets(tmp_path):
     """The rule CoQuí follows: every scalar goes to an attribute."""
     path = tmp_path / 'ham.h5'
-    LatticeHamiltonian.from_dict(CASES['hubbard']).to_hdf5(path)
+    build(CASES['hubbard']).to_hdf5(path)
 
     scalars = []
     with h5.File(path, 'r') as fh5:

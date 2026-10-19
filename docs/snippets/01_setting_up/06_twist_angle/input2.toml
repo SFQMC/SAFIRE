@@ -4,8 +4,7 @@ nelec = [24,24]
 U = 4
 
 [lattice]
-L1 = 4
-L2 = 8
-boundary1 = "PBC" # or "open" for open boundaries
-boundary2 = "PBC" # or "open" for open boundaries
-twist = [0.0,2.748893571891069] # 'Pi' is parsed and converted! So are fractions expressed as 'num/denom'
+type = "square"
+Ls = [4, 8]
+boundaries = ["periodic", "periodic"] # or "open" for open boundaries
+twists = [0.0, 2.748893571891069] # 'Pi' is parsed and converted! So are fractions expressed as 'num/denom'

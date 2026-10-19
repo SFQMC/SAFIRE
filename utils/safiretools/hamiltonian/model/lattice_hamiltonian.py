@@ -282,21 +282,20 @@ class LatticeHamiltonian(Hamiltonian):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, source, lattice=None) -> "LatticeHamiltonian":
+    def from_lattice(cls, lattice, **kwargs) -> "LatticeHamiltonian":
         """
-        Build a fully finalized `LatticeHamiltonian` from a declarative input.
+        Build a fully finalized `LatticeHamiltonian` on `lattice`.
 
-        This is the common-case wrapper around `HamiltonianBuilder`: it parses
-        the input, runs the build steps it names, and finalizes. Use
-        `HamiltonianBuilder` directly to compose terms that no input key covers.
+        This is the common-case wrapper around `HamiltonianBuilder`: it runs the
+        build steps the keyword arguments name, and finalizes. Use
+        `HamiltonianBuilder` directly to compose terms that no keyword covers.
 
         Parameters
         ----------
-        source : dict
-            Input parameters, with a ``'hamiltonian'`` section (and a
-            ``'lattice'`` section unless `lattice` is given).
-        lattice : ~safiretools.Lattice, optional
-            Lattice to build on. Built from ``source['lattice']`` if omitted.
+        lattice : ~safiretools.Lattice
+            Lattice to build on.
+        **kwargs
+            Hamiltonian parameters, as documented in `HamiltonianBuilder.from_input`.
 
         Returns
         -------
@@ -304,55 +303,28 @@ class LatticeHamiltonian(Hamiltonian):
 
         Examples
         --------
-        >>> hamiltonian = LatticeHamiltonian.from_dict({
-        ...     'lattice': dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'),
-        ...     'hamiltonian': dict(t=1.0, U=4.0),
-        ... })
+        >>> lattice = Lattice.from_type('square', (4, 4),
+        ...                             boundaries=('periodic', 'periodic'),
+        ...                             twists=(0.0, 0.0))
+        >>> hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
         """
         from safiretools.hamiltonian.model.builder import HamiltonianBuilder
 
-        builder = HamiltonianBuilder.from_input(source, lattice=lattice)
-        return builder.get_hamiltonian()
+        return HamiltonianBuilder.from_input(lattice, **kwargs).get_hamiltonian()
 
     @property
     def lattice_params(self) -> dict:
         """
-        The recorded lattice shape as a parameter dict that
-        ``Lattice.from_dict`` accepts, or ``{}`` if no lattice metadata was
-        recorded.
+        The recorded lattice as `Lattice` constructor arguments, or ``{}`` if no
+        lattice metadata was recorded.
 
-        Notes
-        -----
-        `lattice_metadata` is stored in the dimension-agnostic form
-        (``L``/``boundaries`` as per-axis sequences) that a future N-dimensional
-        `Lattice` will use. This property flattens it back into today's
-        two-dimensional ``L1``/``L2``/``boundary1``/``boundary2`` keys.
+        Examples
+        --------
+        The same lattice with a twist:
+
+        >>> lattice = Lattice(**dict(hamiltonian.lattice_params, twists=(0.1, 0.2)))
         """
-        metadata = self.lattice_metadata
-        if not metadata:
-            return {}
-
-        params = {'type': metadata['type']}
-        for axis, (size, boundary) in enumerate(
-                zip(metadata['L'], metadata['boundaries']), start=1):
-            params[f'L{axis}'] = int(size)
-            params[f'boundary{axis}'] = str(boundary)
-
-        twist = metadata.get('twist')
-        if twist is not None and np.any(np.asarray(twist) != 0.0):
-            params['twist'] = tuple(float(t) for t in twist)
-
-        cyl_mode = metadata.get('cyl_mode')
-        if cyl_mode and cyl_mode != 'none':
-            params['cyl_mode'] = cyl_mode
-
-        if metadata['type'] == 'custom':
-            a1, a2 = metadata['lattice_vectors']
-            params['a1'] = list(a1)
-            params['a2'] = list(a2)
-            params['basis'] = [list(b) for b in metadata['basis']]
-
-        return params
+        return dict(self.lattice_metadata)
 
     # ------------------------------------------------------------------
     # serialization
@@ -416,13 +388,11 @@ class LatticeHamiltonian(Hamiltonian):
             return
 
         group = model.create_group('Lattice')
-        group.attrs['type'] = metadata['type']
-        group.attrs['cyl_mode'] = metadata.get('cyl_mode') or 'none'
-        group.create_dataset('L', data=np.asarray(metadata['L'], dtype=np.int64))
+        group.create_dataset('L', data=np.asarray(metadata['Ls'], dtype=np.int64))
         group.create_dataset('boundaries',
                              data=np.array(metadata['boundaries'], dtype=h5.string_dtype()))
         group.create_dataset('twist',
-                             data=np.asarray(metadata['twist'], dtype=np.float64))
+                             data=np.asarray(metadata['twists'], dtype=np.float64))
         group.create_dataset('lattice_vectors',
                              data=np.asarray(metadata['lattice_vectors'], dtype=np.float64))
         group.create_dataset('basis',
@@ -486,36 +456,31 @@ def lattice_metadata_from(lattice) -> dict:
     Returns
     -------
     dict
-        Keys ``type``, ``L``, ``boundaries``, ``twist``, ``lattice_vectors``,
-        ``basis`` and ``cyl_mode``.
+        The `Lattice` constructor arguments ``lattice_vectors``, ``basis``,
+        ``Ls``, ``boundaries`` and ``twists``.
 
     Notes
     -----
-    Per-axis quantities are stored as sequences (``L = [L1, L2]``,
-    ``boundaries = ['pbc', 'pbc']``) rather than as ``L1``/``L2`` pairs, and the
-    unit cell as a ``lattice_vectors`` matrix rather than ``a1``/``a2``. Today's
-    `Lattice` is two-dimensional, so those sequences always have length 2; the
-    form is the dimension-agnostic one a future N-dimensional `Lattice` will
-    need, so files written now stay readable then.
+    Per-axis quantities are stored as sequences, which is the
+    dimension-agnostic form a future N-dimensional `Lattice` will need, so files
+    written now stay readable then.
     """
     boundaries = [lattice.axis1_boundary, lattice.axis2_boundary]
 
     return {
-        'type': lattice._type,
-        'L': [int(size) for size in lattice.L],
+        'lattice_vectors': lattice.A.T.tolist(),
+        'basis': [b.tolist() for b in lattice.basis],
+        'Ls': [int(size) for size in lattice.L],
         'boundaries': [_boundary_name(boundary) for boundary in boundaries],
-        'twist': [float(boundary.phase) for boundary in boundaries],
-        'lattice_vectors': [list(lattice.a1), list(lattice.a2)],
-        'basis': [list(b) for b in lattice.basis],
-        'cyl_mode': lattice.cyl_mode or 'none',
+        'twists': [float(boundary.phase) for boundary in boundaries],
     }
 
 
 def _boundary_name(boundary) -> str:
-    """The `Lattice.from_dict` spelling of a `Boundary` instance's type."""
+    """The `Lattice` spelling of a `Boundary` instance's type."""
     from safiretools.hamiltonian.model.lattice import PBCBoundary
 
-    return 'pbc' if isinstance(boundary, PBCBoundary) else 'open'
+    return 'periodic' if isinstance(boundary, PBCBoundary) else 'open'
 
 
 def _read_lattice_metadata(group):
@@ -525,13 +490,11 @@ def _read_lattice_metadata(group):
 
     lattice_group = group['Lattice']
     return {
-        'type': lattice_group.attrs['type'],
-        'L': [int(size) for size in lattice_group['L'][...]],
+        'lattice_vectors': lattice_group['lattice_vectors'][...].tolist(),
+        'basis': lattice_group['basis'][...].tolist(),
+        'Ls': [int(size) for size in lattice_group['L'][...]],
         'boundaries': [str(name) for name in lattice_group['boundaries'].asstr()[...]],
-        'twist': [float(angle) for angle in lattice_group['twist'][...]],
-        'lattice_vectors': [list(vector) for vector in lattice_group['lattice_vectors'][...]],
-        'basis': [list(b) for b in lattice_group['basis'][...]],
-        'cyl_mode': lattice_group.attrs['cyl_mode'],
+        'twists': [float(angle) for angle in lattice_group['twist'][...]],
     }
 
 

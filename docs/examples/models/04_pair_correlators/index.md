@@ -78,31 +78,19 @@ We will explore this in more detail below.
 ```{code-cell} ipython3
 from safiretools import Lattice
 from safiretools import vis
-from safiretools import HamiltonianBuilder
+from safiretools import LatticeHamiltonian
 
 %mkdir -p data
 %cd -q data
 
-lattice = Lattice.from_dict(
-    params=dict(
-        L1 = 4,
-        L2 = 4,
-        boundary1 = "PBC",
-        boundary2 = "PBC"
-    )
+lattice = Lattice.from_type(
+    "square", (4, 4), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
 )
 
 # plot the lattice for reality checks!
 vis.plot_lattice(lattice)
 
-params = dict(
-    hamiltonian=dict(
-        t=1.0,
-        U=4.0
-    )
-)
-
-hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
 ```
 
 +++ {"id": "Np-zIkGusNIP"}

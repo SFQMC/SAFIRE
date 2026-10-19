@@ -17,6 +17,7 @@ import pytest
 import scipy.sparse as sps
 
 from safiretools import (
+    Lattice,
     LatticeHamiltonian,
     NOMSDWavefunction,
     SpinSymm,
@@ -33,10 +34,17 @@ from safiretools.wavefunction.free_electron import (
 from safiretools.wavefunction.slater import spin_layout_shape
 
 
+def build(params):
+    """The `LatticeHamiltonian` a ``{'lattice': ..., 'hamiltonian': ...}`` dict describes."""
+    return LatticeHamiltonian.from_lattice(Lattice.from_type(**params['lattice']),
+                                           **params['hamiltonian'])
+
+
 @pytest.fixture
 def hubbard_params():
     return {
-        'lattice': dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'),
+        'lattice': dict(type='square', Ls=(4, 4), boundaries=('periodic', 'periodic'),
+                        twists=(0.0, 0.0)),
         'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear'),
     }
 
@@ -44,7 +52,7 @@ def hubbard_params():
 @pytest.fixture
 def hubbard(hubbard_params):
     """A 4x4 Hubbard model. Untwisted, so its shells stay degenerate."""
-    return LatticeHamiltonian.from_dict(hubbard_params)
+    return build(hubbard_params)
 
 
 @pytest.fixture
@@ -145,8 +153,9 @@ class TestFromFreeElectron:
         assert spin_layout_shape(wavefunction.dets) == ((1, 16, 5), (1, 16, 0))
 
     def test_a_noncollinear_determinant_spans_the_spinor_basis(self, quiet):
-        hamiltonian = LatticeHamiltonian.from_dict({
-            'lattice': dict(L1=4, L2=1, boundary1='pbc', boundary2='open'),
+        hamiltonian = build({
+            'lattice': dict(type='square', Ls=(4, 1), boundaries=('periodic', 'open'),
+                            twists=(0.0, 0.0)),
             'hamiltonian': dict(t=1.0, U=2.0, nbands=2,
                                 spin_symm='noncollinear'),
         })
@@ -168,7 +177,7 @@ class TestFromFreeElectron:
 
     def test_closed_shell_is_not_implemented(self, hubbard_params):
         hubbard_params['hamiltonian']['spin_symm'] = 'closed'
-        hamiltonian = LatticeHamiltonian.from_dict(hubbard_params)
+        hamiltonian = build(hubbard_params)
 
         with pytest.raises(NotImplementedError, match="closed spin symmetry"):
             NOMSDWavefunction.from_free_electron(hamiltonian, nelec=(8, 8))
@@ -214,8 +223,8 @@ class TestOpenShell:
     def test_a_twisted_lattice_silences_it(self, hubbard_params):
         params = dict(hubbard_params)
         params['lattice'] = dict(hubbard_params['lattice'],
-                                 twist=[0.01, 0.02])
-        hamiltonian = LatticeHamiltonian.from_dict(params)
+                                 twists=[0.01, 0.02])
+        hamiltonian = build(params)
 
         assert not self._degeneracy_warnings(hamiltonian, (8, 8))
 
@@ -228,9 +237,9 @@ class TestOpenShell:
         has to split shells by more than `SHELL_TOL`. The splitting goes as the
         square of the twist and shrinks with lattice size, so check a few.
         """
-        hamiltonian = LatticeHamiltonian.from_dict({
-            'lattice': dict(L1=L1, L2=L2, boundary1='pbc', boundary2='pbc',
-                            twist=list(DEFAULT_TWIST)),
+        hamiltonian = build({
+            'lattice': dict(type='square', Ls=(L1, L2), boundaries=('periodic', 'periodic'),
+                            twists=list(DEFAULT_TWIST)),
             'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear'),
         })
 

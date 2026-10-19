@@ -53,8 +53,8 @@ to ensure that consistent index conventions are used.
 on a variety of lattices, using consistent conventions for indexing.
 The framework consists of a Lattice class which is responsible for geometry (see the `lattice tutorial <03_setting_up_a_lattice/03_setting_up_a_lattice_executed.html>`_),
 and a Hamiltonian *Builder* which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
-The ``HamiltonianBuilder.from_input()`` classmethod accepts a set of input Hamiltonian parameters (as a Python
-dict or a toml file) and automatically runs the corresponding build steps, which covers most use cases.
+``LatticeHamiltonian.from_lattice()`` takes a lattice and the Hamiltonian parameters as keyword arguments
+and runs the corresponding build steps, which covers most use cases.
 Users who want direct control over the Hamiltonian build steps can instead construct a ``HamiltonianBuilder``
 and invoke build steps directly. See the `Hamiltonian Builder <05_hamiltonian_builder/05_hamiltonian_builder.html>`_ for
 more detail.

@@ -26,14 +26,15 @@ safiretools can be invoked within a Python script as
 
     import tomllib
 
-    from safiretools import HamiltonianBuilder, Wavefunction
+    from safiretools import Lattice, LatticeHamiltonian, Wavefunction
 
     with open("input.toml", "rb") as f:
         input_params = tomllib.load(f)
 
     # Build and save a lattice model Hamiltonian. Its lattice already carries
     #   the twist set in the [lattice] section of input.toml.
-    hamiltonian = HamiltonianBuilder.from_input(source=input_params).get_hamiltonian()
+    lattice = Lattice.from_type(**input_params["lattice"])
+    hamiltonian = LatticeHamiltonian.from_lattice(lattice, **input_params["hamiltonian"])
     hamiltonian.to_hdf5("afqmc.h5")
 
     # compute and save a free-electron trial wfn, into the same file. The
@@ -66,7 +67,7 @@ in :ref:`setup_ex_9`.
 
     import tomllib
 
-    from safiretools import HamiltonianBuilder, Lattice, Wavefunction
+    from safiretools import Lattice, LatticeHamiltonian, Wavefunction
     from safiretools.wavefunction.free_electron import DEFAULT_TWIST
 
     infile = "input_charge.toml"
@@ -74,19 +75,15 @@ in :ref:`setup_ex_9`.
         params = tomllib.load(f)
 
     # Build and save a lattice model Hamiltonian
-    hamiltonian = HamiltonianBuilder.from_input(params).get_hamiltonian()
+    lattice = Lattice.from_type(**params["lattice"])
+    hamiltonian = LatticeHamiltonian.from_lattice(lattice, **params["hamiltonian"])
     hamiltonian.to_hdf5("afqmc.h5")
 
     # The trial wavefunction needs its *own* Hamiltonian, built on a lattice
     #   carrying a small irrational twist.
     #   The AFQMC run itself uses the untwisted Hamiltonian above.
-    fe_lattice = Lattice.from_dict(
-        dict(hamiltonian.lattice_params, twist=list(DEFAULT_TWIST))
-    )
-    fe_hamiltonian = HamiltonianBuilder.from_input(
-        params,
-        lattice=fe_lattice,
-    ).get_hamiltonian()
+    fe_lattice = Lattice(**dict(hamiltonian.lattice_params, twists=DEFAULT_TWIST))
+    fe_hamiltonian = LatticeHamiltonian.from_lattice(fe_lattice, **params["hamiltonian"])
 
     # compute and save a free-electron trial wfn, into the same file
     Wavefunction.from_free_electron(

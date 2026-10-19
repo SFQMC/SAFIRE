@@ -70,16 +70,11 @@ When confronted with a new problem, the first thing we generally do is use a non
 U = 6.0
 lattice_dims = (10,4)
 
-lattice_params = {
-    'L1' : lattice_dims[0],
-    'L2' : lattice_dims[1],
-    'boundary1' : 'Open',
-    'boundary2' : 'PBC'
-}
-
 from safiretools import Lattice
 
-lattice = Lattice.from_dict(params=lattice_params)
+lattice = Lattice.from_type(
+    'square', lattice_dims, boundaries=('open', 'periodic'), twists=(0.0, 0.0)
+)
 
 Ne = int(lattice.N_sites*(1-0.2))//2
 nelec = (Ne,Ne)
@@ -105,7 +100,7 @@ H_\text{pin} &= \sum_{i\in \text{edge}} (-1)^{i_x+i_y} h_i S^z_i
 \end{aligned}
 $$
 
-and we have a convenience function to add the edge pinning as well. We'll assume $t=1$, $h_i=0.5$ just like in the paper
+and `PinningField.afm` adds the edge pinning as well. We'll assume $t=1$, $h_i=0.5$ just like in the paper
 
 ```{code-cell} ipython3
 ---
@@ -114,23 +109,21 @@ outputId: 731af8f0-e234-49d5-cfc5-d38fb5483845
 colab:
   base_uri: https://localhost:8080/
 ---
-from safiretools import HamiltonianBuilder
+from safiretools import LatticeHamiltonian, PinningField
 
-builder = HamiltonianBuilder(
-          lattice=lattice,
-          spin_symm="collinear", # we have no spin-flip terms
-)
-# add standard Hubbard terms
-builder.nth_neighbor_hopping(1.0)
-builder.onsite_hubbard(U)
-builder.afm_pinning(0.5)
-builder.finalize()
+# staggered AFM pinning on the two open edges at the ends of axis 0
+pinning = (PinningField.afm(0.5, staggered=True), None)
 ```
 
 ```{code-cell} ipython3
 :id: f94e92dd-9802-46ea-a1db-0baffb7efbb4
 
-hamiltonian = builder.get_hamiltonian()
+# standard Hubbard terms; nearest-neighbor hopping with t=1 is included by default
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    U=U,
+    pinning=pinning,
+)
 ```
 
 ```{code-cell} ipython3
@@ -324,15 +317,11 @@ Ueffs = [1,2,3,4]
 trial_wfns = {}
 for Ueff in Ueffs:
 
-    builder_eff = HamiltonianBuilder(
-              lattice=lattice,
-              spin_symm="collinear",
-                  )
-    # add standard Hubbard terms
-    builder_eff.nth_neighbor_hopping(1.0)
-    builder_eff.onsite_hubbard(Ueff) # We want our HF solver to solve Ueff not U
-    builder_eff.afm_pinning(0.5)
-    builder_eff.finalize()
+    hamiltonian_eff = LatticeHamiltonian.from_lattice(
+        lattice,
+        U=Ueff, # We want our HF solver to solve Ueff not U
+        pinning=pinning,
+    )
 
     hf_settings = dict(
         steps = 2000,
@@ -344,7 +333,7 @@ for Ueff in Ueffs:
         noncollinear = False
     )
     results = solve_hf(
-        hamiltonian=AutoHFHamiltonian(builder_eff.get_hamiltonian()),
+        hamiltonian=AutoHFHamiltonian(hamiltonian_eff),
         lattice=lattice,
         settings=hf_settings,
     )

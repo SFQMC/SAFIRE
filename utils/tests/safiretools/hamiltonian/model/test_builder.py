@@ -17,6 +17,7 @@ import pytest
 from safiretools import Lattice, SpinSymm
 from safiretools.hamiltonian.model.builder import (
     HamiltonianBuilder,
+    PinningField,
     intersite_band_matrix,
     onsite_band_matrix,
     skip_empty_params,
@@ -26,12 +27,14 @@ from safiretools.hamiltonian.model.lattice_hamiltonian import LatticeHamiltonian
 
 @pytest.fixture
 def square_2x2():
-    return Lattice.from_dict(dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'))
+    return Lattice.from_type('square', (2, 2), boundaries=('periodic', 'periodic'),
+                             twists=(0.0, 0.0))
 
 
 @pytest.fixture
 def square_4x4():
-    return Lattice.from_dict(dict(L1=4, L2=4, boundary1='pbc', boundary2='pbc'))
+    return Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'),
+                             twists=(0.0, 0.0))
 
 
 @pytest.mark.parametrize("step", ["nth_neighbor_hopping", "onebody_onsite"])
@@ -126,7 +129,7 @@ def test_intersite_terms_cover_every_band_pair_across_the_bond(step, key):
     the triangle the executable reads.
     """
     nbands = 2
-    lattice = Lattice.from_dict(dict(L1=2, L2=1, boundary1='open', boundary2='open'))
+    lattice = Lattice.from_type('square', (2, 1), boundaries=('open', 'open'), twists=(0.0, 0.0))
 
     builder = HamiltonianBuilder(lattice=lattice, nbands=nbands)
     getattr(builder, step)(1.5, nth_neighbor=1)
@@ -193,10 +196,7 @@ def test_unknown_builder_parameter_raises(square_4x4):
 
 
 def test_from_input_builds_and_finalizes(square_4x4):
-    builder = HamiltonianBuilder.from_input(
-        {'hamiltonian': dict(t=1.0, U=4.0)},
-        lattice=square_4x4,
-    )
+    builder = HamiltonianBuilder.from_input(square_4x4, t=1.0, U=4.0)
     hamiltonian = builder.get_hamiltonian()
 
     assert sorted(hamiltonian.keys()) == ['Uij', 'tij']
@@ -205,20 +205,21 @@ def test_from_input_builds_and_finalizes(square_4x4):
     assert hamiltonian['Uij'][0].hubbard_strat_type == 'discrete_spin'
 
 
-def test_from_input_builds_its_own_lattice():
-    builder = HamiltonianBuilder.from_input({
-        'lattice': dict(L1=3, L2=3, boundary1='pbc', boundary2='pbc'),
-        'hamiltonian': dict(t=1.0, U=4.0),
-    })
-
-    assert builder.get_lattice().N_sites == 9
-    assert builder.get_hamiltonian().nsites == 9
+def test_from_input_rejects_unknown_keys(square_4x4):
+    with pytest.raises(TypeError, match="twist"):
+        HamiltonianBuilder.from_input(square_4x4, U=4.0, twist=(0.1, 0.0))
 
 
-@pytest.mark.parametrize('source', [42, 'input.toml'])
-def test_from_input_rejects_other_sources(source):
-    with pytest.raises(ValueError, match="Invalid parameter source"):
-        HamiltonianBuilder.from_input(source)
+def test_from_input_passes_hst_types(square_4x4):
+    hamiltonian = HamiltonianBuilder.from_input(
+        square_4x4, U=4.0, hst_types={'U': 'continuous_charge'}).get_hamiltonian()
+
+    assert hamiltonian['Uij'][0].hubbard_strat_type == 'continuous_charge'
+
+
+def test_from_input_rejects_hst_types_for_one_body_terms(square_4x4):
+    with pytest.raises(ValueError, match="non-interaction"):
+        HamiltonianBuilder.from_input(square_4x4, hst_types={'t': 'discrete_spin'})
 
 
 def test_negative_and_positive_u_become_separate_components(square_2x2):
@@ -267,16 +268,53 @@ def test_rashba_soc_requires_noncollinear(square_2x2):
         builder.rashba_soc(0.1)
 
 
-def test_fm_pinning_reads_fm_pin_type(square_4x4):
-    """
-    afqmctools' `fm_pinning` read ``afm_pin_type``, which made ``fm_pin_type``
-    dead input.
-    """
-    builder = HamiltonianBuilder(lattice=square_4x4, afm_pin_type='sideways',  # would raise
-                                 fm_pin_type='fm')
+def pinning_potentials(builder):
+    """The (up, down) on-site potentials of the builder's single one-body term."""
+    nbasis = builder.get_hamiltonian().nbasis
+    matrix = builder.get_hamiltonian()['tij'][0].csr_array.toarray()
+    return np.diag(matrix[:nbasis]), np.diag(matrix[nbasis:])
 
-    builder.fm_pinning(0.25)
-    assert builder.get_hamiltonian()['tij']
+
+@pytest.mark.parametrize("axis", [0, 1])
+@pytest.mark.parametrize("field,expected", [
+    (PinningField.afm(0.5, staggered=True), lambda n, edge: (0.25 * (-1)**(n + edge), -0.25 * (-1)**(n + edge))),
+    (PinningField.afm(0.5, staggered=False), lambda n, edge: (0.25 * (-1)**n, -0.25 * (-1)**n)),
+    (PinningField.fm(0.5, staggered=True), lambda n, edge: (0.25, -0.25) if edge else (-0.25, 0.25)),
+    (PinningField.fm(0.5, staggered=False), lambda n, edge: (0.25, -0.25)),
+    (PinningField.charge(0.5, staggered=True), lambda n, edge: (0.25, 0.25) if edge else (-0.25, -0.25)),
+    (PinningField.charge(0.5, staggered=False), lambda n, edge: (0.25, 0.25)),
+    (PinningField(lambda n, edge: (n, -edge)), lambda n, edge: (n, -edge)),
+])
+def test_pinning_acts_on_the_edges_of_one_axis(square_4x4, axis, field, expected):
+    builder = HamiltonianBuilder(lattice=square_4x4)
+    builder.pinning((field, None) if axis == 0 else (None, field))
+    up, down = pinning_potentials(builder)
+
+    for site in square_4x4.get_sites():
+        r = site.coord[axis]
+        if r in (0, 3):
+            want = expected(site.coord[(axis + 1) % 2], int(r == 3))
+        else:
+            want = (0.0, 0.0)
+        assert (up[site.index], down[site.index]) == pytest.approx(want)
+
+
+def test_pinning_on_both_axes_adds_at_the_corners(square_4x4):
+    builder = HamiltonianBuilder(lattice=square_4x4)
+    builder.pinning((PinningField.charge(0.5, staggered=False),
+                     PinningField.charge(0.5, staggered=False)))
+    up, _ = pinning_potentials(builder)
+
+    corner = next(site.index for site in square_4x4.get_sites()
+                  if site.coord[0] == 0 and site.coord[1] == 0)
+    assert up[corner] == pytest.approx(0.5)
+
+
+def test_pinning_needs_one_field_per_axis(square_4x4):
+    builder = HamiltonianBuilder(lattice=square_4x4)
+
+    with pytest.raises(ValueError, match="one entry per lattice axis"):
+        builder.pinning((PinningField.charge(0.5, staggered=False),))
 
 
 @pytest.mark.parametrize("params,expected_calls", [

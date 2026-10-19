@@ -282,8 +282,6 @@ Model Hamiltonians are saved in HDF5 using the following format.
     * ``🏷️ number_of_bands`` :math:`n_\mathrm{bands}`
     * ``Lattice/`` optional
 
-      * ``🏷️ type``
-      * ``🏷️ cyl_mode``
       * ``L`` :math:`(d,)`
       * ``boundaries`` :math:`(d,)`
       * ``twist`` :math:`(d,)`
@@ -311,7 +309,7 @@ Model Hamiltonians are saved in HDF5 using the following format.
     - The number of lattice sites and of bands per site. The number of basis functions is
       :math:`M = n_\mathrm{sites} n_\mathrm{bands}`.
   * - ``Lattice/``
-    - The lattice geometry: its ``type``, the extent ``L``, the ``boundaries``, ``twist``,
+    - The lattice geometry: the extent ``L``, the ``boundaries``, ``twist``,
       ``lattice_vectors`` and ``basis``. SAFIRE itself does not read it. See :py:class:`safiretools.Lattice`.
   * - ``ModelComponent_<n>/``
     - One term of the Hamiltonian. The components are numbered from 0 without gaps; the number of

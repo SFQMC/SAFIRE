@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from safiretools import (
+    Lattice,
     LatticeHamiltonian,
     NOMSDWavefunction,
     PHMSDWavefunction,
@@ -195,10 +196,9 @@ class TestFileSemantics:
 
     @pytest.fixture
     def hamiltonian(self):
-        return LatticeHamiltonian.from_dict({
-            'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
-            'hamiltonian': dict(t=1.0, U=4.0, nelec=(2, 2)),
-        })
+        lattice = Lattice.from_type('square', (2, 2), boundaries=('periodic', 'periodic'),
+                                    twists=(0.0, 0.0))
+        return LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
 
     def test_the_file_is_created_when_absent(self, make_nomsd, tmp_path):
         path = tmp_path / 'fresh.h5'
@@ -379,10 +379,9 @@ class TestFactoryDispatch:
 
     @staticmethod
     def _hubbard_2x2():
-        return LatticeHamiltonian.from_dict({
-            'lattice': dict(L1=2, L2=2, boundary1='pbc', boundary2='pbc'),
-            'hamiltonian': dict(t=1.0, U=4.0, spin_symm='collinear'),
-        })
+        lattice = Lattice.from_type('square', (2, 2), boundaries=('periodic', 'periodic'),
+                                    twists=(0.0, 0.0))
+        return LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, spin_symm='collinear')
 
     def test_from_free_electron_dispatches_to_nomsd(self):
         hamiltonian = self._hubbard_2x2()

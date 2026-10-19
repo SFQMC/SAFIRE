@@ -42,7 +42,7 @@ outputId: 855ebc93-90d5-4e84-94ff-e974f19587fc
 
 import numpy as np
 
-from safiretools import HamiltonianBuilder, Lattice, NOMSDWavefunction
+from safiretools import Lattice, LatticeHamiltonian, NOMSDWavefunction
 
 from autohf import solve_hf
 
@@ -53,43 +53,13 @@ jax.config.update('jax_platform_name', 'cpu')
 # define the system
 nelec = (5,5)
 
-# Define the lattice parameters
-lattice_params = {
-    'L1': 4,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
 
-# define Hamiltonian parameters
-hamiltonian_params = {
-    't': 1.0,
-    'U': 4.0,
-    'spin_symm': "closed"
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-lattice = Lattice.from_dict(lattice_params)
-
-hamiltonian = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, spin_symm="closed")
 
 
 # autoHF does not support closed integrals to collinear integrals
-# define Hamiltonian parameters
-hamiltonian_params = {
-    't' : 1.0,
-    'U': 4.0,
-    'spin_symm' : "collinear"
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-hamiltonian_for_autohf = HamiltonianBuilder.from_input(source=params, lattice=lattice).get_hamiltonian()
+hamiltonian_for_autohf = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, spin_symm="collinear")
 
 
 hf_settings = dict(
