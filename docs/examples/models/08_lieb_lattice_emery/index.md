@@ -509,7 +509,7 @@ def make_emery(lattice, show_mats=False):
     return hamiltonian
 
 # 1. define the lattice
-basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
+basis = [(0, 0), (0.25, 0.25), (-0.25, 0.25), (0.5, 0.5), (0.75, 0.75), (0.25, 0.75)]
 
 lattice = Lattice(
     lattice_vectors=[(1.0,-1.0), (1.0,1.0)],

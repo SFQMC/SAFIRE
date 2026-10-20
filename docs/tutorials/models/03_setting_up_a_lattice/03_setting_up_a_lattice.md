@@ -29,10 +29,11 @@ In this tutorial, we will explore how the Lattice class works, and the available
 
 ## Lattice Formalism
 
-We consider lattices with primitive lattice vectors $\vec{a}_1$, and $\vec{a}_2$ (given explicitly or by a built-in lattice type) which may have a basis, $\{ \delta_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the full cell has dimension $L_1$ x $L_2$.
+We consider lattices with primitive lattice vectors $\vec{a}_1$, and $\vec{a}_2$ (given explicitly or by a built-in lattice type) which may have a basis, $\{ \vec{\delta}_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the full cell has dimension $L_1$ x $L_2$.
+The basis is given in fractional coordinates, $\vec{\delta}_p = (\delta_{p,1}, \delta_{p,2})$, i.e. in units of the lattice vectors.
 The positions of lattice sites on sublattice $p$ are given by  
 $$
-\vec{r}_p = n_1 \vec{a}_1 + n_2 \vec{a}_2  + \vec{\delta}_p,
+\vec{r}_p = (n_1 + \delta_{p,1}) \vec{a}_1 + (n_2 + \delta_{p,2}) \vec{a}_2,
 $$
 where $n_1$, and $n_2$ are integers.
 Additionally, each boundary is labelled by the primitive vector along which it is crossed.
@@ -53,7 +54,7 @@ TODO add a figure illustrating this.
 The constructor `Lattice(lattice_vectors, basis, Ls, *, boundaries, twists=(0.0, 0.0))` takes
 
 - `lattice_vectors` : the lattice vectors $\vec{a}_1$ and $\vec{a}_2$, one per row of a 2 × 2 array
-- `basis` : the list of site positions $\vec{\delta}_p$ within the unit cell
+- `basis` : the list of site positions $\vec{\delta}_p$ within the unit cell, in fractional coordinates of $\vec{a}_1$ and $\vec{a}_2$
 - `Ls` : the lattice dimensions $(L_1, L_2)$ along $\vec{a}_1$ and $\vec{a}_2$, in units of the unit cell
 - `boundaries` : the boundary *types* along $\vec{a}_1$ (at $0 * \vec{a}_1$ and $L_1 * \vec{a}_1$)
   and along $\vec{a}_2$ (at $0 * \vec{a}_2$ and $L_2 * \vec{a}_2$)
@@ -273,7 +274,7 @@ vectors and basis to the `Lattice` constructor directly.
 
 import numpy as np
 
-basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
+basis = [(0, 0), (0.25, 0.25), (-0.25, 0.25), (0.5, 0.5), (0.75, 0.75), (0.25, 0.75)]
 
 lattice = Lattice(
     lattice_vectors=np.array([(1.0, -1.0), (1.0, 1.0)]),
@@ -301,7 +302,7 @@ especially when dealing with complicated lattices.
 :outputId: 2e47ab4f-58e4-47f6-e39a-25726050c235
 
 
-basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
+basis = [(0, 0), (0.25, 0.25), (-0.25, 0.25), (0.5, 0.5), (0.75, 0.75), (0.25, 0.75)]
 
 lattice = Lattice(
     lattice_vectors=np.array([(1.0, -1.0), (1.0, 1.0)]),

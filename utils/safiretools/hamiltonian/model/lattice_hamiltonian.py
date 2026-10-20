@@ -395,8 +395,11 @@ class LatticeHamiltonian(Hamiltonian):
                              data=np.asarray(metadata['twists'], dtype=np.float64))
         group.create_dataset('lattice_vectors',
                              data=np.asarray(metadata['lattice_vectors'], dtype=np.float64))
+        # the file keeps the basis Cartesian, as it was before `Lattice` took a
+        #   fractional one, so files read the same in either direction
         group.create_dataset('basis',
-                             data=np.asarray(metadata['basis'], dtype=np.float64))
+                             data=np.asarray(metadata['basis'], dtype=np.float64)
+                             @ np.asarray(metadata['lattice_vectors'], dtype=np.float64))
 
     @classmethod
     def _read_hdf5(cls, path) -> "LatticeHamiltonian":
@@ -489,9 +492,11 @@ def _read_lattice_metadata(group):
         return {}
 
     lattice_group = group['Lattice']
+    lattice_vectors = lattice_group['lattice_vectors'][...]
+    cartesian_basis = lattice_group['basis'][...]
     return {
-        'lattice_vectors': lattice_group['lattice_vectors'][...].tolist(),
-        'basis': lattice_group['basis'][...].tolist(),
+        'lattice_vectors': lattice_vectors.tolist(),
+        'basis': np.linalg.solve(lattice_vectors.T, cartesian_basis.T).T.tolist(),
         'Ls': [int(size) for size in lattice_group['L'][...]],
         'boundaries': [str(name) for name in lattice_group['boundaries'].asstr()[...]],
         'twists': [float(angle) for angle in lattice_group['twist'][...]],
