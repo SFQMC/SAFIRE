@@ -104,6 +104,7 @@ def plot_lattice(
         show_labels=True,
         show_lattice_vecs=True,
         title=None,
+        fig_scale=2,
 ):
     """
     Plot the sites of a lattice and the bonds to their nth-nearest neighbors.
@@ -115,7 +116,8 @@ def plot_lattice(
     lattice : Lattice
         A built lattice.
     ax : matplotlib.axes.Axes, optional
-        Axes to draw into. Default the current axes.
+        Axes to draw into. By default a new figure is created, sized to the
+        lattice.
     density : array_like, optional
         One value per site, used to color it. Either flat in site order or
         shaped ``(L1, L2, nb)``; ``(L1, L2)`` works when ``nb == 1``.
@@ -138,13 +140,19 @@ def plot_lattice(
         True.
     title : str, optional
         Axes title. Default the lattice size.
+    fig_scale : float, optional
+        Figure inches per unit length, when a figure is created. Default 2.
 
     Returns
     -------
     matplotlib.axes.Axes
     """
+    positions = np.array([site.position for site in lattice.get_sites()])
+
     if ax is None:
-        ax = plt.gca()
+        width, height = fig_scale*(np.ptp(positions, axis=0) + 1)
+        fig, ax = plt.subplots(figsize=(width, height))
+        fig.patch.set(linewidth=4, edgecolor='0.5')
 
     ax.set_aspect(1.)
     ax.xaxis.set_major_locator(MultipleLocator(1.0))
@@ -153,7 +161,7 @@ def plot_lattice(
     ax.grid(linestyle="--", linewidth=0.5, color='.25', zorder=-10)
 
     if title is None:
-        title = f"{lattice.L[0]}x{lattice.L[1]} Lattice"
+        title = f"{lattice.L[0]}×{lattice.L[1]} Lattice"
     ax.set_title(title, fontsize=20, verticalalignment='bottom', pad=20)
     ax.set_xlabel("x", fontsize=14)
     ax.set_ylabel("y", fontsize=14)
@@ -223,9 +231,15 @@ def plot_lattice(
 
     if show_lattice_vecs and lattice.L[0] > 1 and lattice.L[1] > 1:
         origin = np.array([-0.825, -0.825])
-        for vec, label, ha, va in ((lattice.A[:, 0], r'$\vec{a}_1$', 'center', 'top'),
-                                   (lattice.A[:, 1], r'$\vec{a}_2$', 'right', 'center')):
+        a1, a2 = lattice.A.T
+        for vec, other, label in ((a1, a2, r'$\vec{a}_1$'),
+                                  (a2, a1, r'$\vec{a}_2$')):
             ax.arrow(*origin, *vec, color='black', width=0.04, head_width=0.1, shape='full')
-            ax.text(*(origin + vec/2), label, color='black', fontsize=16, ha=ha, va=va)
+            # beside the middle of the arrow, on the side away from the other vector
+            normal = np.array([-vec[1], vec[0]])/np.linalg.norm(vec)
+            if normal @ other > 0:
+                normal = -normal
+            ax.annotate(label, origin + vec/2, xytext=14*normal, textcoords='offset points',
+                        color='black', fontsize=16, ha='center', va='center')
 
     return ax
