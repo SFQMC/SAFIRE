@@ -363,8 +363,8 @@ class HamiltonianBuilder:
 
     @classmethod
     def from_input(cls, lattice: Lattice, *, nbands: int = 1,
-                   spin_symm=SpinSymm.COLLINEAR, t=1.0, custom_one_body=None,
-                   U=None, U1=None, U2=None, J=None, J_heisenberg=None, V=None,
+                   spin_symm=SpinSymm.COLLINEAR, t=1.0, epsilon=None, rashba_lambda=None,
+                   custom_one_body=None, U=None, U1=None, U2=None, J=None, J_heisenberg=None, V=None,
                    pinning=None, hst_types: dict = None) -> "HamiltonianBuilder":
         r"""
         Construct and fully build a `HamiltonianBuilder` from keyword input.
@@ -387,14 +387,24 @@ class HamiltonianBuilder:
             nth-order neighbor hopping (`nth_neighbor_hopping`). Default 1.0;
             ``None`` means no hopping.
 
-            - a scalar gives nearest-neighbor hopping with strength t
+            - a scalar gives nearest-neighbor hopping with strength t, within each band
             - a 1-dimensional list ``[t1, t2, ..., tn]`` gives up to nth-order hopping
-            - a 2-dimensional array with shape (nbands, nbands) is an on-site
-              inter-band hopping matrix
-            - a list of 2-dimensional arrays is a list of on-site inter-band hopping
-              matrices. This is functionally the same as
-              :math:`t_{mn} = \sum t^{(i)}_{mn}` where :math:`t^{(i)}` is the ith
-              element of the list and :math:`m,n` are band indices.
+            - a 2-dimensional array with shape (nbands, nbands) gives band-resolved
+              nearest-neighbor hopping: :math:`t_{mn}` hops between band m on one site
+              and band n on its neighbor
+            - a list of (nbands, nbands) arrays gives band-resolved hopping up to nth
+              order, the ith array for (i+1)th-order neighbors
+
+            Hopping only connects distinct sites; on-site inter-band terms go in
+            `epsilon`.
+        epsilon : float or array_like, optional
+            On-site one-body term (`onebody_onsite`), applied uniformly to all sites. A
+            scalar is an on-site energy for every band; an (nbands, nbands) matrix gives
+            band energies on the diagonal and on-site inter-band hopping off it.
+        rashba_lambda : float, optional
+            Rashba spin-orbit coupling strength (`rashba_soc`), multiplying the hopping
+            `t` of every neighbor order. Requires `spin_symm` NONCOLLINEAR and a
+            scalar or 1-dimensional `t`.
         custom_one_body : array_like, optional
             One-body matrix added as is (`custom_one_body`).
         U : float or array_like, optional
@@ -439,6 +449,7 @@ class HamiltonianBuilder:
 
         one_body_steps = [
             ('nth_neighbor_hopping', t),
+            ('onebody_onsite', epsilon),
             ('custom_one_body', custom_one_body),
         ]
         interaction_steps = [
@@ -457,6 +468,8 @@ class HamiltonianBuilder:
         for step, value in one_body_steps:
             if value is not None:
                 getattr(builder, step)(value)
+        if rashba_lambda is not None:
+            builder.rashba_soc(rashba_lambda, t=t)
         for step, key, value in interaction_steps:
             if value is not None:
                 getattr(builder, step)(value, hst_type=hst_types.get(key))
@@ -578,13 +591,15 @@ class HamiltonianBuilder:
         t : float | numpy.ndarray, default: 1.0
             the hopping strength. By convention a minus sign (-) is applied to the hopping.
             i.e. :math:`\sum_{<ij>} (-t) \hat{c}^\dagger_i \hat{c}_j`
-            If t is a float, hoping between sites but not between bands, is used. If t is an
-            numpy.ndarray, it must have shape nbands x nbands and is interpreted as a band
-            dependent hopping.
+            If t is a float, it hops between the same band on neighboring sites. If t is a
+            numpy.ndarray of shape (nbands, nbands), :math:`t_{mn}` hops from band n on one
+            neighboring site to band m on the other; it never couples bands on the same site
+            (see `onebody_onsite` for that).
+            A 1-dimensional list of floats, or a list of (nbands, nbands) matrices, gives one
+            entry per neighbor order and is iterated over, see `nth_neighbor`.
         nth_neighbor : int, optional, default: 1
             the order of neighbor to use for hopping. `nth_neighbor` equal to 1 is nearest-neighbors.
-            If `nth_neighbor` is not given, and `t` is an iterable, `t` is iterated over and `nth_neighbor` is
-            inferred from the array index, `i`, of each entry in `t` as `nth_neighbor=i+1`
+            If `t` is a list, it is ignored: entry `i` of `t` is used for `nth_neighbor=i+1`.
         spin_symm : SpinSymm, optional
             an override for the default spin symmetry enumerated type for the hopping matrix.
             If not given, the spin symmetry of the Hamiltonian will be used.
@@ -787,10 +802,10 @@ class HamiltonianBuilder:
                                 spin_symm=spin_symm)
             return
 
-        if rashba_lambda.shape != ():
+        if rashba_lambda.shape != () or t.shape != ():
             raise ValueError(
                 f"could not build Rashba SOC from lambda = {rashba_lambda} "
-                f"with {n}th neighbor hopping"
+                f"with {n}th neighbor hopping t = {t}; only scalar lambda and t are supported"
             )
 
         nbands = self._hamiltonian.nbands

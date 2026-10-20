@@ -222,6 +222,43 @@ def test_from_input_rejects_hst_types_for_one_body_terms(square_4x4):
         HamiltonianBuilder.from_input(square_4x4, hst_types={'t': 'discrete_spin'})
 
 
+def test_from_input_epsilon_is_onebody_onsite(square_2x2):
+    epsilon = np.array([[0.5, 0.2], [0.2, -0.5]])
+    from_input = HamiltonianBuilder.from_input(square_2x2, nbands=2, t=None, epsilon=epsilon)
+
+    builder = HamiltonianBuilder(lattice=square_2x2, nbands=2)
+    builder.onebody_onsite(epsilon)
+    builder.finalize()
+
+    np.testing.assert_allclose(from_input.get_hamiltonian().get_one_body().toarray(),
+                               builder.get_hamiltonian().get_one_body().toarray())
+
+
+def test_from_input_rashba_lambda_follows_the_hopping(square_4x4):
+    hopping = [1.0, 0.5]
+    from_input = HamiltonianBuilder.from_input(
+        square_4x4, spin_symm=SpinSymm.NONCOLLINEAR, t=hopping, rashba_lambda=0.3)
+
+    builder = HamiltonianBuilder(lattice=square_4x4, spin_symm=SpinSymm.NONCOLLINEAR)
+    builder.nth_neighbor_hopping(hopping)
+    builder.rashba_soc(0.3, t=hopping)
+    builder.finalize()
+
+    np.testing.assert_allclose(from_input.get_hamiltonian().get_one_body().toarray(),
+                               builder.get_hamiltonian().get_one_body().toarray())
+
+
+def test_band_matrix_hopping_never_couples_bands_on_one_site(square_2x2):
+    hamiltonian = HamiltonianBuilder.from_input(
+        square_2x2, nbands=2, spin_symm=SpinSymm.CLOSED,
+        t=np.array([[1.0, 0.3], [0.3, 1.0]])).get_hamiltonian()
+    one_body = hamiltonian.get_one_body().toarray()
+
+    for site in range(square_2x2.N_sites):
+        block = slice(2 * site, 2 * site + 2)
+        np.testing.assert_array_equal(one_body[block, block], 0.0)
+
+
 def test_negative_and_positive_u_become_separate_components(square_2x2):
     """
     Opposite signs call for different Hubbard-Stratonovich transformations, so
