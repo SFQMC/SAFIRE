@@ -343,7 +343,8 @@ independent of building a full Hamiltonian.
 ### One constructor, built-in unit cells by name
 
 `Lattice(lattice_vectors, basis, Ls, *, boundaries, twists=(0.0, 0.0), build=True)` takes any unit
-cell. `boundaries` has no default (user call): an open or periodic boundary is never picked
+cell, with the basis in fractional coordinates of the lattice vectors (user call), so a site sits at
+`A @ ((n1, n2) + basis[b])`. `boundaries` has no default (user call): an open or periodic boundary is never picked
 silently. `twists` defaults to no twist. `Lattice.from_type(type, Ls, **kwargs)` looks the unit cell up in `LATTICE_TYPES`
 (square, triangular, honeycomb, kagome) and forwards the rest. There used to be one subclass per
 type, a `CustomLattice` for caller-supplied cells and a `from_dict()` factory; the subclasses
@@ -606,7 +607,9 @@ than a second public enum. That is also what lets its docstring name
 the *shape* of the lattice it was built on under `Hamiltonian/ModelHamiltonian/Lattice`, written in
 the dimension-agnostic form a future N-dimensional `Lattice` will need — `L` and `boundaries` and
 `twist` as per-axis sequences, the unit cell as a `lattice_vectors` matrix — rather than as
-`L1`/`L2`/`a1`/`a2` pairs. Today `ndim` is always 2. `LatticeHamiltonian.lattice_params` returns the
+`L1`/`L2`/`a1`/`a2` pairs. Today `ndim` is always 2. `Lattice` takes its basis in fractional
+coordinates of the lattice vectors, but the file's `basis` dataset stays Cartesian, as it was before
+that change, and is converted on write and read; no format bump was needed. `LatticeHamiltonian.lattice_params` returns the
 metadata as `Lattice` constructor arguments, so `Lattice(**hamiltonian.lattice_params)` rebuilds the
 lattice from a Hamiltonian file. A lattice type name is not recorded: the unit cell is. All of this
 is additive — the executable ignores groups it does not read.

@@ -215,7 +215,9 @@ class Lattice:
     lattice_vectors : array_like, shape (2, 2)
         The lattice vectors ``a1`` and ``a2``, one per row.
     basis : array_like, shape (nb, 2)
-        Positions of the sites within the unit cell.
+        Positions of the sites within the unit cell, in fractional coordinates
+        of the lattice vectors: site ``b`` of cell ``(n1, n2)`` sits at
+        ``A @ ((n1, n2) + basis[b])``.
     Ls : iterable(int)
         2-element lattice size, in units of the unit cell.
     boundaries : iterable(str)
@@ -331,15 +333,17 @@ class Lattice:
                     "XC/YC cell reshaping is only available for 'triangular'"
                 )
             a1, a2 = np.array(lattice_vectors)
-            basis = [np.array(b) for b in basis]
-            basis = basis + [b + a2 for b in basis]
             lattice_vectors = [a1, -a1 + 2 * a2]
+            # b and b + a2 in the new cell: a2 = (a1 + a2') / 2
+            f1, f2 = np.transpose(basis)
+            half = np.column_stack([f1 + f2 / 2, f2 / 2])
+            basis = np.vstack([half, half + 0.5])
             if cyl_mode == "XC":
                 Ls = (Ls[0], Ls[1] // 2)
             else:
+                # swapping x and y of the cell leaves the fractional basis unchanged
                 Ls = (Ls[1], Ls[0] // 2)
                 lattice_vectors = [v[::-1] for v in lattice_vectors]
-                basis = [b[::-1] for b in basis]
 
         return cls(lattice_vectors, basis, Ls, **kwargs)
 
@@ -358,8 +362,9 @@ class Lattice:
     @property
     def basis(self):
         """
-        Basis vectors within the unit cell. Read-only; see `Lattice`. The list
-        and its arrays are both immutable.
+        Basis vectors within the unit cell, in fractional coordinates of the
+        lattice vectors. Read-only; see `Lattice`. The list and its arrays are
+        both immutable.
         """
         return tuple(self._basis)
 
@@ -521,9 +526,7 @@ class Lattice:
         """
         periodic = (isinstance(self.axis1_boundary, PBCBoundary),
                     isinstance(self.axis2_boundary, PBCBoundary))
-        fractional = np.linalg.solve(self.A, np.transpose(self._basis)).T
-
-        for (i, first), (j, second) in itertools.combinations(enumerate(fractional), 2):
+        for (i, first), (j, second) in itertools.combinations(enumerate(self._basis), 2):
             offset = second - first
 
             if np.allclose(offset, np.round(offset)):
@@ -574,7 +577,7 @@ class Lattice:
         return coord[0]*self.L[1]*self._nb + coord[1]*self._nb + coord[2]
 
     def _position(self, coord):
-        return self.A @ coord[:2] + self._basis[coord[2]]
+        return self.A @ (coord[:2] + self._basis[coord[2]])
 
     def _build_distances(self):
         if self._distances is None:
@@ -752,12 +755,12 @@ LATTICE_TYPES = {
                    [[0., 0.]]),
     # the honeycomb and kagome cells are the square-like ones netket uses, rather
     #   than the triangular cell with basis [(0, 0), (0, 1/sqrt(3))] and so on
-    'honeycomb': ([[1., 0.], [0.5, 0.75**0.5]],
-                  [[0.5, 0.5 / 3**0.5], [1., 1 / 3**0.5]]),
-    'kagome': ([[1., 0.], [0.5, np.sqrt(0.75)]],
-               [[0.5, 0.], [0.25, np.sqrt(0.75) / 2], [0.75, np.sqrt(0.75) / 2]]),
+    'honeycomb': ([[1., 0.], [0.5, np.sqrt(3) / 2]],
+                  [[1 / 3, 1 / 3], [2 / 3, 2 / 3]]),
+    'kagome': ([[1., 0.], [0.5, np.sqrt(3) / 2]],
+               [[0.5, 0.], [0., 0.5], [0.5, 0.5]]),
 }
-"""Lattice vectors and basis of each `Lattice.from_type` type."""
+"""Lattice vectors and fractional basis of each `Lattice.from_type` type."""
 
 _BOUNDARY_TYPES = {
     'open': OpenBoundary,

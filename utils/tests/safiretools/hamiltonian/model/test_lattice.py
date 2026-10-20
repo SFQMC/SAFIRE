@@ -174,7 +174,9 @@ class TestConstructor:
         for basis_index in range(2):
             site = next(s for s in lattice.get_sites()
                         if tuple(s.coord) == (1, 2, basis_index))
-            expected = np.array(a1) + 2 * np.array(a2) + np.array(basis[basis_index])
+            # the basis is fractional: site b of cell (1, 2) sits at A @ ((1, 2) + basis[b])
+            expected = ((1 + basis[basis_index][0]) * np.array(a1)
+                        + (2 + basis[basis_index][1]) * np.array(a2))
             np.testing.assert_allclose(site.position, expected)
 
     def test_unitcell_is_copied_from_the_caller(self):
@@ -208,8 +210,8 @@ class TestCylMode:
             _periodic('triangular', cyl_mode='ZC')
 
     @pytest.mark.parametrize("cyl_mode,L,a1,a2,basis", [
-        ('XC', (4, 3), [1.0, 0.0], [0.0, 3 ** 0.5], [[0.0, 0.0], [0.5, 3 ** 0.5 / 2]]),
-        ('YC', (6, 2), [0.0, 1.0], [3 ** 0.5, 0.0], [[0.0, 0.0], [3 ** 0.5 / 2, 0.5]]),
+        ('XC', (4, 3), [1.0, 0.0], [0.0, 3 ** 0.5], [[0.0, 0.0], [0.5, 0.5]]),
+        ('YC', (6, 2), [0.0, 1.0], [3 ** 0.5, 0.0], [[0.0, 0.0], [0.5, 0.5]]),
     ])
     def test_reshaped_cell(self, cyl_mode, L, a1, a2, basis):
         lattice = _periodic('triangular', Ls=(4, 6), cyl_mode=cyl_mode)
@@ -421,10 +423,10 @@ class TestBasisValidation:
         assert lattice.N_sites == 9 * len(basis)
 
     def test_the_documented_lieb_example_still_builds(self):
-        # the tilted-cell Lieb lattice from the docs: basis vectors up to |1.5|
+        # the tilted-cell Lieb lattice from the docs
         lattice = Lattice(
             [[1.0, -1.0], [1.0, 1.0]],
-            [[0, 0], [0.5, 0], [0, 0.5], [1.0, 0], [1.5, 0], [1.0, 0.5]],
+            [[0, 0], [0.25, 0.25], [-0.25, 0.25], [0.5, 0.5], [0.75, 0.75], [0.25, 0.75]],
             (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0),
         )
 

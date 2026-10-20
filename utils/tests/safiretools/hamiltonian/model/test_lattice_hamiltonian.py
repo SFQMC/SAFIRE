@@ -252,8 +252,24 @@ class TestLatticeMetadata:
         path = tmp_path / f'{name}.h5'
         hamiltonian.to_hdf5(path)
         restored = Hamiltonian.from_hdf5(path)
+        restored_metadata = dict(restored.lattice_metadata)
+        metadata = dict(hamiltonian.lattice_metadata)
 
-        assert restored.lattice_metadata == hamiltonian.lattice_metadata
+        # the file stores the basis Cartesian, so reading it back rounds
+        assert np.allclose(restored_metadata.pop('basis'), metadata.pop('basis'),
+                           rtol=0, atol=1e-14)
+        assert restored_metadata == metadata
+
+    def test_file_basis_is_cartesian(self, tmp_path):
+        lattice = Lattice([[2.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [0.5, 0.5]], (3, 3),
+                          boundaries=('periodic', 'periodic'))
+        path = tmp_path / 'cartesian.h5'
+        LatticeHamiltonian.from_lattice(lattice, U=1.0).to_hdf5(path)
+
+        with h5.File(path, 'r') as fh5:
+            stored = fh5['Hamiltonian/ModelHamiltonian/Lattice/basis'][...]
+
+        assert np.allclose(stored, [[0.0, 0.0], [1.5, 0.5]])
 
     def test_lattice_params_rebuild_the_same_lattice(self, case):
         _, source = case
