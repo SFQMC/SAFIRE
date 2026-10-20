@@ -354,7 +354,7 @@ class Lattice:
     def A(self):
         """
         The lattice vectors ``a1`` and ``a2`` as the *columns* of a 2x2 matrix,
-        so a site at cell ``(n1, n2)`` sits at ``A @ (n1, n2) + basis[b]``.
+        so site ``b`` of cell ``(n1, n2)`` sits at ``A @ ((n1, n2) + basis[b])``.
         Read-only; see `Lattice`.
         """
         return self._A
