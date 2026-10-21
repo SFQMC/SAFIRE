@@ -15,12 +15,19 @@ kernelspec:
 
 # Writing a Trial Wavefunction
 
+<!--
+This is the main version of the Writing a Trial Wavefunction tutorial. The lattice-model version
+includes the regions between the "BEGIN wfn-NAME" and "END wfn-NAME" markers below,
+so keep those regions free of system-specific content and code cells. Code cells and
+system-specific text go between the regions, and every version repeats them.
+-->
+
 <b>Goal:</b>
 Become acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 format.
 
 ## What You Will Learn
 
-1.  How to write a single Slater determinant trial wavefunction given the Slater Matrix
+1.  How to write a single Slater determinant trial wavefunction given the Slater Matrix, for closed-shell, collinear, and noncollinear spin
 2.  How to write a non-orthogonal multi-Slater determinant trial wavefunction given the expansion coefficients and Slater matrices
 3.  How to write a configuration-interaction (CI) type trial wavefunction given CI coefficients and a corresponding occupancy strings
 
@@ -32,6 +39,8 @@ Become acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 form
 ```
 
 +++ {"id": "vt9PbuQhpw4u"}
+
+<!-- BEGIN wfn-introduction -->
 
 ## Introduction
 
@@ -76,6 +85,8 @@ where **strictly** $\langle \Phi_n |\Phi_m\rangle \neq 0 \forall n,m$.
 In this case, the Slater determinants are specified as a list
 of $C_n$ and corresponding Slater matrices. 
 
+<!-- END wfn-introduction -->
+
 We'll explore each of these wavefunction types in more detail below.
 
 <!--
@@ -94,7 +105,20 @@ Use PHMSD for orthogonal expansions of Slater determinants.
 ## Single Slater Determinant Trial Wavefunction
 
 We have already seen examples of writing a single Slater determinant trial wavefunction using {py:meth}`safiretools.Wavefunction.from_single_determinant` in previous tutorials.
-Under the hood this creates a NOMSD wavefunction with a single determinant, as the code block below shows.
+
+<!-- BEGIN wfn-single-det -->
+
+{py:meth}`safiretools.Wavefunction.from_single_determinant` takes the Slater matrix, whose columns are the occupied orbitals, so it has shape $M \times N$ with generally more basis functions $M$ than electrons $N$.
+How the Slater matrix is passed decides the spin symmetry of the wavefunction, which, together with that of the Hamiltonian, decides the walker type (see {ref}`Walker-classes`).
+All examples below use the same set of four orthonormal orbitals.
+
+### Closed Shell
+
+In a closed-shell determinant, spin-up and spin-down electrons occupy the same orbitals, so a single $M \times N_\uparrow$ array describes both spin sectors.
+Here, we put two electrons of each spin into the lowest two of four orbitals.
+Under the hood, this creates a NOMSD wavefunction with a single determinant, as the code block below shows.
+
+<!-- END wfn-single-det -->
 
 ```{code-cell} ipython3
 ---
@@ -108,16 +132,20 @@ import numpy as np
 
 from safiretools import NOMSDWavefunction, Wavefunction
 
-number_of_electrons = (1,1)
-number_of_orbitals = 2
+number_of_electrons = (2,2)
+number_of_orbitals = 4
 
-orbitals = np.array(
-    [[1.0,0.0],
-    [0.0,1.0]]
+# four orthonormal orbitals, one per column
+orbitals = 0.5 * np.array(
+    [[1.0, 1.0, 1.0, 1.0],
+     [1.0,-1.0, 1.0,-1.0],
+     [1.0, 1.0,-1.0,-1.0],
+     [1.0,-1.0,-1.0, 1.0]]
 )
 
 # shorthand
 wavefunction = Wavefunction.from_single_determinant(orbitals[:, :number_of_electrons[0]])
+print(wavefunction.spin_symm.label, wavefunction.nelec)
 
 # under the hood: NOMSD with 1 determinant and 1 expansion coefficient
 phi_0 = np.array([
@@ -131,38 +159,83 @@ wavefunction = NOMSDWavefunction(
 )
 
 # write to HDF5
-wavefunction.to_hdf5("rhf_wfn.h5")
+wavefunction.to_hdf5("closed_wfn.h5")
 ```
 
+<!-- BEGIN wfn-single-det-constructor -->
+
 In the `NOMSDWavefunction` constructor, `coeffs` is a 1-dimensional array of expansion coefficients, and `dets` is a 3-dimensional array where the first index corresponds to the Slater determinant index, the second index corresponds to the basis set index, and the third index corresponds to the electron index.
+See {ref}`Wavefunction-classes` for details on the file format.
 
-We can use the `h5dump` utility to inspect the contents of the file that we just generated. 
-`h5dump -n [filename]` will show us which datasets exist, and we can use `h5dump -d [dataset] [filename]` to
-view the actual data.
+<!-- END wfn-single-det-constructor -->
 
-Note that the NOMSD format is a compressed sparse row (CSR) format.
-See {ref}`Wavefunction-classes` for details on the expected data.
+<!-- BEGIN wfn-collinear -->
+
+### Collinear
+
+In a collinear determinant, spin-up and spin-down electrons occupy different orbitals, and their numbers may differ.
+The Slater matrix is passed as a tuple of an $M \times N_\uparrow$ and an $M \times N_\downarrow$ array.
+It has to be a tuple: a list is rejected, and a single stacked array of shape $2 \times M \times N$ is read as a noncollinear determinant.
+Here, three spin-up electrons occupy the lowest three orbitals, while the two spin-down electrons occupy orbitals 0 and 2.
+
+<!-- END wfn-collinear -->
 
 ```{code-cell} ipython3
-!h5dump -n rhf_wfn.h5
+phi_up = orbitals[:, :3]
+phi_down = orbitals[:, [0, 2]]
+
+wavefunction = Wavefunction.from_single_determinant((phi_up, phi_down))
+print(wavefunction.spin_symm.label, wavefunction.nelec)
+
+wavefunction.to_hdf5("collinear_wfn.h5")
+```
+
+<!-- BEGIN wfn-noncollinear -->
+
+### Noncollinear
+
+If spin is not a good quantum number, e.g. in the presence of spin-orbit coupling or noncollinear magnetic order, each orbital is a two-component spinor.
+The Slater matrix is then passed as a single $2 \times M \times N$ array, where the first index selects the spin-up or spin-down component and $N$ is the total number of electrons.
+Here, three spinors occupy the lowest three orbitals, with their spins rotated away from the $z$ axis by $\theta = 0, \pi/2, \pi$ in the $xz$ plane.
+A noncollinear wavefunction reports its electron count as `nelec = (3, 0)`.
+
+<!-- END wfn-noncollinear -->
+
+```{code-cell} ipython3
+theta = np.array([0.0, np.pi/2, np.pi])
+
+phi = np.array([
+    orbitals[:, :3] * np.cos(theta/2),  # spin-up components
+    orbitals[:, :3] * np.sin(theta/2),  # spin-down components
+])
+
+wavefunction = Wavefunction.from_single_determinant(phi)
+print(wavefunction.spin_symm.label, wavefunction.nelec)
+
+wavefunction.to_hdf5("noncollinear_wfn.h5")
 ```
 
 +++ {"id": "VJfGuez4rsE-"}
+
+<!-- BEGIN wfn-nomsd -->
 
 ## NOMSD Trial Wavefunction
 
 In the previous example, we learned how to specify a trial wavefunction with a single Slater determinant. Here, we will see how to we can write a suitable non-orthogonal multi-Slater trial wavefunction for the AFQMC code.
 
-We take two determinants with one electron per spin, each occupying a different orbital. The two orbitals are normalized but not orthogonal to each other.
+We take two closed-shell determinants with two electrons per spin in the four orbitals from above. Both occupy the first orbital; the second determinant replaces the second orbital by an equal mix of the second and third, so the two determinants are normalized but not orthogonal to each other.
 As in the single determinant case, `phi_nomsd` has the dimensions (N$_\mathrm{dets}$,N$_\mathrm{basis}$,N$_\mathrm{elec}$).
+Collinear and noncollinear expansions work the same way: each array of the corresponding single-determinant layout gains a leading N$_\mathrm{dets}$ axis, giving a tuple of (N$_\mathrm{dets}$,N$_\mathrm{basis}$,N$_\uparrow$) and (N$_\mathrm{dets}$,N$_\mathrm{basis}$,N$_\downarrow$) arrays or a single (N$_\mathrm{dets}$,2,N$_\mathrm{basis}$,N$_\mathrm{elec}$) array, respectively.
+
+<!-- END wfn-nomsd -->
 
 ```{code-cell} ipython3
 :id: 8Y0sDP2wr1vk
 
-# two nonorthogonal RHF determinants with one orbital each
+# two nonorthogonal closed-shell determinants with two orbitals each
 phi_nomsd = np.array([
-    [[1.0], [0.0]],
-    [[1/np.sqrt(2)], [1/np.sqrt(2)]],
+    orbitals[:, [0, 1]],
+    np.column_stack([orbitals[:, 0], (orbitals[:, 1] + orbitals[:, 2])/np.sqrt(2)]),
 ])
 
 C_0 = 1.0
@@ -173,14 +246,6 @@ NOMSDWavefunction(
     dets=phi_nomsd
 ).to_hdf5("NOMSD_wfn.h5")
 ```
-
-```{code-cell} ipython3
-!h5dump -n NOMSD_wfn.h5
-```
-
-notice that there are two Slater determinants in the HDF5 file, `PsiT_0` and `PsiT_1`! In this closed-shell example, both spins share the same determinant.
-For collinear wavefunctions, the spin up and spin down Slater determinants are stored as separate data sets with even (odd) indices
-corresponding to up (down) sector Slater determinants.
 
 +++ {"id": "YtBpL-q8rlGT"}
 
@@ -244,21 +309,6 @@ PHMSDWavefunction(
 ).to_hdf5("PHMSD_wfn.h5")
 ```
 
-```{code-cell} ipython3
-!h5dump -n PHMSD_wfn.h5
-```
-
-here, the interesting information is the orbital occupancies in `/Wavefunction/PHMSD/occs` and
-the CI coefficients in `/Wavefunction/PHMSD/ci_coeffs`.
-
-```{code-cell} ipython3
-!h5dump -d /Wavefunction/PHMSD/occa PHMSD_wfn.h5
-```
-
-```{code-cell} ipython3
-!h5dump -d /Wavefunction/PHMSD/ci_coeffs PHMSD_wfn.h5
-```
-
 +++ {"id": "FoovlUVcFqxX"}
 
 ## Summary
@@ -267,10 +317,9 @@ In this tutorial, you became acquainted with how to write a Trial wavefunction t
 
 ### What You Learned
 
-1. How to write a single Slater determinant trial wavefunction given the Slater Matrix
-2. How to write a single Slater determinant given orbital occupancies
-3. How to write a non-orthogonal multi-Slater determinant trial wavefunction given the expansion coefficients and Slater matrices
-4. How to write a configuration-interaction (CI) type trial wavefunction given CI coefficients and a corresponding occupancy strings
+1. How to write a single Slater determinant trial wavefunction given the Slater Matrix, for closed-shell, collinear, and noncollinear spin
+2. How to write a non-orthogonal multi-Slater determinant trial wavefunction given the expansion coefficients and Slater matrices
+3. How to write a configuration-interaction (CI) type trial wavefunction given CI coefficients and a corresponding occupancy strings
 
 ```{code-cell} ipython3
 :id: qVBQ6CAhF3Xn

@@ -47,7 +47,7 @@ is a separate package, installed with
 
 .. code-block::
 
-  pip install sfqmc-autohf.
+  pip install sfqmc-autohf
 
 API Reference
 -------------
