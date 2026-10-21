@@ -44,6 +44,19 @@ public:
     return *this;
   }
 
+  void configure_phmsd_workload(std::array<long,2> unique) {
+    std::visit([&](auto& op) {
+      if constexpr(requires { op.configure_phmsd_workload(unique); })
+        op.configure_phmsd_workload(unique);
+    }, var);
+  }
+
+  void release_phmsd_workspace() {
+    std::visit([](auto& op) {
+      if constexpr(requires { op.release_phmsd_workspace(); }) op.release_phmsd_workspace();
+    }, var);
+  }
+
   void runtime_optimization(memory::array_view<MEM,const ComplexType,2> G);
 
   nda::array<ComplexType,3> getOneBodyPropagatorMatrix(double dt,

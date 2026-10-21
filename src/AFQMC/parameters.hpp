@@ -44,13 +44,16 @@ struct WavefunctionParameters {
   // the two optionals below depend on the hamiltonian type, so resolve_defaults fills them in
   std::optional<PHMSDEnergyAlgorithm> algorithm{};
   std::optional<bool> dense_trial{};
-  int nwalk_block_size{8};
-  int ndet_block_size{4096};
+  // Zero selects automatic batching; positive values remain expert upper bounds.
+  int nwalk_block_size{0};
+  int ndet_block_size{0};
+  int phmsd_workspace_mb{0}; // planning budget in MiB; zero selects a conservative default
+  double phmsd_tuning_seconds{1.0}; // zero disables timing, retaining memory-aware planning
 
   // system
 };
 SAFIRE_DEFINE_PARAMETERS(WavefunctionParameters, name, filename, ndets_to_read, algorithm, dense_trial,
-                         nwalk_block_size, ndet_block_size);
+                         nwalk_block_size, ndet_block_size, phmsd_workspace_mb, phmsd_tuning_seconds);
 
 /// Every walker starts out as the initial guess of this wavefunction.
 struct WavefunctionSource {

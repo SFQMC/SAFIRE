@@ -123,6 +123,15 @@ public:
     return H1;
   }
 
+  void configure_phmsd_workload(std::array<long,2> unique) { phmsd_unique = unique; }
+
+  void release_phmsd_workspace() {
+    Twina_ph = decltype(Twina_ph){}; Swia_ph = decltype(Swia_ph){};
+    ph_exchange_integrals = decltype(ph_exchange_integrals){}; ph_exchange_T = decltype(ph_exchange_T){};
+    ph_exchange_F = decltype(ph_exchange_F){}; ph_exchange_K0 = decltype(ph_exchange_K0){};
+    ph_exchange_integrals_valid = false;
+  }
+
   void runtime_optimization(nda::MemoryArrayOfRank<2> auto const& G)
   {  /*nothing to do right now*/ }
 
@@ -269,6 +278,55 @@ public:
     utils::check(Twina_ph.extent(0) >= nwalk * nelec * nCV * nact, "Error in ph_excited_energy: Unexpected size in Twina_ph.");
     memory::array_view<MEM,ComplexType,4> Twina({nwalk,nelec,nCV,nact},Twina_ph.data());
 
+    {
+      long pair_size=long(nelec)*nact;
+      // Amortize the exact integral transform over the unique-spin expansion.
+      // Division avoids overflow in the memory bound for large active spaces.
+      if(!ph_exchange_integrals_valid && std::max(long(ndet),phmsd_unique[spin_component==Alpha ? 0 : 1]-1)>=256 && nCV>2*nact && pair_size>0 &&
+         nwalk <= phmsd_exchange_cache_walkers(nelec,nact,MEM==HOST_MEMORY ? 0 : nCV)) {
+        ph_exchange_integrals.resize(nwalk,nelec,nact,nelec,nact);
+        if constexpr(MEM==HOST_MEMORY) {
+          memory::buffered_array<HOST_MEMORY,ComplexType,3> Tin(nelec,nact,nCV);
+          for(long iw=0; iw<nwalk; ++iw) {
+            nda::tensor::add(ComplexType(1),Twina(iw,all,all,all),"ina",ComplexType(0),Tin,"ian");
+            auto tm=nda::reshape(Tin,std::array<long,2>{pair_size,nCV});
+            auto xm=nda::reshape(ph_exchange_integrals(iw,all,all,all,all),
+                                 std::array<long,2>{pair_size,pair_size});
+            nda::blas::gemm(ComplexType(1),tm,nda::transpose(tm),ComplexType(0),xm);
+          }
+        } else {
+#if defined(ENABLE_DEVICE)
+          using kernels::device::to_view;
+          ph_exchange_T.resize(nwalk,nelec,nact,nCV);
+          ph_exchange_F.resize(nwalk,nelec,nact);
+          ph_exchange_K0.resize(nwalk,nCV);
+          nda::tensor::add(ComplexType(1),Twina,"wina",ComplexType(0),ph_exchange_T,"wian");
+          for(long iw=0; iw<nwalk; ++iw) {
+            auto tm=nda::reshape(ph_exchange_T(iw,all,all,all),std::array<long,2>{pair_size,nCV});
+            auto xm=nda::reshape(ph_exchange_integrals(iw,all,all,all,all),
+                                 std::array<long,2>{pair_size,pair_size});
+            nda::blas::gemm(ComplexType(1),tm,nda::transpose(tm),ComplexType(0),xm);
+          }
+          kernels::device::phmsd_integral_reference(refc.data(),to_view(ph_exchange_T),
+              to_view(ph_exchange_integrals),to_view(ph_exchange_F),to_view(ph_exchange_K0));
+#endif
+        }
+        ph_exchange_integrals_valid=true;
+      }
+      if(ph_exchange_integrals_valid) {
+        if constexpr(MEM==HOST_MEMORY) {
+          ph_excited_2body_energy_integrals(iexcit,refc,Twina,R,wgt,E(all,1),E(all,2),K,ph_exchange_integrals);
+        } else {
+#if defined(ENABLE_DEVICE)
+          using kernels::device::to_view;
+          kernels::device::phmsd_integral_energy(refc.data(),iexcit.data(),to_view(ph_exchange_T),
+              to_view(ph_exchange_integrals),to_view(ph_exchange_F),to_view(ph_exchange_K0),
+              to_view(R),to_view(wgt),to_view(E(all,1)),to_view(E(all,2)),to_view(K));
+#endif
+        }
+        return;
+      }
+    }
     ph_excited_2body_energy_dense_cholesky(iexcit, refc, Twina, R, wgt, E(all,1), E(all,2), K);
   }
 
@@ -469,6 +527,13 @@ private:
   memory::array<MEM,ComplexType,1> Twina_ph;
   // Swia = sum_k G_ref[w][i][k] h[a][k]
   memory::array<MEM,ComplexType,1> Swia_ph; 
+  // Exact exchange cache, bounded to 64 MiB across the walker batch.
+  memory::array<MEM,ComplexType,5> ph_exchange_integrals;
+  memory::array<MEM,ComplexType,4> ph_exchange_T;
+  memory::array<MEM,ComplexType,3> ph_exchange_F;
+  memory::array<MEM,ComplexType,2> ph_exchange_K0;
+  bool ph_exchange_integrals_valid=false;
+  std::array<long,2> phmsd_unique{0,0};
 
   // zero of energy
   RealType E0;
@@ -693,6 +758,7 @@ private:
                          ComplexType(1.0),Kl,"wn");
     }
 
+    ph_exchange_integrals_valid=false;
   }  // ph_ref_energy_impl 
 
 };

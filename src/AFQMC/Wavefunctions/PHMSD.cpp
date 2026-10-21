@@ -17,6 +17,11 @@
 #include <vector>
 #include <tuple>
 #include <algorithm>
+#include <chrono>
+#include <limits>
+#include "mpi3/environment.hpp"
+#include "arch/arch.h"
+#include "utilities/memory_utils.hpp"
 
 #include "AFQMC/config.h"
 #include "AFQMC/Utilities/AFQMCTimer.h"
@@ -36,15 +41,192 @@ namespace afqmc
 
 
 template<MEMORY_SPACE MEM>
+void PHMSD<MEM>::plan_batches(int walkers)
+{
+  auto const& u=abij.number_of_unique_excitations();
+  int acta=OrbMats(0).extent(0), actb=OrbMats(OrbMats.extent(0)-1).extent(0);
+  int nc=HamOp.number_of_ke_vectors();
+  batch_model={double(NMO),double(std::max(nup,ndown)),double(std::max(acta,actb)),
+               double(nc),double(u[0]),double(u[1]),0,0,0,MEM==DEVICE_MEMORY};
+  for(int spin=0; spin<2; ++spin)
+    for(int r=1; r<abij.maximum_excitation_number()[spin]; ++r) {
+      int count=abij.number_of_unique_excitations(r)[spin];
+      if(count) batch_model.rank=std::max(batch_model.rank,double(r));
+      batch_model.shell=std::max(batch_model.shell,double(count));
+    }
+  if(nc>2*std::max(acta,actb) && std::max(u[0],u[1])>256)
+    batch_model.cache_walkers=std::min(phmsd_exchange_cache_walkers(nup,acta,MEM==HOST_MEMORY ? 0 : nc),
+                                       phmsd_exchange_cache_walkers(ndown,actb,MEM==HOST_MEMORY ? 0 : nc));
+  workspace_bytes=(workspace_mb>0 ? double(workspace_mb) : 2048.0)*1024*1024;
+#if defined(ENABLE_CUDA)
+  if constexpr(MEM==DEVICE_MEMORY) {
+    size_t available=0,total=0;
+    cuda::cuda_check(cudaMemGetInfo(&available,&total));
+    // Conservative sharing bound, including jobs with multiple ranks per GPU.
+    // Node ranks may use different GPUs, so this deliberately underestimates
+    // the allowance. An explicit budget overrides the automatic share only.
+    if(workspace_mb==0)
+      workspace_bytes=std::min(workspace_bytes,0.5*double(available)/mpi->node_comm.size());
+  }
+#endif
+  int w=std::min(walkers,requested_walkers>0 ? requested_walkers : 8);
+  int d=requested_determinants>0 ? requested_determinants : 4096;
+  auto density=batch_model.fit({w,d},false,workspace_bytes);
+  int ew=w, ed=d;
+  if constexpr(MEM==HOST_MEMORY) {
+    // The CPU Cholesky path contracts one walker at a time. Large R/B tiles
+    // add memory traffic without creating a batched BLAS operation. For a
+    // substantial expansion, keep its per-walker tile near 4 MiB; preserve the
+    // existing larger batches for the exact-integral-cache path.
+    if(batch_model.cache_walkers==0 && batch_model.unique_a+batch_model.unique_b>=4096) {
+      if(requested_walkers==0) ew=1;
+      if(requested_determinants==0) {
+        double per_det=16*(4*batch_model.rank*batch_model.rank + batch_model.rank*
+                          (batch_model.nelec*batch_model.nchol+batch_model.nact));
+        int tile=8; // retain the optimized GEMM dispatch when a shell permits it
+        while(tile<4096 && 2.0*tile*per_det<=4.0*1024*1024) tile*=2;
+        ed=std::min(d,tile);
+      }
+    }
+  }
+  auto energy=batch_model.fit({ew,ed},true,workspace_bytes);
+  utils::check(batch_model.bytes(density,false)<=workspace_bytes &&
+                 (energy_algorithm!=PHMSDEnergyAlgorithm::woodbury || batch_model.bytes(energy,true)<=workspace_bytes),
+               "PHMSD workspace planning budget is too small even for one walker/determinant. "
+               "Increase wavefunction.phmsd_workspace_mb (MiB); this budget excludes trial/Hamiltonian storage.");
+  nwalk_block_size=density.walkers; ndet_block_size=density.determinants;
+  energy_walk_block_size=energy.walkers; energy_det_block_size=energy.determinants;
+}
+
+template<MEMORY_SPACE MEM>
 void PHMSD<MEM>::runtime_optimization(WalkerSet<MEM>& wset)
 {
-  const int nw   = wset.size();
-  const int nel = (walker_type==COLLINEAR ? nup+ndown : nup );
-  const int npol = (walker_type==NONCOLLINEAR ? 2 : 1 );
-  memory::array<MEM,ComplexType,2> G(nw,nel*npol*NMO);
-  // don't use buffered_array!!!
-// This needs to depend on algorithm!!!
-  HamOp.runtime_optimization(G);
+  if(batches_calibrated) return;
+  const int nw=wset.size();
+  if(nw==0) return;
+  {
+    memory::array<MEM,ComplexType,2> G(nw,(nup+ndown)*NMO);
+    HamOp.runtime_optimization(G);
+  }
+  plan_batches(nw);
+  using clock=std::chrono::steady_clock;
+  auto start=clock::now();
+  auto elapsed=[&] { return std::chrono::duration<double>(clock::now()-start).count(); };
+  auto sync=[] {
+#if defined(ENABLE_CUDA)
+    if constexpr(MEM==DEVICE_MEMORY) cuda::cuda_check(cudaDeviceSynchronize());
+#endif
+  };
+  bool automatic=requested_walkers==0 || requested_determinants==0;
+  if(automatic && tuning_seconds>0 && energy_algorithm==PHMSDEnergyAlgorithm::woodbury) {
+    // Probe independent copies, never the live walkers/properties/RNG. Bound the
+    // sample size and skip expensive complete calls before entering the timer.
+    auto sample_mpi=std::make_shared<utils::mpi_context_t<mpi3::communicator>>(
+      utils::make_mpi_context(mpi3::environment::get_self_instance()));
+    // Measure with reusable scratch, as production does. Restore the original
+    // pool reservation and high-water marks after discarding probe workspaces.
+    auto& host=memory::detail::static_allocator_t<HOST_MEMORY>{}.get_primary();
+    auto& pool=memory::detail::static_allocator_t<MEM>{}.get_primary();
+    struct peak_guard {
+      decltype(host) h; decltype(pool) p;
+      size_t hp,pp,original_size;
+      ~peak_guard() noexcept {
+        if(p.size()!=original_size && p.idle()) {
+          try { p.resize(original_size); }
+          catch(...) { p.release_pool(); } // fallback allocation remains available
+        }
+        h.restore_memory_peak(hp); p.restore_memory_peak(pp);
+      }
+    } peaks{host,pool,host.maximum_memory(),pool.maximum_memory(),pool.size()};
+    for(bool energy : {false,true}) {
+      if(elapsed()>=tuning_seconds) break;
+      int sample_n=std::min(nw,energy ? std::min(8,2*energy_walk_block_size) : 8);
+      double r=std::max(1.0,batch_model.rank);
+      double work=sample_n*(batch_model.unique_a+batch_model.unique_b)*r*r*r;
+      if(energy) {
+        if(batch_model.cache_walkers>0) {
+          double pair=batch_model.nelec*batch_model.nact;
+          work=sample_n*((batch_model.unique_a+batch_model.unique_b)*r*r*pair +
+                         2*pair*pair*batch_model.nchol);
+        } else {
+          // Include the Cholesky dimension: a modest determinant count with
+          // many auxiliary vectors can still make a complete probe expensive.
+          work=sample_n*(batch_model.unique_a+batch_model.unique_b)*r*batch_model.nelec*
+               batch_model.nchol*(batch_model.nact+r);
+        }
+      }
+      // Bound calibration work independently of the elapsed-time target.
+      if(work>(MEM==HOST_MEMORY ? 5.e7 : 2.e10)) {
+        app_log(2,"PHMSD {} calibration skipped: work bound; using dimension-based plan.",
+                energy ? "energy" : "density");
+        continue;
+      }
+      WalkerSet<MEM> sample(sample_mpi,std::make_shared<utils::RandomGenerator_t<>>(),
+                           WalkerSetParameters{},std::array<int,3>{NMO,nup,ndown},sample_n,false);
+      auto all=nda::range::all;
+      sample.SlaterMatrices(Alpha)=wset.SlaterMatrices(Alpha)(nda::range(sample_n),all,all);
+      sample.SlaterMatrices(Beta)=wset.SlaterMatrices(Beta)(nda::range(sample_n),all,all);
+      int active=OrbMats(0).extent(0)+OrbMats(OrbMats.extent(0)-1).extent(0);
+      memory::array<MEM,ComplexType,2> G(sample_n,active*NMO),E(sample_n,3);
+      memory::array<MEM,ComplexType,1> O(sample_n);
+      int& wb=energy ? energy_walk_block_size : nwalk_block_size;
+      int& db=energy ? energy_det_block_size : ndet_block_size;
+      if(wb>sample_n) continue; // do not extrapolate a smaller sample to an explicit large batch
+      auto candidates=batch_model.candidates(std::min(sample_n,wb),db,energy,workspace_bytes,
+                                              requested_walkers==0,requested_determinants==0);
+      phmsd_batch best{wb,db};
+      std::vector<std::pair<phmsd_batch,double>> measured_plans;
+      double last_time=0;
+      double deadline=energy ? tuning_seconds : tuning_seconds*0.5;
+      auto evaluate=[&] {
+        if(energy) Energy(sample,E(),O());
+        else MixedDensityMatrix(sample,G(),O(),true);
+        sync();
+      };
+      for(auto candidate : candidates) {
+        // A running BLAS/kernel call cannot be interrupted safely. Do not start
+        // another candidate if its warmup and two samples are unlikely to fit.
+        if(elapsed()+3*last_time>=deadline) break;
+        if(!pool.idle()) break; // do not replace scratch held by a caller
+        pool.restore_memory_peak(0);
+        wb=candidate.walkers; db=candidate.determinants;
+        auto begin=clock::now();
+        evaluate(); // warmup includes fresh reference/cache construction
+        last_time=std::chrono::duration<double>(clock::now()-begin).count();
+        if(elapsed()+2*last_time>=deadline) break;
+        if(pool.maximum_memory()>pool.size())
+          pool.resize(static_cast<size_t>(1.05*pool.maximum_memory()));
+        double measured=0;
+        for(int repeat=0; repeat<2; ++repeat) {
+          sync(); begin=clock::now(); evaluate();
+          measured+=std::chrono::duration<double>(clock::now()-begin).count()/2;
+        }
+        measured_plans.emplace_back(candidate,measured);
+        last_time=std::max(last_time,measured);
+        app_log(2,"PHMSD probe {}: walkers={} determinants={} time={:.6f} s",
+                energy ? "energy" : "density",candidate.walkers,candidate.determinants,measured);
+      }
+      if(!measured_plans.empty()) {
+        double fastest=std::numeric_limits<double>::infinity();
+        for(auto const& [p,t]:measured_plans) fastest=std::min(fastest,t);
+        double smallest=std::numeric_limits<double>::infinity();
+        for(auto const& [p,t]:measured_plans)
+          if(t<=1.05*fastest && batch_model.bytes(p,energy)<smallest) {
+            best=p; smallest=batch_model.bytes(p,energy);
+          }
+      }
+      wb=best.walkers; db=best.determinants;
+    }
+    sync();
+    HamOp.release_phmsd_workspace(); // do not retain a rejected candidate's cache
+  }
+  batches_calibrated=true;
+  app_log(1,"PHMSD plan: density/overlap={}/{} energy={}/{} (walkers/determinants), "
+            "workspace estimates={:.1f}/{:.1f} MiB, budget={:.1f} MiB, setup={:.3f} s.",
+          nwalk_block_size,ndet_block_size,energy_walk_block_size,energy_det_block_size,
+          batch_model.bytes({nwalk_block_size,ndet_block_size},false)/(1024*1024),
+          batch_model.bytes({energy_walk_block_size,energy_det_block_size},true)/(1024*1024),
+          workspace_bytes/(1024*1024),elapsed());
 }
 
 /*
@@ -402,10 +584,9 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
   else  
   {
 
-    // Walker-block size: process nwalk_block_size walkers per energy batch so the KEright/Tdn
-    // device temporaries stay bounded regardless of the total walker count. Per-walker energies
-    // are independent, so the block size is numerically irrelevant (nwalk_block_size input).
-    int nbatch__ = std::min(nwalk, std::max(1, nwalk_block_size));
+    // Bound per-walker energy intermediates using the selected energy plan.
+    int nbatch__ = std::min(nwalk, energy_walk_block_size);
+    const int ndet_block_size = energy_det_block_size;
     auto SMup=wset.SlaterMatrices(Alpha);
     auto SMdn=wset.SlaterMatrices(Beta);
 
@@ -431,11 +612,11 @@ void PHMSD<MEM>::energy_alg1(WalkerSet<MEM> const& wset, memory::array_view<MEM,
       // 1. calculate list of overlaps
       det_ops::MixedDensityMatrixForWoodbury(OrbMats(0),SMup(w_rng,all,all),GA,
           log_ov(w_rng),QQ0inv0,abij.get_reference_configuration_device(0),true);
-      calculate_overlaps(0, abij, QQ0inv0, ovlp_ratios_up);
+      calculate_overlaps(0, abij, QQ0inv0, ovlp_ratios_up, ndet_block_size);
 
       det_ops::MixedDensityMatrixForWoodbury(OrbMats(nspin_in_orbmat-1),SMdn(w_rng,all,all),GB,
           log_ov(w_rng),QQ0inv1,abij.get_reference_configuration_device(1),true);
-      calculate_overlaps(1, abij, QQ0inv1, ovlp_ratios_dn);
+      calculate_overlaps(1, abij, QQ0inv1, ovlp_ratios_dn, ndet_block_size);
 
       { // spin up
         // 2a. calculate weights
@@ -682,7 +863,7 @@ void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_vi
   else
   {
     const auto& nexcit = abij.number_of_unique_excitations();
-    const int nbatch__  = nwalk; 
+    const int nbatch__ = std::min(nwalk, nwalk_block_size);
 
     auto SMup=wset.SlaterMatrices(Alpha);
     auto SMdn=wset.SlaterMatrices(Beta);
@@ -704,11 +885,11 @@ void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_vi
       // 1. calculate list of overlaps
       det_ops::MixedDensityMatrixForWoodbury(OrbMats(0),SMup(range(iw,iw+nw),all,all),GA,
           log_ov,QQ0inv0,abij.get_reference_configuration_device(0),true);
-      calculate_overlaps(0, abij, QQ0inv0, ovlp_ratios_up);
+      calculate_overlaps(0, abij, QQ0inv0, ovlp_ratios_up, ndet_block_size);
 
       det_ops::MixedDensityMatrixForWoodbury(OrbMats(nspin_in_orbmat-1),SMdn(range(iw,iw+nw),all,all),GB,
           log_ov,QQ0inv1,abij.get_reference_configuration_device(1),true);
-      calculate_overlaps(1, abij, QQ0inv1, ovlp_ratios_dn);
+      calculate_overlaps(1, abij, QQ0inv1, ovlp_ratios_dn, ndet_block_size);
 
       // 2. generate R[Nact,Nel] and generate G
       {
@@ -726,7 +907,7 @@ void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_vi
         // calculate R
         memory::buffered_array<MEM,ComplexType,3> Ra(nw,nup,nactA);
         Ra() = ComplexType(0.0);
-        calculate_R(0, abij, QQ0inv0, wgt, Ra);
+        calculate_R(0, abij, QQ0inv0, wgt, Ra, ndet_block_size);
 
         if (compact)
         { 
@@ -761,7 +942,7 @@ void PHMSD<MEM>::MixedDensityMatrix(WalkerSet<MEM> const& wset, memory::array_vi
         // calculate R
         memory::buffered_array<MEM,ComplexType,3> Rb(nw,ndown,nactB);
         Rb() = ComplexType(0.0);
-        calculate_R(1, abij, QQ0inv1, wgt, Rb);
+        calculate_R(1, abij, QQ0inv1, wgt, Rb, ndet_block_size);
 
         if (compact)
         {
@@ -859,7 +1040,7 @@ void PHMSD<MEM>::Log_Overlap(WalkerSet<MEM> const& wset, memory::array_view<MEM,
       abij.number_of_unique_excitations()[0],
       abij.number_of_unique_excitations()[1]
     });
-    int nwbatch = nwalk; // tune later
+    int nwbatch = std::min(nwalk, nwalk_block_size);
 
     auto SMup=wset.SlaterMatrices(Alpha);
     auto SMdn=wset.SlaterMatrices(Beta);
@@ -875,14 +1056,14 @@ void PHMSD<MEM>::Log_Overlap(WalkerSet<MEM> const& wset, memory::array_view<MEM,
         // alpha  
         memory::buffered_array<MEM,ComplexType,3> QQ0inv0(nw,OrbMats(0).extent(0),nup);
         det_ops::Log_OverlapForWoodbury(OrbMats(0),SMup(range(iw,iw+nw),all,all),log_ov,QQ0inv0,abij.get_reference_configuration_device(0));
-        calculate_overlaps(0, abij, QQ0inv0, ovlp_ratios_up);
+        calculate_overlaps(0, abij, QQ0inv0, ovlp_ratios_up, ndet_block_size);
       }
 
       {
         // beta
         memory::buffered_array<MEM,ComplexType,3> QQ0inv1(nw,OrbMats(nspin_in_orbmat-1).extent(0),ndown);
         det_ops::Log_OverlapForWoodbury(OrbMats(nspin_in_orbmat-1),SMdn(range(iw,iw+nw),all,all),log_ov,QQ0inv1,abij.get_reference_configuration_device(1));
-        calculate_overlaps(1, abij, QQ0inv1, ovlp_ratios_dn);
+        calculate_overlaps(1, abij, QQ0inv1, ovlp_ratios_dn, ndet_block_size);
       }
 
       // log(Ov(iw)) = log_ov(iw) + std::log( sum_n c(n) * ovlp_ratios(n,iw) ) 

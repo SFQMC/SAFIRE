@@ -116,6 +116,52 @@ void phmsd_components_ph_excited_energy_real_dense_cholesky() {
     
     CHECK_THAT(nda::to_host(EX)(0), utils::Approx(EXJ_ref(nex-1, 0)));
     CHECK_THAT(nda::to_host(EJ)(0), utils::Approx(EXJ_ref(nex-1, 1)));
+    {
+      // The exact integral-cache path must preserve complex (non-Hermitian)
+      // contractions, walker strides and every excitation rank.
+      constexpr int ntest=3;
+      nda::array<ComplexType,4> Ttest(ntest,nelec,nchol,nact), Rtest(ntest,ndet,nex,nact);
+      nda::matrix<ComplexType> wtest(ndet,ntest);
+      nda::array<ComplexType,5> X(ntest,nelec,nact,nelec,nact);
+      nda::array<ComplexType,3> Tan(nelec,nact,nchol), Ktest(ndet,ntest,nchol);
+      nda::vector<ComplexType> extest(ntest,0.), ejtest(ntest,0.);
+      auto all=nda::range::all;
+      for(int iw=0; iw<ntest; ++iw) {
+        ComplexType scale(1.+.1*iw,.07*iw), weight(1.-.1*iw,.03*iw);
+        Ttest(iw,all,all,all)=scale*Tna(0,all,all,all);
+        Rtest(iw,all,all,all)=R(0,all,all,all);
+        wtest(all,iw)=weight*wgt(all,0);
+        nda::tensor::add(ComplexType(1),Ttest(iw,all,all,all),"ina",ComplexType(0),Tan,"ian");
+        auto tm=nda::reshape(Tan,std::array<long,2>{nelec*nact,nchol});
+        auto xm=nda::reshape(X(iw,all,all,all,all),std::array<long,2>{nelec*nact,nelec*nact});
+        nda::blas::gemm(ComplexType(1),tm,nda::transpose(tm),ComplexType(0),xm);
+      }
+      if constexpr(MEM==HOST_MEMORY) {
+        ph_excited_2body_energy_integrals(iexcit_d,refc_d,Ttest,Rtest,wtest,extest,ejtest,Ktest,X);
+      } else {
+#if defined(ENABLE_DEVICE)
+        using kernels::device::to_view;
+        auto td=memory::to_memory_space<MEM>(Ttest), rd=memory::to_memory_space<MEM>(Rtest);
+        auto xd=memory::to_memory_space<MEM>(X), wd=memory::to_memory_space<MEM>(wtest);
+        memory::array<MEM,ComplexType,4> tn(ntest,nelec,nact,nchol);
+        memory::array<MEM,ComplexType,3> f(ntest,nelec,nact), kt(ndet,ntest,nchol);
+        memory::array<MEM,ComplexType,2> k0(ntest,nchol);
+        memory::array<MEM,ComplexType,1> exd(ntest,0.), ejd(ntest,0.);
+        nda::tensor::add(ComplexType(1),td,"wina",ComplexType(0),tn,"wian");
+        kernels::device::phmsd_integral_reference(refc_d.data(),to_view(tn),to_view(xd),to_view(f),to_view(k0));
+        kernels::device::phmsd_integral_energy(refc_d.data(),iexcit_d.data(),to_view(tn),to_view(xd),
+            to_view(f),to_view(k0),to_view(rd),to_view(wd),to_view(exd),to_view(ejd),to_view(kt));
+        extest=nda::to_host(exd); ejtest=nda::to_host(ejd); Ktest=nda::to_host(kt);
+#endif
+      }
+      auto Kh=nda::to_host(KE);
+      for(int iw=0; iw<ntest; ++iw) {
+        ComplexType scale(1.+.1*iw,.07*iw), weight(1.-.1*iw,.03*iw);
+        CHECK_THAT(extest(iw),utils::Approx(weight*scale*scale*EXJ_ref(nex-1,0)));
+        CHECK_THAT(ejtest(iw),utils::Approx(weight*scale*scale*EXJ_ref(nex-1,1)));
+        CHECK_THAT(Ktest(all,iw,all),utils::Approx(nda::make_regular(scale*Kh(all,0,all))));
+      }
+    }
     //    std::cout<<"    " <<tcpu1 <<" " <<tcpu2 <<std::endl;
   }  
 }

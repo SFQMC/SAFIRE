@@ -12,8 +12,10 @@ add_executable(test_afqmc
   test_hamiltonian_operations.cpp
   test_observables_reference.cpp
   test_one_body.cpp
+  test_phmsd_batch_plan.cpp
   test_phmsd.cpp
   test_phmsd_components.cpp
+  test_phmsd_regression.cpp
   test_propagator_factory.cpp
   test_sdet_ops.cpp
   test_sharedwset.cpp

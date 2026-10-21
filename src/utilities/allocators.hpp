@@ -138,6 +138,10 @@ private:
 
   size_t maximum_memory() const { return maximum_needed_; }
 
+  // Calibration may temporarily require more scratch than the selected plan.
+  // Restore its accounting only after those allocations have been released.
+  void restore_memory_peak(size_t saved) { maximum_needed_ = std::max(saved, in_use_); }
+
   nda::mem::blk_t allocate(size_t s) noexcept {
     // a size that cannot be rounded up is a caller error, no pool could ever hold it. Decline
     // it without accounting for it, so that it cannot distort the peak

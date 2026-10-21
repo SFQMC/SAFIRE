@@ -1,4 +1,5 @@
 #include <cuda/std/complex>
+#include <cuda/std/cmath>
 #include <cuda/std/mdspan>
 
 #include "arch/atomics.hpp"
@@ -7,6 +8,126 @@
 
 namespace kernels::device
 {
+namespace {
+using ph_complex=cuda::std::complex<double>;
+__device__ ph_complex ph_shuffle(ph_complex z,int lane) {
+  return {__shfl_sync(0xffffffff,z.real(),lane),__shfl_sync(0xffffffff,z.imag(),lane)};
+}
+
+// One warp owns one small matrix. Rows live in registers, with partial
+// pivoting across lanes. No pointer arrays, pivots, or LU workspace transfers.
+template<int N,bool Inverse,typename T_t,typename O_t,typename M_t>
+__global__ void kernel_ph_pivoted(int const* iex,T_t T,O_t ov,M_t M) {
+  int lane=threadIdx.x%32;
+  long batch=(long(blockIdx.x)*blockDim.x+threadIdx.x)/32;
+  long nw=Inverse ? ov.extent(0) : ov.extent(1);
+  long nd=Inverse ? ov.extent(1) : ov.extent(0);
+  if(batch>=nw*nd) return; // uniform within the warp
+  long d=batch/nw, iw=batch%nw;
+  auto ex=iex+2*N*d;
+  ph_complex a[N], inverse[N], det(1);
+  int determinant_exponent=0;
+#pragma unroll
+  for(int j=0; j<N; ++j) {
+    a[j]=lane<N ? T(iw,ex[N+lane],ex[j]) : ph_complex(0);
+    if constexpr(Inverse) inverse[j]=ph_complex(lane==j ? 1 : 0);
+  }
+#pragma unroll
+  for(int k=0; k<N; ++k) {
+    double score=(lane>=k && lane<N) ? cuda::std::abs(a[k]) : -1.;
+    int pivot_row=lane;
+#pragma unroll
+    for(int offset=16; offset>0; offset/=2) {
+      double other=__shfl_down_sync(0xffffffff,score,offset);
+      int other_row=__shfl_down_sync(0xffffffff,pivot_row,offset);
+      if(lane+offset<32 && (other>score || (other==score && other_row<pivot_row))) {
+        score=other; pivot_row=other_row;
+      }
+    }
+    pivot_row=__shfl_sync(0xffffffff,pivot_row,0);
+    int source=lane==k ? pivot_row : (lane==pivot_row ? k : lane);
+#pragma unroll
+    for(int j=0; j<N; ++j) {
+      a[j]=ph_shuffle(a[j],source);
+      if constexpr(Inverse) inverse[j]=ph_shuffle(inverse[j],source);
+    }
+    auto pivot=ph_shuffle(a[k],k);
+    if(cuda::std::abs(pivot)==0.) {
+      if(lane==0) {
+        if constexpr(Inverse) ov(iw,d)=ph_complex(0);
+        else ov(d,iw)=ph_complex(0);
+      }
+      if constexpr(Inverse) if(lane<N) {
+#pragma unroll
+        for(int j=0; j<N; ++j) M(iw,d,lane,j)=ph_complex(0);
+      }
+      return;
+    }
+    // Scale each pivot by a power of two so intermediate products cannot
+    // overflow/underflow when the final determinant is representable.
+    int exponent;
+    cuda::std::frexp(cuda::std::fmax(cuda::std::abs(pivot.real()),cuda::std::abs(pivot.imag())),&exponent);
+    ph_complex scaled(cuda::std::ldexp(pivot.real(),-exponent),cuda::std::ldexp(pivot.imag(),-exponent));
+    determinant_exponent += exponent;
+    det *= pivot_row==k ? scaled : -scaled;
+    if constexpr(Inverse) {
+      auto reciprocal=ph_complex(1)/pivot;
+      if(lane==k) {
+#pragma unroll
+        for(int j=0; j<N; ++j) { a[j]*=reciprocal; inverse[j]*=reciprocal; }
+      }
+      auto factor=a[k];
+#pragma unroll
+      for(int j=0; j<N; ++j) {
+        auto aj=ph_shuffle(a[j],k), bj=ph_shuffle(inverse[j],k);
+        if(lane<N && lane!=k) { a[j]-=factor*aj; inverse[j]-=factor*bj; }
+      }
+    } else {
+      auto factor=a[k]/pivot;
+#pragma unroll
+      for(int j=0; j<N; ++j) {
+        auto aj=ph_shuffle(a[j],k);
+        if(lane<N && lane>k && j>k) a[j]-=factor*aj;
+      }
+      if(lane>k) a[k]=ph_complex(0);
+    }
+  }
+  if(lane==0) {
+    det={cuda::std::ldexp(det.real(),determinant_exponent),cuda::std::ldexp(det.imag(),determinant_exponent)};
+    if constexpr(Inverse) ov(iw,d)=det;
+    else ov(d,iw)=det;
+  }
+  if constexpr(Inverse) if(lane<N) {
+#pragma unroll
+    for(int j=0; j<N; ++j) M(iw,d,lane,j)=inverse[j];
+  }
+}
+
+template<bool Inverse>
+void launch_ph_pivoted(int nex,int const* iex,view<std::complex<double> const,3> T,
+                       view<std::complex<double>,2> ov,view<std::complex<double>,4> M) {
+  long batches=ov.extent(0)*ov.extent(1);
+  if(batches==0) return;
+  long blocks=(batches+3)/4;
+  switch(nex) {
+    case 5: kernel_ph_pivoted<5,Inverse><<<blocks,128>>>(iex,T,ov,M); break;
+    case 6: kernel_ph_pivoted<6,Inverse><<<blocks,128>>>(iex,T,ov,M); break;
+    case 7: kernel_ph_pivoted<7,Inverse><<<blocks,128>>>(iex,T,ov,M); break;
+    case 8: kernel_ph_pivoted<8,Inverse><<<blocks,128>>>(iex,T,ov,M); break;
+  }
+  sfqmc::cuda::cuda_check(cudaGetLastError(),"phmsd_pivoted");
+}
+} // namespace
+
+void phmsd_det_pivoted(int nex,int const* iex,view<std::complex<double> const,3> T,
+                       view<std::complex<double>,2> ov) {
+  launch_ph_pivoted<false>(nex,iex,T,ov,view<std::complex<double>,4>{});
+}
+void phmsd_inverse_pivoted(int nex,int const* iex,view<std::complex<double> const,3> T,
+                           view<std::complex<double>,2> ov,view<std::complex<double>,4> M) {
+  launch_ph_pivoted<true>(nex,iex,T,ov,M);
+}
+
 template<typename T>
 __device__ T _D3x3_( T const a11, T const a12, T const a13, 
                    T const a21, T const a22, T const a23, 
@@ -384,6 +505,13 @@ void phmsd_compact_R_assemble(int nex, int const* refc, int const* iex,
     }
   };
   for_each_extents<4>({nwalk,ndet,nex,nel},f);
+}
+
+void phmsd_reference_R(int const* refc, view<std::complex<double> const, 1> wgt,
+                       view<std::complex<double>, 3> R)
+{
+  auto f=[=] __device__(long iw,long i) { R(iw,i,refc[i])+=wgt(iw); };
+  for_each_extents<2>({R.extent(0),R.extent(1)},f);
 }
 
 // Rbuff(nwalk,ndet,nex,nact), R(nwalk,nel,nact), wgt(ndet,nwalk)

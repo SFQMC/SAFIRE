@@ -273,3 +273,18 @@ TEST_CASE("dynamic_bucket peak drives the pool size", "[allocators]")
   bucket.deallocate(second);
   REQUIRE(bucket.maximum_memory() == peak);
 }
+
+TEST_CASE("calibration restores allocator peak without losing outstanding requests", "[allocators]") {
+  bucket_t bucket;
+  auto outer=serve_elsewhere(bucket,100);
+  auto saved=bucket.maximum_memory();
+  auto probe=serve_elsewhere(bucket,10000);
+  release_elsewhere(bucket,probe);
+  bucket.restore_memory_peak(saved);
+  CHECK(bucket.maximum_memory()==aligned(100));
+  bucket.restore_memory_peak(0);
+  CHECK(bucket.maximum_memory()==aligned(100));
+  release_elsewhere(bucket,outer);
+  bucket.restore_memory_peak(0);
+  CHECK(bucket.maximum_memory()==0);
+}

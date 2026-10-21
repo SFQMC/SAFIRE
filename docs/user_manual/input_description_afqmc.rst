@@ -319,6 +319,71 @@ Settings
      - The number of Slater determinants to read from the HDF5 file. If set to -1, all available determinants will be read.
 
 
+PHMSD execution controls
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+PHMSD selects separate walker and determinant batches for overlap/density and
+Woodbury energy evaluation. Omitting the following settings enables automatic
+planning; no numerical approximation or determinant truncation is introduced.
+All settings belong to the ``wavefunction`` block.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - **Parameter**
+     - **Default**
+     - **Description**
+   * - **nwalk_block_size**
+     - 0
+     - Zero selects automatic walker batching. A positive value sets an upper bound.
+   * - **ndet_block_size**
+     - 0
+     - Zero selects automatic determinant batching. A positive value sets an upper bound.
+   * - **phmsd_workspace_mb**
+     - 0
+     - Workspace planning budget in MiB per rank. Zero selects an automatic allowance.
+   * - **phmsd_tuning_seconds**
+     - 1.0
+     - Setup calibration time target in seconds. Zero disables timing and retains dimension-based planning.
+
+The automatic allowance is 2048 MiB per rank. On CUDA it is further limited to
+half the available device memory divided by the number of ranks on the node.
+This sharing estimate is conservative when ranks use different devices. A
+positive ``phmsd_workspace_mb`` overrides the automatic allowance. The estimate
+includes PHMSD scratch, reference intermediates and eligible integral caches,
+with an allowance for auxiliary storage. Trial and Hamiltonian storage,
+caller-owned outputs, other estimators, library workspaces and allocator slack
+are additional; the budget is not a limit on total process or device memory.
+Setup reports an error if even one walker and one determinant exceed the budget.
+
+Planning begins with up to eight walkers and 4096 determinants, reducing batches
+to satisfy the allowance. Large CPU energy contractions without an integral
+cache use one walker and a smaller determinant tile to limit memory traffic.
+An exact exchange-integral cache is used for sufficiently large unique-spin
+expansions when the active space fits within 64 MiB. Otherwise energy uses a
+bounded matrix contraction or the small-block path. The matrix-contraction
+temporary occupies at most 64 MiB or one determinant, whichever is larger.
+Other intermediates remain additional: the opposite-spin contraction scales
+with unique-spin determinant count, walker batch size and Cholesky-vector count,
+so reducing the determinant batch alone cannot eliminate its memory cost.
+
+During setup, calibration uses independent copies of up to eight walkers to
+select among nearby feasible plans for compact density and Woodbury energy.
+It includes reference/cache construction, synchronizes device work and favors
+lower estimated memory when timings differ by at most five percent. Selections
+remain fixed during propagation. Live walker data and the simulation random
+number generator are unchanged; temporary caches are released and scratch-pool
+reservation and high-water accounting are restored after calibration.
+
+The time target is a stopping criterion, not a preemption deadline: individual
+numerical calls cannot be interrupted. Work estimates skip expensive probes and
+retain the dimension-based plan. Setting both batch dimensions to positive
+values also skips timing; memory constraints can still reduce either batch.
+Verbosity 1 reports selected plans, workspace estimates and setup duration;
+verbosity 2 additionally reports calibration timings.
+
+
 .. only:: developer
 
   Advanced / developer settings

@@ -27,6 +27,7 @@
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
 #include "utilities/check.hpp"
+#include "utilities/check_shape.hpp"
 
 #if defined(ENABLE_DEVICE)
 #include "numerics/device_kernels/device_api.hpp"
@@ -46,8 +47,8 @@ using kernels::device::to_view;
 /*
  *   ov(ndet,nwalk) <- determinant of each nex x nex excitation block of T(nwalk,nact,nel).
  *
- *   Small nex has a closed form and is one kernel. Above that this allocates the blocks and goes
- *   through a batched getrf, which is host-side work and so lives here rather than in the .cu.
+ *   Closed forms and pivoted warp kernels handle ranks through eight. Larger
+ *   blocks use batched getrf, whose host-side orchestration lives here.
  */
 template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryArrayOfRank<2> Ov_t>
 void phmsd_det(int nex, int const* iex, T_t const& T, Ov_t&& ov)
@@ -61,6 +62,10 @@ void phmsd_det(int nex, int const* iex, T_t const& T, Ov_t&& ov)
     kernels::device::phmsd_det_small(nex, iex, to_view(T), to_view(ov));
     return;
   }
+  if(nex <= kernels::device::phmsd_max_warp_rank) {
+    kernels::device::phmsd_det_pivoted(nex,iex,to_view(T),to_view(ov));
+    return;
+  }
   // M[idet][iwalk][ip][iq]
   memory::buffered_array<DEVICE_MEMORY, ComplexType, 4> M(ndet, nwalk, nex, nex);
   kernels::device::phmsd_det_extract(nex, iex, to_view(T), to_view(M));
@@ -69,13 +74,17 @@ void phmsd_det(int nex, int const* iex, T_t const& T, Ov_t&& ov)
   memory::buffered_array<DEVICE_MEMORY, ComplexType, 1> work;
   auto M3d = nda::reshape(M, std::array<long, 3>{ndet * nwalk, nex, nex});
   nda::lapack::getrf(M3d, ipiv, work);
+  // The log-determinant helper accumulates into its destination. PHMSD
+  // consumers require the determinant ratio itself, including for nex > 5.
+  ov() = ComplexType(0.0);
   math::log_determinant_from_getrf(M3d, ipiv, nda::flatten(ov));
+  nda::apply(1.0, ov, nda::tensor::unary_op::EXP);
 }
 
 /*
  *   R(nwalk,ndet,nex,nact) from the inverse of each excitation block.
  *
- *   Same split: closed-form inverses for small nex, otherwise getrf + getri_or_zero here.
+ *   Closed forms, pivoted warp inverses, then batched getrf + getri_or_zero.
  */
 template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryArrayOfRank<4> R_t>
 void phmsd_compact_R(int nex, int const* refc, int const* iex, T_t const& T, R_t&& R)
@@ -91,6 +100,8 @@ void phmsd_compact_R(int nex, int const* refc, int const* iex, T_t const& T, R_t
 
   if(nex <= kernels::device::phmsd_inverse_max_closed_form) {
     kernels::device::phmsd_compact_R_inverse_small(nex, iex, to_view(T), to_view(ov), to_view(M));
+  } else if(nex <= kernels::device::phmsd_max_warp_rank) {
+    kernels::device::phmsd_inverse_pivoted(nex,iex,to_view(T),to_view(ov),to_view(M));
   } else {
     kernels::device::phmsd_compact_R_extract(nex, iex, to_view(T), to_view(M));
     memory::buffered_array<DEVICE_MEMORY, int, 2>         ipiv(ndet * nwalk, nex);
@@ -98,6 +109,9 @@ void phmsd_compact_R(int nex, int const* refc, int const* iex, T_t const& T, R_t
     auto M3d = nda::reshape(M, std::array<long, 3>{ndet * nwalk, nex, nex});
     nda::lapack::getrf(M3d, ipiv, work);
     math::log_determinant_from_getrf(M3d, ipiv, nda::flatten(ov));
+    // The assembly kernel tests det != 0. A unit determinant has log(det)=0
+    // and must not be mistaken for a singular excitation matrix.
+    nda::apply(1.0, ov, nda::tensor::unary_op::EXP);
     nda::lapack::getri_or_zero(M3d, ipiv, work);
   }
   kernels::device::phmsd_compact_R_assemble(nex, refc, iex, to_view(T), to_view(ov), to_view(M),
@@ -109,12 +123,14 @@ void phmsd_compact_R(int nex, int const* refc, int const* iex, T_t const& T, R_t
 #endif
 
 template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryMatrix Mat>
-void calculate_overlaps(int spin, ph_excitations<int, ComplexType, memory::get_memory_space<Mat>()>& abij,  T_t const& T, Mat&& ov)
+void calculate_overlaps(int spin, ph_excitations<int, ComplexType, memory::get_memory_space<Mat>()>& abij,  T_t const& T, Mat&& ov,
+                        int ndet_block_size = 4096)
 {
   using nda::range;
   auto all = range::all;
   static_assert(memory::get_memory_space<T_t>() == memory::get_memory_space<Mat>(), "Memory space mismatch");
   constexpr MEMORY_SPACE MEM = memory::get_memory_space<Mat>();
+  utils::check(ndet_block_size > 0, "PHMSD determinant block size must be positive");
   ov(0,all)=ComplexType(1.0); 
   int nw = ov.extent(1);
   utils::check(T.extent(0) == nw, "Size mismatch"); 
@@ -172,6 +188,7 @@ void calculate_overlaps(int spin, ph_excitations<int, ComplexType, memory::get_m
               for (int q = 0; q < nex; q++) 
                 Qwork(p,q) = T(iw,exct[p + nex],exct[q]);
             nda::lapack::getrf(Qwork,ipiv,Qwork2);
+            ov(nd,iw) = ComplexType(0.0);
             math::log_determinant_from_getrf(Qwork,ipiv,ov(nd,iw)); 
             ov(nd,iw) = std::exp(ov(nd,iw));
           }
@@ -184,7 +201,11 @@ void calculate_overlaps(int spin, ph_excitations<int, ComplexType, memory::get_m
       int ndet = abij.number_of_unique_excitations(nex)[spin];
       if(ndet > 0) {
         auto iexcit = abij.get_excitation_list_device(spin, nex);
-        detail::phmsd_det(nex, iexcit.data(), T, ov(range(idet,idet+ndet),all));
+        for(int first=0; first<ndet; first+=ndet_block_size) {
+          int count=std::min(ndet_block_size,ndet-first);
+          detail::phmsd_det(nex, iexcit.data()+2*nex*first, T,
+                            ov(range(idet+first,idet+first+count),all));
+        }
         idet += ndet;
       }
     }
@@ -198,12 +219,14 @@ void calculate_overlaps(int spin, ph_excitations<int, ComplexType, memory::get_m
 // weights(nd,nw)
 // R(nw,nel,nact)
 template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryMatrix Mat, nda::MemoryArrayOfRank<3> R_t>
-void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_space<Mat>()>& abij,  T_t const& T, Mat&& weights, R_t && R)
+void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_space<Mat>()>& abij,  T_t const& T, Mat&& weights, R_t && R,
+                 int ndet_block_size = 4096)
 {
   using nda::range;
   auto all = range::all;
   static_assert(::nda::mem::have_compatible_addr_space<T_t,Mat,R_t>, "Memory space mismatch");
   constexpr MEMORY_SPACE MEM = memory::get_memory_space<R_t>(); 
+  utils::check(ndet_block_size > 0, "PHMSD determinant block size must be positive");
   int NEL = T.extent(2);
   int nw = T.extent(0);
   nda::array<int,1> orbs(NEL);
@@ -246,6 +269,7 @@ void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_s
               for (int q = 0; q < nex; q++)
                 Q(p,q) = T(iw,e[p + nex],e[q]);
             nda::lapack::getrf(Q,ipiv,work);
+            ov_a = ComplexType(0.0);
             math::log_determinant_from_getrf(Q,ipiv,ov_a);
             // how to handle cases where this is basically zero?
             ov_a = std::exp(ov_a);
@@ -282,23 +306,23 @@ void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_s
     utils::check(weights.extent(1) == nw, "Size mismatch");
     utils::check_shape(R, "R", nw, NEL, nact);
     auto refc   = abij.get_reference_configuration_device(spin);
-    auto refc_h = nda::to_host(refc);
-
-    // contribution from the reference determinant: R[w][i][refc[i]] += weights[w]
-    for(int i = 0; i < NEL; ++i)
-      nda::tensor::add(1.0,weights(0,all),"w",1.0,R(all,i,refc_h(i)),"w");
+    kernels::device::phmsd_reference_R(refc.data(),to_view(weights(0,all)),to_view(R));
 
     // contributions from the ph expansion
     for (int nex = 1, idet = 1; nex < abij.maximum_excitation_number()[spin]; nex++) {
       int ndet = abij.number_of_unique_excitations(nex)[spin];
       if(ndet > 0) {
         auto iexcit = abij.get_excitation_list_device(spin, nex);
-        // compact per-determinant R for this shell, reduced into R below
-        memory::buffered_array<MEM,ComplexType,4> Rbuff(nw,ndet,nex,nact);
-        detail::phmsd_compact_R(nex,refc.data(),iexcit.data(),T,Rbuff);
-        kernels::device::phmsd_reduce_R(nex,refc.data(),iexcit.data(),
-                                        to_view(weights(range(idet,idet+ndet),all)),
-                                        to_view(Rbuff),to_view(R));
+        // Bound density/force-bias scratch by the same determinant limit used
+        // in energy, rather than allocating an entire excitation shell.
+        for(int first=0; first<ndet; first+=ndet_block_size) {
+          int count=std::min(ndet_block_size,ndet-first);
+          memory::buffered_array<MEM,ComplexType,4> Rbuff(nw,count,nex,nact);
+          auto ex=iexcit.data()+2*nex*first;
+          detail::phmsd_compact_R(nex,refc.data(),ex,T,Rbuff);
+          kernels::device::phmsd_reduce_R(nex,refc.data(),ex,
+              to_view(weights(range(idet+first,idet+first+count),all)),to_view(Rbuff),to_view(R));
+        }
         idet += ndet;
       }
     }
@@ -364,6 +388,7 @@ void get_compact_ph_R_matrices(nda::MemoryVector auto const& iexcit,
             for (int q = 0; q < nex; q++)
               Q(p,q) = T(e[p + nex],e[q]);
           nda::lapack::getrf(Q,ipiv,work);
+          ov_a = ComplexType(0.0);
           math::log_determinant_from_getrf(Q,ipiv,ov_a);
           // how to handle cases where this is basically zero?
           ov_a = std::exp(ov_a);

@@ -11,6 +11,7 @@ target_sources(safire_lib
     add_scalar.cu
     phmsd_determinants.cu
     phmsd_energy.cu
+    phmsd_integrals.cu
     phmsd_vmf.cu
     apply.cu
     probe.cu

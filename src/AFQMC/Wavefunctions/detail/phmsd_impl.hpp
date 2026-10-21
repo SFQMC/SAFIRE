@@ -22,6 +22,8 @@
 #include "numerics/device_kernels/to_view.hpp"
 #endif
 
+#include "AFQMC/Wavefunctions/detail/phmsd_energy_gemm.hpp"
+#include "AFQMC/Wavefunctions/detail/phmsd_energy_integrals.hpp"
 
 namespace sfqmc::afqmc 
 {
@@ -48,6 +50,11 @@ void ph_excited_2body_energy_dense_cholesky(nda::MemoryVector auto const& iexcit
   utils::check(EJ.shape() == std::array<long,1>{nwalk}, "Size mismatch");
   utils::check(KE.shape() == std::array<long,3>{ndet,nwalk,nchol}, "Size mismatch");
   utils::check(Twina.extent(0)==nwalk and Twina.extent(3)==nact, "Size mismatch");
+
+  if(ndet >= 8) {
+    ph_excited_2body_energy_gemm(iexcit,refc,Twina,R,wgt,EX,EJ,KE);
+    return;
+  }
 
   if constexpr (MEM==HOST_MEMORY) {
     nda::vector<int> occps(nelec);
