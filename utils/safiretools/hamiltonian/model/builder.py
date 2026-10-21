@@ -363,7 +363,7 @@ class HamiltonianBuilder:
 
     @classmethod
     def from_input(cls, lattice: Lattice, *, nbands: int = 1,
-                   spin_symm=SpinSymm.COLLINEAR, t=1.0, epsilon=None, rashba_lambda=None,
+                   spin_symm=None, t=1.0, epsilon=None, rashba_lambda=None,
                    custom_one_body=None, U=None, U1=None, U2=None, J=None, J_heisenberg=None, V=None,
                    pinning=None, hst_types: dict = None) -> "HamiltonianBuilder":
         r"""
@@ -381,7 +381,9 @@ class HamiltonianBuilder:
         nbands : int, optional
             Number of bands. Default 1.
         spin_symm : SpinSymm or str or int, optional
-            Spin symmetry the Hamiltonian is expressed in. Default
+            Spin symmetry the Hamiltonian is expressed in. By default
+            `SpinSymm.NONCOLLINEAR` if `rashba_lambda` or a
+            (2*nbasis, 2*nbasis) `custom_one_body` is given, otherwise
             `SpinSymm.COLLINEAR`.
         t : float or array_like, optional
             nth-order neighbor hopping (`nth_neighbor_hopping`). Default 1.0;
@@ -403,8 +405,8 @@ class HamiltonianBuilder:
             band energies on the diagonal and on-site inter-band hopping off it.
         rashba_lambda : float, optional
             Rashba spin-orbit coupling strength (`rashba_soc`), multiplying the hopping
-            `t` of every neighbor order. Requires `spin_symm` NONCOLLINEAR and a
-            scalar or 1-dimensional `t`.
+            `t` of every neighbor order. Implies NONCOLLINEAR `spin_symm`; requires
+            a scalar or 1-dimensional `t`.
         custom_one_body : array_like, optional
             One-body matrix added as is (`custom_one_body`).
         U : float or array_like, optional
@@ -445,6 +447,15 @@ class HamiltonianBuilder:
         >>> builder = HamiltonianBuilder.from_input(lattice, t=1.0, U=4.0)
         >>> hamiltonian = builder.get_hamiltonian()
         """
+        if spin_symm is None:
+            nbasis = lattice.N_sites * nbands
+            spinor_one_body = (custom_one_body is not None
+                               and np.shape(custom_one_body) == (2 * nbasis, 2 * nbasis))
+            if rashba_lambda is not None or spinor_one_body:
+                spin_symm = SpinSymm.NONCOLLINEAR
+            else:
+                spin_symm = SpinSymm.COLLINEAR
+
         builder = cls(lattice=lattice, nbands=nbands, spin_symm=spin_symm)
 
         one_body_steps = [
