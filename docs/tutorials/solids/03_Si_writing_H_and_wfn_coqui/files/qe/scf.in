@@ -2,7 +2,7 @@
    calculation = 'scf',
    prefix = 'pwscf',
    outdir = 'OUT',
-   pseudo_dir = './',
+   pseudo_dir = '../files/qe/',
    verbosity = 'high'
 /
 

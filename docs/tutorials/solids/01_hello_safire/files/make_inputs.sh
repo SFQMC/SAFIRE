@@ -11,16 +11,17 @@ src=$files/../../03_Si_writing_H_and_wfn_coqui/files
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-cp -r "$src/qe" "$src/coqui" "$work"
+# same layout as the tutorial: run in data/, inputs in ../files/
+mkdir -p "$work/files" "$work/data"
+cp -r "$src/qe" "$src/coqui" "$work/files"
 
-cd "$work/qe"
-pw.x -inp scf.in
-pw.x -inp nscf.in
-pw2coqui.x < pw2coqui.in
+cd "$work/data"
+pw.x -inp ../files/qe/scf.in
+pw.x -inp ../files/qe/nscf.in
+pw2coqui.x < ../files/qe/pw2coqui.in
 
-cd "$work/coqui"
-coqui hamil.toml
-coqui wfn.toml
+coqui ../files/coqui/hamil.toml
+coqui ../files/coqui/wfn.toml
 
 cp hamil.h5 "$files/hamiltonian.h5"
 cp wfn.h5 "$files/wavefunction.h5"
