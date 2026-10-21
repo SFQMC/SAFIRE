@@ -129,11 +129,12 @@ html_theme_options = {
     "header_links_before_dropdown": 6,
     # Show this many levels expanded on page load (default: 1)
     "show_nav_level": 2,
-    # Maximum depth rendered in the left nav (default: 4)
     # Remove the light/dark theme switcher (default: ["theme-switcher", "navbar-icon-links"])
     "navbar_end": ["navbar-icon-links"],
     "navbar_align": "content",
     "secondary_sidebar_items": ["page-toc"],
+    # Expand this many heading levels in the right-hand page TOC (default: 1)
+    "show_toc_level": 2,
     "icon_links": [
         {
             "name": "GitHub",
