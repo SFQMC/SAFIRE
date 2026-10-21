@@ -55,9 +55,6 @@ The framework consists of a Lattice class which is responsible for geometry (see
 and a Hamiltonian *Builder* which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
 ``LatticeHamiltonian.from_lattice()`` takes a lattice and the Hamiltonian parameters as keyword arguments
 and runs the corresponding build steps, which covers most use cases.
-Users who want direct control over the Hamiltonian build steps can instead construct a ``HamiltonianBuilder``
-and invoke build steps directly. See the `Hamiltonian Builder <05_hamiltonian_builder/05_hamiltonian_builder.html>`_ for
-more detail.
 
 Imaginary-Time Propagation
 --------------------------

@@ -4,8 +4,6 @@ Adding Rashba SOC to the Hamiltonian
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This example covers adding Rashba SOC to the Hamiltonian.
-Currently, this is only supported when working directly with the Hamiltonian Builder
-in Python without using an inputfile.
 
 .. literalinclude:: run.py
 

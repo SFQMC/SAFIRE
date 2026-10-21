@@ -187,7 +187,7 @@ wavefunction = Wavefunction.from_free_electron(
 wavefunction.to_hdf5("wfn.h5")
 ```
 
-Mean-field trial wavefunctions, which often capture the physics of the interacting system better, are the topic of {doc}`../07_autohf_crash_course/07_autohf_crash_course`.
+Mean-field trial wavefunctions, which often capture the physics of the interacting system better, are the topic of {doc}`../06_autohf_crash_course/06_autohf_crash_course`.
 
 +++ {"id": "FoovlUVcFqxX"}
 

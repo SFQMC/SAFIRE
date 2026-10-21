@@ -259,6 +259,99 @@ lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'
 hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, V=1.0)
 ```
 
+### Rashba Spin-Orbit Coupling
+
+Rashba spin-orbit coupling,
+
+$$
+\hat{H}_\mathrm{R} = i \lambda_\mathrm{R} \sum_{n} t_n \sum_{(i,j)^n} \sum_{\sigma\sigma'} (\vec{\sigma} \times \vec{r}_{ij})_z^{\sigma\sigma'} \hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma'},
+$$
+
+where $\vec{\sigma}$ is the vector of Pauli matrices, $\vec{r}_{ij}$ is the displacement from site $i$ to site $j$, $t_n$ is the $n^\text{th}$-order hopping, and $(i,j)^n$ runs over both orderings of each pair of $n^\text{th}$-order neighbors,
+is added with the `rashba_lambda` argument. Currently Rashba Spin-Orbit coupling is only tested for 1-band models.
+Because the Rashba term flips spins, the one-body matrix becomes a $(2 N_\text{sites}, 2 N_\text{sites})$ spinor matrix whose off-diagonal blocks couple up and down spins.
+
+```{code-cell} ipython3
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    t=1.0,
+    U=4.0,
+    rashba_lambda=0.3
+)
+
+# the Rashba term is imaginary and sits in the spin-flip blocks
+plt.matshow(hamiltonian.get_one_body().toarray().imag)
+plt.colorbar()
+plt.show()
+```
+
+### Pinning Fields
+
+Pinning fields are on-site potentials on the edges of a lattice, usually open ones, that break a symmetry so that the order it induces can be measured.
+They are added with the `pinning` argument, a pair with one {py:class}`safiretools.PinningField` or `None` per lattice axis, acting on the two edges at the ends of that axis.
+`PinningField.afm`, `PinningField.fm` and `PinningField.charge` give antiferromagnetic, ferromagnetic and charge fields $\pm h/2$; with `staggered=True`, the two edges have opposite signs.
+Other patterns can be given as a function `(n, edge) -> (h_up, h_down)` passed to `PinningField`.
+
+Below, we pin the two open edges at the ends of axis 0 antiferromagnetically, as in {doc}`/examples/models/02_stripes/index`.
+
+```{code-cell} ipython3
+from safiretools import PinningField
+
+open_lattice = Lattice.from_type('square', (6, 4), boundaries=('open', 'periodic'))
+
+hamiltonian = LatticeHamiltonian.from_lattice(
+    open_lattice,
+    t=1.0,
+    U=4.0,
+    pinning=(PinningField.afm(0.5, staggered=True), None)
+)
+
+# the spin-down potential is the negative of the spin-up one
+vis.plot_lattice(
+    open_lattice,
+    density=hamiltonian.get_one_body().diagonal(),
+    density_label='spin-up potential'
+)
+```
+
+### Custom One-Body Terms
+
+A one-body term that none of the arguments above cover can be passed as a matrix with `custom_one_body`. It is added to the one-body Hamiltonian as is, without an implicit sign, and must be Hermitian.
+Its rows and columns are the site indices $i$ shown by `vis.plot_lattice`, and it may have one of three shapes:
+
+- $(N_\text{sites}, N_\text{sites})$: the same matrix for both spins,
+- $(2 N_\text{sites}, N_\text{sites})$: the spin-up matrix stacked on the spin-down matrix, e.g. `sps.vstack([h, -h])` for a Zeeman field $h$,
+- $(2 N_\text{sites}, 2 N_\text{sites})$: a full spinor matrix.
+
+Below, we add a staggered potential,
+
+$$
+\hat{H}_\Delta = \Delta \sum_{i\sigma} (-1)^{x_i + y_i} \hat{n}_{i\sigma},
+$$
+
+where $(x_i, y_i)$ is the position of site $i$. With $\Delta = 0.5$, this is the ionic Hubbard model.
+
+```{code-cell} ipython3
+import scipy.sparse as sps
+
+x, y = lattice.get_positions().T
+stagger = (-1.0) ** np.round(x + y)
+
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    t=1.0,
+    U=4.0,
+    custom_one_body=sps.diags_array(0.5 * stagger)
+)
+
+# the diagonal of the spin-up block is the on-site potential
+vis.plot_lattice(
+    lattice,
+    density=hamiltonian.get_one_body().diagonal(),
+    density_label='on-site potential'
+)
+```
+
 ## Multiband Models
 
 By passing `nbands` to {py:meth}`safiretools.LatticeHamiltonian.from_lattice`, every lattice site carries $n_\text{bands}$ orbitals, and the operators $\hat{c}_{im\sigma}$ get a band index $m$ (or $p$) next to the site index $i$.
