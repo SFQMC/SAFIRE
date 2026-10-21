@@ -102,7 +102,7 @@ You should get an output compatible with `Energy = -19.5801 ± 0.0023`.
 :end-before: <!-- END hello-equilibration -->
 ```
 
-You will learn how to measure observables other than the energy in {doc}`../08_computing_observables/08_computing_observables`.
+You will learn how to measure observables other than the energy in {doc}`../07_computing_observables/07_computing_observables`.
 
 +++
 
