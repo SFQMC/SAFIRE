@@ -94,7 +94,7 @@ def plot_lattice(
         ax=None,
         density=None,
         density_label="Density",
-        cmap='seismic',
+        cmap='RdBu_r',
         vmin=None,
         vmax=None,
         norm_type='linear',
@@ -124,7 +124,7 @@ def plot_lattice(
     density_label : str, optional
         Colorbar label. Default "Density".
     cmap : str or matplotlib.colors.Colormap, optional
-        Colormap for `density`. Default 'seismic'.
+        Colormap for `density`. Default 'RdBu_r'.
     vmin, vmax : float, optional
         Color scale limits. Default the extremes of `density`.
     norm_type : {'linear', 'log'}, optional
