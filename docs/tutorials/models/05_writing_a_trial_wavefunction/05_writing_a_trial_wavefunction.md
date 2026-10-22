@@ -38,10 +38,13 @@ Become acquainted with how to write a trial wavefunction to the SAFIRE HDF5 form
 :end-before: <!-- END wfn-introduction -->
 ```
 
-```{note}
+<div class="alert alert-block alert-info">
+<b>Note:</b>
+
 PHMSD trial wavefunctions are more commonly used for molecules and we will not cover them further in this tutorial.
 Most lattice model calculations are performed with a single Slater determinant or a handful of non-orthogonal ones.
-```
+
+</div>
 
 +++ {"id": "RXzexuh_sQyL"}
 

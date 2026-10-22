@@ -104,10 +104,13 @@ we are ready to learn how to run the SAFIRE executable given the inputs.
 Because the path to the SAFIRE executable depends on your installation, in the tutorials, we will assume that you have defined the environment variable
 `$AFQMC_EXEC` that contains `/path/to/SAFIRE/build/bin/safire`. So the following should print the path to SAFIRE and then display the help.
 
-```{note}
+<div class="alert alert-block alert-info">
+<b>Note:</b>
+
 In a Jupyter notebook, the `!` symbol will run commands in
 a shell instead of in Python.
-```
+
+</div>
 
 <!-- END hello-jobfile-and-running -->
 

@@ -152,8 +152,10 @@ They are:
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
-  SAFIRE will measure all combinations of pairings that you request.
-  i.e. it will compute $P^{\alpha \beta}_{ij}$ where both $\alpha$ and $\beta$ run over the full set of pairing definitions.
+
+SAFIRE will measure all combinations of pairings that you request.
+i.e. it will compute $P^{\alpha \beta}_{ij}$ where both $\alpha$ and $\beta$ run over the full set of pairing definitions.
+
 </div>
 
 Since the pair correlation functions do not generally commute with the Hamiltonian, we should use a back-propagated estimator.

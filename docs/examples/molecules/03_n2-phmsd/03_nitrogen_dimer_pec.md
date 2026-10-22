@@ -184,7 +184,9 @@ file that already holds the trial wavefunction.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
-    Without basis=mc, from_pyscf() would use the RHF orbitals, while the CAS determinants are occupations of the CASSCF ones. The Hamiltonian and the trial wavefunction must share a basis.
+
+Without basis=mc, from_pyscf() would use the RHF orbitals, while the CAS determinants are occupations of the CASSCF ones. The Hamiltonian and the trial wavefunction must share a basis.
+
 </div>
 
 ```{code-cell} ipython3

@@ -153,9 +153,12 @@ In this tutorial we want to measure the one-body reduced-density matrix (1-rdm),
 
 Setting the observable to `{}` means to measure it with its default settings.
 
-```{note}
+<div class="alert alert-block alert-info">
+<b>Note:</b>
+
 Computing the 2-rdm is very time and memory intensive; this should only be done for small systems.
-```
+
+</div>
 
 It is also possible to compute only the *diagonal* 2-rdm,
 $D^{\sigma\sigma'}_{ij} = \langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{j\sigma'} c_{i\sigma} \rangle$ (see {ref}`diag_twordm_obs`).

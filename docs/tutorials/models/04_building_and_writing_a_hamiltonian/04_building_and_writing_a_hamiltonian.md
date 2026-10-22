@@ -115,9 +115,12 @@ plt.show()
 
 +++
 
-```{caution}
+<div class="alert alert-block alert-warning">
+<b>Caution:</b>
+
 $n^\mathrm{th}$-order neighbors are determined by spatial distance. This is especially important to keep in mind when attempting to use a lattice with a basis.
-```
+
+</div>
 
 ### On-Site Energy
 

@@ -182,9 +182,12 @@ wavefunction = Wavefunction.from_free_electron(
 
 ## Overriding the Hubbard-Stratonovich Transformation Type
 
-```{warning}
+<div class="alert alert-block alert-warning">
+<b>Warning:</b>
+
 This functionality is for experts only. Use at your own risk.
-```
+
+</div>
 
 By default, the Hamiltonian builder chooses a Hubbard-Stratonovich transformation (HST) type from the sign of each interaction.
 For band-dependent interactions, it splits each interaction into two separate terms if there are both positive and negative interaction strengths and assigns an HST type to each.
