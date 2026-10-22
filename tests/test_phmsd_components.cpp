@@ -142,7 +142,8 @@ void phmsd_components_ph_excited_energy_real_dense_cholesky() {
 #if defined(ENABLE_DEVICE)
         using kernels::device::to_view;
         auto td=memory::to_memory_space<MEM>(Ttest), rd=memory::to_memory_space<MEM>(Rtest);
-        auto xd=memory::to_memory_space<MEM>(X), wd=memory::to_memory_space<MEM>(wtest);
+        auto xd=memory::to_memory_space<MEM>(X);
+        auto wd=memory::to_memory_space<MEM>(wtest);
         memory::array<MEM,ComplexType,4> tn(ntest,nelec,nact,nchol);
         memory::array<MEM,ComplexType,3> f(ntest,nelec,nact), kt(ndet,ntest,nchol);
         memory::array<MEM,ComplexType,2> k0(ntest,nchol);

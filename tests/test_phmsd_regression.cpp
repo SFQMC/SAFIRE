@@ -169,7 +169,8 @@ void phmsd_density_scattered_holes(int spin, int batch)
         for(int j=0; j<nel; ++j) expected(iw,i,occ[j])+=weights(d,iw)*inverse(i,j);
     }
   }
-  auto t=memory::to_memory_space<MEM>(T),w=memory::to_memory_space<MEM>(weights);
+  auto t=memory::to_memory_space<MEM>(T);
+  auto w=memory::to_memory_space<MEM>(weights);
   memory::array<MEM,C,3> R(nw,nel,nact);
   for(int repeat=0; repeat<2; ++repeat) {
     R()=C(.3,-.7);
