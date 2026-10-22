@@ -33,11 +33,11 @@ How to Run an AFQMC Calculation
 
 After installing SAFIRE (see :ref:`install`), a basic AFQMC calculation
 can be performed by following the steps below.
-A set of examples is provided for each step in the :ref:`user_examples`.
+The :ref:`tutorials` walk through each step, and the :ref:`user_examples` show them in complete workflows.
 
-1. Set up the AFQMC calculation by specifying a Hamiltonian and a trial wavefunction using safiretools. See :ref:`setup_exs`
-2. Run the SAFIRE executable. See :ref:`run_afqmc_exs`
-3. Analyze the stochastic data. See :ref:`analysis_exs`
+1. Set up the AFQMC calculation by specifying a Hamiltonian and a trial wavefunction using safiretools.
+2. Run the SAFIRE executable.
+3. Analyze the stochastic data.
 
 Tutorials
 ---------
@@ -52,10 +52,7 @@ You can find the tutorials here: :ref:`tutorials`.
 Examples
 --------
 
-The SAFIRE manual provides two different types of examples:
-
-1. :ref:`Walkthroughs <walkthrough_examples>` which illustrate complete workflows in various application domains.
-2. :ref:`Snippets <snippet_examples>` which focus on specific actions or settings.
+The :ref:`user_examples` illustrate complete workflows in various application domains.
 
 Exploring the examples is a great way to familiarize yourself with the capabilities of SAFIRE and see how to apply them to your own problems.
 
