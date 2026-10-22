@@ -11,4 +11,3 @@ Running SAFIRE
   01_basic_ground_state_energy/readme
   02_basic_back_propagation/readme  
   03_generating_json_input/readme
-  04_input_file_recipes/readme
