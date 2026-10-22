@@ -1,8 +1,0 @@
-building Hubbard U term with U=8.0
-max spin symmetry is 3
-processing a noncollinear system (10 electrons)
-eigenvalues of the non-interacting Hamiltonian: [-6.         -6.         -1.03923048 -1.03923048 -1.03923048 -1.03923048
-  1.03923048  1.03923048  1.03923048  1.03923048  1.13257654  1.13257654
-  1.13257654  1.13257654  1.86742346  1.86742346  1.86742346  1.86742346]
-filling 10 electrons over 5 shell(s) using the 'aufbau' strategy
-built a noncollinear free-electron determinant: 10 electrons in 18 spinor orbitals (originally up: 5, down: 5)
