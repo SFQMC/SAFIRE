@@ -13,10 +13,10 @@ kernelspec:
 
 +++ {"id": "16a2dc3c-fe26-455b-bade-b59769494e25"}
 
-# Understanding the Input File
+# Understanding the JSON Job File
 
 <b>Goal:</b>
-Understand how to control SAFIRE via the input file.
+Understand how to control SAFIRE via the JSON job file.
 
 ## What You Will Learn
 
@@ -29,9 +29,9 @@ Understand how to control SAFIRE via the input file.
 
 ## Introduction
 
-As we saw in {doc}`../01_hello_safire/01_hello_safire`, SAFIRE simulations are configured via a JSON job file. This job file specifies which Hamiltonian should be simulated with which trial wavefunction for how long. In this tutorial, we will explore this input file further and give some practical tips on how to choose common parameters. For a complete reference of all settings, see {ref}`input_afqmc`. Later tutorials will cover how to generate the Hamiltonian and wavefunction inputs.
+As we saw in {doc}`../01_hello_safire/01_hello_safire`, SAFIRE simulations are configured via a JSON job file. This job file specifies which Hamiltonian should be simulated with which trial wavefunction for how long. In this tutorial, we will explore this job file further and give some practical tips on how to choose common parameters. For a complete reference of all settings, see {ref}`input_afqmc`. Later tutorials will cover how to generate the Hamiltonian and wavefunction inputs.
 
-## A Minimal Input File
+## A Minimal Job File
 
 While there are many configuration parameters to customize SAFIRE simulations, most of them have sensible defaults. Therefore, basic simulations of the ground state energy of a system can be run with a minimal job file containing only the most important parameters.
 
@@ -214,4 +214,4 @@ In this tutorial, you learned
 3. The most common parameters that you will interact with as a user
 4. How to use the {py:func}`safiretools.write_jobfile` helper
 
-See {ref}`input_afqmc` for more information on the input file.
+See {ref}`input_afqmc` for more information on the JSON job file.

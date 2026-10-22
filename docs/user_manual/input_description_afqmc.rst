@@ -3,8 +3,8 @@
 The Job File
 ============
 
-The SAFIRE executable runs :ref:`afqmc` calculations based on the settings provided in an
-input file written in JSON.
+The SAFIRE executable runs :ref:`afqmc` calculations based on the settings provided in a
+JSON job file.
 
 .. code-block::
 
@@ -14,7 +14,7 @@ This page serves as a reference for its format.
 
 .. seealso::
 
-   The :ref:`tutorials` and :ref:`user_examples` contain many examples of practical input files. Often you can use one of them as a starting point for your own calculation.
+   The :ref:`tutorials` and :ref:`user_examples` contain many examples of practical job files. Often you can use one of them as a starting point for your own calculation.
    ``safiretools`` provides a helper function ``write_jobfile()`` that simplifies writing job files from Python.
 
 A Minimal Job File
@@ -177,18 +177,18 @@ At the top level, we have the following general parameters.
      - ``"afqmc"``
      - The driver that runs the execute blocks: ``"afqmc"`` for ground state AFQMC.
    * - **output_name**
-     - name of the input file without its extension
-     - The results are written to ``<output_name>.results.h5``. Unlike every other path in the input, it is relative to the directory SAFIRE is launched from. See :ref:`output_afqmc`.
+     - name of the job file without its extension
+     - The results are written to ``<output_name>.results.h5``. Unlike every other path in the job file, it is relative to the directory SAFIRE is launched from. See :ref:`output_afqmc`.
    * - **seed**
      - random
-     - The seed for the random number generator. Can be used to reproduce simulations with the same random number stream. To reproduce an existing calculation, you can reuse the seed in its log.
+     - The seed for the random number generator. Can be used to reproduce simulations with the same random number stream. To reproduce an existing calculation, you can reuse the seed in its log and run it with the same number of MPI tasks.
 
 The remaining top-level entries are the subblocks ``execute``, ``wavefunctions``, ``hamiltonians``, ``walker_sets``, and ``propagators``.
 
 .. admonition:: Inline vs Out-of-Line Definitions
   :class: note
 
-  Hamiltonians, wavefunctions, walker sets, and propagators can either be defined directly inline where they are needed, deep in the input file, or declared out-of-line with a name at the top level, in the corresponding subblocks. This is useful when one input component is shared in multiple parts of the calculation. For this overview, we will assume all components are declared out-of-line.
+  Hamiltonians, wavefunctions, walker sets, and propagators can either be defined directly inline where they are needed, deep in the job file, or declared out-of-line with a name at the top level, in the corresponding subblocks. This is useful when one input component is shared in multiple parts of the calculation. For this overview, we will assume all components are declared out-of-line.
 
 .. _execute_block:
 
@@ -334,7 +334,7 @@ See :ref:`estimators` for the theory behind each estimator.
      - **Description**
    * - **propagation_steps**
      - *required*
-     - List of back-propagation lengths in propagation steps. Every length is measured as a separate average. The longest one is also the measurement interval: a new back-propagation window starts once it has been covered.
+     - List of back-propagation lengths in propagation steps. Every length is measured separately and stored in its own ``BackPropEstimator/Steps=<m>`` group of the results file. The longest one is also the measurement interval: a new back-propagation window starts once it has been covered.
    * - **wavefunction**
      - the execute block's **wavefunction**
      - Name of the trial wavefunction that is back-propagated.
@@ -582,9 +582,13 @@ to define propagation protocols for quicker equilibration or sweeping different 
         "hamiltonian": "hamiltonian",
         "timestep": 0.005,
         "steps": 10000,
+        "equilibration_steps": 100,
         "num_walkers": 200
       }
     ]
   }
+
+The first stage only equilibrates, since all of its steps are equilibration steps. The second stage continues with its walkers and
+equilibrates for a short time to adapt to the smaller time step before it starts measuring.
 
 Measurement results are recorded and saved to the results file separately per stage. See :ref:`output_afqmc`.

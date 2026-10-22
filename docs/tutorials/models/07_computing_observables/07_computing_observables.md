@@ -44,7 +44,7 @@ import numpy as np
 
 from safiretools import Lattice, LatticeHamiltonian, NOMSDWavefunction
 
-from autohf import solve_hf
+from autohf import solve_hf, AutoHFHamiltonian
 
 # some jax initialization for autohf
 import jax
@@ -57,9 +57,10 @@ lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'
 
 hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, spin_symm="closed")
 
-
-# autoHF does not support closed integrals to collinear integrals
-hamiltonian_for_autohf = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, spin_symm="collinear")
+# AutoHF needs the Hamiltonian in collinear form, so build it again and convert it
+hamiltonian_for_autohf = AutoHFHamiltonian(
+    LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, spin_symm="collinear")
+)
 
 
 hf_settings = dict(
@@ -74,7 +75,7 @@ hf_settings = dict(
     verbose = False
 )
 
-hf_data, _ = solve_hf(hamiltonian_for_autohf, settings=hf_settings)
+hf_data, _ = solve_hf(hamiltonian=hamiltonian_for_autohf, settings=hf_settings)
 
 # AutoHF returns the orbitals as (spin, orbital, electron)
 alpha, beta = np.asarray(hf_data["orbitals"])
@@ -103,7 +104,7 @@ $$\langle H_2 \rangle = U \sum_{i} D^{\uparrow\downarrow}_{ii}$$
 where the indices of the one-body term are combined orbital and spin indices,
 and compare with the results from the energy estimator. The two should agree exactly.
 
-### Run the Code Block Below to Write an Input File with a Mixed Estimator
+### Run the Code Block Below to Write a JSON Job File with a Mixed Estimator
 
 ```{code-cell} ipython3
 ---
@@ -253,7 +254,7 @@ print(f"two-body energy, energy estimator: {E2_default.real:.8f} ± {E2_default_
 
 +++
 
-### Run the Code Block Below to Write an Input File with a BP Estimator
+### Run the Code Block Below to Write a JSON Job File with a BP Estimator
 
 ```{code-cell} ipython3
 ---

@@ -16,7 +16,7 @@ kernelspec:
 # Writing a Trial Wavefunction
 
 <b>Goal:</b>
-Become acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 format.
+Become acquainted with how to write a trial wavefunction to the SAFIRE HDF5 format.
 
 ## What You Will Learn
 
@@ -38,11 +38,10 @@ Become acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 form
 :end-before: <!-- END wfn-introduction -->
 ```
 
-<div class="alert alert-block alert-info">
-<b>Note:</b>
-    PHMSD trial wavefunctions are more commonly used for molecules and we will not cover them further in this tutorial.
-    Most lattice model calculations are performed with a single Slater determinant or a handful of non-orthogonal ones.
-</div>
+```{note}
+PHMSD trial wavefunctions are more commonly used for molecules and we will not cover them further in this tutorial.
+Most lattice model calculations are performed with a single Slater determinant or a handful of non-orthogonal ones.
+```
 
 +++ {"id": "RXzexuh_sQyL"}
 
@@ -193,7 +192,7 @@ Mean-field trial wavefunctions, which often capture the physics of the interacti
 
 ## Summary
 
-In this tutorial, you became acquainted with how to write a Trial wavefunction to the SAFIRE HDF5 format.
+In this tutorial, you became acquainted with how to write a trial wavefunction to the SAFIRE HDF5 format.
 
 ### What You Learned
 

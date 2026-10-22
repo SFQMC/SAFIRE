@@ -41,7 +41,7 @@ We will need the Hamiltonian again to evaluate the energy from the measured obse
 import h5py
 import numpy as np
 
-with h5py.File("../files/hamil.h5", "r") as f:
+with h5py.File("../files/hamiltonian.h5", "r") as f:
     system = f["System"].attrs
     M = int(system["number_of_bands"])
     # constant energy: nuclear repulsion and the Madelung self-interaction of the electrons
@@ -67,7 +67,7 @@ with h5py.File("../files/hamil.h5", "r") as f:
 :end-before: <!-- END observables-mixed-demo -->
 ```
 
-### Run the Code Block Below to Write an Input File with a Mixed Estimator
+### Run the Code Block Below to Write a JSON Job File with a Mixed Estimator
 
 ```{code-cell} ipython3
 ---
@@ -84,10 +84,10 @@ write_jobfile(
         "seed": 42,
         "execute": {
             "wavefunction": {
-                "filename": "../files/wfn.h5"
+                "filename": "../files/wavefunction.h5"
             },
             "hamiltonian": {
-                "filename": "../files/hamil.h5"
+                "filename": "../files/hamiltonian.h5"
             },
             "timestep": 0.01,
             "steps": 7000,
@@ -142,8 +142,8 @@ from safiretools import Results
 
 
 def onebody_energy(onerdm):
-    # factor 2 because this calculation runs with closed walkers
-    return 2 * np.einsum("ij,ij->", h, onerdm[0])
+    # the CoQuí trial is collinear, so the walkers are too: sum the spin-up and spin-down blocks
+    return np.einsum("ij,sij->", h, onerdm)
 
 results = Results("afqmc_mixed.results.h5")
 
@@ -185,7 +185,10 @@ outputId: b681facb-f520-49ed-a2c2-cfceff7c2d40
 v = np.einsum("ikg,ljg->ikjl", L, L.conj())
 
 def twobody_energy(twordm):
-    return np.einsum("ikjl,bikjl->", v, twordm)
+    # collinear walkers store the up-up, up-down and down-down blocks;
+    # the down-up block contributes the same as the up-down block
+    uu, ud, dd = np.einsum("ikjl,bikjl->b", v, twordm)
+    return 0.5 * (uu + dd) + ud
 
 E2_default, E2_default_err = results.evaluate(lambda eH, eF: eH + eF, ["CoulombEnergy", "ExchangeEnergy"], rebinsize=rebinsize)
 
@@ -214,7 +217,7 @@ print(f"two-body energy, energy estimator: {E2_default.real:.8f} ± {E2_default_
 
 +++
 
-### Run the Code Block Below to Write an Input File with a BP Estimator
+### Run the Code Block Below to Write a JSON Job File with a BP Estimator
 
 ```{code-cell} ipython3
 ---
@@ -233,10 +236,10 @@ write_jobfile(
         "seed": 42,
         "execute": {
             "wavefunction": {
-                "filename": "../files/wfn.h5"
+                "filename": "../files/wavefunction.h5"
             },
             "hamiltonian": {
-                "filename": "../files/hamil.h5"
+                "filename": "../files/hamiltonian.h5"
             },
             "timestep": dt,
             "steps": 10000,

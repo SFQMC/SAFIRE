@@ -115,10 +115,9 @@ plt.show()
 
 +++
 
-<div class="alert alert-block alert-warning">
-<b>CAUTION:</b>
-    nth-order neighbors are determined by spatial distance. This is especially important to keep in mind when attempting to use a lattice with a basis.
-</div>
+```{caution}
+$n^\mathrm{th}$-order neighbors are determined by spatial distance. This is especially important to keep in mind when attempting to use a lattice with a basis.
+```
 
 ### On-Site Energy
 
@@ -482,3 +481,13 @@ hamiltonian = LatticeHamiltonian.from_lattice(
     J=0.5
 )
 ```
+
+## Summary
+
+In this tutorial, you learned how to build lattice model Hamiltonians with {py:meth}`safiretools.LatticeHamiltonian.from_lattice` and write them to the SAFIRE HDF5 format.
+
+### What You Learned
+
+1. How to build a Hubbard model on a lattice and write it to an HDF5 file that SAFIRE can read
+2. How to add higher-order hopping, on-site energies, density-density, spin-spin, Hund's and extended Hubbard interactions, Rashba spin-orbit coupling, pinning fields and custom one-body terms
+3. How these terms extend to multiband models

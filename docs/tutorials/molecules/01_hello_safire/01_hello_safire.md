@@ -104,11 +104,10 @@ we are ready to learn how to run the SAFIRE executable given the inputs.
 Because the path to the SAFIRE executable depends on your installation, in the tutorials, we will assume that you have defined the environment variable
 `$AFQMC_EXEC` that contains `/path/to/SAFIRE/build/bin/safire`. So the following should print the path to SAFIRE and then display the help.
 
-<div class="alert alert-block alert-info">
-<b>Note:</b>
-    in a jupyter notebook, the `!` symbol will run commands in
-    a shell instead of in Python.
-</div>
+```{note}
+In a Jupyter notebook, the `!` symbol will run commands in
+a shell instead of in Python.
+```
 
 <!-- END hello-jobfile-and-running -->
 
@@ -121,7 +120,7 @@ Because the path to the SAFIRE executable depends on your installation, in the t
 
 ### Running SAFIRE in Serial
 
-SAFIRE takes the JSON job file as its only argument,
+SAFIRE takes the JSON job file as its only positional argument,
 
 ```bash
     $ $AFQMC_EXEC afqmc.json
@@ -139,11 +138,11 @@ For example, using mpirun, we could run SAFIRE with 64 MPI tasks as
     $ mpirun -n 64 $AFQMC_EXEC afqmc.json
 ```
 
-It is important to note that `num_walkers` in the input file is the total number of walkers
+It is important to note that `num_walkers` in the job file is the total number of walkers
 over all MPI tasks.
 SAFIRE splits them evenly over the tasks, so that the walker counts of two tasks differ by at
 most one.
-So, running the sample input file above with 64 MPI tasks gives each task 3 or 4 of its 200
+So, running the sample job file above with 64 MPI tasks gives each task 3 or 4 of its 200
 walkers.
 For calculations that run on a CPU only build of SAFIRE, `num_walkers` is typically chosen
 such that every task carries on the order of 10-50 walkers.
@@ -272,6 +271,6 @@ In this tutorial we have learned,
 
 ---
 
-Next, we will take a more detailed look at the input file in {doc}`../02_understanding_the_input_file/02_understanding_the_input_file`.
+Next, we will take a more detailed look at the JSON job file in {doc}`../02_understanding_the_input_file/02_understanding_the_input_file`.
 
 <!-- END hello-summary -->

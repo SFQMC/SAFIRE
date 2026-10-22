@@ -181,6 +181,16 @@ vis.plot_lattice(
 )
 ```
 
+## Summary
+
+In this tutorial, you learned the basics of using AutoHF to generate Hartree-Fock trial wavefunctions for SAFIRE.
+
+### What You Learned
+
+1. How to find the Hartree-Fock solution of a lattice model Hamiltonian with AutoHF
+2. How to turn the AutoHF result into a SAFIRE trial wavefunction
+3. How to check the charge and spin densities of the Hartree-Fock solution
+
 ## Further Reading
 
 The examples in {ref}`examples_models` contain many more advanced applications of AutoHF, including models that show stripe ground states and how to apply pinning fields. The [AutoHF documentation](https://safire.flatironinstitute.org/autohf/dev/) is a good resource to learn more about the detailed settings of AutoHF.
