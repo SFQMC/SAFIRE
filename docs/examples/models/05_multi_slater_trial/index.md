@@ -101,7 +101,7 @@ results = solve_hf(hamiltonian=autohf_hamiltonian,settings=settings)
 
 ## Construct and Save the Trial Wavefunction
 
-A trial wavefunction can be written to AuxiliaryField's HDF5 format by building a `NOMSDWavefunction` from `safiretools` and calling its `to_hdf5()` method.
+A trial wavefunction can be written to SAFIRE's HDF5 format by building a `NOMSDWavefunction` from `safiretools` and calling its `to_hdf5()` method.
 In general, the trial wavefunction in AFQMC is a linear combination of Slater determinants,
 
 $$
@@ -130,7 +130,7 @@ where $i$ is the basis index, $p$ is the electron index, and
  $M,N$ are the number of basis functions and electrons, respectively.
 <b>
 SAFIRE uses the convention that orbitals are columns of the Slater matrices.</b>
-For collinear Slater determinants, the first $N_{\uparrow}$ columns are the spin-up electrons and the last $N_{\downarrow}$ are the spin-down electrons.
+A collinear Slater determinant is a pair of Slater matrices, one for the $N_{\uparrow}$ spin-up electrons and one for the $N_{\downarrow}$ spin-down electrons.
 
 In the code block below, we manually construct Slater matrices from the UHF orbitals that we got from autohf above.
 

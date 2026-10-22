@@ -94,15 +94,14 @@ nelec = (8,8)
 # Step 2. build the lattice model Hamiltonian
 hamiltonian = LatticeHamiltonian.from_lattice(
     lattice,
-    t=1.0,  # note: we could omit this, nearest-neighbor hoping with t=1 is included by default
+    t=1.0,
     U=4.0,
 )
 ```
 
 +++ {"id": "MqK7sb3Z5xcn"}
 
-We now have a standard Hubbard model with nearest-neighbor hopping and onsite U saved in an HDF5 file, `afqmc.h5`
-which can be directly read by SAFIRE.
+We now have a standard Hubbard model with nearest-neighbor hopping and on-site U.
 Next, we'll walk through an AFQMC calculation where we'll compute the ground state energy.
 
 +++ {"id": "9KnqEEIS5xcn"}
@@ -127,7 +126,7 @@ others for specific problems.
 For example, both free-electron trial wavefunctions and Hartree-Fock (HF) trial wavefunctions
 are reasonable for low-, to intermediate-U values.
 Assuming that all candidate trial wavefunctions have the desired properties,
-it may be necessary to test which wavefunction is better by running afqmc with each,
+it may be necessary to test which wavefunction is better by running AFQMC calculations with each,
 and comparing the results.
 In this walk through, we will compare free-electron trial wavefunctions
 to unrestricted Hartree-Fock trial wavefunctions.
@@ -161,10 +160,9 @@ outputId: e6000516-1e4f-4ae3-db34-af0b0c4d03f7
 ---
 # First, let's compute the Free-Electron trial wavefunction
 from safiretools import Wavefunction
-from safiretools.wavefunction.free_electron import DEFAULT_TWIST
 
 # a small irrational twist, in radians per axis, breaks the k-space degeneracy
-twist = DEFAULT_TWIST
+twist = (1/3252409**0.5, 1/105976**0.5)
 
 fe_lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=twist)
 fe_hamiltonian = LatticeHamiltonian.from_lattice(fe_lattice, t=1.0, U=4.0)
@@ -178,13 +176,14 @@ wfn = Wavefunction.from_free_electron(
 +++ {"id": "-xW_O9f35xco"}
 
 Now that we have computed a free-electron wavefunction, we can inspect the results to validate it.
-Building a wavefunction and evaluating its energy are separate calls, so we run the
-`autohf` HF solver explicitly to evaluate the energy of the free-electron trial
-wavefunction for the interacting Hamiltonian — passing `steps=-1` so that it reports
-the reference energy of the determinant we give it rather than optimizing it.
+Building a wavefunction and evaluating its energy are separate calls, so we compute the energy of the
+free-electron trial wavefunction for the interacting Hamiltonian by hand.
+For a single Slater determinant $\Phi$, the one-rdm is $\rho^\sigma_{ij} = \sum_n \Phi^{\sigma*}_{in} \Phi^\sigma_{jn}$,
+which gives the one-body energy $E_\mathrm{K} = \sum_{\sigma ij} t^\sigma_{ij} \rho^\sigma_{ij}$
+and the Hubbard energy $E_U = U \sum_i \rho^\uparrow_{ii} \rho^\downarrow_{ii}$.
 For $N_{\uparrow} = N_{\downarrow} = 8$, the total energy is
-Etotal = -5.18522319306247 $t$ with a one-body contribution of EK = -22.69026695983466 $t$,
-and a Hubbard U contribution of EU=17.50504376677219.
+$E = -8.006\,t$ with a one-body contribution of $E_\mathrm{K} = -24.006\,t$,
+and a Hubbard U contribution of $E_U = 16.000\,t$.
 
 Next, let's take a look at the charge and spin densities of the trial wavefunction.
 
@@ -197,27 +196,19 @@ colab:
 outputId: a868b2dd-398f-40d5-90b7-9a8036f6659b
 ---
 import numpy as np
-from autohf import AutoHFHamiltonian, solve_hf
 
-autohf_results = solve_hf(
-    AutoHFHamiltonian(source=fe_hamiltonian),
-    settings=dict(
-        ansatz='SD',
-        steps=-1,          # report the reference energy; do not optimize
-        verbose=True,
-        nelec=nelec,
-        batch_size=1
-    ),
-    initial_guess=np.hstack(wfn.determinant(0)),
-    suppress_logo=True
-)
+# one-rdm of the free-electron determinant
+alpha, beta = wfn.determinant(0)
+rdm = np.array([alpha.conj() @ alpha.T, beta.conj() @ beta.T])
 
-state_results, functions = autohf_results
+# the one-body term holds the spin-up and spin-down blocks one above the other
+M = fe_lattice.N_sites
+t_ij = fe_hamiltonian.get_one_body().toarray().reshape(2, M, M)
+U_i = fe_hamiltonian.get_U().diagonal()
 
-# get the density from autohf
-makeRDMs = functions['makeRDMs']
-state = state_results['state']
-rdm = makeRDMs(state)
+E_K = np.sum(t_ij * rdm).real
+E_U = np.sum(U_i * rdm[0].diagonal() * rdm[1].diagonal()).real
+print(f"E = {E_K + E_U:.6f}, E_K = {E_K:.6f}, E_U = {E_U:.6f}")
 
 # get lattice dimensions from the Lattice instance
 L = lattice.L
@@ -231,7 +222,6 @@ vis.plot_lattice(
     lattice,
     density=rho_charge.real,
     density_label="charge density",
-    cmap = 'bwr',
     vmin = 0.0,
     vmax = 2.0
 )
@@ -251,7 +241,6 @@ vis.plot_lattice(
     lattice,
     density=rho_spin.real,
     density_label="spin density",
-    cmap = 'bwr',
     vmin = -0.5,
     vmax = 0.5
 )
@@ -358,7 +347,7 @@ colab:
   base_uri: https://localhost:8080/
 outputId: 88d99bd1-dd65-4ca9-a2d1-4943aef286af
 ---
-from autohf import solve_hf
+from autohf import AutoHFHamiltonian, solve_hf
 
 hf_settings = dict(
     ansatz = 'SD',
@@ -436,7 +425,6 @@ vis.plot_lattice(
     lattice,
     density=rho_spin,
     density_label="spin density",
-    cmap="bwr",
     vmin=-0.5,
     vmax=0.5
 )
@@ -613,11 +601,9 @@ Here is a sample input file where an ellipsis has been used to hide the rest of 
 
 For back-propagation (BP), we will need to provide a BP length.
 We will need to check for convergence in this parameter.
-Notice that a BP estimator has no `measure_interval`: the back-propagation length, in steps, is
-given by `propagation_steps`, and it doubles as the measurement interval;
-unlike the default estimator, the BP estimator accepts several values as shown in the example above.
-In this case, BP will be run with each of the BP lengths provided and saved in an output HDF5 file separately.
-This simplifies checking for convergence in the BP length by allowing us to re-use the forward propagation run for each BP length.
+Notice that a BP estimator has no `measure_interval`: the back-propagation lengths, in steps, are
+given by `propagation_steps`, and the longest of them doubles as the measurement interval. Specifying multiple length at once is useful to check the convergence within a single run.
+Every BP length is saved as its own observable, `BackPropEstimator/Steps=<n>`, in the results file.
 
 +++ {"id": "ZjxOUIHUQeuD"}
 
@@ -626,12 +612,9 @@ This simplifies checking for convergence in the BP length by allowing us to re-u
 Run SAFIRE using the following input file to compute the one-rdm using back-propagation.
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: CxlJYdWoREbB
-outputId: 819142c2-1650-4107-9ab3-f2bd8927f689
----
+
+bp_lengths = [200, 400, 600]
+
 # make an input file
 write_jobfile("afqmc_3.json", {
     "seed": 42,                          # just for reproducibility
@@ -652,7 +635,7 @@ write_jobfile("afqmc_3.json", {
         "estimators": {
             "backprop": {
                 "walker_ortho_interval": 10,
-                "propagation_steps": [200, 400, 600], # 🚧 Under construction 🚧 : Kyle is working on a good set of values here.
+                "propagation_steps": bp_lengths,
                 "onerdm": {}
             }
         }
@@ -662,10 +645,6 @@ write_jobfile("afqmc_3.json", {
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-id: IIFG3vyw4WLr
-outputId: fb551b42-39fd-4dd1-905f-015d1237d024
 scrolled: true
 tags: [scroll-output]
 ---
@@ -684,14 +663,12 @@ We will now focus on analyzing the back-propagated observables.
 
 ## Average Observables
 
-afqmctools provides tools to directly average observables from the HDF5 output
-in the `afqmctools.analysis.average` module.
-At the core of the module is the `average_observable()` function which extracts samples of a user specified observable from the HDF5 output file, and averages the samples while accounting for autocorrelation automatically.
-Additionally, it users may provide one or more transform functions which are applied to the data samples immediately after reading from HDF5.
-afqmctools provides a few transform function factories for generating common transforms.
-We will use the `hermitize_factory()` to hermitize the one-rdm samples since SAFIRE measures only the upper-triangular part of the one-rdm.
+`safiretools.Results` reads the back-propagated one-rdm of each BP length from the results file.
+SAFIRE writes the full matrix, with the spin-up block first for a noncollinear calculation.
+The charge and spin densities follow from its diagonal, and `results.evaluate()` computes them
+with a jackknife error that accounts for the autocorrelation of the samples.
 
-In the code block below, we will plot the diagonal of the one-rdm for each BP average (i.e. for each BP length) in order to check for convergence in BP length.
+In the code block below, we will plot the charge and spin densities for each BP length in order to check for convergence in BP length.
 
 ```{code-cell} ipython3
 ---
@@ -701,71 +678,31 @@ colab:
 id: fqLt304CwKks
 outputId: 4593e5a7-2e66-446b-e2b1-483f5193b453
 ---
-from afqmctools.analysis.transform import hermitize_factory
-from afqmctools.analysis.average import WALKER_TYPE,get_metadata,average_observable
-
-SAFIRE_hdf5_output = "qmc.s003.stat.h5"
-nspins = 1 # this is a noncollinear calculation, so one (combined) spin sector!
 M = lattice.N_sites # get the number of sites to help with plotting
 
-walker_type = WALKER_TYPE[get_metadata(SAFIRE_hdf5_output)["WalkerType"]]
+def densities(rdm):
+    """Charge and spin density on each site, from the noncollinear one-rdm."""
+    n = rdm[0].diagonal().real
+    n_up, n_down = n[:M], n[M:]
+    return np.stack([n_up + n_down, 0.5*(n_up - n_down)])
 
-# set up a transform the hermitize the one-rdm
-hermitize = hermitize_factory(
-    walker_type=walker_type
-)
+results = Results("afqmc_3.results.h5")
 
-# get the metadata for plotting
-metadata = get_metadata(SAFIRE_hdf5_output,"/Observables/BackPropagated/")
-print(metadata)
+# densities and their errors for each BP length, saved for the visualizations below
+rho, rho_err = {}, {}
+sites = np.arange(M)
+fig, (ax_charge, ax_spin) = plt.subplots(1, 2, figsize=(12, 4))
+for steps in bp_lengths:
+    rho[steps], rho_err[steps] = results.evaluate(densities, [f"BackPropEstimator/Steps={steps}/OneRDM"])
 
-bp_steps = metadata["BackPropSteps"]
-naverages = metadata["NumAverages"]
+    ax_charge.errorbar(x=sites,y=rho[steps][0],yerr=rho_err[steps][0],fmt='-o',label=f"{steps} steps")
+    ax_spin.errorbar(x=sites,y=rho[steps][1],yerr=rho_err[steps][1],fmt='-o',label=f"{steps} steps")
 
-print("BP steps", bp_steps)
-
-# array to save one-rdm for each average
-one_rdms = np.zeros((naverages,nspins,4*(M**2)),dtype=np.complex128)
-one_rdms_err = np.zeros((naverages,nspins,4*(M**2)),dtype=np.complex128)
-
-rho_ups = np.zeros((naverages,*lattice.L),dtype=np.complex128)
-rho_downs = np.zeros((naverages,*lattice.L),dtype=np.complex128)
-
-for avg in range(naverages):
-    # Extract and Transform data
-    one_rdms[avg],one_rdms_err[avg] = average_observable(
-        SAFIRE_hdf5_output,
-        eqlb=5,
-        estimator='back_propagated',
-        name="one_rdm",
-        transform=[hermitize],
-        ix=avg
-    )
-
-    # handle spin!!
-    print(one_rdms[avg].shape)
-
-    lattice_dims = lattice.L
-    rho_diag = one_rdms[avg].reshape((2*M,2*M)).diagonal()
-    rho_up = rho_diag[:M]#.reshape(lattice_dims)
-    rho_down = rho_diag[M:]#.reshape(lattice_dims)
-
-    rho_diag_err = one_rdms_err[avg].reshape((2*M,2*M)).diagonal()
-    rho_up_err = rho_diag_err[:M]#.reshape(lattice_dims)
-    rho_down_err = rho_diag_err[M:]#.reshape(lattice_dims)
-
-    sites = np.arange(M)
-
-    # add in constant energy for consistency with SAFIRE convention
-    plt.errorbar(x=sites,y=rho_up.real,yerr=rho_up_err.real,fmt='-o',color=f"C{avg}",label=r"diagonal of $\rho_\uparrow$" + f"{avg}")
-    plt.errorbar(x=sites,y=rho_down.real,yerr=rho_down_err.real,fmt='--',color=f"C{avg}",label=r"diagonal of $\rho_\downarrow$" + f"{avg}")
-
-    # save density for visualizations below!
-    rho_ups[avg] = rho_up.reshape(lattice_dims)
-    rho_downs[avg] = rho_down.reshape(lattice_dims)
-
-
-plt.legend()
+ax_charge.set_xlabel("site")
+ax_charge.set_ylabel("charge density")
+ax_spin.set_xlabel("site")
+ax_spin.set_ylabel("spin density")
+ax_charge.legend()
 plt.show()
 ```
 
@@ -785,16 +722,13 @@ colab:
 id: 8I7F7yFX22Ya
 outputId: 3eb88439-52df-4ab6-989f-edb3fc5d0aad
 ---
-avg_to_plot = 2
+bp_to_plot = bp_lengths[-1]
 
-rho_up = rho_ups[avg_to_plot]
-rho_down = rho_downs[avg_to_plot]
-
-rho_charge = rho_up + rho_down
+rho_charge, rho_spin = rho[bp_to_plot]
 
 vis.plot_lattice(
     lattice,
-    density=rho_charge.real,
+    density=rho_charge,
     density_label="charge density",
     vmin=0.0,
     vmax=2.0
@@ -802,16 +736,9 @@ vis.plot_lattice(
 ```
 
 ```{code-cell} ipython3
-avg_to_plot = 1
-
-rho_up = rho_ups[avg_to_plot]
-rho_down = rho_downs[avg_to_plot]
-
-rho_spin = 0.5*(rho_up - rho_down)
-
 vis.plot_lattice(
     lattice,
-    density=rho_spin.real,
+    density=rho_spin,
     density_label="spin density",
     vmin=-0.5,
     vmax=0.5

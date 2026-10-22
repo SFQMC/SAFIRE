@@ -67,8 +67,7 @@ $$
 
 SAFIRE implements this form of pair correlation function.
 It requires a set of $\bar{i}_\alpha = i + e_\alpha$, in the HDF5 input file.
-Additionally, specific pairings may be selected in the JSON job file.
-This allows the user to skip some of the offsets saved in the HDF5 file if desired.
+SAFIRE measures every pairing saved in the group the JSON job file points to, so a subset of pairings is selected by saving it to a group of its own.
 We will explore this in more detail below.
 
 +++
@@ -144,17 +143,18 @@ pairs.to_hdf5("afqmc.h5")
 ## Requesting the Pair Correlation Function in the JSON Job File
 
 The pair correlation function observable may be requested as any other observable within an estimator block.
-However, the pair correlation function observable has a few unique parameters that must be set.
-They are:
+However, the pair correlation function observable has one unique parameter that must be set,
+`pairs`, which locates the pairing offsets with
 
-- `filename` which is the name of the HDF5 file where the pairing offsets were saved. These can saved in the same file as the Wavefunction, and/or Hamiltonian or in their own independent input file. Whichever you prefer.
-- `pair_type` is a list of the names of the types of pairing you want to measure. For example, to measure all of the types of pairing that we defined above, we would use `"pair_type" : ["s","+x","-x","+y","-y","xy"]`.
+- `filename`, the name of the HDF5 file where the pairing offsets were saved. These can be saved in the same file as the Wavefunction, and/or Hamiltonian or in their own independent input file. Whichever you prefer.
+- `group`, the HDF5 group holding them. `DirectedPairs.to_hdf5()` writes them to `PairCorrelator/orbital_map`.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
 
-SAFIRE will measure all combinations of pairings that you request.
-i.e. it will compute $P^{\alpha \beta}_{ij}$ where both $\alpha$ and $\beta$ run over the full set of pairing definitions.
+SAFIRE will measure all combinations of the pairings in the group.
+i.e. it will compute $P^{\alpha \beta}_{ij}$ where both $\alpha$ and $\beta$ run over the full set of pairing definitions,
+and save each of them as its own observable, `PairCorr/<alpha>_<beta>`.
 
 </div>
 
@@ -175,12 +175,18 @@ A back-propagated estimator block with pair correlation functions would look lik
 }
 ```
 
-If we decided we only wanted s-wave pair correlations, we could use
+If we decided we only wanted s-wave pair correlations, we could save only those offsets to a file of their own,
+
+```python
+lattice.get_directed_pairs(directions=["s"]).to_hdf5("pairs_s.h5")
+```
+
+and use
 
 ```json
 "paircorr": {
   "pairs": {
-    "filename": "afqmc.h5",
+    "filename": "pairs_s.h5",
     "group": "PairCorrelator/orbital_map"
   }
 }
@@ -229,6 +235,7 @@ from safiretools import Wavefunction, write_jobfile
 from autohf import solve_hf, AutoHFHamiltonian
 
 nelec = (8, 8)
+bp_lengths = [100]
 
 hf_settings = {
     "verbose": False,
@@ -270,7 +277,7 @@ write_jobfile(
             "estimators": {
                 "backprop": {
                     "walker_ortho_interval": 10,
-                    "propagation_steps": [100],
+                    "propagation_steps": bp_lengths,
                     "paircorr": {
                         "pairs": {
                             "filename": "afqmc.h5",
@@ -299,26 +306,18 @@ write_jobfile(
 ```{code-cell} ipython3
 :id: eh8JuNVdag-o
 
-from afqmctools.analysis.average import average_pair_correlation
+from safiretools import Results
 
+results = Results("afqmc.results.h5")
 
-P,dP,correlator_names = average_pair_correlation("qmc.s000.stat.h5")
-
-for i in range(len(correlator_names)):
-    print(f"correlator name: {correlator_names[i]}")
-
-a = correlator_names.index("s")
-b = correlator_names.index("+x")
-iav = 3
-
-n_correlators = len(correlator_names)
-
-P_ab_ij = P[iav].reshape(n_correlators,n_correlators,lattice.N_sites,lattice.N_sites)
+for name in results.observable_names():
+    if "PairCorr" in name:
+        print(f"correlator name: {name}")
 
 # take the s, +x correlator
-P_s_x_ij = P_ab_ij[a,b,:,:].reshape(lattice.N_sites,lattice.N_sites)
+P_s_x_ij, _ = results.average(f"BackPropEstimator/Steps={bp_lengths[-1]}/PairCorr/s_+x")
 # use the first site as the reference site
-P_s_x_0j = P_s_x_ij[0,:].reshape(lattice.L)
+P_s_x_0j = P_s_x_ij[0,:]
 
 vis.plot_lattice(
     lattice,

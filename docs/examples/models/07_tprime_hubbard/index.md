@@ -27,8 +27,7 @@ where $i,j$ are lattice site indices, angle brackets with superscript $(n)$ indi
 that sums are constrained to $n^\mathrm{th}$-order neighbors,
 $\hat{c}^\dagger_i$/$\hat{c}_i$ are electronic creation/annihilation operators,
 and $\hat{n}^{\sigma}_i$ are spin-resolved number operators corresponding to site $i$.
-The 4×4 lattice is small enough to make exact diagonalization possible.
-We will use exact results for this system as reference data throughout
+We will use the DMRG and AFQMC results of reference [1] for this system as reference data throughout
 this tutorial.
 
 See Table I of reference [1]
@@ -117,28 +116,10 @@ L = lattice.L
 :outputId: 55190e94-44ed-4b7c-9f28-7cdcd5d151ba
 
 import numpy as np
-from autohf import AutoHFHamiltonian, solve_hf
 
-# building the wavefunction does not measure anything, so run the HF solver
-# explicitly to get the trial wavefunction's density matrices
-results = solve_hf(
-    AutoHFHamiltonian(source=fe_hamiltonian),
-    settings=dict(
-        ansatz='SD',
-        steps=-1,          # report the reference energy; do not optimize
-        verbose=True,
-        nelec=nelec,
-        batch_size=1
-    ),
-    initial_guess=np.hstack(wfn.determinant(0)),
-    suppress_logo=True
-)
-
-# convert the 'results' from autohf to a charge density
-makeRDMs = results[1]['makeRDMs']
-state = results[0]['state']
-
-rdm = makeRDMs(state)
+# one-rdm of the free-electron determinant
+alpha, beta = wfn.determinant(0)
+rdm = np.array([alpha.conj() @ alpha.T, beta.conj() @ beta.T])
 
 # collinear
 rho_up = rdm[0].diagonal().reshape(*L)
@@ -178,6 +159,8 @@ vis.plot_lattice(
 # make a JSON job file
 from safiretools import write_jobfile
 
+bp_lengths = [200, 400, 600, 800]
+
 write_jobfile("afqmc.json", {
     "seed": 42,                          # for reproducibility
     "execute": {
@@ -197,7 +180,7 @@ write_jobfile("afqmc.json", {
         "estimators": {
             "backprop": {
                 "walker_ortho_interval": 5,
-                "propagation_steps": [200, 400, 600, 800],
+                "propagation_steps": bp_lengths,
                 "onerdm": {}
             }
         }
@@ -256,36 +239,34 @@ plt.axhline(E_ref, color="crimson")
 
 ## Analysis - Compute the Average 1-RDM
 
-To check for convergence here, we will compute the average 1-rdm for each back-propagation length saved in the
-output HDF5 file, and plot `\rho(i,j)` vs $N_\mathrm{steps}$ for a line cut of the lattice.
+To check for convergence here, we will compute the spin density from the average 1-rdm for each back-propagation length saved in the
+output HDF5 file, and plot it along a line cut of the lattice for each $N_\mathrm{steps}$.
 We should see the average 1-rdm converge for some value of $N_\mathrm{steps}$.
 
 ```{code-cell} ipython3
 :id: 46011340-4ae4-41a9-ae29-e97568264d04
 
-from afqmctools.analysis.rdm import average_afqmc_rdm
+ix = 3
 
-naverages = 4
+def spin_cut(rdm):
+    """S^z along the line cut at ix, from a collinear one-rdm."""
+    rho_spin = 0.5*(rdm[0].diagonal() - rdm[1].diagonal()).real
+    return rho_spin.reshape(lattice.L)[ix]
 
-rho_avg, delta_rho = average_afqmc_rdm(rdm_file="qmc.s000.stat.h5")
-
-rho_up = rho_avg[:,0,:,:].diagonal().reshape((naverages,4,8))
-delta_rho_up = delta_rho[:,0,:,:].diagonal().reshape((naverages,4,8))
-
-rho_down = rho_avg[:,1,:,:].diagonal().reshape((naverages,4,8))
-delta_rho_down = delta_rho[:,1,:,:].diagonal().reshape((naverages,4,8))
+rho_spin, rho_spin_err = {}, {}
+for steps in bp_lengths:
+    rho_spin[steps], rho_spin_err[steps] = results.evaluate(spin_cut, [f"BackPropEstimator/Steps={steps}/OneRDM"])
 ```
 
 ```{code-cell} ipython3
 :id: bd4b242e-81b2-40d0-86fe-ec6b25866a45
 :outputId: b0b06b69-d141-45b0-fafb-1bb6092d9d21
 
-ix = 3
-iy = np.array(range(8))
+iy = np.arange(lattice.L[1])
 
-rho_spin = 0.5*(rho_up - rho_down)
-
-plt.plot(iy,rho_spin[0,ix,iy])
+for steps in bp_lengths:
+    plt.errorbar(iy,rho_spin[steps],yerr=rho_spin_err[steps],fmt='o-',label=f"{steps} steps")
+plt.legend()
 plt.show()
 ```
 
