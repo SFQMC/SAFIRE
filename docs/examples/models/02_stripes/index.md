@@ -156,6 +156,8 @@ Now we'll write the file to run AFQMC. There are some better tools than this but
 
 from safiretools import write_jobfile
 
+bp_lengths = [500]
+
 # make an input file
 afqmc_params = {
     "timestep": 0.005,
@@ -168,7 +170,7 @@ afqmc_params = {
     "estimators": {
         "backprop": {
             "walker_ortho_interval": 2,
-            "propagation_steps": [500],
+            "propagation_steps": bp_lengths,
             "onerdm": {}
         }
     },
@@ -226,33 +228,29 @@ We'll now analyze the spin density of the output given the free electron trial
 ```{code-cell} ipython3
 :id: 08eaa53d-eed0-4540-9bb8-08ea5aeab4c0
 
-def staggeredSigns(Nx,Ny):
-  signs = np.concatenate([(-1)**(np.arange(Nx)+1),(-1)**(np.arange(Nx))]*(Ny//2)).reshape(Ny,Nx).T.flatten()
-  return -signs
+x, y = np.arange(lattice.L[0]), np.arange(lattice.L[1])
+# staggered signs (-1)^(x+y), in the site order of the lattice
+staggered_signs = ((-1)**(x[:, None] + y[None, :])).flatten()
 
-def averageOverCols(Sz,Nx,Ny):
-    return (Sz*staggeredSigns(*lattice.L)).reshape(*lattice_dims).mean(1)
-```
+def spin_density(rdm):
+    """S^z on each site, from a collinear one-rdm."""
+    return 0.5*(rdm[0].diagonal() - rdm[1].diagonal()).real
 
-```{code-cell} ipython3
-:id: 0a52fe29-2397-4436-b84d-48b95ac5f777
+def column_sz(rdm):
+    """Staggered S^z averaged over each column, from a collinear one-rdm."""
+    return (staggered_signs*spin_density(rdm)).reshape(lattice.L).mean(1)
 
-from afqmctools.analysis.rdm import average_afqmc_rdm
+bp_rdm = f"BackPropEstimator/Steps={bp_lengths[-1]}/OneRDM"
 
-rho_avg, delta_rho = average_afqmc_rdm(rdm_file="qmc.s000.stat.h5")
+# DMRG data of the form: site Sz Nup Ndn
+SzDmrg = np.loadtxt("../files/data_10x4_Ne16U6.0_15360.dat",usecols=(1,))
+dmrg_sz = -(staggered_signs*SzDmrg).reshape(lattice.L).mean(1)
 ```
 
 ```{code-cell} ipython3
 :id: 6c223f77-f3f4-42a5-bacb-a0f84a868f2b
 
-import afqmctools.observables.spin as spobs
-
-Xs,Ys,Zs = spobs.local_spin(np.vstack(rho_avg[0]),"collinear").real
-
-delta_Sz = np.sqrt(delta_rho[0,0].diagonal()**2+delta_rho[0,1].diagonal()**2 )
-# We're collinear
-assert np.allclose(Xs,0)
-assert np.allclose(Ys,0)
+Zs, delta_Sz = results.evaluate(spin_density, [bp_rdm])
 ```
 
 ```{code-cell} ipython3
@@ -269,23 +267,15 @@ plt.show()
 ```
 
 ```{code-cell} ipython3
-:id: 1f80b790-9e93-4c4a-b043-f2aea22a0e11
-
-# DMRG data of the form: site Sz Nup Ndn
-SzDmrg = np.loadtxt("../files/data_10x4_Ne16U6.0_15360.dat",usecols=(1,))
-```
-
-```{code-cell} ipython3
 :id: d2e9c723-0471-404c-acb5-30e862b7905f
 :outputId: a53dc884-c7ab-43d4-9b39-1ad5c3e23957
 
 # now we'll average over the columns
+sz_cols, sz_cols_err = results.evaluate(column_sz, [bp_rdm])
 
-avg_delta_Sz = np.sqrt((delta_Sz.reshape(*lattice.L)**2).sum(1)) / lattice.L[1]
-
-plt.errorbar(np.arange(lattice.L[0]),averageOverCols(Zs,*lattice.L),yerr=avg_delta_Sz,
+plt.errorbar(np.arange(lattice.L[0]),sz_cols,yerr=sz_cols_err,
              fmt='o-',label="AFQMC Free Electron")
-plt.plot(-averageOverCols(SzDmrg,*lattice.L),label="DMRG",c='k')
+plt.plot(dmrg_sz,label="DMRG",c='k')
 
 plt.xlabel("Col")
 plt.ylabel("Staggered Sz")
@@ -369,28 +359,17 @@ for Ueff in Ueffs:
 ```{code-cell} ipython3
 :id: 9ac5439b-daa4-4cf4-a248-e2466acf32e5
 
-rhos, deltas = [],[]
-
+# Ueff=0 stands for the free electron trial of the first run
+runs = {0: Results("afqmc.results.h5")}
 for Ueff in Ueffs:
-    if Ueff==0:
-        fname = "qmc.s000.stat.h5"
-    else:
-        fname = f"afqmc_{Ueff}.s000.stat.h5"
-    rho_avg, delta_rho = average_afqmc_rdm(rdm_file=fname)
-    rhos.append(rho_avg)
-    deltas.append(delta_rho)
+    runs[Ueff] = Results(f"afqmc_{Ueff}.results.h5")
 ```
 
 ```{code-cell} ipython3
 :id: 7f7e1dc8-4378-4da3-a77a-8e2638ed3c0e
 
-for Ueff,rho_avg,delta_rho in zip(Ueffs,rhos,deltas):
-    Xs,Ys,Zs = spobs.local_spin(np.vstack(rho_avg[0]),"collinear").real
-
-    delta_Sz = np.sqrt(delta_rho[0,0].diagonal()**2+delta_rho[0,1].diagonal()**2 )
-    # We're collinear
-    assert np.allclose(Xs,0)
-    assert np.allclose(Ys,0)
+for Ueff,run in runs.items():
+    Zs, delta_Sz = run.evaluate(spin_density, [bp_rdm])
 
     fig,axes = plt.subplots(1,2,figsize=(12,4))
     p = axes[0].matshow(Zs.reshape(*lattice.L).T)
@@ -415,39 +394,35 @@ We'll now measure the error between the trial wave function's observable and the
 ```{code-cell} ipython3
 :id: eff15403-1be8-4f08-8ed8-9ccf212e1d9f
 
-from afqmctools.observables.greens import greens_1body
-
-trial_rhos = []
-for Ueff in Ueffs:
+trial_sz = {}
+for Ueff in runs:
     if Ueff==0:
         trial = wavefunction
     else:
         trial = trial_wfns[Ueff]
     # determinant() gives the leading determinant's alpha and beta orbitals
     alpha, beta = trial.determinant(0)
-    o = np.stack([alpha.real, beta.real])
 
-    rdm = greens_1body(o)
-    trial_rhos.append(rdm)
+    # one-rdm of a determinant with orthonormal orbitals
+    rdm = np.array([alpha.conj() @ alpha.T, beta.conj() @ beta.T])
+    trial_sz[Ueff] = column_sz(rdm)
 ```
 
 ```{code-cell} ipython3
 :id: 2926392c-64b7-4c5b-be5a-d289adc38ff5
 
 # now we'll average over the columns
-for Ueff,rho in zip(Ueffs,rhos):
-    Xs,Ys,Zs = spobs.local_spin(np.vstack(rho[0]),"collinear").real
-    
-    avg_delta_Sz = np.sqrt((delta_Sz.reshape(*lattice.L)**2).sum(1)) / lattice.L[1]
+for Ueff,run in runs.items():
+    sz_cols, sz_cols_err = run.evaluate(column_sz, [bp_rdm])
     if Ueff==0:
         label = "Free Electron"
     else:
         label = f"HF W/ HF Ueff={Ueff}"
 
     plt.errorbar(np.arange(lattice.L[0]),
-                 averageOverCols(Zs,*lattice.L),yerr=avg_delta_Sz,
+                 sz_cols,yerr=sz_cols_err,
                  fmt='o--',label=label)
-plt.plot(-averageOverCols(SzDmrg,*lattice.L),'x-',label="DMRG",c='k')
+plt.plot(dmrg_sz,'x-',label="DMRG",c='k')
 
 plt.xlabel("Col")
 plt.ylabel("Staggered Sz")
@@ -460,28 +435,18 @@ plt.show()
 ```{code-cell} ipython3
 :id: 61bcaf57-b7bd-4671-801f-31ab5d6684e1
 
-Ueffs = [0,1,2,3,4]
-
-dmrg_sz = -averageOverCols(SzDmrg,*lattice.L)
-
 xs,ys,yerrs = [],[],[]
-for Ueff,rho_avg,delta_rho,trial_rho in zip(Ueffs,rhos,deltas,trial_rhos):
-    XsT,YsT,ZsT = spobs.local_spin(np.vstack(trial_rho),"collinear").real
-    Xs,Ys,Zs = spobs.local_spin(np.vstack(rho_avg[0]),"collinear").real
-
-    afqmc_sz = averageOverCols(Zs,*lattice.L)
-    trial_sz = averageOverCols(ZsT,*lattice.L)
-
-
-    delta_Sz = np.sqrt(delta_rho[0,0].diagonal()**2+delta_rho[0,1].diagonal()**2 )
-    avg_delta_Sz = np.sqrt((delta_Sz.reshape(*lattice.L)**2).sum(1)) / lattice.L[1]
+for Ueff,run in runs.items():
+    deviation, deviation_err = run.evaluate(
+        lambda rdm: np.mean(np.abs(column_sz(rdm)-dmrg_sz)), [bp_rdm]
+    )
 
     xs.append(Ueff)
-    ys.append(np.mean(np.abs(afqmc_sz-dmrg_sz)))
-    yerrs.append(np.mean(avg_delta_Sz**2))
+    ys.append(deviation)
+    yerrs.append(deviation_err)
 
 plt.errorbar(xs,ys,yerr=yerrs,fmt='o-',label="AFQMC",capsize=6)
-plt.xticks(Ueffs)
+plt.xticks(xs)
 plt.xlabel("Ueff")
 plt.ylabel(r"$\langle |$DMRG $S_z - $AFQMC $S_z|\rangle$",fontsize=12)
 plt.legend()
@@ -492,23 +457,17 @@ plt.show()
 
 
 xs,ys,yerrs = [],[],[]
-for Ueff,rho_avg,delta_rho,trial_rho in zip(Ueffs,rhos,deltas,trial_rhos):
-    XsT,YsT,ZsT = spobs.local_spin(np.vstack(trial_rho),"collinear").real
-    Xs,Ys,Zs = spobs.local_spin(np.vstack(rho_avg[0]),"collinear").real
-
-    afqmc_sz = averageOverCols(Zs,*lattice.L)
-    trial_sz = averageOverCols(ZsT,*lattice.L)
-
-
-    delta_Sz = np.sqrt(delta_rho[0,0].diagonal()**2+delta_rho[0,1].diagonal()**2 )
-    avg_delta_Sz = np.sqrt((delta_Sz.reshape(*lattice.L)**2).sum(1)) / lattice.L[1]
+for Ueff,run in runs.items():
+    deviation, deviation_err = run.evaluate(
+        lambda rdm: np.mean(np.abs(column_sz(rdm)-trial_sz[Ueff])), [bp_rdm]
+    )
 
     xs.append(Ueff)
-    ys.append(np.mean(np.abs(afqmc_sz-trial_sz)))
-    yerrs.append(np.mean(avg_delta_Sz**2))
+    ys.append(deviation)
+    yerrs.append(deviation_err)
 
 plt.errorbar(xs,ys,yerr=yerrs,fmt='o-',label="AFQMC",capsize=6)
-plt.xticks(Ueffs)
+plt.xticks(xs)
 plt.xlabel("Ueff")
 plt.ylabel(r"$\langle |$Trial $S_z - $AFQMC $S_z|\rangle$",fontsize=12)
 plt.legend()
@@ -554,4 +513,4 @@ Lets use this as a test bed to explore how AFQMC responds to different settings.
 - We compared spin densities, what about hole density? This is the effectively the same as comparing charge density.
 - Use a trial with a small number of steps so that the solver doesn't converge. How do the results change? How could you tell this trial isn't good?
 - The free electron trial isn't a valid RHF state (why?). What would be the corresponding RHF solution? What does that output look like?
-- Explore the parameters of backpropagation, how does the 1rdm change as a function of `nsteps`? you can include `naverages` to see the results converge
+- Explore the parameters of backpropagation, how does the 1rdm change as a function of the back-propagation length? You can give several lengths in `propagation_steps` to see the results converge

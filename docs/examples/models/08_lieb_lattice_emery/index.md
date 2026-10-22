@@ -252,7 +252,6 @@ vis.plot_lattice(
     lattice,
     density=rho_charge.real,
     density_label="charge density",
-    cmap = 'bwr',
     show_labels=False
 )
 
@@ -260,7 +259,6 @@ vis.plot_lattice(
     lattice,
     density=rho_spin.real,
     density_label="spin density",
-    cmap = 'bwr',
     show_labels=False
 )
 ```
@@ -682,8 +680,7 @@ if True:
         lattice,
         density=rho_charge.real,
         density_label="charge density",
-        cmap = 'bwr',
-        show_labels=False,
+            show_labels=False,
     )
     ax.figure.savefig("charge.png")
 
@@ -691,8 +688,7 @@ if True:
         lattice,
         density=rho_spin.real,
         density_label="spin density",
-        cmap = 'bwr',
-        show_labels=False,
+            show_labels=False,
     )
     ax.figure.savefig("spin.png")
 ```
