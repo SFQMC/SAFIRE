@@ -155,7 +155,8 @@ html_context = {
 ## -- options for MyST-NB (rendering jupyter notebooks) ----------------------
 myst_enable_extensions = [
     "dollarmath",
-    "amsmath"
+    "amsmath",
+    "html_image",
 ]
 # required to have equations inside of text cells.
 myst_dmath_double_inline = True
