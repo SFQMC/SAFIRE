@@ -11,7 +11,7 @@ kernelspec:
   name: python3
 ---
 
-# Momentum distribution of solid Na
+# Momentum Distribution of Solid Na
 
 In this example, we compute the valence momentum distribution $n(\mathbf{q})$ of bcc sodium with
 back-propagated AFQMC and compare it with the Compton-scattering experiment and DMC of
@@ -27,7 +27,7 @@ which fill the free-electron shells 1 + 6 + 12 + 8 per spin exactly.
 
 ![](files/Na_bcc_cell.png)
 
-## Momentum distribution from the one-body density matrix
+## Momentum Distribution from the One-Body Density Matrix
 
 SAFIRE measures the one-body density matrix in the basis of Kohn-Sham Bloch orbitals,
 $\rho_{ij}(\mathbf{k}) = \langle c^\dagger_{i\mathbf{k}} c_{j\mathbf{k}} \rangle$, which is block-diagonal in $\mathbf{k}$.
@@ -42,7 +42,6 @@ The density matrix does not commute with the Hamiltonian, so we use the back-pro
 (see {doc}`../../../tutorials/solids/04_computing_observables/04_computing_observables`).
 The plane-wave coefficients come from the QE wavefunction files, and `files/nq_tools.py` does the unfolding.
 
-Each step is skipped when its output already exists in `data/`.
 Set `QE_BIN` to the directory holding `pw.x` and `pw2coqui.x`, and `COQUI_EXEC` and `AFQMC_EXEC` to the
 CoQuí and SAFIRE executables.
 
@@ -54,8 +53,7 @@ from pathlib import Path
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
-from safiretools import Results, write_jobfile
-from safiretools.wavefunction.base import Wavefunction
+from safiretools import Results, Wavefunction, write_jobfile
 
 from files.nq_tools import fermi_wavevector, plot_slab, radial_average, read_qe_orbitals, unfold_nq
 
@@ -72,13 +70,12 @@ An scf run on an $8\times8\times8$ mesh gives the density, and an nscf run compu
 $3\times3\times3$ mesh without symmetry reduction. `pw2coqui.x` converts the result for CoQuí.
 
 ```{code-cell} ipython3
-if not (data / "1_dft_qe/OUT/pwscf.coqui.h5").exists():
-    !cd {data}/1_dft_qe && mpirun -n {NP} $QE_BIN/pw.x -in scf.in > scf.out
-    !cd {data}/1_dft_qe && mpirun -n {NP} $QE_BIN/pw.x -in nscf.in > nscf.out
-    !cd {data}/1_dft_qe && $QE_BIN/pw2coqui.x -in pw2coqui.in > pw2coqui.out
+!cd {data}/1_dft_qe && mpirun -n {NP} $$QE_BIN/pw.x -in scf.in > scf.out
+!cd {data}/1_dft_qe && mpirun -n {NP} $$QE_BIN/pw.x -in nscf.in > nscf.out
+!cd {data}/1_dft_qe && $$QE_BIN/pw2coqui.x -in pw2coqui.in > pw2coqui.out
 ```
 
-## Step 2: Hamiltonian and trial wavefunction with CoQuí
+## Step 2: Hamiltonian and Trial Wavefunction with CoQuí
 
 CoQuí writes the Hamiltonian in the basis of the lowest 19 bands per k (513 orbitals), with Cholesky-decomposed
 two-electron integrals, and the Kohn-Sham determinant as the trial wavefunction.
@@ -89,8 +86,7 @@ two-electron integrals, and the Kohn-Sham determinant as the trial wavefunction.
 ```
 
 ```{code-cell} ipython3
-if not (data / "2_coqui/hamiltonian.h5").exists():
-    !cd {data}/2_coqui && mpirun -n {NP} $COQUI_EXEC input.toml > coqui.out
+!cd {data}/2_coqui && mpirun -n {NP} $$COQUI_EXEC input.toml > coqui.out
 
 with h5py.File(data / "2_coqui/hamiltonian.h5") as f:
     kpoints = f["System/BZ/kpoints"][...]
@@ -105,50 +101,51 @@ print(f"nk = {nk}, NMO = {nk * M}, k_F = {k_F:.4f} Bohr^-1")
 
 CoQuí writes a collinear trial with identical spin determinants. We rebuild it as a closed-shell trial,
 so that SAFIRE can use closed-shell walkers, which propagate one spin.
-The back-propagated density matrix is measured with 50, 100, 150 and 200 back-propagation steps.
-A new window starts every 200 steps after equilibration, so each length gives one sample per window,
-and `binsize` is 1.
+The back-propagated density matrix is measured at each back-propagation length in `bp_lengths`.
+A new window starts every `max(bp_lengths)` steps after equilibration, so each length gives one sample per window.
 
 ```{code-cell} ipython3
 alpha, beta = Wavefunction.from_hdf5(data / "2_coqui/wfn.h5").determinant(0)
 assert np.allclose(alpha, beta)
 
+bp_lengths = [100, 200]
+# bp_lengths = [100, 200, 400, 600] # takes some time
 write_jobfile(data / "3_safire/afqmc.json", {
     "seed": 7,
     "execute": {
-        "walker_set": {"walker_type": "closed"},
         "wavefunction": Wavefunction.from_single_determinant(alpha),
         "hamiltonian": {"filename": "../2_coqui/hamiltonian.h5"},
         "timestep": 0.01,
         "steps": 5000,
         "equilibration_steps": 600,
-        "binsize": 1,
         "measure_interval": 10,
         "population_control_interval": 10,
         "walker_ortho_interval": 10,
-        "num_walkers": 120,
+        "num_walkers": 40,
         "estimators": {
-            "energy": {"measure_interval": 100},
-            "mixed": {"measure_interval": 100, "onerdm": {}},
-            "backprop": {"propagation_steps": [50, 100, 150, 200], "onerdm": {}},
+            "energy": None,
+            "backprop": {"propagation_steps": bp_lengths, "onerdm": {}},
         },
     },
 })
 ```
 
 ```{code-cell} ipython3
-if not (data / "3_safire/afqmc.results.h5").exists():
-    !cd {data}/3_safire && mpirun -n {NP} $AFQMC_EXEC afqmc.json > afqmc.out
-results = Results(data / "3_safire/afqmc.results.h5")
+:tags: [scroll-output]
+
+!cd {data}/3_safire && mpirun -n {NP} $$AFQMC_EXEC afqmc.json
 ```
 
-## Step 4: Momentum distribution
+## Step 4: Momentum Distribution
 
 We unfold the Kohn-Sham occupations for the DFT $n(\mathbf{q})$, and the back-propagated density matrix inside
 `Results.evaluate` for jackknife error bars on its radial average.
-Each back-propagation length has 22 bins, which we keep with `rebinsize=1`.
+Each BP sample is separated by a window length, so for long window lengths we can assume they are weakly
+correlated and set `rebinsize=1`.
 
 ```{code-cell} ipython3
+results = Results(data / "3_safire/afqmc.results.h5")
+
 qvecs, coeffs = read_qe_orbitals(data / "1_dft_qe/OUT/pwscf.save", kpoints, M)
 qmag = np.linalg.norm(qvecs, axis=1)
 edges = np.linspace(0, 2.5 * k_F, 81)
@@ -160,7 +157,7 @@ def radial_nq(rdm):
 n_dft = radial_nq(np.diag(occ.ravel())[None])
 
 bp = {}
-for L in [50, 100, 150, 200]:
+for L in bp_lengths:
     bp[L] = results.evaluate(radial_nq, [f"BackPropEstimator/Steps={L}/OneRDM"], rebinsize=1)
 above = np.argmax(q_bins > k_F)  # first radial bin above k_F
 print(f"n(q) at |q| = {q_bins[above]:.3f} Bohr^-1: DFT {n_dft[above]:.3f}")
@@ -168,11 +165,9 @@ for L, (n, dn) in bp.items():
     print(f"  BP {L:3d}: {n[above]:.3f} +/- {dn[above]:.3f}")
 ```
 
-Back propagation moves electrons above $k_F$, and the amount still grows with the back-propagation length.
-Back propagation becomes unstable at long lengths, so we use 200 steps ($\tau = 2$ Ha$^{-1}$) and keep in mind
-that the result depends on this choice.
+Back propagation moves electrons above $k_\mathrm{F}$, and the amount still grows with the back-propagation length.
 
-## Comparison with DMC and experiment
+## Comparison with DMC and Experiment
 
 The experimental and DMC data were extracted from Fig. 1 of Huotari *et al.* and are per spin, so we divide ours by 2.
 Our cell has the experimental density, so we compare on absolute momentum.
@@ -184,15 +179,17 @@ with open("files/huotari2010_fig1_nofp.csv") as f:
 def huotari(series, *columns):
     return np.array([[float(r[c]) for c in columns] for r in rows if r["series"] == series]).T
 
-bp_rdm, _ = results.average("BackPropEstimator/Steps=200/OneRDM", rebinsize=1)
+max_bp_length = max(bp_lengths)
+
+bp_rdm, _ = results.average(f"BackPropEstimator/Steps={max_bp_length}/OneRDM", rebinsize=1)
 
 fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11, 4.5))
-plot_slab(ax0, qvecs, unfold_nq(bp_rdm, coeffs), k_F)
-ax0.set_title(ax0.get_title() + ", BP 200")
+plot_slab(ax0, qvecs, unfold_nq(bp_rdm, coeffs) / 2, k_F)
+ax0.set_title(ax0.get_title() + f", BP {max_bp_length}")
 
 ax1.plot(q_bins, n_dft / 2, "s", color="0.5", mfc="none", ms=6, label="DFT")
-n, dn = bp[200]
-ax1.errorbar(q_bins, n / 2, yerr=dn / 2, fmt="o", color="C3", ms=4, capsize=2, label="AFQMC BP 200")
+n, dn = bp[max_bp_length]
+ax1.errorbar(q_bins, n / 2, yerr=dn / 2, fmt="o", color="C3", ms=4, capsize=2, label=f"AFQMC BP {max_bp_length}")
 p, n = huotari("QMC", "p_au", "n")
 ax1.plot(p, n, "k-", lw=1.5, label="DMC (Huotari 2010)")
 for series, marker, label in [("exp_run1", "s", "experiment, run 1"), ("exp_run2", "^", "experiment, run 2")]:
@@ -209,11 +206,9 @@ fig.savefig(data / "nq_Na.png", dpi=200)
 
 ![](files/nq_Na.png)
 
-The left panel shows the back-propagated $n(\mathbf{q})$ in the $q_z = 0$ plane, with the Fermi sphere dashed.
+The left panel shows the back-propagated $n(\mathbf{q})$ per spin in the $q_z = 0$ plane, with the Fermi sphere
+dashed.
 On the right, our points are drawn without connecting lines, because the $3\times3\times3$ mesh samples only a few
 shells of $|\mathbf{q}|$.
-Back propagation moves the DFT result toward DMC on both sides of $p_F$, but not all the way: just above $p_F$
-its tail is about half of DMC's, and by $1.3\,p_F$ it is close to DMC and within the experimental scatter,
-where DFT gives zero.
-The remaining difference comes from the limits of this calculation: the dependence on the back-propagation
-length, the 19-band basis, and the lack of a finite-size correction.
+At $\tau_\mathrm{BP} = 6$ Ha$^{-1}$ we obtain good agreement with DMC and experiment, but a production run should
+converge the back-propagation length, the basis set, the timestep error, and the population control bias.

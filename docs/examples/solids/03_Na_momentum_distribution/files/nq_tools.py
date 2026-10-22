@@ -66,18 +66,18 @@ def fermi_wavevector(volume, n_electrons):
 
 
 def plot_slab(ax, qvecs, nq, k_F):
-    """n(q) in the |q_z| < 0.1 k_F slab, interpolated, with the q-points and the k_F circle."""
+    """Per-spin n(q) in the |q_z| < 0.1 k_F slab, interpolated, with the q-points and the k_F circle."""
     qz_tol = 0.1 * k_F
     slab = (np.abs(qvecs[:, 2]) < qz_tol) & (np.linalg.norm(qvecs, axis=1) < 2 * k_F)
     qx, qy, ns = qvecs[slab, 0], qvecs[slab, 1], nq[slab]
     xi, yi = np.meshgrid(np.linspace(qx.min(), qx.max(), 300),
                          np.linspace(qy.min(), qy.max(), 300))
     grid = np.nan_to_num(griddata((qx, qy), ns, (xi, yi), method="cubic"))
-    pc = ax.pcolormesh(xi, yi, grid, shading="auto", cmap="magma", vmin=0, vmax=2)
-    ax.scatter(qx, qy, c=ns, cmap="magma", vmin=0, vmax=2, s=12, edgecolors="white", alpha=0.6)
-    ax.figure.colorbar(pc, ax=ax, label=r"$n(\mathbf{q})$")
+    pc = ax.pcolormesh(xi, yi, grid, shading="auto", cmap="magma", vmin=0, vmax=1)
+    ax.scatter(qx, qy, c=ns, cmap="magma", vmin=0, vmax=1, s=12, edgecolors="white", alpha=0.6)
+    ax.figure.colorbar(pc, ax=ax, label=r"$n(\mathbf{q})$ per spin")
     t = np.linspace(0, 2 * np.pi, 200)
-    ax.plot(k_F * np.cos(t), k_F * np.sin(t), "c--", lw=1.5, label=r"$k_F$")
+    ax.plot(k_F * np.cos(t), k_F * np.sin(t), "c--", lw=1.5, label=r"$k_\mathrm{F}$")
     ax.set(xlabel=r"$q_x$ (Bohr$^{-1}$)", ylabel=r"$q_y$ (Bohr$^{-1}$)", aspect="equal",
            title=rf"$n(\mathbf{{q}})$, $|q_z| < {qz_tol:.3f}$ Bohr$^{{-1}}$")
     ax.legend(loc="upper right", fontsize=8)
