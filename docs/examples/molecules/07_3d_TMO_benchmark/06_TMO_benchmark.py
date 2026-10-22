@@ -74,7 +74,6 @@ from pyscf import gto,scf,mcscf
 import jax
 import jax.numpy as jnp
 
-import afqmctools
 import autohf
 from autohf import solve_hf, AutoHFHamiltonian
 
@@ -117,26 +116,20 @@ def setup_benchmark(key:str, case:dict):
         verbose = 4
     )
     
-    # set up Hamiltonian for AutoHF
-    onebody = mol.intor("int1e_kin") + mol.intor("int1e_nuc") + mol.intor("ECPscalar")
-    overlap = mol.intor("int1e_ovlp")
-    eri = mol.intor("int2e")
-    nuclear_repulsion = mol.energy_nuc()
-
-    X = afqmctools.utils.linalg.get_ortho_ao_mol(overlap,LINDEP_CUTOFF=1e-8)
-    
-    norb = onebody.shape[0]
+    # set up Hamiltonian for AutoHF in the orthogonalized AO basis,
+    #   X being the transformation from the AOs
+    chol_tol = 1e-6
+    ortho = MolecularHamiltonian.from_pyscf(mol.ROHF(), basis="ortho_ao", chol_cut=chol_tol)
+    X = ortho.basis_rotation
+    norb = ortho.nmo
     print(f"{norb=}")
 
-    chol_tol = 1e-6
-    cholesky_operators = afqmctools.utils.linalg.modified_cholesky_direct(
-        eri.reshape(norb**2, norb**2), tol=chol_tol, verbose=False
-    ).reshape(-1, norb, norb)
+    overlap = mol.intor("int1e_ovlp")
+    nuclear_repulsion = ortho.enuc
+    onebody = ortho.hcore[0, 0, :, 0, :]
+    cholesky_operators = 1j * np.moveaxis(ortho.chol[0, 0, :, 0, :, :], -1, 0)
 
-    onebody = X.T @ onebody @ X
-    cholesky_operators = 1j * np.einsum("ij,njk,kl->nil", X.T, cholesky_operators, X)
-
-    onebody += 0.5 * np.einsum("nij,njk", cholesky_operators, cholesky_operators).real
+    onebody = onebody + 0.5 * np.einsum("nij,njk", cholesky_operators, cholesky_operators).real
 
     # double along spin dimension
     cholesky_operators = np.stack([cholesky_operators, cholesky_operators], axis=1)
