@@ -9,7 +9,7 @@ SAFIRE for Lattice Models
 |
 
 Some Preliminaries
-==================
+------------------
 
 SAFIRE can handle model Hamiltonians of the form
 
@@ -25,9 +25,9 @@ where
 
 .. math::
 
-   \hat{H}_U =  \sum_{\mu} U_i \hat{n}_{\mu\uparrow} \hat{n}_{\mu\downarrow}
-   + \sum_{\mu<\nu} U_{\mu\nu}^1 (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\downarrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\uparrow} )
-   + \sum_{\mu<\nu} U_{\mu\nu}^2 (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\uparrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\downarrow} ),
+   \hat{H}_U =  \sum_{\mu} U_\mu \hat{n}_{\mu\uparrow} \hat{n}_{\mu\downarrow}
+   + \sum_{\mu<\nu} U_{\mu\nu}^{(1)} (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\downarrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\uparrow} )
+   + \sum_{\mu<\nu} U_{\mu\nu}^{(2)} (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\uparrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\downarrow} ),
 
 and,
 
@@ -51,32 +51,26 @@ to ensure that consistent index conventions are used.
 
 ``safiretools`` provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
 on a variety of lattices, using consistent conventions for indexing.
-The framework consists of a Lattice class which is responsible for geometry (see the `lattice tutorial <03_setting_up_a_lattice/03_setting_up_a_lattice_executed.html>`_),
+The framework consists of a Lattice class which is responsible for geometry (see :doc:`03_setting_up_a_lattice/03_setting_up_a_lattice`),
 and a Hamiltonian *Builder* which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
 ``LatticeHamiltonian.from_lattice()`` takes a lattice and the Hamiltonian parameters as keyword arguments
 and runs the corresponding build steps, which covers most use cases.
 
-Imaginary-Time Propagation
---------------------------
-
-Explain the Trotterization, and Hubbard-Stratonovich transformation for the lattice Hamiltonian. 
-Be sure to explicitly show each type of Hubbard-Stratonovich transformation (discrete spin, continuous charge, discrete charge, continuous spin).
-
 Trial Wavefunctions
--------------------
+~~~~~~~~~~~~~~~~~~~
 
 A trial wavefunction is used in AFQMC which is, in general, some linear
 combination of Slater determinants,
 
 .. math::
 
-   | \Psi_\mathrm{T} \rangle = \sum_n C_n |\Phi_m\rangle,
+   | \Psi_\mathrm{T} \rangle = \sum_n C_n |\Phi_n\rangle,
 
-where :math:`|\Phi_m\rangle` are Slater determinants,
+where :math:`|\Phi_n\rangle` are Slater determinants,
 and :math:`C_n` is a coefficient.
 There is no need for the set of Slater determinants to be mutually orthogonal.
 
-Using a trial wavefunction which accurately captures the ordering and symmetries 
+Using a trial wavefunction which accurately captures the ordering and symmetries
 of the target system is critical for achieving good AFQMC results.
 Care must always be taken to ensure that the trial wavefunction has the desired properties.
 
@@ -87,13 +81,8 @@ Common methods for computing a trial wavefunction include:
 
 among others.
 
-Typical Workflow
-================
-
-|
-
 Software Prerequisites
-======================
+----------------------
 
 The safiretools Python package provides tools for generating a broad range of lattice model Hamiltonians.
 Additionally, safiretools and the autoHF Hartree-Fock solver allow single-Slater determinant trial wavefunctions to be computed.
@@ -106,7 +95,7 @@ See :ref:`lattice_model_hamiltonian` for details on the Hamiltonian HDF5 format 
 |
 
 The Tutorials
-=============
+-------------
 
 The following tutorials will guide you through AFQMC calculations
 using SAFIRE in order to teach you the typical workflow,

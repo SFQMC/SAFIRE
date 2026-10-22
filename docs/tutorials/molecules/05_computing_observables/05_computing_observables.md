@@ -58,7 +58,7 @@ See {ref}`mixed_estimators` and {ref}`backprop_estimator` for a more detailed de
 
 In this tutorial, we will use PySCF for convenience; however, you can use the knowledge that you've gained in the previous tutorials to use a different quantum chemistry code if desired.
 
-Instead of the minimal basis Hydrogen dimer, we will use the nitrogen dimer at its equilibrium bond length.
+Instead of the minimal basis hydrogen dimer, we will use the nitrogen dimer at its equilibrium bond length, $\delta_\mathrm{N-N} = 1.098$ Å.
 We will be using the set of canonical RHF orbitals as the orthonormal basis for AFQMC.
 
 The code block below will:
@@ -90,7 +90,7 @@ from safiretools import MolecularHamiltonian, NOMSDWavefunction
 
 # Here, we'll generate the mol object
 
-delta = 2.3 #2.118 # 3.0 # Bohr
+delta = 1.098 # Angstrom
 
 atom = f'''
 N 0. 0. {delta/2}
@@ -99,7 +99,7 @@ N 0. 0. -{delta/2}
 mol = gto.M(
     atom = atom,
     basis = '631g',
-    unit = 'Bohr',
+    unit = 'Angstrom',
     verbose = 5,
 )
 
@@ -138,7 +138,7 @@ wavefunction = NOMSDWavefunction(
 
 ## Using the Mixed Estimator
 
-To enable the {ref}`mixed_estimators`, we need to add it to the {ref}`estimators` block of the job file along with the observables we want to measure.
+To enable the {ref}`mixed_estimators`, we need to add it to the {ref}`estimator_block` block of the job file along with the observables we want to measure.
 
 In this tutorial we want to measure the one-body reduced-density matrix (1-rdm), $\langle c^\dagger_{i\sigma} c_{j\sigma} \rangle$, and the two-body reduced-density matrix (2-rdm), $\langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{l\sigma'} c_{k\sigma} \rangle$, from which all one- and two-body observables can be calculated.
 
@@ -153,10 +153,9 @@ In this tutorial we want to measure the one-body reduced-density matrix (1-rdm),
 
 Setting the observable to `{}` means to measure it with its default settings.
 
-<div class="alert alert-block alert-info">
-<b>Note:</b>
-    Computing the 2-rdm is very time and memory intensive; this should only be done for small systems.
-</div>
+```{note}
+Computing the 2-rdm is very time and memory intensive; this should only be done for small systems.
+```
 
 It is also possible to compute only the *diagonal* 2-rdm,
 $D^{\sigma\sigma'}_{ij} = \langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{j\sigma'} c_{i\sigma} \rangle$ (see {ref}`diag_twordm_obs`).
@@ -183,7 +182,7 @@ and compare with the results from the energy estimator. The two should agree exa
 
 <!-- END observables-mixed-demo -->
 
-### Run the Code Block Below to Write an Input File with a Mixed Estimator
+### Run the Code Block Below to Write a JSON Job File with a Mixed Estimator
 
 ```{code-cell} ipython3
 from safiretools import write_jobfile
@@ -297,7 +296,6 @@ This is no surprise since the energy estimator is simply a specialized mixed est
 observable above.
 
 Repeat the same exercise for the two-body energy.
-As we saw in the energy estimator section, the exchange and direct coulomb energies are printed to file separately by the energy estimator.
 
 To compute the two-body energy, you will need to measure the `twordm` observable during AFQMC, and extract and transform it.
 
@@ -350,7 +348,7 @@ The back-propagation (BP) estimator mitigates this bias (see {ref}`backprop_esti
 
 ### Basic BP Configuration
 
-BP is invoked in SAFIRE by including a `backprop` estimator in the input file:
+BP is invoked in SAFIRE by including a `backprop` estimator in the job file:
 
 ```json
 {
@@ -390,7 +388,7 @@ The BP-estimated one-body energy is unbiased, and represents a better estimate o
 
 +++
 
-### Run the Code Block Below to Write an Input File with a BP Estimator
+### Run the Code Block Below to Write a JSON Job File with a BP Estimator
 
 ```{code-cell} ipython3
 ---

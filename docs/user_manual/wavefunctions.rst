@@ -58,7 +58,8 @@ NOMSD
     - The **conjugate transpose** of the orbital matrix of spin :math:`\sigma` of determinant
       :math:`n`, with :math:`k = n_\mathrm{spin} n + \sigma`: ``PsiT_<2n>`` (:math:`\uparrow`) and
       ``PsiT_<2n+1>`` (:math:`\downarrow`) for collinear wavefunctions, ``PsiT_<n>`` otherwise. It has one
-      row per electron of that spin, :math:`N_\sigma = N_\uparrow` or :math:`N_\downarrow`.
+      row per electron of that spin, :math:`N_\sigma = N_\uparrow` or :math:`N_\downarrow`, and one row per
+      electron, :math:`N_\sigma = N`, for noncollinear wavefunctions.
 
 .. _phmsd_wavefunction:
 

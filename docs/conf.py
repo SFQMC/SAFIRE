@@ -112,6 +112,8 @@ html_baseurl = 'https://safire.flatironinstitute.org/docs/dev/'
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
+html_favicon = 'images/favicon.svg'
+
 html_css_files = [
     'custom.css',
     'filetree.css',

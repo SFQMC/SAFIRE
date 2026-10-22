@@ -30,23 +30,11 @@ In previous tutorials, we learned how to run SAFIRE, and how
 to post process the results to arrive at the AFQMC energy.
 Now, we will learn how to write a Hamiltonian in SAFIRE's HDF5 format.
 
-<!--
-<div>
-<img src="./figs/QChemWorkflow_v2.png" width="1000"/>
-</div>
--->
-
 ![](files/TopLevelFlowChart_v3.png)
 
 In this tutorial,
 we will compute the ground state energy of
 the minimal basis hydrogen dimer with a bond length of 1.4 Bohr radii. 
-
-<!--
-<div>
-<img src="./figs/HyrdogenMolecule.png" width="500"/>
-</div>
---->
 
 ![](files/HyrdogenMolecule.png)
 
@@ -230,7 +218,7 @@ orbitals = np.eye(number_of_orbitals)
 # closed shell: both spins occupy the lowest number_of_electrons[0] orbitals
 wavefunction = Wavefunction.from_single_determinant(orbitals[:, :number_of_electrons[0]])
 
-# write_jobfile also writes the wavefunction and the Hamiltonian to HDF5 files next to the input file
+# write_jobfile also writes the wavefunction and the Hamiltonian to HDF5 files next to the job file
 write_jobfile("afqmc.json", {
     "execute": {
         "wavefunction": wavefunction,
@@ -377,9 +365,10 @@ wavefunction = Wavefunction.from_pyscf(mf)
 
 In this tutorial, you set up and ran a quantum chemistry AFQMC calculation in which we computed the ground state energy of the Hydrogen dimer at a fixed bond length.
 
-The AFQMC code needs a Hamiltonian, a trial wavefunction, and a file containing settings as input, and it outputs stochastic samples as specified in the input file.
+The AFQMC code needs a Hamiltonian, a trial wavefunction, and a JSON job file containing the settings as input, and it outputs stochastic samples as specified in the job file.
 
 ### What You Learned
 
 1. How to write a Hamiltonian to the SAFIRE HDF5 format starting from one-body, and two-body integrals
 2. How to convert from an FCIDUMP file to the SAFIRE HDF5 format
+3. How to use PySCF and safiretools to generate and write the Hamiltonian
