@@ -18,6 +18,7 @@
 #include <tuple>
 #include <algorithm>
 #include <chrono>
+#include <random>
 #include <limits>
 #include "mpi3/environment.hpp"
 #include "arch/arch.h"
@@ -69,10 +70,10 @@ void PHMSD<MEM>::plan_batches(int walkers)
       workspace_bytes=std::min(workspace_bytes,0.5*double(available)/mpi->node_comm.size());
   }
 #endif
-  int w=std::min(walkers,requested_walkers>0 ? requested_walkers : 8);
+  int w=std::min(walkers,requested_walkers>0 ? requested_walkers : (MEM==HOST_MEMORY ? 8 : 128));
   int d=requested_determinants>0 ? requested_determinants : 4096;
   auto density=batch_model.fit({w,d},false,workspace_bytes);
-  int ew=w, ed=d;
+  int ew=std::min(walkers,requested_walkers>0 ? requested_walkers : 8), ed=d;
   if constexpr(MEM==HOST_MEMORY) {
     // The CPU Cholesky path contracts one walker at a time. Large R/B tiles
     // add memory traffic without creating a batched BLAS operation. For a
@@ -140,7 +141,8 @@ void PHMSD<MEM>::runtime_optimization(WalkerSet<MEM>& wset)
     } peaks{host,pool,host.maximum_memory(),pool.maximum_memory(),pool.size()};
     for(bool energy : {false,true}) {
       if(elapsed()>=tuning_seconds) break;
-      int sample_n=std::min(nw,energy ? std::min(8,2*energy_walk_block_size) : 8);
+      int sample_n=std::min(nw,energy ? std::min(8,2*energy_walk_block_size) :
+                                      std::min(MEM==HOST_MEMORY ? 8 : 128,nwalk_block_size));
       double r=std::max(1.0,batch_model.rank);
       double work=sample_n*(batch_model.unique_a+batch_model.unique_b)*r*r*r;
       if(energy) {
@@ -166,6 +168,21 @@ void PHMSD<MEM>::runtime_optimization(WalkerSet<MEM>& wset)
       auto all=nda::range::all;
       sample.SlaterMatrices(Alpha)=wset.SlaterMatrices(Alpha)(nda::range(sample_n),all,all);
       sample.SlaterMatrices(Beta)=wset.SlaterMatrices(Beta)(nda::range(sample_n),all,all);
+      // A private fixed stream gives nondegenerate excitation blocks even when
+      // every live walker starts from the same reference determinant.
+      std::mt19937 perturb_rng;
+      double amplitude=.025/std::sqrt(double(NMO));
+      std::uniform_real_distribution<double> perturb(-amplitude,amplitude);
+      for(auto spin : {Alpha,Beta}) {
+        auto slater=nda::to_host(sample.SlaterMatrices(spin));
+        for(int iw=0; iw<slater.extent(0); ++iw)
+          for(int a=0; a<slater.extent(1); ++a)
+            for(int i=0; i<slater.extent(2); ++i) {
+              double real=perturb(perturb_rng),imag=perturb(perturb_rng);
+              slater(iw,a,i)+=ComplexType(real,imag);
+            }
+        sample.SlaterMatrices(spin)=slater;
+      }
       int active=OrbMats(0).extent(0)+OrbMats(OrbMats.extent(0)-1).extent(0);
       memory::array<MEM,ComplexType,2> G(sample_n,active*NMO),E(sample_n,3);
       memory::array<MEM,ComplexType,1> O(sample_n);

@@ -357,9 +357,10 @@ caller-owned outputs, other estimators, library workspaces and allocator slack
 are additional; the budget is not a limit on total process or device memory.
 Setup reports an error if even one walker and one determinant exceed the budget.
 
-Planning begins with up to eight walkers and 4096 determinants, reducing batches
-to satisfy the allowance. Large CPU energy contractions without an integral
-cache use one walker and a smaller determinant tile to limit memory traffic.
+Density/overlap planning begins with up to eight walkers on CPU or 128 on CUDA,
+and 4096 determinants. Energy planning begins with up to eight walkers. Each
+plan reduces its batches to satisfy the allowance. Large CPU energy contractions
+without an integral cache use one walker and a smaller determinant tile to limit memory traffic.
 An exact exchange-integral cache is used for sufficiently large unique-spin
 expansions when the active space fits within 64 MiB. Otherwise energy uses a
 bounded matrix contraction or the small-block path. The matrix-contraction
@@ -368,8 +369,11 @@ Other intermediates remain additional: the opposite-spin contraction scales
 with unique-spin determinant count, walker batch size and Cholesky-vector count,
 so reducing the determinant batch alone cannot eliminate its memory cost.
 
-During setup, calibration uses independent copies of up to eight walkers to
-select among nearby feasible plans for compact density and Woodbury energy.
+During setup, calibration uses independent copies of up to eight walkers for
+CPU density and energy, or up to 128 for CUDA density. A bounded perturbation
+from a private fixed random stream exercises excitation blocks even when the
+initial walkers are identical reference determinants. Calibration selects among
+nearby feasible plans for compact density and Woodbury energy.
 It includes reference/cache construction, synchronizes device work and favors
 lower estimated memory when timings differ by at most five percent. Selections
 remain fixed during propagation. Live walker data and the simulation random

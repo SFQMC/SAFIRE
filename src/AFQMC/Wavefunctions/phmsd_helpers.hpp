@@ -16,7 +16,9 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 
 #include "numerics/operations/determinants.hpp"
 #include "AFQMC/config.h"
@@ -36,6 +38,58 @@
 
 namespace sfqmc::afqmc
 {
+
+namespace detail {
+
+// In-place Gauss-Jordan inverse with partial pivoting for fixed small host blocks.
+// Scale the determinant product by powers of two independently of the inverse.
+template<int N>
+ComplexType phmsd_small_inverse(nda::MemoryMatrix auto&& matrix)
+{
+  static_assert(memory::get_memory_space<decltype(matrix)>()==HOST_MEMORY);
+  std::array<ComplexType,N*N> a;
+  for(int i=0; i<N; ++i)
+    for(int j=0; j<N; ++j) {
+      a[i*N+j]=matrix(i,j);
+      matrix(i,j)=ComplexType(i==j);
+    }
+  ComplexType determinant(1);
+  int exponent=0;
+  for(int k=0; k<N; ++k) {
+    int pivot_row=k;
+    for(int i=k+1; i<N; ++i)
+      if(std::abs(a[i*N+k])>std::abs(a[pivot_row*N+k])) pivot_row=i;
+    if(std::abs(a[pivot_row*N+k])==0.) {
+      matrix()=ComplexType(0);
+      return ComplexType(0);
+    }
+    if(pivot_row!=k)
+      for(int j=0; j<N; ++j) {
+        std::swap(a[pivot_row*N+j],a[k*N+j]);
+        std::swap(matrix(pivot_row,j),matrix(k,j));
+      }
+    auto pivot=a[k*N+k];
+    int e;
+    std::frexp(std::max(std::abs(pivot.real()),std::abs(pivot.imag())),&e);
+    ComplexType scaled(std::ldexp(pivot.real(),-e),std::ldexp(pivot.imag(),-e));
+    determinant*=pivot_row==k ? scaled : -scaled;
+    exponent+=e;
+    auto reciprocal=ComplexType(1)/pivot;
+    for(int j=0; j<N; ++j) {
+      a[k*N+j]*=reciprocal;
+      matrix(k,j)*=reciprocal;
+    }
+    for(int i=0; i<N; ++i) if(i!=k) {
+      auto factor=a[i*N+k];
+      for(int j=0; j<N; ++j) {
+        a[i*N+j]-=factor*a[k*N+j];
+        matrix(i,j)-=factor*matrix(k,j);
+      }
+    }
+  }
+  return {std::ldexp(determinant.real(),exponent),std::ldexp(determinant.imag(),exponent)};
+}
+} // namespace detail
 
 #if defined(ENABLE_DEVICE)
 
@@ -81,23 +135,13 @@ void phmsd_det(int nex, int const* iex, T_t const& T, Ov_t&& ov)
   nda::apply(1.0, ov, nda::tensor::unary_op::EXP);
 }
 
-/*
- *   R(nwalk,ndet,nex,nact) from the inverse of each excitation block.
- *
- *   Closed forms, pivoted warp inverses, then batched getrf + getri_or_zero.
- */
-template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryArrayOfRank<4> R_t>
-void phmsd_compact_R(int nex, int const* refc, int const* iex, T_t const& T, R_t&& R)
+// M(w,d,p,q) is the inverse excitation block; ov(w,d) is its determinant.
+template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryMatrix Ov_t, nda::MemoryArrayOfRank<4> M_t>
+void phmsd_inverse(int nex, int const* iex, T_t const& T, Ov_t&& ov, M_t&& M)
 {
-  long nwalk = R.extent(0);
-  long ndet  = R.extent(1);
-  if(nwalk * ndet == 0) {
-    return;
-  }
-  memory::buffered_array<DEVICE_MEMORY, ComplexType, 2> ov(nwalk, ndet);
-  ov() = 0.0;
-  memory::buffered_array<DEVICE_MEMORY, ComplexType, 4> M(nwalk, ndet, nex, nex);
-
+  long nwalk=ov.extent(0), ndet=ov.extent(1);
+  if(nwalk*ndet==0) return;
+  ov()=ComplexType(0.0);
   if(nex <= kernels::device::phmsd_inverse_max_closed_form) {
     kernels::device::phmsd_compact_R_inverse_small(nex, iex, to_view(T), to_view(ov), to_view(M));
   } else if(nex <= kernels::device::phmsd_max_warp_rank) {
@@ -114,8 +158,18 @@ void phmsd_compact_R(int nex, int const* refc, int const* iex, T_t const& T, R_t
     nda::apply(1.0, ov, nda::tensor::unary_op::EXP);
     nda::lapack::getri_or_zero(M3d, ipiv, work);
   }
-  kernels::device::phmsd_compact_R_assemble(nex, refc, iex, to_view(T), to_view(ov), to_view(M),
-                                            to_view(R));
+}
+
+// R(w,d,p,a) is the compact Woodbury correction for energy contractions.
+template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryArrayOfRank<4> R_t>
+void phmsd_compact_R(int nex, int const* refc, int const* iex, T_t const& T, R_t&& R)
+{
+  long nwalk=R.extent(0), ndet=R.extent(1);
+  if(nwalk*ndet==0) return;
+  memory::buffered_array<DEVICE_MEMORY,ComplexType,2> ov(nwalk,ndet);
+  memory::buffered_array<DEVICE_MEMORY,ComplexType,4> M(nwalk,ndet,nex,nex);
+  phmsd_inverse(nex,iex,T,ov,M);
+  kernels::device::phmsd_compact_R_assemble(nex,refc,iex,to_view(T),to_view(ov),to_view(M),to_view(R));
 }
 
 } // namespace detail
@@ -217,28 +271,27 @@ void calculate_overlaps(int spin, ph_excitations<int, ComplexType, memory::get_m
 
 // T(nw,nact,nel)
 // weights(nd,nw)
-// R(nw,nel,nact)
+// Accumulate C(i,a) = sum_d,p,q w[d] inv_d(p,q) delta(i,hole_p) delta(a,particle_q).
+// The density factor is R = C + (S I - C T) P_ref, where S is the sum of valid
+// determinant weights and P_ref(j,a)=delta(a,ref[j]). T(ref[j],k)=delta(j,k)
+// is the reference-overlap normalization. No conjugation is taken.
 template<nda::MemoryArrayOfRank<3> T_t, nda::MemoryMatrix Mat, nda::MemoryArrayOfRank<3> R_t>
-void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_space<Mat>()>& abij,  T_t const& T, Mat&& weights, R_t && R,
-                 int ndet_block_size = 4096)
+void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_space<Mat>()>& abij,
+                 T_t const& T, Mat&& weights, R_t&& R, int ndet_block_size=4096)
 {
   using nda::range;
-  auto all = range::all;
+  auto all=range::all;
   static_assert(::nda::mem::have_compatible_addr_space<T_t,Mat,R_t>, "Memory space mismatch");
-  constexpr MEMORY_SPACE MEM = memory::get_memory_space<R_t>(); 
-  utils::check(ndet_block_size > 0, "PHMSD determinant block size must be positive");
-  int NEL = T.extent(2);
-  int nw = T.extent(0);
-  nda::array<int,1> orbs(NEL);
-  ComplexType ov_a;
-  R() = ComplexType(0);
-  if constexpr (MEM==HOST_MEMORY) {
-    {
-      auto refc   = abij.reference_configuration(spin);
-      // Wrong if ndown < nup!!! FIX FIX FIX
-      for (int i = 0; i < NEL; ++i)
-        R(all,i,refc[i]) += weights(0,all);
-    }
+  constexpr MEMORY_SPACE MEM=memory::get_memory_space<R_t>();
+  utils::check(ndet_block_size>0,"PHMSD determinant block size must be positive");
+  int NEL=T.extent(2), nw=T.extent(0);
+  utils::check(weights.extent(1)==nw,"Size mismatch");
+  utils::check_shape(R,"R",nw,NEL,T.extent(1));
+  R()=ComplexType(0);
+  memory::buffered_array<MEM,ComplexType,1> total(nw);
+  total()=weights(0,all);
+  if constexpr(MEM==HOST_MEMORY) {
+    ComplexType ov_a;
     for (int nex = 1, nd = 1; nex < abij.maximum_excitation_number()[spin]; nex++)
     {
       memory::buffered_array<MEM,ComplexType,2> Q(nex,nex); 
@@ -247,7 +300,6 @@ void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_s
       for (auto it = abij.unique_begin(nex)[spin]; it < abij.unique_end(nex)[spin]; ++it, ++nd)
       {
         auto e = *it;
-        abij.get_configuration(spin, nd, orbs);
         for(int iw=0; iw<nw; ++iw) {
           if (nex == 1)
           {
@@ -268,33 +320,23 @@ void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_s
             for (int p = 0; p < nex; p++)
               for (int q = 0; q < nex; q++)
                 Q(p,q) = T(iw,e[p + nex],e[q]);
-            nda::lapack::getrf(Q,ipiv,work);
-            ov_a = ComplexType(0.0);
-            math::log_determinant_from_getrf(Q,ipiv,ov_a);
-            // how to handle cases where this is basically zero?
-            ov_a = std::exp(ov_a);
-            if(std::abs(ov_a) != 0.0) 
-              nda::lapack::getri_or_zero(Q,ipiv,work);
+            if(nex==4) ov_a=detail::phmsd_small_inverse<4>(Q);
+            else if(nex==5) ov_a=detail::phmsd_small_inverse<5>(Q);
+            else {
+              nda::lapack::getrf(Q,ipiv,work);
+              ov_a=ComplexType(0);
+              math::log_determinant_from_getrf(Q,ipiv,ov_a);
+              ov_a=std::exp(ov_a);
+              if(std::abs(ov_a)!=0.) nda::lapack::getri_or_zero(Q,ipiv,work);
+            }
           }
           ComplexType w(weights(nd,iw));
           if (std::abs(ov_a) != 0.0)
           {
-            // add term coming from identity
-            for (int i = 0; i < NEL; ++i)
-              R(iw,i,orbs(i)) += w;
-            for (int p = 0; p < nex; ++p)
-            {
-              auto Rp = R(iw,e[p],all);
-              auto Ip = Q(p,all);
-              for (int q = 0; q < nex; ++q)
-              {
-                auto Ipq = Ip(q);
-                auto Tq  = T(iw,e[q + nex],all);
-                for (int i = 0; i < NEL; ++i)
-                  Rp(orbs(i)) -= w * Ipq * Tq(i);
-                Rp(orbs(e[q])) += w * Ipq;
-              }
-            }
+            total(iw) += w;
+            for(int p=0; p<nex; ++p)
+              for(int q=0; q<nex; ++q)
+                R(iw,e[p],e[nex+q]) += w*Q(p,q);
           }
         } // iw
       } // it
@@ -302,32 +344,41 @@ void calculate_R(int spin, ph_excitations<int, ComplexType, memory::get_memory_s
   } else {
 #if defined(ENABLE_DEVICE)
     using kernels::device::to_view;
-    int nact = T.extent(1);
-    utils::check(weights.extent(1) == nw, "Size mismatch");
-    utils::check_shape(R, "R", nw, NEL, nact);
-    auto refc   = abij.get_reference_configuration_device(spin);
-    kernels::device::phmsd_reference_R(refc.data(),to_view(weights(0,all)),to_view(R));
-
-    // contributions from the ph expansion
-    for (int nex = 1, idet = 1; nex < abij.maximum_excitation_number()[spin]; nex++) {
-      int ndet = abij.number_of_unique_excitations(nex)[spin];
-      if(ndet > 0) {
-        auto iexcit = abij.get_excitation_list_device(spin, nex);
-        // Bound density/force-bias scratch by the same determinant limit used
-        // in energy, rather than allocating an entire excitation shell.
+    for(int nex=1,idet=1; nex<abij.maximum_excitation_number()[spin]; ++nex) {
+      int ndet=abij.number_of_unique_excitations(nex)[spin];
+      if(ndet>0) {
+        auto iexcit=abij.get_excitation_list_device(spin,nex);
         for(int first=0; first<ndet; first+=ndet_block_size) {
           int count=std::min(ndet_block_size,ndet-first);
-          memory::buffered_array<MEM,ComplexType,4> Rbuff(nw,count,nex,nact);
+          memory::buffered_array<MEM,ComplexType,2> ov(nw,count);
+          memory::buffered_array<MEM,ComplexType,4> M(nw,count,nex,nex);
           auto ex=iexcit.data()+2*nex*first;
-          detail::phmsd_compact_R(nex,refc.data(),ex,T,Rbuff);
-          kernels::device::phmsd_reduce_R(nex,refc.data(),ex,
-              to_view(weights(range(idet+first,idet+first+count),all)),to_view(Rbuff),to_view(R));
+          detail::phmsd_inverse(nex,ex,T,ov,M);
+          kernels::device::phmsd_density_coefficients(nex,ex,to_view(ov),to_view(M),
+              to_view(weights(range(idet+first,idet+first+count),all)),to_view(R),to_view(total));
         }
-        idet += ndet;
       }
+      idet+=ndet;
     }
 #else
-    utils::check(false, "Error in calculate_overlaps: DEVICE_MEMORY without device support.");
+    utils::check(false,"DEVICE_MEMORY requires device support");
+#endif
+  }
+  memory::buffered_array<MEM,ComplexType,3> product(nw,NEL,NEL);
+  if constexpr(MEM==HOST_MEMORY) {
+    auto ref=abij.reference_configuration(spin);
+    for(int iw=0; iw<nw; ++iw) {
+      nda::blas::gemm(R(iw,all,all),T(iw,all,all),product(iw,all,all));
+      for(int i=0; i<NEL; ++i)
+        for(int j=0; j<NEL; ++j)
+          R(iw,i,ref[j]) += (i==j ? total(iw) : ComplexType(0))-product(iw,i,j);
+    }
+  } else {
+#if defined(ENABLE_DEVICE)
+    nda::tensor::contract(ComplexType(1),R,"wia",T,"waj",ComplexType(0),product,"wij");
+    auto ref=abij.get_reference_configuration_device(spin);
+    kernels::device::phmsd_density_reference(ref.data(),kernels::device::to_view(product),
+        kernels::device::to_view(total),kernels::device::to_view(R));
 #endif
   }
 }

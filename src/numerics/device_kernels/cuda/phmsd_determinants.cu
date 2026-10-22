@@ -507,49 +507,56 @@ void phmsd_compact_R_assemble(int nex, int const* refc, int const* iex,
   for_each_extents<4>({nwalk,ndet,nex,nel},f);
 }
 
-void phmsd_reference_R(int const* refc, view<std::complex<double> const, 1> wgt,
-                       view<std::complex<double>, 3> R)
+namespace {
+using density_complex=cuda::std::complex<double>;
+__global__ void density_weight_sum(view<std::complex<double> const,2> ov,
+    view<std::complex<double> const,2> weights, view<std::complex<double>,1> total)
 {
-  auto f=[=] __device__(long iw,long i) { R(iw,i,refc[i])+=wgt(iw); };
-  for_each_extents<2>({R.extent(0),R.extent(1)},f);
+  __shared__ double real[128],imag[128];
+  long iw=blockIdx.x;
+  density_complex sum(0);
+  for(long d=threadIdx.x; d<ov.extent(1); d+=blockDim.x)
+    if(cuda::std::abs(ov(iw,d))!=0.) sum+=weights(d,iw);
+  real[threadIdx.x]=sum.real();
+  imag[threadIdx.x]=sum.imag();
+  __syncthreads();
+  for(int offset=64; offset>0; offset/=2) {
+    if(threadIdx.x<offset) {
+      real[threadIdx.x]+=real[threadIdx.x+offset];
+      imag[threadIdx.x]+=imag[threadIdx.x+offset];
+    }
+    __syncthreads();
+  }
+  if(threadIdx.x==0) total(iw)+=density_complex(real[0],imag[0]);
+}
+} // namespace
+
+void phmsd_density_coefficients(int nex, int const* iex,
+    view<std::complex<double> const,2> ov, view<std::complex<double> const,4> M,
+    view<std::complex<double> const,2> weights, view<std::complex<double>,3> C,
+    view<std::complex<double>,1> total)
+{
+  long nw=M.extent(0), nd=M.extent(1);
+  auto f=[=] __device__(long iw,long d,long p,long q) {
+    if(cuda::std::abs(ov(iw,d))!=0.) {
+      auto ex=iex+2*nex*d;
+      sfqmc::arch::atomic_add(&C(iw,ex[p],ex[nex+q]),weights(d,iw)*M(iw,d,p,q));
+    }
+  };
+  for_each_extents<4>({nw,nd,nex,nex},f);
+  if(nw>0 && nd>0) {
+    density_weight_sum<<<nw,128>>>(ov,weights,total);
+    sfqmc::cuda::cuda_check(cudaGetLastError(),"phmsd_density_coefficients");
+  }
 }
 
-// Rbuff(nwalk,ndet,nex,nact), R(nwalk,nel,nact), wgt(ndet,nwalk)
-void phmsd_reduce_R(int nex, int const* refc, int const* iex, view<std::complex<double> const, 2> wgt,
-                    view<std::complex<double> const, 4> Rbuff, view<std::complex<double>, 3> R)
+void phmsd_density_reference(int const* refc, view<std::complex<double> const,3> product,
+    view<std::complex<double> const,1> total, view<std::complex<double>,3> R)
 {
-  auto Rb_d = Rbuff;
-  auto R_d  = R;
-  auto w_d  = wgt;
-  long ndet = Rbuff.extent(1);
-  long ndet_per_thread = 16;
-  long nblk = (ndet + ndet_per_thread - 1)/ndet_per_thread;
-  long nwalk = R.extent(0);
-  long nel = R.extent(1);
-  long nact = R.extent(2);
-  if(nwalk * nel * nact == 0) {
-    return;
-  }
-  using value_t = native_t<std::complex<double>>;
-
-  auto f = [=] __device__(long iw, long iblk, long i, long a) {
-    int orb_i = refc[i];
-    value_t y(0);
-    long max_ndet = min(ndet,(iblk+1)*ndet_per_thread);
-    for(long idet=iblk*ndet_per_thread; idet<max_ndet; ++idet)
-    {
-      auto iex_ = iex + idet*2*nex;
-      orb_i = refc[i];   
-      for (int q = 0; q < nex; ++q) 
-        if(i == iex_[q]) { 
-          orb_i = iex_[q+nex];
-          y += w_d(idet,iw) * Rb_d(iw,idet,q,a); 
-        }
-      if(a==orb_i) y += w_d(idet,iw);
-    }
-    sfqmc::arch::atomic_add(&R_d(iw, i, a), y);
+  auto f=[=] __device__(long iw,long i,long j) {
+    R(iw,i,refc[j])+=(i==j ? total(iw) : density_complex(0))-product(iw,i,j);
   };
-  for_each_extents<4>({nwalk,nblk,nel,nact},f);
+  for_each_extents<3>({R.extent(0),R.extent(1),R.extent(1)},f);
 }
 
 } // namespace kernels::device

@@ -103,10 +103,13 @@ void phmsd_compact_R_assemble(int nex, int const* refc, int const* iex,
                               view<std::complex<double> const, 4> M,
                               view<std::complex<double>, 4> R);
 
-void phmsd_reduce_R(int nex, int const* refc, int const* iex, view<std::complex<double> const, 2> wgt,
-                    view<std::complex<double> const, 4> Rbuff, view<std::complex<double>, 3> R);
-void phmsd_reference_R(int const* refc, view<std::complex<double> const, 1> wgt,
-                       view<std::complex<double>, 3> R);
+// Weighted inverse coefficients followed by the reference-orbital correction.
+void phmsd_density_coefficients(int nex, int const* iex,
+    view<std::complex<double> const,2> ov, view<std::complex<double> const,4> M,
+    view<std::complex<double> const,2> weights, view<std::complex<double>,3> C,
+    view<std::complex<double>,1> total);
+void phmsd_density_reference(int const* refc, view<std::complex<double> const,3> product,
+    view<std::complex<double> const,1> total, view<std::complex<double>,3> R);
 
 // phmsd_energy.cu -- block-cooperative (cub::BlockReduce + shared memory), so these stay
 // hand-written __global__s rather than a flat for-each. The walker loop of the 2-body term runs in

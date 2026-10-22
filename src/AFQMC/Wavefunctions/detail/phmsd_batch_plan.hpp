@@ -25,9 +25,10 @@ struct phmsd_batch_model {
     double w=p.walkers, d=std::min(double(p.determinants),shell);
     double u=std::max(unique_a,unique_b), pair=nelec*nact;
     double common=w*(unique_a+unique_b+u + 4*nelec*nmo+4*pair+64);
-    // LU buffers, compact/full R assembly, and density output transformation.
-    double block=w*d*(4*rank*rank+rank*nact+8*rank+8);
+    // LU and inverse workspaces; energy also retains per-determinant R.
+    double block=w*d*(4*rank*rank+(energy ? rank*nact : 0)+8*rank+8);
     double elements=common+block+w*nact*nmo;
+    if(!energy) elements+=w*nelec*nelec;
     if(energy) {
       elements += w*((u+unique_a)*nchol+2*pair*nchol+pair);
       elements += w*d*nchol; // beta KEl
