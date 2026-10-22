@@ -35,6 +35,7 @@ Most parameters in the job file have sensible defaults so that for a standard ca
       },
       "timestep": 0.01,
       "steps": 10000,
+      "equilibration_steps": 1000,
       "measure_interval": 10,
       "population_control_interval": 10,
       "walker_ortho_interval": 10,
