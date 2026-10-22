@@ -175,7 +175,6 @@ vis.plot_lattice(
     lattice,
     density=rho_spin.real,
     density_label="spin density",
-    cmap="bwr",
     vmin=-0.5,
     vmax=0.5
 )
