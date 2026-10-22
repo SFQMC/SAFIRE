@@ -29,10 +29,13 @@ where $n_1$, and $n_2$ are integers.
 
 These positions span a supercell with sides $L_1 \vec{a}_1$ and $L_2 \vec{a}_2$ with two boundary conditions 1 and 2, determining how $L_1 \vec{a}_1$ and $L_2 \vec{a}_2$ wrap around, respectively. These boundaries may have a twist angle $\vec{\theta} = (\theta_1,\theta_2)$ so that electrons crossing them pick up a phase.
 
-```{important}
+<div class="alert alert-block alert-info">
+<b>Important:</b>
+
 Only 2-dimensional lattices are currently implemented.
 Contact the developers if 3-dimensional lattices would be useful to you.
-```
+
+</div>
 
 ## Creating a Lattice
 
@@ -100,14 +103,17 @@ or mixed boundary conditions can be used by setting, for example,
 boundaries = ("open", "periodic")
 ```
 
-```{important}
+<div class="alert alert-block alert-warning">
+<b>Important:</b>
+
 When using periodic boundary conditions,
 lattice sites are not allowed to be their own
 image neighbors. So, for example, a 1-dimensional
 lattice can only be periodic along the long direction.
 A ValueError will be raised if any sites are found to be
 image neighbors of themselves.
-```
+
+</div>
 
 ### Exercise 2: Play with Boundary Conditions
 
