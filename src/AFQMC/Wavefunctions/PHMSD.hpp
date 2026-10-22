@@ -32,6 +32,7 @@
 
 #include "AFQMC/Wavefunctions/phmsd_helpers.hpp"
 #include "AFQMC/Wavefunctions/Excitations.hpp"
+#include "AFQMC/Wavefunctions/detail/phmsd_batch_plan.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 
 namespace sfqmc
@@ -107,12 +108,18 @@ public:
         utils::check(refc[nup+i] == i, "Error: PHMSD woodbury algorithm requires refc[i]==i.\n\n");
     }
 
-    nwalk_block_size = params.nwalk_block_size;
-    ndet_block_size  = params.ndet_block_size;
-    utils::check(nwalk_block_size > 0, " Error: PHMSD nwalk_block_size must be > 0.");
-    utils::check(ndet_block_size  > 0, " Error: PHMSD ndet_block_size must be > 0.");
-    app_log(1, "PHMSD energy batching: nwalk_block_size={}, ndet_block_size={}.",
-            nwalk_block_size, ndet_block_size);
+    utils::check(params.nwalk_block_size >= 0 && params.ndet_block_size >= 0,
+                 "PHMSD batch sizes must be nonnegative (zero selects automatic batching).");
+    utils::check(params.phmsd_workspace_mb >= 0 && std::isfinite(params.phmsd_tuning_seconds) &&
+                 params.phmsd_tuning_seconds >= 0,
+                 "PHMSD workspace and tuning budget must be finite and nonnegative.");
+    requested_walkers = params.nwalk_block_size;
+    requested_determinants = params.ndet_block_size;
+    workspace_mb = params.phmsd_workspace_mb;
+    tuning_seconds = params.phmsd_tuning_seconds;
+    auto const& unique=abij.number_of_unique_excitations();
+    HamOp.configure_phmsd_workload({long(unique[0]),long(unique[1])});
+    plan_batches(std::max(1,targetNW));
   }
 
   int number_of_cholesky_vectors() const { return HamOp.number_of_cholesky_vectors(); }
@@ -334,11 +341,14 @@ protected:
 
   PHMSDEnergyAlgorithm energy_algorithm{};
 
-  // energy_shared_alg1 batching (optional wavefunction inputs; see interpret_inputs):
-  //   nwalk_block_size : walkers processed per energy batch  (bounds KEright/Tdn)
-  //   ndet_block_size  : determinants per excitation-shell block (bounds R/KEl)
-  int nwalk_block_size = 8;
-  int ndet_block_size  = 4096;
+  // Separate plans: density/overlap and Woodbury energy have different optima.
+  int nwalk_block_size = 8, ndet_block_size = 4096;
+  int energy_walk_block_size = 8, energy_det_block_size = 4096;
+  int requested_walkers = 0, requested_determinants = 0, workspace_mb = 0;
+  double tuning_seconds = 1.0, workspace_bytes = 0;
+  bool batches_calibrated = false;
+  phmsd_batch_model batch_model;
+  void plan_batches(int walkers);
 
   ph_excitations<int, ComplexType, MEM> abij;
 

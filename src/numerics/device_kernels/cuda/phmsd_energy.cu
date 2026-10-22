@@ -309,4 +309,65 @@ void ph_excited_2body_energy_dense_cholesky_Tpna_walker(
   sfqmc::cuda::cuda_check(cudaGetLastError(), "ph_excited_2body_energy_dense_cholesky_Tpna");
 }
 
+template<typename T_t, typename B_t, typename W_t, typename E_t, typename K_t>
+__global__ void kernel_ph_energy_gemm_reduce(int const* refc, int const* iexcit,
+    T_t T, B_t B, W_t w, E_t EX, E_t EJ, long iw, K_t KE)
+{
+  using C = cuda::std::complex<double>;
+  constexpr int nt=128;
+  using Reduce=cub::BlockReduce<C,nt>;
+  __shared__ typename Reduce::TempStorage scratch;
+  extern __shared__ int occ[];
+  long ni=T.extent(0), nn=T.extent(2), nx=B.extent(1);
+  long groups=(nn+nt-1)/nt, d=blockIdx.x/groups;
+  auto ex=iexcit+2*nx*d;
+  for(long i=threadIdx.x; i<ni; i+=nt) {
+    int oi=refc[i];
+    for(long p=0; p<nx; ++p) if(ex[p]==i) oi=ex[nx+p];
+    occ[i]=oi;
+  }
+  __syncthreads();
+  long n=(blockIdx.x%groups)*nt+threadIdx.x;
+  C x(0), j(0);
+  if(n<nn) {
+    C k(0), k0(0);
+    for(long p=0; p<nx; ++p) {
+      long hp=ex[p];
+      int op=ex[nx+p], rp=refc[hp];
+      auto v=B(d,p,hp,n);
+      x += v*v; k += v;
+      x += T(hp,op,n)*T(hp,op,n)-T(hp,rp,n)*T(hp,rp,n);
+      for(long q=p+1; q<nx; ++q) {
+        x += C(2)*B(d,p,ex[q],n)*B(d,q,hp,n);
+        x += C(2)*(T(hp,ex[nx+q],n)*T(ex[q],op,n)-T(hp,refc[ex[q]],n)*T(ex[q],rp,n));
+      }
+      for(long i=0; i<ni; ++i) {
+        x += C(2)*B(d,p,i,n)*T(hp,occ[i],n);
+        if(occ[i]==refc[i]) x += C(2)*T(hp,refc[i],n)*(T(i,op,n)-T(i,rp,n));
+      }
+    }
+    for(long i=0; i<ni; ++i) {
+      k += T(i,occ[i],n); k0 += T(i,refc[i],n);
+    }
+    KE(d,n)=k;
+    j=k*k-k0*k0;
+  }
+  auto sx=Reduce(scratch).Sum(x);
+  if(threadIdx.x==0) sfqmc::arch::atomic_add(&EX(iw),-C(.5)*w(d)*sx);
+  __syncthreads();
+  auto sj=Reduce(scratch).Sum(j);
+  if(threadIdx.x==0) sfqmc::arch::atomic_add(&EJ(iw),C(.5)*w(d)*sj);
+}
+
+void ph_excited_energy_gemm_reduce(int const* refc, int const* iexcit,
+    view<std::complex<double> const, 3> T, view<std::complex<double> const, 4> B,
+    view<std::complex<double> const, 1> w, view<std::complex<double>, 1> EX,
+    view<std::complex<double>, 1> EJ, long iw, view<std::complex<double>, 2> KE)
+{
+  if(B.extent(0)*T.extent(2)==0) return;
+  long blocks=((T.extent(2)+127)/128)*B.extent(0);
+  kernel_ph_energy_gemm_reduce<<<blocks,128,T.extent(0)*sizeof(int)>>>(refc,iexcit,T,B,w,EX,EJ,iw,KE);
+  sfqmc::cuda::cuda_check(cudaGetLastError(),"ph_excited_energy_gemm_reduce");
+}
+
 } // namespace kernels::device

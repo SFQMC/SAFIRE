@@ -1,4 +1,5 @@
 #include <cuda/std/complex>
+#include <cuda/std/cmath>
 #include <cuda/std/mdspan>
 
 #include "arch/atomics.hpp"
@@ -7,6 +8,126 @@
 
 namespace kernels::device
 {
+namespace {
+using ph_complex=cuda::std::complex<double>;
+__device__ ph_complex ph_shuffle(ph_complex z,int lane) {
+  return {__shfl_sync(0xffffffff,z.real(),lane),__shfl_sync(0xffffffff,z.imag(),lane)};
+}
+
+// One warp owns one small matrix. Rows live in registers, with partial
+// pivoting across lanes. No pointer arrays, pivots, or LU workspace transfers.
+template<int N,bool Inverse,typename T_t,typename O_t,typename M_t>
+__global__ void kernel_ph_pivoted(int const* iex,T_t T,O_t ov,M_t M) {
+  int lane=threadIdx.x%32;
+  long batch=(long(blockIdx.x)*blockDim.x+threadIdx.x)/32;
+  long nw=Inverse ? ov.extent(0) : ov.extent(1);
+  long nd=Inverse ? ov.extent(1) : ov.extent(0);
+  if(batch>=nw*nd) return; // uniform within the warp
+  long d=batch/nw, iw=batch%nw;
+  auto ex=iex+2*N*d;
+  ph_complex a[N], inverse[N], det(1);
+  int determinant_exponent=0;
+#pragma unroll
+  for(int j=0; j<N; ++j) {
+    a[j]=lane<N ? T(iw,ex[N+lane],ex[j]) : ph_complex(0);
+    if constexpr(Inverse) inverse[j]=ph_complex(lane==j ? 1 : 0);
+  }
+#pragma unroll
+  for(int k=0; k<N; ++k) {
+    double score=(lane>=k && lane<N) ? cuda::std::abs(a[k]) : -1.;
+    int pivot_row=lane;
+#pragma unroll
+    for(int offset=16; offset>0; offset/=2) {
+      double other=__shfl_down_sync(0xffffffff,score,offset);
+      int other_row=__shfl_down_sync(0xffffffff,pivot_row,offset);
+      if(lane+offset<32 && (other>score || (other==score && other_row<pivot_row))) {
+        score=other; pivot_row=other_row;
+      }
+    }
+    pivot_row=__shfl_sync(0xffffffff,pivot_row,0);
+    int source=lane==k ? pivot_row : (lane==pivot_row ? k : lane);
+#pragma unroll
+    for(int j=0; j<N; ++j) {
+      a[j]=ph_shuffle(a[j],source);
+      if constexpr(Inverse) inverse[j]=ph_shuffle(inverse[j],source);
+    }
+    auto pivot=ph_shuffle(a[k],k);
+    if(cuda::std::abs(pivot)==0.) {
+      if(lane==0) {
+        if constexpr(Inverse) ov(iw,d)=ph_complex(0);
+        else ov(d,iw)=ph_complex(0);
+      }
+      if constexpr(Inverse) if(lane<N) {
+#pragma unroll
+        for(int j=0; j<N; ++j) M(iw,d,lane,j)=ph_complex(0);
+      }
+      return;
+    }
+    // Scale each pivot by a power of two so intermediate products cannot
+    // overflow/underflow when the final determinant is representable.
+    int exponent;
+    cuda::std::frexp(cuda::std::fmax(cuda::std::abs(pivot.real()),cuda::std::abs(pivot.imag())),&exponent);
+    ph_complex scaled(cuda::std::ldexp(pivot.real(),-exponent),cuda::std::ldexp(pivot.imag(),-exponent));
+    determinant_exponent += exponent;
+    det *= pivot_row==k ? scaled : -scaled;
+    if constexpr(Inverse) {
+      auto reciprocal=ph_complex(1)/pivot;
+      if(lane==k) {
+#pragma unroll
+        for(int j=0; j<N; ++j) { a[j]*=reciprocal; inverse[j]*=reciprocal; }
+      }
+      auto factor=a[k];
+#pragma unroll
+      for(int j=0; j<N; ++j) {
+        auto aj=ph_shuffle(a[j],k), bj=ph_shuffle(inverse[j],k);
+        if(lane<N && lane!=k) { a[j]-=factor*aj; inverse[j]-=factor*bj; }
+      }
+    } else {
+      auto factor=a[k]/pivot;
+#pragma unroll
+      for(int j=0; j<N; ++j) {
+        auto aj=ph_shuffle(a[j],k);
+        if(lane<N && lane>k && j>k) a[j]-=factor*aj;
+      }
+      if(lane>k) a[k]=ph_complex(0);
+    }
+  }
+  if(lane==0) {
+    det={cuda::std::ldexp(det.real(),determinant_exponent),cuda::std::ldexp(det.imag(),determinant_exponent)};
+    if constexpr(Inverse) ov(iw,d)=det;
+    else ov(d,iw)=det;
+  }
+  if constexpr(Inverse) if(lane<N) {
+#pragma unroll
+    for(int j=0; j<N; ++j) M(iw,d,lane,j)=inverse[j];
+  }
+}
+
+template<bool Inverse>
+void launch_ph_pivoted(int nex,int const* iex,view<std::complex<double> const,3> T,
+                       view<std::complex<double>,2> ov,view<std::complex<double>,4> M) {
+  long batches=ov.extent(0)*ov.extent(1);
+  if(batches==0) return;
+  long blocks=(batches+3)/4;
+  switch(nex) {
+    case 5: kernel_ph_pivoted<5,Inverse><<<blocks,128>>>(iex,T,ov,M); break;
+    case 6: kernel_ph_pivoted<6,Inverse><<<blocks,128>>>(iex,T,ov,M); break;
+    case 7: kernel_ph_pivoted<7,Inverse><<<blocks,128>>>(iex,T,ov,M); break;
+    case 8: kernel_ph_pivoted<8,Inverse><<<blocks,128>>>(iex,T,ov,M); break;
+  }
+  sfqmc::cuda::cuda_check(cudaGetLastError(),"phmsd_pivoted");
+}
+} // namespace
+
+void phmsd_det_pivoted(int nex,int const* iex,view<std::complex<double> const,3> T,
+                       view<std::complex<double>,2> ov) {
+  launch_ph_pivoted<false>(nex,iex,T,ov,view<std::complex<double>,4>{});
+}
+void phmsd_inverse_pivoted(int nex,int const* iex,view<std::complex<double> const,3> T,
+                           view<std::complex<double>,2> ov,view<std::complex<double>,4> M) {
+  launch_ph_pivoted<true>(nex,iex,T,ov,M);
+}
+
 template<typename T>
 __device__ T _D3x3_( T const a11, T const a12, T const a13, 
                    T const a21, T const a22, T const a23, 
@@ -386,42 +507,56 @@ void phmsd_compact_R_assemble(int nex, int const* refc, int const* iex,
   for_each_extents<4>({nwalk,ndet,nex,nel},f);
 }
 
-// Rbuff(nwalk,ndet,nex,nact), R(nwalk,nel,nact), wgt(ndet,nwalk)
-void phmsd_reduce_R(int nex, int const* refc, int const* iex, view<std::complex<double> const, 2> wgt,
-                    view<std::complex<double> const, 4> Rbuff, view<std::complex<double>, 3> R)
+namespace {
+using density_complex=cuda::std::complex<double>;
+__global__ void density_weight_sum(view<std::complex<double> const,2> ov,
+    view<std::complex<double> const,2> weights, view<std::complex<double>,1> total)
 {
-  auto Rb_d = Rbuff;
-  auto R_d  = R;
-  auto w_d  = wgt;
-  long ndet = Rbuff.extent(1);
-  long ndet_per_thread = 16;
-  long nblk = (ndet + ndet_per_thread - 1)/ndet_per_thread;
-  long nwalk = R.extent(0);
-  long nel = R.extent(1);
-  long nact = R.extent(2);
-  if(nwalk * nel * nact == 0) {
-    return;
-  }
-  using value_t = native_t<std::complex<double>>;
-
-  auto f = [=] __device__(long iw, long iblk, long i, long a) {
-    int orb_i = refc[i];
-    value_t y(0);
-    long max_ndet = min(ndet,(iblk+1)*ndet_per_thread);
-    for(long idet=iblk*ndet_per_thread; idet<max_ndet; ++idet)
-    {
-      auto iex_ = iex + idet*2*nex;
-      orb_i = refc[i];   
-      for (int q = 0; q < nex; ++q) 
-        if(i == iex_[q]) { 
-          orb_i = iex_[q+nex];
-          y += w_d(idet,iw) * Rb_d(iw,idet,q,a); 
-        }
-      if(a==orb_i) y += w_d(idet,iw);
+  __shared__ double real[128],imag[128];
+  long iw=blockIdx.x;
+  density_complex sum(0);
+  for(long d=threadIdx.x; d<ov.extent(1); d+=blockDim.x)
+    if(cuda::std::abs(ov(iw,d))!=0.) sum+=weights(d,iw);
+  real[threadIdx.x]=sum.real();
+  imag[threadIdx.x]=sum.imag();
+  __syncthreads();
+  for(int offset=64; offset>0; offset/=2) {
+    if(threadIdx.x<offset) {
+      real[threadIdx.x]+=real[threadIdx.x+offset];
+      imag[threadIdx.x]+=imag[threadIdx.x+offset];
     }
-    sfqmc::arch::atomic_add(&R_d(iw, i, a), y);
+    __syncthreads();
+  }
+  if(threadIdx.x==0) total(iw)+=density_complex(real[0],imag[0]);
+}
+} // namespace
+
+void phmsd_density_coefficients(int nex, int const* iex,
+    view<std::complex<double> const,2> ov, view<std::complex<double> const,4> M,
+    view<std::complex<double> const,2> weights, view<std::complex<double>,3> C,
+    view<std::complex<double>,1> total)
+{
+  long nw=M.extent(0), nd=M.extent(1);
+  auto f=[=] __device__(long iw,long d,long p,long q) {
+    if(cuda::std::abs(ov(iw,d))!=0.) {
+      auto ex=iex+2*nex*d;
+      sfqmc::arch::atomic_add(&C(iw,ex[p],ex[nex+q]),weights(d,iw)*M(iw,d,p,q));
+    }
   };
-  for_each_extents<4>({nwalk,nblk,nel,nact},f);
+  for_each_extents<4>({nw,nd,nex,nex},f);
+  if(nw>0 && nd>0) {
+    density_weight_sum<<<nw,128>>>(ov,weights,total);
+    sfqmc::cuda::cuda_check(cudaGetLastError(),"phmsd_density_coefficients");
+  }
+}
+
+void phmsd_density_reference(int const* refc, view<std::complex<double> const,3> product,
+    view<std::complex<double> const,1> total, view<std::complex<double>,3> R)
+{
+  auto f=[=] __device__(long iw,long i,long j) {
+    R(iw,i,refc[j])+=(i==j ? total(iw) : density_complex(0))-product(iw,i,j);
+  };
+  for_each_extents<3>({R.extent(0),R.extent(1),R.extent(1)},f);
 }
 
 } // namespace kernels::device

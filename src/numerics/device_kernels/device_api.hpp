@@ -76,10 +76,16 @@ void apply(T alpha, view<T, R> a, unary_op op);
 
 // phmsd_determinants.cu
 //
-// The closed-form small-matrix cases live on the device; above them the host wrapper allocates
-// scratch and drives getrf/getri, so only the extract kernel is needed here.
+// Closed forms handle the smallest ranks, pivoted warp kernels extend through
+// rank 8, and the host wrapper drives batched getrf/getri for larger matrices.
 inline constexpr int phmsd_det_max_closed_form     = 5;
 inline constexpr int phmsd_inverse_max_closed_form = 4;
+inline constexpr int phmsd_max_warp_rank = 8;
+
+void phmsd_det_pivoted(int nex, int const* iex, view<std::complex<double> const, 3> T,
+                       view<std::complex<double>, 2> ov);
+void phmsd_inverse_pivoted(int nex, int const* iex, view<std::complex<double> const, 3> T,
+                           view<std::complex<double>, 2> ov, view<std::complex<double>, 4> M);
 
 void phmsd_det_small(int nex, int const* iex, view<std::complex<double> const, 3> T,
                      view<std::complex<double>, 2> ov);
@@ -97,8 +103,13 @@ void phmsd_compact_R_assemble(int nex, int const* refc, int const* iex,
                               view<std::complex<double> const, 4> M,
                               view<std::complex<double>, 4> R);
 
-void phmsd_reduce_R(int nex, int const* refc, int const* iex, view<std::complex<double> const, 2> wgt,
-                    view<std::complex<double> const, 4> Rbuff, view<std::complex<double>, 3> R);
+// Weighted inverse coefficients followed by the reference-orbital correction.
+void phmsd_density_coefficients(int nex, int const* iex,
+    view<std::complex<double> const,2> ov, view<std::complex<double> const,4> M,
+    view<std::complex<double> const,2> weights, view<std::complex<double>,3> C,
+    view<std::complex<double>,1> total);
+void phmsd_density_reference(int const* refc, view<std::complex<double> const,3> product,
+    view<std::complex<double> const,1> total, view<std::complex<double>,3> R);
 
 // phmsd_energy.cu -- block-cooperative (cub::BlockReduce + shared memory), so these stay
 // hand-written __global__s rather than a flat for-each. The walker loop of the 2-body term runs in
@@ -112,6 +123,23 @@ void ph_excited_2body_energy_dense_cholesky_Tpna_walker(
     view<std::complex<double> const, 3> R, view<std::complex<double> const, 1> w,
     view<std::complex<double>, 1> EX, view<std::complex<double>, 1> EJ, long iw,
     view<std::complex<double>, 2> KE);
+
+// T(i,a,n) and B(d,p,i,n) have contiguous Cholesky indices.
+void ph_excited_energy_gemm_reduce(int const* refc, int const* iexcit,
+    view<std::complex<double> const, 3> T, view<std::complex<double> const, 4> B,
+    view<std::complex<double> const, 1> w, view<std::complex<double>, 1> EX,
+    view<std::complex<double>, 1> EJ, long iw, view<std::complex<double>, 2> KE);
+
+// Exact integral-cache path. T(w,i,a,n), X(w,i,a,j,b).
+void phmsd_integral_reference(int const* refc, view<std::complex<double> const,4> T,
+    view<std::complex<double> const,5> X, view<std::complex<double>,3> F,
+    view<std::complex<double>,2> K0);
+void phmsd_integral_energy(int const* refc, int const* iex,
+    view<std::complex<double> const,4> T, view<std::complex<double> const,5> X,
+    view<std::complex<double> const,3> F, view<std::complex<double> const,2> K0,
+    view<std::complex<double> const,4> R, view<std::complex<double> const,2> w,
+    view<std::complex<double>,1> EX, view<std::complex<double>,1> EJ,
+    view<std::complex<double>,3> KE);
 
 // phmsd_vmf.cu
 void vmf_offdiag(long total_pairs, int nrows, int rank, int size, int nelec, long const* pair_off,

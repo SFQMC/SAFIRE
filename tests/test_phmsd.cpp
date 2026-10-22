@@ -416,6 +416,50 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   mpi->comm.barrier();
 }
 
+template<MEMORY_SPACE MEM>
+void phmsd_planning_preserves_state()
+{
+  auto mpi=utils::make_unit_test_mpi_context();
+  auto ham=Hamiltonian::from_params(mpi,HamiltonianParameters{
+      .name="ham",.filename=utils::unit_test_base()+"BH/afqmc_H_rhf_collinear.h5"});
+  WavefunctionParameters params{.name="trial",.filename=utils::unit_test_base()+"BH/afqmc_casci_uhf_phmsd.h5",
+                               .algorithm=PHMSDEnergyAlgorithm::woodbury};
+  params.phmsd_tuning_seconds=.25;
+  apply_defaults(params,ham.getHamType());
+  auto trial=Wavefunction<MEM>::from_params(mpi,params,COLLINEAR,false,ham,9);
+  auto guess=trial.initial_guess();
+  auto rng=std::make_shared<utils::RandomGenerator_t<>>(1317);
+  WalkerSet<MEM> walkers(mpi,rng,WalkerSetParameters{.name="walkers"},guess,9);
+  int nmo=guess.walker_dims()[0];
+  memory::array<MEM,ComplexType,2> G0(9,2*nmo*nmo),G1(9,2*nmo*nmo);
+  trial.MixedDensityMatrix(walkers,G0,false);
+  memory::array<MEM,ComplexType,2> data(9,walkers.walkerSizeIO());
+  for(int i=0; i<9; ++i) walkers.copyToIO(data(i,nda::range::all),i);
+  nda::array<ComplexType,2> before(nda::to_host(data));
+  auto engine=rng->std_rng;
+  auto& host=memory::detail::static_allocator_t<HOST_MEMORY>{}.get_primary();
+  auto& pool=memory::detail::static_allocator_t<MEM>{}.get_primary();
+  auto hs=host.size(),hp=host.maximum_memory(),ps=pool.size(),pp=pool.maximum_memory();
+  trial.runtime_optimization(walkers);
+  trial.runtime_optimization(walkers);
+  CHECK(host.size()==hs); CHECK(host.maximum_memory()==hp);
+  CHECK(pool.size()==ps); CHECK(pool.maximum_memory()==pp);
+  CHECK(rng->std_rng==engine);
+  for(int i=0; i<9; ++i) walkers.copyToIO(data(i,nda::range::all),i);
+  auto after=nda::to_host(data);
+  CHECK(std::equal(before.data(),before.data()+before.size(),after.data()));
+  trial.MixedDensityMatrix(walkers,G1,false);
+  CHECK_THAT(nda::to_host(G1),utils::Approx(nda::to_host(G0)));
+}
+
+TEST_CASE("phmsd: execution planning preserves live state", "[phmsd_planning]")
+{
+  phmsd_planning_preserves_state<HOST_MEMORY>();
+#if defined(ENABLE_DEVICE)
+  phmsd_planning_preserves_state<DEVICE_MEMORY>();
+#endif
+}
+
 TEST_CASE("phmsd: read", "[phmsd]")
 {
   auto& mpi = utils::make_unit_test_mpi_context();
