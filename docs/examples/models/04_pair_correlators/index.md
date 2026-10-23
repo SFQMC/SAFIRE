@@ -16,12 +16,12 @@ kernelspec:
 # Observables: Pair Correlation Functions
 
 <b>Goal:</b>
-At the end of this tutorial, you will know how to measure pair correlation functions using SAFIRE for a lattice models.
+At the end of this tutorial, you will know how to measure pair correlation functions using SAFIRE for lattice models.
 
 ## What You Will Learn
 
 1. How to set up the HDF5 and JSON job files to request pair correlation functions
-2. how to post process the correlation functions
+2. How to post-process the correlation functions
 
 +++ {"id": "7FBZ0COY-NIw"}
 
@@ -79,11 +79,11 @@ hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
 
 ## Saving Pair Maps in the HDF5 Input
 
-The Lattice class from safiretools can be directly used to find the pair maps that we need via the `.get_directed_pairs()` function.
-`.get_directed_pairs()` needs a list of `directions`, and it returns a `DirectedPairs` whose `.offsets` maps each requested direction $\alpha$ to its pair map, the list of partner orbitals $\bar{i}_\alpha$ indexed by $i$.
+The `Lattice` class from `safiretools` can be directly used to find the pair maps that we need via its `.get_directed_pairs()` method.
+`.get_directed_pairs()` needs a list of `directions`, and it returns a `DirectedPairs` object whose `.offsets` maps each requested direction $\alpha$ to its pair map, the list of partner orbitals $\bar{i}_\alpha$ indexed by $i$.
 The direction `"s"` is the on-site pair map $\bar{i}_\alpha = i$.
 
-Every direction has to run along a periodic axis. Stepping off an open edge would wrap around to the far side and pair sites that are not neighbours at all, so that is rejected rather than quietly measured.
+Every direction has to run along a periodic axis. Stepping off an open edge would wrap around to the far side and pair sites that are not neighbors at all, so that is rejected rather than quietly measured.
 
 ```{code-cell} ipython3
 ---
@@ -101,7 +101,7 @@ for key,value in pairs.offsets.items():
   print(key, value)
 ```
 
-`DirectedPairs` writes itself to HDF5 in the format the estimator reads. It may go in the same file as the Wavefunction and Hamiltonian, or in one of its own.
+`DirectedPairs` writes itself to HDF5 in the format the estimator reads. It may go in the same file as the wavefunction and Hamiltonian, or in a file of its own.
 
 ```{code-cell} ipython3
 pairs.to_hdf5("afqmc.h5")
@@ -112,10 +112,10 @@ pairs.to_hdf5("afqmc.h5")
 ### Adding Custom Pair Maps
 
 We note that custom pair maps can be added by simply inserting a list of partner orbitals with a new key.
-For example, we can manually add the $+x+y$ pair map to `pairs.offsets` as
+For example, we can manually add the $+x+y$ pair map to `pairs.offsets`:
 
 ```{code-cell} ipython3
-pairs.offsets["xy"] = [ 5, 6 , 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0]
+pairs.offsets["+x+y"] = [5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0]
 
 # update hdf5 - the whole map is rewritten, so every direction is still there
 pairs.to_hdf5("afqmc.h5")
@@ -129,7 +129,7 @@ The pair correlation function observable may be requested as any other observabl
 However, the pair correlation function observable has one unique parameter that must be set,
 `pairs`, which locates the pair maps with
 
-- `filename`, the name of the HDF5 file where the pair maps were saved. These can be saved in the same file as the Wavefunction, and/or Hamiltonian or in their own independent input file. Whichever you prefer.
+- `filename`, the name of the HDF5 file where the pair maps were saved. They can be saved in the same file as the wavefunction and/or Hamiltonian, or in a separate input file.
 - `group`, the HDF5 group holding them. `DirectedPairs.to_hdf5()` writes them to `PairCorrelator/orbital_map`.
 
 <div class="alert alert-block alert-info">
@@ -141,7 +141,7 @@ i.e. every ordered pair of maps $(\alpha, \beta)$ is measured and stored as its 
 </div>
 
 Since the pair correlation functions do not generally commute with the Hamiltonian, we should use a back-propagated estimator.
-A back-propagated estimator block with pair correlation functions would look like the following,
+A back-propagated estimator block with pair correlation functions would look like the following:
 
 ```json
 "estimators": {
@@ -157,7 +157,7 @@ A back-propagated estimator block with pair correlation functions would look lik
 }
 ```
 
-If we decided we only wanted s-wave pair correlations, we could save only that pair map to a file of its own,
+If we decided we only wanted s-wave pair correlations, we could save only that pair map to a file of its own
 
 ```python
 lattice.get_directed_pairs(directions=["s"]).to_hdf5("pairs_s.h5")
@@ -223,7 +223,6 @@ hf_settings = {
     "verbose": False,
     "plot": False,
     "steps": 2000,
-    "seed": 1479,
     "noncollinear": True,
     "gpu": False,
     "ansatz": "SD_ROT",
@@ -231,10 +230,9 @@ hf_settings = {
     "batch_size": 8,
     "nelec": nelec,
 }
-    
+
 results = solve_hf(
     hamiltonian=AutoHFHamiltonian(hamiltonian),
-    lattice=lattice,
     settings=hf_settings,
 )
 
@@ -317,4 +315,4 @@ vis.plot_lattice(
 ### What You Learned
 
 1. How to set up the HDF5 and JSON job files to request pair correlation functions
-2. how to post process the correlation functions
+2. How to post-process the correlation functions

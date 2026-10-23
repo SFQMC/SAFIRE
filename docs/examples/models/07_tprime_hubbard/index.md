@@ -21,7 +21,7 @@ In this tutorial, we will perform AFQMC calculations for the Hubbard model with 
 a 4×8 lattice.
 The Hamiltonian is given by,
 $$
-\hat{H} = -t \sum_{\langle i,j\rangle,\sigma} \hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma} - t' \sum_{\langle\langle i,j\rangle\rangle,\sigma} \hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma} + U \sum_{i} \hat{n}_{i\uparrow} \hat{n}_{i\downarrow},
+\hat{H} = -t \sum_{\langle i,j\rangle,\sigma} \left(\hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma} + \mathrm{h.c.}\right) - t' \sum_{\langle\langle i,j\rangle\rangle,\sigma} \left(\hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma} + \mathrm{h.c.}\right) + U \sum_{i} \hat{n}_{i\uparrow} \hat{n}_{i\downarrow},
 $$
 where $\langle i,j\rangle$ and $\langle\langle i,j\rangle\rangle$ sum over the nearest- and next-nearest-neighbor bonds.
 We will use the DMRG and AFQMC results of reference [1] for this system as reference data throughout
@@ -110,7 +110,6 @@ rho_up = rdm[0].diagonal().reshape(*L)
 rho_down = rdm[1].diagonal().reshape(*L)
 
 rho_charge = rho_up + rho_down
-#rho_spin = 0.5*(rho_up - rho_down)
 
 vis.plot_lattice(
     lattice,
@@ -236,7 +235,7 @@ iy = np.arange(lattice.L[1])
 
 for steps in bp_lengths:
     plt.errorbar(iy,rho_spin[steps],yerr=rho_spin_err[steps],fmt='o-',label=f"{steps} steps")
-plt.xlabel("Site")
+plt.xlabel("y")
 plt.ylabel("Spin Density")
 plt.legend()
 plt.show()

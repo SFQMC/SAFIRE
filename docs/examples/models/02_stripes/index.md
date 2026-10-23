@@ -21,9 +21,9 @@ Author: Ryan Levy
 :id: 9b2b92e5-990e-47bf-b235-3a37edbf4a0d
 
 import os
-# This are in case you have a GPU enabled JAX but are running on CPU.
+# This is in case you have a GPU-enabled JAX but are running on CPU.
 os.environ['JAX_PLATFORMS'] = 'cpu'
-# If you want to use GPU enabled Jax in multiply notebooks with the same
+# Don't preallocate GPU memory, so that several notebooks can share the same GPU
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 # use x64 numbers
@@ -46,16 +46,17 @@ import numpy as np
 
 ## Physics Background
 
-In the paper _Stripes and spin-density waves in the doped two-dimensional Hubbard model: Ground state phase diagram_ [1] we see that for the nearest-neighbor square Hubbard model, the ground state may have a stable staggered stripe ground state order
+In the paper _Stripes and spin-density waves in the doped two-dimensional Hubbard model: Ground state phase diagram_ [1] we see that for the nearest-neighbor square Hubbard model, the ground state may have stable staggered stripe order.
 
 ![](files/fig9.png)
 
-We'll explore how to see this with AFQMC and the role of the trial wave function
+We'll explore how to see this with AFQMC and the role of the trial wavefunction.
 
 +++ {"editable": true, "id": "8dc800f8-72bf-4591-911f-7d99b692c8f4"}
 
 ---
-[1] Hao Xu, Hao Shi, Ettore Vitali, Mingpu Qin, and Shiwei Zhang Phys. Rev. Research 4, 013239 – Published 28 March 2022
+[1] Hao Xu, Hao Shi, Ettore Vitali, Mingpu Qin, and Shiwei Zhang, _Stripes and spin-density waves in the doped two-dimensional Hubbard model: Ground state phase diagram_, Phys. Rev. Research **4**, 013239, published 28 March 2022.  
+DOI: https://doi.org/10.1103/PhysRevResearch.4.013239
 
 +++ {"id": "e8420a88-5a19-4b32-996d-21b3d85aa58c"}
 
@@ -63,7 +64,7 @@ We'll explore how to see this with AFQMC and the role of the trial wave function
 
 Let's look at a 10×4 system with 0.2 doping at $U=6$ with a staggered AFM pinning field at the edges. The pinning breaks symmetry in order to understand the response of the system to the applied field.
 
-When confronted with a new problem, the first thing we generally do is use a non-interacting (free electron) wave function as the trial. Let's do that now
+When confronted with a new problem, the first thing we generally do is use a non-interacting (free-electron) wavefunction as the trial. Let's do that now.
 
 ```{code-cell} ipython3
 :id: 9d8005b9-ae0e-42e9-9d87-7fa2d233c43c
@@ -95,13 +96,13 @@ The Hamiltonian will be simple,
 $$
 \begin{aligned}
 H &= H_t + H_U + H_\text{pin} \\
-H_t &= -t \sum_{\langle i j\rangle \sigma} c^\dagger_{i\sigma} c_{j\sigma} \\
+H_t &= -t \sum_{\langle i j\rangle \sigma} \left(c^\dagger_{i\sigma} c_{j\sigma} + \mathrm{h.c.}\right) \\
 H_U &= U\sum_i n_{i\uparrow}n_{i\downarrow}\\
 H_\text{pin} &= \sum_{i\in \text{edge}} (-1)^{i_x+i_y} h_i S^z_i
 \end{aligned}
 $$
 
-and `PinningField.afm` adds the edge pinning as well. We'll assume $t=1$, $h_i=0.5$ just like in the paper
+where `PinningField.afm` adds the edge pinning. We'll assume $t=1$ and $h_i=0.5$, just like in the paper.
 
 ```{code-cell} ipython3
 ---
@@ -139,7 +140,7 @@ from safiretools import Wavefunction
 # get a trial wavefunction: First, let's try a free-electron (i.e. non-interacting) wavefunction.
 # from_free_electron() takes the Hamiltonian itself.
 #
-# No twist is needed here: the open boundary along axis 1 and the pinning field
+# No twist is needed here: the open boundary along axis 0 and the pinning field
 # already split the shells, so the determinant is well defined. On a fully
 # periodic, unpinned lattice it would not be. See the 4×4 Hubbard example.
 wavefunction = Wavefunction.from_free_electron(
@@ -150,7 +151,7 @@ wavefunction = Wavefunction.from_free_electron(
 
 +++ {"id": "ec2d1ea0-fc24-45f6-a799-5e9d14e39639"}
 
-Now we'll write the file to run AFQMC. There are some better tools than this but let's hard code some things for now
+Now we'll write the job file to run AFQMC.
 
 ```{code-cell} ipython3
 :id: 866c943b-b811-40b9-a8a5-e257e30bda24
@@ -224,7 +225,7 @@ vis.plot_timeseries(results)
 
 ### Analysis
 
-We'll now analyze the spin density of the output given the free electron trial
+We'll now analyze the spin density of the output given the free-electron trial.
 
 ```{code-cell} ipython3
 :id: 08eaa53d-eed0-4540-9bb8-08ea5aeab4c0
@@ -279,10 +280,8 @@ plt.errorbar(np.arange(lattice.L[0]),sz_cols,yerr=sz_cols_err,
 plt.plot(dmrg_sz,label="DMRG",c='k')
 
 plt.xlabel("Col")
-plt.ylabel("Staggered Sz")
+plt.ylabel("Staggered $S^z$")
 plt.legend()
-
-# plt.ylim(-0.3,0.2)
 plt.show()
 ```
 
@@ -290,13 +289,13 @@ plt.show()
 
 ## Self-Consistency with Hartree-Fock
 
-The idea behind self-consistent AFQMC is to have the trial wave function match as much as possible the output of AFQMC.
+The idea behind self-consistent AFQMC is to have the trial wavefunction match as much as possible the output of AFQMC.
 
-For this model, we can do this by introducing an effective Hubbard model, where $U$ is replaced with $U_\text{eff}$. By solving Hartree-Fock (mean field theory) for this effective model and using the result as a trial wave function, we can scan through different $U_\text{eff}$ to find the one that matches the best.
+For this model, we can do this by introducing an effective Hubbard model, where $U$ is replaced with $U_\text{eff}$. By solving Hartree-Fock (mean-field theory) for this effective model and using the result as a trial wavefunction, we can scan through different $U_\text{eff}$ to find the one that matches the best.
 
-We'll use AutoHF to explore creating a trial wave function for AFQMC. Let's do a few between $U_\text{eff}=1$ and $U_\text{eff}=4$
+We'll use AutoHF to explore creating a trial wavefunction for AFQMC. Let's do a few between $U_\text{eff}=1$ and $U_\text{eff}=4$.
 
-_Note:_ The Hartree-Fock code is faster if you use a GPU
+_Note:_ The Hartree-Fock code is faster if you use a GPU.
 
 ```{code-cell} ipython3
 :id: ee2b575c-7d27-4a1d-a9b9-e9b02a682f8f
@@ -325,7 +324,6 @@ for Ueff in Ueffs:
     )
     results = solve_hf(
         hamiltonian=AutoHFHamiltonian(hamiltonian_eff),
-        lattice=lattice,
         settings=hf_settings,
     )
     # the trial solves the Ueff model, but AFQMC runs with the original Hamiltonian (U=6)
@@ -336,7 +334,6 @@ for Ueff in Ueffs:
     write_jobfile(
         f"afqmc_{Ueff}.json",
         {
-            "output_name": f"afqmc_{Ueff}",
             "seed": 42,
             "execute": {
                 "wavefunction": trial_wfns[Ueff],
@@ -345,7 +342,7 @@ for Ueff in Ueffs:
             }
         }
     )
-    print(f"Written {Ueff}")
+    print(f"Wrote afqmc_{Ueff}.json")
 ```
 
 ```{code-cell} ipython3
@@ -360,7 +357,7 @@ for Ueff in Ueffs:
 ```{code-cell} ipython3
 :id: 9ac5439b-daa4-4cf4-a248-e2466acf32e5
 
-# Ueff=0 stands for the free electron trial of the first run
+# Ueff=0 stands for the free-electron trial of the first run
 runs = {0: Results("afqmc.results.h5")}
 for Ueff in Ueffs:
     runs[Ueff] = Results(f"afqmc_{Ueff}.results.h5")
@@ -378,9 +375,9 @@ for Ueff,run in runs.items():
 
 
     p =axes[1].matshow(delta_Sz.reshape(*lattice.L).T)
-    plt.colorbar(p,ax= axes[1], label="$ΔSz$")
+    plt.colorbar(p,ax= axes[1], label=r"$\Delta S^z$")
     if Ueff==0:
-        fig.suptitle(f"Free Electron")
+        fig.suptitle("Free Electron")
     else:
         fig.suptitle(f"{Ueff=}")
     plt.show()
@@ -390,7 +387,7 @@ for Ueff,run in runs.items():
 
 ## Self-Consistency Condition
 
-We'll now measure the error between the trial wave function's observable and the output from AFQMC
+We'll now measure the error between the trial wavefunction's observable and the output from AFQMC.
 
 ```{code-cell} ipython3
 :id: eff15403-1be8-4f08-8ed8-9ccf212e1d9f
@@ -418,7 +415,7 @@ for Ueff,run in runs.items():
     if Ueff==0:
         label = "Free Electron"
     else:
-        label = f"HF W/ HF Ueff={Ueff}"
+        label = f"HF Ueff={Ueff}"
 
     plt.errorbar(np.arange(lattice.L[0]),
                  sz_cols,yerr=sz_cols_err,
@@ -426,10 +423,8 @@ for Ueff,run in runs.items():
 plt.plot(dmrg_sz,'x-',label="DMRG",c='k')
 
 plt.xlabel("Col")
-plt.ylabel("Staggered Sz")
+plt.ylabel("Staggered $S^z$")
 plt.legend()
-
-# plt.ylim(-0.3,0.2)
 plt.show()
 ```
 
@@ -449,11 +444,9 @@ for Ueff,run in runs.items():
 plt.errorbar(xs,ys,yerr=yerrs,fmt='o-',label="AFQMC",capsize=6)
 plt.xticks(xs)
 plt.xlabel("Ueff")
-plt.ylabel(r"$\langle |$DMRG $S_z - $AFQMC $S_z|\rangle$",fontsize=12)
+plt.ylabel(r"$\langle |$DMRG $S^z - $AFQMC $S^z|\rangle$",fontsize=12)
 plt.legend()
 plt.grid()
-
-# plt.ylim(-0.3,0.2)
 plt.show()
 
 
@@ -470,27 +463,25 @@ for Ueff,run in runs.items():
 plt.errorbar(xs,ys,yerr=yerrs,fmt='o-',label="AFQMC",capsize=6)
 plt.xticks(xs)
 plt.xlabel("Ueff")
-plt.ylabel(r"$\langle |$Trial $S_z - $AFQMC $S_z|\rangle$",fontsize=12)
+plt.ylabel(r"$\langle |$Trial $S^z - $AFQMC $S^z|\rangle$",fontsize=12)
 plt.legend()
 plt.grid()
-
-# plt.ylim(-0.3,0.2)
 plt.show()
 ```
 
 +++ {"id": "9e472093-a34e-4083-bb1a-3e04e07f19d2"}
 
 So we can see that somewhere around $U_\text{eff}\approx 3$
-would have the lowest error for self consistency.
-Despite the difference between DMRG and AFQMC being on average 0.01, there is a clear optimal trial wave function to use. For fine tuning between $U_\text{eff}\in [2,4]$, we'll need more sophisticated methods than presented here.
+would have the lowest error for self-consistency.
+Despite the difference between DMRG and AFQMC being on average 0.01, there is a clear optimal trial wavefunction to use. For fine-tuning between $U_\text{eff}\in [2,4]$, we'll need more sophisticated methods than presented here.
 
-In our original study, we found the optimal $U_\text{eff} \approx 2.77$
+Ref. [1] finds the optimal $U_\text{eff} \approx 2.77$.
 
 +++ {"id": "672d9ba4-f659-466d-be57-8fa082fcfb0e"}
 
 ## Your Turn
 
-### Part 1 - Recreate Fig. 1
+### Part 1 – Recreate Fig. 1
 
 +++ {"editable": true, "id": "0ac955ea-ab2d-49fb-b9dd-9a0fafdaf159"}
 
@@ -498,7 +489,7 @@ In our original study, we found the optimal $U_\text{eff} \approx 2.77$
 
 +++ {"editable": true, "id": "27958cd8-4035-4720-82b8-c163b1a89e99"}
 
-Let's recreate figure 1 from Xu et al, by changing
+Let's recreate Fig. 1 of Xu et al. [1] by changing
 
 - Lattice size 10 × 4 to 20 × 4
 - Doping 0.2 to 0.1 hole doping
@@ -506,12 +497,12 @@ Let's recreate figure 1 from Xu et al, by changing
 
 +++ {"id": "edc3a318-40a1-40cb-86bf-b85ae366fc9b"}
 
-### Part 2 - Try Different Settings
+### Part 2 – Try Different Settings
 
-Lets use this as a test bed to explore how AFQMC responds to different settings. Some questions to consider
+Let's use this as a testbed to explore how AFQMC responds to different settings. Some questions to consider:
 
-- Use $U_\text{eff} = U$ or the "bare U" Hartree-Fock trial. How does the quality of the results change?
-- We compared spin densities, what about hole density? This is the effectively the same as comparing charge density.
+- Use $U_\text{eff} = U$, the bare $U$ Hartree-Fock trial. How does the quality of the results change?
+- We compared spin densities; what about the hole density? This is effectively the same as comparing the charge density.
 - Use a trial with a small number of steps so that the solver doesn't converge. How do the results change? How could you tell this trial isn't good?
-- The free electron trial isn't a valid RHF state (why?). What would be the corresponding RHF solution? What does that output look like?
-- Explore the parameters of backpropagation, how does the 1rdm change as a function of the back-propagation length? You can give several lengths in `propagation_steps` to see the results converge
+- The free-electron trial isn't a valid RHF state (why?). What would be the corresponding RHF solution? What does that output look like?
+- Explore the parameters of back-propagation: how does the one-body reduced density matrix change as a function of the back-propagation length? You can give several lengths in `propagation_steps` to see the results converge.

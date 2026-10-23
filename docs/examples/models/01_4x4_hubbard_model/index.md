@@ -21,7 +21,7 @@ In this tutorial, we will perform AFQMC calculations for the Hubbard model on
 a 4×4 lattice.
 The Hamiltonian is given by,
 $$
-\hat{H} = -t \sum_{\langle i,j\rangle} \hat{c}^\dagger_i \hat{c}_j + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
+\hat{H} = -t \sum_{\langle i,j\rangle} \left(\hat{c}^\dagger_i \hat{c}_j + \mathrm{h.c.}\right) + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
 $$
 where $i,j$ are lattice site indices, angle brackets indicate nearest-neighbors,
 $\hat{c}^\dagger_i$/$\hat{c}_i$ are electronic creation/annihilation operators,
@@ -33,13 +33,11 @@ this tutorial.
 The tutorial is structured as follows.
 We will begin with an explanation of how to build lattice model Hamiltonians
 using the `safiretools` Python package.
-Next, we will walk through computing the ground state energy of this Hamiltonian for a particular filling and value of U,
+Next, we will walk through computing the ground state energy of this Hamiltonian at half filling and $U=4$,
 comparing a couple of options for trial wavefunctions.
-Next, we will continue the walk through by computing the ground state charge,
-and spin density for the same filling and value of U.
-Next, we will demonstrated how to obtain exact results using AFQMC
-for the special case of half filling for which, if care is taken,
-there is no sign problem.
+At half filling there is no sign problem, so, if care is taken, AFQMC reproduces the exact energy.
+Finally, we will compute the ground state charge and spin densities for the same filling and value of $U$
+using back-propagation.
 
 +++ {"id": "dfgyQ5OC5xcn"}
 
@@ -112,10 +110,10 @@ Next, we'll walk through an AFQMC calculation where we'll compute the ground sta
 Here, we will compute the ground state energy of the standard Hubbard model
 based on the Hamiltonian that we made previously - i.e.
 $$
-\hat{H} = -t \sum_{\langle i,j\rangle} \hat{c}^\dagger_i \hat{c}_j + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
+\hat{H} = -t \sum_{\langle i,j\rangle} \left(\hat{c}^\dagger_i \hat{c}_j + \mathrm{h.c.}\right) + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
 $$
 with $t = 1.0$, and $U = 4.0$.
-We will perform the calculation at half-filling.
+We will perform the calculation at half filling.
 
 AFQMC uses a trial wavefunction to control the sign problem at the cost of introducing a bias;
 however, the bias can be minimized by using a trial wavefunction which accurately captures
@@ -125,12 +123,12 @@ symmetries, etc. before running an AFQMC calculation.
 In addition to this, some methods for computing a trial wavefunction will lead to better results than
 others for specific problems.
 For example, both free-electron trial wavefunctions and Hartree-Fock (HF) trial wavefunctions
-are reasonable for low-, to intermediate-U values.
+are reasonable for low- to intermediate-U values.
 Assuming that all candidate trial wavefunctions have the desired properties,
 it may be necessary to test which wavefunction is better by running AFQMC calculations with each,
 and comparing the results.
-In this walk through, we will compare free-electron trial wavefunctions
-to unrestricted Hartree-Fock trial wavefunctions.
+In this walkthrough, we will compare free-electron trial wavefunctions
+to generalized Hartree-Fock trial wavefunctions.
 
 +++ {"id": "Clkg0_nE5xcn"}
 
@@ -145,9 +143,9 @@ occupy is arbitrary. A small twist on the
 lattice breaks that degeneracy and fixes the choice.
 
 The twist is a property of the **lattice**, so it has to be applied when the
-Hamiltonian is built. `from_free_electron()` uses whatever Hamiltonian it is given. 
-We therefore build a *second*, Hamiltonian with a twist 
-for the trial wavefunction alone; the untwisted one from step 2. is what AFQMC
+Hamiltonian is built. `from_free_electron()` uses whatever Hamiltonian it is given.
+We therefore build a *second* Hamiltonian with a twist
+for the trial wavefunction alone; the untwisted one from Step 2 is what AFQMC
 actually runs, and is also what we hand the Hartree-Fock solver further down.
 `from_free_electron()` warns if you hand it a Hamiltonian whose shells are still
 degenerate at the fill level.
@@ -250,10 +248,10 @@ vis.plot_lattice(
 +++ {"id": "R9Br4_CK5xco"}
 
 As expected for a free-electron trial wavefunction with an even number of electrons,
-the charge- and spin-densities are uniform.
-For the charge-density, we see that the uniform charge density is 1.0 electron/site,
-consistent with half-filling.
-For the spin-density, we see that the uniform spin density is 0.0 spin/site,
+the charge and spin densities are uniform.
+For the charge density, we see that the uniform charge density is 1.0 electron/site,
+consistent with half filling.
+For the spin density, we see that the uniform spin density is 0.0 spin/site,
 which is expected for an even number of up and down electrons.
 
 +++ {"id": "uV3v2_Ou5xco"}
@@ -261,9 +259,9 @@ which is expected for an even number of up and down electrons.
 ### Running AFQMC
 
 Next, we will run an AFQMC calculation.
-SAFIRE uses an input file in json format to define AFQMC run parameters.
-`safiretools` comes with a convenience function to generate a JSON job file as demonstrated below.
-We have included reasonable AFQMC run parameters for this calculation below.
+SAFIRE uses an input file in JSON format to define AFQMC run parameters.
+`safiretools` comes with a convenience function to generate a JSON job file.
+Below, we use it with reasonable AFQMC run parameters for this calculation.
 
 ```{code-cell} ipython3
 :id: FCd6cFpd5xco
@@ -323,9 +321,9 @@ plt.axhline(E_exact, color="crimson")
 
 +++ {"id": "LRmDOsA-S8og"}
 
-The Hubbard model at half-filling is sign-free, so we would expect numerically exact results; For U/t =4, the exact energy is -13.62185, so why do we disagree?
+The Hubbard model at half filling is sign-free, so we would expect numerically exact results; for $U/t=4$, the exact energy is $-13.62185$, so why do we disagree?
 
-Even if the underlying Hamiltonian is sign-free (i.e. $\langle \Psi_\mathrm{T}|\Phi\rangle \ge 0$ for all walkers $|\Phi\rangle$), in the importance sampled AFQMC random walk, an improperly chosen trial wavefunction can still induce a bias if its nodes $\langle \Psi_\mathrm{T}|\Phi\rangle = 0$ do not coincide with those of the ground state. Especially free-electron trial wavefunctions in open-shell geometries are susceptible to this problem.
+Even if the underlying Hamiltonian is sign-free (i.e. $\langle \Psi_\mathrm{T}|\Phi\rangle \ge 0$ for all walkers $|\Phi\rangle$ during the AFQMC propagation), in the importance-sampled AFQMC random walk, an improperly chosen trial wavefunction can still induce a bias if its nodes $\langle \Psi_\mathrm{T}|\Phi\rangle = 0$ do not coincide with those of the ground state. Especially free-electron trial wavefunctions in open-shell geometries are susceptible to this problem.
 
 There are different approaches to dealing with this problem. One can either
 
@@ -333,13 +331,14 @@ There are different approaches to dealing with this problem. One can either
 2. allow the walkers to move around the nodes ergodically by using a noncollinear wavefunction that is not aligned with the spin axis of the Hubbard-Stratonovich decoupling.
 
 Next, we will use a noncollinear Hartree-Fock trial wavefunction.
+For a more detailed treatment of half filling with a particle-hole symmetric trial wavefunction, see {doc}`../03_half_filling_hubbard/index`.
 
 +++ {"id": "tsMzr8175xcp"}
 
 ### Hartree-Fock Trial Wavefunction
 
-Now, we will compute and characterize an unrestricted Hartree-Fock (UHF) wavefunction.
-We will use autoHF to accomplish this.
+Now, we will compute and characterize a noncollinear, generalized Hartree-Fock (GHF) wavefunction.
+We will use AutoHF to accomplish this.
 
 ```{code-cell} ipython3
 ---
@@ -369,7 +368,7 @@ results = solve_hf(
 
 # the noncollinear orbitals are spinors, spin-up components first
 orbitals, = results[0]["orbitals"]
-uhf_wfn = Wavefunction.from_single_determinant(
+ghf_wfn = Wavefunction.from_single_determinant(
     np.asarray(orbitals).reshape(2, lattice.N_sites, sum(nelec))
 )
 ```
@@ -382,7 +381,7 @@ colab:
   height: 701
 outputId: 4e4d58d4-8505-4316-dee8-3f61b4b57a12
 ---
-# get the density from autohf
+# get the density from AutoHF
 state_results, functions = results
 
 makeRDMs = functions['makeRDMs']
@@ -403,7 +402,7 @@ rho_down = rdm[M:,M:].diagonal().reshape(*L)
 #rho_down = rdm[1].diagonal().reshape(*L)
 
 rho_charge = rho_up + rho_down
-rho_spin = rho_up - rho_down
+rho_spin = 0.5*(rho_up - rho_down)
 
 vis.plot_lattice(
     lattice,
@@ -424,7 +423,7 @@ outputId: 335549e0-8890-4318-a08e-d7468c4fac09
 ---
 vis.plot_lattice(
     lattice,
-    density=rho_spin,
+    density=rho_spin.real,
     density_label="spin density",
     vmin=-0.5,
     vmax=0.5
@@ -438,7 +437,7 @@ vis.plot_lattice(
 write_jobfile("afqmc.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
-        "wavefunction": uhf_wfn,
+        "wavefunction": ghf_wfn,
         "hamiltonian": hamiltonian,
         "timestep": 0.01,
         "steps": 12000,
@@ -488,19 +487,19 @@ If you used all of our settings, you should get an output compatible with
 Energy = -13.6144 ± 0.0042
 ```
 
-Again, we expect to achieve very close to the exact energy for the Hubbard model at half filling which is -13.62185 for U/t=4.
+Again, we expect to achieve very close to the exact energy for the Hubbard model at half filling, which is $-13.62185$ for $U/t=4$.
 We see much better agreement now than we did with the free-electron trial wavefunction before; however, we're still off by about 0.007 t, or about twice
 the stochastic uncertainty of our result. Why do we not quite agree?
 
 We have residual systematic errors to remove. Specifically, we will want
-to remove the trotter error.
+to remove the Trotter error.
 We can achieve this either by using a very small step size, or by extrapolating to $\tau = 0$.
 
-Let's rerun with a smaller $\tau = 0.005$
+Let's rerun with a smaller $\tau = 0.005$.
 
 +++ {"id": "Q-t-66BmVVn5"}
 
-## Rerun AFQMC with a Smaller τ
+### Rerun AFQMC with a Smaller τ
 
 When we decrease the step size, we will
 also need to increase the number of steps, and
@@ -514,7 +513,7 @@ amount of statistics.
 write_jobfile("afqmc.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
-        "wavefunction": uhf_wfn,
+        "wavefunction": ghf_wfn,
         "hamiltonian": hamiltonian,
         "timestep": 0.005,
         "steps": 24000,
@@ -603,7 +602,7 @@ Here is a sample input file where an ellipsis has been used to hide the rest of 
 For back-propagation (BP), we will need to provide a BP length.
 We will need to check for convergence in this parameter.
 Notice that a BP estimator has no `measure_interval`: the back-propagation lengths, in steps, are
-given by `propagation_steps`, and the longest of them doubles as the measurement interval. Specifying multiple length at once is useful to check the convergence within a single run.
+given by `propagation_steps`, and the longest of them doubles as the measurement interval. Specifying multiple lengths at once is useful to check the convergence within a single run.
 Every BP length is saved as its own observable, `BackPropEstimator/Steps=<n>`, in the results file.
 
 +++ {"id": "ZjxOUIHUQeuD"}
@@ -620,7 +619,7 @@ bp_lengths = [200, 400, 600]
 write_jobfile("afqmc_3.json", {
     "seed": 42,                          # just for reproducibility
     "execute": {
-        "wavefunction": uhf_wfn,
+        "wavefunction": ghf_wfn,
         "hamiltonian": hamiltonian,
         "timestep": 0.005,
         "steps": 24000,
@@ -662,7 +661,7 @@ We will now focus on analyzing the back-propagated observables.
 
 +++ {"id": "-Y7bGG0xwFOh"}
 
-## Average Observables
+### Average Observables
 
 `safiretools.Results` reads the back-propagated one-rdm of each BP length from the results file.
 SAFIRE writes the full matrix, with the spin-up block first for a noncollinear calculation.
@@ -709,10 +708,10 @@ plt.show()
 
 +++ {"id": "QOZdjPwg2JPg"}
 
-## Visualizing Observables on the Lattice
+### Visualizing Observables on the Lattice
 
 We used `vis.plot_lattice()` earlier in order to visualize the lattice itself.
-The same function allows us to colorize each lattice site based on some observables.
+The same function allows us to colorize each lattice site based on an observable.
 Below, we plot the charge density, then the spin density on the lattice.
 
 ```{code-cell} ipython3

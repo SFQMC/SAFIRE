@@ -15,7 +15,6 @@ kernelspec:
 
 This example collects short recipes for setting up common lattice model Hamiltonians and their free-electron trial wavefunctions.
 
-Each section builds a Hamiltonian and a free-electron trial wavefunction.
 Each snippet illustrates one aspect of the setup, but they can be combined: for example, a pinning field can be added to the three-band model in the same way as to the single-band one.
 The lattices are explained in {doc}`/tutorials/models/03_setting_up_a_lattice/03_setting_up_a_lattice`, and the Hamiltonian terms in {doc}`/tutorials/models/04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`.
 
@@ -24,7 +23,7 @@ The lattices are explained in {doc}`/tutorials/models/03_setting_up_a_lattice/03
 ```{code-cell} ipython3
 import numpy as np
 
-from safiretools import HamiltonianBuilder, Lattice, LatticeHamiltonian, PinningField, SpinSymm, Wavefunction, vis
+from safiretools import Lattice, LatticeHamiltonian, PinningField, Wavefunction, vis
 
 default_twist = (1/np.sqrt(592560607), 1/np.sqrt(47603))
 ```
@@ -81,7 +80,7 @@ wavefunction = Wavefunction.from_free_electron(
 ## Hubbard-Kanamori Model
 
 A two-band Hubbard-Kanamori model on a 6 × 1 square lattice.
-With periodic boundary conditions only along the long direction, the system is effectively one-dimensional.
+The system is a one-dimensional chain, periodic along its length.
 
 ```{code-cell} ipython3
 params = dict(nbands=2, U=2.0, U1=1.5, U2=1.0, J=0.5)
@@ -124,14 +123,14 @@ wavefunction = Wavefunction.from_free_electron(
 
 ## Pinning Fields
 
-A $t$-$t'$ Hubbard model on an 8 × 4 square lattice with an antiferromagnetic pinning field on the two edges at the ends of axis 0.
+A $t$-$t'$ Hubbard model on an 8 × 4 square lattice with an antiferromagnetic pinning field on the two open edges at the ends of axis 0.
 The pinning field is a one-body term, so the trial wavefunction Hamiltonian has to carry it too.
 
 ```{code-cell} ipython3
 params = dict(t=[1.0, 0.5], U=2.0, pinning=(PinningField.afm(0.5, staggered=True), None))
 
 lattice = Lattice.from_type(
-    "square", (8, 4), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
+    "square", (8, 4), boundaries=("open", "periodic"), twists=(0.0, 0.0)
 )
 hamiltonian = LatticeHamiltonian.from_lattice(lattice, **params)
 
@@ -150,7 +149,7 @@ A charge pinning field $\frac{h}{2} \hat{n}_i$, constant along the edge, is set 
 params = dict(t=[1.0, 0.5], U=2.0, pinning=(PinningField.charge(0.5, staggered=False), None))
 
 lattice = Lattice.from_type(
-    "square", (8, 4), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
+    "square", (8, 4), boundaries=("open", "periodic"), twists=(0.0, 0.0)
 )
 hamiltonian = LatticeHamiltonian.from_lattice(lattice, **params)
 
@@ -245,29 +244,15 @@ wavefunction = Wavefunction.from_free_electron(
 
 ## Rashba Spin-Orbit Coupling
 
-Rashba spin-orbit coupling mixes the spin sectors, so the Hamiltonian is built in noncollinear form.
-Here, it is added step by step with a `HamiltonianBuilder`.
+Rashba spin-orbit coupling mixes the spin sectors, so giving `rashba_lambda` builds the Hamiltonian in noncollinear form.
+The coupling strength multiplies the hopping `t` of every neighbor order.
 
 ```{code-cell} ipython3
 lattice = Lattice.from_type(
     "square", (3, 3), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
 )
 
-# hopping[0] is t, hopping[1] is t', and so on
-hopping = [1.0, 0.5]
-
-builder = HamiltonianBuilder(
-    lattice=lattice,
-    spin_symm=SpinSymm.NONCOLLINEAR
-)
-builder.nth_neighbor_hopping(t=hopping)
-builder.onsite_hubbard(U=8.0)
-
-# add Rashba SOC consistent with the hopping
-builder.rashba_soc(rashba_lambda=0.3, t=hopping)
-builder.finalize()
-
-hamiltonian = builder.get_hamiltonian()
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=[1.0, 0.5], U=8.0, rashba_lambda=0.3)
 
 wavefunction = Wavefunction.from_free_electron(
     source=hamiltonian,

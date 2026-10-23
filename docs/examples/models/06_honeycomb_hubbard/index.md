@@ -43,7 +43,7 @@ hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=6.0)
 ```{code-cell} ipython3
 :id: bYkD4o3sHwP9
 
-# run autoHF and save wavefunction as trial wavefunction
+# run AutoHF and save wavefunction as trial wavefunction
 import numpy as np
 
 from autohf import solve_hf, AutoHFHamiltonian
