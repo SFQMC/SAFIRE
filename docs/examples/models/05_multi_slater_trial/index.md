@@ -43,8 +43,9 @@ Since the Hamiltonian is spin-independent, this trial wavefunction should have t
 :id: 1rz5sWn3Ecsc
 :outputId: 51107f5c-4186-4817-9e97-990b46c79acc
 
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 # setup the Hamiltonian
 from safiretools import Lattice, LatticeHamiltonian

@@ -80,8 +80,9 @@ colab:
 id: c844616d-45c5-498a-b6f9-c995027965e6
 outputId: 973c839f-58d4-486f-9f5c-21f2cd93fec7
 ---
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 import numpy as np
 from pyscf import gto,scf

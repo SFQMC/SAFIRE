@@ -40,8 +40,9 @@ In this tutorial, we will perform Hartree-Fock calculations using AutoHF for the
 a 4×4 lattice, which we learned to set up in {doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`.
 
 ```{code-cell} ipython3
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 ```
 
 ```{code-cell} ipython3

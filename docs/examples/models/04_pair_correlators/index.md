@@ -61,8 +61,9 @@ from safiretools import Lattice
 from safiretools import vis
 from safiretools import LatticeHamiltonian
 
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 lattice = Lattice.from_type(
     "square", (4, 4), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)

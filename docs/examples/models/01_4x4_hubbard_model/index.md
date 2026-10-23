@@ -62,8 +62,9 @@ colab:
   height: 855
 outputId: c0edb976-6ddc-4ada-eb2f-66c8587a93b7
 ---
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 from safiretools import Lattice
 from safiretools import vis

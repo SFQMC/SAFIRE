@@ -53,9 +53,9 @@ well as the corresponding augmented cGTO basis sets [2-5].
 :id: XSXP8e2IYxFb
 :outputId: 6c4e562d-b891-4890-fe3c-45c7898cfbfd
 
-# setup the tutorials by runnig this block
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 ecp_soc = {
     'Pb' : '''

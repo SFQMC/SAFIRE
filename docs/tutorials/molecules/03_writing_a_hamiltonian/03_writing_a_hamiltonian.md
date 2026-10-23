@@ -45,8 +45,9 @@ the minimal basis hydrogen dimer with a bond length of 1.4 Bohr radii.
 ```{code-cell} ipython3
 :id: zMSdfeQqyCNd
 
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 ```
 
 +++ {"id": "J8ieYi3YyCNe"}

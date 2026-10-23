@@ -29,9 +29,9 @@ which, among other things, provides tools to analyze the locality of a set of or
 ```{code-cell} ipython3
 :id: v08YqIkR2r02
 
-# Some setup
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 Hartree = 27.211407953 # eV
 Bohr = 0.529177        # Angstrom
