@@ -103,8 +103,8 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
     UserWarning
         If the highest occupied shell is degenerate and only partly filled, so
         the determinant is not uniquely defined. Build the trial wavefunction
-        from a Hamiltonian on a lattice carrying a small irrational twist (see
-        `DEFAULT_TWIST`), which lifts the degeneracy.
+        from a Hamiltonian on a lattice carrying a small irrational twist, which
+        lifts the degeneracy.
 
     Notes
     -----
@@ -290,7 +290,7 @@ def fill_shells(shells, nelec: int, strategy='aufbau'):
                 f"is arbitrary. The '{strategy}' strategy picked "
                 f"{sorted(selected)}. Build the trial "
                 "wavefunction's Hamiltonian on a lattice with a small irrational "
-                "twist (see DEFAULT_TWIST) to break the degeneracy due to "
+                "twist to break the degeneracy due to "
                 "translational symmetry. A degeneracy between bands or spin sectors "
                 "requires a one-body term that explicitly breaks those symmetries."
             )
