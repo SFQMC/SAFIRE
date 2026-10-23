@@ -11,71 +11,41 @@
 """Generic statistics primitives for equilibrated Monte Carlo time series."""
 
 import numpy as np
-from scipy.signal import correlate
+from scipy.fft import irfft, next_fast_len, rfft
 from scipy.special import gammaln, kve
 
 # spreads up to this are taken for roundoff
 _ROUNDOFF = 1e-9
+# single-precision complex elements one batch of autocorrelation FFTs may hold, 128 MB
+_FFT_CHUNK_ELEMENTS = 2**24
 
 
 def optimal_rebinsize(samples, skip=0):
     """Choose the rebin size for `rebinning_analysis` from the series itself.
 
-    The series is blocked in powers of two (Flyvbjerg and Petersen, J. Chem. Phys. 91, 461
-    (1989)) and the smallest block size B with ``B**3 > 2*N*max(kappa_B)**2`` is taken (U. Wolff,
-    Comput. Phys. Commun. 156, 143 (2004)) where kappa is maximized over every component.
-
-    Returns the rebin size and whether it meets the criterion. If no size does, the series
-    is too short for its autocorrelation time, and the size returned is the compromise of
-    `_fallback_rebinsize`, whose error bar is underestimated.
+    A bin of size B misses a fraction ``(kappa**2 - 1)/(2*kappa*B)`` of the variance of the
+    mean, as it does for an exponentially decaying autocorrelation with statistical
+    inefficiency kappa, while m bins leave the variance itself uncertain by a relative
+    ``2/(m - 1)``. The size with the smallest sum of the squared bias and that variance is
+    taken, about ``B**3 = N*((kappa**2 - 1)/(2*kappa))**2``, so an uncorrelated series is
+    not rebinned. kappa comes from the autocorrelation function of the slowest component;
+    estimating it from the bins themselves cannot work, as it is exactly 1 at B = 1. The
+    largest of many estimates overshoots the largest kappa there is, so the slowest
+    component is chosen on one half of the series and its kappa estimated on the other,
+    and the two ways round are averaged.
     """
     samples = np.asarray(samples)[skip:, ...]
     num_samples = samples.shape[0]
     if num_samples < 2:
-        # nothing to block; rebinning_analysis reports the lack of bins
-        return 1, True
+        # nothing to rebin; rebinning_analysis reports the lack of bins
+        return 1
 
     components = samples.reshape(num_samples, -1)
     if np.iscomplexobj(components):
         components = np.concatenate([components.real, components.imag], axis=1)
 
-    rebins = components
-    rebinsize = 1
-    base_variance = None
-    while True:
-        # squared standard error of the mean over this level's rebins
-        variance = np.var(rebins, axis=0, ddof=1) / rebins.shape[0]
-        if base_variance is None:
-            base_variance = variance
-        # a component that never fluctuates enters as the neutral kappa = 1
-        with np.errstate(divide='ignore', invalid='ignore'):
-            kappa = np.where(base_variance > 0.0, variance / base_variance, 1.0)
-        if rebinsize**3 > 2 * num_samples * np.max(kappa) ** 2:
-            return rebinsize, True
-
-        # the next level has to leave at least two rebins for a variance
-        if rebins.shape[0] < 4:
-            return _fallback_rebinsize(components), False
-        pairs = rebins.shape[0] // 2
-        rebins = 0.5 * (rebins[0 : 2 * pairs : 2] + rebins[1 : 2 * pairs : 2])
-        rebinsize *= 2
-
-
-def _fallback_rebinsize(components):
-    """Rebin size for a series too short for the criterion of `optimal_rebinsize`, given as
-    its real components along the second axis.
-
-    The criterion compares statistical inefficiencies estimated from the blocks
-    themselves, which a series this short leaves too few of; the autocorrelation function
-    still gives one, kappa, that of the slowest component. A bin of size B then misses a
-    fraction ``(kappa**2 - 1)/(2*kappa*B)`` of the variance of the mean, as it does for
-    an exponentially decaying autocorrelation, while m bins leave the variance itself
-    uncertain by a relative ``2/(m - 1)``. The size with the smallest sum of the squared
-    bias and that variance is taken; the largest size that leaves two bins, which has the
-    least bias, would leave an error bar of a single degree of freedom.
-    """
-    num_samples = components.shape[0]
-    kappa = max(_statistical_inefficiency(components[:, j]) for j in range(components.shape[1]))
+    first, second = (_statistical_inefficiency(half) for half in np.array_split(components, 2))
+    kappa = 0.5 * float(second[np.argmax(first)] + first[np.argmax(second)])
     rebinsizes = np.arange(1, num_samples // 2 + 1)
     rebincounts = num_samples // rebinsizes
     squared_error = ((kappa**2 - 1) / (2 * kappa * rebinsizes)) ** 2 + 2 / (rebincounts - 1)
@@ -153,36 +123,61 @@ def _cramer_von_mises_sf(statistic):
     return max(1.0 - cdf, 0.0)
 
 
-def _statistical_inefficiency(samples, window_factor=5.0):
+def _statistical_inefficiency(samples):
     """Statistical inefficiency ``kappa = 1 + 2*sum_t rho(t)`` of a real series, rho being
-    its normalized autocorrelation function.
+    its normalized autocorrelation function; of each column of a two-dimensional one, whose
+    leading axis runs over samples.
 
-    The sum runs up to the smallest window M with ``M >= window_factor * kappa(M)``, the
-    self-consistent window of Madras and Sokal, J. Stat. Phys. 50, 109 (1988), beyond which
-    the noise of rho would outweigh its signal. A series too short for any window to
-    qualify is summed over every lag it has.
+    The sum is the initial positive sequence estimator of Geyer, Stat. Sci. 7, 473 (1992):
+    rho is summed in pairs ``rho(2j) + rho(2j + 1)``, which are positive for a reversible
+    Markov chain, up to the first pair that is not, beyond which the noise of rho outweighs
+    its signal. Unlike a window proportional to kappa it does not stop early on a series
+    whose estimate happens to come out small.
 
-    kappa is floored at 1: the noise of a short window often sums to less, which would
+    kappa is floored at 1: the noise of a short series often sums to less, which would
     understate a variance taken from it, and a Monte Carlo series is not anticorrelated.
     A series too short to correlate, or constant up to roundoff, has nothing to measure
     and gets the neutral 1.
     """
     num_samples = samples.shape[0]
-    if num_samples < 2 or np.ptp(samples) <= _ROUNDOFF:
-        return 1.0
+    columns = samples[:, None] if samples.ndim == 1 else samples
+    kappa = np.ones(columns.shape[1])
+    if num_samples >= 2:
+        moving = np.flatnonzero(np.ptp(columns, axis=0) > _ROUNDOFF)
+        # padded to at least 2N - 1, so the circular correlation of the FFT has no lag
+        # wrap around onto another; in chunks of columns, to bound the transform's memory
+        num_fft = next_fast_len(2 * num_samples - 1, real=True)
+        chunk = max(1, _FFT_CHUNK_ELEMENTS // num_fft)
+        for start in range(0, moving.size, chunk):
+            selected = moving[start : start + chunk]
+            # take is a contiguous copy, several times faster than fancy indexing here
+            kappa[selected] = _geyer_kappa(np.take(columns, selected, axis=1), num_fft)
+    return float(kappa[0]) if samples.ndim == 1 else kappa
 
-    deviations = samples - samples.mean()
-    # the full correlation runs over lags -(N-1) to N-1, the second half of it over t >= 0;
+
+def _geyer_kappa(columns, num_fft):
+    """`_statistical_inefficiency` of every column of `columns`, none of them constant,
+    with the autocorrelation taken through FFTs of length `num_fft`.
+
+    The transforms run along contiguous rows and in single precision, which halves their
+    cost and leaves rho accurate to about 1e-7, far below its statistical noise.
+    """
+    num_samples, num_columns = columns.shape
+    # the mean comes off in double precision: in single precision an offset large against
+    # the fluctuations would swallow them
+    deviations = np.empty((num_columns, num_samples), dtype=np.float32)
+    np.subtract(columns.T, columns.mean(axis=0)[:, None], out=deviations, casting='same_kind')
     # divided by N rather than N - t, which keeps the estimator positive semidefinite
-    autocovariance = (
-        correlate(deviations, deviations, mode='full', method='fft')[num_samples - 1 :]
-        / num_samples
-    )
-    kappa = 1.0 + 2.0 * np.cumsum(autocovariance[1:] / autocovariance[0])
+    power = np.abs(rfft(deviations, n=num_fft, axis=1)) ** 2
+    autocovariance = irfft(power, n=num_fft, axis=1)[:, :num_samples] / num_samples
+    autocorrelation = autocovariance / autocovariance[:, :1]
 
-    windows = np.arange(1, num_samples)
-    qualifies = windows >= window_factor * kappa
-    return max(float(kappa[np.argmax(qualifies) if qualifies.any() else -1]), 1.0)
+    pairs = autocorrelation[:, : num_samples // 2 * 2].reshape(num_columns, -1, 2).sum(axis=2)
+    nonpositive = pairs <= 0.0
+    num_positive = np.where(nonpositive.any(axis=1), nonpositive.argmax(axis=1), pairs.shape[1])
+    positive_sum = np.sum(pairs, axis=1, where=np.arange(pairs.shape[1]) < num_positive[:, None])
+    # the pairs sum rho from t = 0, which counts the leading 1 of kappa twice
+    return np.maximum(2.0 * positive_sum.astype(np.float64) - 1.0, 1.0)
 
 
 def _bridge_pvalue(samples):

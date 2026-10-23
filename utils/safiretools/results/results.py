@@ -38,9 +38,8 @@ STAGE_GROUP = re.compile(r"^Stage(\d+)$")
 
 
 class RebinningWarning(UserWarning):
-    """The bins of an observable do not support the average and error bar taken from them:
-    either the series is too short for its autocorrelation time, so the error bar is
-    underestimated, or it drifts, so the average is biased."""
+    """The bins of an observable do not support the average taken from them: the series
+    drifts, so the average is biased."""
 
 
 # Python shows a warning once per line and text by default, which would hide the same
@@ -67,16 +66,7 @@ def _checked_rebinsize(name, series, skip, rebinsize):
             )
 
     if rebinsize is None:
-        rebinsize, meets_criterion = optimal_rebinsize(series, skip)
-        if not meets_criterion:
-            num_bins = series[skip:].shape[0]
-            warn(
-                f"'{name}' is too short for its autocorrelation time: no rebin size meets "
-                f"the rebinning criterion for its {num_bins} bins after skip. Defaulting to "
-                f"{num_bins // rebinsize} rebins of size {rebinsize}.",
-                RebinningWarning,
-                stacklevel=3,
-            )
+        rebinsize = optimal_rebinsize(series, skip)
     return rebinsize
 
 
@@ -236,9 +226,7 @@ class Results:
         Warns
         -----
         RebinningWarning
-            If the series is too short for its autocorrelation time, in which case `error`
-            is too small, or if a scalar observable drifts after `skip`, in which case
-            `mean` is biased.
+            If a scalar observable drifts after `skip`, in which case `mean` is biased.
         """
         series = self.timeseries(observable_name)
         rebinsize = _checked_rebinsize(observable_name, series, skip, rebinsize)
@@ -296,9 +284,8 @@ class Results:
         Warns
         -----
         RebinningWarning
-            If one of the series is too short for its autocorrelation time, in which case
-            `error` is too small, or if a scalar observable among them drifts after `skip`,
-            in which case `value` is biased.
+            If a scalar observable among them drifts after `skip`, in which case `value` is
+            biased.
         """
         observable_names = list(observable_names)
         series = [self.timeseries(name) for name in observable_names]
