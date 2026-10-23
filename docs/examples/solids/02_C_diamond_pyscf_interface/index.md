@@ -163,7 +163,6 @@ def density(rdm):
 For reference, the Hartree-Fock density follows from the density matrix of the trial determinant $\Phi$,
 $\rho_{ij} = \sum_n \Phi^*_{in} \Phi_{jn}$.
 We take the average back-propagated density matrix at each length from `Results.average`.
-Each sample is separated by a window, so for long windows we can assume they are weakly correlated and set `rebinsize=1`.
 
 ```{code-cell} ipython3
 phi = wfn.determinant(0)
@@ -171,7 +170,7 @@ n_hf = density((phi.conj() @ phi.T)[None])
 
 dn = {}
 for L in bp_lengths:
-    rdm, _ = results.average(f"BackPropEstimator/Steps={L}/OneRDM", rebinsize=1)
+    rdm, _ = results.average(f"BackPropEstimator/Steps={L}/OneRDM")
     dn[L] = density(rdm) - n_hf
 dn_max = max(abs(d).max() for d in dn.values())
 

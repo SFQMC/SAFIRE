@@ -115,7 +115,7 @@ def test_an_unknown_observable_says_what_there_is(results_file):
 
 
 def test_average_agrees_with_rebinning_the_series_by_hand(results_file, measured):
-    rebinsize, _ = optimal_rebinsize(measured['Energy'], skip=5)
+    rebinsize = optimal_rebinsize(measured['Energy'], skip=5)
     bins, _ = rebinning_analysis(measured['Energy'], rebinsize=rebinsize, skip=5)
 
     mean, error = Results(results_file, stage=0).average('Energy', skip=5)
@@ -170,7 +170,7 @@ def test_evaluate_debiases_a_nonlinear_function(results_file):
 def test_evaluate_rebins_every_observable_with_the_largest_size(results_file, measured):
     # the jackknife needs one bin count, so the observable needing the larger rebin
     # size sets it for all of them
-    rebinsize = max(optimal_rebinsize(measured[name])[0] for name in ['Energy', 'Norm'])
+    rebinsize = max(optimal_rebinsize(measured[name]) for name in ['Energy', 'Norm'])
     binned = [
         rebinning_analysis(measured[name], rebinsize=rebinsize)[0] for name in ['Energy', 'Norm']
     ]

@@ -13,7 +13,6 @@ import pytest
 
 from safiretools.results.stats import (
     _cramer_von_mises_sf,
-    _fallback_rebinsize,
     _statistical_inefficiency,
     jackknife,
     optimal_rebinsize,
@@ -70,7 +69,7 @@ def test_component_shape_survives_rebinning():
 def test_uncorrelated_series_has_no_autocorrelation_time():
     rng = np.random.default_rng(0)
     samples = rng.normal(size=20000)
-    rebinsize, _ = optimal_rebinsize(samples)
+    rebinsize = optimal_rebinsize(samples)
 
     bins, tau = rebinning_analysis(samples, rebinsize=rebinsize)
 
@@ -83,7 +82,7 @@ def test_autocorrelated_series_recovers_its_correlation_time():
     rho = 0.9
 
     samples = ar1(50000, rho, rng)
-    rebinsize, _ = optimal_rebinsize(samples)
+    rebinsize = optimal_rebinsize(samples)
 
     _, tau = rebinning_analysis(samples, rebinsize=rebinsize)
 
@@ -93,7 +92,7 @@ def test_autocorrelated_series_recovers_its_correlation_time():
 def test_correlation_widens_the_error_bar():
     rng = np.random.default_rng(2)
     samples = ar1(50000, 0.9, rng)
-    rebinsize, _ = optimal_rebinsize(samples)
+    rebinsize = optimal_rebinsize(samples)
 
     bins, _ = rebinning_analysis(samples, rebinsize=rebinsize)
 
@@ -104,29 +103,28 @@ def test_correlation_widens_the_error_bar():
 def test_constant_series_is_not_taken_for_a_correlated_one():
     samples = np.full((100, 4), 7.0)
 
-    rebinsize, meets_criterion = optimal_rebinsize(samples)
+    rebinsize = optimal_rebinsize(samples)
     bins, tau = rebinning_analysis(samples, rebinsize=rebinsize)
 
-    # an uncorrelated series needs no more than the noise floor (2N)**(1/3) sets
-    assert (rebinsize, meets_criterion) == (8, True)
+    assert rebinsize == 1
     assert tau == 0.0
     np.testing.assert_array_equal(standard_error(bins), np.zeros(4))
 
 
-def test_uncorrelated_series_is_rebinned_at_the_noise_floor():
-    # kappa = 1 leaves B**3 > 2N, and 64 is the first power of two past (2*20000)**(1/3)
+def test_uncorrelated_series_is_barely_rebinned():
+    # kappa = 1 leaves no bias for a larger bin to remove, but its estimate comes out a
+    # little above 1 as often as not; far below the (2N)**(1/3) = 34 of a blocking rule
     rng = np.random.default_rng(0)
 
-    assert optimal_rebinsize(rng.normal(size=20000)) == (64, True)
+    assert optimal_rebinsize(rng.normal(size=20000)) <= 4
 
 
 def test_optimal_rebinsize_is_large_compared_to_the_correlation_time():
     rng = np.random.default_rng(1)
     rho = 0.9
 
-    rebinsize, meets_criterion = optimal_rebinsize(ar1(50000, rho, rng))
+    rebinsize = optimal_rebinsize(ar1(50000, rho, rng))
 
-    assert meets_criterion
     assert rebinsize > 10 * rho / (1 - rho)
 
 
@@ -135,7 +133,7 @@ def test_optimal_rebinsize_serves_the_slowest_component():
     fast = rng.normal(size=20000)
     slow = ar1(20000, 0.9, rng)
 
-    assert optimal_rebinsize(slow)[0] > optimal_rebinsize(fast)[0]
+    assert optimal_rebinsize(slow) > optimal_rebinsize(fast)
     assert optimal_rebinsize(np.column_stack([fast, slow])) == optimal_rebinsize(slow)
 
 
@@ -155,29 +153,14 @@ def test_optimal_rebinsize_honours_skip():
     assert optimal_rebinsize(samples, skip=1000) == optimal_rebinsize(samples[1000:])
 
 
-def test_a_series_too_short_for_the_criterion_is_reported():
-    # a ramp has kappa_B = B, so B**3 > 2*N*B**2 never holds for B < N
-    rebinsize, meets_criterion = optimal_rebinsize(np.arange(100.0))
-
-    assert not meets_criterion
-    assert 100 // rebinsize > 2
+def test_a_series_correlated_over_its_whole_length_keeps_enough_bins():
+    assert 100 // optimal_rebinsize(np.arange(100.0)) > 2
 
 
 def test_a_short_correlated_series_keeps_enough_bins():
-    # 180 samples at kappa = 19 fail the criterion; the largest size leaving two bins
-    # would give an error bar of a single degree of freedom
-    rebinsize, meets_criterion = optimal_rebinsize(ar1(180, 0.9, np.random.default_rng(6)))
-
-    assert not meets_criterion
-    assert 180 // rebinsize >= 5
-
-
-def test_the_fallback_rebinsize_serves_the_slowest_component():
-    fast = np.random.default_rng(7).normal(size=180)
-    slow = ar1(180, 0.9, np.random.default_rng(5))
-
-    assert _fallback_rebinsize(np.column_stack([fast, slow])) == _fallback_rebinsize(slow[:, None])
-    assert _fallback_rebinsize(slow[:, None]) > _fallback_rebinsize(fast[:, None])
+    # 180 samples at tau = 9; the largest size leaving two bins would give an error bar of
+    # a single degree of freedom
+    assert 180 // optimal_rebinsize(ar1(180, 0.9, np.random.default_rng(6))) >= 5
 
 
 @pytest.mark.parametrize(
@@ -211,7 +194,7 @@ def test_stationary_series_are_flagged_at_the_nominal_rate():
 
 
 def test_short_stationary_series_are_flagged_at_the_nominal_rate():
-    # a short window often sums the autocorrelation noise to kappa < 1, which the floor
+    # a short series often sums the autocorrelation noise to kappa < 1, which the floor
     # at 1 keeps from understating the variance
     rng = np.random.default_rng(42)
 
@@ -238,7 +221,7 @@ def test_statistical_inefficiency_has_nothing_to_measure_in_a_constant_series():
 
 
 def test_statistical_inefficiency_is_at_least_one():
-    # the noise of a short window often sums to less than 1 for an uncorrelated series
+    # the noise of a short series often sums to less than 1 for an uncorrelated one
     rng = np.random.default_rng(8)
 
     assert min(_statistical_inefficiency(rng.normal(size=60)) for _ in range(100)) == 1.0

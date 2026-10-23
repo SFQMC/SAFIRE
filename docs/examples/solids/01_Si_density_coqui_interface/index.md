@@ -156,7 +156,6 @@ def charge_density(rdm, phi):
 
 The density is linear in the density matrix, so `Results.evaluate` gives its mean and a jackknife error
 directly from the samples at each back-propagation length.
-Each sample is separated by a window, so for long windows we can assume they are weakly correlated and set `rebinsize=1`.
 For reference, the DFT density follows from the density matrix of the trial determinant $\Phi$,
 $\rho^\sigma_{ij} = \sum_n \Phi^{\sigma*}_{in} \Phi^\sigma_{jn}$, which has no uncertainty.
 

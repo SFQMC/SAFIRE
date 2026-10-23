@@ -140,8 +140,6 @@ write_jobfile(data / "3_safire/afqmc.json", {
 
 We unfold the Kohn-Sham occupations for the DFT $n(\mathbf{q})$, and the back-propagated density matrix inside
 `Results.evaluate` for jackknife error bars on its radial average.
-Each BP sample is separated by a window length, so for long window lengths we can assume they are weakly
-correlated and set `rebinsize=1`.
 
 ```{code-cell} ipython3
 results = Results(data / "3_safire/afqmc.results.h5")
@@ -158,7 +156,7 @@ n_dft = radial_nq(np.diag(occ.ravel())[None])
 
 bp = {}
 for L in bp_lengths:
-    bp[L] = results.evaluate(radial_nq, [f"BackPropEstimator/Steps={L}/OneRDM"], rebinsize=1)
+    bp[L] = results.evaluate(radial_nq, [f"BackPropEstimator/Steps={L}/OneRDM"])
 above = np.argmax(q_bins > k_F)  # first radial bin above k_F
 print(f"n(q) at |q| = {q_bins[above]:.3f} Bohr^-1: DFT {n_dft[above]:.3f}")
 for L, (n, dn) in bp.items():
@@ -181,7 +179,7 @@ def huotari(series, *columns):
 
 max_bp_length = max(bp_lengths)
 
-bp_rdm, _ = results.average(f"BackPropEstimator/Steps={max_bp_length}/OneRDM", rebinsize=1)
+bp_rdm, _ = results.average(f"BackPropEstimator/Steps={max_bp_length}/OneRDM")
 
 fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11, 4.5))
 plot_slab(ax0, qvecs, unfold_nq(bp_rdm, coeffs) / 2, k_F)
