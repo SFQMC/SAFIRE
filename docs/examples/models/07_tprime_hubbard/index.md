@@ -44,8 +44,9 @@ References:
 :id: 254dc31a-b763-4cb3-9867-5129279b9c2b
 :outputId: c065dd3d-6070-4a49-80ef-e02029ba7b13
 
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 from safiretools import Lattice
 from safiretools import vis

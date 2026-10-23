@@ -29,8 +29,9 @@ using an appropriate trial wavefunction.
 ```{code-cell} ipython3
 :id: ljFeTy3vE6ls
 
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 ```
 
 +++ {"id": "6ZBVQf-6E6lv"}

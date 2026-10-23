@@ -23,8 +23,9 @@ kernelspec:
 :id: 3f6aeee9-53bd-41a8-be26-f00472aaf8f5
 :outputId: 41c1c867-f098-44c7-d47d-dfcb8232728e
 
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 from safiretools import Lattice
 from safiretools import vis

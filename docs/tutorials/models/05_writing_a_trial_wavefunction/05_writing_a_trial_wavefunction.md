@@ -27,8 +27,9 @@ Become acquainted with how to write a trial wavefunction to the SAFIRE HDF5 form
 ## Setup
 
 ```{code-cell} ipython3
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 ```
 
 +++ {"id": "vt9PbuQhpw4u"}

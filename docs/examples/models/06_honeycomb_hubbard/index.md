@@ -20,8 +20,9 @@ kernelspec:
 ```{code-cell} ipython3
 :id: djut2ei2D6d-
 
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 # setup the Hamiltonian
 from safiretools import Lattice

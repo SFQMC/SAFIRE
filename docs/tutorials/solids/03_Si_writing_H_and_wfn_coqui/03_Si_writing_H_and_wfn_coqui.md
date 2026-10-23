@@ -105,8 +105,9 @@ Set `QE_BIN` to the directory holding `pw.x` and `pw2coqui.x`, and `COQUI_EXEC` 
 All calculations run in a scratch directory `data`.
 
 ```{code-cell} ipython3
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 ```
 
 ### Step 1: Self-Consistent DFT

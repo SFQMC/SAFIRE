@@ -37,8 +37,9 @@ colab:
 id: c844616d-45c5-498a-b6f9-c995027965e6
 outputId: 855ebc93-90d5-4e84-94ff-e974f19587fc
 ---
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 import numpy as np
 

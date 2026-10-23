@@ -35,8 +35,9 @@ We have provided HDF5 files containing the Hamiltonian and trial wavefunctions, 
 We will need the Hamiltonian again to evaluate the energy from the measured observables, so we read it here.
 
 ```{code-cell} ipython3
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 import h5py
 import numpy as np

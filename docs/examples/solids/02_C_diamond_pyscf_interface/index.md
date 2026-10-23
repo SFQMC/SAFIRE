@@ -22,8 +22,9 @@ Set `AFQMC_EXEC` to the SAFIRE executable.
 All calculations run in a scratch directory `data`.
 
 ```{code-cell} ipython3
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 import matplotlib.pyplot as plt
 import numpy as np

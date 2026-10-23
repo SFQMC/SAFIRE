@@ -33,8 +33,9 @@ config.update("jax_enable_x64", True)
 import matplotlib.pyplot as plt
 import numpy as np
 
-%mkdir -p data
-%cd -q data
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 ```
 
 +++ {"editable": true, "id": "f91cf26c-5663-416e-9802-aeb1aa5a77c6"}
