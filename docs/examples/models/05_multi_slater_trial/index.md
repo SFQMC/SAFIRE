@@ -40,10 +40,9 @@ $$
 Since the Hamiltonian is spin-independent, this trial wavefunction should have the same energy as the UHF ground state.
 
 ```{code-cell} ipython3
----
-id: 1rz5sWn3Ecsc
-outputId: 51107f5c-4186-4817-9e97-990b46c79acc
----
+:id: 1rz5sWn3Ecsc
+:outputId: 51107f5c-4186-4817-9e97-990b46c79acc
+
 %mkdir -p data
 %cd -q data
 
@@ -63,9 +62,8 @@ hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=8.0)
 ```
 
 ```{code-cell} ipython3
----
-id: dCFJvp57FBV6
----
+:id: dCFJvp57FBV6
+
 # run autoHF to get UHF solution
 from autohf import AutoHFHamiltonian
 
@@ -79,9 +77,8 @@ autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)
 ```
 
 ```{code-cell} ipython3
----
-id: ZitUaYnfV2p8
----
+:id: ZitUaYnfV2p8
+
 from autohf import solve_hf
 
 nelec=(18,18)
@@ -135,10 +132,9 @@ A collinear Slater determinant is a pair of Slater matrices, one for the $N_{\up
 In the code block below, we manually construct Slater matrices from the UHF orbitals that we got from autohf above.
 
 ```{code-cell} ipython3
----
-id: amcCyPWmBtoW
-outputId: 7849db3e-aaec-42e5-dfb0-fafe361b3a39
----
+:id: amcCyPWmBtoW
+:outputId: 7849db3e-aaec-42e5-dfb0-fafe361b3a39
+
 # construct the multi-Slater trial AND save
 import numpy as np
 
@@ -199,18 +195,15 @@ write_jobfile(
 ```
 
 ```{code-cell} ipython3
----
-id: SJ-EP0itFLgE
-scrolled: true
-tags: [scroll-output]
----
+:id: SJ-EP0itFLgE
+:tags: [scroll-output]
+
 !mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
----
-id: IZizKYGAFNvS
----
+:id: IZizKYGAFNvS
+
 # analyze results
 from safiretools import Results
 

@@ -21,18 +21,15 @@ In this tutorial, we will perform AFQMC calculations for the Hubbard model with 
 a 4×8 lattice.
 The Hamiltonian is given by,
 $$
-\hat{H} = -t \sum_{\langle i,j\rangle^{(1)}} \hat{c}^\dagger_i \hat{c}_j -t' \sum_{\langle i,j\rangle^{(2)}} \hat{c}^\dagger_i \hat{c}_j + U \sum_{i} \hat{n}^{\uparrow}_i \hat{n}^{\downarrow}_i,
+\hat{H} = -t \sum_{\langle i,j\rangle,\sigma} \hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma} - t' \sum_{\langle\langle i,j\rangle\rangle,\sigma} \hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma} + U \sum_{i} \hat{n}_{i\uparrow} \hat{n}_{i\downarrow},
 $$
-where $i,j$ are lattice site indices, angle brackets with superscript $(n)$ indicate
-that sums are constrained to $n^\mathrm{th}$-order neighbors,
-$\hat{c}^\dagger_i$/$\hat{c}_i$ are electronic creation/annihilation operators,
-and $\hat{n}^{\sigma}_i$ are spin-resolved number operators corresponding to site $i$.
+where $\langle i,j\rangle$ and $\langle\langle i,j\rangle\rangle$ sum over the nearest- and next-nearest-neighbor bonds.
 We will use the DMRG and AFQMC results of reference [1] for this system as reference data throughout
 this tutorial.
 
-See Table I of reference [1]
-The AFQMC energy using a free-electron Trial wavefunction is, for $U=4$ on a 4×8 square lattice
-with $N_{\uparrow} = N_{\downarrow} = 16$, $−27.271⁢(1)$ versus $−27.6924$ from DMRG.
+See Table I of reference [1].
+The AFQMC energy using a free-electron trial wavefunction is, for $U=4$ on a 4×8 square lattice
+with $N_\uparrow = N_\downarrow = 16$, $-27.271(1)$ versus $-27.6924$ from DMRG.
 (Better AFQMC results exist there when using a self-consistent procedure).
 
 References:
@@ -62,21 +59,19 @@ vis.plot_lattice(lattice)
 
 ## Setup - Make the Hamiltonian
 
-...
-
 ```{code-cell} ipython3
 :id: 364ee811-8242-45ce-88ee-69fcaa6901fd
 :outputId: b64b276a-cae9-4c47-a315-e9c015fc264a
 
 from safiretools import LatticeHamiltonian, PinningField
 
-# AFM pinning with h_pin = 0.25 on the open edges y=1 and y=Ly, with the same
-# sign pattern on both. Only the AFQMC Hamiltonian is pinned.
+# AFM pinning field of ±0.25 on the open edges y=1 and y=Ly, with opposite
+# signs on the two edges.
 hamiltonian = LatticeHamiltonian.from_lattice(
     lattice,
     t=[1.0, 0.3],
     U=4,
-    pinning=(None, PinningField.afm(0.25, staggered=False)),
+    pinning=(None, PinningField.afm(0.5, staggered=True)),
 )
 ```
 
@@ -85,25 +80,13 @@ hamiltonian = LatticeHamiltonian.from_lattice(
 ## Setup - Trial Wavefunction
 
 ```{code-cell} ipython3
-# First, let's compute the Free-Electron trial wavefunction
+# First, let's compute the free-electron trial wavefunction
 from safiretools import Wavefunction
 
 nelec = (16,16)
 
-# twist from ref 1: this twist was used for 4×16 with t' = 0.3t
-twist = (0.01,0.01)
-
-# The trial wavefunction is built from the *un-pinned* Hamiltonian - the pinning
-# field added above is only wanted for the AFQMC run itself - and on a *twisted*
-# lattice. Without the twist the highest occupied level here is 4-fold
-# degenerate and only partly filled, so the determinant would not be well
-# defined and from_free_electron() would warn. Build it explicitly so that the
-# same Hamiltonian can be handed to the HF solver below.
-fe_lattice = Lattice.from_type("square", (4, 8), boundaries=("periodic", "open"), twists=twist)
-fe_hamiltonian = LatticeHamiltonian.from_lattice(fe_lattice, t=[1.0, 0.3], U=4)
-
 wfn = Wavefunction.from_free_electron(
-    source=fe_hamiltonian,
+    source=hamiltonian,
     nelec=nelec
 )
 
@@ -159,7 +142,7 @@ vis.plot_lattice(
 # make a JSON job file
 from safiretools import write_jobfile
 
-bp_lengths = [200, 400, 600, 800]
+bp_lengths = [200, 400, 600]
 
 write_jobfile("afqmc.json", {
     "seed": 42,                          # for reproducibility
@@ -192,15 +175,6 @@ write_jobfile("afqmc.json", {
 
 ### Running AFQMC
 
-Below, we provide a cell that will run AFQMC here; however, for this calculation, you might prefer to submit the job to Slurm.
-You can copy the runscript {download}`run_afqmc_cpu.sh` from this example into the `data` directory and use
-
-```bash
-sbatch run_afqmc_cpu.sh
-```
-
-to submit the job (perhaps adjusting the run time).
-
 ```{code-cell} ipython3
 :id: c5ec3cf1-78cc-428e-8436-c3ddef25451e
 :outputId: 3544767c-4beb-4497-a895-92af2c2becc8
@@ -214,12 +188,7 @@ to submit the job (perhaps adjusting the run time).
 
 ## Analysis - Compute the AFQMC Energy
 
-we're looking for −27.271⁢(1) from reference [1]
-
-I'm currently at
--26.778445 +/- 0.009127.
-
-Let's double check the paper.
+We compare the AFQMC energy to the value $-27.271(1)$ from reference [1].
 
 ```{code-cell} ipython3
 :id: 4d782d47-030b-4baa-97f7-d5727575dca7
@@ -237,11 +206,11 @@ plt.axhline(E_ref, color="crimson")
 
 +++ {"id": "da4dfc0c-047c-43b7-9568-5494c48067b2"}
 
-## Analysis - Compute the Average 1-RDM
+## Analysis - Compute the Average One-Body Reduced Density Matrix
 
-To check for convergence here, we will compute the spin density from the average 1-rdm for each back-propagation length saved in the
-output HDF5 file, and plot it along a line cut of the lattice for each $N_\mathrm{steps}$.
-We should see the average 1-rdm converge for some value of $N_\mathrm{steps}$.
+To check for convergence here, we will compute the spin density from the back-propagated one-body reduced density matrix for each back-propagation length $m_\mathrm{BP}$ saved in the
+output HDF5 file, and plot it along a line cut of the lattice for each $m_\mathrm{BP}$.
+We should see the density matrix converge for some value of $m_\mathrm{BP}$.
 
 ```{code-cell} ipython3
 :id: 46011340-4ae4-41a9-ae29-e97568264d04
@@ -266,16 +235,8 @@ iy = np.arange(lattice.L[1])
 
 for steps in bp_lengths:
     plt.errorbar(iy,rho_spin[steps],yerr=rho_spin_err[steps],fmt='o-',label=f"{steps} steps")
+plt.xlabel("Site")
+plt.ylabel("Spin Density")
 plt.legend()
 plt.show()
-```
-
-+++ {"id": "12337ed8-7b39-4712-b99a-154aac89a650"}
-
-## Improved Trial via Natural Orbitals
-
-```{code-cell} ipython3
-:id: cf8d2b64-4ac4-4322-a9d1-b5360d9795e0
-
-
 ```

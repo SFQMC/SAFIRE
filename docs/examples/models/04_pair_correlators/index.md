@@ -27,47 +27,29 @@ At the end of this tutorial, you will know how to measure pair correlation funct
 
 ## Introduction
 
-By pair correlation functions, we mean
+By pair correlation functions, we mean the singlet pair correlation functions
 
 $$
-P^{\alpha \beta}_{ij} ≡ ⟨ Δ^†_{i,\alpha}Δ_{j,\beta} ⟩,
-$$
-where  $i,j$ are basis set indices,
-$α, β$ are spatial offset indices, and
-
-$$
-Δ^†_{i,\alpha} \equiv \frac{1}{\sqrt{2}} \left(c^{\dagger}_{i⇑} c^{†}_{i + e_α ⇓} -  c^{\dagger}_{i⇓} c^{†}_{i + e_α ⇑} \right),
+\mathtt{PairCorr/}\alpha\mathtt{\_}\beta[i, j] = \langle \Delta^\dagger_{i,\alpha} \Delta_{j,\beta} \rangle
 $$
 
-where $e_α$ is the *index offset* associated with the spatial offset.
-For example, $e_\alpha$ may correspond to a $+x$ offset.
-For convenience, we define,
+between the pair creation and annihilation operators
 
 $$
-\bar{i}_α \equiv i + e_\alpha,
+\Delta^\dagger_{i,\alpha} = \frac{1}{\sqrt{2}} \left(c^{\dagger}_{i\uparrow} c^{\dagger}_{\bar{i}_\alpha \downarrow} -  c^{\dagger}_{i\downarrow} c^{\dagger}_{\bar{i}_\alpha \uparrow} \right), \qquad
+\Delta_{j,\beta} = \frac{1}{\sqrt{2}} \left( c_{\bar{j}_\beta\downarrow} c_{j \uparrow}  - c_{\bar{j}_\beta \uparrow} c_{j \downarrow} \right).
 $$
 
-such that,
+Here $i$ and $j$ are orbitals, and $\alpha$ and $\beta$ are *pair maps* that assign every orbital $i$ a partner orbital $\bar{i}_\alpha$.
+On a lattice, a pair map typically pairs each site with its neighbor at a fixed offset such as $+x$, and the pair map $\bar{i}_\alpha = i$ gives on-site (s-wave) pairs.
+Written out, the pair correlation function is
 
 $$
-Δ^†_{i,\alpha} \equiv \frac{1}{\sqrt{2}} \left(c^{\dagger}_{i⇑} c^{†}_{\bar{i}_α ⇓} -  c^{\dagger}_{i⇓} c^{†}_{\bar{i}_α ⇑} \right),
+\mathtt{PairCorr/}\alpha\mathtt{\_}\beta[i, j] = \frac{1}{2} \left\langle \left(c^{\dagger}_{i\uparrow} c^{\dagger}_{\bar{i}_\alpha \downarrow} -  c^{\dagger}_{i\downarrow} c^{\dagger}_{\bar{i}_\alpha \uparrow} \right) \left( c_{\bar{j}_\beta\downarrow} c_{j \uparrow}  - c_{\bar{j}_\beta \uparrow} c_{j \downarrow} \right) \right\rangle.
 $$
 
-and
-
-$$
-Δ_{j,\beta} \equiv \frac{1}{\sqrt{2}} \left( c_{\bar{j}_\beta⇓} c_{j ⇑}  - c_{\bar{j}_\beta ⇑} c_{j ⇓} \right),
-$$
-
-Using this language, the pair correlation function can be written as,
-
-$$
-P^{\alpha \beta}_{ij} ≡ \frac{1}{2} ⟨ \left(c^{\dagger}_{i⇑} c^{†}_{\bar{i}_α ⇓} -  c^{\dagger}_{i⇓} c^{†}_{\bar{i}_α ⇑} \right)  \left( c_{\bar{j}_\beta⇓} c_{j ⇑}  - c_{\bar{j}_\beta ⇑} c_{j ⇓} \right) ⟩.
-$$
-
-SAFIRE implements this form of pair correlation function.
-It requires a set of $\bar{i}_\alpha = i + e_\alpha$, in the HDF5 input file.
-SAFIRE measures every pairing saved in the group the JSON job file points to, so a subset of pairings is selected by saving it to a group of its own.
+SAFIRE reads the pair maps from the HDF5 input file.
+It measures every pair map saved in the group the JSON job file points to, so a subset of pair maps is selected by saving it to a group of its own.
 We will explore this in more detail below.
 
 +++
@@ -94,10 +76,11 @@ hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
 
 +++ {"id": "Np-zIkGusNIP"}
 
-## Saving Index Offsets in the HDF5 Input
+## Saving Pair Maps in the HDF5 Input
 
-The Lattice class from safiretools can be directly used to find the pairs that we need via the `.get_directed_pairs()` function.
-`.get_directed_pairs()` needs a list of `directions`, and it returns a `DirectedPairs` whose `.offsets` maps each requested direction to a list of index offsets, $\bar{i}_\alpha [i]$, such that $\bar{i}_{\alpha} [i] = i + e_\alpha$.
+The Lattice class from safiretools can be directly used to find the pair maps that we need via the `.get_directed_pairs()` function.
+`.get_directed_pairs()` needs a list of `directions`, and it returns a `DirectedPairs` whose `.offsets` maps each requested direction $\alpha$ to its pair map, the list of partner orbitals $\bar{i}_\alpha$ indexed by $i$.
+The direction `"s"` is the on-site pair map $\bar{i}_\alpha = i$.
 
 Every direction has to run along a periodic axis. Stepping off an open edge would wrap around to the far side and pair sites that are not neighbours at all, so that is rejected rather than quietly measured.
 
@@ -109,7 +92,6 @@ colab:
 id: VjaOtDOltPAj
 outputId: 30ac79d1-e76e-4b8e-8c2c-6341210f4b4f
 ---
-
 pairs=lattice.get_directed_pairs(
   directions=["s","+x","-x","+y","-y"]
 )
@@ -126,10 +108,10 @@ pairs.to_hdf5("afqmc.h5")
 
 +++ {"id": "lkkZMHMWvFAU"}
 
-### Adding Custom Pairings
+### Adding Custom Pair Maps
 
-We note that custom pairings can be added by simply inserting a list of offsets with a new key.
-For example, we can manually add "+x+y" pairing to `pairs.offsets` as
+We note that custom pair maps can be added by simply inserting a list of partner orbitals with a new key.
+For example, we can manually add the $+x+y$ pair map to `pairs.offsets` as
 
 ```{code-cell} ipython3
 pairs.offsets["xy"] = [ 5, 6 , 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0]
@@ -144,17 +126,16 @@ pairs.to_hdf5("afqmc.h5")
 
 The pair correlation function observable may be requested as any other observable within an estimator block.
 However, the pair correlation function observable has one unique parameter that must be set,
-`pairs`, which locates the pairing offsets with
+`pairs`, which locates the pair maps with
 
-- `filename`, the name of the HDF5 file where the pairing offsets were saved. These can be saved in the same file as the Wavefunction, and/or Hamiltonian or in their own independent input file. Whichever you prefer.
+- `filename`, the name of the HDF5 file where the pair maps were saved. These can be saved in the same file as the Wavefunction, and/or Hamiltonian or in their own independent input file. Whichever you prefer.
 - `group`, the HDF5 group holding them. `DirectedPairs.to_hdf5()` writes them to `PairCorrelator/orbital_map`.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
 
-SAFIRE will measure all combinations of the pairings in the group.
-i.e. it will compute $P^{\alpha \beta}_{ij}$ where both $\alpha$ and $\beta$ run over the full set of pairing definitions,
-and save each of them as its own observable, `PairCorr/<alpha>_<beta>`.
+SAFIRE will measure all combinations of the pair maps in the group,
+i.e. every ordered pair of maps $(\alpha, \beta)$ is measured and stored as its own $(M, M)$ array `PairCorr/<α>_<β>`, where $M$ is the number of orbitals.
 
 </div>
 
@@ -175,7 +156,7 @@ A back-propagated estimator block with pair correlation functions would look lik
 }
 ```
 
-If we decided we only wanted s-wave pair correlations, we could save only those offsets to a file of their own,
+If we decided we only wanted s-wave pair correlations, we could save only that pair map to a file of its own,
 
 ```python
 lattice.get_directed_pairs(directions=["s"]).to_hdf5("pairs_s.h5")
@@ -322,8 +303,9 @@ P_s_x_0j = P_s_x_ij[0,:]
 vis.plot_lattice(
     lattice,
     density=np.abs(P_s_x_0j.real),
+    show_labels=False,
     norm_type="log",
-    cmap="plasma"
+    cmap="viridis"
 )
 ```
 
