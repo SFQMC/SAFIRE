@@ -15,13 +15,13 @@ kernelspec:
 
 # Multi-Slater Determinant Trial Wavefunction
 
-In this example, we will compute the AFQMC energy of the Hubbard model with U=8 on a 6×6 square lattice with open boundary conditions
-at half-filling.
+In this example, we will compute the AFQMC energy of the Hubbard model with $U=8$ on a 6×6 square lattice with open boundary conditions
+at half filling.
 We will use a trial wavefunction consisting of two Slater determinants.
 Specifically, we will use
 
 $$
-| \Psi_\mathrm{T} \rangle = \frac{1}{\sqrt{2}} \left( |\Phi_{0}\rangle + |\Phi_{1}\rangle \right)
+| \Psi_\mathrm{T} \rangle = |\Phi_{0}\rangle + |\Phi_{1}\rangle
 $$
 
 where
@@ -37,7 +37,8 @@ $$
 |\Phi_{1}\rangle = |\Phi^{\downarrow}\rangle \otimes |\Phi^{\uparrow}\rangle.
 $$
 
-Since the Hamiltonian is spin-independent, this trial wavefunction should have the same energy as the UHF ground state.
+Since the Hamiltonian is spin-independent, $|\Phi_{1}\rangle$ has the same energy as the UHF ground state $|\Phi_{0}\rangle$.
+Their superposition restores the spin-flip symmetry that the UHF solution breaks, and in general its energy differs from the UHF energy.
 
 ```{code-cell} ipython3
 :id: 1rz5sWn3Ecsc
@@ -62,10 +63,17 @@ vis.plot_lattice(lattice)
 hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=8.0)
 ```
 
++++
+
+Hartree-Fock overestimates magnetic order, so a UHF solution at the bare $U=8$ is too strongly polarized to be a good trial wavefunction.
+Instead, we solve UHF for a Hubbard model with a smaller effective interaction $U_\mathrm{eff}$ and use its orbitals as the trial wavefunction.
+The AFQMC run itself still uses the Hamiltonian with $U=8$.
+For a way to tune $U_\mathrm{eff}$ self-consistently, see {doc}`../02_stripes/index`.
+
 ```{code-cell} ipython3
 :id: dCFJvp57FBV6
 
-# run autoHF to get UHF solution
+# run AutoHF to get UHF solution
 from autohf import AutoHFHamiltonian
 
 Ueff = 2.75
@@ -106,31 +114,27 @@ $$
 |\Psi_\mathrm{T} \rangle = \sum^{N_\mathrm{det}}_n C_n | \Phi_n \rangle,
 $$
 
-where
-
-$C_n$
-
-is a complex-valued coefficient,
+where $C_n$ are complex-valued coefficients,
 and $|\Phi_n\rangle$ are Slater determinants which are not necessarily
 orthogonal to each other.
 Here, we will specify Slater determinants as Slater matrices
 
 $$
-\Phi_{ip} ≐ \begin{bmatrix}
-    \bar{C}_{00} &\bar{C}_{01} & \bar{C}_{02} & \dots  & \bar{C}_{0N} \\
-    \bar{C}_{10} & \bar{C}_{11} & \bar{C}_{12} & \dots  & \bar{C}_{1N} \\
-    \vdots & \vdots & \vdots & \ddots & \vdots \\
-    \bar{C}_{M0} & \bar{C}_{M1} & \bar{C}_{M2} & \dots  & \bar{C}_{MN}
+\Phi = \begin{bmatrix}
+    \Phi_{0,0} & \Phi_{0,1} & \dots  & \Phi_{0,N-1} \\
+    \Phi_{1,0} & \Phi_{1,1} & \dots  & \Phi_{1,N-1} \\
+    \vdots & \vdots & \ddots & \vdots \\
+    \Phi_{M-1,0} & \Phi_{M-1,1} & \dots  & \Phi_{M-1,N-1}
 \end{bmatrix},
 $$
 
-where $i$ is the basis index, $p$ is the electron index, and
- $M,N$ are the number of basis functions and electrons, respectively.
+where the row index $i$ of $\Phi_{ip}$ is the basis index, the column index $p$ is the electron index, and
+$M,N$ are the number of basis functions and electrons, respectively.
 <b>
 SAFIRE uses the convention that orbitals are columns of the Slater matrices.</b>
 A collinear Slater determinant is a pair of Slater matrices, one for the $N_{\uparrow}$ spin-up electrons and one for the $N_{\downarrow}$ spin-down electrons.
 
-In the code block below, we manually construct Slater matrices from the UHF orbitals that we got from autohf above.
+In the code block below, we manually construct Slater matrices from the UHF orbitals that we got from AutoHF above.
 
 ```{code-cell} ipython3
 :id: amcCyPWmBtoW
@@ -161,11 +165,9 @@ phi_0 = (phi_up, phi_down) # |phi_0> = |phi_up> X |phi_down>
 phi_1 = (phi_down, phi_up) # |phi_1> = |phi_down> X |phi_up>
 
 
-C_0 = 1.0 / np.sqrt(2)
-
 # numpy.stack is a convenient way to stack the determinants of each spin channel
 wfn = NOMSDWavefunction(
-    coeffs=np.array([C_0,C_0]),
+    coeffs=np.array([1.0, 1.0]),
     dets=(np.stack([phi_0[0], phi_1[0]]), np.stack([phi_0[1], phi_1[1]]))
 )
 ```

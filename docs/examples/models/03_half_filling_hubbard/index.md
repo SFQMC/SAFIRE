@@ -42,10 +42,9 @@ import numpy as np
 
 ## Physics Background
 
-The Hubbard model at half filling ($n=1$) has a special symmetry known as particle-hole symmetry, that allows auxiliary field methods to be sign free. However, care must be taken to make sure that phaseless/constrained path AFQMC is used properly to exploit said symmetry.
+The Hubbard model at half filling ($n=1$) has a special symmetry known as particle-hole symmetry, which allows auxiliary-field methods to be sign-free. However, care must be taken to make sure that phaseless/constrained-path AFQMC is used properly to exploit said symmetry.
 
-[1]: _Benchmark study of the two-dimensional Hubbard model with auxiliary-field quantum Monte Carlo method_  
-M Qin, H Shi, S Zhang Phys. Rev. B 94, 085103 4 August, 2016  
+[1] M. Qin, H. Shi, and S. Zhang, _Benchmark study of the two-dimensional Hubbard model with auxiliary-field quantum Monte Carlo method_, Phys. Rev. B **94**, 085103, published 4 August 2016.  
 DOI: https://doi.org/10.1103/PhysRevB.94.085103
 
 +++ {"id": "678e6d9b-4d8f-4f74-87ee-2420b8588c57"}
@@ -55,7 +54,7 @@ DOI: https://doi.org/10.1103/PhysRevB.94.085103
 ```{code-cell} ipython3
 :id: 132741fa-48b2-46a2-a980-3d58740b78d3
 
-# take from 10.1103/PhysRevB.45.10741, U => E_0
+# taken from 10.1103/PhysRevB.45.10741, U => E_0
 E0_n1_lookup = {4 : -13.62185,
                 8 : -8.46888}
 ```
@@ -74,7 +73,7 @@ from safiretools import Lattice
 
 lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'), twists=(0.0, 0.0))
 
-Ne = int(lattice.N_sites)//2
+Ne = lattice.N_sites//2
 nelec = (Ne,Ne)
 nelec
 ```
@@ -96,7 +95,7 @@ The Hamiltonian will be
 $$
 \begin{aligned}
 H &= H_t + H_U \\
-H_t &= -t \sum_{\langle i j\rangle \sigma} c^\dagger_{i\sigma} c_{j\sigma} \\
+H_t &= -t \sum_{\langle i j\rangle \sigma} \left(c^\dagger_{i\sigma} c_{j\sigma} + \mathrm{h.c.}\right) \\
 H_U &= U\sum_i n_{i\uparrow}n_{i\downarrow}
 \end{aligned}
 $$
@@ -116,41 +115,41 @@ hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=U)
 
 hamiltonian_hf = LatticeHamiltonian.from_lattice(
     lattice,
-    U=4, # if you want an effective U, you can change this
+    U=U, # if you want an effective U, you can change this
 )
 ```
 
 ```{code-cell} ipython3
 :id: 67700d97-b76c-4d89-a7f9-0b814e411497
 
-# get the 1 body Hamiltonian
+# get the one-body Hamiltonian
 T = hamiltonian_hf.get_one_body().toarray().reshape(2,lattice.N_sites,lattice.N_sites)
 ```
 
 +++ {"id": "d96b5df9-c26f-4dcc-87f6-bee7ed16e205"}
 
-## Version 1: GHF Trial
+## GHF Trial
 
 +++ {"id": "1f18437f-875d-486e-8ecc-22c8ec5f5ca8"}
 
-Because of the open shell at half filling, we'll follow Ref. 1 and use a GHF trial with AFM constrained to the X-Y plane (eq 14)
+Because of the open shell at half filling, we'll follow Ref. [1] and use a GHF trial with AFM constrained to the X-Y plane (Eq. 14),
 
 $$
-H_\mathrm{GHF} = -t\sum_{\langle ij\rangle \sigma} c^\dagger_{i\sigma}c_{j\sigma} + \text{h.c.} + \sum_{i}M_i c^\dagger_{i\uparrow}c_{i\downarrow} + \text{h.c.}
+H_\mathrm{GHF} = -t\sum_{\langle ij\rangle \sigma} \left(c^\dagger_{i\sigma}c_{j\sigma} + \text{h.c.}\right) + \sum_{i} \left(M_i c^\dagger_{i\uparrow}c_{i\downarrow} + \text{h.c.}\right),
 $$
-where $M_i= (-1)^i\Delta_i$
+where $M_i= (-1)^i\Delta_i$.
 
 +++ {"id": "95189cf3-a880-41d1-aa34-dfd8a9af4713"}
 
 ### Aside: Custom Hartree-Fock Solver
 
-We'll want to optimize $M$ directly, and to do this we'll use AutoHF's custom ansatz power to build a modification of the `DIAG` ansatz
+We'll want to optimize $M$ directly, and to do this we'll use AutoHF's custom ansatz support to build a modification of the `DIAG` ansatz.
 
 To do that we'll need:
-* `orbitalFunc` This takes a `state` and produces the orbitals
-* `rdmFunc` this takes a `state` and produces the rdm $\langle c^\dagger_{\sigma i}c_{\sigma^\prime j}\rangle$
-* `state0` the initial state
-* `state0_ref` the initial state that should correspond to e.g. $U=0$
+* `orbitalFunc`, which takes a `state` and produces the orbitals
+* `rdmFunc`, which takes a `state` and produces the rdm $\langle c^\dagger_{\sigma i}c_{\sigma^\prime j}\rangle$
+* `state0`, the initial state
+* `state0_ref`, the initial state that should correspond to e.g. $U=0$
 
 ```{code-cell} ipython3
 :id: 37602e67-9b8b-4b66-8a1a-33b184a670bc
@@ -164,7 +163,6 @@ from autohf.solver import sd_to_rdm_noncollinear
 signs = np.array([ (-1)**np.sum(s.coord) for s in lattice.sites])
 N = lattice.N_sites
 # convert T -> GHF format
-# TODO this should be in safiretools
 TGHF_ = np.block([[T[0],np.zeros_like(T[1])],
                [np.zeros_like(T[0]),T[1]]])
 TGHF_ = jnp.array(TGHF_)
@@ -187,7 +185,7 @@ def rdmFunc(state):
 :id: 09cfee9a-7cef-4cf5-8af0-ed664049e3f0
 
 def checkPH(state):
-    '''check the spectrum of the 'faux' HF state is PH symmetric'''
+    '''check that the spectrum of the faux HF state is PH symmetric'''
     # take the hopping matrix TGHF, and "set" M on the off-diagonal blocks
     TGHF = TGHF_+0.0
     TGHF = TGHF.at[N+np.arange(N),np.arange(N)].set(signs*state)
@@ -221,7 +219,6 @@ state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["batch_size"], N)
 
 dataHFC = solve_hf(
     hamiltonian=AutoHFHamiltonian(hamiltonian_hf),
-    lattice=lattice,
     settings=hf_settings,
     state2orbitals=orbitalFunc,
     state2rdm=rdmFunc,
@@ -232,7 +229,7 @@ dataHFC = solve_hf(
 
 +++ {"id": "4df95593-82d2-41e7-95aa-262bf3fb7eb8"}
 
-Let's check out what M values we got
+Let's check out what $M$ values we got.
 
 ```{code-cell} ipython3
 :id: e650b2a3-278d-4bed-8849-bd9952a2d028
@@ -252,7 +249,7 @@ plt.imshow(dataHFC[0]["state"].reshape(4,4))
 
 Hmm... This looks like we haven't fully converged into a translationally invariant solution, but it's close. Let's increase the precision!
 
-**⚠️ Warning** This notebook is set up for the CPU, the following cell takes a while (the GPU is a bit faster if you have one)
+**⚠️ Warning** This notebook is set up for the CPU; the following cell takes a while (the GPU is a bit faster if you have one).
 
 ```{code-cell} ipython3
 :id: bf090735-faac-4b21-90da-72283a85641f
@@ -278,7 +275,6 @@ state0 = state0_ref + rng.normal(scale=0.01, size=(hf_settings["batch_size"], N)
 
 dataHFC2 = solve_hf(
     hamiltonian=AutoHFHamiltonian(hamiltonian_hf),
-    lattice=lattice,
     settings=hf_settings,
     state2orbitals=orbitalFunc,
     state2rdm=rdmFunc,
@@ -311,7 +307,7 @@ plt.imshow(dataHFC2[0]["state"].reshape(4,4))
 
 +++ {"id": "0bbfe20c-66db-4b99-9f69-dfa45a29f0d1"}
 
-Let's check that this is a better energy than the previous energy
+Let's check that this is a better energy than the previous energy.
 
 ```{code-cell} ipython3
 :id: c489bd73-3ae7-4943-b8a6-90705f5e3654
@@ -324,7 +320,7 @@ dataHFC2[0]["E"] < dataHFC[0]["E"]
 
 Great!
 
-Now let's check if we can guess a better state, by explicitly restoring translation invariance
+Now let's check if we can guess a better state by explicitly restoring translation invariance.
 
 ```{code-cell} ipython3
 :id: b02b905f-2789-4a5d-bac2-5847467d31a4
@@ -336,7 +332,7 @@ np.isclose(dataHFC2[1]["energy_func"](dataHFC2[0]["state"]),dataHFC2[1]["energy_
 
 +++ {"id": "8944c9a6-fc6c-4cb0-9e07-8b8712bb5f45"}
 
-So we see we've reached a minimum, and that a constant $M$ is the same as our nearly constant optimized $M_i$
+So we see we've reached a minimum, and that a constant $M$ is the same as our nearly constant optimized $M_i$.
 
 +++ {"id": "5afb0278-218c-4d88-9bea-b1c0f2ce8b15"}
 
@@ -391,7 +387,6 @@ results = Results("afqmc.results.h5")
 
 vis.plot_timeseries(results, skip=250)
 E_ref = E0_n1_lookup[U]
-print(E_ref)
 plt.axhline(E_ref, color="crimson")
 ```
 
@@ -399,35 +394,7 @@ plt.axhline(E_ref, color="crimson")
 
 ### For Further Thinking
 
-* What if we didn't use the correct signs ($M_i = (-1)^i\Delta_i$) for the HF ansatz? Could we construct an even more constrained wave function?
+* What if we didn't use the correct signs ($M_i = (-1)^i\Delta_i$) for the HF ansatz? Could we construct an even more constrained wavefunction?
 * What do the local spin/charge observables of the optimized ansatz look like?
-* What happens for $U=8$? Do we need a different wave function?
-* What happens if you start from a free electron state instead of the HF state? (`free_wfn = Wavefunction.from_free_electron(hamiltonian, nelec, spin_symm="nc")`; this warns, since the untwisted lattice is open-shell at half filling)
-
-+++ {"id": "f7eab26a-3624-402e-83de-00ee38daf267"}
-
-## Version 2: Multi-Slater Trial
-
-+++ {"id": "ec6849d2-44e2-4e02-89c1-826a54fe9719"}
-
-To take advantage of particle hole symmetry at half filling with a spin decomposition, besides using a GHF in the X-Y plane, we could use two particle-hole symmetric determinants
-
-```{code-cell} ipython3
-:id: 5144095e-d93d-4614-8fc0-27ed2ea6ce99
-
-# TODO!
-```
-
-+++ {"id": "382b53bd-c986-497e-b362-e72bcd29fc23"}
-
-## Version 3: Charge Decomposition
-
-+++ {"id": "27b1d4ad-ffd1-47ff-b31a-ac2bb5a40f37"}
-
-The last alternative is to use a particle hole symmetry trial with the charge decomposition. Because we are focusing on positive $U$ interactions, the charge decomposition will create a complex phase. At half-filling, due to the particle symmetry the walker weights will end up being all real and positive so we don't have to worry about this
-
-```{code-cell} ipython3
-:id: 6b4b0c59-0f4c-40cf-8063-71eda6e6d018
-
-# TODO!
-```
+* What happens for $U=8$? Do we need a different wavefunction?
+* What happens if you start from a free-electron state instead of the HF state? (`free_wfn = Wavefunction.from_free_electron(hamiltonian, nelec, spin_symm="nc")`; this warns, since the untwisted lattice is open-shell at half filling.)
