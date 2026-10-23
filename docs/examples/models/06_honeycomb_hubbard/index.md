@@ -18,9 +18,8 @@ kernelspec:
 ## Set Up the Hamiltonian
 
 ```{code-cell} ipython3
----
-id: djut2ei2D6d-
----
+:id: djut2ei2D6d-
+
 %mkdir -p data
 %cd -q data
 
@@ -41,9 +40,8 @@ hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=6.0)
 ```
 
 ```{code-cell} ipython3
----
-id: bYkD4o3sHwP9
----
+:id: bYkD4o3sHwP9
+
 # run autoHF and save wavefunction as trial wavefunction
 import numpy as np
 
@@ -127,9 +125,8 @@ tags: [scroll-output]
 ## Analyze the Results
 
 ```{code-cell} ipython3
----
-id: eADuTKxlJgfx
----
+:id: eADuTKxlJgfx
+
 # analyze results
 from safiretools import Results
 
