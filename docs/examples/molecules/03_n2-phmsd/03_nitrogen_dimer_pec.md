@@ -44,12 +44,6 @@ The $N_2$ molecule is a notorious example and has historically been used to benc
 Below is a plot of the error in the energy, relative to exact results from DRMG,
 from reference [1].
 
-<!---
-<div>
-<img src="./figs/NitrogenMolecule.png" width="500"/>
-</div>
---->
-
 ![](files/ReferenceFigure.png)
 
 We have included both CCSD(T) results, as well as CCSDT results for reference.
