@@ -18,8 +18,8 @@ kernelspec:
 In this example, we will compute the ground state energy of the Boron (B) atom.
 This is an open-shell atom with a single p-electron.
 We used PySCF and `safiretools` to generate a Hamiltonian and save it the SAFIRE HDF5 format (sample script at the end of this example); however, a FCIDUMP can be used instead.
-If you already have a FCIDUMP, you can skip using the `afqmc_to_fcidump` tool,
-and instead, after running SHCI, you can use the `fcidump_to_afqmc` tool to generate a Hamiltonian for SAFIRE.
+If you already have a FCIDUMP, you can skip the conversion to FCIDUMP below,
+and instead, after running SHCI, use `MolecularHamiltonian.from_fcidump` to generate a Hamiltonian for SAFIRE.
 
 References:
 
@@ -132,10 +132,7 @@ from safiretools import Wavefunction
 Wavefunction.from_dice("output.dat", ndets=100).to_hdf5("shci_wfn.h5")
 ```
 
-The `-o` option sets the output HDF5 file name,
-`-i` sets the input to `dice_to_hdf5` (this will be an output from Dice!),
-`-n` sets the number of Slater determinants to save (currently a required argument!),
-and `-v` turns on verbose output.
+`ndets` sets the number of Slater determinants to keep from the Dice output.
 
 Now, we need to write an SAFIRE input file.
 You can set this up as you choose, here is a sample input file

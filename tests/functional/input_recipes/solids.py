@@ -13,11 +13,11 @@ Recipes for the diamond solid, downfolded from a plane-wave DFT calculation.
 
 Unlike everything else in this tool these two recipes drive external codes:
 
-    pw.x  ->  pw2coqui.x  ->  coqui  ->  afqmctools
+    pw.x  ->  pw2coqui.x  ->  coqui  ->  safiretools
 
 Quantum ESPRESSO produces the PBE mean field, ``pw2coqui.x`` exports it, CoQui
 downfolds it into a Cholesky- or THC-factorised hamiltonian together with the
-mean-field wavefunction, and two small afqmctools steps derive the closed and
+mean-field wavefunction, and two small safiretools steps derive the closed and
 noncollinear trials from that wavefunction.
 
 Neither external code is a Python dependency, so both recipes are skipped

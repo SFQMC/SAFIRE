@@ -73,7 +73,7 @@ def main(argv=None) -> int:
     parser.add_argument("--list", action="store_true",
                         help="list the recipes and exit")
     parser.add_argument("-v", "--verbose", action="store_true",
-                        help="verbose output from pyscf, afqmctools and AutoHF")
+                        help="verbose output from pyscf, safiretools and AutoHF")
     args = parser.parse_args(argv)
 
     recipes = build_recipes()

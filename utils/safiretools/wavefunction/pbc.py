@@ -16,8 +16,7 @@ k-point, giving a single Slater determinant. Reached through
 `NOMSDWavefunction.from_pbc_scf`.
 
 .. note:: **CoQuí is the supported route for solids.** This path covers a PySCF
-          mean-field reference only, and only as a single determinant; see
-          DESIGN.md.
+          mean-field reference only, and only as a single determinant.
 """
 
 import logging

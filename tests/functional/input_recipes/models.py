@@ -156,8 +156,6 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
     initial_alpha, initial_beta = Wavefunction.from_free_electron(
         hamiltonian, nelec=nelec, spin_symm=SpinSymm.COLLINEAR).determinant(0)
 
-    # AutoHFHamiltonian(source=...) only reads afqmctools hamiltonians, so the
-    # terms are handed over explicitly, as its afqmctools interface would.
     one_body = hamiltonian.get_one_body().toarray()
     autohf_hamiltonian = AutoHFHamiltonian(
         T=[one_body[:norb], one_body[norb:]],
@@ -177,7 +175,7 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
             verbose=ctx.verbose,
             measure_spin=False,
         ),
-        # AutoHF takes the afqmctools layout, (norb, nup + ndn)
+        # AutoHF takes the determinant as one (norb, nup + ndn) matrix
         initial_guess=np.hstack([initial_alpha, initial_beta]).real,
         suppress_logo=True,
     )

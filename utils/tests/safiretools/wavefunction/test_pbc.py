@@ -172,8 +172,7 @@ class TestPartialOccupancies:
 class TestBaseClassDispatch:
     """
     `Wavefunction.from_pbc_scf` reaches the subclass through inheritance, and
-    always produces an `NOMSDWavefunction`. See DESIGN.md "Every factory
-    dispatches from the base class".
+    always produces an `NOMSDWavefunction`.
     """
 
     def test_the_base_factory_gives_an_nomsd(self, diamond_krks):
