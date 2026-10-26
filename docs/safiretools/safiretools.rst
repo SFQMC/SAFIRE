@@ -15,12 +15,12 @@ safiretools is the companion Python package of SAFIRE. It contains tools to
 Installation
 ------------
 
-safiretools is installed with ``pip`` from the ``utils`` directory of the SAFIRE source
+safiretools is installed with ``pip`` from the ``python`` directory of the SAFIRE source
 tree:
 
 .. code-block::
 
-    $ pip install "./utils[GROUPNAME]"
+    $ pip install "./python[GROUPNAME]"
 
 Optional Dependencies
 ~~~~~~~~~~~~~~~~~~~~~
@@ -29,7 +29,7 @@ Additional functionality is enabled by optional dependency groups, installed via
 
 .. code-block::
 
-    $ pip install "./utils[GROUPNAME]"
+    $ pip install "./python[GROUPNAME]"
 
 where ``GROUPNAME`` is one of the groups below.
 

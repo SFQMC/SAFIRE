@@ -128,7 +128,7 @@ RUN install -d -o 1000 -g 1000 ${VIRTUAL_ENV}
 USER 1000:1000
 RUN python3 -m venv ${VIRTUAL_ENV}
 
-# This mirrors utils/pyproject.toml: the base dependencies plus the VIS, TESTING, PYSCF and DOCS
+# This mirrors python/pyproject.toml: the base dependencies plus the VIS, TESTING, PYSCF and DOCS
 # extras. Versions are pinned so that rebuilding the image
 # cannot silently change the python stack under the tests; to update, resolve the same list
 # unpinned in a scratch venv and copy the resulting `pip freeze` versions back here.

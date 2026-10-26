@@ -6,7 +6,7 @@ properties([
 // --no-deps because dependencies should already be installed in the image
 def pythonEnv = {
   stage('python env') {
-    sh 'pip install --no-deps $SRC/utils'
+    sh 'pip install --no-deps $SRC/python'
   }
 }
 
@@ -54,7 +54,7 @@ timeout(time: 1, unit: 'HOURS') {
           }
           stage('python tests') {
             sh '''
-              cd $SRC/utils
+              cd $SRC/python
               pytest tests/safiretools
             '''
           }

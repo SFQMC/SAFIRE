@@ -138,7 +138,7 @@ def _build_uhf_trial(ctx: BuildContext, filename) -> None:
         from autohf.solver import solve_hf
     except ImportError as exc:  # pragma: no cover - depends on the install
         raise RuntimeError(
-            "the U=0.1 UHF trial needs AutoHF (install utils/AutoHF)"
+            "the U=0.1 UHF trial needs AutoHF (install AutoHF)"
         ) from exc
 
     weak = {
