@@ -55,12 +55,12 @@ CTEST_PARALLEL_LEVEL=0 make test
 ### Running Python unit tests
 
 Pytest is already configured at the project level.
-If `afqmctools` was installed via pip according, then pytest should already be installed.
-We recommend also installing the optional "TESTING" dependencies by running the following
+If `safiretools` was installed via pip according, then pytest should already be installed.
+We recommend also installing the optional "testing" dependencies by running the following
 in the `utils/` directory.
 
 ```sh
-$ pip install .[TESTING]
+$ pip install .[testing]
 ```
 
 Pytest can be run using

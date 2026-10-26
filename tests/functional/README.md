@@ -27,7 +27,7 @@ by the C++ side and appear in no functional case.
 ## Requirements
 
 - `AFQMC_EXEC` must point at the SAFIRE executable to test.
-- The `afqmctools` and `stats` packages must be importable. Installing `utils` (e.g.
+- The `safiretools` package must be importable. Installing `utils` (e.g.
   `pip install -e utils`) is the usual way; otherwise put `utils` on `PYTHONPATH`:
   `export PYTHONPATH=/path/to/SAFIRE/utils:$PYTHONPATH`.
 
@@ -70,7 +70,7 @@ that the new results are still correct.
 ## Regenerating the inputs
 
 `make_inputs.py` rebuilds the HDF5 files in `afqmc_inputs/` from the calculations that
-produced them - pyscf for the molecules, afqmctools for the lattice models, and
+produced them - pyscf for the molecules, safiretools for the lattice models, and
 Quantum ESPRESSO plus CoQui for diamond. `input_recipes/` holds one recipe per system
 directory.
 
@@ -88,7 +88,7 @@ physics) and accepting one obliges regenerating the reference results as well. C
 with `h5diff` before you copy anything in. Intermediate files - pyscf checkpoints, QE
 and CoQui runs and their logs - are left under `DIR/_scratch`.
 
-Everything except diamond needs only pyscf, afqmctools and AutoHF, and the whole set
+Everything except diamond needs only pyscf, safiretools and AutoHF, and the whole set
 takes about a minute. The two diamond recipes drive external codes and are skipped
 unless these are found on `PATH` or named explicitly:
 

@@ -10,7 +10,8 @@ is a flexible, high-performance implementation of the auxiliary-field quantum Mo
 
 Next, follow one of the sections below depending on whether you want a CPU-only build, or a GPU-accelerated build.
 
-Also, see the afqmctools Python package [Readme](utils/README.md#installation) to install the afqmctools Python package.
+The companion Python package `safiretools` lives in `utils/` and is installed with `pip install ./utils`.
+Optional dependencies are available as the extras `pyscf`, `vis`, `testing` and `docs`, e.g. `pip install "./utils[pyscf,vis]"`.
 
 ### Dependencies
 

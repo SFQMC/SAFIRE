@@ -131,6 +131,11 @@ dir(rho)
 
 # Analyze with afqmctools
 
+```{note}
+`afqmctools` has been removed. The RDM averaging below (`average_afqmc_rdm`) must be ported to
+`safiretools.Results` before this example can be enabled.
+```
+
 ```{code-cell} ipython3
 :id: YtU1MnKiL-22
 

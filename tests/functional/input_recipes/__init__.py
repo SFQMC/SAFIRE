@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
-# jax reads this when it is imported, and afqmctools pulls it in indirectly, so
+# jax reads this when it is imported, and AutoHF pulls it in indirectly, so
 # it has to be set before anything else here. Without it jax claims a cuda
 # backend on a machine that has the plugin installed but no visible device and
 # then dies. Everything these recipes ask of jax is a seconds-long solve on a
