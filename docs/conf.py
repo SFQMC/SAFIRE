@@ -82,6 +82,7 @@ exclude_patterns = [
     '_build',
     'Thumbs.db',
     '.DS_Store',
+    'examples/molecules/tbd_H2O_charge_density',
 ]
 
 autodoc_default_options = {
