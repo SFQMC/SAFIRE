@@ -5,7 +5,7 @@ i.e. that we can actually run an AFQMC calculation and get the correct numbers. 
 testing the full system, and proving that the code does what we claim it does.
 
 The unit tests live elsewhere: the C++ unit tests in `tests/` (built by CMake and run via
-`ctest`), the Python ones in `utils/tests/` (run via `pytest` from `utils`).
+`ctest`), the Python ones in `python/tests/` (run via `pytest` from `python`).
 
 ## Layout
 
@@ -27,9 +27,9 @@ by the C++ side and appear in no functional case.
 ## Requirements
 
 - `AFQMC_EXEC` must point at the SAFIRE executable to test.
-- The `safiretools` package must be importable. Installing `utils` (e.g.
-  `pip install -e utils`) is the usual way; otherwise put `utils` on `PYTHONPATH`:
-  `export PYTHONPATH=/path/to/SAFIRE/utils:$PYTHONPATH`.
+- The `safiretools` package must be importable. Installing `python` (e.g.
+  `pip install -e python`) is the usual way; otherwise put `python` on `PYTHONPATH`:
+  `export PYTHONPATH=/path/to/SAFIRE/python:$PYTHONPATH`.
 
 ## Local Runs
 
@@ -136,7 +136,7 @@ export AFQMC_EXEC="/path/to/safire"
 OUTPUT_DIR="/path/to/scratch/dir"
 rm -rf $OUTPUT_DIR
 
-export PYTHONPATH="/path/to/SAFIRE/utils:$PYTHONPATH"
+export PYTHONPATH="/path/to/SAFIRE/python:$PYTHONPATH"
 python -u /path/to/SAFIRE/tests/functional/run_functional.py \
        all \
        --output-path=$OUTPUT_DIR \

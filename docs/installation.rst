@@ -98,7 +98,7 @@ the generation of input files and the processing of output data.
 
 .. code-block::
 
-    cd utils # TODO update once package is public
+    cd python
     pip install ".[vis]" # [vis]ualization support
 
 For lattice model calculations, the `AutoHF <https://github.com/SFQMC/AutoHF>`__ Hartree-Fock code is very useful.
