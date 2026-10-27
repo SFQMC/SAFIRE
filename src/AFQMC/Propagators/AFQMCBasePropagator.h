@@ -262,6 +262,12 @@ private:
   nda::array<PsiT_Matrix<MEM>, 1> P1s_inv;
   memory::const_shared_array<MEM, ComplexType, 3> P1d_inv;
 
+  // Real copies of P1s/P1s_inv, set on the host when the 1-body propagator is real (e.g. lattice
+  // models): a real P1 acts on the real and imaginary parts of the walkers at once, a quarter
+  // of the flops. Empty otherwise.
+  nda::array<PsiT_Matrix_t<RealType,MEM>, 1> P1s_real;
+  nda::array<PsiT_Matrix_t<RealType,MEM>, 1> P1s_inv_real;
+
   memory::const_shared_array<MEM, ComplexType, 1> vMF;
 
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng;

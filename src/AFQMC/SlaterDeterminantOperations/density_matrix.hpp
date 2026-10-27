@@ -114,7 +114,7 @@ template<typename A_t, nda::MemoryArrayOfRank<3> B_t, nda::MemoryArrayOfRank<1> 
          nda::MemoryArrayOfRank<3> T_t>
 requires( (CSRMatrix<A_t> or nda::MemoryMatrix<A_t>) and
           nda::mem::have_compatible_addr_space<A_t,B_t,O_t,T_t> and
-          nda::have_same_value_type_v<A_t, B_t, O_t, T_t> and
+          nda::have_same_value_type_v<B_t, O_t, T_t> and
           std::decay_t<B_t>::is_stride_order_C() and std::decay_t<T_t>::is_stride_order_C()
         )
 void log_overlap_impl(A_t const& A, B_t const& B, O_t && ovlp, T_t && TNN, bool herm = true, bool invert = false)
@@ -431,7 +431,7 @@ void LUsolve(A_t && A, B_t && B, O_t && ovlp)
 template<typename A_t, nda::MemoryArrayOfRank<3> B_t, nda::MemoryArrayOfRank<1> O_t>
 requires( (CSRMatrix<A_t> or nda::MemoryMatrix<A_t>) and
           nda::mem::have_compatible_addr_space<A_t,B_t,O_t> and 
-          nda::have_same_value_type_v<A_t, B_t, O_t> and
+          nda::have_same_value_type_v<B_t, O_t> and
           std::decay_t<B_t>::is_stride_order_C() 
         ) 
 void Log_Overlap(A_t const& A, B_t const& B, O_t && ovlp, bool herm = true)
@@ -538,7 +538,7 @@ template<typename A_t,
          nda::MemoryArrayOfRank<1> O_t>
 requires( (CSRMatrix<A_t> or nda::MemoryMatrix<A_t>) and
           nda::mem::have_compatible_addr_space<A_t,B_t,C_t,O_t> and
-          nda::have_same_value_type_v<A_t, B_t, C_t, O_t> and
+          nda::have_same_value_type_v<B_t, C_t, O_t> and
           std::decay_t<B_t>::is_stride_order_C() and std::decay_t<C_t>::is_stride_order_C()
         )
 void MixedDensityMatrix(A_t const& A, B_t const& B, C_t && C, O_t && ovlp, bool compact = true, bool herm = true)
@@ -587,6 +587,8 @@ void MixedDensityMatrix(A_t const& A, B_t const& B, C_t && C, O_t && ovlp, bool 
       // T2 = T1 * H(A)
       if constexpr (CSRMatrix<A_t>) {
         utils::check(false, "finish implementation!!!");
+      } else if constexpr (!nda::is_complex_v<nda::get_value_t<A_t>>) {
+        utils::check(false, "a real A needs herm = true");
       } else {
         math::product<'N','H'>(TNN,A,TNM);
       }

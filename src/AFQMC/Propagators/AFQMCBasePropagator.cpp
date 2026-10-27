@@ -170,6 +170,45 @@ void AFQMCBasePropagator<MEM>::generateP1(bool Pinv)
     for(int i=0; i<nspin; i++) 
       P1s_inv(i) = math::sparse::to_csr<MEM>(P1d_inv()(i,all,all),1e-8); 
   }
+
+  // a real H1 still leaves roundoff in the imaginary part of its eigenvector-based exponential
+  auto is_real = [](auto const& P) {
+    auto vals = nda::to_host(P.values());
+    RealType vmax = 0.0, imax = 0.0;
+    for(auto v : vals) {
+      vmax = std::max(vmax, std::abs(v));
+      imax = std::max(imax, std::abs(v.imag()));
+    }
+    return imax <= 1e-14 * vmax;
+  };
+  auto to_real_csr = [&](auto const& Pd) {
+    nda::array<RealType,2> Pr = nda::real(nda::to_host(Pd));
+    return math::sparse::to_csr<MEM,int,int>(Pr,1e-8);
+  };
+  P1s_real.resize(0);
+  P1s_inv_real.resize(0);
+  if constexpr (MEM == HOST_MEMORY) {
+    bool real_P1 = true;
+    for(int i=0; i<nspin; i++) {
+      real_P1 = real_P1 && is_real(P1s(i));
+      if(build_inv) {
+        real_P1 = real_P1 && is_real(P1s_inv(i));
+      }
+    }
+    if(real_P1 && !denseP1) {
+      app_log(1, "  - The 1-body propagator is real, applying it in real arithmetic");
+      P1s_real.resize(nspin);
+      for(int i=0; i<nspin; i++) {
+        P1s_real(i) = to_real_csr(P1d()(i,all,all));
+      }
+      if(build_inv) {
+        P1s_inv_real.resize(nspin);
+        for(int i=0; i<nspin; i++) {
+          P1s_inv_real(i) = to_real_csr(P1d_inv()(i,all,all));
+        }
+      }
+    }
+  }
   mpi->comm.barrier();
 
 }
@@ -178,6 +217,13 @@ template<MEMORY_SPACE MEM>
 template<char TA, typename VHS_t>
 void AFQMCBasePropagator<MEM>::apply_propagators(WalkerSet<MEM>& wset, VHS_t const& v, bool P1inv)
 {
+  if constexpr (MEM == HOST_MEMORY) {
+    auto const& P1r = (P1inv ? P1s_inv_real : P1s_real);
+    if(P1r.size() > 0) {
+      det_ops::Propagate<MEM,TA>(wset,P1r(),v,order);
+      return;
+    }
+  }
   if(P1inv) {
     if(denseP1) {
       det_ops::Propagate<MEM,TA>(wset,P1d_inv(),v,order);
@@ -199,6 +245,17 @@ void AFQMCBasePropagator<MEM>::apply_propagators(WALKER_TYPES wtype, int npol,
                                                  Mat3&& Xa, Mat3&& Xb,
                                                  VHS_t const& v, bool P1inv)
 {
+  if constexpr (MEM == HOST_MEMORY) {
+    auto const& P1r = (P1inv ? P1s_inv_real : P1s_real);
+    if(P1r.size() > 0) {
+      if(wtype == COLLINEAR) {
+        det_ops::Propagate<MEM,TA>(wtype,npol,Xa,Xb,P1r(),v,order);
+      } else {
+        det_ops::Propagate<MEM,TA>(wtype,npol,Xa,P1r(),v,order);
+      }
+      return;
+    }
+  }
   if(P1inv) {
     if(denseP1) {
       if(wtype == COLLINEAR)
