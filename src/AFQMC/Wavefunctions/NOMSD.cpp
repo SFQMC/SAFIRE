@@ -175,7 +175,7 @@ void NOMSD<MEM,devPsiT>::Energy(WalkerSet<MEM> const& wset,
   memory::buffered_array<MEM,ComplexType,2> G(nw,nel*npol*NMO); 
 
   if(ndet == 1) {
-    DensityMatrix(wset, OrbMats(0,all), G, Ov);
+    with_trial(0, [&](auto&& Ref) { DensityMatrix(wset, Ref, G, Ov); });
     HamOp.energy(E, G(), 0);
     ComplexType val = std::log(std::abs(ci(0)) < 1e-12 ? ComplexType(1e-12) : std::conj(ci(0)));
     memory::buffered_array<MEM,ComplexType,1> buff(nw,val);
@@ -188,7 +188,7 @@ void NOMSD<MEM,devPsiT>::Energy(WalkerSet<MEM> const& wset,
     eloc() = ComplexType(0.0);
 
     for (int id = 0; id < ndet; id++) {
-      DensityMatrix(wset, OrbMats(id,all), G, ovlp(id,all)); 
+      with_trial(id, [&](auto&& Ref) { DensityMatrix(wset, Ref, G, ovlp(id,all)); });
       HamOp.energy(eloc(id,all,all), G(), id);
     }
 
@@ -234,7 +234,7 @@ void NOMSD<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset,
   Ov() = ComplexType(0.0);
 
   if(ndet == 1) {
-    DensityMatrix(wset, OrbMats(0,all), G, Ov, compact);     
+    with_trial(0, [&](auto&& Ref) { DensityMatrix(wset, Ref, G, Ov, compact); });
   } else {
     // the determinants accumulate into G
     G() = 0.0;
@@ -246,7 +246,7 @@ void NOMSD<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset,
 
     for(int d=0; d<ndet; ++d) {
 
-      DensityMatrix(wset, OrbMats(d,all), Gt, Ot, compact);     
+      with_trial(d, [&](auto&& Ref) { DensityMatrix(wset, Ref, Gt, Ot, compact); });
       // G += conj(ci) * exp(Ot-log_m) * Gt
       // Ov += conj(ci) * exp(Ot-log_m)
       // doing in host for now!!!
@@ -289,11 +289,11 @@ void NOMSD<MEM,devPsiT>::Log_Overlap(WalkerSet<MEM> const& wset,
   Ov() = ComplexType(0.0);
 
   if(ndet == 1) {
-    det_ops::Log_Overlap(OrbMats(0,0)(),wset.SlaterMatrices(Alpha),Ov);
+    with_trial(0, [&](auto&& Ref) { det_ops::Log_Overlap(Ref(0)(),wset.SlaterMatrices(Alpha),Ov); });
     if(walker_type == CLOSED) {
       nda::tensor::scale(ComplexType(2.0),Ov);
     } else if (walker_type == COLLINEAR)  {
-      det_ops::Log_Overlap(OrbMats(0,1)(),wset.SlaterMatrices(Beta),Ov);
+      with_trial(0, [&](auto&& Ref) { det_ops::Log_Overlap(Ref(1)(),wset.SlaterMatrices(Beta),Ov); });
     }
     ComplexType val = std::log(std::abs(ci(0)) < 1e-12 ? 1e-12 : std::conj(ci(0)));
     memory::buffered_array<MEM,ComplexType,1> buff(nw,val);
@@ -303,11 +303,11 @@ void NOMSD<MEM,devPsiT>::Log_Overlap(WalkerSet<MEM> const& wset,
     memory::buffered_array<MEM,ComplexType,2> log_ovlps(ndet,nw);
     log_ovlps() = ComplexType(0.0);
     for(int d=0; d<ndet; ++d) {
-      det_ops::Log_Overlap(OrbMats(d,0)(),wset.SlaterMatrices(Alpha),log_ovlps(d,all));
+      with_trial(d, [&](auto&& Ref) { det_ops::Log_Overlap(Ref(0)(),wset.SlaterMatrices(Alpha),log_ovlps(d,all)); });
       if(walker_type == CLOSED) {
         nda::tensor::scale(ComplexType(2.0),log_ovlps(d,all));
       } else if (walker_type == COLLINEAR)  {
-        det_ops::Log_Overlap(OrbMats(d,1)(),wset.SlaterMatrices(Beta),log_ovlps(d,all));
+        with_trial(d, [&](auto&& Ref) { det_ops::Log_Overlap(Ref(1)(),wset.SlaterMatrices(Beta),log_ovlps(d,all)); });
       }
       ComplexType val( std::log( (std::abs(ci(d)) < 1e-12 ? ComplexType(1e-12) : std::conj(ci(d)) ) ) );
       memory::buffered_array<MEM,ComplexType,1> buff(nw,val);

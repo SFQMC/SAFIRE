@@ -67,6 +67,23 @@ public:
         OrbMats(std::move(orbs_))
   {
     utils::check(OrbMats.extent(0) == ci.size(), "Size mismatch");
+    if constexpr (MEM == HOST_MEMORY && std::is_same_v<devPsiT, memory::const_shared_array<MEM,ComplexType,2>>) {
+      bool real = true;
+      for(auto const& M : OrbMats) {
+        for(auto const& v : M()) {
+          real = real && v.imag() == 0.0;
+        }
+      }
+      if(real) {
+        app_log(1, "  - The trial wavefunction is real, computing overlaps in real arithmetic");
+        OrbMats_real.resize(OrbMats.shape());
+        for(long d = 0; d < OrbMats.extent(0); ++d) {
+          for(long s = 0; s < OrbMats.extent(1); ++s) {
+            OrbMats_real(d,s) = nda::real(OrbMats(d,s)());
+          }
+        }
+      }
+    }
   }
 
   int number_of_cholesky_vectors() const { return HamOp.number_of_cholesky_vectors(); }
@@ -248,6 +265,22 @@ protected:
 
   // OrbMats[ndet][nspin](nel,NMO)
   nda::array<devPsiT,2> OrbMats;
+
+  // Real copy of a dense, real OrbMats on the host: a real trial acts on the real and imaginary
+  // parts of the walkers at once, half the flops of T = Psi^H * walker. Empty otherwise.
+  nda::array<memory::array<MEM,RealType,2>,2> OrbMats_real;
+
+  // calls f with the Slater matrices of determinant d, the real ones if there are any
+  void with_trial(int d, auto&& f)
+  {
+    if constexpr (MEM == HOST_MEMORY) {
+      if(OrbMats_real.size() > 0) {
+        f(OrbMats_real(d,nda::range::all));
+        return;
+      }
+    }
+    f(OrbMats(d,nda::range::all));
+  }
 
 };
 
