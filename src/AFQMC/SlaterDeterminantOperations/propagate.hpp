@@ -124,8 +124,6 @@ void apply_expM(V_t const& V, S_t && S, int order = 6)
   static_assert( nda::is_complex_v<Type>, "Type mismatch");
   auto [Nw, M, Nel] = S.shape();
   utils::check( V.shape() == std::array<long,2>{Nw*M,Nw*M}, "Shape mismatch");
-  memory::buffered_array<MEM,Type,2> T1(Nw*M,Nel);
-  memory::buffered_array<MEM,Type,2> T2(Nw*M,Nel);
 
   Type zero(0.), one(1.);
   Type im(0.0, 1.0);
@@ -138,6 +136,36 @@ void apply_expM(V_t const& V, S_t && S, int order = 6)
   std::array<long,2> strides = {str[1],str[2]};
   nda::idx_map<2, 0, nda::C_stride_order<2>, nda::layout_prop_e::none> idxm(shape,strides);
   memory::array_view<MEM,Type,2> S_(idxm,S.data());
+
+  if constexpr (MEM == HOST_MEMORY) {
+    // A diagonal V (e.g. on-site Hubbard U) turns the Taylor series into a per-row scale factor
+    auto rb   = V.row_begin();
+    auto re   = V.row_end();
+    auto cols = V.columns();
+    bool diagonal = true;
+    for(long r = 0; r < Nw*M && diagonal; ++r) {
+      diagonal = (re(r) == rb(r)) || (re(r) == rb(r) + 1 && cols(rb(r)) == r);
+    }
+    if(diagonal) {
+      auto vals = V.values();
+      for(long r = 0; r < Nw*M; ++r) {
+        Type v = (re(r) > rb(r)) ? vals(rb(r)) : zero;
+        if constexpr (TA == 'H' || TA == 'h') {
+          v = std::conj(v);
+        }
+        Type f = one, term = one;
+        for(int n = 1; n <= order; n++) {
+          term = (im * static_cast<Type>(1.0 / static_cast<double>(n))) * (v * term);
+          f += term;
+        }
+        S_(r, nda::range::all) *= f;
+      }
+      return;
+    }
+  }
+
+  memory::buffered_array<MEM,Type,2> T1(Nw*M,Nel);
+  memory::buffered_array<MEM,Type,2> T2(Nw*M,Nel);
 
   auto pT1=std::addressof(T1);
   auto pT2=std::addressof(T2);
