@@ -281,7 +281,7 @@ void NOMSD<MEM,devPsiT>::DensityMatrix(const WlkSet& wset, RVec&& Ref, MatG&& G,
       utils::check_shape(Ref(1), "Ref(1)", npol*NMO, ndown);
     }
   }
-  G() = ComplexType(0.0);
+  // every element of G is overwritten below
   Ov() = ComplexType(0.0);
 
   if(compact) {

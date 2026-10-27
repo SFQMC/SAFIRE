@@ -550,12 +550,13 @@ private:
     auto psi = PsiC()(idet,ispin,all,range(nel[ispin]));
 
     if constexpr (MEM==HOST_MEMORY) {
-      //C[w][n] = sum_a psi[ I[n] ][a] Gc[w][a][ J[n] ]
+      //C[n][w] = sum_a psi[ I[n] ][a] Gc[w][a][ J[n] ]
+      nda::array<long,1> I(nIJ), J(nIJ);
       for(int n=0; n<nIJ; ++n) {
-        int In = int(ET_n2IJ(n)/M);
-        int Jn = int(ET_n2IJ(n)%M);
-        nda::tensor::contract(psi(In,all),"a",Gc(all,all,Jn),"wa",GIJ(n,all),"w"); 
+        I(n) = ET_n2IJ(n)/M;
+        J(n) = ET_n2IJ(n)%M;
       }
+      GIJ_host(psi, Gc, I, J, nda::transpose(GIJ()));
     } else {
       // batched gemm (gemv), with transposed Gc 
       memory::buffered_array<MEM,ComplexType,3> Gt(npol*NMO,nel[ispin],nwalk);
@@ -597,25 +598,22 @@ private:
 
     if constexpr (MEM==HOST_MEMORY) {
       //C[w][n] = sum_a psi[ I[n] ][a] Gwaj[w][a][ J[n] ]
+      nda::array<long,1> I(nIJ), J(nIJ);
+      for(int n=0; n<nIJ; ++n) {
+        I(n) = n2IJ(n)/M - (n < nIJ_first_beta ? 0 : NMO);
+        J(n) = n2IJ(n)%M;
+      }
       {
-        auto psi = PsiC()(0,0,all,range(nel[0]));
-        auto Gwaj = Gc(all,range(nel[0]),all);
-        for(int n=0; n<nIJ_first_beta; ++n) {
-          int In = int(n2IJ(n)/M);
-          int Jn = int(n2IJ(n)%M);
-          nda::tensor::contract(psi(In,all),"a",Gwaj(all,all,Jn),"wa",GIJ(all,n),"w");
-        }
+        auto alpha = range(nIJ_first_beta);
+        GIJ_host(PsiC()(0,0,all,range(nel[0])), Gc(all,range(nel[0]),all), I(alpha), J(alpha),
+                 GIJ(all,alpha));
       }
       if(empty_beta) {
         GIJ(all,range(nIJ_first_beta,nIJ)) = 0.0;
       } else if(walker_type == COLLINEAR) {
-        auto psi = PsiC()(0,1,all,range(nel[1]));
-        auto Gwaj = Gc(all,range(nel[0],nel[0]+nel[1]),all);
-        for(int n=nIJ_first_beta; n<nIJ; ++n) {
-          int In = int(n2IJ(n)/M) - NMO;
-          int Jn = int(n2IJ(n)%M);
-          nda::tensor::contract(psi(In,all),"a",Gwaj(all,all,Jn),"wa",GIJ(all,n),"w");
-        }
+        auto beta = range(nIJ_first_beta,nIJ);
+        GIJ_host(PsiC()(0,1,all,range(nel[1])), Gc(all,range(nel[0],nel[0]+nel[1]),all), I(beta),
+                 J(beta), GIJ(all,beta));
       }
     } else {
       // batched gemm (gemv), with transposed Gc
@@ -656,6 +654,27 @@ private:
       }
       nda::blas::gemm_batch<false>(ComplexType(1.0),vA,vB,ComplexType(0.0),vC);
       nda::tensor::assign(C,"iw",GIJ,"wi");
+    }
+  }
+
+  // GIJ[w][n] = sum_a psi[ I[n] ][a] Gc[w][a][ J[n] ] on the host. Runs over Gc in memory order,
+  // so that the rows of psi^T and Gc it gathers from stay in cache.
+  static void GIJ_host(auto const& psi, auto const& Gc, auto const& I, auto const& J, auto&& GIJ)
+  {
+    auto all = nda::range::all;
+    auto [nwalk, nel, M] = Gc.shape();
+    nda::array<ComplexType,2> psiT = nda::transpose(psi);
+    nda::array<ComplexType,1> acc(I.size());
+    for(long w = 0; w < nwalk; ++w) {
+      acc() = 0.0;
+      for(long a = 0; a < nel; ++a) {
+        auto p = psiT(a, all);
+        auto g = Gc(w, a, all);
+        for(long n = 0; n < I.size(); ++n) {
+          acc(n) += p(I(n)) * g(J(n));
+        }
+      }
+      GIJ(w, all) = acc;
     }
   }
 

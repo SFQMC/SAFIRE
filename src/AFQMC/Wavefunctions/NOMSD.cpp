@@ -231,12 +231,13 @@ void NOMSD<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset,
   const int nc    = ( compact ? nel : nspin*npol*NMO );
   auto expected_shape = std::to_array<long>({nw, nc * npol * NMO});
   utils::check(G.shape() == expected_shape, "Size mismatch: given {} != {} expected", G.shape(), expected_shape);
-  G() = ComplexType(0.0);
   Ov() = ComplexType(0.0);
 
   if(ndet == 1) {
     DensityMatrix(wset, OrbMats(0,all), G, Ov, compact);     
   } else {
+    // the determinants accumulate into G
+    G() = 0.0;
     // use the walker's current log_overlap as reference
     memory::buffered_array<MEM,ComplexType,1> log_m(nw); 
     wset.getProperty(OVLP, log_m);
