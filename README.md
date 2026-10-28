@@ -8,57 +8,11 @@ is a flexible, high-performance implementation of the auxiliary-field quantum Mo
 
 ## Installation
 
-Next, follow one of the sections below depending on whether you want a CPU-only build, or a GPU-accelerated build.
+See [Installation](https://safire.flatironinstitute.org/docs/dev/installation.html) for installation instructions and a list of dependencies.
 
-The companion Python package `safiretools` lives in `python/` and is installed with `pip install ./python`.
-Optional dependencies are available as the extras `pyscf`, `vis`, `testing` and `docs`, e.g. `pip install "./python[pyscf,vis]"`.
+## Getting Started
 
-### Dependencies
-
-For a CPU-only build:
-
-- CMake 3.18+
-- a modern C++ compiler with C++20 support. LLVM or GCC are recommended.
-- MPI (OpenMPI or other MPI implementation)
-- HDF5 (parallel HDF5 recommended)
-- Boost 1.61.0+
-- BLAS library
-- LAPACK library
-- Intel oneAPI MKL (for optimized sparse matrix operations on CPU)
-
-The build system will fetch the following dependencies automatically if they are not installed
-
-- [nda](https://github.com/TRIQS/nda) (tensor branch)
-- cxxopts
-- spdlog
-- cpptrace
-- nlohmann_json
-- Catch2 (for tests)
-
-For a GPU build, the following are also required:
-
-- CUDA 12+
-- CuTENSOR
-- CCCL (fetched automatically)
-- A GPU with compute compatability >=8
-
-### CPU Build
-
-```bash
-$ mkdir build
-$ cd build
-$ cmake .. -DCMAKE_BUILD_TYPE=Release
-$ make -j10
-```
-
-### GPU Build
-
-```bash
-$ mkdir build
-$ cd build
-$ cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=ON
-$ make -j10
-```
+The easiest way to get started using SAFIRE is by following the tutorials or examples from the [Documentation](https://safire.flatironinstitute.org/docs/dev/index.html).
 
 ## License
 
