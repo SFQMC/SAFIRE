@@ -75,6 +75,18 @@ The core developers of SAFIRE are listed below. For the full list of contributor
 <table>
   <tr>
     <td align="center">
+      <a href="https://github.com/lukas-weber">
+        <img src="https://github.com/lukas-weber.png" width="80"/><br/>
+        <sub><b>Lukas Weber</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/mmorale3">
+        <img src="https://github.com/mmorale3.png" width="80"/><br/>
+        <sub><b>Miguel Morales</b></sub>
+      </a>
+    </td>
+    <td align="center">
       <a href="https://github.com/bkesk">
         <img src="https://github.com/bkesk.png" width="80"/><br/>
         <sub><b>(Brandon) Kyle Eskridge</b></sub>
@@ -87,21 +99,9 @@ The core developers of SAFIRE are listed below. For the full list of contributor
       </a>
     </td>
     <td align="center">
-      <a href="https://github.com/mmorale3">
-        <img src="https://github.com/mmorale3.png" width="80"/><br/>
-        <sub><b>Miguel Morales</b></sub>
-      </a>
-    </td>
-    <td align="center">
       <a href="https://github.com/prosenberg15">
         <img src="https://github.com/prosenberg15.png" width="80"/><br/>
         <sub><b>Peter Rosenberg</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/lukas-weber">
-        <img src="https://github.com/lukas-weber.png" width="80"/><br/>
-        <sub><b>Lukas Weber</b></sub>
       </a>
     </td>
     <td align="center">
