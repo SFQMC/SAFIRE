@@ -1,7 +1,7 @@
 .. _examples_molecules:
 
-Quantum Chemistry / Molecules
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Quantum Chemistry
+~~~~~~~~~~~~~~~~~
 
 We provide the following worked examples in which we
 go through the entire workflow. 

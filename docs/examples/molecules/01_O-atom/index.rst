@@ -16,8 +16,8 @@ The workflow includes the following steps:
    trial wavefunction.
    Note that we used the ROHF orbitals as a basis, since they are spin-independent.
    The UHF wavefunction will be used as the trial wavefunction for AFQMC.
-   ``Wavefunction.from_pyscf()`` directly handles the change of basis as demonstrated in
-    this example. This produces ``afqmc.h5`` containing the Hamiltonian and trial wavefunction. 
+   ``Wavefunction.from_pyscf()`` directly handles the change of basis as demonstrated in 
+   this example. This produces ``afqmc.h5`` containing the Hamiltonian and trial wavefunction. 
 
 2. **Run SAFIRE**: Run SAFIRE using the provided JSON job file (see below):
 
