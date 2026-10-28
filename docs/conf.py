@@ -129,7 +129,7 @@ html_theme_options = {
     "globaltoc_collapse": False,    # expand whole tree or not
     "globaltoc_includehidden": False, # show :hidden: entries
     "navigation_depth": 3,
-    "header_links_before_dropdown": 6,
+    "header_links_before_dropdown": 5,
     # Show this many levels expanded on page load (default: 1)
     "show_nav_level": 2,
     # Remove the light/dark theme switcher (default: ["theme-switcher", "navbar-icon-links"])
