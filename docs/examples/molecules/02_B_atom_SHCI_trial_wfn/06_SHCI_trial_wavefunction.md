@@ -13,13 +13,13 @@ kernelspec:
 
 +++ {"id": "UwuNT7DqI_rN"}
 
-# B atom – Semistochastic heatbath CI (SHCI) trial wavefunction
+# B Atom – Semistochastic Heat-Bath CI (SHCI) Trial Wavefunction
 
 In this example, we will compute the ground state energy of the Boron (B) atom.
 This is an open-shell atom with a single p-electron.
-We used PySCF and `afqmctools` to generate a Hamiltonian and save it the SAFIRE HDF5 format (sample script at the end of this example); however, a FCIDUMP can be used instead.
-If you already have a FCIDUMP, you can skip using the `afqmc_to_fcidump` tool,
-and instead, after running SHCI, you can use the `fcidump_to_afqmc` tool to generate a Hamiltonian for SAFIRE.
+We used PySCF and `safiretools` to generate a Hamiltonian and save it the SAFIRE HDF5 format (sample script at the end of this example); however, a FCIDUMP can be used instead.
+If you already have a FCIDUMP, you can skip the conversion to FCIDUMP below,
+and instead, after running SHCI, use `MolecularHamiltonian.from_fcidump` to generate a Hamiltonian for SAFIRE.
 
 References:
 
@@ -29,10 +29,17 @@ References:
 
 Begin by generating a SAFIRE Hamiltonian HDF5 file.
 See the [sample script below](#sample-script-for-generating-the-safire-hamiltonian-file).
-afqmctools provides a command line tool to convert from the SAFIRE HDF5 Hamiltonian file to a FCIDUMP which can be read by many quantum chemistry codes.
+safiretools can convert the SAFIRE HDF5 Hamiltonian file to a FCIDUMP which can be read by many quantum chemistry codes.
 
-```bash
-afqmc_to_fcidump -i afqmc.h5 -o FCIDUMP
+```python
+from safiretools import MolecularHamiltonian
+
+# the Hamiltonian file carries no electron count, so pass (nup, ndown) of the B atom
+MolecularHamiltonian.from_hdf5("afqmc.h5").to_fcidump(
+    "FCIDUMP",
+    nelec=(3, 2),
+    cplx=False
+)
 ```
 
 We will use SHCI as implemented in [DICE](https://github.com/sanshar/Dice) for this example; 
@@ -116,19 +123,16 @@ PTEnergy:     -24.6066408409 +/- 5.36e-06
 Time(s):       39.50
 ```
 
-Finally, `afqmctools` provides a command line tool to convert from the wavefunction printed in the Dice raw text output to the SAFIRE HDF5 wavefunction format.
+Finally, `safiretools` can convert the wavefunction printed in the Dice raw text output to the SAFIRE HDF5 wavefunction format.
 From the example directory, run
 
-```bash
-$ dice_to_hdf5 -o shci_wfn.h5 -i output.dat -n 100 -v
-Number of electrons: up:2, down:3
-PHMSD trial wavfunction -> using uhf-like walkers
+```python
+from safiretools import Wavefunction
+
+Wavefunction.from_dice("output.dat", ndets=100).to_hdf5("shci_wfn.h5")
 ```
 
-The `-o` option sets the output HDF5 file name,
-`-i` sets the "input" to `dice_to_hdf5` (this will be an output from Dice!),
-`-n` sets the number of Slater determinants to save (currently a required argument!),
-and `-v` turns on verbose output.
+`ndets` sets the number of Slater determinants to keep from the Dice output.
 
 Now, we need to write an SAFIRE input file.
 You can set this up as you choose, here is a sample input file
@@ -136,29 +140,22 @@ for this case.
 
 ```json
 {
-  "afqmc": {
-    "project": {
-      "id": "qmc",
-      "series": 0
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "hamiltonian": {
+      "filename": "afqmc.h5"
     },
-    "execute": {
-      "walker_set": {
-        "walker_type": "COLLINEAR"
-      },
-      "hamiltonian": {
-        "filename": "afqmc.h5"
-      },
-      "wavefunction": {
-        "filename": "shci_wfn.h5"
-      },
-      "timestep": 0.01,
-      "steps": 10000,
-      "n_walkers_per_mpi_task": 20,
-      "measure_interval_multiplier": 1,
-      "population_control_interval": 10,
-      "walker_ortho_interval": 10,
-      "seed": 42
-    }
+    "wavefunction": {
+      "filename": "shci_wfn.h5"
+    },
+    "timestep": 0.01,
+    "steps": 10000,
+    "equilibration_steps": 2000,
+    "num_walkers": 1280,
+    "measure_interval": 10,
+    "population_control_interval": 10,
+    "walker_ortho_interval": 10
   }
 }
 ```
@@ -169,38 +166,20 @@ Finally, we can run AFQMC using SAFIRE by running
 $ mpirun -np 64 /path/to/SAFIRE/build/safire afqmc.json
 ```
 
-When that has finished, we can use afqmctools to analyze the result,
+When that has finished, we can use `safiretools` to analyze the result,
 
-```bash
-$ scalar_stats qmc.s000.scalar.dat -s time -t -e 20.0 -t --savefig energy_vs_beta.png
+```python
+from safiretools import Results, vis
 
-
-====== [analyze_scalar_data Settings] ======
-
-[+] fname            = qmc.s000.scalar.dat
-[+] mark_header      = #               
-[+] series_column    = time            
-[+] nequil           = 20.0            
-[+] estimate_equil   = False           
-[+] column           = LocalEnergy     
-[+] reblock          = 1               
-[+] ndiscard         = None            
-[+] list             = False           
-[+] trace            = True            
-[+] append           = None            
-[+] dump             = False           
-[+] dump_fname       = trace.dat       
-[+] verbose          = True            
-[+] autocorr         = None            
-[+] savefig          = energy_vs_beta.png
-[+] dump_avail_columns = False           
-
-AFQMC Energy   -24.602724 +/-   0.000208 9.08 20.0/100.0
+results = Results("qmc.results.h5")
+vis.plot_timeseries(results)
 ```
 
-This will also generate the following plot within the `energy_vs_beta.png`. The plot will also open in a new interactive window if run locally.
+This plots the energy as a function of imaginary time and prints an output compatible with
 
-![Energy vs Beta](energy_vs_beta.png)
+```
+Energy = -24.60272 ± 0.00021
+```
 
 +++
 
@@ -212,11 +191,10 @@ Simply run this python script to generate a SAFIRE Hamiltonian file for the B at
 :id: OX7sSXv5U7KH
 
 # sample script to generate a SAFIRE HDF5 Hamiltonian
-#  using afqmctools and PySCF.
+#  using safiretools and PySCF.
 from pyscf import gto, scf
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
+from safiretools import MolecularHamiltonian
 
 
 ### Step 1. Run PySCF to generate a basis
@@ -226,11 +204,7 @@ mol = gto.M(
     spin = 1  # Nup - Ndown
 )
 
-atom_chkfile = "B.chk"
-
-
 mf = scf.ROHF(mol).newton()
-mf.chkfile = atom_chkfile
 mf.kernel()
 
 # perform stability analysis - see PySCF example:
@@ -241,17 +215,11 @@ mf = mf.run(dm1)
 mf.stability()
 mf.kernel()
 
-### Step 2. use afqmctools to generate and save the Hamiltonian.
-# load data from PySCF checkpoint file
-basis_scf_data = load_from_pyscf_chk_mol(
-    chkfile = atom_chkfile
-)
-
-# write Hamiltonian
-write_hamil_mol(
-    basis_scf_data,
-    hamil_file = "afqmc.h5",
+### Step 2. use safiretools to generate and save the Hamiltonian
+# directly from the PySCF SCF object.
+MolecularHamiltonian.from_pyscf(
+    mf,
     chol_cut = 1e-6,
     verbose=True
-)
+).to_hdf5("afqmc.h5")
 ```

@@ -24,45 +24,37 @@ https://pubs.acs.org/doi/10.1021/acs.jctc.8b01244
 This example uses the freely available [embeddingAFQMC](https://github.com/bkesk/embeddingAFQMC) Python package
 which, among other things, provides tools to analyze the locality of a set of orbitals.
 
-## O adsorption on $H_{20}$ chain
+## O Adsorption on $H_{20}$ Chain
 
 ```{code-cell} ipython3
 :id: v08YqIkR2r02
 
-# Some setup
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
-# from embeddingAFQMC
-from embedding.orbital.assign import euclid_nd, gen_orbital_stats, print_stats
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
 Hartree = 27.211407953 # eV
 Bohr = 0.529177        # Angstrom
-
-MPI_TASKS = 16
 ```
 
 +++ {"id": "vDrFukfq5u0t"}
 
 ### Automate the AFQMC
 
-We can automate the local embedding workflow, for a given O atom height, $h$, and localization radii $R_o$, and $R_v$, using a Python function. The workflow consists of the following steps.
+We can automate the local embedding workflow, for a given O atom height, $h$, and localization radii $R_\mathrm{o}$, and $R_\mathrm{v}$, using a Python function. The workflow consists of the following steps.
 
 1. define the atomic positions
 2. run ROHF to obtain both a trial wavefunction, and a basis
-3. unitarily localize the set of ROHF orbitals using so-called "split localization". This can be done by partitioning the ROHF orbitals into the following sets, and localizing each set separately via Foster-Boys localization for example).
+3. unitarily localize the set of ROHF orbitals using so-called split localization. This can be done by partitioning the ROHF orbitals into the following sets, and localizing each set separately via Foster-Boys localization for example).
     - energetic core orbitals (no need to localize, we will freeze these no mater what)
     - occupied orbitals (including singly-occupied orbitals here; however, it is also possible to partition the singly-occupied orbitals from the doubly-occupied orbitals)
     - virtual orbitals
-4. Select active orbitals using the $R_o$ and $R_v$ localization radii which apply to the occupied and virtual orbitals, respectively. An orbital is included in the active space if its centroid is localized within the applicable localization radius. Here, we use the 2-dimensional projection of the orbital centroid positions onto the $xy$-plane instead of the full 3-dimensional position.
+4. Select active orbitals using the $R_\mathrm{o}$ and $R_\mathrm{v}$ localization radii which apply to the occupied and virtual orbitals, respectively. An orbital is included in the active space if its centroid is localized within the applicable localization radius. Here, we use the 2-dimensional projection of the orbital centroid positions onto the $xy$-plane instead of the full 3-dimensional position.
 5. perform a frozen core transformation on the many-body Hamiltonian based on the chosen active / inactive orbitals, and save the effective Hamiltonian to a SAFIRE HDF5 input file.
 6. Write the ROHF determinant to the SAFIRE HDF5 format to use as a trial wavefunction.
-7. Generate the json input file for SAFIRE
+7. Generate the JSON job file for SAFIRE
 8. run AFQMC using SAFIRE
-9. Compute the average AFQMC energy using afqmctools's analysis tooling
+9. Compute the average AFQMC energy using `safiretools`
 
 See the codeblock below.
 
@@ -70,17 +62,13 @@ See the codeblock below.
 :id: b7gcg4ZA6-kD
 
 import numpy as np
-import h5py as h5
-import matplotlib.pyplot as plt
 from pyscf import gto, scf, lo
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-from afqmctools.wavefunction.mol import write_wfn
-from afqmctools.inputs.from_hdf import write_json
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import MolecularHamiltonian, NOMSDWavefunction, write_jobfile
+from safiretools import Results
 
-from tutorial_utils import run_afqmc
+# from embeddingAFQMC
+from embedding.orbital.assign import euclid_nd, gen_orbital_stats, print_stats
 
 
 # custom metric to take the projection of the orbital position onto the xy plane
@@ -93,10 +81,6 @@ def euclid_2d(r1, r2):
 def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=None):
     # 1. generate underlying CMO basis
     # run initial HF calculation to generate basis
-
-    local_scratch = scratch_dir / f"h={h:5.5f}"
-    local_scratch.mkdir(parents=True, exist_ok=True)
-    atom_chkfile = local_scratch / f"rhf_h={h:5.5f}.chk"
 
     def get_atomic_positions(h):
         """
@@ -134,7 +118,6 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
 
     # run HF
     mf = scf.RHF(mol).newton()
-    mf.chkfile = atom_chkfile
     # it turns out to be helpful to initialize each HF calculation from the final solution of the
     # previous geometry
     dm0 = rhf_guess_rdm if rhf_guess_rdm is not None else None
@@ -202,88 +185,58 @@ def get_afqmc_energy(h, Ro=np.inf, Rv=np.inf, N_energetic_core=0, rhf_guess_rdm=
     # 4. build and save the Hamiltonian
     # generate the Frozen Core Hamiltonian + save for AFQMC
 
-    afqmc_hamil_file = local_scratch / "local_embedding_H.h5"
-
-    scf_data = load_from_pyscf_chk_mol(
-        chkfile = atom_chkfile
-    )
-
-    # edit the orbitals!
-    scf_data["mo_coeff"] = local_basis
-
-    write_hamil_mol(
-        scf_data,
-        cas=(2*(N_active_occ),ncas),
-        hamil_file = afqmc_hamil_file,
+    # the localized orbitals are the basis, rather than the RHF ones
+    hamiltonian = MolecularHamiltonian.from_pyscf(
+        mf,
+        basis=local_basis,
+        active_space=(2*(N_active_occ),ncas),
         chol_cut = 1e-5,
         verbose=False
     )
 
-    # 5. Write the trial wavefunction
-
-    # write the trial wavefunction
-    afqmc_wfn_file = local_scratch / "active_space_rhf_wfn.h5"
-
+    # 5. the trial wavefunction
     active_det_up = np.eye(ncas,N_active_occ)
-    wfn = ( np.array([1.0]), np.array([active_det_up]))
-    nelec_active = (N_active_occ,N_active_occ)
 
-    write_wfn(
-        afqmc_wfn_file,
-        wfn,
-        walker_type='closed',
-        nelec=nelec_active,
-        norb=ncas,
-        verbose=False
+    # a single (ncas, N_active_occ) array per determinant makes the wavefunction closed shell
+    wavefunction = NOMSDWavefunction(
+        coeffs=np.array([1.0]),
+        dets=np.array([active_det_up])
     )
 
-    # 6. write json input file
-    execute_options = {
-        "timestep": 0.01,
-        "steps": 6000,
-        "population_control_interval" : 10,
-        "measure_interval_multiplier": 1,
-        "walker_ortho_interval" : 10,
-        "n_walkers_per_mpi_task": 20,
-        "seed" : 42,
-        "walker_set": {
-            "walker_type": "COLLINEAR"
-        },
-    }
-    write_json(
-        local_scratch / "afqmc.json",
-        fwfn0=afqmc_wfn_file,
-        fham0=afqmc_hamil_file,
-        exec_opts=execute_options
+    # 6. write JSON job file, which also writes the Hamiltonian and the wavefunction to HDF5
+    name = f"afqmc_h{h:5.5f}"
+    write_jobfile(
+        f"{name}.json",
+        {
+            "seed": 42,
+            "execute": {
+                "timestep": 0.01,
+                "steps": 6000,
+                "equilibration_steps": 1000,
+                "population_control_interval": 10,
+                "measure_interval": 10,
+                "walker_ortho_interval": 10,
+                "num_walkers": 320,
+                "wavefunction": wavefunction,
+                "hamiltonian": hamiltonian
+            }
+        }
     )
 
     # 7. run AFQMC
-    # run the AFQMC calculation...
-    run_afqmc(
-        run_dir=local_scratch,
-        run_mode="local_cpu",
-        timeout_mins=100,
-        input_file="afqmc.json",
-        np=MPI_TASKS,             # number of MPI tasks
-        output_file="afqmc.out"   # optionally include output here by setting to None
-    )
+    !mpirun -n 16 $$AFQMC_EXEC {name}.json
 
     # 8. analyze results
-    settings = dict(
-        fname = local_scratch/"qmc.s000.scalar.dat",
-        xaxis = "time",
-        nequil = 10,
-        trace = True
-    )
+    E, dE = Results(f"{name}.results.h5").average("Energy")
 
-    return *analyze_scalar_data(settings),Erhf,rhf_rdm
+    return E.real, dE.real, Erhf, rhf_rdm
 ```
 
 +++ {"id": "siRKdtkN9GVZ"}
 
 ## AFQMC Potential Energy Curve
 
-Let's use the function that we defined to compute $E[h]$ for $(R_o,R_v) = (3.8,6.2)$ Bohr.
+Let's use the function that we defined to compute $E[h]$ for $(R_\mathrm{o},R_\mathrm{v}) = (3.8,6.2)$ Bohr.
 
 ```{code-cell} ipython3
 ---
@@ -292,7 +245,11 @@ colab:
   height: 1000
 id: AsrchZED9FfD
 outputId: d46cbef5-7b91-4c67-9ae3-c5217e07894c
+scrolled: true
+tags: [scroll-output]
 ---
+import h5py as h5
+
 o_atom_heights = [ 1.247, 1.436, 1.814, 2.381, 3.326, 3.893]
 
 Ro = 3.8 # Bohr
@@ -321,7 +278,7 @@ for h in o_atom_heights:
     print(f"E_rhf = {Erhf*Hartree} eV")
     print(f"correlation E = {(E - Erhf)*Hartree}")
 
-    with h5.File(scratch_dir / "afqmc_results.h5", "a") as f:
+    with h5.File("afqmc_results.h5", "a") as f:
         save_results(f, "h", data=o_atom_heights)
         save_results(f, "E", data=E_list)
         save_results(f, "dE", data=dE_list)
@@ -341,8 +298,10 @@ colab:
 id: d74PFj8g8pAR
 outputId: 91e568eb-80d6-4e00-8e5e-0596bf3bfa65
 ---
+import matplotlib.pyplot as plt
+
 # read results from file to allow saving / re-analysis.
-with h5.File(scratch_dir / "afqmc_results.h5", "r") as f:
+with h5.File("afqmc_results.h5", "r") as f:
     o_atom_heights = f["h"][:]
     E_list = f["E"][:]
     dE_list = f["dE"][:]
@@ -356,7 +315,7 @@ plt.legend()
 plt.xlabel('h (Bohr)')
 plt.ylabel('E (eV)')
 plt.title('Energy vs O atom height')
-plt.savefig(scratch_dir / "energy_vs_height.png")
+plt.savefig("energy_vs_height.png")
 plt.show()
 ```
 
@@ -439,7 +398,7 @@ id: 9QDuUutS9BwO
 outputId: f5afcd28-81bc-4dcc-927c-0bdc3e332daf
 ---
 # read results from file to allow saving / re-analysis.
-with h5.File(scratch_dir / "afqmc_results.h5", "r") as f:
+with h5.File("afqmc_results.h5", "r") as f:
     o_atom_heights = f["h"][:]
     E_list = f["E"][:]
     dE_list = f["dE"][:]
@@ -509,6 +468,6 @@ plt.legend()
 plt.xlabel('h (Bohr)')
 plt.ylabel('E (eV)')
 plt.title('Energy vs O atom height')
-plt.savefig(scratch_dir / "energy_vs_height.png")
+plt.savefig("energy_vs_height.png")
 plt.show()
 ```

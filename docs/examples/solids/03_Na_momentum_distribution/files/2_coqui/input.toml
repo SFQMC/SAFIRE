@@ -1,0 +1,22 @@
+[mean_field.qe]
+name     = "mf"
+prefix   = "pwscf"
+outdir   = "../1_dft_qe/OUT"
+nbnd     = 19
+
+[interaction.cholesky]
+name        = "eri"
+mean_field  = "mf"
+output      = "hamiltonian.h5"
+write_type  = "single"
+tol         = 1e-5
+ecut = 60
+
+[hamiltonian]
+mean_field  = "mf"
+output      = "hamiltonian.h5"
+
+[wavefunction.mf]
+mean_field  = "mf"
+output      = "wfn.h5"
+occ_by_eigenval = true

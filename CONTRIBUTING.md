@@ -55,12 +55,12 @@ CTEST_PARALLEL_LEVEL=0 make test
 ### Running Python unit tests
 
 Pytest is already configured at the project level.
-If `afqmctools` was installed via pip according, then pytest should already be installed.
-We recommend also installing the optional "TESTING" dependencies by running the following
-in the `utils/` directory.
+If `safiretools` was installed via pip according, then pytest should already be installed.
+We recommend also installing the optional "testing" dependencies by running the following
+in the `python/` directory.
 
 ```sh
-$ pip install .[TESTING]
+$ pip install .[testing]
 ```
 
 Pytest can be run using
@@ -69,7 +69,7 @@ Pytest can be run using
 $ pytest
 ```
 
-from within `utils/`.
+from within `python/`.
 
 To target specific categories of test, specify the corresponding pytest for "marks" using.
 
@@ -93,7 +93,7 @@ for example.
 
 If the "TESTING" optional dependencies are installed, then an html report of the test results will be generated
 in `.htmlpytest`.
-The html report can be viewed in using a web browser by navigating to `file:///path/to/afmqc/utils/.htmlpytest/pytest.html`.
+The html report can be viewed in using a web browser by navigating to `file:///path/to/SAFIRE/python/.htmlpytest/pytest.html`.
 
 
 ### Additional Notes

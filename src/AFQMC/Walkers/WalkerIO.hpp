@@ -33,150 +33,16 @@ namespace sfqmc
 {
 namespace afqmc
 {
-template<class WalkerSet>
-bool dumpSamplesHDF5([[maybe_unused]] WalkerSet& wset,
-                     [[maybe_unused]] h5::file& dump,
-                     [[maybe_unused]] int nW_to_file)
-{
-  return true;
-  APP_ABORT("Finish ");
-/*
-  if(nW_to_file==0) return true;
-  if(head) { 
-
-    int nW = numWalkers();
-
-    std::vector<int> from(nproc_heads);
-    MPI_Allgather(&nW,1,MPI_INT,from.data(),1,MPI_INT,TG.TG_heads().impl_);
-
-    int nWtot = std::accumulate(from.begin(),from.end(),int(0));
-    int w0 = std::accumulate(from.begin(),from.begin()+rank_heads,int(0));
-
-    if(nW_to_file<0) nW_to_file=nWtot;
-    nW_to_file = std::min(nW_to_file,nWtot);
-
-    // careful here, avoid sending extra information (e.g. B mats for back propg)
-    int wlk_nterms = (9 + nrow*ncol);
-    int wlk_sz = wlk_nterms*sizeof(ComplexType);
-    int nwlk_per_block = std::min(std::max(1,hdf_block_size/wlk_sz),nW_to_file);
-    int nblks = nW_to_file/nwlk_per_block + ((nW_to_file%nwlk_per_block>0)?1:0);
-    std::vector<int> wlk_per_blk;
-  
-    if(rank_heads==0) {
-
-      // check that restart data doesnot exist 
-      counts.resize(nproc_heads);
-      displ.resize(nproc_heads);
-      wlk_per_blk.reserve(nblks);
-
-      commBuff.reserve(wlk_nterms*nwlk_per_block);
-
-      std::vector<int> Idata(6);
-      Idata[0]=nW_to_file;
-      Idata[1]=nblks;
-      Idata[2]=wlk_nterms;
-      Idata[3]=wlk_sz;
-      Idata[4]=nrow;
-      Idata[5]=ncol;
-
-      dump.push("Walkers");
-      dump.write(Idata,"dims");
-      
-    }
-
-    // to extract a single walker from walker storage 
-    MPI_Datatype rtype, stype;
-    {
-      MPI_Datatype stype_;
-      MPI_Type_contiguous(2*wlk_nterms, MPI_DOUBLE, &stype_);
-      MPI_Type_commit(&stype_);
-      MPI_Aint loc0, loc1;
-      MPI_Get_address(walkers.values(), &loc0);
-      MPI_Get_address(walkers.values()+walker_size, &loc1);
-      MPI_Aint dis = loc1-loc0;
-      MPI_Type_create_resized(stype_,0,dis,&stype); 
-      MPI_Type_commit(&stype);
-      MPI_Type_free(&stype_);
-
-      // to deposit a single walker on contiguous memory
-      MPI_Type_contiguous(2*wlk_nterms, MPI_DOUBLE, &rtype);
-      MPI_Type_commit(&rtype);
-    }
-
-    int nsent=0;
-    // ready to send walkers to head in blocks
-    for(int i=0, ndone=0; i<nblks; i++, ndone+=nwlk_per_block) {
-
-      int nwlk_tot = std::min(nwlk_per_block,nW_to_file-ndone);  
-      int nw_to_send=0; 
-      if( w0+nsent >= ndone && w0+nsent < ndone + nwlk_tot) 
-        nw_to_send = std::min(nW-nsent,(ndone+nwlk_tot)-(w0+nsent)); 
- 
-      if(rank_heads==0) {
-
-        for(int p=0, nt=0; p<nproc_heads; p++) {
-   
-          int n_ = 0;
-          int nn = nt + nW;   
-          if( ndone+nwlk_tot > nt && ndone < nt+nW ) {
-            if(ndone <= nt)
-              n_ = std::min(nW,(ndone+nwlk_tot)-nt);    
-            else    
-              n_ = std::min(nt+nW-ndone,nwlk_tot);    
-          }    
-
-          counts[p]=n_;
-          nt+=from[p];
-
-        }    
-        displ[0]=0;
-        for(int p=1, nt=0; p<nproc_heads; p++) {
-          nt += counts[p-1];
-          displ[p]=nt;
-        }
-
-        commBuff.resize(wlk_nterms*nwlk_tot);
-      }  
-
-      // assumes current storage structure
-      MPI_Gatherv( getSM(nsent), nw_to_send, stype,
-                    commBuff.data(), counts.data(), displ.data(), rtype, 
-                    0, TG.TG_heads().impl_);
-      nsent += nw_to_send;
-      
-      if(rank_heads==0) {  
-        dump.write(commBuff,std::string("walkers_")+std::to_string(i));
-        wlk_per_blk.push_back(nwlk_tot);
-      }  
-  
-    }
-
-    if(rank_heads==0) {
-      dump.write(wlk_per_blk,"wlk_per_blk");
-      dump.pop();
-    }
-
-    MPI_Type_free(&rtype);
-    MPI_Type_free(&stype);
-
-  }
-
-  mpi->comm.barrier();  
-
-  return true;
-*/
-}
 
 // Reads a walker restart file and returns a fully constructed, populated walker
 // set sized to this rank's share of the walkers in the file. fh5 opened on all
-// ranks read-only. The set is built from the given parameters/rng/walker_type with
-// dimensions taken from the file, upholding the invariant that a walker set is
-// always born fully populated (no empty intermediate state).
+// ranks read-only. The set is built from the given parameters/rng with dimensions
+// taken from the file, upholding the invariant that a walker set is always born
+// fully populated (no empty intermediate state).
 template<class WalkerSet, class MpiContext, class Rng>
 WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
-                              const WalkerSetParameters& params,
                               std::shared_ptr<Rng> rng,
-                              WALKER_TYPES walker_type,
+                              const WalkerSetParameters& params,
                               h5::file& fh5,
                               int nWalkers,
                               bool set_to_target)
@@ -200,6 +66,7 @@ WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
   int ndn        = Idata[6];
 
   std::array<int, 3> dims;  // {rows, naea, naeb} = wlk_desc[0..2]
+  WALKER_TYPES const walker_type = resolved(params.walker_type, "walker_type");
   if (walker_type == NONCOLLINEAR)
     dims = {2 * NMO, nup + ndn, 0};
   else if (walker_type == COLLINEAR)
@@ -225,7 +92,7 @@ WalkerSet readWalkersFromHDF5(std::shared_ptr<MpiContext> mpi,
   }
   int nw_local = nWN - nW0;
 
-  WalkerSet wset(mpi, params, rng, walker_type, dims, nw_local, false);
+  WalkerSet wset(mpi, rng, params, dims, nw_local, false);
   utils::check(wlk_nterms == wset.walkerSizeIO(),
                " Inconsistent walker restart file: IO size {} != walkerSizeIO {}.",
                wlk_nterms, wset.walkerSizeIO());
@@ -342,13 +209,15 @@ bool dumpToHDF5(WalkerSet& wset, h5::file& fh5)
     {
       for (int p = 0, nt = 0; p < mpi->comm.size(); p++)
       {
+        // the ranks need not hold the same number of walkers
+        int const nWp = nw_per_rank[p];
         int n_ = 0;
-        if (ndone + nwlk_tot > nt && ndone < nt + nW)
+        if (ndone + nwlk_tot > nt && ndone < nt + nWp)
         {
           if (ndone <= nt)
-            n_ = std::min(nW, (ndone + nwlk_tot) - nt);
+            n_ = std::min(nWp, (ndone + nwlk_tot) - nt);
           else
-            n_ = std::min(nt + nW - ndone, nwlk_tot);
+            n_ = std::min(nt + nWp - ndone, nwlk_tot);
         }
 
         counts[p] = n_ * wlk_nterms;

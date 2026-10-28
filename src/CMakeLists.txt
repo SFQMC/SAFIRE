@@ -28,7 +28,9 @@ target_include_directories(safire_lib PUBLIC
 target_link_libraries(safire_lib PUBLIC nda::nda_c mpi3 Boost::headers cxxopts::cxxopts safire_warnings hdf5::hdf5 hdf5::hdf5_hl nlohmann_json::nlohmann_json)
 
 if(ENABLE_CUDA)
-  target_link_libraries(safire_lib PRIVATE CUDA::curand CUDA::cudart CCCL::CCCL)
+  target_link_libraries(safire_lib PRIVATE CUDA::curand CUDA::cudart)
+  # we fetch the standalone CCCL and if a different TU does not use it, there can be ABI mismatches in GPU code
+  target_link_libraries(safire_lib PUBLIC CCCL::CCCL)
 endif()
 
 if(ENABLE_SPDLOG)

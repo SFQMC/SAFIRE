@@ -32,12 +32,12 @@
 #include <string>
 #include <algorithm>
 
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "test_utils.hpp"
 #include "AFQMC/Utilities/readWfn.h"
+#include "AFQMC/Utilities/format_version.hpp"
 
 extern bool WRITE_REFERENCE;
 extern std::string UTEST_HAMIL, UTEST_WFN;
@@ -58,7 +58,6 @@ void phmsd_read(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>
   std::string test_wfn = base_name.substr(0, base_name.find_last_of("."));
   auto file_data       = read_test_results_from_hdf<ComplexType>(hamil_file, test_wfn);
   auto [NMO,nup,ndown] = read_info_from_wfn(wfn_file, "PHMSD");
-  utils::check(NMO == file_data.NMO, "Incompatible NMO.");
 
   WALKER_TYPES type    = afqmc::getWalkerType(wfn_file, "PHMSD");
 
@@ -67,7 +66,7 @@ void phmsd_read(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>
   h5::group wgrp = grp.open_group("Wavefunction");
   h5::group ngrp = wgrp.open_group("PHMSD");
   int ndets_to_read = -1;
-  std::string wfn_type;
+  PHMSDOrbitalType wfn_type;
 
   nda::array<int,2> occs;
   nda::array<ComplexType,1> coeffs;
@@ -145,7 +144,6 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   test_wfn = test_wfn.substr(test_wfn.find('_') + 1);
   auto file_data       = read_test_results_from_hdf<ComplexType>(hamil_file, test_wfn);
   auto [NMO,nup,ndown] = read_info_from_wfn(wfn_file, "PHMSD");
-  utils::check(NMO == file_data.NMO, "Incompatible NMO.");
 
   WALKER_TYPES type = afqmc::getWalkerType(wfn_file, "PHMSD");
   int nspin         = (type == COLLINEAR) ? 2 : 1;
@@ -155,20 +153,17 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   double dt         = 0.01;
   std::shared_ptr<utils::RandomGenerator_t<>> rng = std::make_shared<utils::RandomGenerator_t<>>();
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  Hamiltonian& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 
-  WavefunctionFactory<MEM> WfnFac{};
   WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file,
                                     .algorithm = PHMSDEnergyAlgorithm::reference};
   apply_defaults(wfn_params, ham.getHamType());
-  WfnFac.push("wfn0", wfn_params);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(mpi, wfn_params, type, false, ham, nwalk);
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
 
-  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
+  auto const guess = wfn.initial_guess();
+  auto const initial_guess = guess.slater();
   REQUIRE(int(initial_guess.size()) == nspin);
   REQUIRE(initial_guess[0].shape() == std::array<long,2>{npol*NMO,nup});
 
@@ -187,7 +182,10 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
       nda::blas::gemm(R, initial_guess[is], g);
       rotated_initial_guess.push_back(std::move(g));
     }
-    return WalkerSet<MEM>(mpi, wlk_params, rng, type, rotated_initial_guess, nwalk);
+    return WalkerSet<MEM>(mpi, rng, wlk_params,
+                          WalkerSetInitialGuess{.walker_type = type,
+                                                .payload = std::move(rotated_initial_guess)},
+                          nwalk);
   }();
 
   // 0. Get raw occupancies and coefficients from file.
@@ -198,11 +196,11 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   nda::array<int,2> occs;
   h5::file f(wfn_file,'r');
   h5::group g = h5::group(f).open_group("Wavefunction").open_group("PHMSD");
-  std::string orb_type;
-  read_ph_wavefunction_hdf(g, coeffs, occs, ndets, type, 
+  PHMSDOrbitalType orb_type;
+  read_ph_wavefunction_hdf(g, coeffs, occs, ndets, type,
                                 NMO, nup, ndown, PsiT_MO, orb_type);
 
-  if(orb_type=="occ") {
+  if(orb_type == PHMSDOrbitalType::occ) {
     PsiT_MO.resize(1);
     PsiT_MO(0) = PsiT_Matrix<HOST_MEMORY>({npol*NMO,npol*NMO},1);
     for(int i=0; i<npol*NMO; ++i)
@@ -210,7 +208,8 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   }
 
   // Using NOMSD as reference. Making h5 from input phmsd wfn
-  std::string nomsd_file = "_nomsd_dummy_.h5";
+  utils::TemporaryDirectory tmpdir;
+  std::string nomsd_file = (tmpdir / "nomsd.h5").string();
   if(mpi->comm.root()) {
     // 
     h5::file f_(nomsd_file,'w');
@@ -218,16 +217,9 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     h5::group wg = g_.create_group("Wavefunction");
     h5::group ng = wg.create_group("NOMSD");
  
-    nda::vector<int> dims = {NMO,nup,ndown,int(type),int(coeffs.size())};
-    nda::h5_write(ng,"dims",dims);
+    write_format_version(ng);
+    h5::h5_write_attribute(ng,"spin_type",walkerTypeToString(type));
     nda::h5_write(ng,"ci_coeffs",coeffs);
-
-    {
-      nda::h5_write(ng,"Psi0_alpha",initial_guess[0]);
-    }
-    if(type == COLLINEAR) {
-      nda::h5_write(ng,"Psi0_beta",initial_guess[1]);
-    }
 
     for(int idet=0, n=0; idet<ndets; ++idet) {
       {
@@ -247,8 +239,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
 
   WavefunctionParameters nomsd_params{.name = "nomsd", .filename = nomsd_file};
   apply_defaults(nomsd_params, ham.getHamType());
-  WfnFac.push("nomsd", nomsd_params);
-  auto& nomsd = WfnFac.getWavefunction(mpi, "nomsd", type, false, &ham, nwalk);
+  auto nomsd = Wavefunction<MEM>::from_params(mpi, nomsd_params, type, false, ham, nwalk);
 
   // 1. Overlap 
   ComplexType ovlp_sum = ComplexType(0.0);
@@ -256,17 +247,19 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
   {
     // Construct slater matrix from given set of occupied orbitals.
     memory::array<MEM,ComplexType,1> ov(nwalk,ComplexType(0.0));
-    if(orb_type == "mixed")
+    if(orb_type == PHMSDOrbitalType::mixed) {
       getSlaterMatrix_mixed(PsiA, PsiT_MO(0), occs(idet,range(nup)));
-    else
+    } else {
       getSlaterMatrix_occ(PsiA, occs(idet,range(nup)));
+    }
     det_ops::Log_Overlap(PsiA,wset.SlaterMatrices(Alpha),ov);
     if(type == COLLINEAR) {
-      nda::array<int, 1> ob = occs(idet,range(nup,nup+ndown)) - NMO; 
-      if(orb_type == "mixed")
+      nda::array<int, 1> ob = occs(idet,range(nup,nup+ndown)) - NMO;
+      if(orb_type == PHMSDOrbitalType::mixed) {
         getSlaterMatrix_mixed(PsiB, PsiT_MO(PsiT_MO.size()-1), ob);
-      else
+      } else {
         getSlaterMatrix_occ(PsiB, ob);
+      }
       det_ops::Log_Overlap(PsiB,wset.SlaterMatrices(Beta),ov);
     }
     ovlp_sum += std::conj(coeffs[idet]) * std::exp(nda::to_host(ov)(0));
@@ -300,17 +293,19 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     {
       memory::array<MEM,ComplexType,1> ov(nwalk,ComplexType(0.0));
       Gt() = ComplexType(0.0);
-      if(orb_type == "mixed")
+      if(orb_type == PHMSDOrbitalType::mixed) {
         getSlaterMatrix_mixed(PsiA, PsiT_MO(0), occs(idet,range(nup)));
-      else
+      } else {
         getSlaterMatrix_occ(PsiA, occs(idet,range(nup)));
+      }
       det_ops::MixedDensityMatrix(PsiA,wset.SlaterMatrices(Alpha),Gt(all,range(npol*NMO),all),ov,false);
       if(type == COLLINEAR) {
         nda::array<int, 1> ob = occs(idet,range(nup,nup+ndown)) - NMO;
-        if(orb_type == "mixed")
+        if(orb_type == PHMSDOrbitalType::mixed) {
           getSlaterMatrix_mixed(PsiB, PsiT_MO(PsiT_MO.size()-1), ob);
-        else
+        } else {
           getSlaterMatrix_occ(PsiB, ob);
+        }
         det_ops::MixedDensityMatrix(PsiB,wset.SlaterMatrices(Beta),Gt(all,range(npol*NMO,2*npol*NMO),all),ov,false);
       }
       auto Gt_h = nda::to_host(Gt());
@@ -357,13 +352,12 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     CHECK_THAT(eloc_ph0, utils::Approx(eloc));
   }
 
-  if(wfn.getHamType() == RealDenseFactorized)  // add THC
+  if(wfn.getHamType() == HamiltonianType::real_dense_factorized)  // add THC
   {
     WavefunctionParameters wfn1_params{.name = "wfn1", .filename = wfn_file,
                                        .algorithm = PHMSDEnergyAlgorithm::woodbury};
     apply_defaults(wfn1_params, ham.getHamType());
-    WfnFac.push("wfn1", wfn1_params);
-    auto& wfn1 = WfnFac.getWavefunction(mpi, "wfn1", type, false, &ham, nwalk);
+    auto wfn1 = Wavefunction<MEM>::from_params(mpi, wfn1_params, type, false, ham, nwalk);
 
     memory::array<MEM,ComplexType,2> eloc(nwalk,3);
     memory::array<MEM,ComplexType,1> ov(nwalk);
@@ -418,8 +412,7 @@ void phmsd_compute(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicato
     write_test_results_to_hdf(hamil_file, test_wfn, file_data);
   }
 
-  mpi->comm.barrier();
-  if(mpi->comm.root()) remove(nomsd_file.c_str());
+  // tmpdir removes nomsd_file on the root rank alone, so no rank may still be reading
   mpi->comm.barrier();
 }
 

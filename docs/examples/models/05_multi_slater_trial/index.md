@@ -11,31 +11,23 @@ kernelspec:
   name: python3
 ---
 
-```{code-cell} ipython3
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
-
 +++ {"id": "0WrZ0hFmBbdm"}
 
-# Multi-Slater determinant trial wavefunction
+# Multi-Slater Determinant Trial Wavefunction
 
-In this example, we will compute the AFQMC energy of the Hubbard model with U=8 on a 6x6x square lattice with open boundary conditions
-at half-filling.
+In this example, we will compute the AFQMC energy of the Hubbard model with $U=8$ on a 6×6 square lattice with open boundary conditions
+at half filling.
 We will use a trial wavefunction consisting of two Slater determinants.
 Specifically, we will use
 
 $$
-| \Psi_\mathrm{T} \rangle = \frac{1}{\sqrt{2}} \left( |\Phi_{0}\rangle + |\Phi_{1}\rangle \right)
+| \Psi_\mathrm{T} \rangle = |\Phi_{0}\rangle + |\Phi_{1}\rangle
 $$
 
 where
 
 $$
-|\Phi_{0}\rangle = |\Phi^{UHF}\rangle = |\Phi^{\uparrow}\rangle \otimes |\Phi^{\downarrow}\rangle
+|\Phi_{0}\rangle = |\Phi^\mathrm{UHF}\rangle = |\Phi^{\uparrow}\rangle \otimes |\Phi^{\downarrow}\rangle
 $$
 
 is the UHF ground state
@@ -45,145 +37,113 @@ $$
 |\Phi_{1}\rangle = |\Phi^{\downarrow}\rangle \otimes |\Phi^{\uparrow}\rangle.
 $$
 
-Since the Hamiltonian is spin-independent, this trial wavefunction should have the same energy as the UHF ground state.
+Since the Hamiltonian is spin-independent, $|\Phi_{1}\rangle$ has the same energy as the UHF ground state $|\Phi_{0}\rangle$.
+Their superposition restores the spin-flip symmetry that the UHF solution breaks, and in general its energy differs from the UHF energy.
 
 ```{code-cell} ipython3
----
-id: 1rz5sWn3Ecsc
-outputId: 51107f5c-4186-4817-9e97-990b46c79acc
----
+:id: 1rz5sWn3Ecsc
+:outputId: 51107f5c-4186-4817-9e97-990b46c79acc
+
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
+
 # setup the Hamiltonian
-import numpy as np
+from safiretools import Lattice, LatticeHamiltonian
+from safiretools import vis
 
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.utils.visualize import plot_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-import afqmctools.utils.io as io
-
-lattice = get_lattice(
-    params=dict(
-        L1 = 6,
-        L2 = 6,
-        boundary1 = "open",
-        boundary2 = "open"
-    )
+lattice = Lattice.from_type(
+    "square", (6, 6), boundaries=("open", "open"), twists=(0.0, 0.0)
 )
 
 # plot the lattice for reality checks!
-plot_lattice(lattice)
-
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'U': 8.0
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
+vis.plot_lattice(lattice)
 
 # make the Hamiltonian
-hamiltonian = HamiltonianDirector(
-    source=params,
-    lattice=lattice
-).build()
-
-# save for AFQMC
-io.write_model_hamiltonian(hamiltonian,fname=scratch_dir/"afqmc.h5")
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=8.0)
 ```
 
++++
+
+Hartree-Fock overestimates magnetic order, so a UHF solution at the bare $U=8$ is too strongly polarized to be a good trial wavefunction.
+Instead, we solve UHF for a Hubbard model with a smaller effective interaction $U_\mathrm{eff}$ and use its orbitals as the trial wavefunction.
+The AFQMC run itself still uses the Hamiltonian with $U=8$.
+For a way to tune $U_\mathrm{eff}$ self-consistently, see {doc}`../02_stripes/index`.
+
 ```{code-cell} ipython3
----
-id: dCFJvp57FBV6
----
-# run autoHF to get UHF solution
-from autohf.hamiltonian import AutoHFHamiltonian
+:id: dCFJvp57FBV6
+
+# run AutoHF to get UHF solution
+from autohf import AutoHFHamiltonian
 
 Ueff = 2.75
 
-# define effective Hamiltonian parameters
-hamiltonian_params = {
-    'U': 2.75
-}
+# make the effective Hamiltonian
+effective_hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=Ueff)
 
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# make the Hamiltonian
-effective_hamiltonian = HamiltonianDirector(
-    source=params,
-    lattice=lattice
-).build()
-
-# convert afqmctools Hamitlonian to AutoHFHamiltonian
+# convert safiretools Hamiltonian to AutoHFHamiltonian
 autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)
 ```
 
 ```{code-cell} ipython3
----
-id: ZitUaYnfV2p8
----
-from autohf import lattice_hf
+:id: ZitUaYnfV2p8
+
+from autohf import solve_hf
 
 nelec=(18,18)
 
 settings = dict(
     ansatz = 'SD_ROT',
-    numSteps = 100,
+    steps = 100,
     nelec = nelec,
-    numTrials = 100,
+    batch_size = 100,
     seed = 42
 )
 
-results = lattice_hf(hamiltonian=autohf_hamiltonian,settings=settings)
+results = solve_hf(hamiltonian=autohf_hamiltonian,settings=settings)
 ```
 
 +++ {"id": "BQRI3y5nygEF"}
 
-## Construct and Save the trial wavefunction
+## Construct and Save the Trial Wavefunction
 
-A trial wavefunction can be written to AuxiliaryField's HDF5 format using the `write_wfn()` function from the `afqmctools.wavefunction.common` submodule of afqmctools.
+A trial wavefunction can be written to SAFIRE's HDF5 format by building a `NOMSDWavefunction` from `safiretools` and calling its `to_hdf5()` method.
 In general, the trial wavefunction in AFQMC is a linear combination of Slater determinants,
 
 $$
 |\Psi_\mathrm{T} \rangle = \sum^{N_\mathrm{det}}_n C_n | \Phi_n \rangle,
 $$
 
-where
-
-$C_n$
-
-is a complex-valued coefficient,
+where $C_n$ are complex-valued coefficients,
 and $|\Phi_n\rangle$ are Slater determinants which are not necessarily
 orthogonal to each other.
 Here, we will specify Slater determinants as Slater matrices
 
 $$
-\Phi_{ip} ≐ \begin{bmatrix}
-    \bar{C}_{00} &\bar{C}_{01} & \bar{C}_{02} & \dots  & \bar{C}_{0N} \\
-    \bar{C}_{10} & \bar{C}_{11} & \bar{C}_{12} & \dots  & \bar{C}_{1N} \\
-    \vdots & \vdots & \vdots & \ddots & \vdots \\
-    \bar{C}_{M0} & \bar{C}_{M1} & \bar{C}_{M2} & \dots  & \bar{C}_{MN}
+\Phi = \begin{bmatrix}
+    \Phi_{0,0} & \Phi_{0,1} & \dots  & \Phi_{0,N-1} \\
+    \Phi_{1,0} & \Phi_{1,1} & \dots  & \Phi_{1,N-1} \\
+    \vdots & \vdots & \ddots & \vdots \\
+    \Phi_{M-1,0} & \Phi_{M-1,1} & \dots  & \Phi_{M-1,N-1}
 \end{bmatrix},
 $$
 
-where $i$ is the basis index, $p$ is the electron index, and
- $M,N$ are the number of basis functions and electrons, respectively.
+where the row index $i$ of $\Phi_{ip}$ is the basis index, the column index $p$ is the electron index, and
+$M,N$ are the number of basis functions and electrons, respectively.
 <b>
 SAFIRE uses the convention that orbitals are columns of the Slater matrices.</b>
-For collinear Slater determinants, the first $N_{\uparrow}$ columns are the spin-up electrons and the last $N_{\downarrow}$ are the spin-down electrons.
+A collinear Slater determinant is a pair of Slater matrices, one for the $N_{\uparrow}$ spin-up electrons and one for the $N_{\downarrow}$ spin-down electrons.
 
-In the code block below, we manually construct Slater matrices from the UHF orbitals that we got from autohf above.
+In the code block below, we manually construct Slater matrices from the UHF orbitals that we got from AutoHF above.
 
 ```{code-cell} ipython3
----
-id: amcCyPWmBtoW
-outputId: 7849db3e-aaec-42e5-dfb0-fafe361b3a39
----
+:id: amcCyPWmBtoW
+:outputId: 7849db3e-aaec-42e5-dfb0-fafe361b3a39
+
 # construct the multi-Slater trial AND save
 import numpy as np
 
-from afqmctools.wavefunction.common import write_wfn
+from safiretools import NOMSDWavefunction
 
 # get the orbitals from the AutoHF results.
 orbitals_up = results[0]['orbitals'][0]
@@ -191,83 +151,65 @@ orbitals_down = results[0]['orbitals'][1]
 
 
 # The columns of the Slater matrices are the HF orbitals
-# Each Slater matrix has shape (Nsites x Nelec) where Nelec is N_up + N_down.
-# For UHF-like Slater matrices
-#     the first Nup columns are the spin-up orbitals,
-#     the last Ndown columns are the spin-down orbitals
+# A UHF-like Slater determinant is a pair of Slater matrices
+#     the spin-up orbitals, with shape (Nsites × Nup),
+#     the spin-down orbitals, with shape (Nsites × Ndown)
 #
 phi_up = orbitals_up[:,:nelec[0]]
 phi_down = orbitals_down[:,:nelec[1]]
 
 
-# numpy.hstack is a convenient way to concatenate the Slater matrices
-phi_0 = np.hstack((phi_up, phi_down)) # |phi_0> = |phi_up> X |phi_down>
+phi_0 = (phi_up, phi_down) # |phi_0> = |phi_up> X |phi_down>
 
 # now make the spin-reversed Slater determinant.
-phi_1 = np.hstack((phi_down, phi_up)) # |phi_0> = |phi_down> X |phi_up>
+phi_1 = (phi_down, phi_up) # |phi_1> = |phi_down> X |phi_up>
 
 
-C_0 = 1.0 / np.sqrt(2)
-
-wfn = ( np.array([C_0,C_0]), np.array([phi_0,phi_1]))
-
-write_wfn(
-    filename=scratch_dir/ "afqmc.h5",
-    wfn=wfn,
-    walker_type="uhf",
-    nelec=nelec,
-    norb=lattice.N_sites
+# numpy.stack is a convenient way to stack the determinants of each spin channel
+wfn = NOMSDWavefunction(
+    coeffs=np.array([1.0, 1.0]),
+    dets=(np.stack([phi_0[0], phi_1[0]]), np.stack([phi_0[1], phi_1[1]]))
 )
 ```
 
 ```{code-cell} ipython3
 :id: OgN60HHqFJlO
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
-# write input file
-afqmc_execution_options = {
-    "timestep": 0.01,
-    "steps": 10000,
-    "measure_interval_multiplier": 1,   # in units of the population control interval
-    "population_control_interval" : 10, # in units of steps
-    "walker_ortho_interval" : 10 ,      # in units of steps
-    "n_walkers_per_mpi_task": 100,
-    "seed" : 42
-}
-
-write_json(
-    scratch_dir/ "afqmc.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    exec_opts=afqmc_execution_options
+# write input file, which also writes the wavefunction and the Hamiltonian to HDF5
+write_jobfile(
+    "afqmc.json",
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": wfn,
+            "hamiltonian": hamiltonian,
+            "timestep": 0.01,
+            "steps": 10000,
+            "equilibration_steps": 500,
+            "measure_interval": 10,             # in units of steps
+            "population_control_interval": 10,  # in units of steps
+            "walker_ortho_interval": 10,        # in units of steps
+            "num_walkers": 1600
+        }
+    }
 )
 ```
 
 ```{code-cell} ipython3
----
-id: SJ-EP0itFLgE
----
-# run SAFIRE
-run_afqmc(
-    run_dir=scratch_dir,
-    run_mode="local_cpu",
-    input_file="afqmc.json",
-    np=16,             # number of MPI tasks
-    output_file=None   # optionally direct output to file instead of here
-)
+:id: SJ-EP0itFLgE
+:tags: [scroll-output]
+
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
----
-id: IZizKYGAFNvS
----
+:id: IZizKYGAFNvS
+
 # analyze results
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
 
-_ = analyze_scalar_data(dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,
-    trace = True
-))
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
 ```

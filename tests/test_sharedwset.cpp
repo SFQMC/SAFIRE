@@ -22,18 +22,21 @@
 #include "configuration.hpp"
 #include "IO/AppAbort.hpp"
 #include "utilities/Random.hpp"
-#include "test_common.hpp"
 
 #include "AFQMC/parameters.hpp"
 #include "IO/app_loggers.h"
 
-#include <stdio.h>
 #include <string>
 #include <vector>
 #include <complex>
+#include <numeric>
+#include <random>
+#include <set>
+#include <tuple>
 
 #include "AFQMC/Walkers/WalkerSet.hpp"
 #include "AFQMC/Walkers/WalkerIO.hpp"
+#include "AFQMC/Walkers/population_control.hpp"
 
 using std::complex;
 using std::string;
@@ -81,7 +84,8 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
     if(wtype == COLLINEAR)
       initA.emplace_back(initA_h(1, nda::range::all, nda::range(ndown)));
 
-    auto ws = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initA, nwalkers);
+    auto ws = WalkerSet<MEM>(mpi, rng, wlk_params,
+                             WalkerSetInitialGuess{.walker_type = wtype, .payload = initA}, nwalkers);
 
     REQUIRE(ws.size() == nwalkers);
     for(int iw = 0; iw < ws.size(); ++iw)
@@ -125,23 +129,22 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
       }
 
     // the guess is always supplied on the host, mirroring the T=0 constructor
-    auto initUDV = initUDV_h();
-
-    auto ws = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initUDV, nwalkers);
+    auto ws = WalkerSet<MEM>(mpi, rng, wlk_params,
+                             WalkerSetInitialGuess{.walker_type = wtype, .payload = initUDV_h}, nwalkers);
 
     REQUIRE(ws.size() == nwalkers);
     for(int iw = 0; iw < ws.size(); ++iw)
     {
       auto w = ws[iw];
       auto umat = w.UMatrix(Alpha);
-      REQUIRE( umat.extent(0) == initUDV.extent(2) );
+      REQUIRE( umat.extent(0) == initUDV_h.extent(2) );
       REQUIRE( umat.extent(1) == M );
-      REQUIRE(nda::to_host(w.UMatrix(Alpha)) == nda::to_host(initUDV(0,0,nda::ellipsis{})));
+      REQUIRE(nda::to_host(w.UMatrix(Alpha)) == nda::to_host(initUDV_h(0,0,nda::ellipsis{})));
       if( ws.getWalkerType() == COLLINEAR ) {
         auto umatB = w.UMatrix(Beta);
-        REQUIRE( umatB.extent(0) == initUDV.extent(2) );
+        REQUIRE( umatB.extent(0) == initUDV_h.extent(2) );
         REQUIRE( umatB.extent(1) == M );
-        REQUIRE( nda::to_host(w.UMatrix(Beta)) == nda::to_host(initUDV(0,1,nda::range::all,nda::range(M))));
+        REQUIRE( nda::to_host(w.UMatrix(Beta)) == nda::to_host(initUDV_h(0,1,nda::range::all,nda::range(M))));
       }
       w.set_property(WEIGHT,base * 1.0 + 0.5);
       w.set_property(OVLP,base * 1.0 + 0.5);
@@ -231,13 +234,7 @@ void sharedwset_basic_walker_features(WALKER_TYPES wtype, bool finiteT)
   REQUIRE(wset.NumBackProp() == 0);
   REQUIRE(wset.GlobalWeight() == tot_weight * Type(mpi->comm.size()));
 
-  wset.scaleWeight(2.0);
-  tot_weight *= 2.0;
-  REQUIRE(wset.GlobalWeight() == tot_weight * Type(mpi->comm.size()));
-
-  std::vector<ComplexType> Wdata;
-  wset.processWalkerData(Wdata);
-  wset.popControl();
+  population_control(*mpi, *wset.getRNG(), wset);
   REQUIRE_THAT(wset.GlobalWeight(), utils::Approx(static_cast<RealType>(wset.get_global_target_population())));
   REQUIRE(wset.get_target_population() == nwalkers);
   REQUIRE(wset.get_global_target_population() == nwalkers * mpi->comm.size());
@@ -308,6 +305,9 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
   using Type = std::complex<double>;
   auto& mpi = utils::make_unit_test_mpi_context();
 
+  utils::TemporaryDirectory tmpdir;
+  const std::string walker_file = (tmpdir / "walkers.h5").string();
+
   int NMO = 8, nup = 2, ndown = 2, nwalkers = 10;
   if (wtype == NONCOLLINEAR)
   {
@@ -333,7 +333,8 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
     initA.emplace_back(initA_h(1, nda::range::all, nda::range(ndown)));
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = wtype};
-  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, wtype, initA, nwalkers);
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params,
+                             WalkerSetInitialGuess{.walker_type = wtype, .payload = initA}, nwalkers);
 
   REQUIRE(wset.size() == nwalkers);
   int cnt(0);
@@ -362,15 +363,15 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
   // dump restart file
   {
     h5::file fh5;
-    if(mpi->comm.root()) fh5 = h5::file(std::string("dummy_walkers.h5"),'w');
+    if(mpi->comm.root()) fh5 = h5::file(walker_file,'w');
     dumpToHDF5(wset, fh5);
   }
   mpi->comm.barrier();
 
   {
-    h5::file fh5(std::string("dummy_walkers.h5"),'r');
-    auto wset2 = readWalkersFromHDF5<WalkerSet<MEM>>(mpi, wlk_params, rng,
-                                                     wtype, fh5, nwalkers, true);
+    h5::file fh5(walker_file,'r');
+    auto wset2 = readWalkersFromHDF5<WalkerSet<MEM>>(mpi, rng, wlk_params,
+                                                     fh5, nwalkers, true);
     std::array<walker_data,5> tags = {WEIGHT,OVLP,E1_,EXX_,EJ_};
     for (int i = 0; i < nwalkers; i++)
     {
@@ -380,9 +381,8 @@ void sharedwset_walker_io(WALKER_TYPES wtype)
     }
   }
 
+  // tmpdir removes the file on the root rank alone, so no rank may still be reading
   mpi->comm.barrier();
-  if (mpi->comm.root())
-    remove("dummy_walkers.h5");
 
 }
 
@@ -412,5 +412,59 @@ TEST_CASE("sharedwset: walker io", "[sharedwset]")
   sharedwset_walker_io<DEVICE_MEMORY>(COLLINEAR);
   sharedwset_walker_io<DEVICE_MEMORY>(NONCOLLINEAR);
 #endif
+}
+
+/// The exchange plan of population control on ranks that hold different numbers of walkers, as an
+/// uneven split of num_walkers leaves them. The plan is a pure function of the offspring, so the
+/// ranks are only simulated here and a single process covers any rank layout.
+TEST_CASE("sharedwset: walker exchange plan over uneven ranks", "[sharedwset]")
+{
+  std::mt19937 gen(17);
+  for(std::vector<int> const& counts :
+      {std::vector<int>{3, 2, 2}, std::vector<int>{1, 4}, std::vector<int>{2, 2, 2, 1}, std::vector<int>{5}}) {
+    int const nranks = counts.size();
+    // walker i of rank r is entry first[r] + i of the global population
+    std::vector<int> first(nranks + 1, 0);
+    std::partial_sum(counts.begin(), counts.end(), first.begin() + 1);
+    int const ntot = first.back();
+
+    for(int trial = 0; trial < 200; ++trial) {
+      // the copies of a random resampling, which preserves the population like the comb does
+      nda::vector<int> offspring(ntot, 0);
+      std::uniform_int_distribution<int> pick(0, ntot - 1);
+      for(int c = 0; c < ntot; ++c) {
+        ++offspring(pick(gen));
+      }
+
+      auto const plan = plan_walker_exchange(offspring, counts);
+
+      std::vector<int> keep(offspring.begin(), offspring.end());
+      std::vector<int> held(nranks, 0);
+      std::vector<bool> sends(nranks, false), receives(nranks, false);
+      std::set<std::tuple<int, int, int>> routes;
+      for(auto const& t : plan) {
+        REQUIRE(t.src != t.dst);
+        REQUIRE(t.walker < counts[t.src]);
+        REQUIRE(t.copies > 0);
+        // a walker goes to a destination once and is replicated there
+        CHECK(routes.emplace(t.src, t.walker, t.dst).second);
+        keep[first[t.src] + t.walker] -= t.copies;
+        held[t.dst] += t.copies;
+        sends[t.src]    = true;
+        receives[t.dst] = true;
+      }
+
+      for(int r = 0; r < nranks; ++r) {
+        for(int w = first[r]; w < first[r + 1]; ++w) {
+          // no walker gives away more copies than the comb made of it
+          REQUIRE(keep[w] >= 0);
+          held[r] += keep[w];
+        }
+        // every rank ends with its own count, and the exchange posts only sends or only receives
+        CHECK(held[r] == counts[r]);
+        CHECK(!(sends[r] && receives[r]));
+      }
+    }
+  }
 }
 } // namespace sfqmc

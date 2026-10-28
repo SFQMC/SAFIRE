@@ -1,0 +1,15 @@
+{
+  "execute": {
+    "wavefunction": {
+      "filename": "wavefunction.h5"
+    },
+    "hamiltonian": {
+      "filename": "hamiltonian.h5"
+    },
+    "timestep": 0.01,
+    "steps": 10000,
+    "equilibration_steps": 1000,
+    "measure_interval": 10,
+    "num_walkers": 200
+  }
+}

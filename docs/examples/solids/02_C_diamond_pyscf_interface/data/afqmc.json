@@ -1,0 +1,27 @@
+{
+  "seed": 7,
+  "execute": {
+    "hamiltonian": {
+      "filename": "afqmc_hamiltonian0.h5"
+    },
+    "wavefunction": {
+      "filename": "afqmc_wavefunction0.h5"
+    },
+    "timestep": 0.01,
+    "steps": 10000,
+    "equilibration_steps": 1000,
+    "measure_interval": 10,
+    "population_control_interval": 10,
+    "walker_ortho_interval": 10,
+    "num_walkers": 320,
+    "estimators": {
+      "backprop": {
+        "propagation_steps": [
+          100,
+          200
+        ],
+        "onerdm": {}
+      }
+    }
+  }
+}

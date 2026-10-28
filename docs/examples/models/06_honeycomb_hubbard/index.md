@@ -13,94 +13,50 @@ kernelspec:
 
 +++ {"id": "jFoBNSA0D-an"}
 
-# Hubbard model on a honeycomb lattice
+# Hubbard Model on a Honeycomb Lattice
 
-## Set up the Hamiltonian
-
-```{code-cell} ipython3
-:id: G8BN6a14EL83
-
-# setup scratch dir
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
+## Set Up the Hamiltonian
 
 ```{code-cell} ipython3
----
-id: djut2ei2D6d-
----
+:id: djut2ei2D6d-
+
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
+
 # setup the Hamiltonian
-import numpy as np
+from safiretools import Lattice
+from safiretools import vis
+from safiretools import LatticeHamiltonian
 
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.utils.visualize import plot_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-import afqmctools.utils.io as io
-
-lattice = get_lattice(
-    params=dict(
-        L1 = 4,
-        L2 = 4,
-        boundary1 = "pbc",
-        boundary2 = "pbc",
-        type = "honeycomb"
-    )
+lattice = Lattice.from_type(
+    "honeycomb", (4, 4), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
 )
 
 # plot the lattice for reality checks!
-plot_lattice(lattice)
-
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'U': 6.0
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
+vis.plot_lattice(lattice)
 
 # make the Hamiltonian
-hamiltonian = HamiltonianDirector(
-    source=params,
-    lattice=lattice
-).build()
-
-# save for AFQMC
-io.write_model_hamiltonian(hamiltonian,fname=scratch_dir/"afqmc.h5")
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=6.0)
 ```
 
 ```{code-cell} ipython3
----
-id: bYkD4o3sHwP9
----
-# run autoHF and save wavefunction as trial wavefunction
-from autohf import lattice_hf
-from autohf.hamiltonian import AutoHFHamiltonian
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
+:id: bYkD4o3sHwP9
+
+# run AutoHF and save wavefunction as trial wavefunction
+import numpy as np
+
+from autohf import solve_hf, AutoHFHamiltonian
+from safiretools import Wavefunction
 
 # Typically, we want to use a Ueff to generate a trial wavefunction
 #    since HF's critical U is lower than the correct critical U
 Ueff = 3.0
 
-# define effective Hamiltonian parameters
-hamiltonian_params = {
-    'U': Ueff
-}
+# make the effective Hamiltonian
+effective_hamiltonian = LatticeHamiltonian.from_lattice(lattice, U=Ueff)
 
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# make the Hamiltonian
-effective_hamiltonian = HamiltonianDirector(
-    source=params,
-    lattice=lattice
-).build()
-
-# convert afqmctools Hamitlonian to AutoHFHamiltonian
+# convert safiretools Hamiltonian to AutoHFHamiltonian
 autohf_hamiltonian = AutoHFHamiltonian(effective_hamiltonian)
 
 # set the number of electrons!!
@@ -108,127 +64,73 @@ nelec=(16-1,16-1)
 
 settings = dict(
     ansatz = 'SD_ROT',
-    numSteps = 100,
+    steps = 100,
     nelec = nelec,
-    numTrials = 100,
+    batch_size = 100,
     seed = 42
 )
 
-results = lattice_hf(hamiltonian=autohf_hamiltonian,settings=settings)
+results = solve_hf(hamiltonian=autohf_hamiltonian,settings=settings)
 
-autohf_to_afqmc(results,output_fname=scratch_dir/"afqmc.h5")
+wavefunction = Wavefunction.from_single_determinant(
+    tuple(np.asarray(o) for o in results[0]["orbitals"])
+)
 ```
 
 +++ {"id": "vYmHYe-nIm_Q"}
 
-## Write input file
+## Write Input File
 
 For more information about the input file, see {doc}`../../../tutorials/models/02_understanding_the_input_file/02_understanding_the_input_file`.
 
 ```{code-cell} ipython3
 :id: pm-N_EFxInNK
 
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
 # write input file
-afqmc_execution_options = {
-    "timestep": 0.01,
-    "steps": 10000,
-    "measure_interval_multiplier": 1,   # in units of the population control interval
-    "population_control_interval" : 10, # in units of steps
-    "walker_ortho_interval" : 10 ,      # in units of steps
-    "n_walkers_per_mpi_task": 100,
-    "seed" : 42
-}
-
-write_json(
-    scratch_dir/ "afqmc.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    exec_opts=afqmc_execution_options
+write_jobfile(
+    "afqmc.json",
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": wavefunction,
+            "hamiltonian": hamiltonian,
+            "timestep": 0.01,
+            "steps": 10000,
+            "equilibration_steps": 500,
+            "measure_interval": 10,             # in units of steps
+            "population_control_interval": 10,  # in units of steps
+            "walker_ortho_interval": 10,        # in units of steps
+            "num_walkers": 1600
+        }
+    }
 )
 ```
 
 +++ {"id": "2umfVnQDJcfa"}
 
-## run AFQMC
+## Run AFQMC
 
 ```{code-cell} ipython3
 ---
 id: xvJVj1DGJeW0
+scrolled: true
+tags: [scroll-output]
 ---
-# run SAFIRE
-run_afqmc(
-    run_dir=scratch_dir,
-    run_mode="local_cpu",
-    input_file="afqmc.json",
-    np=16,             # number of MPI tasks
-    output_file=None   # optionally direct output to file instead of here
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 +++ {"id": "9YE2JAdlJesB"}
 
-## Analyze the results
+## Analyze the Results
 
 ```{code-cell} ipython3
----
-id: eADuTKxlJgfx
----
+:id: eADuTKxlJgfx
+
 # analyze results
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
 
-_ = analyze_scalar_data(dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,
-    trace = True
-))
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+results = Results("afqmc.results.h5")
+vis.plot_timeseries(results)
 ```

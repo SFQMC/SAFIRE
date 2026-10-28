@@ -3,254 +3,390 @@
 Estimators
 ==========
 
-This page is organized as follows.
-We begin by explaining the different types of estimators available in SAFIRE.
-Estimators are used to compute observables.
-An estimator requires at least one observable to compute.
-Below, we explain each :ref:`type of observable <observables>` that can be computed using these estimators.
-All observables can be used with any of the estimators.
+The results of a SAFIRE calculation are obtained by performing stochastic measurements on the :ref:`afqmc` random walk. For this purpose SAFIRE implements different estimators.
 
-.. important::
+Estimators are enabled, disabled, and configured in the :ref:`estimator_block` block of the job file. Their measurement results are written to the :ref:`output_afqmc`. Refer to these sections for details on the input and output and the :ref:`tutorials` and :ref:`user_examples` for practical use cases. On this page, we will instead describe the behavior of each estimator and the definitions of the observables that can be measured.
 
-    Unlike all other types of input blocks, the "name" parameter is used to determine the type of estimator - i.e. 
-    NOT to define an identifier that can be used elsewhere in the input file.
+Each estimator uses the trial wavefunction :math:`\Psi_\mathrm{T}` and Hamiltonian :math:`H` of its execute block, unless it names different ones with its own ``wavefunction`` and ``hamiltonian`` entries.
 
-Mixed Estimators
-----------------
-
-SAFIRE implements mixed estimators, which are used to compute observables :math:`\hat{O}` such that :math:`[\hat{O},\hat{H}] = 0`.
-In this case, a mixed estimator is an unbiased estimator.
-Formally, mixed estimators evaluate an observable :math:`\hat{O}` as
-
-.. math::
-  \langle \hat{O} \rangle_\mathrm{Mixed} = \frac{1}{\sum_k W_{n,k}} \sum_k W_{n,k} \frac{\langle \Psi_\mathrm{T} | \hat{O} | \Phi_{n,k} \rangle }{\langle \Psi_\mathrm{T} | \Phi_{n,k} \rangle}
-
-
-Settings
-~~~~~~~~
-
-.. code-block:: json
-  :caption: Sample input block for Mixed Estimator.  
-  
-  "estimator": {
-    "name": "mixed",
-    "equil_multiplier" : 0,
-    "measure_interval_multiplier" : 1,
-    "onerdm": {
-      "name": "one_rdm",
-    }
-  }
-
-
-.. list-table::
-   :header-rows: 1
-   :widths: 25 20 55
-
-   * - **Parameter**
-     - **Default**
-     - **Description**
-   * - **equil_multiplier**
-     - 0
-     - Used to determine the number of projection steps in the equilibration phase using the formula below. Measurement is the most expensive operation in AFQMC.
-   * - **measure_interval_multiplier**
-     - Inherited from execute block (default: 1)
-     - Used to determine the number of projection steps between measurements using the formula below. Measurement is the most expensive operation in AFQMC. A larger "measure_interval_multiplier" will reduce the CPU time necessary to perform AFQMC calculations.
-
-.. include:: ../_include/measure_interval_admonition.rst
+.. _energy_estimator:
 
 Energy Estimator
 ----------------
 
-SAFIRE implements a specialized mixed estimator for the energy, which is always added 
-to an execute block by default.
-The only reason to explicitly define it is to customize its settings.
-Formally, it evaluates
+The energy estimator is the only estimator that is enabled by default. It measures the local energy
 
 .. math::
   :name: energyEstimator
 
-  E = \frac{\langle \Psi_\mathrm{T} | \hat{H} | \Psi^s \rangle}{\langle \Psi_\mathrm{T} | \Psi^s \rangle} \approx 
-  \frac{1}{\sum_n W^s_n} \sum_n W^s_n \frac{\langle \Psi_\mathrm{T} | \hat{H} | \Phi^s_n \rangle}{\langle \Psi_\mathrm{T} | \Phi^s_n \rangle},
+  E = \frac{\langle \Psi_\mathrm{T} | H | \Psi(\tau) \rangle}{\langle \Psi_\mathrm{T} | \Psi(\tau) \rangle} \approx
+  \frac{1}{\sum_n W_n(\tau)} \sum_n W_n(\tau) \frac{\langle \Psi_\mathrm{T} | H | \Phi_n(\tau) \rangle}{\langle \Psi_\mathrm{T} | \Phi_n(\tau) \rangle},
 
-Settings
-~~~~~~~~
+of the walkers and its components for a given Hamiltonian :math:`H` and trial wavefunction :math:`\Psi_\mathrm{T}`,
+where :math:`|\Phi_n(\tau)\rangle` are the walkers at imaginary time :math:`\tau` and :math:`W_n(\tau)` their weights.
 
-.. code-block:: json
-  :caption: Sample input block for Energy Estimator.  
+.. list-table::
+   :header-rows: 1
+   :widths: 25 55
+
+   * - **Observable**
+     - **Description**
+   * - ``Energy``
+     - The total local energy :math:`E`, the sum of the three components below.
+   * - ``OnebodyEnergy``
+     - The one-body part of the local energy. It also includes the constant energy offset of the
+       Hamiltonian.
+   * - ``CoulombEnergy``
+     - The direct (Hartree) part of the two-body local energy.
+   * - ``ExchangeEnergy``
+     - The exchange part of the two-body local energy.
+   * - ``ProjectionTime``
+     - The imaginary time :math:`\tau` of the measurement, counted from the start of the
+       execution stage: :math:`\tau = s\Delta\tau` after :math:`s` propagation steps. Useful for plotting time series.
+
+.. note::
+   Since the one and two-body terms of the Hamiltonian generally do not commute, the ``OnebodyEnergy``, ``CoulombEnergy`` and ``ExchangeEnergy`` component estimators carry a mixed-estimator bias that the total energy does not. See :ref:`mixed_estimators`.
   
-  "estimator": {
-    "name": "energy",
-    "measure_interval_multiplier": 1,
-    "print_components": true
-  }
-
+Additionally, the following diagnostic observables are available.
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 20 55
+   :widths: 25 55
 
-   * - **Parameter**
-     - **Default**
+   * - **Observable**
      - **Description**
-   * - **measure_interval_multiplier**
-     - Inherited from execute block (default: 1)
-     - Used to determine the number of projection steps between measurements using the formula below. Measurement is the most expensive operation in AFQMC. A larger "measure_interval_multiplier" will reduce the CPU time necessary to perform AFQMC calculations.
-   * - **print_components**
-     - false
-     - if true, print the one-body and two-body direct, and two-body exchange components of the energy separately (in addition to the total energy). Note: the one-body energy also includes any constant energy contributions.
- 
-.. only:: developer
+   * - ``Overlap``
+     - The weighted average
+       :math:`\sum_n W_n(\tau) \langle \Psi_\mathrm{T} | \Phi_n(\tau) \rangle / \sum_n W_n(\tau)` of the
+       walker overlaps with the trial wavefunction. Reset by reorthogonalization.
+   * - ``TotalWeight``
+     - The total walker weight :math:`\sum_n W_n(\tau)`.
+   * - ``Phase``
+     - The average phase :math:`\sum_n W_n(\tau) / \sum_n |W_n(\tau)|` of the walker weights. A
+       magnitude well below one signals a phase problem. As long as a constraint is active, this is one.
+   * - ``EffectiveNumWalkers``
+     - The effective number of walkers
+       :math:`\left(\sum_n |W_n(\tau)|\right)^2 / \sum_n |W_n(\tau)|^2`, which equals the number of
+       walkers for uniform weights and drops as the weights spread out.
 
-    Advanced / developer setting
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _mixed_estimators:
 
-    .. list-table::
-      :header-rows: 1
-      :widths: 25 20 55
+Mixed Estimator
+----------------
 
-      * - **Parameter**
-        - **Default**
-        - **Description**
-      * - print_sign
-        - false
-        - if true, print detailed information about the phase and constraint in the scalar.dat output file.
-      * - truncate
-        - false
-        -
+SAFIRE implements more general mixed estimators,
 
-Back-Propagation (BP) Estimators
---------------------------------
+.. math::
+  \langle O \rangle_\mathrm{Mixed} = \frac{1}{\sum_n W_n(\tau)} \sum_n W_n(\tau) \frac{\langle \Psi_\mathrm{T} | O | \Phi_n(\tau) \rangle }{\langle \Psi_\mathrm{T} | \Phi_n(\tau) \rangle},
 
-Mixed estimators are biased for observables :math:`\hat{O}` such that :math:`[\hat{O},\hat{H}] \neq 0`, 
-which requires the use of pure estimators. The Back-Propagation (BP) algorithm is used to compute pure estimators in SAFIRE.
-The back-propagated estimator has the form,
+where :math:`O` is one of several :ref:`observables` described below.
+
+In the output file, all mixed observables are saved under a ``MixedEstimator/`` prefix.
+
+Mixed Estimator Bias
+~~~~~~~~~~~~~~~~~~~~
+
+Because the mixed estimator is based on a one-sided projection, even if the walker ensemble exactly represents the ground-state wavefunction, the mixed average will generally not match the true ground-state average. This bias vanishes only when :math:`[O,H] = 0`, such as for the total energy, :math:`O=H`, or when :math:`O` represents a symmetry of the Hamiltonian. The latter property means that mixed averages — despite being numerically biased — can still be used to detect the symmetry sector of the ground state.
+
+The mixed estimator bias can be mitigated by using the back-propagation estimator described in the next section.
+
+.. _backprop_estimator:
+
+Back-Propagation Estimator
+--------------------------
+
+The Back-Propagation (BP) estimator :cite:`ZhangConstrained1997,MottaBackPropagation2017` replaces the one-sided projection of the mixed estimator by a two-sided projection of the form
 
 .. math::
 
-  \langle \hat{O} \rangle_\mathrm{BP} = \frac{1}{\sum_k W_{s+m,k}} \sum_k W_{s+m,k} \frac{\langle \tilde{\Phi}_{m,k} | \hat{O} | \Phi_{s,k} \rangle }{\langle \tilde{\Phi}_{m,k} |\Phi_{s,k}\rangle}
+  \langle O \rangle_\mathrm{BP} = \frac{1}{\sum_n W_n(\tau+\tau_\mathrm{BP})} \sum_n W_n(\tau+\tau_\mathrm{BP}) \frac{\langle \tilde{\Phi}_n(\tau_\mathrm{BP}) | O | \Phi_n(\tau) \rangle }{\langle \tilde{\Phi}_n(\tau_\mathrm{BP}) |\Phi_n(\tau)\rangle}
 
 
-where :math:`| \Phi_{s,k} \rangle` are the usual forward-projected Slater determinant random walkers,
-and :math:`| \tilde{\Phi}_{m,k} \rangle` are the back-propagated walkers given by,
+where :math:`| \Phi_n(\tau) \rangle` are the usual forward-projected Slater determinant random walkers,
+and :math:`| \tilde{\Phi}_n(\tau_\mathrm{BP}) \rangle` are the back-propagated walkers given by,
 
 .. math::
 
-  | \tilde{\Phi}_{m,k} \rangle = \hat{B}^\dagger( (x - \bar{x})_{s,k} ) ... \hat{B}^\dagger( (x - \bar{x})_{s+m-1,k} ) | \Psi_\mathrm{T} \rangle.
+  | \tilde{\Phi}_n(\tau_\mathrm{BP}) \rangle = B^\dagger\big( x_n(\tau)\big) \cdots B^\dagger\big(x_n(\tau+\tau_\mathrm{BP}-\Delta\tau) \big) | \Psi_\mathrm{T} \rangle.
 
-The index :math:`s` corresponds to the current forward projection step,
-and :math:`m` is the back-propagated step index.
+Here :math:`\tau` is the imaginary time of the forward walkers,
+and :math:`\tau_\mathrm{BP} = m_\mathrm{BP}\Delta\tau` is the back-propagation time over :math:`m_\mathrm{BP}` steps.
 We note that each random walker has a corresponding back-propagated partner
-which share the same path in auxiliary-field space.
+which shares the same path in auxiliary-field space.
 
-Sample Input File
-~~~~~~~~~~~~~~~~~
+Path Restoration
+~~~~~~~~~~~~~~~~
 
-.. code-block:: json
-    :caption: Sample input block for Back-Propagation (BP) Estimator.
-
-    "estimator": {
-        "name": "back_propagation",
-        "path_restoration": true,
-        "bp_walker_ortho_interval": 10,
-        "measure_interval_multiplier": 80,
-        "equil_multiplier": 80,
-        "onerdm": {
-            "name": "one_rdm"
-        }
-    }
-
-
-Configuration
-~~~~~~~~~~~~~
-
-BP is invoked in SAFIRE by including a "back_propagation" estimator in the input file. 
-Observables are added to the BP block in the same way as for mixed estimators.
-
-Measurement Intervals
-~~~~~~~~~~~~~~~~~~~~~
-
-Since BP involves an additional projection, the measurement interval controls the number of back-propagated steps. 
-Just as in the execute block or a mixed estimator block, the input file includes a measurement interval "multiplier",
-and the actual measurement interval, :math:`m`, is determined as:
+In every propagation step, the phaseless approximation (see :ref:`afqmc`) multiplies the walker weights by the
+cosine projection factor :math:`\max\{0, \cos\Delta\theta\}` and keeps only the magnitude of the local energy
+factor :math:`e^{-\Delta\tau (E_\mathrm{L} - E_\mathrm{shift})}`. Along the back-propagation path, both
+modifications bias the back-propagated observables. With ``path_restoration``, which is enabled by default, the
+weights :math:`W_n(\tau+\tau_\mathrm{BP})` in the back-propagated average are multiplied by
 
 .. math::
 
-    m = \text{measure\_interval\_multiplier} \times \text{population\_control\_interval}
+  \prod_{\tau'} \frac{e^{-i \Delta\tau \, \mathrm{Im} E_{\mathrm{L},n}(\tau')}}{\max\{0, \cos\Delta\theta_n(\tau')\}},
 
-Multiple BP Lengths
-~~~~~~~~~~~~~~~~~~~
-
-SAFIRE implements the capability of running BP with multiple BP measurement lengths within the same calculation.
-We call each measurement with a different BP length an "average". 
-This allows the forward projection to be reused while checking for convergence in the BP length.
-To define multiple BP lengths/averages, simply provide a JSON array for measure_interval_multiplier corresponding to all of the BP lengths
-that you would like to use:
-
-.. code-block:: json
-    :caption: Sample input block for Back-Propagation (BP) Estimator with multiple BP lengths.
-    
-    "estimator": {
-        "name": "back_propagation",
-        "path_restoration": true,
-        "bp_walker_ortho_interval": 10,
-        "measure_interval_multiplier": [60, 70, 80],
-        "equil_multiplier": 80,
-        "onerdm": {
-            "name": "one_rdm"
-        }
-    }
+with the product running over the :math:`m_\mathrm{BP}` steps
+:math:`\tau' = \tau, \dots, \tau + \tau_\mathrm{BP} - \Delta\tau` of the back-propagation path. This restores the
+phase of the local energy factor and undoes the cosine projection :cite:`MottaBackPropagation2017`. A walker whose weight the projection has set
+to zero keeps a zero weight. ``extra_path_restoration`` extends the product to the :math:`2 m_\mathrm{BP}` steps
+:math:`\tau' = \tau - \tau_\mathrm{BP}, \dots, \tau + \tau_\mathrm{BP} - \Delta\tau`, so that it also covers the
+:math:`m_\mathrm{BP}` steps before the forward walkers :math:`|\Phi_n(\tau)\rangle`.
 
 
-Equilibration
-~~~~~~~~~~~~~
+Back-Propagation Lengths
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-The BP estimator implements an equilibration phase at the beginning of the AFQMC calculation where no BP is performed. 
-This is recommended since computing observables is typically expensive and since AFQMC needs to equilibrate before 
-samples can meaningfully contribute to the average. 
-Similarly to the measure_interval_multiplier, the equilibration time is specified as an equilibration multiplier 
-(``"equil_multiplier"``) and the actual equilibration time is given by:
+The result of the back-propagation estimator depends on the correct choice of the back-propagation length. Short back-propagation lengths will approach the mixed estimator while setting the length too long is costly. Therefore, it is advisable to calculate multiple back-propagation lengths at the same time and check their convergence. SAFIRE supports calculating multiple lengths in a single calculation (see :ref:`backprop_block`). The longest back-propagation length of a simulation simultaneously acts as the measurement interval of the estimator.
+
+In the output file, all back-propagated observables are saved under a ``BackPropEstimator/Steps=<m_BP>/`` prefix.
+
+.. _observables:
+
+Observables
+-----------
+
+Mixed and back-propagated estimators share a set of general observables they can measure. Here we give the definition of each of them. The most important observables are the one- and two-body reduced density matrices ``OneRDM``, ``DiagonalTwoRDM``, and ``TwoRDM`` from which all one-body and two-body properties can be calculated. Additional, more specialized observables are defined for subclasses of systems that can be simulated with SAFIRE.
+
+Below, :math:`\langle \cdot \rangle` is the mixed or back-propagated average of the estimator measuring the
+observable. The orbital indices :math:`i, j, k, l` run over the :math:`M` orbitals of the Hamiltonian
+and :math:`\sigma, \sigma'` over the spins. For noncollinear walkers, spin and orbital are combined into a
+single spin-orbital index :math:`\sigma M + i` with :math:`\uparrow = 0` and :math:`\downarrow = 1`.
+
+Every observable can be measured with any Hamiltonian. The wavefunctions and walker spin symmetries it
+supports are listed with each one.
+
+.. _onerdm_obs:
+
+``OneRDM``: One-Body Reduced Density Matrix
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Computes the spin blocks of the one-particle reduced density matrix,
 
 .. math::
 
-    \text{equil\_time} = \text{equil\_multiplier} \times \text{population\_control\_interval}
+    \mathtt{OneRDM}[s, i, j] = \langle c^\dagger_{i\sigma} c_{j\sigma} \rangle,
 
+where :math:`s = 0` is :math:`\sigma = \uparrow` and :math:`s = 1` is :math:`\sigma = \downarrow`.
+Closed walkers store only the :math:`\uparrow` block, which equals the :math:`\downarrow` block.
+Noncollinear walkers store a single block over spin-orbitals that includes the spin-flip elements,
+:math:`\mathtt{OneRDM}[0, \sigma M + i, \sigma' M + j] = \langle c^\dagger_{i\sigma} c_{j\sigma'} \rangle`.
 
-Settings
-~~~~~~~~
+If a ``RotationMatrix`` :math:`R` is given, the density matrix is measured in the rotated basis
+:math:`d_{s,a} = \sum_i R_{s,a,i} c_{i\sigma}`,
 
+.. math::
+
+    \mathtt{OneRDM}[s, a, b] = \langle d^\dagger_{s,a} d_{s,b} \rangle = \sum_{ij} R^*_{s,a,i} R_{s,b,j} \langle c^\dagger_{i\sigma} c_{j\sigma} \rangle.
+
+For noncollinear walkers, the sums run over all :math:`2M` spin-orbitals, so the rotation can mix the spins.
+
+Compatibility
+_______________
 
 .. list-table::
-   :header-rows: 1
-   :widths: 25 20 55
+  :header-rows: 1
+  :widths: 30 55
 
-   * - **Parameter**
-     - **Default**
-     - **Description**
-   * - **path_restoration**
-     - false
-     - if true, use path restoration in the back-propagation algorithm.
-   * - **bp_walker_ortho_interval**
-     - 10
-     - Interval for walker orthogonalization during back-propagation.
-   * - **measure_interval_multiplier**
-     - Inherited from execute block (default: 1)
-     - Either a single integer or an array of integers. Used to determine the number of back-propagation steps between measurements using the formula below. A larger value will use longer back-propagation lengths. If an array is provided, multiple back-propagation lengths will be used within the same calculation.
-   * - **equil_multiplier**
-     - 0
-     - Used to determine the number of projection steps in the equilibration phase before back-propagation measurements begin.
+  * - **Wavefunctions**
+    - **Spin Symmetry**
+  * - NOMSD
+    - closed, collinear, noncollinear
+  * - PHMSD
+    - collinear
 
-.. only:: developer
 
-    Advanced / developer settings
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    .. list-table::
-      :header-rows: 1
-      :widths: 25 20 55
 
-      * - **Parameter**
-        - **Default**
-        - **Description**
-      * - **extra_path_restoration**
-        - false
-        - if true, perform an extra path restoration in the back-propagation algorithm.
+.. _twordm_obs:
+
+``TwoRDM``: Two-Body Reduced Density Matrix
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Calculates the full two-particle reduced density matrix,
+
+.. math::
+
+    \mathtt{TwoRDM}[b, i, k, j, l] = \langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{l\sigma'} c_{k\sigma} \rangle,
+
+where the spin block :math:`b = 0, 1, 2` is :math:`\sigma\sigma' = {\uparrow\uparrow}, {\uparrow\downarrow}, {\downarrow\downarrow}`.
+Note the index order: the pair :math:`(i, k)` belongs to spin :math:`\sigma` and :math:`(j, l)` to :math:`\sigma'`.
+The :math:`{\downarrow\uparrow}` block follows from
+:math:`\langle c^\dagger_{i\downarrow} c^\dagger_{j\uparrow} c_{l\uparrow} c_{k\downarrow} \rangle = \mathtt{TwoRDM}[1, j, l, i, k]`.
+Closed walkers omit the :math:`{\downarrow\downarrow}` block, which equals the :math:`{\uparrow\uparrow}` block, so
+only :math:`b = 0, 1` are stored.
+
+.. caution::
+
+	Computing and storing the full 2-RDM can be very memory intensive and greatly increases the run time.
+	Use only when absolutely necessary, and restrict to small systems.
+
+
+Compatibility
+_____________
+
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
+
+  * - **Wavefunctions**
+    - **Spin Symmetry**
+  * - NOMSD
+    - closed, collinear
+  * - PHMSD
+    - collinear
+
+
+.. _diag_twordm_obs:
+
+``DiagonalTwoRDM``: Diagonal Two-Body Reduced Density Matrix
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Computes the diagonal elements of the two-particle reduced density matrix (2-RDM),
+
+.. math::
+
+    D^{\sigma\sigma'}_{ij} = \langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{j\sigma'} c_{i\sigma} \rangle
+    = \langle n_{i\sigma} n_{j\sigma'} \rangle - \delta_{ij} \delta_{\sigma\sigma'} \langle n_{i\sigma} \rangle.
+
+The same-spin blocks are symmetric, :math:`D^{\sigma\sigma}_{ij} = D^{\sigma\sigma}_{ji}`, and vanish for
+:math:`i = j`, so only their symmetrized upper triangle :math:`i < j` is stored. The :math:`{\uparrow\downarrow}`
+block is stored whole. ``DiagonalTwoRDM`` is a flat array that holds, for collinear and closed walkers,
+
+1. for each :math:`i = 0, \dots, M-1` in turn: :math:`D^{\uparrow\uparrow}_{ij}` for :math:`j = i+1, \dots, M-1`,
+   followed by :math:`D^{\uparrow\downarrow}_{ij}` for :math:`j = 0, \dots, M-1`,
+2. then, for collinear walkers only, :math:`D^{\downarrow\downarrow}_{ij}` for :math:`i < j`, row by row.
+
+Closed walkers omit the :math:`{\downarrow\downarrow}` block, which equals the :math:`{\uparrow\uparrow}` block.
+Noncollinear walkers have a single block over spin-orbitals, :math:`D_{pq} = \langle c^\dagger_p c^\dagger_q c_q c_p \rangle`
+with :math:`p, q = 0, \dots, 2M-1`, which is stored as its upper triangle :math:`p < q`, row by row.
+
+Compatibility
+_____________
+
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
+
+  * - **Wavefunctions**
+    - **Spin Symmetry**
+  * - NOMSD
+    - closed, collinear, noncollinear
+  * - PHMSD
+    - collinear
+
+
+.. _spincorr_obs:
+
+``SpinCorr``: Spin-Spin Correlation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Computes the spin-spin correlation function :math:`\langle \vec{S}_i \cdot \vec{S}_j \rangle`, where
+
+.. math::
+
+    \vec{S}_i = \frac{1}{2} \sum_{\sigma,\sigma'} c_{i\sigma}^\dagger \vec{\sigma}_{\sigma\sigma'} c_{i\sigma'},
+
+split into the XY and the Z channel,
+
+.. math::
+
+    \mathtt{SpinCorr}[0, n] &= \langle S^x_i S^x_j + S^y_i S^y_j \rangle = \frac{1}{2} \langle S^+_i S^-_j + S^-_i S^+_j \rangle, \\
+    \mathtt{SpinCorr}[1, n] &= \langle S^z_i S^z_j \rangle,
+
+so that :math:`\langle \vec{S}_i \cdot \vec{S}_j \rangle = \mathtt{SpinCorr}[0, n] + \mathtt{SpinCorr}[1, n]`.
+Since the correlation is symmetric in :math:`i` and :math:`j`, only the upper triangle :math:`i \le j` is
+stored, row by row, at :math:`n = iM - i(i-1)/2 + j - i`.
+
+
+
+Compatibility
+_____________
+
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
+
+  * - **Wavefunctions**
+    - **Spin Symmetry**
+  * - NOMSD
+    - closed, collinear, noncollinear
+  * - PHMSD
+    - collinear
+
+
+.. _paircorr_obs:
+
+``PairCorr``: Pair Correlation Functions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. important::
+
+	Pair correlation functions are an experimental feature.
+
+Calculates singlet pair correlation functions
+
+.. math::
+
+	\mathtt{PairCorr/}\alpha\mathtt{\_}\beta[i, j] = \langle \Delta^\dagger_{i,\alpha} \Delta_{j,\beta} \rangle
+
+between the pair creation and annihilation operators
+
+.. math::
+
+	\Delta^\dagger_{i,\alpha} = \frac{1}{\sqrt{2}} \left(c^{\dagger}_{i\uparrow} c^{\dagger}_{\bar{i}_\alpha \downarrow} -  c^{\dagger}_{i\downarrow} c^{\dagger}_{\bar{i}_\alpha \uparrow} \right), \qquad
+	\Delta_{j,\beta} = \frac{1}{\sqrt{2}} \left( c_{\bar{j}_\beta\downarrow} c_{j \uparrow}  - c_{\bar{j}_\beta \uparrow} c_{j \downarrow} \right).
+
+Here :math:`\alpha` and :math:`\beta` are *pair maps* that assign every orbital :math:`i` a partner orbital
+:math:`\bar{i}_\alpha`. On a lattice, a pair map typically pairs each site with its neighbor at a fixed
+offset such as :math:`+x`, and the pair map :math:`\bar{i}_\alpha = i` gives on-site (s-wave) pairs.
+
+The pair maps are read from the HDF5 file and group given by the ``pairs`` entry of the :ref:`paircorr input block <observables_block>`.
+
+.. rst-class:: filetree-caption
+
+``pairs.h5``
+
+.. rst-class:: filetree
+
+* ``<group>/``
+
+  * ``<α>`` :math:`(M, 1)`
+  * ``<β>`` :math:`(M, 1)`
+  * …
+
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
+
+  * - **Entry**
+    - **Description**
+  * - ``<α>``
+    - One pair map, named freely: the partner orbital :math:`\bar{i}_\alpha` of each orbital :math:`i`,
+      integers. A negative entry means :math:`i` has no partner, which leaves the corresponding row and
+      column of the correlation function zero.
+
+Every ordered pair of maps :math:`(\alpha, \beta)` is measured and stored as its own
+:math:`(M, M)` array ``PairCorr/<α>_<β>``.
+
+For collinear walkers, only the elements :math:`i < j` are measured, and the diagonal and lower triangle are
+zero. Noncollinear walkers measure all :math:`i, j`.
+
+Compatibility
+_____________
+
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
+
+  * - **Wavefunctions**
+    - **Spin Symmetry**
+  * - NOMSD
+    - collinear, noncollinear
+  * - PHMSD
+    - collinear
+
+Pair correlation functions are most useful for lattice models, but they can be measured with any
+Hamiltonian for which pair maps are provided.
+

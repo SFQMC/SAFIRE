@@ -117,6 +117,8 @@ public:
 
   int number_of_cholesky_vectors() const { return HamOp.number_of_cholesky_vectors(); }
 
+  RealType energy_offset() const { return HamOp.energy_offset(); }
+
   WALKER_TYPES getWalkerType() const { return walker_type; }
 
   bool isFiniteTemperature() const { return false; }
@@ -141,7 +143,7 @@ public:
    */
   memory::const_shared_array<HOST_MEMORY,ComplexType,3> G_MF();
 
-  HamiltonianTypes getHamType() const { return HamOp.getHamType(); }
+  HamiltonianType getHamType() const { return HamOp.getHamType(); }
 
   auto getFieldTypes()
   {
@@ -228,27 +230,6 @@ public:
    */
   void Log_Overlap(WalkerSet<MEM>& wset);
 
-  template<class WlkSet, class Observable>
-  void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
-        std::vector<Observable>& properties_1body, std::vector<Observable>& properties, 
-        nda::MemoryArrayOfRank<4> auto* X, nda::MemoryArrayOfRank<4> auto* Yc, 
-        nda::MemoryArrayOfRank<4> auto* M, bool time_evolved, bool importanceSampling=true)
-  {
-    utils::check(false,"finish");
-  }
-
-  /*
-   * Calculates Green functions and calls Observables.
-   */
-  template<class WlkSet, class Observable>
-  void accumulate_estimators(int iav, WlkSet& wset, nda::MemoryVector auto const& wgt,
-        std::vector<Observable>& properties_1body,
-        std::vector<Observable>& properties, bool importanceSampling = true)
-  {
-    memory::buffered_array<MEM,ComplexType,4> *X = nullptr;
-    accumulate_estimators(iav,wset,wgt,properties_1body,properties,X,X,X,false,importanceSampling);
-  }
-
   ComplexType getReferenceWeight(int i) const { return std::get<2>(*abij.configuration(i)); }
 
   int total_number_of_references() const { return abij.number_of_configurations(); }
@@ -265,7 +246,6 @@ public:
     memory::check_memory_space<MEM>(Refs);
     int nel = nup + (walker_type == COLLINEAR ? ndown : 0);
     int nspin = walker_type == COLLINEAR ? 2 : 1;
-    int nspin_in_wfn = OrbMats.extent(0);
     int npol = (walker_type == NONCOLLINEAR ? 2 : 1);
 
     int number_of_references = abij.number_of_configurations();
@@ -279,16 +259,13 @@ public:
         std::array nels = {nup, ndown};
         std::array spin_offset = {0, nup};
         for(int spin = 0; spin < nspin; spin++) {
-          int spin_ = spin % nspin_in_wfn;
-          auto psi = nda::to_host(math::sparse::to_array<'N'>(OrbMats(spin_)));
-          nda::vector<int> Ac(nels[spin]);
+          // a single reference serves both spins
+          auto psi = nda::to_host(math::sparse::to_array<'N'>(OrbMats(spin % OrbMats.extent(0))));
           for (int i_det = 0; i_det < number_of_references; ++i_det) {
             auto c=abij.configuration(i_det);
             int conf_idx = (spin == 0) ? std::get<0>(*c) : std::get<1>(*c);
-            abij.get_configuration(spin, conf_idx, Ac);
-            for (int a = 0; a < nels[spin]; ++a) {
-              R(i_det,all,spin_offset[spin]+a) = nda::conj(psi(Ac(a),all));
-            }
+            R(i_det,all,range(spin_offset[spin],spin_offset[spin]+nels[spin])) =
+                configuration_orbitals(psi, spin, conf_idx);
           }
         }
         return R;
@@ -299,6 +276,29 @@ public:
                  "Problems with RefOrbMats");
     // this is slow and uses too much memory. Improve!!!
     Refs() = RefOrbMats()(range(number_of_references),all,all);
+  }
+
+  /*
+   * The determinant with the largest coefficient, one Slater matrix per spin.
+   */
+  WalkerSetInitialGuess initial_guess() const
+  {
+    int idet = 0;
+    for(int i = 1; i < abij.number_of_configurations(); ++i) {
+      if(std::abs(std::get<2>(*abij.configuration(i))) > std::abs(std::get<2>(*abij.configuration(idet)))) {
+        idet = i;
+      }
+    }
+    auto c = abij.configuration(idet);
+
+    int const nspin = (walker_type == COLLINEAR ? 2 : 1);
+    WalkerSetInitialGuess::slater_matrices M;
+    M.reserve(nspin);
+    for(int spin = 0; spin < nspin; ++spin) {
+      auto psi = nda::to_host(math::sparse::to_array<'N'>(OrbMats(spin % OrbMats.extent(0))));
+      M.push_back(configuration_orbitals(psi, spin, spin == 0 ? std::get<0>(*c) : std::get<1>(*c)));
+    }
+    return {.walker_type = walker_type, .payload = std::move(M)};
   }
 
   void updateLogScale(auto scl_new, SpinTypes s)
@@ -356,6 +356,23 @@ protected:
 
   // store references for back propagation
   memory::const_shared_array<HOST_MEMORY,ComplexType,3> RefOrbMats;
+
+  /*
+   * The Slater matrix of the unique string `conf_idx` of `spin`: the conjugates of the rows of
+   * `psi` it occupies, as columns.
+   */
+  nda::matrix<ComplexType> configuration_orbitals(nda::array<ComplexType,2> const& psi, int spin,
+                                                  int conf_idx) const
+  {
+    int const nel = (spin == 0 ? nup : ndown);
+    nda::vector<int> Ac(nel);
+    abij.get_configuration(spin, conf_idx, Ac);
+    nda::matrix<ComplexType> M(psi.extent(1), nel);
+    for(int a = 0; a < nel; ++a) {
+      M(nda::range::all, a) = nda::conj(psi(Ac(a), nda::range::all));
+    }
+    return M;
+  }
 
   /*
    * Node-shared dense (daggered) copies of the orbital matrices.

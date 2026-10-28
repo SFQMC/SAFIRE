@@ -1,8 +1,0 @@
-&inputpp
-
-outdir = "./OUT",
-prefix = "pwscf",
-filplot = "./OUT/VSC",
-plot_num = 1
-
-/

@@ -23,26 +23,13 @@ the water molecule at its equilibrium geometry.
 
 - need to figure out how to get the unit volume from PySCF.
 
-## **Run the code block below to set up the example**
+## **Run the Code Block Below to Set Up the Example**
 
 ```{code-cell} ipython3
 :id: ljFeTy3vE6ls
 
 # Run me (shift+enter or click the play button) to setup the tutorial!
 from pathlib import Path
-
-import h5py as h5
-import numpy as np
-from pyscf import gto,scf,mcscf
-
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-from afqmctools.wavefunction.mol import write_cas_wfn
-from afqmctools.inputs.from_hdf import write_json
-
-from stats.scalar_dat import analyze_scalar_data
-
-from tutorial_utils import run_afqmc
 
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -67,12 +54,9 @@ the total number of electrons...
 
 """
 
-from pathlib import Path
-
 import numpy as np
 from pyscf import gto,scf
 
-from pyscf.scf.hf import dip_moment
 from pyscf.tools import cubegen
 
 scratch = scratch_dir
@@ -145,22 +129,20 @@ dir(rho)
 
 +++ {"id": "0Y-83DT3L-r9"}
 
-# analyze with afqmctools
+# Analyze with afqmctools
+
+```{note}
+`afqmctools` has been removed. The RDM averaging below (`average_afqmc_rdm`) must be ported to
+`safiretools.Results` before this example can be enabled.
+```
 
 ```{code-cell} ipython3
 :id: YtU1MnKiL-22
 
-from pathlib import Path
-
-from pyscf.tools import cubegen
-import numpy as np
 import h5py as h5
 import matplotlib.pyplot as plt
-from pyscf import gto
-
+from pyscf import lib
 from pyscf.scf.hf import dip_moment
-
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
 
 scratch = Path("./scratch")
 scratch.mkdir(exist_ok=True)
@@ -176,9 +158,7 @@ uhf_results = reference / "uhf_rdm.h5"
 dft_results = reference / "dft_pbe.h5"
 cc_results = reference / "cc.h5"
 
-scf_data_basis = load_from_pyscf_chk_mol(scratch / "rhf.chk")
-
-mo_coeff = scf_data_basis["mo_coeff"]
+mo_coeff = lib.chkfile.load(scratch / "rhf.chk", "scf/mo_coeff")
 
 a0 = 0.9572
 theta = 104.52

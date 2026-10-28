@@ -23,6 +23,7 @@
 
 #include "configuration.hpp"
 #include "utilities/check.hpp"
+#include "utilities/check_shape.hpp"
 #include "IO/AppAbort.hpp"
 #include "IO/app_loggers.h"
 
@@ -341,147 +342,127 @@ auto to_array(nda::MemoryMatrix auto const& view)
   }
 }
 
+/*
+ * A sparse matrix is stored in an HDF5 group in one of two layouts:
+ * - `shape` (nrows, ncols), `row_pointers` (nrows+1 offsets into the next two), `column_indices`
+ *   and `values`, which is what SAFIRE writes;
+ * - the legacy layout CoQuí writes: `dims` (nrows, ncols, nnz), `pointers_begin_` and
+ *   `pointers_end_` (one offset per row each), `jdata_` and `data_`.
+ * The readers take either, told apart by `shape`; the writers write the first.
+ */
+inline bool hdf_csr_is_legacy(h5::group grp) {
+  return !grp.has_key("shape");
+}
+
+// (nrows, ncols) of the sparse matrix stored in `grp`
+inline std::array<long, 2> hdf_csr_shape(h5::group grp) {
+  bool const legacy = hdf_csr_is_legacy(grp);
+  std::vector<int> dims;
+  h5::h5_read(grp, legacy ? "dims" : "shape", dims);
+  sfqmc::utils::check(dims.size() == (legacy ? 3 : 2), "sparse matrix '{}' has length {}, expected {}",
+                      legacy ? "dims" : "shape", dims.size(), legacy ? 3 : 2);
+  return {dims[0], dims[1]};
+}
+
+// name of the dataset holding the nonzero values of the sparse matrix stored in `grp`
+inline std::string hdf_csr_values_name(h5::group grp) {
+  return hdf_csr_is_legacy(grp) ? "data_" : "values";
+}
+
 template<typename ValType, MEMORY_SPACE MEM = HOST_MEMORY, typename IndxType = int, typename IntType = long>
-auto HDF2CSR(h5::group grp)
-{
+auto HDF2CSR(h5::group grp) {
   using csr_host = csr_matrix<ValType,HOST_MEMORY,IndxType,IntType>;
   using csr = csr_matrix<ValType,MEM,IndxType,IntType>;
+  using nda::range;
 
-  // Need to read:
-  // - dims: nrow,ncols, nnz
-  // - data_
-  // - jdata_
-  // - pointers_begin_
-  // - pointers_end_
+  bool const legacy = hdf_csr_is_legacy(grp);
+  auto const [nrows, ncols] = hdf_csr_shape(grp);
 
-  long nrows, ncols, nnz;
-  std::vector<int> dims(3);
-  h5::h5_read(grp,"dims",dims);
-  sfqmc::utils::check(dims.size() == 3, "Size mismatch");
-  nrows = dims[0];
-  ncols = dims[1];
-  nnz   = dims[2];
+  // row r is the range [ptrb(r), ptre(r)) of the stored values and column indices
+  nda::array<IntType,1> ptrb, ptre;
+  long nnz = 0;
+  if(legacy) {
+    std::vector<int> dims;
+    h5::h5_read(grp, "dims", dims);
+    nnz = dims[2];
+    nda::h5_read(grp, "pointers_begin_", ptrb);
+    sfqmc::utils::check_shape(ptrb, "pointers_begin_", nrows);
+    nda::h5_read(grp, "pointers_end_", ptre);
+    sfqmc::utils::check_shape(ptre, "pointers_end_", nrows);
+  } else {
+    nda::array<IntType,1> row_pointers;
+    nda::h5_read(grp, "row_pointers", row_pointers);
+    sfqmc::utils::check_shape(row_pointers, "row_pointers", nrows + 1);
+    sfqmc::utils::check(row_pointers(0) == 0, "row_pointers starts at {}, expected 0", row_pointers(0));
+    nnz = row_pointers(nrows);
+    ptrb = row_pointers(range(nrows));
+    ptre = row_pointers(range(1, nrows + 1));
+  }
 
   nda::array<IntType,1> nnz_per_row(nrows);
-  nda::array<IntType,1> ptrb(nrows), ptre(nrows);
-  nda::h5_read(grp,"pointers_begin_",ptrb);
-  sfqmc::utils::check(ptrb.size() == nrows, "Size mismatch");
-  nda::h5_read(grp,"pointers_end_",ptre);
-  sfqmc::utils::check(ptre.size() == nrows, "Size mismatch");
-  for (long i = 0; i < nrows; i++)
+  for(long i = 0; i < nrows; i++) {
     nnz_per_row(i) = ptre(i) - ptrb(i);
+  }
 
   csr_host SpM({nrows, ncols}, nnz_per_row);
 
+  // sized up front: a compound-complex read fills the array as it stands
   nda::array<ValType,1> data(nnz);
   nda::array<IndxType,1> jdata(nnz);
-  sfqmc::utils::h5_read(grp,"data_",data);
-  sfqmc::utils::check(data.size() == nnz, "Size mismatch");
-  nda::h5_read(grp,"jdata_",jdata);
-  sfqmc::utils::check(jdata.size() == nnz, "Size mismatch");
-  for (long r = 0; r < nrows; r++)
-  {
-    for(long i=ptrb[r]; i<ptre[r]; ++i) 
+  sfqmc::utils::h5_read(grp, legacy ? "data_" : "values", data);
+  sfqmc::utils::check_shape(data, legacy ? "data_" : "values", nnz);
+  nda::h5_read(grp, legacy ? "jdata_" : "column_indices", jdata);
+  sfqmc::utils::check_shape(jdata, legacy ? "jdata_" : "column_indices", nnz);
+  for(long r = 0; r < nrows; r++) {
+    for(long i = ptrb[r]; i < ptre[r]; ++i) {
       SpM.emplace_back({IndxType(r), IndxType(jdata(i))}, data(i));
+    }
   }
 
-  if constexpr (MEM == HOST_MEMORY)
+  if constexpr (MEM == HOST_MEMORY) {
     return SpM;
-  else
+  } else {
     return csr{SpM};
-}
-
-template<typename ValType, MEMORY_SPACE MEM, typename IndxType, typename IntType>
-auto CSR2HDF(h5::group grp, csr_matrix<ValType,MEM,IndxType,IntType> const& A)
-{
-  using nda::range;
-  int nrows = int(A.extent(0));
-  int ncols = int(A.extent(1)); 
-  int nnz = int(A.nnz());
-  std::vector<int> dims = {nrows, ncols, nnz};
-  h5::h5_write(grp,"dims",dims);
-
-  {
-    auto ptrb = A.row_begin()(range(nrows)); // always on host
-    nda::h5_write(grp,"pointers_begin_",ptrb);
-    auto ptre = A.row_end(); // always on host
-    nda::h5_write(grp,"pointers_end_",ptre);
-  }
-  
-  auto ptrb = A.row_begin();
-  auto ptre = A.row_end(); 
-  {
-    auto Avals = A.values();
-    nda::array<ValType,1> vals(nnz);
-    for(long r=0, c=0; r<nrows; ++r) { 
-      long nr = ptre(r)-ptrb(r);
-      vals(range(c,c+nr)) = Avals(range(ptrb(r),ptre(r))); 
-      c += nr;  
-    } 
-    nda::h5_write(grp,"data_",vals);  
-  }
-  {
-    auto Acols = A.columns();
-    nda::array<IndxType,1> cols(nnz);
-    for(long r=0, c=0; r<nrows; ++r) {
-      long nr = ptre(r)-ptrb(r);
-      cols(range(c,c+nr)) = Acols(range(ptrb(r),ptre(r)));     
-      c += nr;
-    }  
-    nda::h5_write(grp,"jdata_",cols);  
   }
 }
 
+// Writes rows `rows` of `A`, in that order, as the sparse matrix stored in `grp`.
 template<typename ValType, MEMORY_SPACE MEM, typename IndxType, typename IntType, typename O_t>
-auto CSR2HDF(h5::group grp, csr_matrix<ValType,MEM,IndxType,IntType> const& A, O_t const& rows)
-{
+auto CSR2HDF(h5::group grp, csr_matrix<ValType,MEM,IndxType,IntType> const& A, O_t const& rows) {
   using nda::range;
-  int nrows = int(rows.size());
+  long const nrows = long(rows.size());
   sfqmc::utils::check(nrows <= A.extent(0), "Size mismatch");
-  int ncols = int(A.extent(1));
-  int nnz = 0;
-  for( auto r : rows ) nnz += A.nnz(r); 
-  std::vector<int> dims = {nrows, ncols, nnz};
-  h5::h5_write(grp,"dims",dims);
+
+  // A's rows can carry unused capacity, so the stored offsets are rebuilt from the row counts
+  nda::array<IntType,1> row_pointers(nrows + 1);
+  row_pointers(0) = 0;
+  for(auto [i, r] : itertools::enumerate(rows)) {
+    row_pointers(i + 1) = row_pointers(i) + IntType(A.nnz(r));
+  }
+  long const nnz = row_pointers(nrows);
 
   auto ptrb = A.row_begin();
   auto ptre = A.row_end();
-  {
-    nda::array<IntType,1> ptrb(nrows);
-    nda::array<IntType,1> ptre(nrows);
-    long n=0;
-    for( auto [i,r] : itertools::enumerate(rows) ) {
-      IntType nr = IntType(A.nnz(r));
-      ptrb(i) = n;
-      ptre(i) = n+nr;
-      n += nr;
-    } 
-    nda::h5_write(grp,"pointers_begin_",ptrb);
-    nda::h5_write(grp,"pointers_end_",ptre);
+  auto Avals = A.values();
+  auto Acols = A.columns();
+  nda::array<ValType,1> vals(nnz);
+  nda::array<IndxType,1> cols(nnz);
+  for(auto [i, r] : itertools::enumerate(rows)) {
+    auto const out = range(row_pointers(i), row_pointers(i + 1));
+    vals(out) = Avals(range(ptrb(r), ptre(r)));
+    cols(out) = Acols(range(ptrb(r), ptre(r)));
   }
 
-  {
-    auto Avals = A.values();
-    nda::array<ValType,1> vals(nnz);
-    long n=0;
-    for( auto [i,r] : itertools::enumerate(rows) ) {
-      long nr = ptre(r)-ptrb(r);
-      vals(range(n,n+nr)) = Avals(range(ptrb(r),ptre(r)));
-      n += nr;
-    }
-    nda::h5_write(grp,"data_",vals);
-  }
-  {
-    auto Acols = A.columns();
-    nda::array<IndxType,1> cols(nnz);
-    long n=0;
-    for( auto [i,r] : itertools::enumerate(rows) ) {
-      long nr = ptre(r)-ptrb(r);
-      cols(range(n,n+nr)) = Acols(range(ptrb(r),ptre(r)));
-      n += nr;
-    }
-    nda::h5_write(grp,"jdata_",cols);
-  }
+  std::vector<int> shape = {int(nrows), int(A.extent(1))};
+  h5::h5_write(grp, "shape", shape);
+  nda::h5_write(grp, "row_pointers", row_pointers);
+  nda::h5_write(grp, "column_indices", cols);
+  nda::h5_write(grp, "values", vals);
+}
+
+template<typename ValType, MEMORY_SPACE MEM, typename IndxType, typename IntType>
+auto CSR2HDF(h5::group grp, csr_matrix<ValType,MEM,IndxType,IntType> const& A) {
+  return CSR2HDF(grp, A, nda::range(A.extent(0)));
 }
 
 /*

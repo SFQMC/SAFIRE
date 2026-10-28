@@ -14,8 +14,6 @@
 #pragma once
 
 #include <cmath>
-#include <complex>
-#include <algorithm>
 #include "configuration.hpp"
 #include "IO/app_loggers.h"
 #include "IO/banner.hpp"

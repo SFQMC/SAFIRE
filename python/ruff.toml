@@ -1,0 +1,45 @@
+# This file is distributed under the Apache License, Version 2.0 License.
+# See LICENSE file in top directory for details.
+#
+# Copyright (c) 2021-2025 The Simons Foundation, Inc.
+#
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+
+line-length = 100
+
+target-version = "py310" # matches requires-python in pyproject.toml
+
+[lint]
+select =[
+"E", # pycodestyle error
+"F", # pyflake
+"W", # whitespace
+"NPY", # numpy
+"TID", # tidy-imports
+"B", # bugbear
+"D"
+]
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+ignore = [
+"E402", # import at top of file
+"E731", # Do not assign a lambda expression, use a def 
+"E741", # Don't use I, O, l as variable names
+"F401", # unused import
+"E701", # allow Multiple statements on one line (colon)
+"PT023",# ignore @pytest.mark.slow
+"B011", # Do not assert False
+"TID252", # no relative imports from parents (may remove this when making a release package)
+]
+
+# Ignore `E402` (import violations) in all `__init__.py` files, and in `path/to/file.py`.
+[lint.per-file-ignores]
+"__init__.py" = ["E402"]
+
+[lint.pydocstyle]
+convention = "numpy"

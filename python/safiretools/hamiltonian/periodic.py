@@ -1,0 +1,999 @@
+# This file is distributed under the Apache License, Version 2.0 License.
+# See LICENSE file in top directory for details.
+#
+# Copyright (c) 2021-2025 The Simons Foundation, Inc.
+#
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+
+r"""
+`PeriodicHamiltonian` — a Cholesky-factorized Hamiltonian for a periodic system.
+
+Corresponds to the on-disk format ``Hamiltonian/KPFactorized``, which the
+executable's ``KPFactorizedHamiltonian`` reads.
+
+For large-scale solids, this interface may be too slow. Consider using Coquí instead.
+"""
+
+import itertools
+import logging
+import math
+import time
+import warnings
+
+import numpy as np
+import scipy.linalg
+import h5py as h5
+
+from safiretools.hamiltonian.base import (
+    Hamiltonian,
+    read_hamiltonian_header,
+    write_hamiltonian_header,
+)
+from safiretools.hamiltonian.fcidump import write_fcidump_kpoint
+from safiretools.hdf5 import read_complex, replace_group
+
+logger = logging.getLogger(__name__)
+
+_GRID_SHIFTS = tuple(itertools.product(range(-1, 2), repeat=3))
+"""The reciprocal-lattice shifts searched, all of (-1, 0, 1)^3, in the order
+`generate_grid_shifts` numbers them."""
+
+_NUM_GRID_SHIFTS = len(_GRID_SHIFTS)
+
+
+# ----------------------------------------------------------------------
+# momentum bookkeeping
+# ----------------------------------------------------------------------
+
+def construct_qk_maps(cell, kpts):
+    r"""
+    Build the momentum-transfer maps used by the k-point-symmetric solver.
+
+    For a given :math:`Q` (any vector in the first Brillouin zone) there are
+    ``nkpts`` k-point pairs mapping to it, such that :math:`(k_1 - k_2) + G = Q`
+    with :math:`G` in the reciprocal lattice. The mapping is taken as
+    :math:`K = k_1` and :math:`Q = (k_1 - k_2) + G`.
+
+    Parameters
+    ----------
+    cell : pyscf.pbc.gto.Cell
+        PySCF cell.
+    kpts : numpy.ndarray
+        k-points, shape ``(nkpts, 3)``.
+
+    Returns
+    -------
+    QKToK2 : numpy.ndarray
+        ``QKToK2[Q, k1] = k2``, shape ``(nkpts, nkpts)``.
+    kminus : numpy.ndarray
+        ``kminus[Q]`` is the index of :math:`-Q`, shape ``(nkpts,)``.
+
+    Raises
+    ------
+    ValueError
+        If a mapping is missing or ambiguous, which means the k-point mesh is
+        not closed under the reciprocal lattice.
+    """
+    nkpts = len(kpts)
+    Qpts = kpts - kpts[0]
+
+    QKToK2 = np.zeros((nkpts, nkpts), dtype=np.int32) - 1
+    kminus = np.zeros((nkpts,), dtype=np.int32) - 1
+
+    kvecs = cell.reciprocal_vectors()
+    shifts = [np.dot(shift, kvecs) for shift in _GRID_SHIFTS]
+
+    for iq, Q in enumerate(Qpts):
+        for ia, ka in enumerate(kpts):
+            for ic, kc in enumerate(kpts):
+                candidates = [ka - kc] + [ka - kc + G for G in shifts]
+                for q in candidates:
+                    if np.abs(np.dot(q - Q, q - Q)) < 1e-10:
+                        if QKToK2[iq, ia] >= 0:
+                            raise ValueError(
+                                "More than one solution while constructing the QK map"
+                            )
+                        QKToK2[iq, ia] = ic
+                        break
+            if QKToK2[iq, ia] < 0:
+                raise ValueError(f"Could not construct the QK mapping for Q={iq}, k={ia}")
+
+    for iq, Q in enumerate(Qpts):
+        for iqm, Qm in enumerate(Qpts):
+            if any(np.abs(np.dot(Q + Qm - G, Q + Qm - G)) < 1e-10 for G in shifts):
+                if kminus[iq] >= 0:
+                    raise ValueError("More than one solution to Q + Qm = G")
+                kminus[iq] = iqm
+        if kminus[iq] < 0:
+            raise ValueError(f"Could not solve Q + Qm = G for Q={iq}")
+
+    return QKToK2, kminus
+
+
+def generate_grid_shifts(cell):
+    r"""
+    Build the FFT-grid index maps for every shift by a reciprocal-lattice vector
+    :math:`Q = k_k - k_i + k_l - k_j`.
+
+    Parameters
+    ----------
+    cell : pyscf.pbc.gto.Cell
+        PySCF cell.
+
+    Returns
+    -------
+    gmap : numpy.ndarray
+        ``(27, ngs)`` index map, one row per shift.
+    Qi : numpy.ndarray
+        ``(27, 3)`` shift vectors, in the same order.
+    ngs : int
+        Number of grid points.
+    """
+    mesh = cell.mesh
+    ngs = np.prod(mesh)
+
+    g1 = np.arange(ngs, dtype=np.int32).reshape(mesh, order='C')
+    gmap = np.zeros((_NUM_GRID_SHIFTS, ngs), np.int32)
+    Qi = np.zeros((_NUM_GRID_SHIFTS, 3), dtype=np.float64)
+
+    kvecs = cell.reciprocal_vectors()
+    for ii, (nx, ny, nz) in enumerate(_GRID_SHIFTS):
+        Qi[ii, :] = np.dot(np.array([nx, ny, nz]), kvecs)
+        gmap[ii, :] = np.roll(g1, (-nx, -ny, -nz), axis=(0, 1, 2)).reshape(-1, order='C')
+
+    return gmap, Qi, ngs
+
+
+def setup_basis_map(nmo_pk):
+    """
+    Map each ``(orbital, k-point)`` pair onto its index in the combined
+    supercell basis.
+
+    Parameters
+    ----------
+    nmo_pk : sequence of int
+        Number of orbitals at each k-point.
+
+    Returns
+    -------
+    ik2n : numpy.ndarray
+        ``(nmo_max, nkpts)`` index map; -1 where a k-point has no such orbital.
+    nmo_tot : int
+        Size of the combined basis.
+    """
+    nkpts = len(nmo_pk)
+    nmo_max = int(np.max(nmo_pk))
+    ik2n = -1 * np.ones((nmo_max, nkpts), dtype=np.int32)
+
+    count = 0
+    for ki in range(nkpts):
+        for i in range(nmo_pk[ki]):
+            ik2n[i, ki] = count
+            count += 1
+
+    return ik2n, count
+
+
+# ----------------------------------------------------------------------
+# the Cholesky solver
+# ----------------------------------------------------------------------
+
+class PeriodicCholesky:
+    """
+    Modified Cholesky factorization of the two-body integrals of a periodic
+    system.
+
+    Parameters
+    ----------
+    cell : pyscf.pbc.gto.Cell
+        PySCF cell.
+    kpts : numpy.ndarray
+        k-points, shape ``(nkpts, 3)``.
+    nmo_pk : sequence of int
+        Number of orbitals at each k-point.
+    kp_sym : bool
+        Factorize each momentum transfer separately (True) or the full k-point
+        pair matrix at once (False). See the module docstring.
+    maxvecs : int, optional
+        Multiplier bounding the number of Cholesky vectors: the loop stops at
+        ``maxvecs * nmo_max`` per momentum transfer when `kp_sym`, and at
+        ``maxvecs * nmo_tot`` otherwise. Default 20.
+    gtol_chol : float, optional
+        Stop once the largest residual falls below this. Default 1e-5.
+    verbose : bool, optional
+        Log per-iteration progress.
+
+    Notes
+    -----
+    The Cholesky buffer is bounded by the loop that fills it —
+    ``maxvecs * nmo_max`` per momentum transfer when `kp_sym`, and
+    ``maxvecs * nmo_tot`` otherwise.
+    """
+
+    def __init__(self, cell, kpts, nmo_pk, *, kp_sym, maxvecs=20,
+                 gtol_chol=1e-5, verbose=True) -> None:
+        from pyscf.pbc import df, tools
+
+        self.cell = cell
+        self.kpts = kpts
+        self.nkpts = len(kpts)
+        self.nmo_pk = np.asarray(nmo_pk)
+        self.nmo_max = int(np.max(self.nmo_pk))
+        self.nmo_tot = int(np.sum(self.nmo_pk))
+        self.kp_sym = kp_sym
+        self.gtol_chol = gtol_chol
+        self.verbose = verbose
+
+        self.max_cholesky_vectors = maxvecs * (self.nmo_max if kp_sym else self.nmo_tot)
+
+        # the k-point(-pair) axis and the orbital-pair axis of the work arrays
+        self.nkk = self.nkpts if kp_sym else self.nkpts * self.nkpts
+        self.nij = self.nmo_max * self.nmo_max
+        logger.info("total number of orbitals: %d", self.nmo_tot)
+
+        if kp_sym:
+            self.QKToK2, self.kminus = construct_qk_maps(cell, kpts)
+            self.kconserv = None
+        else:
+            self.QKToK2 = self.kminus = None
+            self.kconserv = tools.get_kconserv(cell, kpts)
+
+        self.gmap, self.Qi, self.ngs = generate_grid_shifts(cell)
+        self.df = df.FFTDF(cell, kpts)
+
+    # -- mode-dependent bookkeeping ------------------------------------
+
+    def momentum_blocks(self):
+        """
+        The momentum transfers to factorize, in order.
+
+        One entry per :math:`Q` not related to an earlier one by
+        :math:`Q \\rightarrow -Q` when `kp_sym`, and a single ``None`` block
+        covering all k-point pairs otherwise.
+        """
+        if not self.kp_sym:
+            return [None]
+        return [Q for Q in range(self.nkpts) if Q <= self.kminus[Q]]
+
+    def k_pairs(self, block):
+        """The ``(k1, k2)`` pairs of momentum block `block`."""
+        if self.kp_sym:
+            return [(k1, self.QKToK2[block][k1]) for k1 in range(self.nkpts)]
+        return [(k1, k2) for k1 in range(self.nkpts)
+                for k2 in range(self.nkpts)]
+
+    def _row(self, k1, k2) -> int:
+        """Index of the ``(k1, k2)`` pair along the work arrays' k axis."""
+        return k1 if self.kp_sym else k1 * self.nkpts + k2
+
+    def _conserves_momentum(self, k1, k2, k3, k4) -> bool:
+        """
+        Whether ``(k1, k2)`` couples to the pivot pair ``(k3, k4)``. Every pair
+        within one momentum block does when `kp_sym`; otherwise k-point
+        conservation has to be checked explicitly.
+        """
+        return True if self.kp_sym else k3 == self.kconserv[k1, k2, k4]
+
+    def _new_done(self):
+        """
+        Array marking pivots already used, so a repeat can be caught.
+
+        Only ``k3`` is needed when `kp_sym`, since ``k4`` follows from it within
+        a momentum block.
+        """
+        shape = ((self.nkpts, self.nmo_max, self.nmo_max) if self.kp_sym
+                 else (self.nkpts, self.nkpts, self.nmo_max, self.nmo_max))
+        return np.zeros(shape, dtype=np.int32)
+
+    def _done_index(self, k3, k4, i3, i4):
+        return (k3, i3, i4) if self.kp_sym else (k3, k4, i3, i4)
+
+    # -- shared numerics -----------------------------------------------
+
+    def generate_orbital_products(self, pairs, X, Xaoik, Xaolj) -> None:
+        r"""
+        Fill the left and right pair densities for a set of k-point pairs.
+
+        ``Xaolj`` holds :math:`\rho_{lj}(G)`; ``Xaoik`` holds the same products
+        multiplied by the Coulomb kernel.
+
+        Parameters
+        ----------
+        pairs : list of tuple(int, int)
+            The ``(k1, k2)`` pairs to fill.
+        X : sequence of numpy.ndarray
+            Per-k-point transformation into the working basis.
+        Xaoik, Xaolj : numpy.ndarray
+            Output buffers, ``(nkk, ngs, nij)``.
+        """
+        from pyscf.pbc import tools
+
+        for k, (k1, k2) in enumerate(pairs):
+            npairs = self.nmo_pk[k1] * self.nmo_pk[k2]
+
+            Xaoik[k, :, 0:npairs] = self.df.get_mo_pairs_G(
+                (X[k1].copy(), X[k2].copy()),
+                (self.kpts[k1], self.kpts[k2]),
+                (self.kpts[k2] - self.kpts[k1]),
+                compact=False)
+
+            Xaolj[k, :, :] = Xaoik[k, :, :]
+            coulG = tools.get_coulG(self.cell, self.kpts[k2] - self.kpts[k1],
+                                    mesh=self.df.mesh)
+            Xaoik[k, :, :] *= (coulG * self.cell.vol / self.ngs**2).reshape(-1, 1)
+
+    def generate_diagonal(self, pairs, Xaoik, Xaolj):
+        """
+        The diagonal of the two-body matrix, which is the initial Cholesky
+        residual, together with its largest element.
+
+        Returns
+        -------
+        residual : numpy.ndarray
+            ``(nkk, nij)`` residual.
+        pivot : tuple(int, int, int, int, float)
+            ``(k1, k2, i1, i2, magnitude)`` of the largest element.
+        """
+        residual = np.zeros((self.nkk, self.nij), dtype=np.float64)
+
+        for k, (k1, k2) in enumerate(pairs):
+            for ij in range(min(self.nij, self.nmo_pk[k1] * self.nmo_pk[k2])):
+                intg = np.dot(Xaoik[k, :, ij], Xaolj[k, :, ij].conj())
+                if (intg.real < 0) or (abs(intg.imag) > 1e-9):
+                    logger.error("negative or complex diagonal term: "
+                                 "%d %d %d %d %13.8e", k1,
+                                 ij // self.nmo_pk[k2], k2,
+                                 ij % self.nmo_pk[k2], intg)
+
+                residual[k, ij] = intg.real
+
+        return residual, self._largest_residual(pairs, residual)
+
+    def _largest_residual(self, pairs, residual):
+        """
+        The pivot for the next Cholesky vector: the largest remaining residual,
+        as ``(k1, k2, i1, i2, magnitude)``.
+        """
+        maxv = 0.0
+        pivot = (-1, -1, -1, -1)
+
+        for k, (k1, k2) in enumerate(pairs):
+            for ij in range(min(self.nij, self.nmo_pk[k1] * self.nmo_pk[k2])):
+                if abs(residual[k, ij]) > maxv:
+                    maxv = abs(residual[k, ij])
+                    pivot = (k1, k2, ij // self.nmo_pk[k2],
+                             ij % self.nmo_pk[k2])
+
+        return (*pivot, maxv)
+
+    def _shifted_pivot_column(self, k1, k2, k3, k4, Xkl0, Xkl):
+        r"""
+        The pivot's pair density, shifted onto this pair's FFT grid.
+
+        A nonzero :math:`Q = k_2 - k_1 + k_3 - k_4` means the two pairs use
+        grids offset by a reciprocal-lattice vector, so the pivot column has to
+        be re-indexed through `generate_grid_shifts`.
+        """
+        q1 = self.kpts[k2] - self.kpts[k1] + self.kpts[k3] - self.kpts[k4]
+        if np.sum(abs(q1)) <= 1e-9:
+            return Xkl0[0:self.ngs]
+
+        for ii in range(_NUM_GRID_SHIFTS):
+            if np.sum(np.linalg.norm(q1 - self.Qi[ii, :])) < 1e-12:
+                Xkl[:] = Xkl0[self.gmap[ii, :]]
+                return Xkl
+
+        raise RuntimeError(f"Could not find the reciprocal lattice shift for Q = {q1}")
+
+    def run(self, X):
+        """
+        Factorize the two-body integrals, one momentum block at a time.
+
+        Parameters
+        ----------
+        X : sequence of numpy.ndarray
+            Per-k-point transformation into the working basis.
+
+        Yields
+        ------
+        block : int or None
+            The momentum transfer just factorized, or None in supercell mode.
+        cholvecs : numpy.ndarray
+            The block's Cholesky vectors, ``(nkk, nij, numv)``. The buffer is
+            reused between blocks, so consume each one before asking for the
+            next.
+        """
+        ngs = self.ngs
+        maxvecs = self.max_cholesky_vectors
+
+        logger.info("approx total memory for orbital products: %.2e GB",
+                    2 * 16 * self.nkk * ngs * self.nij / 1024**3)
+
+        Xaoik = np.zeros((self.nkk, ngs, self.nij), dtype=np.complex128)
+        Xaolj = np.zeros((self.nkk, ngs, self.nij), dtype=np.complex128)
+        cholvecs = np.zeros((self.nkk, self.nij, maxvecs), dtype=np.complex128)
+        Xkl = np.zeros(ngs, dtype=np.complex128)
+        Xkl0 = np.zeros(ngs, dtype=np.complex128)
+        done = self._new_done()
+
+        for block in self.momentum_blocks():
+            pairs = self.k_pairs(block)
+            logger.info("calculating factorization for momentum block %s", block)
+
+            cholvecs[:] = 0
+            done[:] = 0
+
+            start = time.time()
+            self.generate_orbital_products(pairs, X, Xaoik, Xaolj)
+            logger.info("time to generate orbital products: %13.8e", time.time() - start)
+
+            residual, (k3, k4, i3, i4, vmax) = self.generate_diagonal(
+                pairs, Xaoik, Xaolj)
+            done[self._done_index(k3, k4, i3, i4)] = 1
+
+            numv = 0
+            while True:
+                if numv >= maxvecs:
+                    warnings.warn(
+                        "Too many vectors needed to converge the Cholesky "
+                        f"factorization ({maxvecs}). Increase maxvecs.",
+                        RuntimeWarning
+                    )
+                    break
+
+                # the pivot's pair density, and its Cholesky history
+                row = self._row(k3, k4)
+                column = i3 * self.nmo_pk[k4] + i4
+                Xkl0[:] = Xaolj[row, 0:ngs, column]
+                history = cholvecs[row, column, 0:numv].copy()
+
+                # 1. evaluate the new column (ik|i_max k_max)
+                for k, (k1, k2) in enumerate(pairs):
+                    if not self._conserves_momentum(k1, k2, k3, k4):
+                        continue
+
+                    pivot_column = self._shifted_pivot_column(k1, k2, k3, k4, Xkl0, Xkl)
+                    npairs = self.nmo_pk[k1] * self.nmo_pk[k2]
+                    cholvecs[k, 0:npairs, numv] = np.dot(
+                        Xaoik[k, :, 0:npairs].T, pivot_column.conj())
+
+                # 2. subtract the projection along the previous components
+                cholvecs[:, :, numv] -= np.dot(cholvecs[:, :, 0:numv], history.conj())
+                cholvecs[:, :, numv] /= math.sqrt(vmax)
+
+                residual -= (cholvecs[:, :, numv] * cholvecs[:, :, numv].conj()).real
+
+                k3, k4, i3, i4, vmax = self._largest_residual(pairs, residual)
+
+                if self.verbose:
+                    logger.info("cholesky iteration %d: max residual %13.8e", numv, vmax)
+
+                numv += 1
+                if vmax < self.gtol_chol:
+                    break
+
+                if done[self._done_index(k3, k4, i3, i4)] > 0:
+                    raise RuntimeError(
+                        "Error in Cholesky decomposition: pivot "
+                        f"({k3}, {k4}, {i3}, {i4}) was already used, residual {vmax}"
+                    )
+                done[self._done_index(k3, k4, i3, i4)] = 1
+
+            yield block, cholvecs[:, :, :numv]
+
+
+class PeriodicHamiltonian(Hamiltonian):
+    r"""
+    A k-point-factorized Hamiltonian for a periodic system.
+
+    Parameters
+    ----------
+    hcore : numpy.ndarray
+        One-body Hamiltonian, ``(nkpts, nmo, nmo)``: every k-point has to carry the
+        same number of orbitals.
+    chol : dict
+        Cholesky data as ``{Q: L_Q}``, with ``L_Q`` of shape
+        ``(nkpts, nmo**2 * nchol_Q)``. Only momentum transfers with
+        ``Q <= minus_k[Q]`` are stored; the rest follow by symmetry.
+    kpts : numpy.ndarray
+        k-points, shape ``(nkpts, 3)``.
+    qk_to_k2 : numpy.ndarray
+        ``qk_to_k2[Q, k1] = k2``, the momentum-transfer map.
+    minus_k : numpy.ndarray
+        ``minus_k[Q]`` is the index of :math:`-Q`.
+    enuc : float, optional
+        Nuclear repulsion of every cell. Default 0.0.
+    madelung_constant : float, optional
+        Electron self-interaction per electron: the executable subtracts it
+        times the trial wavefunction's electron count. Default 0.0.
+    basis_rotation : numpy.ndarray, optional
+        Transformation from the input (Bloch AO) basis to the working basis at
+        each k-point, ``(nkpts, nao, nmo)``; see `Hamiltonian.basis_rotation`.
+        Written as ``Hamiltonian/BasisRotation`` when given. Omitted, the
+        integrals are taken to be in the working basis already.
+
+    Raises
+    ------
+    ValueError
+        If any array does not match the k-point count or the orbital count.
+
+    Notes
+    -----
+    A supercell Hamiltonian is this same class with ``nkpts == 1`` — the Γ point
+    of the supercell — so there is no separate representation to branch on.
+
+    The format holds only spin-independent Hamiltonians, so `spin_symm` is
+    always `SpinSymm.CLOSED`.
+    """
+
+    def __init__(self, hcore, chol, kpts, qk_to_k2, minus_k, enuc=0.0,
+                 madelung_constant=0.0, basis_rotation=None) -> None:
+        super().__init__()
+
+        self.hcore = np.asarray(hcore)
+        self.chol = chol
+        self.kpts = np.asarray(kpts)
+        self.qk_to_k2 = np.asarray(qk_to_k2)
+        self.minus_k = np.asarray(minus_k)
+        self.enuc = float(np.real(enuc))
+        self.madelung_constant = float(madelung_constant)
+        self._basis_rotation = (None if basis_rotation is None
+                                else np.asarray(basis_rotation))
+
+        nkpts = len(self.kpts)
+        if (self.hcore.ndim != 3 or self.hcore.shape[0] != nkpts
+                or self.hcore.shape[1] != self.hcore.shape[2]):
+            raise ValueError(
+                f"hcore has shape {self.hcore.shape}, expected ({nkpts}, nmo, nmo)"
+            )
+        for name, array, shape in (('qk_to_k2', self.qk_to_k2, (nkpts, nkpts)),
+                                   ('minus_k', self.minus_k, (nkpts,))):
+            if array.shape != shape:
+                raise ValueError(
+                    f"{name} has shape {array.shape}, expected {shape} for "
+                    f"{nkpts} k-points"
+                )
+        for Q, L in self.chol.items():
+            shape = np.shape(L)
+            if len(shape) != 2 or shape[0] != nkpts or shape[1] % self.nmo**2:
+                raise ValueError(
+                    f"chol[{Q}] has shape {shape}, expected "
+                    f"({nkpts}, {self.nmo}**2 * nchol)"
+                )
+        if self._basis_rotation is not None:
+            shape = self._basis_rotation.shape
+            if len(shape) != 3 or shape[0] != nkpts or shape[2] != self.nmo:
+                raise ValueError(
+                    f"basis_rotation has shape {shape}, expected "
+                    f"({nkpts}, nao, {self.nmo})"
+                )
+
+    @property
+    def nkpts(self) -> int:
+        """Number of k-points. 1 for a supercell (Γ-point) Hamiltonian."""
+        return len(self.kpts)
+
+    @property
+    def nmo(self) -> int:
+        """Number of orbitals at each k-point."""
+        return self.hcore.shape[1]
+
+    @property
+    def basis_rotation(self) -> np.ndarray:
+        """
+        The stored ``(nkpts, nao, nmo)`` transformation, or the identity at
+        every k-point when the Hamiltonian was given in its working basis.
+
+        A supercell Hamiltonian's one k-point carries the block-diagonal
+        rotation from the Bloch AOs of every original k-point, k-major, to the
+        combined basis.
+        """
+        if self._basis_rotation is None:
+            return np.tile(np.eye(self.nmo), (self.nkpts, 1, 1))
+        return self._basis_rotation
+
+    # ------------------------------------------------------------------
+    # construction
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_pyscf(cls, kmf, basis=None, kpoint_symmetry=True, chol_cut=1e-5,
+                   maxvecs=20, verbose=False) -> "PeriodicHamiltonian":
+        """
+        Generate a periodic Hamiltonian from a PySCF ``pbc`` SCF object.
+
+        Parameters
+        ----------
+        kmf
+            A converged ``pbc.scf`` object, at one k-point or on a mesh; its
+            ``get_hcore()`` is the one-body Hamiltonian.
+        basis : None or 'ortho_ao', optional
+            The working basis: the solution's own orbitals (closed shell only),
+            or the orthogonalized AO basis. Pass the same basis to
+            `safiretools.NOMSDWavefunction.from_pbc_scf`.
+        kpoint_symmetry : bool, optional
+            Factorize per momentum transfer (True) rather than as one supercell
+            (False). Default True. A supercell result comes back as a Γ-point
+            Hamiltonian, i.e. with ``nkpts == 1``.
+        chol_cut : float, optional
+            Cholesky convergence threshold. Default 1e-5.
+        maxvecs : int, optional
+            Cholesky-vector bound multiplier. Default 20.
+        verbose : bool, optional
+            Log per-iteration Cholesky progress.
+
+        Returns
+        -------
+        PeriodicHamiltonian
+
+        Raises
+        ------
+        ValueError
+            If ``kmf.exxdiv`` is neither ``'ewald'`` nor ``None``: the Cholesky
+            vectors use the plain Coulomb kernel, not a truncated one. Also if
+            `kpoint_symmetry` is set and the k-points carry different orbital
+            counts, e.g. after linear dependencies were removed per k-point;
+            the supercell factorization takes those.
+
+        Notes
+        -----
+        The whole factorization is built in memory and written by `to_hdf5`,
+        serially. CoQuí is the supported route for production-sized solids.
+        """
+        from pyscf.pbc import tools
+        from safiretools.convert.pyscf import periodic_solution
+
+        if kmf.exxdiv not in ('ewald', None):
+            raise ValueError(
+                f"exxdiv={kmf.exxdiv!r} is not supported, only 'ewald' or None: the "
+                "Cholesky vectors are built with the plain Coulomb kernel"
+            )
+
+        scf_data = periodic_solution(kmf, basis)
+
+        cell, kpts, X = scf_data['cell'], scf_data['kpts'], scf_data['X']
+        nmo_pk = np.asarray(scf_data['nmo_pk'])
+        if kpoint_symmetry and len(set(nmo_pk)) > 1:
+            raise ValueError(
+                f"the k-points carry different orbital counts ({list(nmo_pk)}), but a "
+                "k-point Hamiltonian holds one count for all of them"
+            )
+
+        solver = PeriodicCholesky(cell, kpts, nmo_pk, kp_sym=kpoint_symmetry,
+                                  maxvecs=maxvecs, gtol_chol=chol_cut,
+                                  verbose=verbose)
+
+        hcore_pk = _transform_hcore(scf_data['hcore'], X, nmo_pk)
+        enuc = len(kpts) * cell.energy_nuc()
+        # CoQuí's convention: the executable subtracts madelung_constant * nelec
+        madelung_constant = 0.0
+        if kmf.exxdiv == 'ewald':
+            madelung_constant = 0.5 * tools.pbc.madelung(cell, kpts)
+            logger.info("madelung constant: %s", madelung_constant)
+
+        if not kpoint_symmetry:
+            (_, cholvecs), = solver.run(X)
+            # setup_basis_map numbers the combined basis k-major, as block_diag
+            #   stacks the per-k-point blocks
+            return cls(**_supercell_layout(hcore_pk, cholvecs, solver),
+                       enuc=enuc, madelung_constant=madelung_constant,
+                       basis_rotation=scipy.linalg.block_diag(*X)[np.newaxis])
+
+        chol = {Q: _kpoint_block(block, solver) for Q, block in solver.run(X)}
+
+        return cls(hcore=np.array(hcore_pk), chol=chol, kpts=kpts,
+                   qk_to_k2=solver.QKToK2, minus_k=solver.kminus, enuc=enuc,
+                   madelung_constant=madelung_constant,
+                   basis_rotation=np.array(X))
+
+    # ------------------------------------------------------------------
+    # serialization
+    # ------------------------------------------------------------------
+
+    def to_hdf5(self, path) -> None:
+        """
+        Write this Hamiltonian in the ``Hamiltonian/KPFactorized`` format.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            HDF5 file to write into. Created if it does not exist. A Hamiltonian
+            already in the file is replaced; everything else — notably a
+            ``Wavefunction`` — is left alone, so a Hamiltonian and a
+            wavefunction can share one file in either order.
+        """
+        nkpts, nmo = self.nkpts, self.nmo
+        hcore = np.asarray(self.hcore, dtype=np.complex128)
+
+        with h5.File(path, 'a') as fh5:
+            group = replace_group(fh5, 'Hamiltonian')
+            write_hamiltonian_header(group, 'kpoint', enuc=self.enuc)
+            group.attrs['madelung_constant'] = np.float64(self.madelung_constant)
+            group.create_dataset("KPoints", data=np.asarray(self.kpts, dtype=np.float64))
+            group.create_dataset("QKTok2", data=np.asarray(self.qk_to_k2, dtype=np.int32))
+            group.create_dataset("MinusK", data=np.asarray(self.minus_k, dtype=np.int32))
+            group.create_dataset("hcore", data=hcore.reshape(nkpts, 1, 1, nmo, 1, nmo))
+            if self._basis_rotation is not None:
+                group.create_dataset("BasisRotation", data=self._basis_rotation)
+
+            kp_group = group.create_group('KPFactorized')
+            for Q, L in self.chol.items():
+                kp_group.create_dataset(
+                    f"L{Q}", data=np.asarray(L).reshape(nkpts, 1, 1, nmo, 1, nmo, -1))
+
+    def to_fcidump(self, path, nelec=(0, 0), tol=1e-8, ctol=1e-12, sym=1,
+                   cplx=True, paren=False, use_spinor=False) -> None:
+        """
+        Write this Hamiltonian as a plain-text FCIDUMP file, over the combined
+        basis of every k-point.
+
+        The two-electron integrals are reconstructed from the Cholesky vectors
+        and written out in full, so the file is far larger than the HDF5
+        `to_hdf5` writes and this is only practical for small cells and meshes.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            FCIDUMP file to write. Overwritten if it exists.
+        nelec : tuple(int, int), optional
+            ``(nup, ndown)`` over the whole supercell, for the ``NELEC``/``MS2``
+            header fields and the Madelung correction folded into the constant
+            energy. The Hamiltonian itself does not carry an electron count, so
+            it is supplied here. Default ``(0, 0)``.
+        tol : float, optional
+            Only write integrals above this magnitude. Default 1e-8.
+        ctol : float, optional
+            Largest imaginary part tolerated when `cplx` is False.
+            Default 1e-12.
+        sym : int, optional
+            Write only the symmetry-inequivalent integrals of this
+            permutational symmetry, 1, 4 or 8. Default 1, i.e. everything.
+        cplx : bool, optional
+            Write in the complex format. Default True, and what a k-point
+            factorization normally needs.
+        paren : bool, optional
+            Write complex values parenthesized as ``(real,imag)`` rather than
+            in two columns.
+        use_spinor : bool, optional
+            Not implemented for a k-point Hamiltonian; see below.
+
+        Raises
+        ------
+        ValueError
+            If there is a Madelung constant but no electron count, or if `cplx`
+            is False and the integrals have imaginary parts above `ctol`.
+        NotImplementedError
+            If `use_spinor` is set.
+
+        Notes
+        -----
+        The orbital index of the FCIDUMP is the combined ``k * nmo + i``.
+        """
+        if self.madelung_constant != 0.0 and sum(nelec) == 0:
+            raise ValueError(
+                "the FCIDUMP constant energy includes the Madelung correction, "
+                "which needs the electron count; pass nelec"
+            )
+
+        chol = self._chol_all_momenta()
+        enuc = self.enuc - self.madelung_constant * sum(nelec)
+
+        write_fcidump_kpoint(path, self.hcore, chol, enuc, nelec, self.qk_to_k2,
+                             tol=tol, sym=sym, paren=paren, cplx=cplx, ctol=ctol,
+                             use_spinor=use_spinor)
+
+    def _chol_all_momenta(self):
+        r"""
+        Every momentum transfer's Cholesky block in :math:`Q` order.
+
+        `chol` stores only the momentum transfers with ``Q <= minus_k[Q]``; the
+        partner of each is recovered by remapping the k-points and transposing
+        the orbital pair,
+
+        .. math:: L^{-Q}_{k_1}[i, j, n] = \big(L^{Q}_{k_2}[j, i, n]\big)^*,
+                  \quad k_2 = \mathrm{qk\_to\_k2}[-Q, k_1]
+
+        which is what any reader of the on-disk format has to do as well.
+
+        Returns
+        -------
+        list of numpy.ndarray
+            One ``(nkpts, nmo**2 * nchol_Q)`` block per momentum transfer.
+
+        Raises
+        ------
+        ValueError
+            If neither a momentum transfer nor its partner has a block.
+        """
+        nmo = self.nmo
+        blocks = []
+
+        for Q in range(self.nkpts):
+            if Q in self.chol:
+                blocks.append(np.asarray(self.chol[Q]))
+                continue
+
+            partner = int(self.minus_k[Q])
+            if partner not in self.chol:
+                raise ValueError(
+                    f"no Cholesky vectors for momentum transfer {Q}, nor for its "
+                    f"-Q partner {partner}"
+                )
+
+            stored = np.asarray(self.chol[partner]).reshape(self.nkpts, nmo, nmo, -1)
+            block = np.empty_like(stored)
+            for k1 in range(self.nkpts):
+                block[k1] = stored[self.qk_to_k2[Q][k1]].transpose(1, 0, 2).conj()
+            blocks.append(block.reshape(self.nkpts, -1))
+
+        return blocks
+
+    @classmethod
+    def _read_hdf5(cls, path) -> "PeriodicHamiltonian":
+        """
+        Read a periodic Hamiltonian written by `to_hdf5`.
+
+        Raises
+        ------
+        ValueError
+            If ``hcore`` or an ``L{Q}`` does not have the layout `to_hdf5`
+            writes.
+        """
+        with h5.File(path, 'r') as fh5:
+            group = fh5['Hamiltonian']
+            enuc = read_hamiltonian_header(group)
+            madelung_constant = float(group.attrs.get('madelung_constant', 0.0))
+
+            kpts = group['KPoints'][...]
+            qk_to_k2 = group['QKTok2'][...]
+            minus_k = group['MinusK'][...]
+
+            stored = read_complex(group['hcore'])
+            nkpts = stored.shape[0]
+            nmo = stored.shape[3] if stored.ndim == 6 else -1
+            if stored.shape != (nkpts, 1, 1, nmo, 1, nmo):
+                raise ValueError(
+                    f"hcore has shape {stored.shape}, expected (nkpts, 1, 1, nmo, 1, nmo)")
+            hcore = stored[:, 0, 0, :, 0, :]
+            basis_rotation = (read_complex(group['BasisRotation'])
+                              if 'BasisRotation' in group else None)
+
+            kp_group = group['KPFactorized']
+            chol = {}
+            for Q in range(nkpts):
+                if f'L{Q}' not in kp_group:
+                    continue
+                L = read_complex(kp_group[f'L{Q}'])
+                if L.ndim != 7 or L.shape[:6] != (nkpts, 1, 1, nmo, 1, nmo):
+                    raise ValueError(
+                        f"KPFactorized/L{Q} has shape {L.shape}, expected "
+                        f"({nkpts}, 1, 1, {nmo}, 1, {nmo}, nchol)")
+                chol[Q] = L.reshape(nkpts, -1)
+
+        return cls(hcore=hcore, chol=chol, kpts=kpts, qk_to_k2=qk_to_k2,
+                   minus_k=minus_k, enuc=enuc, madelung_constant=madelung_constant,
+                   basis_rotation=basis_rotation)
+
+
+def write_rhoG(kmf, path, gcut, kpoint_symmetry=True,
+               verbose=False) -> None:
+    r"""
+    Write the real-space density :math:`\rho(G)` on the FFT grid.
+
+    .. warning:: Not implemented.
+
+    Parameters
+    ----------
+    kmf
+        Periodic PySCF SCF object; see `PeriodicHamiltonian.from_pyscf`.
+    path : str or pathlib.Path
+        HDF5 file to write.
+    gcut : float
+        Plane-wave cutoff for the density.
+    kpoint_symmetry : bool, optional
+        Which factorization the density would follow.
+    verbose : bool, optional
+        Log progress.
+
+    Raises
+    ------
+    NotImplementedError
+        Always.
+
+    Notes
+    -----
+    The signature is kept so that a working implementation has an obvious place
+    to land.
+    """
+    raise NotImplementedError("write_rhoG is not implemented.")
+
+
+# ----------------------------------------------------------------------
+# assembling and writing
+# ----------------------------------------------------------------------
+
+def _transform_hcore(hcore, X, nmo_pk):
+    """The one-body Hamiltonian at each k-point, in the working basis."""
+    return [np.dot(X[ki][:, 0:nmo_pk[ki]].T.conj(),
+                   np.dot(hcore[ki], X[ki][:, 0:nmo_pk[ki]]))
+            for ki in range(len(nmo_pk))]
+
+
+def _supercell_layout(hcore_pk, cholvecs, solver) -> dict:
+    r"""
+    Recast a supercell factorization as a Γ-point k-point Hamiltonian.
+
+    A supercell Hamiltonian *is* the Γ point of the supercell, so it needs no
+    representation of its own: collapse the k-point axis into one combined basis
+    of size ``nmo_tot`` and hand back the same constructor arguments any k-point
+    Hamiltonian takes, with ``nkpts == 1``.
+
+    Parameters
+    ----------
+    hcore_pk : list of numpy.ndarray
+        Per-k-point one-body blocks in the working basis.
+    cholvecs : numpy.ndarray
+        The serial solver's ``(nkk, nij, nchol)`` Cholesky block.
+    solver : PeriodicCholesky
+        The solver that produced `cholvecs`, for its orbital counts.
+
+    Returns
+    -------
+    dict
+        ``hcore``, ``chol``, ``kpts``, ``qk_to_k2`` and ``minus_k``, ready to
+        pass to `PeriodicHamiltonian`.
+
+    Notes
+    -----
+    The one-body part is block diagonal in k — the one-body operator conserves
+    crystal momentum — while the Cholesky vectors couple every ``(k1, k2)``
+    pair, which is exactly what makes the combined basis necessary.
+
+    The :math:`1/\sqrt{N_k}` factor is the same one the k-point format carries,
+    with :math:`N_k` the *original* k-point count rather than the single Γ point
+    the result is expressed in.
+    """
+    nmo_pk = solver.nmo_pk
+    nkpts = len(solver.kpts)
+    nchol = cholvecs.shape[-1]
+
+    ik2n, nmo_tot = setup_basis_map(nmo_pk)
+    factor = 1.0 / math.sqrt(nkpts)
+
+    hcore = np.zeros((nmo_tot, nmo_tot), dtype=np.complex128)
+    for ki, block in enumerate(hcore_pk):
+        for i in range(nmo_pk[ki]):
+            for j in range(nmo_pk[ki]):
+                hcore[ik2n[i, ki], ik2n[j, ki]] = block[i, j]
+
+    L = np.zeros((nmo_tot * nmo_tot, nchol), dtype=np.complex128)
+    for k, (k1, k2) in enumerate(solver.k_pairs(None)):
+        for ij in range(nmo_pk[k1] * nmo_pk[k2]):
+            i, j = divmod(ij, nmo_pk[k2])
+            L[ik2n[i, k1] * nmo_tot + ik2n[j, k2], :] = cholvecs[k, ij, :] * factor
+
+    return {
+        'hcore': hcore[np.newaxis],
+        'chol': {0: L.reshape(1, nmo_tot * nmo_tot * nchol)},
+        'kpts': np.zeros((1, 3)),
+        'qk_to_k2': np.zeros((1, 1), dtype=np.int32),
+        'minus_k': np.zeros(1, dtype=np.int32),
+    }
+
+
+def _kpoint_block(cholvecs, solver):
+    r"""
+    Reshape a Cholesky block into the ``KPFactorized`` layout,
+    ``(nkpts, nmo_max**2 * nchol)``.
+
+    Carries the same :math:`1/\sqrt{N_k}` normalization the on-disk format
+    expects to find already applied.
+    """
+    nkpts = len(solver.kpts)
+    nchol = cholvecs.shape[-1]
+    factor = 1.0 / math.sqrt(nkpts)
+
+    return cholvecs.reshape(nkpts, solver.nmo_max**2 * nchol) * factor

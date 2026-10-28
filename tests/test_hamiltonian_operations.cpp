@@ -78,15 +78,15 @@ void hamiltonian_operations_hubbard_4x4_consistency(WALKER_TYPES h_symmetry, WAL
   auto H_kp     = tests::build_kp3index<MEM>(mpi, spec);
   auto H_kpthc  = tests::build_kpthc<MEM>(mpi, spec);
 
-  REQUIRE(H_real.getHamType()  == RealDenseFactorized);
-  REQUIRE(H_thc.getHamType()   == THC);
-  REQUIRE(H_kp.getHamType()    == KPFactorized);
-  REQUIRE(H_kpthc.getHamType() == KPTHC);
+  REQUIRE(H_real.getHamType()  == HamiltonianType::real_dense_factorized);
+  REQUIRE(H_thc.getHamType()   == HamiltonianType::thc);
+  REQUIRE(H_kp.getHamType()    == HamiltonianType::kp_factorized);
+  REQUIRE(H_kpthc.getHamType() == HamiltonianType::kpthc);
 
   std::optional<HamiltonianOperations<MEM>> H_model;
   if(with_model) {
     H_model = tests::build_modelhamops<MEM>(mpi, spec);
-    REQUIRE(H_model->getHamType() == ModelHamiltonian);
+    REQUIRE(H_model->getHamType() == HamiltonianType::model_hamiltonian);
   }
 
   // ---- 1. energy(E, G, 0) ----
@@ -256,8 +256,8 @@ KPConsistencyResults kpoint_consistency(afqmc::WALKER_TYPES walker_type,
 
   auto H_multi = tests::build_kp3index_ring<MEM>(mpi, spec);
   auto H_ref   = tests::build_kp3index_ring_reference<MEM>(mpi, spec);
-  REQUIRE(H_multi.getHamType() == KPFactorized);
-  REQUIRE(H_ref.getHamType() == KPFactorized);
+  REQUIRE(H_multi.getHamType() == HamiltonianType::kp_factorized);
+  REQUIRE(H_ref.getHamType() == HamiltonianType::kp_factorized);
 
   auto run_vHS_of_vbias = [&](auto& H) {
     int nCV = H.number_of_cholesky_vectors();

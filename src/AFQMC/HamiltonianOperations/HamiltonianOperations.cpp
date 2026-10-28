@@ -119,13 +119,19 @@ namespace afqmc
   }
 
   template<MEMORY_SPACE M>
+  RealType HamiltonianOperations<M>::energy_offset() const
+  {
+    return std::visit([&](auto&& a) { return a.energy_offset(); }, var);
+  }
+
+  template<MEMORY_SPACE M>
   std::tuple<int,int> HamiltonianOperations<M>::vHS_dims() const
   {
     return std::visit([&](auto&& a) { return a.vHS_dims(); }, var);
   }
 
   template<MEMORY_SPACE M>
-  HamiltonianTypes HamiltonianOperations<M>::getHamType() const
+  HamiltonianType HamiltonianOperations<M>::getHamType() const
   {
     return std::visit([&](auto&& a) { return a.getHamType(); }, var);
   }

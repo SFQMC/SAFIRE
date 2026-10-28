@@ -16,8 +16,10 @@
 
 #pragma once
 
+#include<filesystem>
 #include<fstream>
 #include<random>
+#include<system_error>
 #include<vector>
 #include<string>
 #include<tuple>
@@ -52,7 +54,6 @@ extern std::shared_ptr<mpi_context_t<boost::mpi3::communicator>> __unit_test_mpi
 /* Path to unit test files included in the code base */
 inline constexpr std::string unit_test_base()
 {
-  //std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/unit_test_files/";
   std::string pre = std::string(PROJECT_SOURCE_DIR_STR) + "/tests/functional/afqmc_inputs/";
   return pre;
 }
@@ -95,9 +96,6 @@ inline constexpr auto molecule_unit_tests_files(TestFiles::Flags flags)
     if(flags & TestFiles::UHF) {
       files.emplace_back(pre + "BH/afqmc_H_rhf_collinear.h5",
                                           pre + "BH/afqmc_uhf_nomsd.h5",
-                                          afqmc::UNDEFINED_WALKER_TYPE);
-      files.emplace_back(pre + "BH/afqmc_H_rhf_collinear.h5",
-                                          pre + "BH/afqmc_uhf_nomsd_init_rhf.h5",
                                           afqmc::UNDEFINED_WALKER_TYPE);
       files.emplace_back(pre + "Li/hamil_closed.h5",
                                           pre + "Li/rohf_nomsd_polarized.h5",
@@ -241,6 +239,59 @@ inline constexpr auto get_unit_tests_files(TestFiles::Flags flags) {
   }
   return unit_test_files;
 }
+
+/// A uniquely named directory under the system temporary directory that is deleted, with everything
+/// below it, when the guard goes out of scope. Tests that produce output files write into it so that
+/// a failing run leaves nothing behind and the next run cannot pick up stale results.
+///
+/// The root rank owns the directory and broadcasts its path, so every rank agrees on where output
+/// goes. The destructor performs no collective on purpose: a test that throws on only some of the
+/// ranks would otherwise deadlock while unwinding. This means however that you have to do a barrier before
+/// the directory goes out of scope. Since we currently have very few MPI tests, we live with this.
+class TemporaryDirectory {
+public:
+  TemporaryDirectory() {
+    auto& world = boost::mpi3::environment::get_world_instance();
+
+    std::string path;
+    if(world.root()) {
+      std::random_device rd;
+      for(int attempt = 0; attempt < 16 && path.empty(); attempt++) {
+        auto candidate = std::filesystem::temp_directory_path() / std::format("safire_test_{:08x}{:08x}", rd(), rd());
+        if(std::filesystem::create_directory(candidate)) {
+          path = candidate.string();
+        }
+      }
+      check(!path.empty(), "could not create a temporary directory under '{}'",
+            std::filesystem::temp_directory_path().string());
+    }
+
+    long length = path.size();
+    world.broadcast_value(length);
+    path.resize(length);
+    world.broadcast_n(path.data(), length, 0);
+
+    path_ = path;
+  }
+
+  ~TemporaryDirectory() {
+    if(boost::mpi3::environment::get_world_instance().root()) {
+      std::error_code ec;
+      std::filesystem::remove_all(path_, ec);
+    }
+  }
+
+  TemporaryDirectory(TemporaryDirectory const&)            = delete;
+  TemporaryDirectory& operator=(TemporaryDirectory const&) = delete;
+
+  std::filesystem::path const& path() const { return path_; }
+
+  /// Path of an entry inside the directory, to hand to code that writes output.
+  std::filesystem::path operator/(std::string_view name) const { return path_ / name; }
+
+private:
+  std::filesystem::path path_;
+};
 
 inline void catch_test_exceptions(std::string_view name, auto func) {
   try {

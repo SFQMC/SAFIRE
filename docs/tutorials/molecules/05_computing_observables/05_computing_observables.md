@@ -13,89 +13,52 @@ kernelspec:
 
 +++ {"id": "82e12143-bd3a-4c82-9a51-bcf96abd6950"}
 
-# Computing general observables
+# Computing General Observables
+
+<!--
+This is the main version of the Computing General Observables tutorial. The solids and
+lattice-model versions include the regions between the "BEGIN observables-NAME" and
+"END observables-NAME" markers below, so keep those regions free of system-specific
+content and code cells.
+-->
+
+<!-- BEGIN observables-intro -->
 
 <b>Goal:</b>
 Become acquainted with how to compute general observables with SAFIRE.
 
-## What you will learn
+## What You Will Learn
 
-1. What an "estimator" is and how to set one up in the json input file
+1. What an estimator is and how to set one up in the JSON job file
 2. What a mixed estimator is and when to use one to compute an observable
 3. What a back-propagated estimator is and when to use one to compute an observable
-4. How to compute observables in post-processing with afqmctools
+4. How to compute observables in post-processing with safiretools
 
 ## Introduction
 
-AuxiliaryFiels uses "estimators" to compute observables.
-Each estimator corresponds to a formal method for computing an observable - i.e. mixed estimators, back-propagated estimators, etc. - We will explain each of the these in the next section.
-As we mentioned in {doc}`../02_understanding_the_input_file/02_understanding_the_input_file`,
+In the previous tutorials, we were content with just computing the energy of a system. SAFIRE does this automatically without the need to configure anything.
 
-you can add estimators to an AFQMC calculation using an "estimator" input block.
-By default, an "energy" estimator is included which is a specialized mixed estimator.
-Other estimators allow you to specify one or more additional observables to compute.
+In this tutorial, we will use SAFIRE to compute other observables beyond the energy. SAFIRE gives us the choice between two different estimators to compute such observables: The *mixed* estimator and the *back-propagation* estimator. The mixed estimator evaluates a one-sided expectation value with the trial wavefunction,
 
-## Formal Background
+$$ ⟨O⟩_\text{Mixed} = \frac{⟨Ψ_\text{T}|O|Ψ_\text{AFQMC}⟩}{⟨Ψ_\text{T}|Ψ_\text{AFQMC}⟩}, $$
 
-Although we have not seen this explicitly, we have, so far, computed the ground state energy with AFQMC using a so-called
-mixed estimator of the form
+and is therefore biased if the observable $O$ does not commute with the Hamiltonian of the system. The back-propagation estimator evaluates
 
-$$
-\langle \hat{O} \rangle_\mathrm{Mixed} = \frac{1}{\sum_k W_{n,k}} \sum_k W_{n,k} \frac{\langle \Psi_\mathrm{T} | \hat{O} | \Phi_{n,k} \rangle }{\langle \Psi_\mathrm{T} | \Phi_{n,k} \rangle}
-$$
+$$ ⟨O⟩_\text{BP} = \frac{⟨Ψ_\text{T}|e^{-β_\text{BP} H} O|Ψ_\text{AFQMC}⟩}{⟨Ψ_\text{T}|e^{-β_\text{BP} H}|Ψ_\text{AFQMC}⟩}$$
 
-where $n$ is the projection step index,
-$| \Phi_{n,k} \rangle$ are Slater determinant random walkers with weight $W_{n,k}$ (from importance sampling),
-and $| \Psi_\mathrm{T} \rangle$ is the trial wavefunction.
-The mixed estimator provides an unbiased estimate for any observable which commutes with the Hamiltonian.
-For the AFQMC energy, $\hat{O} = \hat{H}$, and trivially $[ \hat{O}, \hat{H} ] = 0$;
-therefore, the mixed estimator is an unbiased choice for the total ground state energy.
+with a back-propagation length $\beta_\text{BP}$ to eliminate this bias.
 
-On the other hand, it is often interesting to compute observables which do not commute with the Hamiltonian.
-For example, the one-body reduced density matrix, from which many properties can be computed, does not commute
-with the Hamiltonian.
-In these cases, a back-propagated estimator is necessary to mitigate the bias that would be incurred
-by using a mixed-estimator.
-The back-propagated estimator has the form,
-$$
-\langle \hat{O} \rangle_\mathrm{BP} = \frac{1}{\sum_k W_{n+m,k}} \sum_k W_{n+m,k} \frac{\langle \tilde{\Phi}_{m,k} | \hat{O} | \Phi_{n,k} \rangle }{\langle \tilde{\Phi}_{m,k} |\Phi_{n,k}\rangle}
-$$
+See {ref}`mixed_estimators` and {ref}`backprop_estimator` for a more detailed definition of both estimators.
 
-where $| \Phi_{n,k} \rangle$ are the usual forward-projected Slater determinant random walkers,
-and $| \tilde{\Phi}_{m,k} \rangle$ are the back-propagated walkers given by,
-$$
-| \tilde{\Phi}_{m,k} \rangle = \hat{B}^\dagger( (x - \bar{x})_{n,k} ) ... \hat{B}^\dagger( (x - \bar{x})_{n+m-1,k} ) | \Psi_\mathrm{T} \rangle.
-$$
-The index $n$ corresponds to the current forward projection step,
-and $m$ is the back-propagated step index.
-We note that each random walker has a corresponding back-propagated partner
-which share the same path in auxiliary-field space.
-It is important to note that the two Slater determinants are
-distinct from each other since the propagator $B(x - \bar{x})$ is applied differently to each.
-i.e. the propagator is applied to different Slater determinants when moving in the forward-, and backward-directions.
-
-### ▶️ Run the cell below to setup the tutorial
-
-```{code-cell} ipython3
-:id: 616ca764-f070-434a-8146-e1511f273342
-
-# Run me (shift+enter or click the play button) to setup the tutorial!
-from pathlib import Path
-
-# simple setup
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-```
+<!-- END observables-intro -->
 
 +++ {"id": "4d4d8135-bc2d-4caa-bbaf-c88ab045176c"}
 
-## Setup the Test System
+## Set Up the Test System
 
 In this tutorial, we will use PySCF for convenience; however, you can use the knowledge that you've gained in the previous tutorials to use a different quantum chemistry code if desired.
 
-Instead of the minimal basis Hydrogen dimer, we will use the nitrogen dimer at its equilibrium bond length.
+Instead of the minimal basis hydrogen dimer, we will use the nitrogen dimer at its equilibrium bond length, $\delta_\mathrm{N-N} = 1.098$ Å.
 We will be using the set of canonical RHF orbitals as the orthonormal basis for AFQMC.
 
 The code block below will:
@@ -108,7 +71,7 @@ These were all covered in previous tutorials.
 
 ![](files/NitrogenDimer.png)
 
-### ▶️ Run the code block below to perform all of the steps above
+### Run the Code Block Below to Perform All of the Steps Above
 
 ```{code-cell} ipython3
 ---
@@ -117,21 +80,18 @@ colab:
 id: c844616d-45c5-498a-b6f9-c995027965e6
 outputId: 973c839f-58d4-486f-9f5c-21f2cd93fec7
 ---
-from pathlib import Path
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
-import h5py as h5
 import numpy as np
-from pyscf import gto,scf,mcscf
+from pyscf import gto,scf
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-from afqmctools.inputs.from_hdf import write_json
-
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import MolecularHamiltonian, NOMSDWavefunction
 
 # Here, we'll generate the mol object
 
-delta = 2.3 #2.118 # 3.0 # Bohr
+delta = 1.098 # Angstrom
 
 atom = f'''
 N 0. 0. {delta/2}
@@ -140,25 +100,26 @@ N 0. 0. -{delta/2}
 mol = gto.M(
     atom = atom,
     basis = '631g',
-    unit = 'Bohr',
+    unit = 'Angstrom',
     verbose = 5,
 )
 
-rhf_chkfile = 'rhf_chkfile.h5'
-
 rhf = scf.RHF(mol)
-rhf.chkfile = scratch_dir / rhf_chkfile
 rhf.run()
-
-
-import numpy as np
-from afqmctools.wavefunction.mol import write_wfn
 
 number_of_electrons = mol.nelec
 number_of_orbitals = mol.nao_nr()
 
 print("Number of orbitals = ", number_of_orbitals)
 
+# the Hamiltonian
+hamiltonian = MolecularHamiltonian.from_pyscf(
+    rhf,
+    chol_cut = 1e-5,
+    verbose=True
+)
+
+# now the trial wavefunction
 orbitals = np.eye(number_of_orbitals)
 
 phi_0 = np.array([
@@ -166,330 +127,98 @@ phi_0 = np.array([
 ])
 C_0 = 1.0
 
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/ "afqmc.h5",
-    wfn=wfn,
-    walker_type="rhf",
-    nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
-
-
-# Save the Hamiltonian
-basis_scf_data = load_from_pyscf_chk_mol(
-    chkfile = scratch_dir / rhf_chkfile,
-)
-
-# write Hamiltonian
-write_hamil_mol(
-    basis_scf_data,
-    hamil_file = scratch_dir / 'afqmc.h5',
-    chol_cut = 1e-5,
-    verbose=True
+wavefunction = NOMSDWavefunction(
+    coeffs=np.array([C_0]),
+    dets=phi_0
 )
 ```
 
 +++ {"id": "dSJ9e4tRBxxx"}
 
-## The "Energy" Estimator
+<!-- BEGIN observables-mixed -->
 
-By default, SAFIRE will include an "energy estimator" in the calculation.
-This is formally a mixed estimator where $\hat{O} = \hat{H}$.
-The Hamiltonian trivially commutes with itself, so a mixed estimator of the energy is unbiased.
+## Using the Mixed Estimator
 
-You can add an energy estimator input block to your json input file in order to customize its setting.
-For example, in the input block,
+To enable the {ref}`mixed_estimators`, we need to add it to the {ref}`estimator_block` block of the job file along with the observables we want to measure.
+
+In this tutorial we want to measure the one-body reduced-density matrix (1-rdm), $\langle c^\dagger_{i\sigma} c_{j\sigma} \rangle$, and the two-body reduced-density matrix (2-rdm), $\langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{l\sigma'} c_{k\sigma} \rangle$, from which all one- and two-body observables can be calculated.
 
 ```json
-"estimator": {
-  "name": "energy",
-  "print_components": true,
-  "overwrite": true
+"estimators": {
+  "mixed": {
+    "onerdm": {},
+    "twordm": {}
+  }
 }
 ```
 
-the "name" keyword tells us what kind of estimator we want.
-In this case, we want an "energy" estimator.
-We are setting the "print_components" and "overwrite" flags to true.
-"print_components" tells SAFIRE to print the one-body, two-body coulomb, and two-body exchange contributions to the energy separately.
-"overwrite" tells SAFIRE to overwrite the default energy estimator
-with the one that we have defined.
-
-### Most Common Settings
-
-<style>
-td, th {
-   border: none!important;
-}
-</style>
-  
-|<b>setting</b>|<b>default</b>|<b>description</b>|
-|--:|:-:|:--|
-| <b>        print_components</b> |  False |  If True, print the one-body, two-body coulomb, and two-body exchange contributions to the energy in the `*.scalar.dat` file  |
-| <b> equil_multiplier </b> | 0 |  The multiplier that determines the length of the equilibration phase. The equilibration phase length is computed as $(equilibration\_length) = (equil\_multiplier) * (population\_control\_inveral)$ where the population control interval is defined in the execute block. During the equilibration phase, observables are not computed. |
-| <b>        overwrite</b> | False |   If True, overwrite the default energy estimator with the explicitly defined energy estimator |
-
-### Less Common Settings
-
-<style>
-td, th {
-   border: none!important;
-}
-</style>
-  
-|<b>setting</b>|<b>default</b>|<b>description</b>|
-|--:|:-:|:--|
-| <b>        print_sign</b> | False |  If True, print various quantities related to the sign/phase of random walkers in the `*.scalar.dat` file  |
-| <b>        remove</b> |  False |   If True, remove the default energy estimator. **Note that the explicitly defined energy estimator will not be used in the calculation!** |
-| <b>        truncate</b> |  False |   If True, truncate the energy such that data that fall outside of the range $[-3 var, 3 var]$, with $var$ being the variance, are set to either $-3 var$ or $3 var$, whichever is closer |
-
-+++
-
-### ▶️ Run the code block below to write an input file
-
-```{code-cell} ipython3
-:id: wOOIRUtfCIfh
-
-from afqmctools.inputs.from_hdf import write_json
-
-# some shared parameters for the AFQMC run
-execute_options = {
-    "walker_set" : {
-        "walker_type" : "COLLINEAR"
-    },
-    "timestep": 0.01,
-    "steps": 10000,
-    "population_control_interval" : 10,
-    "measure_interval_multiplier": 1,
-    "walker_ortho_interval" : 10 ,
-    "n_walkers_per_mpi_task": 20,
-    "seed" : 42,
-    "estimator" : {
-        "name" : "energy",
-        "print_components" : True,
-        "overwrite" : True
-    }
-}
-
-write_json(
-    scratch_dir / "afqmc.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    walker_type="COLLINEAR",
-    exec_opts=execute_options
-)
-```
-
-+++ {"id": "Yr39jGz1DCyk"}
-
-### 📝 Your Turn : Run SAFIRE with an explicit energy estimator block
-
-Now you can run SAFIRE, and you should see the following column headers in the `*scalar.dat` file.
-
-```
- block  time  nWalkers weight PseudoEloc LogOvlpFactor EnergyEstim__nume_real  EnergyEstim__nume_imag EnergyEstim__deno_real  EnergyEstim__deno_imag EnergyEstim__timer OneBodyEnergyEstim__nume_real EXXEnergyEstim__nume_real ECoulEnergyEstim__nume_real MixedEstim_timer Eshift freeMemory
-```
-
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: k_zbz82RGF0K
-outputId: ce74d680-635b-456e-a468-0e7ada8b10f7
----
-run_afqmc(
-    run_dir=scratch_dir,                # directory to run SAFIRE in - output files will be there as well
-    input_file="afqmc.json",
-    np=16,                              # number of MPI tasks
-    output_file=None
-)
-```
-
-+++ {"id": "h6GBStnB0mVH"}
-
-You can check the `*.scalar.dat` file to verify that the extra columns that we requested were printed.
-
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: rJfeETOmyKKU
-outputId: acb22087-0747-4430-8dc9-03ef1ff115a2
----
-!head -n 10 $scratch_dir/qmc.s000.scalar.dat
-```
-
-+++ {"id": "rrop2GLPGDmQ"}
-
-## Extracting and Analyzing the AFQMC energy.
-
-We learned about basic energy analysis using the CLI and the `analyze_scalar_data()` Python function in the Hello SAFIRE tutorial.
-We can use the same tools here to get the average AFQMC energy and the stochastic uncertainty.
-
-For pedagogical reasons, we will instead read the entire scalar data file so that we can plot several of the data columns as a function of total projection time.
-In the code block below, the total energy (solid blue line) is plotted against as well as the sum of the three individual columns (dotted orange line) corresponding to the one-body energy, the Coulomb energy, and the exchange energy.
-The two curves agree with each other to machine precision.
-
-### ▶️ Run the code block below to extract and plot energy samples
-
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 472
-id: HxCV-iXdDXP7
-outputId: a6731663-ba05-44a0-bb1f-3e0474f02351
----
-from types import SimpleNamespace
-from stats.scalar_dat import analyze_scalar_data,read_scalar_table
-
-# read scalar table and return as a pandas DataFrame
-args = SimpleNamespace(
-    fname=scratch_dir / "qmc.s000.scalar.dat",
-    append=None,
-    mark_header="#"
-)
-df = read_scalar_table(args)
-
-
-# read the energy components
-one_body_energy = df["OneBodyEnergyEstim__nume_real"].values
-direct_coulomb_energy = df["ECoulEnergyEstim__nume_real"].values
-exchange_energy = df["EXXEnergyEstim__nume_real"].values
-
-two_body_energy = direct_coulomb_energy + exchange_energy
-
-# read the total energy
-total_energy = df["EnergyEstim__nume_real"].values
-
-# plot the energy both ways
-import matplotlib.pyplot as plt
-
-plt.plot(total_energy,label="Total Energy from energy Estimator")
-plt.plot(one_body_energy + direct_coulomb_energy + exchange_energy, ":", label=r"$E_1 + E_{Coul} + E_{x}$")
-
-plt.legend()
-plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
-plt.title(r"Total energy vs. sample")
-
-plt.show()
-```
-
-+++ {"id": "yzpB-AJrAZ24"}
-
-## Computing Observables using a "Mixed" Estimator
-
-SAFIRE also includes a mixed estimator that periodically evaluates,
-
-$$
-\langle \hat{O} ⟩_\mathrm{Mixed} = \frac{1}{\sum_k W_{n,k}} \sum_k W_{n,k} \frac{\langle \Psi_\mathrm{T} | \hat{O} | \Phi_{n,k} \rangle }{\langle \Psi_\mathrm{T} | \Phi_{n,k} \rangle},
-$$
-where $\hat{O}$ is an operator.
-The one-body reduced density matrix (1rdm), given by
-
-$$\hat{O} = \hat{\rho}^1 = \sum_{ij}\sum_{\sigma \sigma'} \hat{c}^\dagger_{i \sigma}\hat{c}_{j \sigma'},$$
-
-and the two-body reduced density matrix (2rdm), given by,
-
-$$\hat{O} = \hat{\rho}^2 = \sum_{ijkl}\sum_{\sigma \sigma'}\hat{c}^\dagger_{i\sigma}\hat{c}^\dagger_{j\sigma'}\hat{c}_{k\sigma'}\hat{c}_{l\sigma}$$
-
-are common observables.
+Setting the observable to `{}` means to measure it with its default settings.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
-    computing the 2rdm is very time and memory intensive; this should only be done for small systems.
+
+Computing the 2-rdm is very time and memory intensive; this should only be done for small systems.
+
 </div>
 
-### Specifying Observables to Measure
+It is also possible to compute only the *diagonal* 2-rdm,
+$D^{\sigma\sigma'}_{ij} = \langle c^\dagger_{i\sigma} c^\dagger_{j\sigma'} c_{j\sigma'} c_{i\sigma} \rangle$ (see {ref}`diag_twordm_obs`).
+This requires significantly less compute time and memory usage than the full 2-rdm and should be preferred whenever possible!
+It is requested with a `diag_twordm` observable block.
 
-You can specify which observables you want to compute by
-adding a corresponding observable block to an estimator
-block.
-For example, the estimator block below includes both the 1rdm, and the 2rdm.
+<!-- END observables-mixed -->
 
-```json
-"estimator" : {
-    "name" : "mixed",
-    "onerdm" : {
-        "name" : "my_onerdm"
-    },
-    "twordm" : {
-        "name" : "my_twordm"
-    }
-}
-```
+<!-- BEGIN observables-mixed-demo -->
 
-As we will see later, this is exactly how observables are specified for the BP estimator as well.
-See the [User Manual](https://users.flatironinstitute.org/~beskridge/safire/user_manual/observables.html#observables) for a complete list of currently implemented observables.
+### Pedagogical Example: Calculating the Energy from the Mixed Estimator
 
-### Pedagogical Demonstration
+The energy estimator that is enabled by default and computes the energy of the system is under the hood just an optimized version of the mixed estimator. We can therefore compare the energy and its components obtained from the mixed estimator to the output of the energy estimator.
 
 Below, we will use a mixed estimator to compute the 1-rdm, and the 2-rdm.
 We can then directly compute each contribution to the AFQMC energy,
 
-$$E_{one-body} = \sum_{ij} H^1_{ij} \rho^1_{ji} $$
+$$\langle H_1 \rangle = \sum_{ij} h_{ij} \langle c^\dagger_i c_j \rangle$$
 
-$$E_{two-body} = \sum_{ijkl} H^2_{ijkl} \rho^2_{ijkl} $$
+$$\langle H_2 \rangle = \frac{1}{2} \sum_{ijkl} v_{ijkl} \langle c^\dagger_i c^\dagger_j c_l c_k \rangle$$
 
-and compare with the results from the energy estimator.
-**We should find exact agreement between the two if we use the same AFQMC run parameters.**
+where the indices are combined orbital and spin indices,
+and compare with the results from the energy estimator. The two should agree exactly.
 
-We note that computing the 2rdm is very memory intensive since many samples of the 2rdm will be saved.
-It is not typically computed unless absolutely necessary.
+<!-- END observables-mixed-demo -->
 
-### ▶️ Run the code block below to write an input file with mixed estimator
+### Run the Code Block Below to Write a JSON Job File with a Mixed Estimator
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: QcoDuWPjAZDx
-outputId: 2e894444-7a35-4787-c654-cc4f84f6ffd6
----
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import write_jobfile
 
-# some shared parameters for the AFQMC run
-execute_options = {
-    "walker_set" : {
-        "walker_type" : "COLLINEAR"
-    },
-    "timestep": 0.01,
-    "steps": 10000,
-    "measure_interval_multiplier": 1,
-    "population_control_interval" : 10,
-    "walker_ortho_interval" : 10 ,
-    "n_walkers_per_mpi_task": 20,
-    "seed" : 42,
-    "estimator" : {
-        "name" : "energy",
-        "print_components" : True,
-        "overwrite" : True
-    },
-    "estimator" : {
-        "name" : "mixed",
-        "onerdm" : {
-            "name" : "my_onerdm"
-        },
-        "twordm" : {
-            "name" : "my_twordm"
+write_jobfile(
+    "afqmc_mixed.json",
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": wavefunction,
+            "hamiltonian": hamiltonian,
+            "timestep": 0.01,
+            "steps": 10000,
+            "equilibration_steps": 1000,
+            "measure_interval": 10,
+            "population_control_interval": 10,
+            "walker_ortho_interval": 10,
+            "num_walkers": 320,
+            "estimators": {
+                "mixed": {
+                    "onerdm": {},
+                    "twordm": {}
+                }
+            }
         }
     }
-}
-
-write_json(
-    scratch_dir / "afqmc_1.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    exec_opts=execute_options,
-    series=1
 )
 ```
 
 +++ {"id": "TrVqnMi4AxuT"}
 
-Now, we can run AFQMC with a Mixed Estimator in order to compute the 1-rdm.
-**This will probably take a while!** To finish the tutorial more quickly, remove the "twordm" block from the input and just compute the one-body energy.
+Now, we can run SAFIRE with this configuration. **This will probably take a while!** To finish the tutorial more quickly, remove the `twordm` block from the input and just compute the one-body energy.
 
 ```{code-cell} ipython3
 ---
@@ -497,26 +226,25 @@ colab:
   base_uri: https://localhost:8080/
 id: 6fnE-_O_HUgs
 outputId: 47d9ccce-e999-47e9-f36c-2a4005cd87a0
+scrolled: true
+tags: [scroll-output]
 ---
-run_afqmc(
-    run_dir=scratch_dir,                # directory to run SAFIRE in - output files will be there as well
-    input_file="afqmc_1.json",
-    np=16,                              # number of MPI tasks
-    output_file=None
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc_mixed.json
 ```
 
 +++ {"id": "fgJ_Pp2EA7oA"}
 
+<!-- BEGIN observables-extraction -->
+
 ### Data Extraction and Analysis
 
-afqmctools provides several tools for extracting data - i.e. retrieving data from the SAFIRE output files - and analyzing data - arriving at a final average with stochastic uncertainty.
+After the calculation is over, an `afqmc_mixed.results.h5` file should have been written containing the measurements of the energy and the mixed estimator.
 
-Since some observables require a large amount of memory to store, `afqmctools` also provides "transforms" which are applied to the raw observables as they are read from disk.
-For example, in the cell below, a energy evaluation transform is used to compute the one-body energy, a scalar, on the fly as one-rdm samples are read from the *.h5 data file.
-This dramatically reduces the memory needed to analyze the AFQMC results from SAFIRE.
+To extract the averages, we can use the same {py:class}`safiretools.Results` class we have been using in previous examples. Additionally the function {py:meth}`safiretools.Results.evaluate` will be useful to evaluate a function of observables and obtain the correct errorbars in the result through a jackknife analysis. The jackknife takes care e.g. of correlations between RDM components or between different observables. For nonlinear functions, it would also add a bias correction.
 
-### ▶️ Run the code below to evaluate the one-body energy from the one-rdm, and compare with the energy estimator
+### Run the Code Below to Evaluate the One-Body Energy from the One-RDM and Compare with the Energy Estimator
+
+<!-- END observables-extraction -->
 
 ```{code-cell} ipython3
 ---
@@ -526,96 +254,58 @@ colab:
 id: c9LgOOxOA_xI
 outputId: 0305b057-ca8b-4c5d-e70c-7cd43158dc5a
 ---
-from pathlib import Path
-from types import SimpleNamespace
-
-import matplotlib.pyplot as plt
-import numpy as np
-
-from afqmctools.hamiltonian.converter import read_hamiltonian
-from afqmctools.analysis.extraction import extract_observable,get_metadata
-from afqmctools.analysis.transform import hermitize_factory,eval_one_body_obs_factory,eval_two_body_obs_factory
-
-from afqmctools.analysis.average import WALKER_TYPE
-
-# read the Hamiltonian
-H = read_hamiltonian(scratch_dir / "afqmc.h5")
-M = H["nmo"]
-Econst = H["enuc"]
-
-walker_type = WALKER_TYPE[get_metadata(scratch_dir/"qmc.s001.stat.h5")["WalkerType"]]
-
-# set up a transform to compute the one-body energy from the one-rdm
-eval_one_body_energy = eval_one_body_obs_factory(
-    one_body_operator=H["hcore"],
-    walker_type=walker_type
-)
-# set up a transform the hermitize the one-rdm
-hermitize = hermitize_factory(
-    walker_type=walker_type
-)
+from safiretools import Results
 
 
-# Extract and Transform data
-Energy_1body = extract_observable(
-    scratch_dir/"qmc.s001.stat.h5",    # filename
-    estimator='mixed',
-    name="one_rdm",                    # observable type
-    ix=0,                              # index of the "average" - we'll return to this below!
-    transform=[hermitize,eval_one_body_energy],  # list of transforms to apply *FROM LEFT TO RIGHT*
-)
-# add in constant energy for consistency with SAFIRE convention
-Energy_1body += Econst
+M = hamiltonian.nmo
+h = hamiltonian.hcore.reshape(M, M)
 
+def onebody_energy(onerdm):
+    # factor 2 because this calculation runs with closed (RHF) walkers
+    return 2 * np.einsum("ij,ij->", h, onerdm[0])
 
-plt.plot(one_body_energy,label="1-body energy from EnergyEstimator")
-plt.plot(Energy_1body,'--',label="1-body energy (Mixed estimator)")
-plt.legend()
-plt.xlabel("Sample")
-plt.ylabel("Total energy")
-plt.title("Total energy vs. sample")
-plt.show()
-```
+results = Results("afqmc_mixed.results.h5")
 
-### ▶️ Run the code block below to plot the difference between the mixed, and energy estimator
+rebinsize = 90 # chosen automatically by default. only required here to get exact numerical agreement between different observables
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 598
-id: snk1U2F7JtDc
-outputId: 0b701347-7f3e-41da-f6d6-3f038105d649
----
-# now, look at the difference!
-delta_E = Energy_1body[:,0] - one_body_energy
+onerdm, onerdm_err = results.average("MixedEstimator/OneRDM", rebinsize=rebinsize)
+E1_rdm = onebody_energy(onerdm)
+E1_rdm += hamiltonian.enuc
 
-# plot the difference between the two energies
-plt.plot(delta_E,label="1-body energy difference")
-plt.legend()
-plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
-plt.title(r"$\Delta E_{1-body}$ vs. sample")
+E1_default, E1_default_err = results.average("OnebodyEnergy", rebinsize=rebinsize)
 
-plt.show()
+print(f"one-body energy, mixed estimator:  {E1_rdm.real:.8f}")
+print(f"one-body energy, energy estimator: {E1_default.real:.8f} ± {E1_default_err.real:.8f}")
+
+# to get the correct errorbar use results.evaluate()!
+E1_jackknife, E1_jackknife_err = results.evaluate(onebody_energy, ["MixedEstimator/OneRDM"], rebinsize=rebinsize)
+E1_jackknife += hamiltonian.enuc
+print(f"one-body energy, mixed estimator (jackknife):  {E1_jackknife.real:.8f} ± {E1_jackknife_err.real:.8f}")
 ```
 
 +++ {"id": "wDMvF0aT04_x"}
 
+<!-- BEGIN observables-mixed-2rdm -->
+
+<!-- BEGIN observables-1rdm-conclusion -->
+
 As we can see, the energy computed using the one-body reduced density matrix with a mixed estimator yields the exact same one-body energies as the energy estimator to very high precision.
 This is no surprise since the energy estimator is simply a specialized mixed estimator.
 
-### 📝 Your Turn : Extract the 2rdm and compute the 2-body energy
+<!-- END observables-1rdm-conclusion -->
 
-Note: You can skip this section if you chose to not compute the "twordm"
+### Your Turn: Extract the 2-RDM and Compute the Two-Body Energy
+
+*Note:* You can skip this section if you chose to not compute the `twordm`
 observable above.
 
 Repeat the same exercise for the two-body energy.
-As we saw in the energy estimator section, the exchange and direct coulomb energies are printed to file separately by the energy estimator.
 
-To compute the two-body energy, you will need to measure the "twordm" observable during AFQMC, and extract and transform it.
+To compute the two-body energy, you will need to measure the `twordm` observable during AFQMC, and extract and transform it.
 
-We provide code for setting up the appropriate transform functions in the code block below.
+We provide code for setting up the appropriate transform function in the code block below.
+
+<!-- END observables-mixed-2rdm -->
 
 ```{code-cell} ipython3
 ---
@@ -625,188 +315,72 @@ colab:
 id: afFNaJpQdymb
 outputId: 56bc5ba2-1416-4468-ec0e-d7e74a7e87fc
 ---
-import numpy as np
-import matplotlib.pyplot as plt
+L = hamiltonian.chol.reshape(M, M, hamiltonian.nchol)
+# v_ijkl = sum_g L^g_ik (L^g_lj)^*, stored in the [i, k, j, l] index order of the TwoRDM
+v = np.einsum("ikg,ljg->ikjl", L, L.conj())
 
-from afqmctools.analysis.transform import hermitize_factory,eval_one_body_obs_factory,eval_two_body_obs_factory
+def twobody_energy(twordm):
+    return np.einsum("ikjl,bikjl->", v, twordm)
 
-ncv = H["chol"].shape[-1]
-cholesky_vectors = np.transpose(H["chol"].reshape((M,M,ncv)),(2,0,1))
-eri = np.einsum("gil,gjk->iljk",cholesky_vectors,cholesky_vectors).flatten()
+E2_default, E2_default_err = results.evaluate(lambda eH, eF: eH + eF, ["CoulombEnergy", "ExchangeEnergy"], rebinsize=rebinsize)
 
-eval_two_body_energy = eval_two_body_obs_factory(
-    two_body_operator=eri,  # 📝 YOUR TURN: Supply the correct two-body operator
-    walker_type=walker_type
-)
+############
+# YOUR TURN: Calculate the twobody-energy using results.evaluate
+E2_rdm, E2_rdm_err = 0.0, 0.0
+############
 
-Energy_2body_mixed = extract_observable(
-    scratch_dir/"qmc.s001.stat.h5",
-    estimator='mixed',
-    name="two_rdm",
-    ix=0,
-    transform=eval_two_body_energy, # 📝 YOUR TURN: Supply the transform function to compute the two-body energy,
-    batch_size=1
-)
-
-plt.plot(two_body_energy,label="Two-body energy from energy estimator")
-plt.plot(Energy_2body_mixed,":",label="Two-body energy from mixed estimator")
-plt.legend()
-plt.xlabel("Sample")
-plt.ylabel(r"Energy $E_{Ha}$")
-plt.title("Two-body energy vs. sample")
-plt.show()
-
-
-# plot the difference as well!
-delta_E = Energy_2body_mixed[:,0] - two_body_energy
-
-# plot the difference between the two energies
-plt.plot(delta_E,label="two-body energy difference")
-plt.legend()
-plt.xlabel("Sample")
-plt.ylabel(r"$\Delta E \equiv E_\mathrm{MixedEstimator} - E_{EnergyEstimator}$")
-plt.title(r"$\Delta E_{2-body}$ vs. sample")
-
-plt.show()
+print(f"two-body energy, mixed estimator: {E2_rdm.real:.8f} ± {E2_rdm_err.real:.8f}")
+print(f"two-body energy, energy estimator: {E2_default.real:.8f} ± {E2_default_err.real:.8f}")
 ```
 
 +++ {"id": "NjutJDKY4B_m"}
 
-Once again, we see that the two body energy computed from the two-body reduced density matrix samples is the same as the two body energy from the energy estimator (after adding the exchange and direct Coulomb contributions together, of course).
+<!-- BEGIN observables-averaging -->
 
-+++ {"id": "9bKC3Q6G5Mx9"}
+With the two-body energy implemented, we once again see that the two body energy computed from the two-body reduced density matrix samples is the same as the two body energy from the energy estimator (after adding the exchange and direct Coulomb contributions together, of course).
 
-## Averaging Observables
-
-Averaging observables computed using AFQMC requires some care.
-
-First, one must make sure that the data is equilibrated.
-
-Second, in AFQMC, successive samples are not independent since they depend on the recent history of each walker.
-This is known as "autocorrelation".
-Care must be take to remove autocorrelation effects or the stochastic uncertainty will be underestimated.
-
-The former can be achieved by visualizing the observable over imaginary time, and finding the equilibration time by inspection.
-We saw this in {doc}`../01_hello_safire/01_hello_safire`.
-afqmctools provides tools for automatically computing the auto-correlation time - i.e. the time interval at which measurements are no longer autocorrelated - and adjusting the number of effective samples accordingly.
-
-In the code cell below, we demonstrate how to use the provided tools to automatically compute averages.
-
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 1000
-id: ca0ef2b4
-outputId: 260beb99-16d6-4e60-e2b9-16665ef099af
----
-from afqmctools.analysis.average import average_observable
-
-E1body = average_observable(
-    filename=scratch_dir/"qmc.s001.stat.h5",
-    name = "one_rdm",
-    eqlb=20, # EXERCISE: Set this to an appropriate value based on the energy vs projection time curve above.
-    estimator='mixed',
-    ix=0,
-    blocksize=1,
-    transform=[hermitize,eval_one_body_energy],
-    remove_auto_correlation=True # you can turn this off if you prefer to remove autocorrelation yourself.
-)
-
-## compare with the analyze_scalar_stats result:
-from stats.scalar_dat import analyze_scalar_data
-
-analyze_scalar_data(dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
-    series_column = "time",
-    nequil = 5,
-    trace = True
-))
-```
+<!-- END observables-averaging -->
 
 +++ {"id": "6a1baf12-288e-4f8f-afaf-6f9d83e899d4"}
 
+<!-- BEGIN observables-bp -->
+
 ## Back-Propagation (BP) in SAFIRE
 
-Mixed estimators are biased for observables $\hat{O}$ such that $[\hat{O},\hat{H}] \neq 0$, which requires the use of pure estimators. The Back-Propagation (BP) algorithm is used to compute pure estimators efficiently in SAFIRE.
+Mixed estimators are biased for observables $O$ such that $[O,H] \neq 0$.
+The back-propagation (BP) estimator mitigates this bias (see {ref}`backprop_estimator`).
 
 ### Basic BP Configuration
 
-BP is invoked in SAFIRE by including a "back_propagation" estimator in the input file:
+BP is invoked in SAFIRE by including a `backprop` estimator in the job file:
 
 ```json
 {
-  "estimator": {
-    "name": "back_propagation",
-    "path_restoration": true,
-    "bp_walker_ortho_interval": 5,
-    "measure_interval_multiplier": 20,
-    "equil_multiplier": 100,
-    "onerdm": {
-      "name": "one_rdm"
+  "estimators": {
+    "backprop": {
+      "propagation_steps": [600, 700, 800],
+      "onerdm": {}
     }
   }
 }
 ```
 
 Observables are added to the BP block in the same way as for mixed estimators.
+The required `propagation_steps` setting lists the back-propagation lengths, in steps.
 
-### Measurement Intervals
+### Back-Propagation Lengths
 
-Since BP involves an additional projection, the measurement interval controls the number of back-propagated steps.
-Just as in the execute block or a mixed estimator block, the input file includes a measurement interval "multiplier", and the actual measurement interval, $m$, is determined as:
+The result of the BP estimator depends on the back-propagation length:
+short lengths approach the mixed estimator, while long ones are costly and noisy.
+SAFIRE measures every listed length in the same calculation, reusing the forward projection,
+so that you can check the convergence in the back-propagation length.
+Each length is written to its own group, `BackPropEstimator/Steps=<length>`, in the results file.
+The longest length also acts as the measurement interval of the estimator.
 
-$$
-m = (\text{measure\_interval\_multiplier}) \times (\text{population\_control\_interval})
-$$
+Like all other observables, back-propagated ones are not measured during the equilibration phase
+whose length is the execute block's `equilibration_steps`.
 
-### Multiple BP Lengths
-
-SAFIRE implements the capability of running BP with multiple BP measurement lengths.
-We call each measurement with a different BP length an "average".
-This allows the forward projection to be reused while checking for convergence in the BP length.
-To define multiple BP lengths/averages, simply provide a JSON array for measure_interval_multiplier corresponding to all of the BP lengths that you would like to use:
-
-```json
-{
-  "estimator": {
-    "name": "back_propagation",
-    "path_restoration": true,
-    "bp_walker_ortho_interval": 10,
-    "measure_interval_multiplier": [60, 70, 80],
-    "equil_multiplier": 80,
-    "onerdm": {
-      "name": "one_rdm"
-    }
-  }
-}
-```
-
-### Equilibration Phase
-
-The BP estimator implements an equilibration phase at the beginning of the AFQMC calculation where no BP is performed.
-This is recommended since computing observables is expensive and since AFQMC needs to equilibrate before samples can meaningfully contribute to the average.
-Similarly to the measure_interval_multiplier, the equilibration time is specified as an equilibration multiplier (`"equil_multiplier"`) and the actual equilibration time is given by:
-
-$$
-\textrm{equil\_time} = (\textrm{equil\_multiplier}) \times (\textrm{population\_control\_interval})
-$$
-
-### All Settings
-
-<style>
-td, th {
-   border: none!important;
-}
-</style>
-  
-|<b>setting</b>|<b>default</b>|<b>description</b>|
-|--:|:-:|:--|
-| <b>        measure_interval_multiplier</b> |   1  |  controls the number of back propagation steps which are determined as $(\textrm{number of BP steps}) = (\textrm{measure\_interval\_multiplier}) \times (\textrm{population\_control\_interval})$. Can be either a single value or multiple values. If multiple values are provided, BP will be performed with each corresponding number of BP steps and observables are accumulated and saved for each distinct BP length.  |
-| <b> equil_multiplier </b> | 0 |  The multiplier that determines the length of the equilibration phase. The equilibration phase length is computed as $(\textrm{equilibration\_length}) = (\textrm{equil\_multiplier}) * (\textrm{population\_control\_inveral})$ where the population control interval is defined in the execute block. During the equilibration phase, observables are not computed. |
-| <b>        bp_walker_ortho_interval</b> |   1  |   interval for performing walker orthonormalization during back-propagation (i.e. for the left-hand side Walkers)  |
-| <b>        path_restoration</b> |   false  |  If true, perform path restoration.  |
-| <b>        extra_path_restoration</b> |   false  |   If true, perform an extra path restoration.  |
+See {ref}`backprop_block` for all settings of the BP estimator.
 
 ### Demonstration of BP
 
@@ -814,9 +388,11 @@ For the sake of execution time, we will compute only the one-rdm using the back-
 We will find that the one-body energy computed using the BP one-rdm will *not* agree with the one computed using a mixed estimator.
 The BP-estimated one-body energy is unbiased, and represents a better estimate of the one-body energy than that provided by the mixed estimator.
 
+<!-- END observables-bp -->
+
 +++
 
-### ▶️ Run the code block below to write an input file with a BP Estimator
+### Run the Code Block Below to Write a JSON Job File with a BP Estimator
 
 ```{code-cell} ipython3
 ---
@@ -826,57 +402,36 @@ id: 41e0454a
 outputId: fbf1e8a4-bc84-40c5-9135-0d6a6571b8e8
 ---
 # Example: Setting up a BP calculation with multiple BP lengths
-from afqmctools.inputs.from_hdf import write_json
-
-# Create a scratch directory for BP calculations
-scratch_dir_bp = scratch_dir / "bp"
-scratch_dir_bp.mkdir(parents=True, exist_ok=True)
-
-# Copy the Hamiltonian and wavefunction files
-import shutil
-shutil.copy(scratch_dir / "afqmc.h5", scratch_dir_bp / "afqmc.h5")
-
+dt = 0.005
+bp_lengths = [1, 10, 20, 40]  # Multiple BP lengths, in steps
 # Set up AFQMC parameters with back-propagation
-execute_options_bp = {
-    "walker_set": {
-        "walker_type": "COLLINEAR"
-    },
-    "timestep": 0.005,
-    "steps": 20000,
-    "measure_interval_multiplier": 2,
-    "population_control_interval": 5,
-    "walker_ortho_interval": 10,
-    "n_walkers_per_mpi_task": 100,
-    "seed": 42,
-    "estimator": {
-        "name": "back_propagation",
-        "path_restoration": True,
-        "bp_walker_ortho_interval": 5,
-        "measure_interval_multiplier": [1, 2, 3],  # Multiple BP lengths
-        "equil_multiplier": 30,  # Equilibration phase
-        "onerdm": {
-            "name": "one_rdm"
+write_jobfile(
+    "afqmc_bp.json",
+    {
+        "seed": 42,
+        "execute": {
+            "wavefunction": wavefunction,
+            "hamiltonian": hamiltonian,
+            "timestep": dt,
+            "steps": 20000,
+            "measure_interval": 10,
+            "equilibration_steps": 150,
+            "population_control_interval": 5,
+            "walker_ortho_interval": 10,
+            "num_walkers": 1600,
+            "estimators": {
+                "backprop": {
+                    "walker_ortho_interval": 5,
+                    "propagation_steps": bp_lengths,
+                    "onerdm": {}
+                }
+            }
         }
     }
-}
-
-write_json(
-    scratch_dir_bp / "afqmc_bp.json",
-    fwfn0=scratch_dir_bp / "afqmc.h5",
-    walker_type="COLLINEAR",
-    exec_opts=execute_options_bp,
-    series=2
 )
-
-print("Back-propagation input file created with the following BP parameters:")
-print(f"- Multiple BP lengths: {execute_options_bp['estimator']['measure_interval_multiplier']}")
-print(f"- Equilibration multiplier: {execute_options_bp['estimator']['equil_multiplier']}")
-print(f"- Population control interval: {execute_options_bp['population_control_interval']}")
-print(f"- Actual BP lengths: {[m * execute_options_bp['population_control_interval'] for m in execute_options_bp['estimator']['measure_interval_multiplier']]}")
-print(f"- Equilibration time: {execute_options_bp['estimator']['equil_multiplier'] * execute_options_bp['population_control_interval']}")
 ```
 
-### ▶️ Run SAFIRE with BP
+### Run SAFIRE with BP
 
 ```{code-cell} ipython3
 ---
@@ -884,140 +439,39 @@ colab:
   base_uri: https://localhost:8080/
 id: 918df5d4
 outputId: cb9daf3b-71f6-46c9-a100-bfd1ae9323f4
+scrolled: true
+tags: [scroll-output]
 ---
 # Run AFQMC with back-propagation
 print("Running AFQMC with back-propagation estimator...")
 print("This will take longer than mixed estimators due to the additional back-propagation steps.")
-
-run_afqmc(
-    run_dir=scratch_dir_bp,
-    input_file="afqmc_bp.json",
-    np=16,
-    output_file=None
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc_bp.json
 ```
 
-### ▶️ Run the code below to evaluate the one-body energy from the one-rdm, and compare with the BP estimator
+### Run the Code Below to Evaluate the One-Body Energy from the One-RDM and Compare with the BP Estimator
 
 ```{code-cell} ipython3
 :id: 39c23cf1
 
-# Extract and analyze BP results
-from afqmctools.analysis.extraction import extract_observable, get_metadata
-from afqmctools.analysis.average import WALKER_TYPE
-from afqmctools.analysis.transform import hermitize_factory
-
-# Check the metadata to understand the walker type
-metadata = get_metadata(scratch_dir_bp / "qmc.s002.stat.h5")
-bp_metadata = get_metadata(scratch_dir_bp / "qmc.s002.stat.h5", path="/Observables/BackPropagated/")
-
-walker_type = WALKER_TYPE[metadata["WalkerType"]]
-print(f"Walker type: {walker_type}")
-
-# set up a transform the hermitize the one-rdm
-hermitize = hermitize_factory(
-    walker_type=walker_type
-)
-
-# Extract one-RDM data from all BP averages
-print("\nExtracting one-RDM data from back-propagation averages...")
-
-# We specified 3 BP lengths:
-bp_lengths = bp_metadata["BackPropSteps"]
-bp_onerdm_data = {}
-
-for iav, bp_length in enumerate(bp_lengths):
-    print(f"Extracting average {iav} (BP length = {bp_length} * {execute_options_bp['population_control_interval']} = {bp_length * execute_options_bp['population_control_interval']} steps)")
-
-    # Extract the one-RDM for this average
-    onerdm_bp = extract_observable(
-        scratch_dir_bp / "qmc.s002.stat.h5",
-        estimator='back_propagated',
-        name="one_rdm",
-        ix=iav,  # Index of the BP average
-        transform=[hermitize],  # Apply hermitization
-        batch_size=10
-    )
-    bp_onerdm_data[iav] = onerdm_bp
-    print(f"  Shape of one-RDM data: {onerdm_bp.shape}")
-
-print(f"\nSuccessfully extracted one-RDM data from {len(bp_onerdm_data)} BP averages")
-```
-
-```{code-cell} ipython3
-# Extract and analyze BP results
-from afqmctools.analysis.extraction import extract_observable, get_metadata
-from afqmctools.analysis.average import WALKER_TYPE
-from afqmctools.analysis.transform import hermitize_factory
-# Check the metadata to understand the walker type
-metadata = get_metadata(scratch_dir_bp / "qmc.s002.stat.h5")
-bp_metadata = get_metadata(scratch_dir_bp / "qmc.s002.stat.h5", path="/Observables/BackPropagated/")
-
-walker_type = WALKER_TYPE[metadata["WalkerType"]]
-print(f"Walker type: {walker_type}")
-
-# set up a transform the hermitize the one-rdm
-hermitize = hermitize_factory(
-    walker_type=walker_type
-)
-
-bp_lengths = bp_metadata["BackPropSteps"]
-naverages = len(bp_lengths)
-bp_energy = np.zeros((naverages),dtype=np.complex128)
-bp_energy_err = np.zeros((naverages),dtype=np.complex128)
-
-for iav, bp_length in enumerate(bp_lengths):
-    print(f"Extracting average {iav} (BP length = {bp_length} steps)")
-
-    # Extract the one-RDM for this average
-    energy_bp, denergy_bp = average_observable(
-        scratch_dir_bp / "qmc.s002.stat.h5",
-        estimator='back_propagated',
-        name="one_rdm",
-        eqlb=0, # equilibrated for beta = 4.0 during SAFIRE run!!
-        ix=iav,  # Index of the BP average
-        transform=[hermitize,eval_one_body_energy],  # Apply hermitization
-        batch_size=10
-    )
-    bp_energy[iav] = energy_bp[0] + Econst
-    bp_energy_err[iav] = denergy_bp[0]
-```
-
-```{code-cell} ipython3
 import matplotlib.pyplot as plt
-from stats.scalar_dat import analyze_scalar_data
 
-E_mixed, dE_mixed = analyze_scalar_data(dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
-    series_column = "time",
-    column = "OneBodyEnergyEstim__nume_real",
-    nequil = 10
-))
+results_bp = Results("afqmc_bp.results.h5")
 
-bp_steps = bp_lengths * execute_options_bp['population_control_interval']
-fig, ax = plt.subplots(1, 1, figsize=(8, 5))
-
-# plot reference value from mixed
-ax.fill_between([min(bp_steps)-1, max(bp_steps)+1],
-                 E_mixed - dE_mixed, E_mixed + dE_mixed,
-                 alpha=0.2, color='red')
-ax.axhline(y=E_mixed, color='red', linestyle='--', alpha=0.7, label=f'Mixed Estimator')
-
-# Plot convergence
-ax.errorbar(bp_steps, bp_energy, yerr=bp_energy_err, marker='o', capsize=5, capthick=2, label='BP Estimator')
-
-ax.set_xlabel('BP Length (steps)')
-ax.set_ylabel('Mean One-body Energy (Ha)')
-ax.set_title('BP Convergence with BP Length')
-ax.legend()
-ax.grid(True, alpha=0.3)
-
-plt.tight_layout()
-plt.show()
+bp_onebody_energy, bp_onebody_energy_err = np.transpose([
+   results_bp.evaluate(onebody_energy, [f"BackPropEstimator/Steps={bp_length}/OneRDM"])
+   for bp_length in bp_lengths
+])
+bp_onebody_energy += hamiltonian.enuc
+plt.errorbar(np.array(bp_lengths) * dt, bp_onebody_energy, bp_onebody_energy_err, label="BackProp Estimator")
+plt.axhline(y=E1_default, color='red', linestyle='--', alpha=0.7, label="Mixed Estimator")
+plt.xlabel(r"BP length $β_\mathrm{BP}$ (Ha${}^{-1}$)")
+plt.ylabel("$E_1$ (Ha)")
+plt.legend()
 ```
 
 +++ {"id": "d0f6abfa"}
 
+<!-- BEGIN observables-summary -->
 ### Key Takeaways from Back-Propagation Analysis
 
 **When to Use BP vs Mixed Estimators:**
@@ -1027,8 +481,6 @@ plt.show()
 2. **Back-Propagation**: Required for observables that do not commute with the Hamiltonian (like the one-body reduced density matrix). BP provides pure estimators that are unbiased.
 
 **Important BP Configuration Points:**
-
-- **Equilibration**: Always include an equilibration phase (`equil_multiplier`) to allow AFQMC to reach equilibrium before BP measurements begin.
 
 - **Multiple BP Lengths**: Use multiple BP lengths to check convergence. Longer BP lengths generally provide more accurate results but are more expensive. However, BP is unstable for long back propagation times. This is reflected in the large stochastic uncertainty for large BP length.
 
@@ -1048,8 +500,11 @@ This demonstrates why BP is essential for computing unbiased estimates of observ
 
 In this tutorial, you were acquainted with how to compute general observables with SAFIRE.
 
-## What you learned
+## What You Learned
 
-1. What a mixed estimator is and when to use one to compute an observable
-2. What a back-propagated estimator is and when to use one to compute an observable
-3. How to compute observables in post-processing with afqmctools
+1. What an estimator is and how to set one up in the JSON job file
+2. What a mixed estimator is and when to use one to compute an observable
+3. What a back-propagated estimator is and when to use one to compute an observable
+4. How to compute observables in post-processing with safiretools
+
+<!-- END observables-summary -->

@@ -1,9 +1,9 @@
 [mean_field.qe]
 name = "mf"
 prefix = "pwscf"
-outdir = "../qe/OUT"
+outdir = "OUT"
 nbnd = 20
- 
+
 [wavefunction.mf]
 mean_field  = "mf"
 output      = "wfn.h5"

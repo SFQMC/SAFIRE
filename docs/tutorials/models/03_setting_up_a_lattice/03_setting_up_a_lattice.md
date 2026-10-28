@@ -13,169 +13,122 @@ kernelspec:
 
 +++ {"id": "e9d26b92-e165-4baf-8fc1-dd312330f9d0"}
 
-# Lattice class tutorial
+# Defining a Lattice
 
-In this tutorial, we will learn how to set up a lattice to define a Model Hamiltonian (See __LATTICE_HAMIL_TUTORIAL__ for details on building a Hamiltonian).
-The `afqmctools` Python package implements a Lattice class which is responsible for answering geometric questions about a specific lattice such as:
+In this tutorial, we will learn how to set up a lattice using the {py:class}`safiretools.Lattice` class. The lattice is a purely geometrical description of the connectivity of a lattice model. It forms the main ingredient of a lattice model Hamiltonian file for SAFIRE, which we will build in the next tutorial {doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`.
 
-- what are the boundary conditions
-- what are the $n^{th}$-nearest neighbors
-- which of those neighbors are "direct" neighbors, and which are image neighbors
+## Lattice Formalism
 
-and more.
-`afqmctools` provides a convenience function, `get_lattice()` to build a Lattice instance given a set of geometric parameters.
-In this tutorial, we will explore how the Lattice class works, and the available options for building a Lattice via `get_lattice()`.
-
-## Lattice formalism
-
-We consider lattices with primitive lattice vectors $\vec{a}_1$, and $\vec{a}_2$ (as determined by the lattice "type") which may have a basis, $\{ \delta_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the full cell has dimension $L_1$ x $L_2$.
+We consider lattices with primitive lattice vectors $\vec{a}_1$ and $\vec{a}_2$ which may have a basis, $\{ \vec{\delta}_p \}$ where $p$ runs over sub-lattice degrees of freedom, and the supercell has dimension $L_1 \times L_2$.
+The basis is given in fractional coordinates, $\vec{\delta}_p = (\delta_{p,1}, \delta_{p,2})$, i.e. in units of the lattice vectors.
 The positions of lattice sites on sublattice $p$ are given by  
 $$
-\vec{r}_p = n_1 \vec{a}_1 + n_2 \vec{a}_2  + \vec{\delta}_p,
+\vec{r}_{n_1,n_2,p} = (n_1 + \delta_{p,1}) \vec{a}_1 + (n_2 + \delta_{p,2}) \vec{a}_2,
 $$
 where $n_1$, and $n_2$ are integers.
-Additionally, boundaries are defined normal to the primitive vectors and are labelled according to the primitive vector which they are normal to.
-For example, "boundary 1" is normal to $\vec{a}_1$.
-Finally, when boundaries are crossed, a "twist" angle $\vec{\theta} = (\theta_1,\theta_2)$
-is used to apply a phase where $\theta_1$/$\theta_2$ is applied when boundary 1 / boundary 2 are crossed, respectively.
+
+These positions span a supercell with sides $L_1 \vec{a}_1$ and $L_2 \vec{a}_2$ with two boundary conditions 1 and 2, determining how $L_1 \vec{a}_1$ and $L_2 \vec{a}_2$ wrap around, respectively. These boundaries may have a twist angle $\vec{\theta} = (\theta_1,\theta_2)$ so that electrons crossing them pick up a phase.
 
 <div class="alert alert-block alert-info">
 <b>Important:</b>
-    Only 2-dimensional lattices are currently implemented / supported.
-    Contact the developers if 3-dimensional lattices would be useful to you.
+
+Only 2-dimensional lattices are currently implemented.
+Contact the developers if 3-dimensional lattices would be useful to you.
+
 </div>
 
-TODO add a figure illustrating this.
+## Creating a Lattice
 
-## Summary of get_lattice()
-
-The `get_lattice()` function takes a Python dictionary containing "lattice parameters" as an argument and returns a Lattice instance based on the provided "lattice parameters".
-
-We'll explore the available options individually, but possible lattice parameters are:
-
-- `type` : specifying the lattice type; `square` by default
-- `L1` : the lattice dimension along the lattice vector $\vec{a}_1$
-- `L2` : the lattice dimension along the lattice vector $\vec{a}_2$
-- `boundary1` : the boundary *type* of the boundary normal to $\vec{a}_1$ (at $0 * \vec{a}_1$ and $L_1 * \vec{a}_1$ ). Defaults to an open boundary if not specified.
-- `boundary2` : the boundary *type* of the boundary normal to $\vec{a}_2$ (at $0 * \vec{a}_2$ and $L_2 * \vec{a}_2$ ). Defaults to an open boundary if not specified.
-- `twist` : the twist angle to apply, given as $\vec{\theta} = (\theta_1,\theta_2)$ in units of radians. Defaults to (0.0,0.0)
-- `basis` : the set of lattice basis vectors, $\delta_{n}$. Defaults to {(0.0,0.0)}
-
-Below is a minimal example of building a lattice allowing most parameters to take on default values.
-We also use `afqmctool`'s `plot_lattice()` function so that we can visualize what we have made.
+The simplest way to build a lattice is to use one of the built-in lattice types with the {py:meth}`safiretools.Lattice.from_type` constructor. The following snippet creates a 4 × 4 square lattice with open boundary conditions.
 
 ```{code-cell} ipython3
 :id: 68d02ad8-c469-49b2-a54c-f8611c4ecb68
 
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
+import numpy as np
+from safiretools import Lattice
+from safiretools import vis
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4
-)
-
-lattice = get_lattice(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'square',
+    (4, 4),
+    boundaries=('open', 'open'),
 )
 
 vis.plot_lattice(lattice)
 ```
 
+The built-in lattice types are `'square'`, `'triangular'`, `'honeycomb'`, or `'kagome'` and the second argument is the lattice dimensions $(L_1, L_2)$.
+
 +++ {"id": "16542f56-b4f4-455e-b117-cc003b665648"}
 
-As we can see, we have constructed a 4x4 square lattice.
-Nearest-neighbors in the direct cell are indicated with a solid black line by default.
+As we can see, we have constructed a 4 × 4 square lattice.
+Nearest neighbors in the direct cell are indicated with a solid black line by default.
 The lattice vectors, $\vec{a}_1$ and $\vec{a}_2$,
 the lattice coordinate $n_1,n_2$,
 and the lattice site index, $i$,
 are shown for convenience as well.
 
-### Exercise 1: Play with dimensions
+### Exercise 1: Play with Dimensions
 
-Rerun the cell above with different lattice dimensions.
+Rerun the cell above with different lattice dimensions and lattice types.
 Try:
-- 12 x 4
-- 2 x 4
-- 4 x 7
-- 1 x 10
-- anything else you would like to try
+- 12 × 4 square lattice
+- 4 × 7 honeycomb lattice
+- 1 × 10 triangular lattice
 
 +++ {"id": "e1134f16-cfc2-4089-9d00-034f0e063781"}
 
 ## Boundary Conditions
 
 In this section, we will explore the available options for boundary conditions.
-To select a boundary type, set `boundary1` and/or `boundary2` in the `lattice_params`
-dictionary to a string describing the boundary type.
-This is a case insensitive parameter.
+The boundary types are selected by `boundaries`, a pair of strings describing the boundary type
+along $\vec{a}_1$ and $\vec{a}_2$.
+The strings are case insensitive.
 
-As we saw previously, the default boundaries are open.
-This can be made explicit by setting
+The example above used open boundaries,
 
 ```python
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1= "open",
-    boundary2= "open"
-)
+boundaries = ("open", "open")
 ```
 
-alternatively, periodic boundary conditions (PBC) can be used by setting
+alternatively, periodic boundary conditions can be used by setting
 
 ```python
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1= "pbc",
-    boundary2= "pbc"
-)
+boundaries = ("periodic", "periodic")
 ```
 
 or mixed boundary conditions can be used by setting, for example,
 
 ```python
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1= "open",
-    boundary2= "pbc"
-)
+boundaries = ("open", "periodic")
 ```
 
 <div class="alert alert-block alert-warning">
 <b>Important:</b>
-    When using periodic boundary conditions,
-    lattice sites are not allowed to be their own
-    image neighbors. So, for example, a 1-dimensional
-    lattice can only have PBCs in the "long" direction.
-    A ValueError will be raised if any sites are found to be
-    image neighbors of themselves.
+
+When using periodic boundary conditions,
+lattice sites are not allowed to be their own
+image neighbors. So, for example, a 1-dimensional
+lattice can only be periodic along the long direction.
+A ValueError will be raised if any sites are found to be
+image neighbors of themselves.
+
 </div>
 
-### Exercise 2: Play with boundary conditions
+### Exercise 2: Play with Boundary Conditions
 
 Try setting different combinations of boundary conditions
-in `lattice_params` in the code block below.
-The `plot_lattice()` function will indicate the position of nearest image
+in `boundaries` in the code block below.
+The `vis.plot_lattice()` function will indicate the position of nearest image
 neighbors with a black dotted line.
 
 ```{code-cell} ipython3
 :id: 08d214dc-f42a-48ca-9215-f17f86f481fa
 
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "open",
-    boundary2 = "pbc",
-)
-
-lattice = get_lattice(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'square',
+    (4, 4),
+    boundaries=('open', 'periodic')
 )
 
 vis.plot_lattice(lattice)
@@ -185,173 +138,59 @@ vis.plot_lattice(lattice)
 
 ### Twists
 
-When using periodic boundary conditions (PBCs), a "twist" angle, $\theta = (\theta_1,\theta_2)$ can be set such that, for image neighbors $i,j$,
+When using periodic boundary conditions, a twist angle, $\vec{\theta} = (\theta_1,\theta_2)$ can be set such that, for neighbors $(i,j)$ where going from $i$ to $j$ crosses boundary 1 in the $+\vec{a}_1$ direction,
 $$
-c^{\dagger}_i c_j = e^{i \theta_1} c^{\dagger}_i c_j
+c^{\dagger}_i c_j  + c^{\dagger}_j c_i \to e^{i \theta_1} c^{\dagger}_i c_j + e^{-i \theta_1} c^{\dagger}_j c_i.
 $$
-when crossing boundary 1 in the $+\vec{a}_1$ direction
-and
-$$
-c^{\dagger}_i c_j = e^{-i \theta_1} c^{\dagger}_i c_j
-$$
-when crossing boundary 1 in the $-\vec{a}_1$ direction.
 Similar relations apply for boundary 2 and $\theta_2$.
-The Lattice class does not directly use the Twist angle, but
-stores the relative phase between pairs of lattice site neighbors
-if they are set.
 
-All of the following are valid twist inputs:
-
-```python
-twist = [0.0,0.0]
-twist = [3.14,0.0]
-twist = [0.0, 0.5]
-twist = ["1/2 Pi", "3/2 Pi"]
-```
-
-If a twist is provide in `lattice_params`, then
-it will be saved as the relative phase between image neighbors
-consistent with the boundaries.
-
-For example, in the code block
-
-```python
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "open",
-    boundary2 = "pbc",
-    twist = ["1/2 Pi", "1/2 Pi"]
-)
-
-lattice = get_lattice(
-    params=lattice_params
-)
-```
-
-although we have provided a twist for both boundary 1 and boundary 2,
-only the twist for boundary 2 will be applied since
-boundary 1 is not periodic.
-
-+++ {"id": "94ad1d70-c561-4211-b09b-eb5db0de05ac"}
-
-## Lattice Types
-
-We provide a few lattice types which can be selected by setting `"type"` to one of `"square"`,
-`"triangular"`, `"honeycomb"`, or `"kagome"` in `lattice_params`
-
-Try building a few of these in the code block below.
+The twist $(\theta_1, \theta_2)$ is specified by the `twists` argument:
 
 ```{code-cell} ipython3
-:id: 590508fb-00bd-4bb6-9e3a-03b95a19ba01
-
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = "honeycomb"
+lattice = Lattice.from_type(
+    'square',
+    (4, 4),
+    boundaries=('open', 'periodic'),
+    twists=(np.pi/2, np.pi/2)
 )
-
-lattice = get_lattice(
-    params=lattice_params
-)
-
-vis.plot_lattice(lattice,title="Honeycomb lattice",show_labels=False)
 ```
 
-+++ {"id": "f4903dd8-53d6-4fff-86b9-66e75098fd22"}
++++
 
-## Lattice basis
-
-For the `square` lattice type, a lattice basis can be optionally supplied
-by setting `basis` in `lattice_params` to a list of vectors which
-represent the basis vectors **in spatial coordinates**.
-Currently only 2-dimensional lattices are supported, and all basis vectors
-must be 2-dimensional.
-
-Note that the honeycomb lattice and the kagome lattice are both special cases
-of the triangular lattice with a basis that has been predefined.
-If a basis is provided in `lattice_params` for either of these lattices, it will
-be ignored.
-
-### Exercise
-
-Play around with setting a basis.
-
-```{code-cell} ipython3
-:id: 77d03832-f8f2-4854-8e87-ce2f2946c191
-
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = "square",
-    basis = [[0.0],[0.5]]
-)
-
-lattice = get_lattice(
-    params=lattice_params
-)
-
-vis.plot_lattice(lattice,title="Square lattice with a basis",show_labels=False)
-```
+Note that in the above example, due to the open boundary condition along $\vec{a}_1$, $\theta_1$ has no effect.
 
 +++ {"id": "67ef466a-2411-4d21-8fa1-8a2516db44e4"}
 
-## Custom lattices
+## Custom Lattices
 
-If the lattice that you want is not specifically implemented, you can use the
-"custom" lattice.
-You will need to specify the lattice vectors, $\vec{a}_1$, and $\vec{a}_2$,
-and the lattice basis, $\{ \delta_p \}$.
+If the lattice that you want is not one of the built-in types, pass its lattice
+vectors (as the rows of `lattice_vectors`) and basis to the {py:class}`safiretools.Lattice` constructor directly. The basis is given in fractional coordinates of the lattice vectors.
 
 ```{code-cell} ipython3
 :id: 1f3486b9-62ab-4687-a322-295de51b8ae8
 :outputId: 220c8539-682a-473b-ce17-592734b4f775
 
-import numpy as np
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
+basis = [(0, 0), (0.25, 0.25), (-0.25, 0.25), (0.5, 0.5), (0.75, 0.75), (0.25, 0.75)]
 
-basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 8,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = "custom",
-    basis = basis,
-    a1=np.array((1.0,-1.0)),
-    a2=np.array((1.0,1.0)),
-)
-
-lattice = get_lattice(
-    lattice_params
+lattice = Lattice(
+    lattice_vectors=np.array([(1.0, -1.0), (1.0, 1.0)]),
+    basis=basis,
+    Ls=(4, 8),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 vis.plot_lattice(lattice,title="Lieb lattice with tilted cell",show_labels=False)
 ```
 
 +++ {"id": "2431a7fd-8a39-4172-9f68-b9bf3f7294c2"}
 
-## Visualizing nth-order neighbors
+## Visualizing nth-Order Neighbors
 
 The `vis.plot_lattice()` function can be used to visualize which pairs of sites
-are $n^{th}$-order neighbors.
-As you will see in the {doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`,
-$n_{th}$-order neighbor hopping and interactions are available in the lattice model Hamiltonian builder tools.
-Visualizing the neighbors can be helpful or ensuring that the desired hopping / interactions are being included,
+are $n^\mathrm{th}$-order neighbors.
+As you will see in {doc}`../04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian`,
+$n^\mathrm{th}$-order neighbor hopping and interactions are available in the lattice model Hamiltonian builder tools.
+Visualizing the neighbors can be helpful for ensuring that the desired hopping / interactions are being included,
 especially when dealing with complicated lattices.
 
 ```{code-cell} ipython3
@@ -359,21 +198,14 @@ especially when dealing with complicated lattices.
 :outputId: 2e47ab4f-58e4-47f6-e39a-25726050c235
 
 
-basis = [ np.array(delta) for delta in [(0,0),(0.5,0),(0,0.5),(1.0,0),(1.5,0),(1.0,0.5)] ]
+basis = [(0, 0), (0.25, 0.25), (-0.25, 0.25), (0.5, 0.5), (0.75, 0.75), (0.25, 0.75)]
 
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = "custom",
-    basis = basis,
-    a1=np.array((1.0,-1.0)),
-    a2=np.array((1.0,1.0)),
-)
-
-lattice = get_lattice(
-    lattice_params
+lattice = Lattice(
+    lattice_vectors=np.array([(1.0, -1.0), (1.0, 1.0)]),
+    basis=basis,
+    Ls=(4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 vis.plot_lattice(
     lattice,
@@ -385,55 +217,24 @@ vis.plot_lattice(
 
 +++ {"id": "c6c6bd33-4fce-439d-bc76-c6663031b838"}
 
-## Archive of Possible Examples
-
-### a water molecule:
-
-TODO: write an intro. The goal here is to shift everyone's brains to thinking
-about mapping atoms in a solid onto a lattice model without the complication of multiple sites.
-
-```{code-cell} ipython3
-:id: 3c519903-9583-4236-9e64-192a8026b087
-
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 1,
-    L2 = 1,
-    type = 'square',
-    basis = [[0.,0.],[-0.5,-0.5],[0.5,-0.5]]
-)
-
-lattice = get_lattice(
-    params=lattice_params
-)
-
-vis.plot_lattice(lattice,title="Water Molecule",show_labels=False)
-```
+## Further Examples
 
 +++ {"id": "2fafdcad-d356-47a6-80a4-930ba8a3a840"}
 
 ### Lieb Lattice
 
-The Cuprates are a class of high-temperature superconductors which consists of 2-dimensional layers of CuO$_2$ and other materials.
+The cuprates are a class of high-temperature superconductors which consist of 2-dimensional layers of CuO$_2$ and other materials.
 The Cu and O atoms are arranged in the Lieb lattice as shown below.
 
 ```{code-cell} ipython3
 :id: d4955fae-dac3-4197-a3b5-f35bf51b103e
 
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    type = 'square',
-    basis = [[0.,0.],[0.5,0.0],[0.0,0.5]]
-)
-
-lattice = get_lattice(
-    params=lattice_params
+lattice = Lattice(
+    lattice_vectors=[[1.0, 0.0], [0.0, 1.0]],
+    basis=[[0., 0.], [0.5, 0.0], [0.0, 0.5]],
+    Ls=(4, 4),
+    boundaries=('open', 'open'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
@@ -446,89 +247,27 @@ vis.plot_lattice(lattice,title="Lieb Lattice",show_labels=False)
 ```{code-cell} ipython3
 :id: 3eac1b2a-f2e9-4416-81bb-88d02fb5952b
 
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = 'kagome'
-)
-
-lattice = get_lattice(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'kagome',
+    (4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Kagome Lattice",show_labels=False)
 ```
 
+### Triangular Lattice
+
 ```{code-cell} ipython3
 :id: ae7e9e7c-896b-4ce4-86c7-98f6951756f7
 
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = 'triangular'
-)
-
-lattice = get_lattice(
-    params=lattice_params
+lattice = Lattice.from_type(
+    'triangular',
+    (4, 4),
+    boundaries=('periodic', 'periodic'),
+    twists=(0.0, 0.0)
 )
 
 vis.plot_lattice(lattice,title="Triangular Lattice",show_labels=False)
-```
-
-```{code-cell} ipython3
-:id: 9767452c-454d-4e3f-99a6-42a35f501b35
-
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 4,
-    L2 = 4,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = 'honeycomb'
-)
-
-lattice = get_lattice(
-    params=lattice_params
-)
-
-vis.plot_lattice(lattice,title="Honeycomb Lattice",show_labels=False)
-```
-
-```{code-cell} ipython3
-:id: 669f3165-f665-4fbc-940b-5783f111b1a9
-
-from afqmctools.systems.lattice import get_lattice
-import afqmctools.utils.visualize as vis
-
-lattice_params = dict(
-    L1 = 8,
-    L2 = 8,
-    boundary1 = "pbc",
-    boundary2 = "pbc",
-    type = 'square'
-)
-
-lattice = get_lattice(
-    params=lattice_params
-)
-
-vis.plot_lattice(lattice,title="Square Lattice",show_labels=False)
-```
-
-```{code-cell} ipython3
-:id: 733459f3-7200-4a86-89e2-6220bd503536
-
-
 ```

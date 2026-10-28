@@ -30,8 +30,8 @@
 project = 'SAFIRE'
 
 # The full version, including alpha/beta/rc tags
-version = '0.1.0'
-release = '0.1.0'
+version = '1.0.0'
+release = '1.0.0'
 
 
 # -- General configuration ---------------------------------------------------
@@ -42,14 +42,10 @@ release = '0.1.0'
 import sys, os
 sys.path.append(os.path.abspath('extensions'))
 
-import sphinx_rtd_theme
-
 extensions = [
     'sphinxcontrib.bibtex', 
-    'sphinx_rtd_theme', 
     'myst_nb',
     'sphinx.ext.mathjax',
-    'sphinx.ext.apidoc',
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx_autodoc_typehints',
@@ -57,6 +53,7 @@ extensions = [
     'notebook_header',
     ]
 bibtex_bibfiles = ['bibs/afqmc.bib']
+bibtex_default_style = 'unsrt'
 
 def setup(app):
     # Add CSS for bold references
@@ -85,15 +82,7 @@ exclude_patterns = [
     '_build',
     'Thumbs.db',
     '.DS_Store',
-    'afqmctools/api/modules.rst' # we only have one module, so we do not need this
-]
-
-apidoc_modules = [
-    {
-        'path': '../utils/afqmctools',
-        'destination': 'afqmctools/api/',
-        'exclude_patterns': ['**/qe_driver.py', '**/hamiltonian/hubbard.py'],
-    },
+    'examples/molecules/tbd_H2O_charge_density',
 ]
 
 autodoc_default_options = {
@@ -124,8 +113,11 @@ html_baseurl = 'https://safire.flatironinstitute.org/docs/dev/'
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
+html_favicon = 'images/favicon.svg'
+
 html_css_files = [
     'custom.css',
+    'filetree.css',
 ]
 
 html_theme_options = {
@@ -137,14 +129,15 @@ html_theme_options = {
     "globaltoc_collapse": False,    # expand whole tree or not
     "globaltoc_includehidden": False, # show :hidden: entries
     "navigation_depth": 3,
-    "header_links_before_dropdown": 6,
+    "header_links_before_dropdown": 5,
     # Show this many levels expanded on page load (default: 1)
     "show_nav_level": 2,
-    # Maximum depth rendered in the left nav (default: 4)
     # Remove the light/dark theme switcher (default: ["theme-switcher", "navbar-icon-links"])
     "navbar_end": ["navbar-icon-links"],
-    "navbar_align": "left",
+    "navbar_align": "content",
     "secondary_sidebar_items": ["page-toc"],
+    # Expand this many heading levels in the right-hand page TOC (default: 1)
+    "show_toc_level": 2,
     "icon_links": [
         {
             "name": "GitHub",
@@ -163,7 +156,8 @@ html_context = {
 ## -- options for MyST-NB (rendering jupyter notebooks) ----------------------
 myst_enable_extensions = [
     "dollarmath",
-    "amsmath"
+    "amsmath",
+    "html_image",
 ]
 # required to have equations inside of text cells.
 myst_dmath_double_inline = True

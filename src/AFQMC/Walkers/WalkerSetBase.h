@@ -17,28 +17,24 @@
 #pragma once
 
 #include <memory>
-#include <span>
 #include <utility>
+#include <vector>
 
 #include "configuration.hpp"
 #include "config.h"
+#include "arch/arch.h"
 #include "IO/AppAbort.hpp"
 #include "AFQMC/parameters.hpp"
+#include "mpi3/request.hpp"
 #include "utilities/Random.hpp"
 #include "utilities/mpi_context.h"
-#include "utilities/type_traits.hpp"
-
-#include "nda/nda.hpp"
-#include "nda/tensor.hpp"
 
 #include "AFQMC/config.h"
 #include "IO/app_loggers.h"
-#include "AFQMC/Utilities/AFQMCTimer.h"
-#include "AFQMC/Utilities/type_conversion.hpp"
 
 #include "AFQMC/Walkers/Walkers.hpp"
-#include "AFQMC/Walkers/WalkerControl.hpp"
 #include "AFQMC/Walkers/WalkerConfig.hpp"
+#include "AFQMC/Walkers/WalkerSetInitialGuess.hpp"
 
 namespace sfqmc
 {
@@ -51,91 +47,70 @@ namespace afqmc
  *
  */
 
-/*
- * IMPLEMENTATION NOTE:
- * Routines that return an array view to local memory are now templated on the
- * MEMORY_SPACE. This is needed to be able to use the member functions as visitors,
- * since they must return the same type. If the memory spaces are incompatible, 
- * the call will abort the execution. 
- */
-template<MEMORY_SPACE _MEM_>
+template<MEMORY_SPACE MEM>
 class WalkerSetBase
 {
 public:
-  static constexpr MEMORY_SPACE MEM    = _MEM_;
-
   // contiguous_walker = true means that all the data of a walker is continguous in memory
   static const bool contiguous_walker = true;
   // contiguous_storage = true means that the data of all walker is continguous in memory
   static const bool contiguous_storage = true;
   static const bool fixed_population   = true;
 
-  using reference = walker<_MEM_,ComplexType>;
-  using const_reference = walker<_MEM_,const ComplexType>;
+  using reference = walker<MEM,ComplexType>;
+  using const_reference = walker<MEM,const ComplexType>;
 
-  /// Constructor: build a set of nWalkers walkers with the given dimensions
-  /// {rows, naea, naeb}. The walker type is parsed by the caller and passed in
-  /// (see parse_walker_type) so it is resolved exactly once. Walkers are
-  /// allocated and initialized to valid default values (unit
-  /// weight/overlap/phase, zero Slater matrices).
-  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                const WalkerSetParameters& params,
+  /// Constructor: build a set of nWalkers walkers of the given dimensions
+  /// {rows, naea, naeb}. Walkers are allocated and initialized to valid default
+  /// values (unit weight/overlap/phase, zero Slater matrices) but carry no
+  /// initial guess; it is for callers that restore walkers from elsewhere, such
+  /// as an HDF5 restart file.
+  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
                 std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
-                WALKER_TYPES walker_type,
+                const WalkerSetParameters& params,
                 std::array<int, 3> dims,
                 int nWalkers,
                 bool finite_temperature_
                )
-      : mpi(_mpi_),
+      : mpi(mpi),
         rng(r),
         walker_size(1),
         walker_memory_usage(0),
         bp_walker_size(0),
         bp_walker_memory_usage(0),
-        bp_pos(-1),
         tau_step(0),
         history_pos(0),
-        walkerType(walker_type),
+        walkerType(resolved(params.walker_type, "walker_type")),
         finite_temperature(finite_temperature_),
         tot_num_walkers(0),
         walker_buffer(0, 1),
         bp_buffer(0, 0)
   {
-    // parse fills load_balance, pop_control, min_weight and max_weight from params
     parse(params);
     setup(dims);
     allocate_walkers(nWalkers);
   }
 
-  /// Constructor: build a set of nWalkers walkers from the per-spin initial
-  /// guess matrices. Dimensions are inferred from the guess, so no external
-  /// NMO/nup/ndown is needed. Every walker is initialized to the guess.
-  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                const WalkerSetParameters& params,
-                std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
-                WALKER_TYPES walker_type,
-                const std::vector<nda::matrix<ComplexType>>& guess,
-                int nWalkers
-               )
-      : WalkerSetBase(_mpi_, params, r, walker_type, dims_from_guess(guess), nWalkers, false)
-  {
-    populate_from_guess(guess);
-  }
-
-  /// Constructor: build a set of nWalkers finite-temperature walkers from the
-  /// rank-4 UDV initial guess {3, nspin, rows, naea}. Dimensions are inferred
+  /// Constructor: build a set of nWalkers walkers from the trial wavefunction's
+  /// initial guess. The dimensions and the finite-temperature flag are derived
   /// from the guess, so no external NMO/nup/ndown is needed. Every walker is
   /// initialized to the guess.
-  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi_,
-                const WalkerSetParameters& params,
+  WalkerSetBase(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
                 std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> r,
-                WALKER_TYPES walker_type,
-                memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV,
+                const WalkerSetParameters& params,
+                const WalkerSetInitialGuess& guess,
                 int nWalkers
                )
-      : WalkerSetBase(_mpi_, params, r, walker_type, dims_from_guess_ft(UDV), nWalkers, true)
+      : WalkerSetBase(mpi, r, params, guess.walker_dims(), nWalkers, guess.isFiniteTemperature())
   {
-    populate_from_guess_ft(UDV);
+    utils::check(guess.walker_type == walkerType,
+                 "WalkerSetBase: the initial guess is {} but the walker set is {}.",
+                 walkerTypeToString(guess.walker_type), walkerTypeToString(walkerType));
+    if(finite_temperature) {
+      populate_from_guess_ft(guess.udv());
+    } else {
+      populate_from_guess(guess.slater());
+    }
   }
 
   /*
@@ -166,13 +141,6 @@ public:
    */
   int HistoryBufferLength() const { return wlk_desc[6]; }
 
-  /*
-   * Returns the position of the insertion point in the BP stack. 
-   */
-  int getBPPos() const { return bp_pos; }
-  void setBPPos(int p) { bp_pos = p; }
-  void advanceBPPos() { bp_pos++; }
-
    /*
    * Current imaginary-time slice index. Set to 0 for ground state walker types.
    * Used by FT wavefunction routines to select DL matrix slice.
@@ -182,10 +150,11 @@ public:
   void advanceTauStep() { tau_step++; }
 
   /*
-   * Returns, sets and advances the position of the insertion point in the History circular buffers. 
+   * Returns and advances the position of the insertion point in the History circular buffers.
+   * The FIELDS ring is indexed by history_pos % NumBackProp(), so a single cursor drives
+   * both it and the (three times longer) weight history.
    */
   int getHistoryPos() const { return history_pos; }
-  void setHistoryPos(int p) { history_pos = p % wlk_desc[6]; }
   void advanceHistoryPos() { history_pos = (history_pos + 1) % wlk_desc[6]; }
 
 
@@ -226,19 +195,6 @@ public:
   void resize(int n);
 
   /*
-   * (Re)populates every walker's Slater matrix from the per-spin guess. The set
-   * must already be sized; each guess matrix is exactly (rows x naea)/(NMO x naeb).
-   */
-  void populate_from_guess(const std::vector<nda::matrix<ComplexType>>& guess);
-
-  /*
-   * (Re)populates every walker's finite-temperature U/D/V matrices from the
-   * rank-4 guess {3, nspin, rows, naea} (D is a full matrix; its diagonal is
-   * used). The set must already be sized.
-   */
-  void populate_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV);
-
-  /*
    * Finite temperature reset walkers at the beginning of each sweep
   */
   void reset(int n);
@@ -259,7 +215,9 @@ public:
   auto get_target_population() const { return targetN_per_rank; }
   auto get_global_target_population() const { return targetN; }
 
-  auto walker_dims() const { return std::pair<int, int>{wlk_desc[0], wlk_desc[1]}; }
+  /// Dimensions {rows, naea, naeb} of the walkers in this set, in the same layout as
+  /// WalkerSetInitialGuess::walker_dims().
+  auto walker_dims() const { return std::array<int, 3>{wlk_desc[0], wlk_desc[1], wlk_desc[2]}; }
 
   auto GlobalPopulation() const
   {
@@ -281,26 +239,18 @@ public:
   }
 
   private:
-  /// Dimensions {rows, naea, naeb} of a walker set holding the given per-spin
-  /// guess matrices (rows = 2*NMO for noncollinear; naeb = 0 unless collinear).
-  static std::array<int, 3> dims_from_guess(const std::vector<nda::matrix<ComplexType>>& guess)
-  {
-    utils::check(guess.size() == 1 or guess.size() == 2, "Invalid initial guess.");
-    return {int(guess[0].extent(0)), int(guess[0].extent(1)),
-            guess.size() > 1 ? int(guess[1].extent(1)) : 0};
-  }
+  /*
+   * Populates every walker's Slater matrix from the per-spin guess. The set must already be
+   * sized; each guess matrix is exactly (rows x naea)/(NMO x naeb).
+   */
+  void populate_from_guess(WalkerSetInitialGuess::slater_guess guess);
 
-  /// Dimensions {rows, naea, naeb} of a finite-temperature walker set holding
-  /// the given rank-4 UDV guess {3, nspin, rows, naea}. nspin == 2 signals
-  /// collinear-ft (naeb == naea); otherwise naeb == 0.
-  static std::array<int, 3> dims_from_guess_ft(memory::array_view<HOST_MEMORY, const ComplexType, 4> UDV)
-  {
-    utils::check(UDV.extent(0) == 3, "Invalid finite-T initial guess.");
-    int rows = int(UDV.extent(2));
-    int naea = int(UDV.extent(3));
-    int naeb = (UDV.extent(1) == 2) ? naea : 0;
-    return {rows, naea, naeb};
-  }
+  /*
+   * Populates every walker's finite-temperature U/D/V matrices from the rank-4 guess
+   * {3, nspin, rows, naea} (D is a full matrix; its diagonal is used). The set must already
+   * be sized.
+   */
+  void populate_from_guess_ft(WalkerSetInitialGuess::udv_guess UDV);
 
   template<walker_data D>
   auto extract_SM( SpinTypes s ) {
@@ -419,69 +369,49 @@ public:
     return extract_SM<SMN>(s);
   }
 
-  void processWalkerData(std::vector<ComplexType>& curData);
-
-  void popControl();
-
-  // population control algorithm
-  // Note: the following overload is deprecated
-  void popControl(std::vector<ComplexType>& curData, bool skip = false);
-
-  // M holds the incoming walkers packed as {walker_buffer row, bp_buffer row}; it comes
-  // from an MPI receive buffer, so it is on the host even when the set lives on a device.
-  void push_walkers(memory::array_view<HOST_MEMORY, const ComplexType, 2> M);
-
-  void pop_walkers(memory::array_view<HOST_MEMORY, ComplexType, 2> M);
-
-  // given a list of new weights and counts, add/remove walkers and reassign weight accordingly.
-  // counts is one {weight, multiplicity} entry per local walker and is reordered in place;
-  // walkers beyond the target population are written to M.
-  void branch(std::span<std::pair<double, int>> counts,
-              memory::array_view<_MEM_, ComplexType, 2> M);
-
-  template<class T>
-  void scaleWeight(const T& w0, bool scale_last_history = false)
-  {
-    utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
-    nda::blas::scal(ComplexType(w0), walker_buffer(nda::range(tot_num_walkers), data_displ[WEIGHT]));
-    if (scale_last_history)
-    {
-      int his_pos = ((history_pos == 0) ? wlk_desc[6] - 1 : history_pos - 1);
-      if (wlk_desc[6] > 0 && his_pos >= 0 && his_pos < wlk_desc[6])
-      {
-        nda::blas::scal(ComplexType(w0), 
-                bp_buffer(nda::range(tot_num_walkers), data_displ[WEIGHT_HISTORY] + his_pos));
-      }
+  /*
+   * Calls f(A) for every per-walker field A, whose leading index is the walker slot. The call
+   * order is the wire order, so both ends of an exchange must agree on it.
+   */
+  template<class F>
+  void for_each_field(F&& f) {
+    f(walker_buffer);
+    if(wlk_desc[3] > 0) {
+      f(bp_buffer);
     }
   }
 
-  void scaleWeightsByOverlap()
-  {
-    using nda::tensor::binary_op::PROD;
-    utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
-    nda::range r(tot_num_walkers);
-    nda::array<ComplexType,1> ov(tot_num_walkers);  // on host
-    nda::array<ComplexType,1> buff(tot_num_walkers);  // on host
-    memory::array<MEM,ComplexType,1> buff_d(tot_num_walkers);  // on device
-    getProperty(OVLP, ov);
-    for (int i = 0; i < tot_num_walkers; i++)
-      buff(i) = ComplexType(1.0 / std::abs(ov[i]), 0.0);
-    buff_d() = buff(); // to device
-    // A(i) = A(i) * x(i)
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[WEIGHT]),"i",PROD);
-    for (int i = 0; i < tot_num_walkers; i++)
-      buff[i] = std::exp(ComplexType(0.0, -std::arg(ov[i])));
-    buff_d() = buff();  // to device
-    // A(i) = A(i) * x(i)
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[PHASE]),"i",PROD);
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[PHASE1]),"i",PROD);
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[PHASE2]),"i",PROD);
-    nda::tensor::elementwise(1.0,buff_d,"i",
-                             1.0,walker_buffer(r,data_displ[PHASE3]),"i",PROD);
+  /*
+   * Posts one non-blocking send per field of walker i to dest; field k uses tag k.
+   */
+  void isend_walker(int i, int dest, mpi3::communicator& comm, std::vector<mpi3::request>& requests) {
+    // CUDA-aware MPI reads device memory outside the stream, and nda runs without synchronization
+    if constexpr(MEM == DEVICE_MEMORY) {
+      arch::device_synchronize();
+    }
+    int tag = 0;
+    for_each_field([&](auto& A) {
+      auto row = A(i, nda::ellipsis{});
+      requests.emplace_back(comm.isend_n(row.data(), row.size(), dest, tag++));
+    });
+  }
+
+  /*
+   * Posts one non-blocking receive per field into slot i, matching isend_walker.
+   */
+  void irecv_walker(int i, int source, mpi3::communicator& comm, std::vector<mpi3::request>& requests) {
+    int tag = 0;
+    for_each_field([&](auto& A) {
+      auto row = A(i, nda::ellipsis{});
+      requests.emplace_back(comm.ireceive_n(row.data(), row.size(), source, tag++));
+    });
+  }
+
+  /*
+   * Copies every field of the walker in slot from into slot to.
+   */
+  void copy_walker(int from, int to) {
+    for_each_field([&](auto& A) { A(to, nda::ellipsis{}) = A(from, nda::ellipsis{}); });
   }
 
   auto get_mpi() const { return mpi; }
@@ -494,9 +424,6 @@ public:
   WALKER_TYPES getWalkerType() const { return walkerType; }
 
   bool isFiniteTemperature() const { return finite_temperature; }
-
-  std::tuple<BranchingAlgorithm,int,int> population_control_parameters() const 
-  { return std::make_tuple(pop_control,min_weight,max_weight); }
 
   int walkerSizeIO() const
   {
@@ -527,6 +454,14 @@ public:
     utils::check(x.size() >= walkerSizeIO(), "Size mismatch");
     utils::check(walker_buffer.extent(1) == walker_size, "Shape mismatch");
     walker_buffer(n,range(walkerSizeIO())) = x(range(walkerSizeIO()));
+  }
+
+  /*
+   * Writable view of one scalar property across the population. Properties are columns of
+   * walker_buffer, so the view is strided by the walker size and lives in MEM.
+   */
+  auto getProperty(walker_data id) {
+    return walker_buffer(nda::range(tot_num_walkers), data_displ[id]);
   }
 
   template<typename Arr>
@@ -598,22 +533,6 @@ public:
     return bp_buffer(range::all,range(i0,i0+wlk_desc[6]));
   }
 
-  // load balancing algorithm
-  void loadBalance(nda::MemoryArrayOfRank<2> auto&& M,  
-                   std::vector<int> const& nwalk_counts_old,  
-                   std::vector<int> const& nwalk_counts_new)
-  {
-    if (load_balance == LoadBalanceAlgorithm::simple)
-    {
-      afqmc::swapWalkersSimple(*this, M, nwalk_counts_old, nwalk_counts_new, mpi->comm);
-    }
-    else if (load_balance == LoadBalanceAlgorithm::async)
-    {
-      afqmc::swapWalkersAsync(*this, M, nwalk_counts_old, nwalk_counts_new, mpi->comm);
-    }
-    mpi->comm.barrier();
-  }
-
   std::shared_ptr<utils::RandomGenerator_t<HOST_MEMORY>> getRNG() { return rng; }
 
 protected:
@@ -623,7 +542,6 @@ protected:
 
   int walker_size, walker_memory_usage;
   int bp_walker_size, bp_walker_memory_usage;
-  int bp_pos;
   int tau_step;
   int history_pos;
 
@@ -651,16 +569,6 @@ protected:
   void setup(std::array<int, 3> dims);
   // reserve capacity for n walkers and initialize them to valid defaults
   void allocate_walkers(int n);
-
-  // the four below are set by parse(); the sentinels only guard against a ctor that forgets to
-  // call it
-
-  // load balance algorithm
-  LoadBalanceAlgorithm load_balance{LoadBalanceAlgorithm::undefined};
-
-  // branching algorithm
-  BranchingAlgorithm pop_control{BranchingAlgorithm::undefined};
-  [[maybe_unused]] double min_weight{}, max_weight{};
 };
 
 } // namespace afqmc

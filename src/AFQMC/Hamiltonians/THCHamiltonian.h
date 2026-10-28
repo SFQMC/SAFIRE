@@ -42,7 +42,7 @@ public:
 
   THCHamiltonian(const HamiltonianParameters& params) : fileName(params.filename) {}
 
-  HamiltonianTypes getHamType() const { return THC; }
+  HamiltonianType getHamType() const { return HamiltonianType::thc; }
 
   template<MEMORY_SPACE MEM>
   HamiltonianOperations<MEM> getHamiltonianOperations(WALKER_TYPES type,

@@ -20,9 +20,9 @@ the runner focused on scheduling and checking logic.
 import enum
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from afqmctools.utils.types import SpinSymm
+from safiretools import SpinSymm
 
 ROOT = Path(__file__).resolve().parent
 INPUTS_ROOT = ROOT / "afqmc_inputs"
@@ -76,9 +76,12 @@ class System:
     walkers: List[SpinSymm]  # the member name also names the reference path component
                              # and the walker_type of the generated input
     # Observable blocks spliced into the back-propagation estimator, keyed by the name the
-    # input schema gives them. A non-empty dict is what makes a system run back-propagation
-    # cases at all. A relative `filename` is resolved against the system's afqmc_inputs dir.
+    # input schema gives them. A relative `filename` in a stored-input block is resolved
+    # against the system's afqmc_inputs dir.
     observables: Dict[str, dict] = field(default_factory=dict)
+    # The (hamiltonian, wavefunction, walker) combinations run as back-propagation cases;
+    # the rest of the cross product runs without it.
+    backprop: List[Tuple[str, str, SpinSymm]] = field(default_factory=list)
 
 
 # ============================================================================
@@ -106,35 +109,56 @@ def build_systems() -> Dict[str, System]:
                 "rhf_nomsd": Wavefunction("afqmc_rhf_nomsd.h5", S.CLOSED, WC.NOMSD),
                 "uhf_nomsd": Wavefunction("afqmc_uhf_nomsd.h5", S.COLLINEAR, WC.NOMSD),
                 "ghf_nomsd": Wavefunction("afqmc_ghf_nomsd.h5", S.NONCOLLINEAR, WC.NOMSD),
-                "rcasci_rhf_phmsd": Wavefunction("afqmc_casci_rhf_phmsd.h5", S.CLOSED, WC.PHMSD),
+                "rcasci_rhf_phmsd": Wavefunction("afqmc_casci_rhf_phmsd.h5", S.COLLINEAR, WC.PHMSD),
                 "rcasci_uhf_phmsd": Wavefunction("afqmc_casci_uhf_phmsd.h5", S.COLLINEAR, WC.PHMSD),
                 "rcasci_ghf_phmsd": Wavefunction("afqmc_casci_ghf_phmsd.h5", S.NONCOLLINEAR, WC.PHMSD),
                 "rcasci_rhf_nomsd": Wavefunction("afqmc_casci_rhf_nomsd.h5", S.CLOSED, WC.NOMSD),
                 "rcasci_uhf_nomsd": Wavefunction("afqmc_casci_uhf_nomsd.h5", S.COLLINEAR, WC.NOMSD),
                 "rcasci_ghf_nomsd": Wavefunction("afqmc_casci_ghf_nomsd.h5", S.NONCOLLINEAR, WC.NOMSD),
-                "rcasci_rhf_1phmsd": Wavefunction("afqmc_casci_rhf_1phmsd.h5", S.CLOSED, WC.PHMSD),
+                "rcasci_rhf_1phmsd": Wavefunction("afqmc_casci_rhf_1phmsd.h5", S.COLLINEAR, WC.PHMSD),
                 "rcasci_uhf_1phmsd": Wavefunction("afqmc_casci_uhf_1phmsd.h5", S.COLLINEAR, WC.PHMSD),
                 "rcasci_ghf_1phmsd": Wavefunction("afqmc_casci_ghf_1phmsd.h5", S.NONCOLLINEAR, WC.PHMSD),
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}, "diag_twordm": {}},
+            backprop=[
+                ("dense_rhf_basis_closed", "rhf_nomsd", S.CLOSED),
+                ("dense_rhf_basis_closed", "uhf_nomsd", S.COLLINEAR),
+                ("dense_rhf_basis_closed", "uhf_nomsd", S.NONCOLLINEAR),
+                ("dense_rhf_basis_closed", "rcasci_uhf_nomsd", S.COLLINEAR),
+                ("dense_rhf_basis_closed", "rcasci_uhf_nomsd", S.NONCOLLINEAR),
+                ("dense_rhf_basis_closed", "rcasci_uhf_phmsd", S.COLLINEAR),
+                # PHMSD over an explicit orbital reference
+                ("dense_rhf_basis_closed", "rcasci_rhf_phmsd", S.COLLINEAR),
+            ],
         ),
         "Li": System(
             data_dir="Li",
             hamiltonians={"hamil_closed": Hamiltonian("hamil_closed.h5", S.CLOSED, HC.GENERIC_DENSE)},
             wavefunctions={"rohf_wfn_polarized": Wavefunction("rohf_nomsd_polarized.h5", S.COLLINEAR, WC.NOMSD)},
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}, "diag_twordm": {}},
+            backprop=[("hamil_closed", "rohf_wfn_polarized", S.COLLINEAR)],
         ),
         "Pb": System(
             data_dir="Pb",
             hamiltonians={
                 "dense_rhf_basis_noncollinear_sf": Hamiltonian("afqmc_H_rhf_basis_noncollinear_sf.h5", S.NONCOLLINEAR, HC.GENERIC_DENSE),
-                "dense_rhf_basis_noncollinear_soc": Hamiltonian("afqmc_H_rhf_basis_noncollinear_soc.h5", S.NONCOLLINEAR, HC.GENERIC_DENSE),
             },
             wavefunctions={
                 "uhf_nomsd": Wavefunction("afqmc_uhf_nomsd.h5", S.COLLINEAR, WC.NOMSD),
                 "ghf_sf_nomsd": Wavefunction("afqmc_ghf_sf_nomsd.h5", S.NONCOLLINEAR, WC.NOMSD),
+                "ghf_soc_nomsd": Wavefunction("afqmc_ghf_soc_nomsd.h5", S.NONCOLLINEAR, WC.NOMSD),
+            },
+            walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
+        ),
+        # The spin-free trials are left out: on the spin-orbit hamiltonian their energy equilibrates very slowly
+        "Pb_soc": System(
+            data_dir="Pb",
+            hamiltonians={
+                "dense_rhf_basis_noncollinear_soc": Hamiltonian("afqmc_H_rhf_basis_noncollinear_soc.h5", S.NONCOLLINEAR, HC.GENERIC_DENSE),
+            },
+            wavefunctions={
                 "ghf_soc_nomsd": Wavefunction("afqmc_ghf_soc_nomsd.h5", S.NONCOLLINEAR, WC.NOMSD),
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
@@ -153,12 +177,17 @@ def build_systems() -> Dict[str, System]:
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
             observables={
-                "onerdm": {"name": "one_rdm"},
-                "spinspin": {"name": "spinspin"},
-                "pair_correlators": {"name": "pair_correlators",
-                                     "filename": "pair_correlators.h5",
-                                     "pair_type": ["s", "+x", "+y"]},
+                "onerdm": {},
+                "diag_twordm": {},
+                "spincorr": {},
+                "paircorr": {"pairs": {"filename": "pair_correlators.h5",
+                                       "group": "PairCorrelator/orbital_map"}},
             },
+            backprop=[
+                ("ham_collinear", "fe_collinear", S.COLLINEAR),
+                ("ham_collinear_cont_spin", "fe_collinear", S.COLLINEAR),
+                ("ham_noncollinear", "fe_noncollinear", S.NONCOLLINEAR),
+            ],
         ),
         "hubbard_charge": System(
             data_dir="square_4x4_hubbard_nup5_ndn5",
@@ -170,11 +199,23 @@ def build_systems() -> Dict[str, System]:
                 "hf_U0.1_collinear": Wavefunction("uhf_U0.1_wfn_nup5_ndn5.h5", S.COLLINEAR, WC.NOMSD),
             },
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={
+                "onerdm": {},
+                "diag_twordm": {},
+                "spincorr": {},
+                "paircorr": {"pairs": {"filename": "pair_correlators.h5",
+                                       "group": "PairCorrelator/orbital_map"}},
+            },
+            backprop=[
+                ("ham_collinear_disc_charge", "hf_U0.1_collinear", S.COLLINEAR),
+                ("ham_collinear_cont_charge", "hf_U0.1_collinear", S.COLLINEAR),
+            ],
         ),
         "hubbard_kanamori": System(
             data_dir="square_6x1_hubbard_kanamori_nup6_ndn6",
             hamiltonians={
+                # Two components: the Hund's J term, then the Hubbard U term.
+                # A discrete decomposition is not allowed for J.
                 "ham_collinear": Hamiltonian("ham_collinear.h5", S.COLLINEAR, HC.MODEL),
                 "ham_noncollinear": Hamiltonian("ham_noncollinear.h5", S.NONCOLLINEAR, HC.MODEL),
             },
@@ -184,12 +225,16 @@ def build_systems() -> Dict[str, System]:
             },
             walkers=[S.COLLINEAR, S.NONCOLLINEAR],
             observables={
-                "onerdm": {"name": "one_rdm"},
-                "spinspin": {"name": "spinspin"},
-                "pair_correlators": {"name": "pair_correlators",
-                                     "filename": "pair_correlators.h5",
-                                     "pair_type": ["s", "+x"]},
+                "onerdm": {},
+                "diag_twordm": {},
+                "spincorr": {},
+                "paircorr": {"pairs": {"filename": "pair_correlators.h5",
+                                       "group": "PairCorrelator/orbital_map"}},
             },
+            backprop=[
+                ("ham_collinear", "fe_collinear", S.COLLINEAR),
+                ("ham_noncollinear", "fe_noncollinear", S.NONCOLLINEAR),
+            ],
         ),
         "rashba_soc": System(
             data_dir="rashba_soc",
@@ -213,7 +258,14 @@ def build_systems() -> Dict[str, System]:
                 "pbe_collinear_nomsd_noncollinear": Wavefunction("wfn_mf_pbe_noncollinear.h5", S.NONCOLLINEAR, WC.NOMSD),
             },
             walkers=[S.CLOSED, S.COLLINEAR, S.NONCOLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}, "diag_twordm": {}},
+            backprop=[
+                ("ham_chol_closed", "pbe_closed_nomsd", S.CLOSED),
+                ("ham_chol_closed", "pbe_collinear_nomsd", S.COLLINEAR),
+                ("ham_chol_closed", "pbe_collinear_nomsd", S.NONCOLLINEAR),
+                ("ham_thc_closed", "pbe_collinear_nomsd", S.COLLINEAR),
+                ("ham_thc_closed", "pbe_collinear_nomsd", S.NONCOLLINEAR),
+            ],
         ),
         "diamond_2x2x2": System(
             data_dir="C_diamond_coqui",
@@ -222,6 +274,7 @@ def build_systems() -> Dict[str, System]:
             },
             wavefunctions={"pbe_wfn_2x2x2_collinear": Wavefunction("wfn_mf_2x2x2_pbe.h5", S.COLLINEAR, WC.NOMSD)},
             walkers=[S.COLLINEAR],
-            observables={"onerdm": {"name": "one_rdm"}},
+            observables={"onerdm": {}, "diag_twordm": {}},
+            backprop=[("ham_2x2x2_chol_closed", "pbe_wfn_2x2x2_collinear", S.COLLINEAR)],
         ),
     }

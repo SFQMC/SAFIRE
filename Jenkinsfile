@@ -6,7 +6,7 @@ properties([
 // --no-deps because dependencies should already be installed in the image
 def pythonEnv = {
   stage('python env') {
-    sh 'pip install --no-deps $SRC/utils'
+    sh 'pip install --no-deps $SRC/python'
   }
 }
 
@@ -51,6 +51,12 @@ timeout(time: 1, unit: 'HOURS') {
                 gitPush(gitScm: scm, targetBranch: 'gh-pages', targetRepo: 'origin')
               }
             }
+          }
+          stage('python tests') {
+            sh '''
+              cd $SRC/python
+              pytest tests/safiretools
+            '''
           }
         },
         cpp_release: {
@@ -103,7 +109,7 @@ timeout(time: 1, unit: 'HOURS') {
     }
   },
   cuda: {
-    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins', tag: 'cuda', gpus: 1,
+    buildPod(context: 'docker', dockerfile: 'Dockerfile_jenkins', tag: 'cuda', gpus: 1, gpuType: 'a100',
              buildArgs: '--build-arg VARIANT=cuda') {
       withEnv([
         "SRC=$WORKSPACE",

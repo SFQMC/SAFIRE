@@ -71,8 +71,9 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
 
   int nact_dn = (type == COLLINEAR ? PsiT(0,1).extent(0) : 0l);
 
-  std::vector<long> Idata(8);
-  ComplexType E0;
+  // number of cholesky vectors
+  int ncv = 0;
+  RealType E0;
   h5::file file;
   if (mpi->comm.root()) 
   {
@@ -80,80 +81,46 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     h5::group root = h5::group(file);
     h5::group g = root.open_group("Hamiltonian");
 
-    h5::h5_read(g,"dims",Idata);
-
     E0 = read_energy_offset(root, "std", type, nact_up, nact_dn);
 
     {
-      // Too many choices, consider forcing standard structure (e.g. [ns_f][np_f*NMO][np_f*NMO]
+      // hcore is always [nspin][npol][NMO][npol][NMO]. get_dataset_info reports the raw
+      //   dataspace rank, which is one higher for an interleaved complex dataset;
+      //   check_shape is what knows to tolerate that trailing dimension.
       auto l = h5::array_interface::get_dataset_info(g,"hcore");
-      if(l.rank() == 2) {
-        // [2*NMO][NMO] 
-        if( l.lengths[0]==2*NMO and l.lengths[1]==NMO ) {
-          nspin_in_H1=2;
-          npol_in_H1=1; 
-        } else {
-          nspin_in_H1=1;
-          utils::check(l.lengths[0] == l.lengths[1], base_error + "Size mismatch");
-          utils::check(l.lengths[0]==NMO or l.lengths[0]==2*NMO, base_error +  "Size mismatch");
-          npol_in_H1 = l.lengths[0]/NMO;
-        }
-      } else if(l.rank() == 3) {
-        if (l.lengths[0]==2*NMO and l.lengths[1]==2*NMO)
-        {
-          nspin_in_H1=1;
-          npol_in_H1=2;
-          // checking l.lengths[0] == l.lengths[1] is unnecessary, see condition above
-          utils::check(l.lengths[2]==2, base_error + "Incorrect tailing dimension of hcore in h5 file. Expected 2, got {}",l.lengths[2]);
-        } else {
-          nspin_in_H1=l.lengths[0];
-          utils::check(l.lengths[1] == l.lengths[2], base_error + "Size mismatch");
-          utils::check(l.lengths[1]==NMO or l.lengths[1]==2*NMO, base_error + "Size mismatch");
-          npol_in_H1 = l.lengths[1]/NMO;
-        }
-      } else {
-        utils::check(false, base_error + "Invalid hcore rank:{}",l.rank());
-      }
+      utils::check(l.rank() >= 2, base_error + "hcore has rank {}", l.rank());
+      nspin_in_H1 = l.lengths[0];
+      npol_in_H1  = l.lengths[1];
+      utils::check_shape(l, "hcore", nspin_in_H1, npol_in_H1, NMO, npol_in_H1, NMO);
       utils::check(walkerDimsAreConvertible(nspin_in_H1, npol_in_H1, nspin, npol), "Hamiltonian with nspin: {}, npol: {} cannot be broadcasted to {}", nspin_in_H1, npol_in_H1, walkerTypeToString(type));
     }
     {
-      // cholesky tensor
+      // L is always [nspin][npol][NMO][npol][NMO][ncv], where nspin is either 1 (shared by
+      //   every spin sector) or that of hcore. Spinor vectors (npol=2) are not supported.
       h5::group vgrp = g.open_group("DenseFactorized");
       auto l = h5::array_interface::get_dataset_info(vgrp,"L");
-      if(l.rank()==2) {
-        //[nspin_in_H2*npol_in_H2*NMO*NMO]][ncv]
-        if( nspin_in_H1 > 1 ) nspin_in_H2 = l.lengths[0] / (NMO*NMO); 
-        if( npol_in_H1 > 1 ) npol_in_H2 = l.lengths[0] / (NMO*NMO); 
-        utils::check( l.lengths[0] == nspin_in_H2*npol_in_H2*NMO*NMO, 
-                      base_error + "Inconsistent size of DenseFactorized/L:({}, {}). Incompatible with nspin_in_H2:{}, npol_in_H2:{}, NMO:{} found in hcore",l.lengths[0],l.lengths[1],nspin_in_H2,npol_in_H2,NMO);
-      } else if(l.rank()==3 or l.rank()==4) {
-        //rank:3 [nspin_in_H2*npol_in_H2][NMO*NMO]][ncv]
-        //rank:4 [nspin_in_H2*npol_in_H2][NMO][NMO]][ncv]
-        if( nspin_in_H1 > 1 ) nspin_in_H2 = l.lengths[0]; 
-        if( npol_in_H1 > 1 ) npol_in_H2 = l.lengths[0];  
-        utils::check( l.lengths[0] == nspin_in_H2*npol_in_H2, 
-                      base_error +  "Inconsistent size of DenseFactorized/L:({}, ...). Incompatible with nspin_in_H2:{}, npol_in_H2:{} found in hcore",l.lengths[0],nspin_in_H2,npol_in_H2);
-      } else {
-        utils::check(false, "Invalid Cholesky vector rank:{} ",l.rank());
-      }
+      utils::check(l.rank() >= 6, base_error + "DenseFactorized/L has rank {}", l.rank());
+      nspin_in_H2 = l.lengths[0];
+      ncv = l.lengths[5];
+      utils::check(l.lengths[1] == 1, base_error + "spinor Cholesky vectors (npol: {}) are not supported", l.lengths[1]);
+      utils::check(nspin_in_H2 == 1 || nspin_in_H2 == nspin_in_H1,
+                   base_error + "DenseFactorized/L has nspin: {}, expected 1 or the nspin: {} of hcore", nspin_in_H2, nspin_in_H1);
+      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2, 1, NMO, 1, NMO, ncv);
     }
   }
-  mpi->comm.broadcast_n(Idata.begin(), 8, 0);
+  mpi->comm.broadcast_n(&ncv, 1, 0);
   mpi->comm.broadcast_n(&E0, 1, 0);
   mpi->comm.broadcast_n(&nspin_in_H1, 1, 0);
   mpi->comm.broadcast_n(&npol_in_H1, 1, 0);
   mpi->comm.broadcast_n(&nspin_in_H2, 1, 0);
   mpi->comm.broadcast_n(&npol_in_H2, 1, 0);
 
-  // number of cholesky vectors
-  int ncv = Idata[7];
-  
   // allocate shared arrays
 
   auto H1 = memory::share_from_root(*mpi, [&]() {
     h5::group g = h5::group(file).open_group("Hamiltonian"); 
     memory::array<HOST_MEMORY, ComplexType, 3> H1(nspin_in_H1, npol_in_H1 * NMO, npol_in_H1 * NMO);
-    sfqmc::utils::h5_read(g,"hcore",nda::reshape(H1(), nspin_in_H1 * npol_in_H1 * NMO, npol_in_H1 *NMO));
+    sfqmc::utils::h5_read(g,"hcore",nda::reshape(H1(), nspin_in_H1, npol_in_H1, NMO, npol_in_H1, NMO));
     return H1;
   });
 
@@ -161,23 +128,8 @@ RealDenseHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     h5::group g = h5::group(file).open_group("Hamiltonian"); 
     auto Likn = memory::array<MEM,RealType,4>(nspin_in_H2*npol_in_H2,NMO,NMO,ncv);
 
-    h5::group vgrp = g.open_group("DenseFactorized"); 
-    auto l = h5::array_interface::get_dataset_info(vgrp,"L");
-    if(l.rank()==2) {
-      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2*npol_in_H2*NMO*NMO, ncv);
-      auto L_ = nda::reshape(Likn(),std::array<long,2>{nspin_in_H2*npol_in_H2*NMO*NMO,ncv});
-      utils::h5_read(vgrp,"L",L_);
-    } else if(l.rank()==3) {
-      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2*npol_in_H2, NMO*NMO, ncv);
-      auto L_ = nda::reshape(Likn(),std::array<long,3>{nspin_in_H2*npol_in_H2,NMO*NMO,ncv});
-      utils::h5_read(vgrp,"L",L_);
-    } else if(l.rank()==4) {
-      utils::check_shape(l, "DenseFactorized/L", nspin_in_H2*npol_in_H2, NMO, NMO, ncv);
-      auto L_ = nda::reshape(Likn(),std::array<long,4>{nspin_in_H2*npol_in_H2,NMO,NMO,ncv});
-      utils::h5_read(vgrp,"L",L_);
-    } else {
-      utils::check(false, "Invalid Cholesky vector rank:{} ",l.rank());
-    }
+    h5::group vgrp = g.open_group("DenseFactorized");
+    utils::h5_read(vgrp,"L",nda::reshape(Likn(), nspin_in_H2, 1, NMO, 1, NMO, ncv));
     return Likn;
   });
   

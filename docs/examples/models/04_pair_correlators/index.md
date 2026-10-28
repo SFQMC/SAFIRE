@@ -13,62 +13,43 @@ kernelspec:
 
 +++ {"id": "m5yYPGDk-NIu"}
 
-# Observables: Pair Correlation functions
+# Observables: Pair Correlation Functions
 
 <b>Goal:</b>
-At the end of this tutorial, you will know how to measure pair correlation functions using SAFIRE for a lattice models.
+At the end of this tutorial, you will know how to measure pair correlation functions using SAFIRE for lattice models.
 
-## What you will learn
+## What You Will Learn
 
-1. How to set up the HDF5 and json input files to request pair correlation functions
-2. how to post process the correlation functions
+1. How to set up the HDF5 and JSON job files to request pair correlation functions
+2. How to post-process the correlation functions
 
 +++ {"id": "7FBZ0COY-NIw"}
 
 ## Introduction
 
-By pair correlation functions, we mean
+By pair correlation functions, we mean the singlet pair correlation functions
 
 $$
-P^{\alpha \beta}_{ij} ≡ ⟨ Δ^†_{i,\alpha}Δ_{j,\beta} ⟩,
-$$
-where  $i,j$ are basis set indices,
-$α, β$ are spatial offset indices, and
-
-$$
-Δ^†_{i,\alpha} \equiv \frac{1}{\sqrt{2}} \left(c^{\dagger}_{i⇑} c^{†}_{i + e_α ⇓} -  c^{\dagger}_{i⇓} c^{†}_{i + e_α ⇑} \right),
+\mathtt{PairCorr/}\alpha\mathtt{\_}\beta[i, j] = \langle \Delta^\dagger_{i,\alpha} \Delta_{j,\beta} \rangle
 $$
 
-where $e_α$ is the *index offset* associated with the spatial offset.
-For example, $e_\alpha$ may correspond to a $+x$ offset.
-For convenience, we define,
+between the pair creation and annihilation operators
 
 $$
-\bar{i}_α \equiv i + e_\alpha,
+\Delta^\dagger_{i,\alpha} = \frac{1}{\sqrt{2}} \left(c^{\dagger}_{i\uparrow} c^{\dagger}_{\bar{i}_\alpha \downarrow} -  c^{\dagger}_{i\downarrow} c^{\dagger}_{\bar{i}_\alpha \uparrow} \right), \qquad
+\Delta_{j,\beta} = \frac{1}{\sqrt{2}} \left( c_{\bar{j}_\beta\downarrow} c_{j \uparrow}  - c_{\bar{j}_\beta \uparrow} c_{j \downarrow} \right).
 $$
 
-such that,
+Here $i$ and $j$ are orbitals, and $\alpha$ and $\beta$ are *pair maps* that assign every orbital $i$ a partner orbital $\bar{i}_\alpha$.
+On a lattice, a pair map typically pairs each site with its neighbor at a fixed offset such as $+x$, and the pair map $\bar{i}_\alpha = i$ gives on-site (s-wave) pairs.
+Written out, the pair correlation function is
 
 $$
-Δ^†_{i,\alpha} \equiv \frac{1}{\sqrt{2}} \left(c^{\dagger}_{i⇑} c^{†}_{\bar{i}_α ⇓} -  c^{\dagger}_{i⇓} c^{†}_{\bar{i}_α ⇑} \right),
+\mathtt{PairCorr/}\alpha\mathtt{\_}\beta[i, j] = \frac{1}{2} \left\langle \left(c^{\dagger}_{i\uparrow} c^{\dagger}_{\bar{i}_\alpha \downarrow} -  c^{\dagger}_{i\downarrow} c^{\dagger}_{\bar{i}_\alpha \uparrow} \right) \left( c_{\bar{j}_\beta\downarrow} c_{j \uparrow}  - c_{\bar{j}_\beta \uparrow} c_{j \downarrow} \right) \right\rangle.
 $$
 
-and
-
-$$
-Δ_{j,\beta} \equiv \frac{1}{\sqrt{2}} \left( c_{\bar{j}_\beta⇓} c_{j ⇑}  - c_{\bar{j}_\beta ⇑} c_{j ⇓} \right),
-$$
-
-Using this language, the pair correlation function can be written as,
-
-$$
-P^{\alpha \beta}_{ij} ≡ \frac{1}{2} ⟨ \left(c^{\dagger}_{i⇑} c^{†}_{\bar{i}_α ⇓} -  c^{\dagger}_{i⇓} c^{†}_{\bar{i}_α ⇑} \right)  \left( c_{\bar{j}_\beta⇓} c_{j ⇑}  - c_{\bar{j}_\beta ⇑} c_{j ⇓} \right) ⟩.
-$$
-
-SAFIRE implements this form of pair correlation function.
-It requires a set of $\bar{i}_\alpha = i + e_\alpha$, in the HDF5 input file.
-Additionally, specific pairings may be selected in the json input file.
-This allows the user to skip some of the offsets saved in the HDF5 file if desired.
+SAFIRE reads the pair maps from the HDF5 input file.
+It measures every pair map saved in the group the JSON job file points to, so a subset of pair maps is selected by saving it to a group of its own.
 We will explore this in more detail below.
 
 +++
@@ -76,49 +57,33 @@ We will explore this in more detail below.
 ## Defining the Hamiltonian
 
 ```{code-cell} ipython3
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.utils.visualize import plot_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from pathlib import Path
+from safiretools import Lattice
+from safiretools import vis
+from safiretools import LatticeHamiltonian
 
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
-lattice = get_lattice(
-    params=dict(
-        L1 = 4,
-        L2 = 4,
-        boundary1 = "PBC",
-        boundary2 = "PBC"
-    )
+lattice = Lattice.from_type(
+    "square", (4, 4), boundaries=("periodic", "periodic"), twists=(0.0, 0.0)
 )
 
 # plot the lattice for reality checks!
-plot_lattice(lattice)
+vis.plot_lattice(lattice)
 
-params = dict(
-    hamiltonian=dict(
-        t=1.0,
-        U=4.0
-    )
-)
-
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
-
-from afqmctools.utils.io import write_model_hamiltonian
-
-write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=scratch_dir/"afqmc.h5"
-)
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
 ```
 
 +++ {"id": "Np-zIkGusNIP"}
 
-## Saving index offsets in the HDF5 input
+## Saving Pair Maps in the HDF5 Input
 
-The Lattice class from afqmctools can be directly used to find the pairs that we need via the `.get_directed_pairs()` function.
-`.get_directed_pairs()` needs a list of "directions", and it will return a dictionary where the keys are the requested directions, and the values are a list of index offsets, $\bar{i}_\alpha [i]$, such that $\bar{i}_{\alpha} [i] = i + e_\alpha$.
+The `Lattice` class from `safiretools` can be directly used to find the pair maps that we need via its `.get_directed_pairs()` method.
+`.get_directed_pairs()` needs a list of `directions`, and it returns a `DirectedPairs` object whose `.offsets` maps each requested direction $\alpha$ to its pair map, the list of partner orbitals $\bar{i}_\alpha$ indexed by $i$.
+The direction `"s"` is the on-site pair map $\bar{i}_\alpha = i$.
+
+Every direction has to run along a periodic axis. Stepping off an open edge would wrap around to the far side and pair sites that are not neighbors at all, so that is rejected rather than quietly measured.
 
 ```{code-cell} ipython3
 ---
@@ -128,117 +93,117 @@ colab:
 id: VjaOtDOltPAj
 outputId: 30ac79d1-e76e-4b8e-8c2c-6341210f4b4f
 ---
-
-pairs_dict=lattice.get_directed_pairs(
+pairs=lattice.get_directed_pairs(
   directions=["s","+x","-x","+y","-y"]
 )
 
-for key,value in pairs_dict.items():
+for key,value in pairs.offsets.items():
   print(key, value)
 ```
 
-afqmctools also provides a function for saving these pairs to HDF5 in the appropriate format.
+`DirectedPairs` writes itself to HDF5 in the format the estimator reads. It may go in the same file as the wavefunction and Hamiltonian, or in a file of its own.
 
 ```{code-cell} ipython3
-%load_ext autoreload
-%autoreload
-from afqmctools.utils.io import write_pair_correlators
-
-write_pair_correlators(scratch_dir / "afqmc.h5",pairs_dict)
+pairs.to_hdf5("afqmc.h5")
 ```
 
 +++ {"id": "lkkZMHMWvFAU"}
 
-### Adding Custom Pairings
+### Adding Custom Pair Maps
 
-We note that custom pairings can be added by simply inserting a list of offsets with a new key.
-For example, we can manually add "+x+y" pairing to the `pairs_dict` dictionary as
+We note that custom pair maps can be added by simply inserting a list of partner orbitals with a new key.
+For example, we can manually add the $+x+y$ pair map to `pairs.offsets`:
 
 ```{code-cell} ipython3
-pairs_dict["xy"] = [ 5, 6 , 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0]
+pairs.offsets["+x+y"] = [5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0]
 
-# update hdf5
-write_pair_correlators(scratch_dir / "afqmc.h5",pairs_dict)
+# update hdf5 - the whole map is rewritten, so every direction is still there
+pairs.to_hdf5("afqmc.h5")
 ```
 
 +++ {"id": "iwp3CeLownyV"}
 
-## Requesting the pair correlation function in the json input file
+## Requesting the Pair Correlation Function in the JSON Job File
 
 The pair correlation function observable may be requested as any other observable within an estimator block.
-However, the pair correlation function observable has a few unique parameters that must be set.
-They are:
+However, the pair correlation function observable has one unique parameter that must be set,
+`pairs`, which locates the pair maps with
 
-- "filename" which is the name of the HDF5 file where the pairing offsets were saved. These can saved in the same file as the Wavefunction, and/or Hamiltonian or in their own independent input file. Whichever you prefer.
-- "pair_type" is a list of the names of the types of pairing you want to measure. For example, to measure all of the types of pairing that we defined above, we would use `"pair_type" : ["s","+x","-x","+y","-y","xy"]`.
+- `filename`, the name of the HDF5 file where the pair maps were saved. They can be saved in the same file as the wavefunction and/or Hamiltonian, or in a separate input file.
+- `group`, the HDF5 group holding them. `DirectedPairs.to_hdf5()` writes them to `PairCorrelator/orbital_map`.
 
 <div class="alert alert-block alert-info">
 <b>Note:</b>
-  SAFIRE will measure all combinations of pairings that you request.
-  i.e. it will compute $P^{\alpha \beta}_{ij}$ where both $\alpha$ and $\beta$ run over the full set of pairing definitions.
+
+SAFIRE will measure all combinations of the pair maps in the group,
+i.e. every ordered pair of maps $(\alpha, \beta)$ is measured and stored as its own $(M, M)$ array `PairCorr/<α>_<β>`, where $M$ is the number of orbitals.
+
 </div>
 
 Since the pair correlation functions do not generally commute with the Hamiltonian, we should use a back-propagated estimator.
-A back-propagated estimator block with pair correlation functions would look like the following,
+A back-propagated estimator block with pair correlation functions would look like the following:
 
 ```json
-"estimator": {
-    "name": "back_propagation",
-    "path_restoration": true,
-    "bp_walker_ortho_interval": 10,
-    "equil": 200,
-    "pair_correlators" : {
-        "name" : "my_pair_correlators",
-        "filename" : "afqmc.h5",
-        "pair_type" : ["s","+x","-x","+y","-y","xy"]
+"estimators": {
+  "backprop": {
+    "walker_ortho_interval": 10,
+    "paircorr": {
+      "pairs": {
+        "filename": "afqmc.h5",
+        "group": "PairCorrelator/orbital_map"
+      }
     }
   }
+}
 ```
 
-If we decided we only wanted s-wave pair correlations, we could use
+If we decided we only wanted s-wave pair correlations, we could save only that pair map to a file of its own
+
+```python
+lattice.get_directed_pairs(directions=["s"]).to_hdf5("pairs_s.h5")
+```
+
+and use
 
 ```json
-"pair_correlators" : {
-  "name" : "my_pair_correlators",
-  "filename" : "afqmc.h5",
-  "pair_type" : ["s","+x","-x","+y","-y","xy"]
+"paircorr": {
+  "pairs": {
+    "filename": "pairs_s.h5",
+    "group": "PairCorrelator/orbital_map"
+  }
 }
 ```
 
 instead of the above.
 
-### Full sample input file
+### Full Sample Input File
 
 ```json
 {
-  "afqmc": {
-    "project": {
-      "id": "qmc",
-      "series": 0
+  "output_name": "qmc",
+  "seed": 42,
+  "execute": {
+    "wavefunction": {
+      "filename": "afqmc.h5"
     },
-    "execute": {
-      "walker_set": {
-        "walker_type": "NONCOLLINEAR"
-      },
-      "wavefunction": {
-        "filename": "afqmc.h5"
-      },
-      "timestep": 0.01,
-      "steps": 12000,
-      "n_walkers_per_mpi_task": 80,
-      "measure_interval_multiplier": 1,
-      "population_control_interval": 10,
-      "walker_ortho_interval": 10,
-      "seed": 42,
-      "estimator": {
-        "name": "back_propagation",
-        "path_restoration": true,
-        "bp_walker_ortho_interval": 10,
-        "equil": 200,
-        "pair_correlators" : {
-            "name" : "my_pair_correlators",
-            "filename" : "afqmc.h5",
-            "pair_type" : ["s","+x","-x","+y","-y","xy"]
+    "hamiltonian": {
+      "filename": "afqmc.h5"
+    },
+    "timestep": 0.01,
+    "steps": 12000,
+    "num_walkers": 200,
+    "measure_interval": 10,
+    "population_control_interval": 10,
+    "walker_ortho_interval": 10,
+    "estimators": {
+      "backprop": {
+        "walker_ortho_interval": 10,
+        "propagation_steps": [100],
+        "paircorr": {
+          "pairs": {
+            "filename": "afqmc.h5",
+            "group": "PairCorrelator/orbital_map"
+          }
         }
       }
     }
@@ -247,17 +212,17 @@ instead of the above.
 ```
 
 ```{code-cell} ipython3
-from afqmctools.inputs.from_hdf import write_json
-from afqmctools.inputs.from_autohf import autohf_to_afqmc
-import autohf
+import numpy as np
+from safiretools import Wavefunction, write_jobfile
+from autohf import solve_hf, AutoHFHamiltonian
 
 nelec = (8, 8)
+bp_lengths = [100]
 
 hf_settings = {
     "verbose": False,
     "plot": False,
     "steps": 2000,
-    "seed": 1479,
     "noncollinear": True,
     "gpu": False,
     "ansatz": "SD_ROT",
@@ -265,98 +230,81 @@ hf_settings = {
     "batch_size": 8,
     "nelec": nelec,
 }
-    
-wfn = autohf.solver.lattice_hf(
-    hamiltonian=autohf.AutoHFHamiltonian(hamiltonian),
-    lattice=lattice,
+
+results = solve_hf(
+    hamiltonian=AutoHFHamiltonian(hamiltonian),
     settings=hf_settings,
 )
 
-autohf_to_afqmc(
-    wfn,
-    output_fname = scratch_dir / "afqmc.h5"
+# the noncollinear orbitals are spinors, spin-up components first
+orbitals, = results[0]["orbitals"]
+wavefunction = Wavefunction.from_single_determinant(
+    np.asarray(orbitals).reshape(2, lattice.N_sites, sum(nelec))
 )
 
-
-afqmc_params = {
-    "timestep": 0.005,
-    "steps": 10000,
-    "population_control_interval": 2,
-    "walker_ortho_interval": 2,
-    "n_walkers_per_mpi_task": 40,
-    "measure_interval_multiplier": 1,    
-    "estimator": {
-        "name": "back_propagation",
-        "path_restoration": True,
-        "bp_walker_ortho_interval": 10,
-        "equil": 200,
-        "pair_correlators" : {
-            "name" : "my_pair_correlators",
-            "filename" : "afqmc.h5",
-            "pair_type" : ["s","+x","-x","+y","-y","xy"]
+write_jobfile(
+    "afqmc.json",
+    {
+        "execute": {
+            "wavefunction": wavefunction,
+            "hamiltonian": hamiltonian,
+            "timestep": 0.005,
+            "steps": 10000,
+            "population_control_interval": 2,
+            "walker_ortho_interval": 2,
+            "num_walkers": 640,
+            "measure_interval": 2,
+            "estimators": {
+                "backprop": {
+                    "walker_ortho_interval": 10,
+                    "propagation_steps": bp_lengths,
+                    "paircorr": {
+                        "pairs": {
+                            "filename": "afqmc.h5",
+                            "group": "PairCorrelator/orbital_map"
+                        }
+                    }
+                }
+            }
         }
     }
-}
-
-write_json(
-    scratch_dir / "afqmc.json",
-    fwfn0=scratch_dir / "afqmc.h5",
-    fham0=scratch_dir / "afqmc.h5",
-    exec_opts=afqmc_params,
-    series=0
 )
 ```
 
 ```{code-cell} ipython3
 :id: SrM8syoYzUeS
+:scrolled: true
+:tags: [scroll-output]
 
-from tutorial_utils import run_afqmc
-run_afqmc(
-        run_dir = scratch_dir,
-        input_file = "afqmc.json",
-        np = 16,
-        output_file = None
-    )   
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 +++ {"id": "WIxdjnH-zopo"}
 
-## Post-processing pair correlations functions
+## Post-Processing Pair Correlation Functions
 
 ```{code-cell} ipython3
 :id: eh8JuNVdag-o
 
-import numpy as np
-from warnings import warn
+from safiretools import Results
 
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.utils.visualize import plot_lattice
-from afqmctools.analysis.average import average_pair_correlation
+results = Results("afqmc.results.h5")
 
-
-P,dP,correlator_names = average_pair_correlation("qmc.s000.stat.h5")
-
-for i in range(len(correlator_names)):
-    print(f"correlator name: {correlator_names[i]}")
-
-a = correlator_names.index("s")
-b = correlator_names.index("+x")
-iav = 3
-
-n_correlators = len(correlator_names)
-
-P_ab_ij = P[iav].reshape(n_correlators,n_correlators,lattice.N_sites,lattice.N_sites)
+for name in results.observable_names():
+    if "PairCorr" in name:
+        print(f"correlator name: {name}")
 
 # take the s, +x correlator
-P_s_x_ij = P_ab_ij[a,b,:,:].reshape(lattice.N_sites,lattice.N_sites)
+P_s_x_ij, _ = results.average(f"BackPropEstimator/Steps={bp_lengths[-1]}/PairCorr/s_+x")
 # use the first site as the reference site
-P_s_x_0j = P_s_x_ij[0,:].reshape(lattice.L)
+P_s_x_0j = P_s_x_ij[0,:]
 
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=np.abs(P_s_x_0j.real),
+    show_labels=False,
     norm_type="log",
-    cmap="plasma"
+    cmap="viridis"
 )
 ```
 
@@ -364,7 +312,7 @@ plot_lattice(
 
 ## Summary
 
-### What you learned
+### What You Learned
 
-1. How to set up the HDF5 and json input files to request pair correlation functions
-2. how to post process the correlation functions
+1. How to set up the HDF5 and JSON job files to request pair correlation functions
+2. How to post-process the correlation functions

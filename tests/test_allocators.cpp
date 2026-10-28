@@ -200,7 +200,7 @@ TEST_CASE("dynamic_bucket resize", "[allocators]")
   bucket.resize(4 * A);
   auto live = bucket.allocate(A);
   REQUIRE(live.ptr != nullptr);
-  REQUIRE_THROWS_AS(bucket.resize(8 * A), std::bad_alloc);
+  REQUIRE_THROWS_AS(bucket.resize(8 * A), std::runtime_error);
   bucket.deallocate(live);
   REQUIRE_NOTHROW(bucket.resize(8 * A));
   REQUIRE(bucket.size() >= 8 * A);
@@ -220,7 +220,7 @@ TEST_CASE("dynamic_bucket release_pool", "[allocators]")
   // just like a resize, releasing the pool is only allowed while nothing is carved out of it
   auto live = bucket.allocate(A);
   REQUIRE(!bucket.idle());
-  REQUIRE_THROWS_AS(bucket.release_pool(), std::bad_alloc);
+  REQUIRE_THROWS_AS(bucket.release_pool(), std::runtime_error);
   bucket.deallocate(live);
 
   REQUIRE(bucket.idle());

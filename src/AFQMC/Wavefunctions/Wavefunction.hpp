@@ -20,8 +20,10 @@
 #include <variant>
 #include "AFQMC/config.h"
 #include "AFQMC/Walkers/WalkerSet.hpp"
+#include "AFQMC/Walkers/WalkerSetInitialGuess.hpp"
 
 #include "numerics/shared_array/const_shared_array.hpp"
+#include "AFQMC/Hamiltonians/Hamiltonian.hpp"
 #include "AFQMC/Wavefunctions/NOMSD.hpp"
 #include "AFQMC/Wavefunctions/PHMSD.hpp"
 #include "AFQMC/Wavefunctions/NOMSD_FT.hpp"
@@ -31,25 +33,35 @@ namespace sfqmc
 namespace afqmc
 {
 
+
+
 template<MEMORY_SPACE MEM>
 class Wavefunction 
 {
 public:
-  template<typename Wfn>
-  Wavefunction(Wfn&& other) : var(std::forward<Wfn>(other)) {}
+
+  static Wavefunction<MEM> from_params(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+    const WavefunctionParameters& params,
+    WALKER_TYPES walker_type,
+    bool finiteT,
+    Hamiltonian& h,
+    int targetNW);
 
   template<typename Wfn>
-  Wavefunction& operator=(Wfn&& other) {
-    var = std::forward<Wfn>(other);
-    return *this;
-  }
+    requires(!std::same_as<std::remove_cvref_t<Wfn>, Wavefunction>)
+  explicit Wavefunction(Wfn&& other) : var(std::forward<Wfn>(other)) {}
 
-  /*
-   * Returns the memory space.
-   */
+  // The walker configuration a walker set initialized from this wavefunction starts out in:
+  // the determinant with the largest coefficient at zero temperature, and the identity at finite
+  // temperature. It has the walker type the wavefunction was built for.
+  WalkerSetInitialGuess initial_guess() const;
+
   MEMORY_SPACE get_memory_space() const;
 
   int number_of_cholesky_vectors() const;
+
+  /// Constant term of the hamiltonian (nuclear + frozen core + madelung).
+  RealType energy_offset() const;
 
   void runtime_optimization(WalkerSet<MEM>& wset);
 
@@ -104,21 +116,15 @@ public:
     std::visit([&](auto&& a) { a.updateLogScale(std::forward<Args>(args)...); }, var);
   }
 
-  template<class... Args>
-  void accumulate_estimators(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.accumulate_estimators(std::forward<Args>(args)...); }, var);
-  }
-
   int total_number_of_references() const;
 
   int getNMO() const;
 
-  ComplexType getReferenceWeight(int i);
+  ComplexType getReferenceWeight(int i) const;
 
   void getReferences(memory::buffered_array<MEM,ComplexType,3>& Refs);
 
-  HamiltonianTypes getHamType() const;
+  HamiltonianType getHamType() const;
 
   nda::array<int,1> getFieldTypes();
 
@@ -137,7 +143,6 @@ public:
   memory::array<MEM,ComplexType,1> getLogPT0();
 
   private:
-
 
   std::variant<NOMSD<MEM,PsiT_Matrix<MEM>>,
                NOMSD<MEM,memory::const_shared_array<MEM,ComplexType,2>>,

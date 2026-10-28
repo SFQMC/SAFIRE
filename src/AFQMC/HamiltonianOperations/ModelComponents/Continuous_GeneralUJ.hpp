@@ -44,15 +44,13 @@ public:
                        memory::const_shared_array<MEM,ComplexType,1>&& h0_,
                        math::sparse::CSRMatrix auto&& vn_,
                        math::sparse::CSRMatrix auto&& vnT_,
-                       bool shift_ = false,  
-                       ComplexType e0 = 0
+                       bool shift_ = false
                       )
       : mpi(_mpi),
         walker_type(type),
         propg_type(ptype),
         nCV(0),
         shift_one_body_terms(shift_),
-        E0(e0),
         h0(std::move(h0_)),
         SpVn(std::move(vn_)),
         SpVnT(std::move(vnT_))
@@ -167,8 +165,6 @@ private:
   // if shift_one_body_terms=true, h0 is added to the one body propagator.
   // otherwise it is added through vHS
   bool shift_one_body_terms = false;
-
-  ComplexType E0 = 0.0;
 
   // All sparse matrices have a compact representation of IJ, as defined
   // by n2IJ in ModelHamOps. 

@@ -45,7 +45,7 @@ public:
                           csrMat<ValueType> && u_,
                           csrMat<ValueType> && j_,
                           nda::MemoryVector auto && n2ij_,
-                          ComplexType e0 = 0.0
+                          RealType e0 = 0.0
                 )
       : mpi(_mpi), 
         walker_type(type),
@@ -85,7 +85,8 @@ public:
   }
 
   auto get_n2IJ() const { return n2IJ_host(); };
-  auto get_n2IJ_dev() const { return n2IJ_dev(); }  
+  auto get_n2IJ_dev() const { return n2IJ_dev(); }
+  RealType energy_offset() const { return E0; }
 
   void addOneBodyPropagatorMatrix(nda::array<ComplexType, 3> & H1, double dt)
   {
@@ -189,9 +190,9 @@ private:
 
   /* defines the compact ordering */
   memory::array<HOST_MEMORY, int,1> n2IJ_host;  
-  memory::array<MEM, int,1> n2IJ_dev;  
+  memory::array<MEM, int,1> n2IJ_dev;
 
-  ComplexType E0;
+  RealType E0;
 
   int nnz_VJ[3];
   int nnz_VXX[2];

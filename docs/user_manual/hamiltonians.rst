@@ -1,29 +1,79 @@
 .. _Hamiltonian-classes:
 
 
-Hamiltonian File formats
-------------------------
+Hamiltonian Files
+-----------------
 
-The Hamiltonian is, of course, one of the key inputs to SAFIRE.
-SAFIRE is aware only of the generic class of Hamiltonian, so that it can take advantage of 
-class-specific algorithms while remaining general.
-Python-based tools to generate Hamiltonians, among other inputs, are provided in the `afqmctools` module.
-See the afqmctools documentation :ref:`afqmctools` and the tutorials :ref:`tutorials` for more details.
+The Hamiltonian is one of the key inputs to SAFIRE that describes the system to be simulated. In general, it takes the form of an interacting many-electron problem
 
-Several generic classes of Hamiltonians are implemented and described in detail below.
+.. math::
+  :label: eq-h012
 
-#. :ref:`Dense Cholesky <dense-cholesky>`
-#. :ref:`K-Point Factorized (KP) <k_point_factorized>`
-#. :ref:`Lattice Model Hamiltonian <lattice_model_hamiltonian>`
-#. :ref:`THC Hamiltonian <thc_hamiltonian>`
+  \hat{H} =& E_0 + \hat{H}_1 + \hat{H}_2 \\
+    =& E_0 + \sum\limits_{pq\sigma\sigma'} h^{\sigma \sigma'}_{pq} \hat{c}^\dagger_{p\sigma}\hat{c}_{q\sigma'}
+    + \frac{1}{2} \sum\limits_{pqrs\sigma\sigma'} v_{pqrs}^{\sigma\sigma'} \hat{c}^\dagger_{p\sigma}
+      \hat{c}^\dagger_{q\sigma'}\hat{c}_{s\sigma'}\hat{c}_{r\sigma},
+
+with an energy offset :math:`E_0`, a one-body Hamiltonian :math:`h^{\sigma \sigma'}_{pq}` and an interaction tensor :math:`v_{pqrs}^{\sigma\sigma'}`.
+
+To perform the :ref:`afqmc` algorithm, :math:`v_{pqrs}^{\sigma\sigma'}` has to be factorized into a sum over squared one-body operators. There are different such factorizations that have different accuracy and performance characteristics. In SAFIRE, each of these factorizations corresponds to a different input file format, which has to be prepared before the simulation is started.
+
+In the following, we will describe the different available Hamiltonian factorizations and their on-disk format. Knowing these details is unnecessary for most users who will instead use :ref:`safiretools` or `CoQuí <https://github.com/AbInitioQHub/coqui>`__ to generate factorized Hamiltonians from a variety of sources automatically (see :ref:`tutorials` and :ref:`user_examples`).
+
+.. _storage_conventions:
+
+General Storage Conventions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Data is stored in an HDF5 file.
+- :math:`n_\mathrm{spin}` and :math:`n_\mathrm{pol}` express the spin structure: :math:`n_\mathrm{spin} = n_\mathrm{pol} = 1` for closed-shell (spin-independent), :math:`n_\mathrm{spin} = 2`, :math:`n_\mathrm{pol} = 1` for collinear (spin up first), and :math:`n_\mathrm{spin} = 1`, :math:`n_\mathrm{pol} = 2` for noncollinear systems.
+- Complex arrays can either follow the ``h5py`` compound type format or the `TRIQS/h5 <https://github.com/TRIQS/h5>`__ interleaved complex format with an ``__complex__`` attribute.
+- Scalar parameters are usually stored as an attribute, denoted by 🏷️ in the schemas below.
+
+.. _csr_storage:
+
+Sparse Matrices
+_______________
+
+Sparse matrices are stored in the compressed sparse row (CSR) format, as a group holding
+
+.. rst-class:: filetree-caption
+
+``afqmc.h5``
+
+.. rst-class:: filetree
+
+* ``<matrix>/``
+
+  * ``shape`` :math:`(2,)`
+  * ``values`` :math:`(N_\mathrm{nz},)`
+  * ``column_indices`` :math:`(N_\mathrm{nz},)`
+  * ``row_pointers`` :math:`(M_1 + 1,)`
+
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
+
+  * - **Entry**
+    - **Description**
+  * - ``shape``
+    - The dimensions :math:`(M_1, M_2)` of the matrix.
+  * - ``values``
+    - The :math:`N_\mathrm{nz}` non-zero matrix elements.
+  * - ``column_indices``
+    - The column index of each element of ``values``.
+  * - ``row_pointers``
+    - Row :math:`i` holds the entries ``row_pointers[i]`` up to (not including)
+      ``row_pointers[i+1]`` of ``values`` and ``column_indices``, so ``row_pointers[0] = 0`` and
+      ``row_pointers[M_1]`` :math:`= N_\mathrm{nz}`.
 
 .. _dense-cholesky:
 
 Dense Cholesky
 ~~~~~~~~~~~~~~
 
-A common Hamiltonian type that is implemented in SAFIRE is based on the modified-Cholesky
-factorization :cite:`BeebeCholesky1977,KochCholesky2003,AquilanteMOLCAS2009,PurwantoCa2011,PurwantoDownfolding2013` of the ERI
+This Hamiltonian type is based on the modified-Cholesky
+factorization :cite:`BeebeCholesky1977,KochCholesky2003,AquilanteMOLCAS2009,PurwantoCa2011,PurwantoDownfolding2013` of the interaction
 tensor:
 
 .. math::
@@ -31,196 +81,150 @@ tensor:
 
   v_{pqrs} = V_{(pr),(sq)} \approx \sum_n^{N_{\mathrm{chol}}} L_{pr,n} L^{*}_{sq,n},
 
-where the sum is truncated at :math:`N_{\mathrm{chol}} = x_c M`,
-:math:`x_c` is typically between :math:`5` and :math:`10`, :math:`M` is
-the number of basis functions and we have assumed that the
-single-particle orbitals are in general complex. The storage requirement
-is thus naively :math:`\mathcal{O}(M^3)`. Note we follow the usual
-definition of :math:`v_{pqrs} = \langle pq | rs \rangle = (pr|qs)`. With
-this form of factorization, SAFIRE allows for the integrals to be stored
-in either dense or sparse format.
+where the sum is truncated at :math:`N_{\mathrm{chol}} = x_\mathrm{c} M`,
+:math:`x_\mathrm{c}` is typically between :math:`5` and :math:`10`, and :math:`M` is
+the number of single-particle basis functions. The storage requirement
+thus scales like :math:`\mathcal{O}(M^3)`. 
 
-The dense case is the simplest and is only implemented for Hamiltonians
-with *real* integrals (and basis functions, i.e. not the homogeneous
-electron gas which has complex orbitals but real integrals). The file
-format is given as follows:
+The SAFIRE implementation currently assumes the common case that :math:`v_{pqrs}^{\sigma\sigma'}` is real-valued and has two-spin-index structure. There is no such restriction on the single particle Hamiltonian.
 
-.. code-block:: text
-  :caption: Sample Dense Cholesky AFQMC Hamiltonian.
-  :name: Listing_Dense_Cholesky
 
-  $ h5dump -n afqmc.h5
-  HDF5 "afqmc.h5" {
-      FILE_CONTENTS {
-          group      /
-          group      /Hamiltonian
-          dataset    /Hamiltonian/dims
-          dataset    /Hamiltonian/Energies
-          dataset    /Hamiltonian/hcore
-          group      /Hamiltonian/DenseFactorized
-          dataset    /Hamiltonian/DenseFactorized/L
-      }
-  }
+.. rst-class:: filetree-caption
 
-**Required datasets:**
+``afqmc.h5``
 
--  ``/Hamiltonian/dims`` Descriptor array of length 8 containing :math:`[0,0,0,M,N_\alpha,N_\beta,0,N_\mathrm{chol}]`. :math:`M` is the number of basis functions, :math:`N_\alpha` and :math:`N_\beta` are the numbers of spin-up and spin-down electrons, and :math:`N_\mathrm{chol}` is the number of Cholesky vectors.
+.. rst-class:: filetree
 
--  ``/Hamiltonian/Energies`` Array containing :math:`[E_{II}, E_{\mathrm{core}}]`. :math:`E_{II}` should contain ion-ion repulsion energy and any additional constant terms which have to be added to the total energy. :math:`E_{\mathrm{core}}` is deprecated and not used.
+* ``Hamiltonian/``
 
--  ``/Hamiltonian/hcore`` One-body Hamiltonian matrix elements. For **real integrals**, dimensions are :math:`[M_{spin}, M]` where :math:`M_{spin}` depends on the spin symmetry: :math:`M` for closed-shell, :math:`2M` for collinear, or :math:`2M` for noncollinear systems. For **complex integrals**, an additional dimension of size 2 is added to store real and imaginary parts separately.
+  * ``🏷️ format_version`` 1
+  * ``🏷️ type`` ``"dense"``
+  * ``🏷️ nuclear_energy`` optional
+  * ``🏷️ frozen_core_energy`` optional
+  * ``hcore`` :math:`(n_\mathrm{spin}, n_\mathrm{pol}, M, n_\mathrm{pol}, M)`
+  * ``DenseFactorized/``
 
--  ``/Hamiltonian/DenseFactorized/L`` The Cholesky decomposition tensor :math:`L_{pr,n}`. Dimensions are :math:`[M \times M, N_\mathrm{chol}]` where the first dimension represents the flattened orbital pair indices :math:`(p,r)` and the second dimension represents the Cholesky vector index :math:`n`. Only real-valued Cholesky vectors are supported for the Dense Cholesky format.
+    * ``L`` :math:`(n_\mathrm{spin}, 1, M, 1, M, N_\mathrm{chol})`
 
-**Storage conventions:**
+  * ``BasisRotation`` :math:`(n_\mathrm{pol} N_\mathrm{AO}, n_\mathrm{pol} M)`, optional
 
-- The Dense Cholesky format only supports real-valued Cholesky vectors.
-- Complex one-body Hamiltonians should be stored with an additional dimension of size 2, where ``array[..., 0]`` contains real parts and ``array[..., 1]`` contains imaginary parts.
-- The Cholesky tensor :math:`L` is stored in column-major order with orbital pairs :math:`(p,r)` flattened into a single index.
-- For collinear systems, the one-body Hamiltonian should have the spin-up block in the upper half and spin-down block in the lower half.
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
+
+  * - **Entry**
+    -  **Description**
+  * - ``nuclear_energy``, ``frozen_core_energy``
+    - Energy offset  :math:`E_0 = E_\mathrm{nuclear} + E_\mathrm{frozen-core}`
+
+  * - ``hcore``
+    - The one-body Hamiltonian.
+  * - ``DenseFactorized/L``
+    - The factorized interaction Cholesky operators. The leading :math:`n_\mathrm{spin}` is either 1,
+      for vectors shared by every spin sector, or that of ``hcore``, for one set per spin sector. Only
+      :math:`n_\mathrm{pol} = 1` is supported, including for noncollinear systems, whose Cholesky
+      vectors are spin independent.
+  * - ``BasisRotation``
+    - Connects the computational basis to the natural basis of the Hamiltonian, of size
+      :math:`N_\mathrm{AO}`, for example non-orthogonal atomic orbitals.
+
+Despite the name, this Hamiltonian format can be used for any factorization that has three indices on the factors. 
 
 .. seealso::
 
-   See the `Writing a Hamiltonian tutorial <../tutorials/molecules/03_writing_a_hamiltonian/03_writing_a_hamiltonian.html>`_  from the :ref:`molecules_overview` tutorials.
+   The primary use case for this kind of Hamiltonian is in quantum chemistry. :ref:`molecules_overview` describes many ways to construct it.
 
 
 .. _k_point_factorized:
 
-K-Point Factorized (KP)
-~~~~~~~~~~~~~~~~~~~~~~~
+Periodic Cholesky
+~~~~~~~~~~~~~~~~~
 
-We have implemented an explicitly :math:`k`-point dependent factorization for periodic systems :cite:`MottaKPoint2019,MaloneGPU2020`
+In periodic systems, there is an alternative way to factorize the interaction that makes use of translation symmetry :cite:`MottaKPoint2019,MaloneGPU2020`. Given a periodic basis :math:`|\mathbf{k} p\rangle` we can write the momentum conserving interaction tensor as
 
 .. math::
-  :label: eq62
+  :label: eq-kp-chol
 
-  (\textbf{k}_p p \textbf{k}_r r| \textbf{k}_q q \textbf{k}_s s) = \sum_n L^{\textbf{Q},\textbf{k}}_{pr,n} {L^{\textbf{Q},\textbf{k}'}_{sq,n}}^{*}
+  v^{\sigma\sigma'}_{(\mathbf{k}+\mathbf{Q})p,\,(\mathbf{k}'-\mathbf{Q})q,\,\mathbf{k}r,\,\mathbf{k}'s}
+    = \sum_n L^{\mathbf{Q},\mathbf{k}+\mathbf{Q}}_{pr,n} \left(L^{\mathbf{Q},\mathbf{k}'}_{sq,n}\right)^{*},
 
-where :math:`\textbf{k}`, :math:`\textbf{k}'` and :math:`\textbf{Q}` are
-vectors in the first Brillouin zone. The one-body Hamiltonian is block
-diagonal in :math:`\textbf{k}` and in :eq:`eq62` we have used
-momentum conservation
-:math:`(\textbf{k}_p - \textbf{k}_r + \textbf{k}_q - \textbf{k}_s) = \textbf{G}`
-with :math:`\textbf{G}` being some vector in the reciprocal lattice of
-the simulation cell. The convention for the Cholesky matrix
-:math:`L^{\textbf{Q},\textbf{k}}_{pr,\gamma}` is as follows:
-:math:`\textbf{k}_r = \textbf{k}_p - \textbf{Q}`, so the vector
-:math:`\textbf{k}` labels the *k*-point of the first band index,
-:math:`\textit{p}`, while the *k*-point vector of the second band index,
-:math:`\textit{r}`, is given by :math:`\textbf{k} - \textbf{Q}`.
-Electron repulsion integrals at different :math:`\textbf{Q}` vectors are
-zero by symmetry, resulting in a reduction in the number of required
-:math:`\mathbf{Q}` vectors. For certain :math:`\textbf{Q}` vectors that
-satisfy :math:`\textbf{Q} \ne -\textbf{Q}` (this is not satisfied at the
-origin and at high symmetry points on the edge of the 1BZ), we have
-:math:`{L^{\textbf{Q},\textbf{k}}_{sq,\gamma}}^{*} = {L^{-\textbf{Q},\textbf{k}-\textbf{Q}}_{qs,\gamma}}`,
+where :math:`\mathbf{k}`, :math:`\mathbf{k}'` and :math:`\mathbf{Q}` are
+vectors in the first Brillouin zone, and :math:`\mathbf{k}+\mathbf{Q}`, :math:`\mathbf{k}'-\mathbf{Q}` are folded back into it.
+The one-body Hamiltonian is block diagonal in :math:`\mathbf{k}`. Because each factor only holds a single :math:`\mathbf{k}` index per two single-particle basis indices, it can bring significant memory savings compared to the dense factorization.
+
+For :math:`\mathbf{Q}` vectors that
+satisfy :math:`\mathbf{Q} \ne -\mathbf{Q}`, we have
+:math:`{L^{\mathbf{Q},\mathbf{k}}_{sq,n}}^{*} = {L^{-\mathbf{Q},\mathbf{k}-\mathbf{Q}}_{qs,n}}`,
 which requires us to store Cholesky vectors for either one of the
-:math:`(\textbf{Q},-\textbf{Q})` pair, but not both.
+:math:`(\mathbf{Q},-\mathbf{Q})` pair, but not both. For highly-symmetric :math:`\mathbf{Q}` vectors, :math:`\mathbf{Q} = -\mathbf{Q}` and we store just that :math:`\mathbf{Q}` vector. Similar reductions can be performed for other symmetries of the lattice.
 
-In what follows let :math:`m_{\mathbf{k}}` denote the number of basis
-functions for basis functions of a given :math:`k`-point (these can in
-principle differ for different :math:`k`-points due to linear
-dependencies), :math:`n^{\alpha}_{\mathbf{k}}` the number of
-:math:`\alpha` electrons in a given :math:`k`-point and
-:math:`n_{\mathrm{chol}}^{\mathbf{Q}_n}` the number of Cholesky vectors
-for momentum transfer :math:`\mathbf{Q}_n`. The file format for this
-factorization is as follows (for a :math:`2\times2\times2`
-:math:`k`-point mesh, for denser meshes generally there will be far
-fewer symmetry inequivalent momentum transfer vectors than there are
-:math:`k`-points):
+In what follows let :math:`m` denote the number of basis functions per
+:math:`k`-point, which has to be the same at every :math:`k`-point,
+:math:`N_k` the number of :math:`k`-points and
+:math:`n_{\mathrm{chol}}^{\mathbf{Q}_j}` the number of Cholesky vectors
+for momentum transfer :math:`\mathbf{Q}_j`. The one-body Hamiltonian and
+the Cholesky vectors take the layouts of the
+:ref:`dense-cholesky` format with a leading
+:math:`k`-point axis; the format holds only spin-independent
+Hamiltonians, so :math:`n_\mathrm{spin} = n_\mathrm{pol} = 1` throughout. The file format for this
+factorization is as follows:
 
-.. code-block::
-  :caption: Sample Dense :math:`k`-point dependent Cholesky SAFIRE Hamiltonian.
-  :name: Listing 55
+.. rst-class:: filetree-caption
 
-  $ h5dump -n afqmc.h5
-  HDF5 "afqmc.h5" {
-      FILE_CONTENTS {
-          group      /
-          group      /Hamiltonian
-          group      /Hamiltonian/KPFactorized
-          dataset    /Hamiltonian/KPFactorized/L0
-          dataset    /Hamiltonian/KPFactorized/L1
-          dataset    /Hamiltonian/KPFactorized/L2
-          dataset    /Hamiltonian/KPFactorized/L3
-          dataset    /Hamiltonian/KPFactorized/L4
-          dataset    /Hamiltonian/KPFactorized/L5
-          dataset    /Hamiltonian/KPFactorized/L6
-          dataset    /Hamiltonian/KPFactorized/L7
-          dataset    /Hamiltonian/NCholPerKP
-          dataset    /Hamiltonian/MinusK
-          dataset    /Hamiltonian/NMOPerKP
-          dataset    /Hamiltonian/QKTok2
-          dataset    /Hamiltonian/H1_kp0
-          dataset    /Hamiltonian/H1_kp1
-          dataset    /Hamiltonian/H1_kp2
-          dataset    /Hamiltonian/H1_kp3
-          dataset    /Hamiltonian/H1_kp4
-          dataset    /Hamiltonian/H1_kp5
-          dataset    /Hamiltonian/H1_kp6
-          dataset    /Hamiltonian/H1_kp7
-          dataset    /Hamiltonian/ComplexIntegrals
-          dataset    /Hamiltonian/KPoints
-          dataset    /Hamiltonian/dims
-          dataset    /Hamiltonian/Energies
-      }
-  }
+``afqmc.h5``
 
--  ``/Hamiltonian/KPFactorized/L[n]`` This series of datasets store elements of the Cholesky tensors
-   :math:`L[\mathbf{Q}_n,\mathbf{k},pr,n]`. Each data set is of
-   dimension
-   :math:`[N_k,m_{\mathbf{k}}\times m_{\mathbf{k}'},n^{\mathbf{Q}_n}_\mathrm{chol}]`,
-   where, again, :math:`k` is the :math:`k`-point associated with basis
-   function :math:`p`, the :math:`k`-point of basis function :math:`r`
-   is defined via the mapping ``QKtok2``.
+.. rst-class:: filetree
 
--  ``/Hamiltonian/NCholPerKP`` :math:`N_k` length array giving number of Cholesky vectors per
-   :math:`k`-point.
+* ``Hamiltonian/``
 
--  ``/Hamiltonian/MinusK``: :math:`N_k` length array mapping a
-   :math:`k`-point to its inverse: :math:`\mathbf{k}_i+`\ ``MinusK[i]``
-   :math:`= \mathbf{0} \mod \mathbf{G}`.
+  * ``🏷️ format_version`` 1
+  * ``🏷️ type`` ``"kpoint"``
+  * ``🏷️ nuclear_energy`` optional
+  * ``🏷️ frozen_core_energy`` optional
+  * ``🏷️ madelung_constant`` optional
+  * ``hcore`` :math:`(N_k, 1, 1, m, 1, m)`
+  * ``KPFactorized/``
 
--  ``/Hamiltonian/NMOPerKP``: :math:`N_k` length array listing number of
-   basis functions per :math:`k`-point.
+    * ``L<j>`` :math:`(N_k, 1, 1, m, 1, m, n^{\mathbf{Q}_j}_\mathrm{chol})`, one per
+      :math:`\mathbf{Q}_j`
 
--  ``/Hamiltonian/QKTok2``: :math:`[N_k,N_k]` dimensional array.
-   ``QKtok2[i,j]`` yields the :math:`k` point index satisfying
-   :math:`\mathbf{k}=\mathbf{Q}_i-\mathbf{k}_j+\mathbf{G}`.
+  * ``KPoints`` :math:`(N_k, 3)`
+  * ``MinusK`` :math:`(N_k,)`
+  * ``QKTok2`` :math:`(N_k, N_k)`
+  * ``BasisRotation`` :math:`(N_k, N_\mathrm{AO}, m)`, optional
 
--  ``/Hamiltonian/dims``: Descriptor array of length 8 containing
-   :math:`[0,0,0,M,N_\alpha,N_\beta,0,0]`.
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
 
--  ``/Hamiltonian/H1_kp[n]`` Contains the :math:`[m_{\mathbf{k}_n},m_{\mathbf{k}_n}]`
-   dimensional one-body Hamiltonian matrix elements
-   :math:`h_{(\mathbf{k}_{n}p)(\mathbf{k}_{n}q)}`.
+  * - **Entry**
+    - **Description**
+  * - ``nuclear_energy``, ``frozen_core_energy``, ``madelung_constant``
+    - Energy offset :math:`E_0 = E_\mathrm{nuclear} + E_\mathrm{frozen-core} - N_\mathrm{e} E_\mathrm{Madelung}`, where the electron self-interaction is scaled by the number of electrons :math:`N_\mathrm{e}`.
+  * - ``hcore``
+    - The one-body Hamiltonian :math:`h_{(\mathbf{k}p)(\mathbf{k}q)}`, one block per :math:`k`-point.
+  * - ``KPFactorized/L<j>``
+    - The Cholesky operators :math:`L^{\mathbf{Q}_j,\mathbf{k}}_{pr,n}` for momentum transfer
+      :math:`\mathbf{Q}_j`, indexed by the :math:`k`-point :math:`\mathbf{k}` of :math:`p`. Only one
+      of each :math:`(\mathbf{Q}, -\mathbf{Q})` pair, the one with :math:`j \le` ``MinusK[j]``, has
+      to be stored. The normalization :math:`1/\sqrt{N_k}` is included.
+  * - ``KPoints``
+    - The :math:`k`-points :math:`\mathbf{k}_i` sampling the Brillouin zone.
+  * - ``MinusK``
+    - Maps a :math:`k`-point to its inverse: :math:`\mathbf{k}_i + \mathbf{k}_{\mathrm{MinusK}[i]}
+      = \mathbf{0} \mod \mathbf{G}.`
+  * - ``QKTok2``
+    - ``QKTok2[j, i]`` is the index of :math:`\mathbf{k}_i - \mathbf{Q}_j \mod \mathbf{G}`, the
+      :math:`k`-point of :math:`r` when :math:`p` is at :math:`\mathbf{k}_i`.
+  * - ``BasisRotation``
+    - Connects the computational basis to the natural basis of the Hamiltonian, of size
+      :math:`N_\mathrm{AO}`, at each :math:`k`-point.
 
--  ``/Hamiltonian/ComplexIntegrals`` Length 1 array that specifies if integrals are complex valued. 1
-   for complex integrals, 0 for real integrals.
-
--  ``/Hamiltonian/KPoints`` :math:`[N_k,3]` Dimensional array containing :math:`k`-points used to
-   sample Brillouin zone.
-
--  ``/Hamiltonian/dims`` Descriptor array of length 8 containing
-   :math:`[0,0,N_k,M,N_\alpha,N_\beta,0,N_\mathrm{nchol}]`. Note that
-   :math:`M` is the total number of basis functions, i.e.
-   :math:`M=\sum_\mathbf{k} m_\mathbf{k}`, and likewise for the number
-   of electrons.
-
--  ``/Hamiltonian/Energies`` Array containing :math:`[E_{II}, E_{\mathrm{core}}]`.
-   :math:`E_{II}` should contain ion-ion repulsion energy and any
-   additional constant terms which have to be added to the total energy
-   (such as the electron-electron interaction Madelung contribution of
-   :math:`\frac{1}{2} N \xi )`. :math:`E_{\mathrm{core}}` is deprecated
-   and not used.
-
-Complex integrals should be written as an array with an additional dimension, e.g., a 1D array should be written as a 2D array with ``array_hdf5[:,0]=real(1d_array)`` and ``array_hdf5[:,1]=imag(1d_array)``. The functions ``afqmctools.utils.misc.from_complex`` and ``afqmctools.utils.misc.to_complex`` can be used to transform from the internal complex format to complex valued numpy arrays of the appropriate shape and vice versa.
+The number of electrons :math:`N_\mathrm{e}` in the electron self-interaction offset is taken from the trial wavefunction.
 
 .. seealso::
 
-   See the following from the :ref:`solids_overview` tutorials.
-
-   * (under construction) `Writing a Hamiltonian with CoQuí <#>`_
+   The primary use case for this Hamiltonian is simulating realistic materials. :ref:`solids_overview` gives examples of generating it with both `CoQuí <https://github.com/AbInitioQHub/coqui>`__ and :ref:`safiretools`.
 
 
 
@@ -229,275 +233,206 @@ Complex integrals should be written as an array with an additional dimension, e.
 Lattice Model Hamiltonian
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-General multi-band, Hubbard-Kanamori (HK) lattice model Hamiltonians are implemented.
+The Lattice Model Hamiltonian format implements general multi-band, Hubbard-Kanamori (HK) models. The short-range interactions in these
+models have a special structure that allows for optimizations and bespoke factorizations that are not applicable in the general case. SAFIRE will also adjust some of its :ref:`configuration defaults <propagator_block>` to better suit HK-type calculations when a Lattice Model Hamiltonian is simulated.
+
 The HK Hamiltonian has the general form,
 
 .. math::
+  :label: eq-hk
 
-   \hat{H} = \sum_{ij,\sigma \sigma'}t^{\sigma \sigma'}_{ij}\hat{c}^\dagger_{i\sigma}\hat{c}_{j\sigma'} 
+   \hat{H} &= \sum_{ij,\sigma \sigma'}t^{\sigma \sigma'}_{ij}\hat{c}^\dagger_{i\sigma}\hat{c}_{j\sigma'}
    + \sum_{i} U_i \hat{n}_{i\uparrow} \hat{n}_{i\downarrow} \\
-   + \sum_{i<j} U_{ij}^1 (\hat{n}_{i\uparrow} \hat{n}_{j\downarrow} + \hat{n}_{i\downarrow} \hat{n}_{j\uparrow} ) 
-   + \sum_{i<j} U_{ij}^2 (\hat{n}_{i\uparrow} \hat{n}_{j\uparrow} + \hat{n}_{i\downarrow} \hat{n}_{j\downarrow} ) \\
-   + \sum_{i<j} J_{ij} ( 
+   &+ \sum_{i<j} U_{ij}^{(1)} (\hat{n}_{i\uparrow} \hat{n}_{j\downarrow} + \hat{n}_{i\downarrow} \hat{n}_{j\uparrow} )
+   + \sum_{i<j} U_{ij}^{(2)} (\hat{n}_{i\uparrow} \hat{n}_{j\uparrow} + \hat{n}_{i\downarrow} \hat{n}_{j\downarrow} ) \\
+   &+ \sum_{i<j} J_{ij} ( 
      \hat{c}^\dagger_{i\uparrow}\hat{c}^\dagger_{j\downarrow}\hat{c}_{i\downarrow}\hat{c}_{j\uparrow}
      +\hat{c}^\dagger_{i\uparrow}\hat{c}^\dagger_{i\downarrow}\hat{c}_{j\downarrow}\hat{c}_{j\uparrow} 
      +\hat{c}^\dagger_{j\uparrow}\hat{c}^\dagger_{i\downarrow}\hat{c}_{j\downarrow}\hat{c}_{i\uparrow}
      +\hat{c}^\dagger_{j\uparrow}\hat{c}^\dagger_{j\downarrow}\hat{c}_{i\downarrow}\hat{c}_{i\uparrow} 
      ),
 
-where :math:`i`,\ :math:`j` are combined lattice and band indices,
-:math:`\hat{c}^\dagger_{i\sigma}`, :math:`\hat{c}_{j\sigma'}`
-create/annihilate and electron on the site (and band) corresponding to
-:math:`i`/:math:`j` with spin :math:`\sigma`/:math:`\sigma'`,
-:math:`\hat{n}_{i\sigma}` is the number operator,
+where :math:`i` and :math:`j` are combined lattice and band indices, :math:`\hat{n}_{i\sigma}` is the number operator,
 :math:`t^{\sigma \sigma'}_{ij}` includes all one-body terms
-(:math:`n^{th}`-order neighbor hopping, spin-orbit coupling, etc.),
-:math:`U` is the traditional on-site hubbard interaction, :math:`U^1` is
-a density-density interaction, :math:`U^2` is
+(:math:`n^\mathrm{th}`-order neighbor hopping, spin-orbit coupling, etc.),
+:math:`U_i` is the traditional on-site Hubbard interaction, :math:`U^{(1)}` is
+a density-density interaction, :math:`U^{(2)}` is
 a spin-spin interaction, and :math:`J` is a Hund's coupling term.
-:math:`U^1`, :math:`U^2`, and :math:`J` are typically only non-zero between
-bands on the same lattice site, but are by no means limited in this way.
 
-Each individual term is optional (including the hopping term); 
+Exactly one one-body term is required. Each interaction term is optional;
 however, including at least one interaction term is required.
 Model Hamiltonians are saved in HDF5 using the following format.
 
-.. code-block::
-  :caption: Sample Hubbard-Kanamori SAFIRE Hamiltonian.
-  :name: Listing 57
+.. rst-class:: filetree-caption
 
-  $ h5dump -n afqmc.h5 
-    HDF5 "afqmc.h5" {
-      FILE_CONTENTS {
-          group      /
-          group      /Hamiltonian
-          dataset    /Hamiltonian/Energies
-          group      /Hamiltonian/ModelHamiltonian
-          group      /Hamiltonian/ModelHamiltonian/ModelComponent_0
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/model_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/spin_type
-          group      /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/data_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/dims
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/jdata_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/pointers_begin_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_0/tij/pointers_end_
-          group      /Hamiltonian/ModelHamiltonian/ModelComponent_1
-          group      /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/data_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/dims
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/jdata_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/pointers_begin_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/Jij/pointers_end_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/hst_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/model_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_1/spin_type
-          group      /Hamiltonian/ModelHamiltonian/ModelComponent_2
-          group      /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/data_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/dims
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/jdata_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/pointers_begin_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/Uij/pointers_end_
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/hst_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/model_type
-          dataset    /Hamiltonian/ModelHamiltonian/ModelComponent_2/spin_type
-          dataset    /Hamiltonian/ModelHamiltonian/maximum_connectivity
-          dataset    /Hamiltonian/ModelHamiltonian/number_of_components
-          dataset    /Hamiltonian/dims
-          dataset    /Hamiltonian/spin_type
-    }
-  }
+``afqmc.h5``
 
--  ``/Hamiltonian/Energies``: Array containing :math:`[E_{II}, E_{\mathrm{core}}]`.
-   :math:`E_{II}` should contain ion-ion repulsion energy and any
-   additional constant terms which have to be added to the total energy
-   (such as the electron-electron interaction Madelung contribution of
-   :math:`\frac{1}{2} N \xi )`. :math:`E_{\mathrm{core}}` is deprecated
-   and not used. In the context of lattice models, both :math:`E_{II}` and 
-   :math:`E_{\mathrm{core}}` while generally be set to 0.0.
+.. rst-class:: filetree
 
--  ``/Hamiltonian/dims``: Descriptor array of length 8 containing
-   :math:`[0,0,0,M,M,0,0,0]`. Note that
-   :math:`M` is the total number of basis functions, i.e. number of sites * number of bands
+* ``Hamiltonian/``
 
--  ``/Hamiltonian/spin_type``: Is a string containing the spin symmetry type of the Hamiltonian.
-   possible values are "collinear", or "noncollinear".
+  * ``🏷️ format_version`` 1
+  * ``🏷️ type`` ``"model"``
+  * ``🏷️ spin_type``
+  * ``🏷️ nuclear_energy`` optional
+  * ``🏷️ frozen_core_energy`` optional
+  * ``ModelHamiltonian/``
 
--  ``/Hamiltonian/ModelHamiltonian/maximum_connectivity``: A scalar integer containing the maximum 
-   number of possible connections in the Hamiltonian. If in doubt, the number of non-zero elements
-   can be safely used here.
+    * ``🏷️ number_of_sites`` :math:`n_\mathrm{sites}`
+    * ``🏷️ number_of_bands`` :math:`n_\mathrm{bands}`
+    * ``Lattice/`` optional
 
--  ``/Hamiltonian/ModelHamiltonian/number_of_components``: A scalar integer containing the number 
-   of "components" (i.e. terms) in the Hamiltonian. This should be consistent with the number of 
-   :math:` /Hamiltonian/ModelHamiltonian/ModelComponent_n/` groups, where :math:`n` is replaced with an
-   integer.
+      * ``L`` :math:`(d,)`
+      * ``boundaries`` :math:`(d,)`
+      * ``twist`` :math:`(d,)`
+      * ``lattice_vectors`` :math:`(d, d)`
+      * ``basis`` :math:`(n_\mathrm{basis}, d)`
 
--  ``/Hamiltonian/ModelHamiltonian/ModelComponent_n``: (where :math:`n` are replaced by a specific integer index) 
-   are HDF5 groups which contain a Hamiltonian component (i.e. a term). Each component consists of some metadata
-   and a compressed sparse row (CSR) matrix representation of that Hamiltonian component. Each group has the 
-   following datasets and groups.
+    * ``ModelComponent_<n>/`` one per term
 
-    -  ``/spin_type``: a string containing the spin symmetry type of the component.
-       Possible values are "collinear", or "noncollinear".
+      * ``🏷️ model_type``
+      * ``🏷️ spin_type``
+      * ``🏷️ hst_type`` interactions only
+      * ``tij/`` or ``Uij/``, ``Jij/``; a :ref:`CSR matrix <csr_storage>`
 
-    -  ``/model_type``: a string describing the type of model term. 
-       Possible values are: "one_body", "hubbard_u", and "hubbard_j".
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
 
-    -  a matrix group. The name of the group depends on the ``/model_type``. 
-       Possible values are: ``/tij/`` (``"one_body"``), ``/Uij/`` (``"hubbard_u"``), 
-       and ``/Jij/`` (``"hubbard_j"``). Conventions for the shape of each matrix are
-       described below. The matrix group will always have the following datasets:
-    
-      -  ``dims``:  Descriptor array of length 3 containing :math:`[M_1,M_2,N_{nz}]`. 
-         where :math:`M_1` and :math:`M_2` are the dimensions of the CSR matrix, and
-         :math:`N_{nz}` is the number of non-zero entries.
-
-      -  ``data_``: an array containing the non-zero matrix elements.
-
-      -  ``jdata_``: an array containing the column indices of each non-zero matrix element.
-
-      -  ``pointers_begin_``: an array containing "pointers" to the beginning of each row
-         within ``data_`` / ``jdata_``.
-
-      -  ``pointers_end_``: an array containing "pointers" to the end of each row
-         within ``data_`` / ``jdata_``.
+  * - **Entry**
+    - **Description**
+  * - ``nuclear_energy``, ``frozen_core_energy``
+    - Energy offset :math:`E_0 = E_\mathrm{nuclear} + E_\mathrm{frozen-core}`, generally set to 0 for lattice models.
+  * - ``spin_type``
+    - The spin symmetry of the Hamiltonian, ``"collinear"`` or ``"noncollinear"``.
+  * - ``number_of_sites``, ``number_of_bands``
+    - The number of lattice sites and of bands per site. The number of basis functions is
+      :math:`M = n_\mathrm{sites} n_\mathrm{bands}`.
+  * - ``Lattice/``
+    - The lattice geometry: the extent ``L``, the ``boundaries``, ``twist``,
+      ``lattice_vectors`` and ``basis``. SAFIRE itself does not read it. See :py:class:`safiretools.Lattice`.
+  * - ``ModelComponent_<n>/``
+    - One term of the Hamiltonian. The components are numbered from 0 without gaps; the number of
+      components is where the numbering stops.
+  * - ``model_type``
+    - The kind of term, ``"one_body"``, ``"hubbard_u"`` or ``"hubbard_j"``.
+  * - ``spin_type`` of a component
+    - The spin symmetry of the term, ``"closed"``, ``"collinear"`` or ``"noncollinear"``.
+  * - ``hst_type``
+    - The Hubbard-Stratonovich transformation of an interaction term, ``"continuous_charge"``,
+      ``"continuous_spin"``, ``"discrete_charge"`` or ``"discrete_spin"`` (the discrete ones for
+      ``"hubbard_u"`` only).
+  * - ``tij/``, ``Uij/``, ``Jij/``
+    - The matrix of the term, named after ``model_type``: ``tij`` for ``"one_body"``, ``Uij`` for
+      ``"hubbard_u"`` and ``Jij`` for ``"hubbard_j"``. Their shapes are described below.
 
 Model Component Conventions
 ___________________________
 
-The following Conventions apply to the CSR matrix representations of each model component.
-
--  both real- and complex-valued matrices are supported; however, all components must have 
-   the same type. i.e. if the hopping matrix is complex-valued, due to a twist, all interaction 
-   terms must also be complex-valued even of the imaginary part is identically zero.
-  
--  for all interaction terms except for on-site, on-band Hubbard U, we take the convention 
+-  The model components must either be all real or all complex valued.  
+-  For all interaction terms except for on-site, on-band Hubbard U, we take the convention
    that :math:`i < j` as shown in the general Hubbard-Kanamori Hamiltonian above. If entries
-   with :math:`i >= j` are supplied, they will be ignored with a warning.
-
--  For ``/tij/``, if :math:`M` is the total basis set size, including bands and sites,
-   the CSR matrix may have dimension :math:`M x M`, :math:`2M x M`, or :math:`2M x 2M` 
+   with :math:`i \geq j` are supplied, they will be ignored with a warning.
+-  For the one-body term ``tij``, if :math:`M` is the total basis set size, including bands and sites,
+   the CSR matrix may have dimension :math:`(M, M)`, :math:`(2M, M)`, or :math:`(2M, 2M)` 
    corresponding to ``"closed"``, ``"collinear"``, and ``"noncollinear"`` spin symmetry,
    respectively. For a ``"closed"`` hopping matrix, the same hopping will be applied to 
-   both spin channels. For a ``"collinear"`` hopping matrix, the upper half of ``/tij/``
-   will applied to the spin up channel, and the lower half to the spin-down channel. 
-   For a ``"noncollinear"`` hopping matrix, ``/tij/`` is explicitly represented in a 
-   spin-orbital basis and is applied as is. We note that ``/tij/`` may contain arbitrary
-   one-body terms if desired; for example, a pinning field.
-
-   the CSR matrix may have dimension :math:`M x M`, or :math:`2M x M`. If the dimension
-   is :math:`2M x M`, then the upper half of the array is interpreted as :math:`U_{ii}+U1_{ij}`
-   with :math:`i,j` running over all basis set functions, and the lower half 
-   is interpreted as :math:`U2_{ij}`with :math:`i,j` running over all basis set functions.
-   If :math:`U2_{ij}` is desired without :math:`U_{ii}` or :math:`U1_{ij}`, the matrix must
-   still have dimension :math:`2M x M`, but the upper half should have no non-zero elements.
-   If dimension is :math:`M x M`, then the CSR matrix is interpreted as :math:`U_{ii}+U1_{ij}`.
-
--  for ``/Jij``, the CSR matrix must have dimension :math:`M x M` and is interpreted as the 
+   both spin channels. For a ``"collinear"`` hopping matrix, the upper half of ``tij``
+   will be applied to the spin up channel, and the lower half to the spin-down channel. 
+   For a ``"noncollinear"`` hopping matrix, ``tij`` is explicitly represented in a 
+   spin-orbital basis and is applied as is.
+-  For the ``Uij`` terms, the CSR matrix may have dimensions :math:`(M, M)`, or :math:`(2M, M)`. If the dimension
+   is :math:`(2M,M)`, then the upper half of the array is interpreted as :math:`U_i` on the
+   diagonal and :math:`U^{(1)}_{ij}` off it, with :math:`i,j` running over all basis set
+   functions, and the lower half is interpreted as :math:`U^{(2)}_{ij}` with :math:`i,j` running
+   over all basis set functions.
+   If :math:`U^{(2)}_{ij}` is desired without :math:`U_i` or :math:`U^{(1)}_{ij}`, the matrix must
+   still have dimension :math:`(2M,M)`, but the upper half should have no non-zero elements.
+   If dimension is :math:`(M,M)`, then the CSR matrix is interpreted as :math:`U_i` and
+   :math:`U^{(1)}_{ij}`.
+-  For ``Jij``, the CSR matrix must have dimension :math:`(M, M)` and is interpreted as
    the :math:`J_{ij}` from the Hubbard-Kanamori term.
-
-The other groups and datasets represent the Hamiltonian "components" (i.e. the terms which
-are included in the specific Hamiltonian given to AFQMC).
 
 
 .. seealso::
 
-   See the following from the :ref:`lattice_model_overview` tutorials.
-
-   * `Setting up a Lattice <../tutorials/models/03_setting_up_a_lattice/03_setting_up_a_lattice.html>`_
-   * `Building and writing a Hamiltonian <../tutorials/models/04_building_and_writing_a_hamiltonian/04_building_and_writing_a_hamiltonian.html>`_
-   * `Finer control of the Hamiltonian <../tutorials/models/05_hamiltonian_builder/05_hamiltonian_builder.html>`_
+   :ref:`lattice_model_overview` gives an overview of generating Hamiltonians in this format.
 
 .. _thc_hamiltonian:
 
-Tensor Hyper Contraction (THC)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Tensor Hypercontraction
+~~~~~~~~~~~~~~~~~~~~~~~
 
-The Tensor Hyper-Contraction (THC) approach is an efficient method for representing two-electron integrals that exploits the low-rank structure of the electron repulsion integral (ERI) tensor. THC factorizes the four-center electron repulsion integrals into products involving lower-dimensional tensors, providing significant computational savings for AFQMC calculations.
-
-THC represents the ERI tensor as:
+The tensor hypercontraction (THC) factorization is an efficient method for representing two-electron integrals that exploits the low-rank structure of the electron repulsion integral (ERI) tensor :cite:`HohensteinTHCI2012,ParrishTHCII2012,HohensteinTHCIII2012`. THC factorizes the four-center electron repulsion integrals into a multi-tensor product :cite:`MaloneISDF2019`
 
 .. math::
   :label: eq-thc
 
-  v_{pqrs} \approx \sum_{u}^{N_u} \sum_{v}^{N_v} X_{pu} L_{uv} X_{rv}^*
+  v^{\sigma\sigma'}_{pqrs} \approx \sum_{u,u'}^{N_u} X^{\sigma*}_{pu} X^{\sigma}_{ru} M_{uu'} X^{\sigma'*}_{qu'} X^{\sigma'}_{su'},
+  \qquad M_{uu'} = \sum_n^{N_v} L_{un} L^*_{u'n},
 
-where :math:`X_{pu}` are collocation matrices that map orbitals to interpolation points, :math:`L_{uv}` is the factorized Coulomb matrix at interpolation points, :math:`N_u` and :math:`N_v` are the numbers of interpolation points, and the approximation quality depends on the choice of interpolation points and the rank of the factorization.
-
-The THC format supports two main variants:
-
-**Option 1: Direct THC factorization**
-  Uses the factorized Coulomb matrix :math:`L_{uv}` directly and reuses the same collocation matrix for both electron coordinates.
-
-**Option 2: Half-rotated THC factorization**  
-  Uses a half-rotated Coulomb matrix and separate collocation matrices that have been pre-rotated to a specific orbital space.
+where :math:`X^{\sigma}_{pu}` are collocation matrices that map orbitals to interpolation points, :math:`M_{uu'}` is the Coulomb matrix at the interpolation points, and :math:`L_{un}` is its factorization.
+:math:`N_u` is the number of interpolation points and :math:`N_v` the number of inner Cholesky operators. The approximation quality depends on the choice of interpolation points and the rank of the factorization.
 
 THC Hamiltonians are stored in HDF5 using the following format:
 
-.. code-block:: text
-  :caption: Sample THC AFQMC Hamiltonian.
-  :name: Listing_THC
+.. rst-class:: filetree-caption
 
-  $ h5dump -n afqmc.h5
-  HDF5 "afqmc.h5" {
-      FILE_CONTENTS {
-          group      /
-          group      /System
-          dataset    /System/H0
-          dataset    /System/atomic_positions
-          dataset    /System/lattice_vectors
-          [additional system datasets...]
-          group      /Interaction
-          dataset    /Interaction/factorized_coulomb_matrix
-          dataset    /Interaction/collocation_matrix
-          dataset    /Interaction/coulomb_matrix [Option 1 only]
-          dataset    /Interaction/half_rotated_coulomb_matrix [Option 2 only]
-          dataset    /Interaction/collocation_matrix_half_rotated [Option 2 only]
-      }
-  }
+``afqmc.h5``
 
-**Required datasets:**
+.. rst-class:: filetree
 
--  ``/System/H0`` One-body Hamiltonian matrix elements. Dimensions are ``[nspin, nkpts, norb, norb, complex_dim]`` where ``complex_dim=2`` for complex integrals and is omitted for real integrals. For molecular calculations, ``nkpts=1``.
+* ``System/``
 
--  ``/Interaction/factorized_coulomb_matrix`` The factorized Coulomb tensor :math:`L_{uv}`. Dimensions are ``[nq, nu, nv, complex_dim]`` where ``nq`` should be 1 for current implementation. For complex integrals, the last dimension has size 2 storing real and imaginary parts.
+  * ``🏷️ number_of_bands`` :math:`M`
+  * ``🏷️ number_of_spins`` :math:`n_\mathrm{spin}`
+  * ``🏷️ nuclear_energy`` optional
+  * ``🏷️ frozen_core_energy`` optional
+  * ``🏷️ madelung_constant`` optional
+  * ``BZ/``
 
--  ``/Interaction/collocation_matrix`` The collocation matrix :math:`X_{pu}` mapping orbitals to interpolation points. Dimensions are ``[nspin, nkpts, norb, nu, complex_dim]``.
+    * ``🏷️ number_of_kpoints`` 1
 
-**Option 1 additional dataset:**
+  * ``H0`` :math:`(n_\mathrm{spin}, 1, M, M)`
 
--  ``/Interaction/coulomb_matrix`` The full Coulomb matrix :math:`M_{uv} = L_{uv} \cdot L_{uv}^{\dagger}`. This allows reuse of the same collocation matrix. Dimensions are ``[nq, nu, nu, complex_dim]``.
+* ``Interaction/``
 
-**Option 2 additional datasets:**
+  * ``🏷️ number_of_bands`` :math:`M`
+  * ``🏷️ number_of_spins`` :math:`n_\mathrm{spin}`
+  * ``🏷️ number_of_kpoints`` 1
+  * ``🏷️ number_of_qpoints`` 1
+  * ``collocation_matrix`` :math:`(n_\mathrm{spin}, 1, M, N_u)`
+  * ``factorized_coulomb_matrix`` :math:`(1, N_u, N_v)`
+  * ``coulomb_matrix`` :math:`(1, N_u, N_u)`
 
--  ``/Interaction/half_rotated_coulomb_matrix`` A half-rotated version of the Coulomb matrix for specialized THC factorizations. Dimensions are ``[nq, nu_rot, nv_rot, complex_dim]``.
+.. list-table::
+  :header-rows: 1
+  :widths: 30 55
 
--  ``/Interaction/collocation_matrix_half_rotated`` The corresponding half-rotated collocation matrix. Dimensions match the half-rotated coulomb matrix structure.
+  * - **Entry**
+    - **Description**
+  * - ``number_of_bands``, ``number_of_spins``
+    - The number of basis functions :math:`M` and of spin sectors :math:`n_\mathrm{spin}`, the same
+      in ``System`` and ``Interaction``.
+  * - ``nuclear_energy``, ``frozen_core_energy``, ``madelung_constant``
+    - Energy offset :math:`E_0 = E_\mathrm{nuclear} + E_\mathrm{frozen-core} - N_\mathrm{e} E_\mathrm{Madelung}`,
+      as in :ref:`k_point_factorized`.
+  * - ``number_of_kpoints``, ``number_of_qpoints``
+    - Must be 1: this format holds a single :math:`k`-point.
+  * - ``H0``
+    - The one-body Hamiltonian.
+  * - ``collocation_matrix``
+    - The collocation matrix :math:`X_{pu}` mapping orbitals to interpolation points.
+  * - ``factorized_coulomb_matrix``
+    - The factorized Coulomb matrix :math:`L_{un}` at the interpolation points.
+  * - ``coulomb_matrix``
+    - The full Coulomb matrix :math:`M_{uu'}`, which allows reusing
+      the same collocation matrix for both electron coordinates.
 
-**Storage conventions:**
+The number of electrons :math:`N_\mathrm{e}` is taken from the wavefunction.
 
-- Complex integrals should be stored with an additional dimension of size 2, where ``array[..., 0]`` contains real parts and ``array[..., 1]`` contains imaginary parts.
-- For spin-collinear calculations with ``nspin=2``, if only one spin component is provided in the file (``nspin_in_file=1``), it will be automatically duplicated for the second spin channel.
-- The parameter ``cutoff_cholesky`` can be specified to control the accuracy of Cholesky-related operations (default: ``1e-6``).
-
-The THC representation provides substantial memory and computational savings compared to storing the full four-index ERI tensor, especially for large systems where the number of interpolation points :math:`N_u \ll M^2` (where :math:`M` is the number of orbitals).
+The THC factorization provides substantial memory and computational savings compared to storing the full four-index ERI tensor, especially for large systems where the number of interpolation points :math:`N_u \ll M^2`.
 
 .. seealso::
 
-   See the following from the :ref:`solids_overview` tutorials.
-
-   * (under construction) `Writing a Hamiltonian with CoQuí <#>`_
-
-Final Notes on Hamiltonians
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The code CoQuí is able to generate and output both the K-Point Factorized, and THC Hamiltonian format directly.
-
-Lattice model Hamiltonians can be generated using the afqmctools Python package which is included with SAFIRE. 
-See the lattice model tutorials
-for more information on how to generate these Hamiltonians.
-
-Finally, if using external tools to generate this file format, 
-we provide a sanity checker script in ``utils/bin/test_afqmc_input.py`` 
-which will raise errors if the format does not conform to what is being used internally.
+   :ref:`solids_overview` shows how to use `CoQuí <https://github.com/AbInitioQHub/coqui>`__ to generate this Hamiltonian.

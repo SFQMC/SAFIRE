@@ -1,85 +1,69 @@
 .. _Walker-classes:
 
-Walker Classes
---------------
+Walkers
+-------
 
-Several types of Slater determinant random walkers are implemented 
-based on how spin-symmetry is handled.
-Each type is described below.
-The following list includes all walker types.
+SAFIRE supports several representations of walkers in the :ref:`afqmc` algorithm. Unless ``walker_type`` is set in the :ref:`walker_set_block` block of the job file, the code infers the walker type from the input files described in :ref:`Hamiltonian-classes` and :ref:`Wavefunction-classes`, choosing the highest spin symmetry that all of them allow.
 
-#. :ref:`RHF/Closed Walkers <closed_walker>`
-#. :ref:`UHF/Collinear Walkers <collinear_walker>`
-#. :ref:`GHF/Noncollinear Walkers <noncollinear_walker>`
+The currently supported walkers are all Slater determinants of different spin symmetries.
 
-The walker type can be set in the AFQMC input file using the ``walker_type`` keyword 
-within a "walker_set" input block.
-The walker type can be set to one of the following values:
 
 .. _closed_walker:
 
-RHF/Closed Walkers
-~~~~~~~~~~~~~~~~~~
+Closed Walkers
+~~~~~~~~~~~~~~
 
-RHF/Closed walkers are treated as having identical spin-up and spin-down channels.
-Formally,
+Closed walkers have identical spin-up and spin-down orbitals,
 
 .. math::
   
-   |\Phi_k\rangle = |\Phi_{k \uparrow}\rangle \otimes |\Phi_{k \tilde{\uparrow}}\rangle,
+   |\Phi_\mathrm{closed}\rangle = |\Phi\rangle \otimes |\Phi\rangle
+   = \prod_{\sigma} \prod_{k=1}^{N_\uparrow} \Big( \sum_{i} \Phi_{ik} \, c^\dagger_{i\sigma} \Big) |0\rangle,
 
-where :math:`|\Phi_{k \uparrow}\rangle` is the spin-up channel walker with walker index :math:`k`, and 
-:math:`|\Phi_{k \tilde{\uparrow}}\rangle` is the spin-down channel walker with walker index :math:`k`.
-The notation :math:`\tilde{\uparrow}` is used to denote that the spin-down channel Slater matrix is identical to
-the spin-up channel Slater matrix.
+where both spins share the same
+:math:`M \times N_\uparrow` Slater matrix :math:`\Phi`, and :math:`N_\uparrow = N_\downarrow`.
 
 .. note::
 
-   Closed walkers can only be used with Hamiltonians that have a "Closed" representation.
+   Closed walkers are also called restricted Hartree-Fock (RHF) walkers due to their resemblance to the RHF wavefunction.
 
-.. warning::
-
-   Closed walkers are not allowed in calculations using Lattice Model Hamiltonians.
 
 .. _collinear_walker:
 
-UHF/Collinear Walkers
-~~~~~~~~~~~~~~~~~~~~~
+Collinear Walkers
+~~~~~~~~~~~~~~~~~
 
-UHF/Collinear walkers are treated as having independent spin-up and spin-down channels.
-Formally,
+Collinear walkers have :math:`N_\uparrow` spin-up and :math:`N_\downarrow` spin-down orbitals,
 
 .. math::
   
-   |\Phi_k\rangle = |\Phi_{k \uparrow}\rangle \otimes |\Phi_{k \downarrow}\rangle,
+   |\Phi_\mathrm{collinear}\rangle = |\Phi^{\uparrow}\rangle \otimes |\Phi^{\downarrow}\rangle
+   = \prod_{\sigma} \prod_{k=1}^{N_\sigma} \Big( \sum_{i} \Phi^{\sigma}_{ik} \, c^\dagger_{i\sigma} \Big) |0\rangle,
 
-where :math:`|\Phi_{k \uparrow}\rangle` is the spin-up channel walker with walker index :math:`k`, and 
-:math:`|\Phi_{k \downarrow}\rangle` is the spin-down channel walker with walker index :math:`k`.
-Both spin channels have independent Slater matrices which are separately updated during
-the random walk.
+where :math:`|\Phi^{\uparrow}\rangle` is the spin-up and :math:`|\Phi^{\downarrow}\rangle` the spin-down Slater
+determinant, with the :math:`M \times N_\sigma` Slater matrices :math:`\Phi^\sigma`. This structure causes all electron spins to be collinear, i.e. aligned with the quantization axis.
 
 .. note::
 
-   Collinear walkers can only be used with Hamiltonians that have a "Collinear" or "Closed" representation.
+   Collinear walkers are also called unrestricted Hartree-Fock (UHF) walkers due to their resemblance to the UHF wavefunction.
 
 .. _noncollinear_walker:
 
-GHF/Noncollinear Walkers
+Noncollinear Walkers
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-GHF/Noncollinear walkers include both spin-up, spin-down channels as well as spin-flip channels within
-a single Slater matrix.
-Formally,
+Noncollinear walkers include spinor orbitals that mix spin flavor. There is no clear notion of spin-up or down electrons.
 
-.. math:: |\Phi_k\rangle = \begin{bmatrix}
-   \Phi^{\uparrow \uparrow}_k & \Phi^{\uparrow \downarrow}_k \\
-   \Phi^{\downarrow \uparrow}_k & \Phi^{\downarrow \downarrow}_k 
-   \end{bmatrix}  
-   
-where $\Phi^{\sigma \sigma'}_k$ represent each respective spin channel.
-In practice, the entire Slater matrix is stored and propagated during the random walk
-with no partitioning between spin channels.
+.. math:: |\Phi_\mathrm{noncollinear}\rangle = \Bigg|\begin{matrix}
+   \Phi^{\uparrow} \\
+   \Phi^{\downarrow}
+   \end{matrix} \Bigg\rangle
+   = \prod_{k=1}^{N} \Big( \sum_{i\sigma} \Phi^{\sigma}_{ik} \, c^\dagger_{i\sigma} \Big) |0\rangle,
+
+where the :math:`M \times N` blocks :math:`\Phi^{\sigma}` of the :math:`2M \times N` Slater matrix represent the
+spin-up and spin-down parts of each of the :math:`N` spinor orbitals. Unlike for the
+collinear walker, every orbital :math:`k` is a superposition of both spins.
 
 .. note::
 
-   Noncollinear walkers can be used with Hamiltonians that have any spin symmetry representation ("Closed", "Collinear", "Noncollinear").
+   Noncollinear walkers are also called general Hartree-Fock (GHF) walkers due to their resemblance to the GHF wavefunction.

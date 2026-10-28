@@ -1,0 +1,944 @@
+# This file is distributed under the Apache License, Version 2.0 License.
+# See LICENSE file in top directory for details.
+#
+# Copyright (c) 2021-2025 The Simons Foundation, Inc.
+#
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+
+r"""
+`MolecularHamiltonian` — a Cholesky-factorized molecular Hamiltonian,
+
+.. math:: \hat{H} = E_0 + \sum_{ij} h_{ij}\, c^\dagger_i c_j
+          + \frac{1}{2}\sum_{\gamma} \Big(\sum_{ij} L^\gamma_{ij} c^\dagger_i c_j\Big)^2
+
+stored densely as ``hcore`` plus the Cholesky vectors ``chol``,
+:math:`L^\gamma_{ij}`, and written in the dense format the AFQMC executable's
+``RealDenseHamiltonian`` reads.
+
+The Cholesky decomposition itself is generated either from a PySCF SCF object
+(`MolecularHamiltonian.from_pyscf`), from integrals supplied directly
+(`MolecularHamiltonian.from_integrals`), or from a plain-text FCIDUMP
+(`MolecularHamiltonian.from_fcidump`). `MolecularHamiltonian.to_fcidump` writes
+that external format back out.
+"""
+
+import logging
+import time
+from warnings import warn
+
+import numpy as np
+import h5py as h5
+
+from safiretools.hamiltonian.base import (
+    Hamiltonian,
+    read_hamiltonian_header,
+    write_hamiltonian_header,
+)
+from safiretools.hamiltonian.fcidump import read_fcidump, write_fcidump
+from safiretools.hdf5 import read_complex, replace_group
+from safiretools.types import SpinSymm
+
+logger = logging.getLogger(__name__)
+
+
+class MolecularHamiltonian(Hamiltonian):
+    r"""
+    A dense, Cholesky-factorized molecular Hamiltonian.
+
+    Parameters
+    ----------
+    hcore : numpy.ndarray
+        One-body Hamiltonian in the working basis, ``(nspin, npol, nmo, npol,
+        nmo)``. A single matrix ``(npol*nmo, npol*nmo)`` or one per spin sector
+        ``(nspin, npol*nmo, npol*nmo)`` is accepted too and reshaped into that —
+        see `spin_blocked_hcore`.
+    chol : numpy.ndarray
+        Cholesky vectors :math:`L^\gamma_{ij}`, ``(nspin, npol, nmo, npol, nmo,
+        nchol)``. The flat Cholesky matrix ``(nmo*nmo, nchol)`` or
+        ``(npol*nmo*npol*nmo, nchol)`` — *pair* index first — is accepted too and
+        reshaped into that; see `spin_blocked_chol`.
+    enuc : float, optional
+        Constant (nuclear repulsion) energy. Default 0.0.
+    spin_symm : SpinSymm or str or int, optional
+        Spin symmetry. Default `SpinSymm.CLOSED`.
+    basis_rotation : numpy.ndarray, optional
+        Transformation from the input (AO) basis to the working basis,
+        ``(npol*nao, npol*nmo)``: the spinor matrix, spin-up block first, for a
+        noncollinear Hamiltonian; see `Hamiltonian.basis_rotation`. Written as
+        ``Hamiltonian/BasisRotation`` when given. Omitted, the integrals are
+        taken to be in the working basis already.
+
+    Raises
+    ------
+    ValueError
+        If `basis_rotation` does not span ``npol`` polarizations of ``nmo``
+        orbitals in its columns and of some input basis in its rows.
+    """
+
+    def __init__(self, hcore, chol, enuc=0.0,
+                 spin_symm=SpinSymm.CLOSED, basis_rotation=None) -> None:
+        super().__init__(spin_symm=spin_symm)
+
+        self.hcore = spin_blocked_hcore(hcore, self.spin_symm)
+        self.chol = spin_blocked_chol(chol, self.spin_symm, self.nmo)
+        self.enuc = float(np.real(enuc))
+
+        if basis_rotation is not None:
+            basis_rotation = np.asarray(basis_rotation)
+            npol = self.npol
+            if (basis_rotation.ndim != 2 or basis_rotation.shape[0] % npol
+                    or basis_rotation.shape[1] != npol * self.nmo):
+                raise ValueError(
+                    f"basis_rotation has shape {basis_rotation.shape}, expected "
+                    f"(npol*nao, {npol * self.nmo}) with npol={npol} for a "
+                    f"{self.spin_symm.label} Hamiltonian"
+                )
+        self._basis_rotation = basis_rotation
+
+    @property
+    def basis_rotation(self) -> np.ndarray:
+        """
+        The stored ``(npol*nao, npol*nmo)`` transformation, or the identity when
+        the Hamiltonian was given in its working basis.
+        """
+        if self._basis_rotation is None:
+            return np.eye(self.npol * self.nmo)
+        return self._basis_rotation
+
+    @property
+    def nspin(self) -> int:
+        """Number of independent spin sectors; see `SpinSymm.nspin`."""
+        return self.spin_symm.nspin
+
+    @property
+    def npol(self) -> int:
+        """2 for a spin-orbital basis; see `SpinSymm.npol`."""
+        return self.spin_symm.npol
+
+    @property
+    def nmo(self) -> int:
+        """Number of orbitals, i.e. spatial orbitals unless noncollinear."""
+        return self.hcore.shape[2]
+
+    @property
+    def nchol(self) -> int:
+        """Number of Cholesky vectors."""
+        return self.chol.shape[-1]
+
+    @property
+    def complex_chol(self) -> bool:
+        """
+        Whether the Cholesky matrix is written as complex. Decided by the data:
+        complex exactly when some element has a nonzero imaginary part.
+
+        .. note:: The AFQMC executable's ``RealDenseHamiltonian`` reads
+                  ``DenseFactorized/L`` into a real array, so it cannot consume
+                  a complex-Cholesky file.
+        """
+        return bool(np.any(np.iscomplex(self.chol)))
+
+    # ------------------------------------------------------------------
+    # construction
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_integrals(cls, hcore, chol=None, eri=None, enuc=0.0,
+                       spin_symm=SpinSymm.CLOSED, cholesky_tol=1e-6,
+                       verbose=False) -> "MolecularHamiltonian":
+        r"""
+        Build a Hamiltonian from integrals supplied directly.
+
+        Parameters
+        ----------
+        hcore : numpy.ndarray
+            One-body Hamiltonian, in any of the layouts `spin_blocked_hcore`
+            accepts — usually ``(npol*nmo, npol*nmo)``.
+        chol : numpy.ndarray, optional
+            Cholesky vectors :math:`L_{\gamma,(ij)}`, shape ``(nchol, nmo**2)``.
+            Exactly one of `chol` and `eri` is required.
+        eri : numpy.ndarray, optional
+            Coulomb repulsion tensor in chemists' notation, ``(ij|kl)``, shape
+            ``(nmo, nmo, nmo, nmo)``. Decomposed here if given.
+        enuc : float, optional
+            Constant energy contribution. Default 0.0.
+        spin_symm : SpinSymm or str or int, optional
+            Spin symmetry. Default `SpinSymm.CLOSED`.
+        cholesky_tol : float, optional
+            Tolerance for decomposing `eri`. Default 1e-6.
+        verbose : bool, optional
+            Log the decomposition's convergence.
+
+        Returns
+        -------
+        MolecularHamiltonian
+
+        Raises
+        ------
+        ValueError
+            If neither or both of `chol` and `eri` are given, or if either has
+            the wrong shape.
+        """
+        if (chol is None) == (eri is None):
+            raise ValueError("Provide exactly one of 'chol' or 'eri'.")
+
+        nmo = hcore.shape[-1]
+
+        if eri is not None:
+            if eri.shape != (nmo, nmo, nmo, nmo):
+                raise ValueError(
+                    f"eri has shape {eri.shape}, expected ({nmo}, {nmo}, {nmo}, {nmo})"
+                )
+            logger.info("generating Cholesky vectors from the Coulomb repulsion tensor")
+            chol = modified_cholesky_direct(
+                eri.reshape(nmo**2, nmo**2), tol=cholesky_tol, verbose=verbose, cmax=4)
+        elif chol.shape[1] != nmo**2:
+            raise ValueError(
+                f"chol has shape {chol.shape}, expected (nchol, {nmo**2}) — "
+                "the orbital-pair index must come second"
+            )
+
+        # go from L_{gamma,(ij)} to L_{(ij),gamma}
+        return cls(hcore=hcore, chol=chol.T, enuc=enuc, spin_symm=spin_symm)
+
+    @classmethod
+    def from_pyscf(cls, mf, basis=None, active_space=None, df=False,
+                   chol_cut=1e-5, verbose=False) -> "MolecularHamiltonian":
+        """
+        Build a Hamiltonian from a PySCF molecular SCF object.
+
+        Parameters
+        ----------
+        mf
+            The source of the physics: ``mf.get_hcore()`` is the one-body
+            Hamiltonian, and ``mf.mol`` supplies the two-electron integrals and
+            the nuclear repulsion. The relativistic treatment is whatever `mf`
+            was set up with — ``mol.RHF().sfx2c1e()``, ``mol.GHF().x2c1e()``,
+            or a GHF object with ``with_soc = True`` for the spin-orbit ECP
+            term. `mf` need not be converged unless it also supplies the basis.
+        basis : None or 'ortho_ao' or object or numpy.ndarray, optional
+            The orbitals the Hamiltonian is expressed in. ``None`` uses `mf`'s
+            own orbitals, ``'ortho_ao'`` the canonically orthogonalized AO
+            basis, an object its ``mo_coeff`` (an ROHF or CASSCF solution, say),
+            and an array is taken as the ``(nao, nmo)`` transformation itself.
+            UHF and GHF orbitals cannot serve as a basis. Pass the same basis to
+            `safiretools.Wavefunction.from_pyscf`.
+        active_space : tuple(int, int), optional
+            ``(nelecas, ncas)`` active space; core orbitals are frozen into the
+            one-body term and the constant. ``ncas == -1`` takes every orbital
+            above the frozen core. Incompatible with ``basis='ortho_ao'``.
+        df : bool, optional
+            Use `mf`'s density-fitting vectors instead of decomposing the
+            two-electron integrals, which needs a density-fitted `mf`.
+        chol_cut : float, optional
+            Cholesky decomposition accuracy. Default 1e-5.
+        verbose : bool, optional
+            Log timing and convergence progress.
+
+        Returns
+        -------
+        MolecularHamiltonian
+            Noncollinear when ``mf.get_hcore()`` is a spinor matrix, closed
+            otherwise: a spin-independent one-body operator gains nothing from
+            two identical spin sectors.
+
+        Raises
+        ------
+        ValueError
+            If `basis` is an unknown string, UHF/GHF orbitals, does not span
+            `mf`'s AO basis, or is ``'ortho_ao'`` together with `active_space`;
+            or if `df` is set and `mf` is not density fitted.
+        """
+        from safiretools.convert.pyscf import cholesky_df, one_body, working_basis
+
+        hcore, spin_symm = one_body(mf)
+        mol = mf.mol
+
+        X, (nfzc, nfzv) = working_basis(mf, basis, active_space)
+        nbasis = X.shape[-1]
+
+        if spin_symm is SpinSymm.NONCOLLINEAR:
+            Xspin = np.kron(np.eye(2), X)
+            h1e = Xspin.conj().T @ hcore @ Xspin
+        else:
+            h1e = X.conj().T @ hcore @ X
+
+        logger.info("number of basis functions: %d", nbasis)
+
+        if df:
+            logger.info("using the density-fitting vectors of the SCF object")
+            chol_vecs = cholesky_df(mf)
+        else:
+            logger.info("performing modified Cholesky decomposition on the ERI tensor")
+            chol_vecs = chunked_cholesky(mol, max_error=chol_cut, verbose=verbose)
+
+        logger.info("orthogonalising Cholesky vectors")
+        start = time.time()
+        chol_trans = transform_cholesky(chol_vecs, X)
+        logger.info("time to orthogonalise: %s s", time.time() - start)
+
+        enuc = mol.energy_nuc()
+
+        if (nfzc, nfzv) != (0, 0):
+            h1e, chol_trans, enuc = freeze_core(
+                h1e, chol_trans, enuc, nfzc, nbasis - nfzv - nfzc, verbose=verbose)
+
+        rotation = X[:, nfzc:nbasis - nfzv]
+        if spin_symm is SpinSymm.NONCOLLINEAR:
+            rotation = np.kron(np.eye(2), rotation)
+
+        return cls(
+            hcore=h1e,
+            chol=chol_trans.T,   # want L_{(ij),gamma}
+            enuc=enuc,
+            spin_symm=spin_symm,
+            basis_rotation=rotation,
+        )
+
+    @classmethod
+    def from_fcidump(cls, path, symmetry=None, cholesky_tol=1e-6, spin_symm=None,
+                     verbose=False) -> "MolecularHamiltonian":
+        r"""
+        Build a Hamiltonian from a plain-text FCIDUMP file.
+
+        FCIDUMP stores the two-electron integrals in full rather than
+        factorized, so they are Cholesky-decomposed here, as
+        `from_integrals` does for an `eri` tensor.
+
+        The file's ``MS2`` header field decides the spin symmetry, and the
+        integrals are reoriented from FCIDUMP's :math:`(ik|jl)` to the
+        :math:`\{(ik), (lj)\}` pair order the decomposition needs.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            FCIDUMP file to read.
+        symmetry : int, optional
+            Permutational symmetry of the two-electron integrals, 1, 4 or 8.
+            Read from the file's header when omitted, since some codes
+            misreport it there.
+        cholesky_tol : float, optional
+            Tolerance for decomposing the two-electron integrals. Default 1e-6.
+        spin_symm : SpinSymm or str or int, optional
+            Spin symmetry. Defaults to `SpinSymm.CLOSED` when the header's
+            ``MS2`` is zero and `SpinSymm.COLLINEAR` otherwise. Pass
+            `SpinSymm.NONCOLLINEAR` for a FCIDUMP already written in a spinor
+            basis, which the file itself does not record.
+        verbose : bool, optional
+            Log what was read and the decomposition's convergence.
+
+        Returns
+        -------
+        MolecularHamiltonian
+
+        Raises
+        ------
+        ValueError
+            If the header has no end marker, or names a permutational symmetry
+            other than 1, 4 or 8.
+        """
+        hcore, integrals, enuc, nelec = read_fcidump(path, symmetry=symmetry,
+                                                     verbose=verbose)
+
+        # read_fcidump hands back the chemists' (ik|jl) at [i, k, j, l], while
+        #   the decomposition wants the hermitian pair matrix {(ik), (lj)}. The
+        #   two coincide for real integrals, and do not for complex ones.
+        eri = integrals.transpose((0, 1, 3, 2))
+
+        if spin_symm is None:
+            spin_symm = (SpinSymm.CLOSED if nelec[0] == nelec[1]
+                         else SpinSymm.COLLINEAR)
+
+        return cls.from_integrals(hcore=hcore, eri=eri, enuc=enuc,
+                                  spin_symm=spin_symm, cholesky_tol=cholesky_tol,
+                                  verbose=verbose)
+
+    # ------------------------------------------------------------------
+    # serialization
+    # ------------------------------------------------------------------
+
+    def to_hdf5(self, path) -> None:
+        """
+        Write this Hamiltonian in the dense format ``RealDenseHamiltonian``
+        reads.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            HDF5 file to write into. Created if it does not exist. A Hamiltonian
+            already in the file is replaced; everything else — notably a
+            ``Wavefunction`` — is left alone, so a Hamiltonian and a
+            wavefunction can share one file in either order.
+        """
+        complex_chol = self.complex_chol
+        if complex_chol:
+            warn(
+                "writing complex Cholesky vectors, which a complex orbital basis "
+                "gives; the AFQMC executable's RealDenseHamiltonian reads "
+                "DenseFactorized/L as real and cannot run this file"
+            )
+        # decided with any() rather than all(): a Hermitian matrix has a real
+        #   diagonal, so all() would discard the imaginary part of every one
+        complex_hcore = bool(np.any(np.iscomplex(self.hcore)))
+
+        with h5.File(path, 'a') as fh5:
+            group = replace_group(fh5, 'Hamiltonian')
+            write_hamiltonian_header(group, 'dense', enuc=self.enuc)
+            group.create_dataset('DenseFactorized/L',
+                                 data=self.chol if complex_chol else np.real(self.chol))
+            group.create_dataset('hcore',
+                                 data=self.hcore if complex_hcore else np.real(self.hcore))
+            if self._basis_rotation is not None:
+                group.create_dataset('BasisRotation', data=self._basis_rotation)
+
+    def to_fcidump(self, path, nelec=(0, 0), tol=1e-8, ctol=1e-12, sym=1,
+                   cplx=True, paren=False, use_spinor=False) -> None:
+        """
+        Write this Hamiltonian as a plain-text FCIDUMP file.
+
+        The two-electron integrals are reconstructed from the Cholesky matrix
+        and written out in full, so the file is much larger than the HDF5
+        `to_hdf5` writes and this is only practical for small basis sets.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            FCIDUMP file to write. Overwritten if it exists.
+        nelec : tuple(int, int), optional
+            ``(nup, ndown)`` for the ``NELEC``/``MS2`` header fields. The
+            Hamiltonian itself does not carry an electron count, so it is
+            supplied here. Default ``(0, 0)``.
+        tol : float, optional
+            Only write integrals above this magnitude. Default 1e-8.
+        ctol : float, optional
+            Largest imaginary part tolerated when `cplx` is False.
+            Default 1e-12.
+        sym : int, optional
+            Write only the symmetry-inequivalent integrals of this
+            permutational symmetry, 1, 4 or 8. Default 1, i.e. everything.
+        cplx : bool, optional
+            Write in the complex format. Default True.
+        paren : bool, optional
+            Write complex values parenthesized as ``(real,imag)`` rather than
+            in two columns. Which one a reader wants depends on the code.
+        use_spinor : bool, optional
+            Convert the spatial-orbital integrals to a spinor basis, doubling
+            the orbital count, before writing.
+
+        Raises
+        ------
+        ValueError
+            If the Hamiltonian is collinear, if the Cholesky matrix is in the
+            spatial-orbital basis while ``hcore`` is in the spin-orbital one, if
+            `use_spinor` is asked of a Hamiltonian that is already in a
+            spin-orbital basis, or if `cplx` is False and the integrals have
+            imaginary parts above `ctol`.
+        """
+        if self.nspin != 1:
+            raise ValueError(
+                "FCIDUMP holds a single one-body matrix, and this "
+                f"{self.spin_symm.label} Hamiltonian has {self.nspin} independent "
+                "spin sectors"
+            )
+
+        nbasis = self.npol * self.nmo
+        hcore = self.hcore.reshape(nbasis, nbasis)
+        chol = self.chol.reshape(-1, self.nchol)
+
+        if chol.shape[0] != nbasis**2:
+            raise ValueError(
+                f"the Cholesky matrix spans {chol.shape[0]} orbital pairs but "
+                f"hcore spans {nbasis**2}; FCIDUMP holds one basis, so both have "
+                "to be in the same one"
+            )
+
+        if use_spinor and self.npol == 2:
+            raise ValueError(
+                "use_spinor converts spatial-orbital integrals to a spinor basis, "
+                f"and this {self.spin_symm.label} Hamiltonian is already in a "
+                "spin-orbital one"
+            )
+
+        write_fcidump(path, hcore, chol, self.enuc, nelec,
+                      tol=tol, ctol=ctol, sym=sym, cplx=cplx, paren=paren,
+                      use_spinor=use_spinor)
+
+    @classmethod
+    def _read_hdf5(cls, path) -> "MolecularHamiltonian":
+        """
+        Read a dense Hamiltonian written by `to_hdf5`.
+
+        Notes
+        -----
+        ``hcore``'s own shape gives back the spin symmetry it was written in,
+        so nothing has to be guessed here.
+        """
+        with h5.File(path, 'r') as fh5:
+            group = fh5['Hamiltonian']
+            enuc = read_hamiltonian_header(group)
+            chol = read_complex(group['DenseFactorized/L'])
+            hcore = read_complex(group['hcore'])
+            basis_rotation = (read_complex(group['BasisRotation'])
+                              if 'BasisRotation' in group else None)
+
+        if hcore.ndim != 5:
+            raise ValueError(
+                f"Hamiltonian/hcore in {path} has shape {hcore.shape}, expected "
+                "(nspin, npol, nmo, npol, nmo)"
+            )
+        if chol.ndim != 6:
+            raise ValueError(
+                f"Hamiltonian/DenseFactorized/L in {path} has shape {chol.shape}, "
+                "expected (nspin, npol, nmo, npol, nmo, nchol)"
+            )
+
+        nspin, npol = hcore.shape[0], hcore.shape[1]
+        if nspin == 2:
+            spin_symm = SpinSymm.COLLINEAR
+        else:
+            spin_symm = SpinSymm.NONCOLLINEAR if npol == 2 else SpinSymm.CLOSED
+
+        return cls(hcore=hcore, chol=chol, enuc=enuc, spin_symm=spin_symm,
+                   basis_rotation=basis_rotation)
+
+
+# ----------------------------------------------------------------------
+# the dense on-disk layout
+# ----------------------------------------------------------------------
+
+def spin_blocked_hcore(hcore, spin_symm: SpinSymm):
+    """
+    `hcore` as the ``(nspin, npol, nmo, npol, nmo)`` array the dense format
+    stores, where ``nspin`` is 2 only for a collinear Hamiltonian and ``npol``
+    is 2 only for a noncollinear one.
+
+    Two shorter layouts are accepted and reshaped into it: a single one-body
+    matrix ``(npol*nmo, npol*nmo)``, and one matrix per spin sector
+    ``(nspin, npol*nmo, npol*nmo)``. An array that is already blocked is checked
+    and passed through.
+
+    A single matrix given for a collinear Hamiltonian goes into both spin
+    sectors. That is the usual case rather than a convenience: the core
+    Hamiltonian does not depend on spin, and it is the two-body term that makes
+    the sectors differ.
+
+    Raises
+    ------
+    ValueError
+        If `hcore` has a rank other than 2, 3 or 5, or if its extents do not
+        match `spin_symm`.
+    """
+    hcore = np.asarray(hcore)
+    given = hcore.shape
+    nspin, npol = spin_symm.nspin, spin_symm.npol
+
+    if hcore.ndim == 2:
+        hcore = np.stack([hcore] * nspin)
+
+    if hcore.ndim == 3:
+        nrows, ncols = hcore.shape[1:]
+        if ncols % npol or (hcore.shape[0], nrows) != (nspin, ncols):
+            raise ValueError(
+                f"hcore has shape {given}, expected "
+                f"(nspin, npol*nmo, npol*nmo) with nspin={nspin} and npol={npol} "
+                f"for a {spin_symm.label} Hamiltonian"
+            )
+        nmo = ncols // npol
+        return hcore.reshape(nspin, npol, nmo, npol, nmo)
+
+    if hcore.ndim == 5:
+        nmo = hcore.shape[2]
+        if hcore.shape != (nspin, npol, nmo, npol, nmo):
+            raise ValueError(
+                f"hcore has shape {given}, expected "
+                f"{(nspin, npol, nmo, npol, nmo)} for a {spin_symm.label} Hamiltonian"
+            )
+        return hcore
+
+    raise ValueError(
+        f"hcore has shape {given}, expected (nspin, npol, nmo, npol, nmo) or "
+        "one of the shorter layouts it is built from"
+    )
+
+
+def spin_blocked_chol(chol, spin_symm: SpinSymm, nmo: int):
+    """
+    `chol` as the ``(nspin, npol, nmo, npol, nmo, nchol)`` array the dense
+    format stores.
+
+    ``nspin`` is 1 for vectors shared by every spin sector and that of the
+    Hamiltonian for one set per sector; ``npol`` is 1 for vectors in the
+    spatial-orbital basis, which a noncollinear Hamiltonian may use too, and 2
+    for spinor ones.
+
+    The flat Cholesky matrix ``(nmo*nmo, nchol)`` or
+    ``(npol*nmo*npol*nmo, nchol)`` is accepted and reshaped into a shared set of
+    spatial or spinor vectors. An array that is already blocked is checked and
+    passed through.
+
+    Raises
+    ------
+    ValueError
+        If `chol` has a rank other than 2 or 6, or if its extents do not match
+        `spin_symm` and `nmo`.
+    """
+    chol = np.asarray(chol)
+    given = chol.shape
+
+    if chol.ndim == 2:
+        nrows = chol.shape[0]
+        if nrows == nmo**2:
+            npol = 1
+        elif spin_symm.npol == 2 and nrows == (2 * nmo)**2:
+            npol = 2
+        else:
+            valid_rows = sorted({nmo**2, (spin_symm.npol * nmo)**2})
+            raise ValueError(
+                f"Cholesky matrix has {nrows} rows; for nmo={nmo} and "
+                f"npol={spin_symm.npol} expected one of {valid_rows}"
+            )
+        return chol.reshape(1, npol, nmo, npol, nmo, chol.shape[1])
+
+    if chol.ndim == 6:
+        nspin, npol = chol.shape[:2]
+        if (nspin not in {1, spin_symm.nspin} or npol not in {1, spin_symm.npol}
+                or chol.shape[2:5] != (nmo, npol, nmo)):
+            raise ValueError(
+                f"chol has shape {given}, expected (nspin, npol, {nmo}, npol, "
+                f"{nmo}, nchol) with nspin in {sorted({1, spin_symm.nspin})} and "
+                f"npol in {sorted({1, spin_symm.npol})} for a {spin_symm.label} "
+                "Hamiltonian"
+            )
+        return chol
+
+    raise ValueError(
+        f"chol has shape {given}, expected (nspin, npol, nmo, npol, nmo, nchol) "
+        "or the flat (npairs, nchol) Cholesky matrix"
+    )
+
+
+# ----------------------------------------------------------------------
+# Cholesky decomposition and basis transformation
+# ----------------------------------------------------------------------
+
+def modified_cholesky_direct(M, tol=1e-5, verbose=False, cmax=20):
+    """
+    Modified Cholesky decomposition of a matrix.
+
+    See, e.g. :cite:`motta_initio_2018`.
+
+    Parameters
+    ----------
+    M : numpy.ndarray
+        Positive semi-definite, symmetric matrix.
+    tol : float, optional
+        Accuracy desired. Default 1e-5.
+    verbose : bool, optional
+        Log convergence progress.
+    cmax : int, optional
+        Store at most ``cmax * sqrt(M.shape[0])`` Cholesky vectors.
+
+    Returns
+    -------
+    numpy.ndarray
+        Cholesky vectors, shape ``(nchol, M.shape[0])``.
+    """
+    delta = np.copy(M.diagonal())
+    nchol_max = min(int(cmax * M.shape[0]**0.5), M.shape[1])
+
+    nu = np.argmax(np.abs(delta))
+    delta_max = delta[nu]
+
+    if verbose:
+        logger.info("performing Cholesky decomposition with tolerance %s", tol)
+        logger.info("max number of cholesky vectors = %d", nchol_max)
+
+    Mapprox = np.zeros(M.shape[0], dtype=M.dtype)
+    chol_vecs = np.zeros((nchol_max, M.shape[0]), dtype=M.dtype)
+    nchol = 0
+    chol_vecs[0] = np.copy(M[:, nu]) / delta_max**0.5
+
+    # -1 because we already have one vector
+    while abs(delta_max) > tol and nchol < nchol_max - 1:
+        Mapprox += chol_vecs[nchol] * chol_vecs[nchol].conj()
+        delta = M.diagonal() - Mapprox
+        nu = np.argmax(np.abs(delta))
+        delta_max = np.abs(delta[nu])
+        nchol += 1
+        Munu0 = np.dot(chol_vecs[:nchol, nu].conj(), chol_vecs[:nchol, :])
+        chol_vecs[nchol] = (M[:, nu] - Munu0) / delta_max**0.5
+        if verbose:
+            logger.info("cholesky iteration %d: max residual %13.8e", nchol, delta_max)
+
+    return np.array(chol_vecs[:nchol])
+
+
+def chunked_cholesky(mol, max_error=1e-6, verbose=False, cmax=10):
+    """
+    Modified Cholesky decomposition of the PySCF ERI tensor, one shell chunk at
+    a time.
+
+    See, e.g. :cite:`motta_initio_2018`. Only works for molecular systems.
+
+    Parameters
+    ----------
+    mol : pyscf.gto.Mole
+        PySCF mol object.
+    max_error : float, optional
+        Accuracy desired. Default 1e-6.
+    verbose : bool, optional
+        Log convergence progress.
+    cmax : int, optional
+        ``nchol_max = cmax * nao``; controls the Cholesky vector buffer size.
+
+    Returns
+    -------
+    numpy.ndarray
+        Cholesky vectors in the AO basis, shape ``(nchol, nao*nao)``.
+    """
+    nao = mol.nao_nr()
+    diag = np.zeros(nao * nao)
+    nchol_max = cmax * nao
+    chol_vecs = np.zeros((nchol_max, nao * nao))
+
+    ndiag = 0
+    dims = [0]
+    nao_per_i = 0
+    for i in range(0, mol.nbas):
+        l = mol.bas_angular(i)
+        nc = mol.bas_nctr(i)
+        nao_per_i += (2 * l + 1) * nc
+        dims.append(nao_per_i)
+
+    for i in range(0, mol.nbas):
+        shls = (i, i + 1, 0, mol.nbas, i, i + 1, 0, mol.nbas)
+        buf = mol.intor('int2e_sph', shls_slice=shls)
+        di = buf.shape[0]
+        diag[ndiag:ndiag + di * nao] = buf.reshape(di * nao, di * nao).diagonal()
+        ndiag += di * nao
+
+    nu = np.argmax(diag)
+    delta_max = diag[nu]
+
+    if verbose:
+        logger.info("generating Cholesky decomposition of ERIs")
+        logger.info("max number of cholesky vectors = %d", nchol_max)
+
+    def shell_of(index):
+        """The shell index the AO index `index` falls in."""
+        shell = np.searchsorted(dims, index)
+        if dims[shell] != index and index != 0:
+            shell -= 1
+        return shell
+
+    j, l = nu // nao, nu % nao
+    sj, sl = shell_of(j), shell_of(l)
+
+    Mapprox = np.zeros(nao * nao)
+    eri_col = mol.intor('int2e_sph',
+                        shls_slice=(0, mol.nbas, 0, mol.nbas, sj, sj + 1, sl, sl + 1))
+    cj, cl = max(j - dims[sj], 0), max(l - dims[sl], 0)
+    chol_vecs[0] = np.copy(eri_col[:, :, cj, cl].reshape(nao * nao)) / delta_max**0.5
+
+    nchol = 0
+    while abs(delta_max) > max_error:
+        # M'_ii = \sum_x L_i^x L_i^x, then D_ii = M_ii - M'_ii
+        Mapprox += chol_vecs[nchol] * chol_vecs[nchol]
+        delta = diag - Mapprox
+        nu = np.argmax(np.abs(delta))
+        delta_max = np.abs(delta[nu])
+
+        # shls_slice computes shells of integrals as determined by the angular
+        # momentum of the basis function and the number of contraction
+        # coefficients. Need to search for AO index within this shell indexing
+        # scheme.
+        j, l = nu // nao, nu % nao
+        sj, sl = shell_of(j), shell_of(l)
+
+        eri_col = mol.intor('int2e_sph',
+                            shls_slice=(0, mol.nbas, 0, mol.nbas, sj, sj + 1, sl, sl + 1))
+        cj, cl = max(j - dims[sj], 0), max(l - dims[sl], 0)
+        Munu0 = eri_col[:, :, cj, cl].reshape(nao * nao)
+
+        # updated residual = \sum_x L_i^x L_nu^x
+        R = np.dot(chol_vecs[:nchol + 1, nu], chol_vecs[:nchol + 1, :])
+        chol_vecs[nchol + 1] = (Munu0 - R) / delta_max**0.5
+        nchol += 1
+
+        if verbose:
+            logger.info("cholesky iteration %d: max residual %13.8e", nchol, delta_max)
+
+    return chol_vecs[:nchol]
+
+
+def transform_cholesky(chol, C):
+    r"""
+    Apply the basis rotation `C` to the Cholesky vectors `chol`.
+
+    Parameters
+    ----------
+    chol : numpy.ndarray
+        Cholesky vectors, shape ``(nchol, nao*nao)``.
+    C : numpy.ndarray
+        Transformation matrix, ``(nao, nmo)``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Transformed vectors :math:`C^\dagger L^\gamma C`, shape
+        ``(nchol, nmo*nmo)``. Complex when `C` is, and hermitian in the orbital
+        pair like the one-body term.
+
+    Notes
+    -----
+    Transforms in place through a flat view of `chol`, so that ``nao > nmo``
+    needs no second buffer, and `chol` is overwritten. A complex `C` with real
+    `chol` is the exception: the result cannot live in the real buffer, so it
+    gets one of its own and `chol` is left alone.
+    """
+    nao, nmo = C.shape
+    nik = nmo * nmo
+    nchol = chol.shape[0]
+
+    if np.iscomplexobj(C) and not np.iscomplexobj(chol):
+        chol = chol.astype(np.result_type(chol, C))
+
+    Cdag = C.conj().T
+    chol_ = chol.ravel()
+    for i in range(nchol):
+        cv = chol[i].reshape(nao, nao)
+        half = np.dot(cv, C)
+        # nmo <= nao, so vector i lands at or before where it was read from
+        chol_[i * nik:(i + 1) * nik] = np.dot(Cdag, half).ravel()
+
+    return chol_[:nchol * nik].reshape((nchol, nik))
+
+
+def freeze_core(h1e, chol, ecore, nc, ncas, verbose=True):
+    """
+    Freeze `nc` core orbitals into the one-body term and the constant energy,
+    keeping `ncas` active orbitals.
+
+    Parameters
+    ----------
+    h1e : numpy.ndarray
+        One-body Hamiltonian, ``(nbasis, nbasis)``.
+    chol : numpy.ndarray
+        Cholesky vectors, ``(nchol, nbasis*nbasis)``.
+    ecore : float
+        Constant energy before freezing.
+    nc : int
+        Number of frozen core orbitals.
+    ncas : int
+        Number of active orbitals.
+    verbose : bool, optional
+        Log the frozen-core energy breakdown.
+
+    Returns
+    -------
+    h1e : numpy.ndarray
+        Active-space one-body Hamiltonian, ``(ncas, ncas)``.
+    chol : numpy.ndarray
+        Active-space Cholesky vectors.
+    efzc : float
+        Total frozen-core energy.
+
+    Raises
+    ------
+    ValueError
+        If more orbitals would be frozen than the basis has.
+    """
+    nbasis = h1e.shape[-1]
+
+    if nbasis - nc - ncas < 0:
+        raise ValueError(
+            f"freeze_core: ncore = {nc}, nactive = {ncas}, nbasis = {nbasis}:\n"
+            "Can't freeze more orbitals than available basis set functions"
+        )
+
+    chol = chol.reshape((-1, nbasis, nbasis))
+    psi = np.identity(nbasis)[:, :nc]
+    Gcore = psi @ psi.T
+    efzc = local_energy_generic_cholesky(h1e, chol, [Gcore, Gcore])
+
+    h1e = h1e + 2 * core_contribution_cholesky(chol, Gcore)
+    h1e = h1e[nc:nc + ncas, nc:nc + ncas]
+
+    nchol = chol.shape[0]
+    chol = chol[:, nc:nc + ncas, nc:nc + ncas].reshape((nchol, -1))
+
+    if verbose:
+        logger.info("number of active orbitals: %d", ncas)
+        logger.info("freezing %d core electrons and %d virtuals",
+                    2 * nc, nbasis - nc - ncas)
+        logger.info("total frozen core energy: %s", efzc[0] + ecore)
+        logger.info("E0 (input): %13.8e", ecore)
+        logger.info("frozen 1-body contribution: %s", efzc[1])
+        logger.info("frozen 2-body contribution: %s", efzc[2])
+
+    return h1e, chol, efzc[0] + ecore
+
+
+def local_energy_generic_cholesky(h1e, chol_vecs, G):
+    r"""
+    Local energy for a generic two-body Hamiltonian, from Cholesky-decomposed
+    two-electron integrals.
+
+    Parameters
+    ----------
+    h1e : numpy.ndarray
+        One-body Hamiltonian.
+    chol_vecs : numpy.ndarray
+        Cholesky vectors, ``(nchol, nbasis, nbasis)``.
+    G : list of numpy.ndarray
+        Up and down Green's functions.
+
+    Returns
+    -------
+    (E, T, V) : tuple
+        Total, one-body and two-body energies.
+    """
+    Gtot = G[0] + G[1]
+
+    e1b = np.sum(h1e * Gtot)
+
+    ecoul = np.dot(np.einsum('lij,ij->l', chol_vecs, Gtot),
+                   np.einsum('lji,ij->l', chol_vecs.conj(), Gtot))
+
+    # sum is over spin axes; is a few orders of magnitude *faster* than including
+    #    in the einsum
+    exx = sum(np.einsum('lpi,pj,ljq,qi->', chol_vecs, Gs, chol_vecs.conj(), Gs,
+                        optimize=True)
+              for Gs in G)
+
+    e2b = 0.5 * (ecoul - exx)
+
+    return (e1b + e2b, e1b, e2b)
+
+
+def core_contribution_cholesky(chol_vecs, G):
+    """
+    One spin sector's frozen-core contribution to the one-body Hamiltonian.
+
+    Parameters
+    ----------
+    chol_vecs : numpy.ndarray
+        Cholesky vectors, ``(nchol, nbasis, nbasis)``.
+    G : numpy.ndarray
+        Core Green's function of that spin sector.
+
+    Returns
+    -------
+    numpy.ndarray
+        The core contribution, ``(nbasis, nbasis)``.
+    """
+    cv = chol_vecs
+
+    coulomb = np.einsum('l,lij->ij', np.sum(cv * G, axis=(1, 2)), cv)
+    # K_rs = sum_pq (rp|qs) G_pq, in the order that stays right for complex
+    #   (hermitian) vectors, where L_pr is the conjugate of L_rp
+    exchange = 0.5 * np.einsum('lrp,pq,lqs->rs', cv, G, cv, optimize=True)
+
+    return coulomb - exchange

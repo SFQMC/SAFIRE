@@ -12,7 +12,6 @@
  */
 
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <vector>
 #include <cxxopts.hpp>
@@ -29,16 +28,9 @@
 #include "utilities/memory_utils.hpp"
 #include "utilities/app_version.h"
 
-#include "AFQMC/AFQMCFactory.h"
+#include "AFQMC/execute.hpp"
 #include "AFQMC/parameter_defaults.hpp"
 
-/*
- * *** execution blocks are processed sequentially, so order is important.
- *     Communication between blocks occurs though appropriate hdf5 I/O. *** 
- */ 
-
-/** @file safire.cpp
- */
 int main_impl(int argc, char** argv)
 {
   using namespace sfqmc;
@@ -66,13 +58,13 @@ int main_impl(int argc, char** argv)
     "╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝\n"};
 
   // parse command line inputs
-  std::vector<std::string> inputs;
-  int output_level, debug_level; 
+  std::string job_file;
+  int output_level, debug_level;
 
   // parse command line inputs
   cxxopts::Options options(argv[0],"SAFIRE");
   options
-    .positional_help("[optional args]")
+    .positional_help("<job file>")
     .show_positional_help();
   options.add_options()
     ("h,help", "print help message")
@@ -80,9 +72,12 @@ int main_impl(int argc, char** argv)
     ("verbosity", "higher means more (allowed: 0, 1, 2, 3)", cxxopts::value<int>()->default_value("2"))
     ("debug", "higher means more (allowed: 0, 1, 2, 3)", cxxopts::value<int>()->default_value("0"))
     ("compute", std::format("where to execute (allowed: {})", allowed_devices_str), cxxopts::value<std::string>()->default_value(default_compute))
-    ("filenames", "input filenames", cxxopts::value<std::vector<std::string>>())
   ;
-  options.parse_positional({"filenames"});
+  // not in a group passed to options.help(), so it does not show up in --help
+  options.add_options("positional")
+    ("job_file", "JSON job file", cxxopts::value<std::string>())
+  ;
+  options.parse_positional({"job_file"});
 
   cxxopts::ParseResult args{};
   try {
@@ -127,14 +122,14 @@ int main_impl(int argc, char** argv)
     throw AppAbortException{std::format("Invalid compute: {} (allowed values: {})", compute, allowed_devices_str)};
   }
 
-  // input files are positional arguments
-  int nfile = args.count("filenames");
-  if (nfile < 1)
-  {
-    throw AppAbortException{"no input file given; exiting ..."};
-  } else {
-    inputs = args["filenames"].as<std::vector<std::string>>();
+  if(!args.count("job_file")) {
+    throw AppAbortException{"no job file given; exiting ..."};
   }
+  // positional arguments beyond the job file end up here
+  if(!args.unmatched().empty()) {
+    throw AppAbortException{std::format("unexpected argument after the job file: {}", args.unmatched().front())};
+  }
+  job_file = args["job_file"].as<std::string>();
 
   // setup output loggers
   setup_loggers(root, output_level, debug_level);
@@ -155,14 +150,15 @@ int main_impl(int argc, char** argv)
 
   sfqmc::arch::init(compute == "gpu");
 
-  // !!!! assume a single input for now
-  std::string myinput = inputs[0];
   afqmc::AFQMCParameters params;
   try {
-    params = afqmc::parse_input_file(myinput);
+    params = afqmc::parse_input_file(job_file);
   } catch (std::exception const& e) {
     throw AppAbortException(fmt::format("Could not parse input file: {}", e.what()));
   }
+  // the paths in the input are relative to the input file, but the results go to the launch directory
+  params.output_name = std::filesystem::absolute(params.output_name).string();
+  std::filesystem::current_path(std::filesystem::absolute(job_file).parent_path());
   // every default the parameter structs cannot express as a member initializer is applied here,
   // so that the code below only ever sees resolved values
   afqmc::resolve_defaults(params, *mpi);
@@ -172,12 +168,12 @@ int main_impl(int argc, char** argv)
 #if defined(ENABLE_DEVICE)
   if(compute=="gpu") {
     sfqmc::arch::check_device_configuration();
-    auto afqmc_fac = afqmc::AFQMCFactory<DEVICE_MEMORY>(params, mpi);
+    afqmc::execute_simulation<DEVICE_MEMORY>(mpi, params);
   } else
 #endif
   {
-    auto afqmc_fac = afqmc::AFQMCFactory<HOST_MEMORY>(params, mpi);
-  } // keep braces so factory is destructed before next line
+    afqmc::execute_simulation<HOST_MEMORY>(mpi, params);
+  }
 
   mpi->shared_windows.collective_free_unused();
   if(!mpi->shared_windows.isempty()) {

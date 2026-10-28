@@ -11,619 +11,251 @@ kernelspec:
   name: python3
 ---
 
-+++ {"id": "NudwCmJzZWxz"}
+# Si Ground State Energy and Charge Density
 
-# Si ground state energy and charge density
+In this example, we compute the ground state energy and the real-space charge density of Si in the primitive cell.
+The system is the one of {doc}`../../../tutorials/solids/03_Si_writing_H_and_wfn_coqui/03_Si_writing_H_and_wfn_coqui`,
+and we use its Quantum ESPRESSO and CoQuí input files, linked in `files/qe` and `files/coqui`.
 
-In this example, we will compute the ground state energy and charge density
-of solid Si in the conventional cell.
+<img src="files/Si_primitive.png" width="400"/>
 
-+++ {"id": "3XqxpjD8Q5dA"}
+Unlike for the energy, a Hamiltonian and trial wavefunction file are not enough for the density:
+we also need the Kohn-Sham orbitals to put it on a real-space grid, and they have to come from the same Quantum ESPRESSO run.
+Another run mixes degenerate bands differently, so its orbitals do not match the basis of the Hamiltonian.
+We therefore run Quantum ESPRESSO and CoQuí here again.
 
-![Si_conv_cell.png](image_01.png)
+Set `QE_BIN` to the directory holding `pw.x` and `pw2coqui.x`, and `COQUI_EXEC` and `AFQMC_EXEC` to the
+CoQuí and SAFIRE executables.
+All calculations run in a scratch directory `data`.
 
-+++ {"id": "wqDpVPxzZT62"}
+```{code-cell} ipython3
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 
-## External Software
+import xml.etree.ElementTree as ET
 
-In addition to SAFIRE and afqmctools, we will be using the following software packages:
-
-- [Quantum Espresso (QE)](https://www.quantum-espresso.org/) for density functional theory (DFT) calculations, and some integrals via its post-processing utilities
--  [CoQuí](https://github.com/AbInitioQHub/coqui) for generating the SAFIRE Hamiltonian and Trial wavefunction HDF5 files from the output of QE.
-- [pw2coqui.x](https://github.com/AbInitioQHub/coqui/tree/main/qe_converter) see the instructions there for adding this to your QE build.
-- [VESTA](https://jp-minerals.org/vesta/en/) for visualizing the final density.
-
-+++ {"id": "TGWpFn73aPAi"}
-
-## Setup
-
-First, we need an orthonormal basis to express the second quantized Hamiltonian in.
-We will run Quantum Espresso (QE) to generate a set of Kohn-Sham orbitals to use as a basis.
-We assume knowledge of the basic use of QE in this example, but we'll point out a few details that are relevant to the workflow here.
-All input files are provided in `1_dft_quantum_espresso`.
-
-> ⚠️ Important: you will need to install the pw2coqui.x converter in your QE build. See the above!
-
-We will perform the following calculations with QE:
-
-1. self-consistent DFT with a large k-point grid, but a minimal number of bands
-2. a one-shot DFT calculation starting from the converged result in step 1., but at the $\Gamma$-point and using a large number of bands.
-3. run the pw2coqui.x post-processing utility to generate data that we will need later.
-
-<div class="alert alert-block alert-info">
-  <b>Note:</b> CoQuí expects to find `[prefix].coqui.h5` in the QE output directory. Double check that the output path of the post-processing tools are all set to the same directory.
-</div>
-
-### Step 1 : self-consistent DFT
-
-To generate the Hamiltonian for SAFIRE, we need
-to set `force_symmorphic=.true.` in the `&system` input card.
-Run self-consistent DFT with the provided input file and pseudopotential.
-
-```bash
-$ pw.x -inp scf.inp > scf.out
+import h5py
+import matplotlib.pyplot as plt
+import numpy as np
+from safiretools import Results, Wavefunction, vis, write_jobfile
 ```
 
-where we have redirected output to scf.out.
-You should see a final energy of,
+## Hamiltonian, Trial Wavefunction, and Orbitals
 
-```
- highest occupied, lowest unoccupied level (ev):     6.3054    7.0035
+As in the tutorial, Quantum ESPRESSO computes 20 bands at the $\Gamma$ point and writes them to `OUT`,
+and CoQuí writes the Hamiltonian `hamil.h5` and the trial wavefunction `wfn.h5` in the basis of these bands.
+Their output goes to the `*.out` files.
 
-!    total energy              =     -62.96095502 Ry
-     estimated scf accuracy    <       0.00000058 Ry
-
-     The total energy is the sum of the following terms:
-     one-electron contribution =      19.02415456 Ry
-     hartree contribution      =       4.49885911 Ry
-     xc contribution           =     -19.30056639 Ry
-     ewald contribution        =     -67.18340230 Ry
+```{code-cell} ipython3
+!$QE_BIN/pw.x -inp ../files/qe/scf.in > scf.out
+!$QE_BIN/pw.x -inp ../files/qe/nscf.in > nscf.out
+!$QE_BIN/pw2coqui.x < ../files/qe/pw2coqui.in > pw2coqui.out
 ```
 
-### Step 2 : One-shot DFT
-
-The goal here is generate the orbitals we need to generate the second
-quantized Hamiltonian for AFQMC.
-**In general, AFQMC needs to be converged in the number of bands included in the basis**.
-Coquí will allow us to select a subset of bands.
-One possible strategy at this point is to include a relatively large number of bands here and we use Coquí to write a subset of them.
-This avoids re-running the one-shot DFT calculation at the cost of saving more data.
-
-**Run the one-shot QE calculation.**
-
-```bash
-$ pw.x -inp nscf.inp > nscf.out
+```{code-cell} ipython3
+!$COQUI_EXEC ../files/coqui/hamil.toml > hamil.out
+!$COQUI_EXEC ../files/coqui/wfn.toml > wfn.out
 ```
 
-You should see something like the following,
+## Charge Density from the One-Body Density Matrix
 
-```bash
-Band Structure Calculation
-     Davidson diagonalization with overlap
+SAFIRE measures the one-body density matrix in the basis of the Kohn-Sham orbitals $\phi_i(\mathbf{r})$,
+$\rho^\sigma_{ij} = \langle c^\dagger_{i\sigma} c_{j\sigma} \rangle$. The charge density is
 
-     Computing kpt #:     1  of     1
-     total cpu time spent up to now is        0.4 secs
+$$
+n(\mathbf{r}) = \sum_\sigma \sum_{ij} \phi^*_i(\mathbf{r})\, \rho^\sigma_{ij}\, \phi_j(\mathbf{r}).
+$$
 
-     ethr =  3.12E-09,  avg # of iterations = 49.0
-
-     total cpu time spent up to now is        0.4 secs
-
-     End of band structure calculation
-
-          k = 0.0000 0.0000 0.0000 (  1189 PWs)   bands (ev):
-
-    -5.6912  -1.5401  -1.5401  -1.5401  -1.5398  -1.5398  -1.5398   3.4173
-     3.4173   3.4173   3.4174   3.4174   3.4174   6.3051   6.3051   6.3051
-     7.0045   7.0045   7.0046   7.0047
-
-     occupation numbers
-     1.0000   1.0000   1.0000   1.0000   1.0000   1.0000   1.0000   1.0000
-     1.0000   1.0000   1.0000   1.0000   1.0000   1.0000   1.0000   1.0000
-     0.0000   0.0000   0.0000   0.0000
-
-     highest occupied, lowest unoccupied level (ev):     6.3051    7.0045
-
-     Writing all to output data dir OUT/pwscf.save/
-```
-
-**Note the location of the output data**; we will use the orbitals saved there when we compute the real-space charge density.
-
-+++ {"id": "_uliHCdtig7m"}
-
-### Step 3: QE post-processing utilities
-
-CoQuí reads some of the details of the pseudopotential from QE.
-We need to dump the relevant data to a file using the pw2coqui.x QE post-processing utility.
-As described above, you will need to install this utility into
-your QE build using the instructions found [here](https://github.com/AbInitioQHub/coqui/tree/main/qe_converter).
-See the provided input files for more.
-
-pw2coqui.inp
-
-```
-&input_pw2coqui
-  prefix = "pwscf"
-  outdir = "OUT"
-/
-```
-
-Run the following.
-
-```bash
-$ pw2coqui.x < pw2coqui.inp > pw2coqui.out
-```
-
-<div class="alert alert-block alert-info">
-  <b>Note:</b> Unlike many of the QE post-processing tools,
-   the pw2coqui.x converter does not support MPI.
-   Be sure to run the convert in serial as shown above!
-</div>
-
-If everything worked, you should see the following files in the "OUT" directory
-that should have been generated by QE.
-
-```bash
-$ ls OUT
-pwscf.coqui.h5 pwscf.save
-```
-
-**We're ready to move on to CoQuí.**
-
-+++ {"id": "qELxzaWcjjlh"}
-
-## Writing the second-quantized Hamiltonian and Trial wavefunction
-
-CoQuí is able to directly generate a Hamiltonian HDF5 file for SAFIRE using the data output by QE.
-Additionally, it can write a trial wavefunction based on the DFT solution from QE.
-**A sample CoQuí input file is provided**.
-
-```toml
-[mean_field.qe]
-name     = "mf"
-prefix   = "pwscf"
-outdir   = "../1_dft_quantum_espresso/OUT"
-nbnd     = 20
-
-[interaction.cholesky]
-name        = "eri"
-mean_field  = "mf"
-output      = "hamiltonian.h5"
-write_type  = "single"
-tol         = 1e-5
-
-[hamiltonian]
-mean_field  = "mf"
-output      = "hamiltonian.h5"
-add_wavefunction = "default"
-```
-
-The key details to note are:
-
-- In `[mean_field.qe]`, we need to set the `outdir` to the directory where both the QE `pwscf.xml` file is saved, and where `[prefix].coqui.h5` is.
-- Also in `[mean_field.qe]`, we can set the number of bands to use with `nbnd`. Of course, we can only use as many bands as we output in the one-shot DFT calculation previously.
-- In the `interaction` input block, we are using the "cholesky" decomposed form for the interaction and have set a tolerance of `tol = 1e-5`. We have set the `output` to a file called "hamiltonian.h5` to tell CoQuí to save the interaction there.
-- The `hamiltonian` block is used to write the one-body part of the Hamiltonian to HDF5. **We need to set this to the same file as the interaction.**
-- Finally, we can save a single Slater determinant wavefunction to the Hamiltonian setting the `add_wavefunction = "default"` parameter in the `hamiltonian` block. The Slater determinant is constructed by occupying the Kohn-Sham orbitals with the largest occupancy.
-
-Now, run Coquí.
-
-```bash
-$ /path/to/coqui --verbosity=2 --filenames hamil.toml &> hamil.out
-```
-
-You should see the following output in `hamil.out`.
-
-```
- ---------------------------------
-     ____ ___   ___  _   _ ___
-    / ___/ _ \ / _ \| | | |_ _|
-   | |  | | | | | | | | | || |
-   | |__| |_| | |_| | |_| || |
-    \____\___/ \__\_\\___/|___|
-  --------------------------------
- |  Correlated Quantum Interface  |
-  --------------------------------
-
-Input Parameters
-----------------
-
-[mean_field.qe]
-name = 'mf'
-nbnd = 20
-outdir = '../1_dft_quantum_espresso/OUT'
-prefix = 'pwscf'
-
-[interaction.cholesky]
-mean_field = 'mf'
-name = 'eri'
-output = 'hamiltonian.h5'
-tol = 1.0000000000000001e-05
-write_type = 'single'
-
-[hamiltonian]
-add_wavefunction = 'default'
-mean_field = 'mf'
-output = 'hamiltonian.h5'
-
--- End of Input Parameters --
-
-BZ symm info:  
-  - Number of Qpts in IBZ: 1
-  - Number of symmetries used with Qpts: 1
-  - Number of time reversal kpoint pairs: 0
-
- Generating truncated G-space grid:
-   - size: 1189
-
-  Quantum ESPRESSO reader
-  -----------------------
-    - nspin: 1
-    - npol: 1
-    - nbnd: 20
-    - Monkhorst-Pack mesh = (1,1,1)
-    - nkpts: 1
-    - nkpts_ibz: 1
-    - nelec: 32.0
-    - ecutrho: 32.0 a.u.
-    - fft mesh: (27,27,27)
-    - wfc ecut: 7.8710084309817 a.u.
-    - wfc ngm: 1189
-    - wfc fft mesh: (13,13,13)
-
-
- Generating truncated G-space grid:
-   - size: 9315
-
-*******************************************
- Electron-electron interaction:
-*******************************************
- - type: coulomb
- - ndim: 3
- - cutoff:1e-08
- - screen_type:none
-
-*******************************
- ERI::cholesky:
-*******************************
-  -pw cutoff (Ha): 32.0
-  -size of PW basis: 9315
-  -cholesky truncation: 1e-05
-  -number of k-point pools: 1
-  -number of processors per pools: 64
-  -default block size: 32
-
-
-  iq:0  nchol:153
-Writing distributed Vq at iq = 0 to .//hamiltonian.h5
-*******************************
- Cholesky ERI Reader:
-*******************************
-    - Np max  = 153
-    - accuracy = 1e-05
-    - read mode = each_q
-    - eri storage: outcore
-    - ERI dir = ./
-    - ERI output = hamiltonian.h5
-
-*******************************
- Second-quantized 1-Body Hamiltonian  
-*******************************
-output: hamiltonian.h5
-format: qmc
-type: bare
-add_wfn: default
-************************************************
- Initializing External Potential:
-************************************************
-  input type: qe::pp/qe::pw2bgw
-  type: NCPP
-  # of species: 1
-  # of atoms: 8
-  max # of projectors per atom: 8
-  # of projectors: 64
-
- Memory usage:
-   Overlaps:                      1.9073486328125e-05 MB
-   Dion:                          9.5367431640625e-07 MB
-************************************************
-
-*******************************************
- Electron-electron interaction:
-*******************************************
- - type: coulomb
- - ndim: 3
- - cutoff:1e-08
- - screen_type:none
-
-*************************************************
-               Adding  Wavefunction              
-*************************************************
- Adding default wavefunction (assuming MO basis)
- Total number of electrons in waveunction: nup:16, ndown:16:
- Number of occupied states per kpoint:
- ik:0 nocc:16
-*************************************************
-```
-
-The HDF5 file, "hamiltonian.h5", that CoQuí just generated can be
-directly read in SAFIRE to get the Hamiltonian and the trial wavefunction.
-
-+++ {"id": "-QQPlGsMnzeJ"}
+The density matrix does not commute with the Hamiltonian, so we use the back-propagated estimator
+(see {doc}`../../../tutorials/solids/04_computing_observables/04_computing_observables`).
 
 ## Run AFQMC
 
-Next, we'll run SAFIRE using the Hamiltonian and trial wavefunction that we wrote using CoQuí.
-We've provided an input file in `3_afqmc` for this example.
-To learn more about the input file, see {doc}`../../../tutorials/solids/02_understanding_the_input_file/02_understanding_the_input_file`.
-
-The input file assumes that you ran CoQuí within the `2_hamiltonian_coqui` directory.
-If you ran it elsewhere, you will need to update the path to the HDF5 file
-in `wavefunction` accordingly
-
-A key part of the input file is the "estimator" block for the
-back-propagation algorithm.
-
-```json
-"estimator": {
-    "name":"back_propagation",
-    "path_restoration":true,
-    "extra_path_restoration":true,
-    "bp_walker_ortho_interval":10,
-    "measure_interval_multiplier" : [20,40],
-    "equil_multiplier":40,
-    "onerdm" : {
-        "name":"onerdm"
-    }
-},
-```
-
-The "name" parameter tells SAFIRE what kind of estimator to use (`"back_propagation"` in this case).
-The "measure_interval_multiplier" parameter indirectly determines the number of back propagation steps to use.
-The actual number of back propagation steps is determined as $N^{step}_a = \text{measure\_interval\_multiplier}[a] \times \text{population\_control\_interval} $
-
-To check for convergence in the number of back propagation steps, SAFIRE allows multiple "averages" to be set up which each use a different number of steps.
-This feature is enabled by provided a list of integers for measure_interval_multiplier instead of a single integer.
-The number of steps that will be used in each average is given by,
-$$
-N^{step}_a = \text{measure\_interval\_multiplier}[a] \times \text{population\_control\_interval}
-$$
-So, for the example here, if the population control interval is 10 (as set in the main execute block),
-
-$$
-N^{step}_0= 20 * 10 = 200
-$$
-
-and
-
-$$
-N^{step}_1 = 40 * 10 = 400.
-$$
-
-Now we can run SAFIRE using this input file.
-We provided a sample Slurm script.
-In practice, the slurm details will depend on your specific cluster.
-
-```bash
-#!/bin/bash -l
-#SBATCH -J afqmc
-#! Number of MPI ranks (= tasks for Slurm)
-#SBATCH --ntasks=192
-#SBATCH --time=2:00:00
-
-# set up your enviornment as needed here
-#
-# source /path/to/env.sh
-
-# Launch MPI code...
-date
-srun --cpu-bind=cores /path/to/safire afqmc.json &> afqmc.out
-date
-```
-
-Or, you can run locally with,
-
-```bash
-$ mpirun -np [number of processes] /path/to/safire afqmc.json &> afqmc.out &
-```
-
-where `[number of processes]` depends on how many tasks can be run on your local machine.
-
-We've included some of the output below.
-You should see similar numbers in your output.
-
-```
-****************************************************
-               Initializing Hamiltonian
-
-****************************************************
-
- Hamiltonian Factory input:
-system: sysid_2
-filename: ../2_hamiltonian_coqui/hamiltonian.h5
-name: hamiltonian_unique_id_5
-
- Initializing Hamiltonian from file: ../2_hamiltonian_coqui/hamiltonian.h5
- Found hamiltonian with format: coqui
-
- - Nuclear coulomb energy: (0.000000, 0.000000)
- - Frozen Core energy: (0.000000, 0.000000)
- - Electron self-interaction energy: (-8.846596, 0.000000)
-
-KPFactorizedHamiltonian input:
-name: hamiltonian_unique_id_5
-filename: ../2_hamiltonian_coqui/hamiltonian.h5
-batched: false
-out_of_core: false
-cutoff_cholesky: 9.9999999999999995e-07
-memory: 4096
-nsampleQ: -1
-
-
-****************************************************
-               Initializing Wavefunction
-
-****************************************************
- Wavefunction type: NOMSD
- - Number of determinants in trial wavefunction: 1
- - Coefficient of first determinant: (1.000000, 0.000000)
- getHamOps from scratch
- nkpts: 1
-
-NOMSD input:
-nbatch: 0
-number_of_references: -1
-rediag: false
-
-
-
-****************************************************
-               Initializing Propagator
-
-****************************************************
-
-BasePropagator input:
-
-nbatch: 0
-nbatch_qr: 0
-i: -1
-a: -1
-vbias_bound: 50
-external_field_scale: 1
-upper_cutoff_scale: 10
-lower_cutoff_scale: 1
-apply_constrain: true
-importance_sampling: true
-substractMF: true
-hybrid: true
-printP1eigval: false
-free_projection: false
-denseP1: false
-external_field:
-excited:
-debug_verbosity: false
-
-
-
-
- --------------- Constructing Propagator ------------------
-
- Using sequential propagation.
- vbias_bound: 50
- Using sparse 1-body propagator
- Using hybrid method to calculate the weights during the propagation.
- Local Energy of starting determinant
-  - Total energy    : (-1.191595, 0.000000)
-  - One-body energy : (0.800315, 0.000000)
-  - Coulomb energy  : (2.632165, 0.000000)
-  - Exchange energy : (-4.624075, 0.000000)
-
-```
-
-When SAFIRE has finished running, you should see the `qmc.s000.scalar.dat`, and `qmc.s000.stat.h5` output data files.
-
-```
-$ ls 3_afqmc
-afqmc.json  afqmc.out  qmc.s000.scalar.dat  qmc.s000.stat.h5
-```
-
-+++ {"id": "KLWinWxMscWQ"}
-
-## Analyze
-
-### Ground state energy
-
-`afqmctools` includes a command line tool for analyzing the scalar data output.
-Fun the following command.
-If you are running locally, the `-t` option will cause a plot of the scalar data samples versus total projection time to be generated as seen below.
-If you are running remotely, you can add the `--savefig [filename].png` option to save the figure.
-Note, you must still use `-t` to generate the plot.
+The energy estimator is on by default.
+The `backprop` block measures the back-propagated density matrix at each back-propagation length in `bp_lengths`, given in steps.
+A new window starts every `max(bp_lengths)` steps after equilibration, so each length gives one sample per window.
+Comparing the lengths tells us whether the density is converged in the back-propagation length.
 
 ```{code-cell} ipython3
-:id: pmR1rRGJAenu
-
-!scalar_stats 3_afqmc/qmc.s000.scalar.dat -s time -t -e 5.0 --savefig 3_afqmc/energy_vs_beta.png
+dt = 0.01
+bp_lengths = [100, 200]
+write_jobfile("afqmc.json", {
+    "seed": 7,
+    "execute": {
+        "wavefunction": {"filename": "wfn.h5"},
+        "hamiltonian": {"filename": "hamil.h5"},
+        "timestep": dt,
+        "steps": 10000,
+        "equilibration_steps": 1000,
+        "measure_interval": 10,
+        "population_control_interval": 10,
+        "walker_ortho_interval": 10,
+        "num_walkers": 800,
+        "estimators": {
+            "backprop": {"propagation_steps": bp_lengths, "onerdm": {}},
+        },
+    },
+})
 ```
 
-+++ {"id": "tq9vNkeZDhw2"}
+```{code-cell} ipython3
+:tags: [scroll-output]
 
-Your plot should look similar to the following.
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
+```
 
-+++ {"id": "NYRwlRYYEh79"}
+## Ground State Energy
 
-### Charge Density
+```{code-cell} ipython3
+results = Results("afqmc.results.h5")
 
-`afqmctools` provides a function for generating the real-space charge density
-given the one-body reduced density matrix (1rdm), and its stochastic uncertainty from AFQMC, as well as the orbitals from Quantum Espresso.
-It will output the resulting 1rdm in a standard *.cube file.
-The *.cube file can then be opened in one of several
-software packages.
+energy, energy_err = results.average("Energy")
+print(f"E = {energy.real:.4f} ± {energy_err.real:.4f} Ha")
 
-The provided script `analysis.py` demonstrates how to call the `charge_density()` function.
+vis.plot_timeseries(results)
+plt.show()
+```
 
-```python
-from pathlib import Path
+This is the system of {doc}`../../../tutorials/solids/01_hello_safire/01_hello_safire`,
+so the energy should agree with `Energy = -0.7299 ± 0.0017` there within the stochastic uncertainty.
 
-from afqmctools.analysis.rdm import average_afqmc_rdm
-from afqmctools.observables.rhonk import charge_density
+## Charge Density
 
-qe_output = Path("./1_dft_quantum_espresso/OUT")
-afqmc_path = Path("./3_afqmc")
+We evaluate the orbitals on the real-space grid of Quantum ESPRESSO.
+`pwscf.xml` holds the lattice vectors, the atomic positions and the grid,
+and `pwscf.save/wfc1.hdf5` the plane-wave coefficients $c_i(\mathbf{G})$ of the bands at the only k-point, $\Gamma$.
+An inverse FFT gives $\phi_i(\mathbf{r}) = \Omega^{-1/2} \sum_\mathbf{G} c_i(\mathbf{G})\, e^{i\mathbf{G}\cdot\mathbf{r}}$ with the cell volume $\Omega$,
+so the density comes out in electrons per Bohr$^3$.
 
-mean_rdms,err_rdms = average_afqmc_rdm(rdm_file=afqmc_path / "qmc.s000.stat.h5")
+```{code-cell} ipython3
+def read_qe_orbitals(outdir, prefix="pwscf"):
+    """Lattice vectors and atomic positions (Bohr), and the Gamma-point orbitals on the FFT grid."""
+    xml = ET.parse(f"{outdir}/{prefix}.xml").getroot()
+    structure = xml.find(".//atomic_structure")
+    cell = np.array([structure.find(f"cell/a{i}").text.split() for i in (1, 2, 3)], dtype=float)
+    positions = np.array([atom.text.split() for atom in structure.iter("atom")], dtype=float)
+    mesh = np.array([xml.find(".//fft_grid").get(f"nr{i}") for i in (1, 2, 3)], dtype=int)
 
-num_avgs = mean_rdms.shape[0]
-for i in range(num_avgs):
-    charge_density(
-        mean_rdms[i],
-        err_rdms[i],
-        orbital_source=qe_output,
-        rho_outfile=f"rho_avg{i}_qe_orbs.cube"
+    with h5py.File(f"{outdir}/{prefix}.save/wfc1.hdf5") as f:
+        m = f["MillerIndices"][...] % mesh
+        evc = f["evc"][...].view(complex)  # plane-wave coefficients, (bands, G)
+    coeffs = np.zeros((len(evc), *mesh), dtype=complex)
+    coeffs[:, m[:, 0], m[:, 1], m[:, 2]] = evc
+    phi = np.fft.ifftn(coeffs, axes=(1, 2, 3)) * mesh.prod() / np.sqrt(abs(np.linalg.det(cell)))
+    return cell, positions, phi
+
+
+def charge_density(rdm, phi):
+    """Charge density on the grid of `phi`, from the density matrix."""
+    rho = rdm.sum(axis=0) # sum over spin (assumes collinear)
+    # n(r) = sum_i phi_i^*(r) (rho phi)_i(r)
+    n = np.einsum("i...,i...->...", phi.conj(), np.tensordot(rho, phi, axes=1)).real
+    return n
+```
+
+The density is linear in the density matrix, so `Results.evaluate` gives its mean and a jackknife error
+directly from the samples at each back-propagation length.
+For reference, the DFT density follows from the density matrix of the trial determinant $\Phi$,
+$\rho^\sigma_{ij} = \sum_n \Phi^{\sigma*}_{in} \Phi^\sigma_{jn}$, which has no uncertainty.
+
+```{code-cell} ipython3
+cell, positions, phi = read_qe_orbitals("OUT")
+
+alpha, beta = Wavefunction.from_hdf5("wfn.h5").determinant(0)
+dft_rdm = np.array([alpha.conj() @ alpha.T, beta.conj() @ beta.T])
+n_dft = charge_density(dft_rdm, phi)
+
+n_bp, n_bp_err = {}, {}
+for L in bp_lengths:
+    n_bp[L], n_bp_err[L] = results.evaluate(
+        lambda rdm: charge_density(rdm, phi), [f"BackPropEstimator/Steps={L}/OneRDM"]
     )
+    print(f"BP {L}: max |n - n_DFT| = {abs(n_bp[L] - n_dft).max():.2e}, max error {n_bp_err[L].max():.2e}")
 ```
 
-+++ {"id": "UPJFQtt0FlF-"}
+We plot the densities in the $(110)$ plane, which contains both atoms of the cell and the Si-Si bond between them.
+On the grid along the lattice vectors $\mathbf{a}_1, \mathbf{a}_2, \mathbf{a}_3$,
+it is the slice of grid points with equal first and second index.
 
-Finally, we can open the charge density for visualization.
-Here we used Vesta to make the following isosurface plot (using an isosurface value of 0.0023)
+```{code-cell} ipython3
+def plane_110(n, cell):
+    """`n` in the (110) plane through the atoms, over 2x2 cells."""
+    n1, _, n3 = n.shape
+    v = cell / np.array(n.shape)[:, None]  # grid steps along the lattice vectors
+    i, k = np.meshgrid(np.arange(2 * n1 + 1), np.arange(2 * n3 + 1), indexing="ij")
+    r = i[..., None] * (v[0] + v[1]) + k[..., None] * v[2]
+    # orthonormal axes in the plane: along a3 = [-110], and the rest of a1 + a2 = [001]
+    e1 = v[2] / np.linalg.norm(v[2])
+    e2 = v[0] + v[1] - (v[0] + v[1]) @ e1 * e1
+    e2 /= np.linalg.norm(e2)
+    return r @ e1, r @ e2, n[i % n1, i % n1, k % n3]
 
-+++ {"id": "zeBur8RnsewA"}
 
-![image_02.png](image_02.png)
+x, y, dft_plane = plane_110(n_dft, cell)
+dn = {L: plane_110(n_bp[L] - n_dft, cell)[2] for L in bp_lengths}
+dn_max = max(abs(d).max() for d in dn.values())
 
-+++ {"id": "msihLT4tchs0"}
+fig, axes = plt.subplots(1, 1 + len(bp_lengths), figsize=(4.5 * (1 + len(bp_lengths)), 4), sharey=True)
+im = axes[0].pcolormesh(x, y, dft_plane, shading="gouraud")
+fig.colorbar(im, ax=axes[0])
+axes[0].set_title("DFT")
+for ax, L in zip(axes[1:], bp_lengths):
+    im = ax.pcolormesh(x, y, dn[L], shading="gouraud", cmap="RdBu_r", vmin=-dn_max, vmax=dn_max)
+    fig.colorbar(im, ax=ax)
+    ax.set_title(rf"AFQMC $-$ DFT, $\tau_\mathrm{{BP}} = {L * dt:g}$ Ha$^{{-1}}$")
+for ax in axes:
+    ax.set_aspect("equal")
+    ax.set_xlabel(r"$[\bar{1}10]$ (Bohr)")
+axes[0].set_ylabel("$[001]$ (Bohr)")
+fig.tight_layout()
+```
+
+The DFT density piles up on the bonds, and the difference shows how correlation redistributes the charge.
+It should agree between the back-propagation lengths within the error; otherwise, increase `bp_lengths`.
 
 ## Removing Systematic Errors
 
-There are several systematic errors, each controlled by a specific parameter, in AFQMC that we will need to remove for high-quality results.
+There are several systematic errors, each controlled by a specific parameter, that we will need to remove for high-quality results.
 
-They are:
-
-1. the trotter error which can be removed by either converging in the imaginary time step size OR by extrapolation to $\tau = 0$ (set in the SAFIRE input file)
-2. the cholesky error which is controlled by the cholesky decomposition tolerance (set in the CoQuí input file)
-3. the basis set incompleteness error which is controlled by the number of bands included in the calculation (set in the CoQuí input file, but limited by the QE nscf calculation)
+1. the Trotter error, which is removed by converging in the `timestep`, or by extrapolating to zero timestep
+2. the Cholesky error, controlled by the tolerance `tol` in `files/coqui/hamil.toml`
+3. the basis set incompleteness error, controlled by the number of bands `nbnd` in the CoQuí inputs,
+   which is limited by the number of bands of the one-shot DFT calculation in `files/qe/nscf.in`
+4. the finite-size error, controlled by the k-point mesh of the one-shot DFT calculation.
+   Here we used only the $\Gamma$ point of the primitive cell, which is far from converged.
 
 These errors are formally interdependent; however, good values for each parameter can typically be found independently and used together in a production run.
 
-+++ {"id": "Fm5vwrfIodNf"}
+## Interacting with Third-Party Software
 
-### Converging in the basis set size
+To plot the density with third-party software such as [VESTA](https://jp-minerals.org/vesta/en/), we can write it to a Gaussian cube file.
+The file lists the atoms with their atomic numbers, 14 for Si, and the grid steps along the lattice vectors,
+followed by the values with the last grid index running fastest.
 
-Accurately capturing electron correlation effects requires a large basis.
-Here, we are working the basis of Kohn-Sham bands.
-We will now converge the AFQMC ground state energy, and the charge density in the number of bands used to form the basis,$N_{bands}$.
-We have already seen how to perform each step individually above;
-We will simply need to run AFQMC for a few choices of $N_{bands}$.
+```{code-cell} ipython3
+def write_cube(filename, data, cell, positions, numbers):
+    """Write `data` on the grid spanned by the lattice vectors `cell` to a Gaussian cube file, all in Bohr."""
+    with open(filename, "w") as f:
+        f.write("Gaussian cube file\nwritten by write_cube\n")
+        f.write(f"{len(numbers):5d}" + 3 * f"{0:12.6f}" + "\n")  # number of atoms, origin
+        for n, a in zip(data.shape, cell):
+            f.write(f"{n:5d}" + "".join(f"{x:12.6f}" for x in a / n) + "\n")  # grid points, step vector
+        for Z, r in zip(numbers, positions):
+            f.write(f"{Z:5d}{Z:12.6f}" + "".join(f"{x:12.6f}" for x in r) + "\n")
+        for row in data.reshape(-1, data.shape[2]):
+            for start in range(0, len(row), 6):  # at most 6 values per line
+                f.write("".join(f"{x:14.6e}" for x in row[start:start + 6]) + "\n")
 
-As $E_\mathrm{AFQMC}$ and $\rho_\mathrm{AFQMC}(\vec{r})$ begin to converge,
-each additional band will individually make only a small contribution.
-It can be useful, then, to choose a logarithmic set of $N_{bands}$ to actually run AFQMC for.
-For example,
 
-```python
->> nbands_log = [ 20*(2**p) for p in range(6) ]
->>> nbands_log
-[20, 40, 80, 160, 320, 640]
+numbers = [14] * len(positions)
+write_cube("rho_dft.cube", n_dft, cell, positions, numbers)
+for L in bp_lengths:
+    write_cube(f"rho_bp{L}.cube", n_bp[L], cell, positions, numbers)
+    write_cube(f"rho_bp{L}_err.cube", n_bp_err[L], cell, positions, numbers)
 ```
 
-would allow you to see large changes between each successive run.
-More points can be added in between these if needed.
+For example, this isosurface plot of the charge density of Si was made with VESTA from a calculation in the conventional cell,
+with an isosurface value of 0.0023 electrons per grid point, about 0.042 electrons per Bohr$^3$ in the units of `write_cube`.
+
+![](files/Si_density_vesta.png)

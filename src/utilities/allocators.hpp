@@ -111,7 +111,7 @@ private:
    * declined until the next resize(), which leaves the caller to serve them.
    */
   void release_pool() {
-    if(!idle()) { throw std::bad_alloc{}; }
+    if(!idle()) { throw std::runtime_error{"tried to release the pool of a dynamic bucket allocator when it was not empty"}; }
     if(pool_.ptr != nullptr) { Auxiliary::deallocate(pool_); }
     pool_ = {};
     avail_.clear();

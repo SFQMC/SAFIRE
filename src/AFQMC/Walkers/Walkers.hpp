@@ -110,7 +110,7 @@ private:
   auto getw_(int P) const { return _data + indx[P]; }
 
   void check_allowed_property(walker_data P) const {
-    utils::check(P==WEIGHT or P==PHASE or P==PHASE1 or P==PHASE2 or P==THETA or 
+    utils::check(P==WEIGHT or P==PHASE or P==THETA or 
         P==PSEUDO_ELOC_ or P==E1_ or P==EXX_ or P==EJ_ or P==OVLP or P==LOGSCL_UP
         or P==LOGSCL_DN or P==IS_UNITARY, "Invalid property.");
   }

@@ -34,7 +34,7 @@ public:
       : fileName(params.filename), shift_1body(params.shift_1body)
   {}
 
-  HamiltonianTypes getHamType() const { return ModelHamiltonian; }
+  HamiltonianType getHamType() const { return HamiltonianType::model_hamiltonian; }
 
   template<MEMORY_SPACE MEM>
   HamiltonianOperations<MEM> getHamiltonianOperations(WALKER_TYPES type,
@@ -51,7 +51,7 @@ protected:
       std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> mpi,
       WALKER_TYPES type, math::sparse::csr_matrix<ValueType, HOST_MEMORY, int, int>& hij,
       math::sparse::csr_matrix<ValueType, HOST_MEMORY, int, int>& U,
-      math::sparse::csr_matrix<ValueType, HOST_MEMORY, int, int>& J, ComplexType E0);
+      math::sparse::csr_matrix<ValueType, HOST_MEMORY, int, int>& J, RealType E0);
 
   template<typename ValueType>
   nda::array<long,1> find_occupied_pairs(WALKER_TYPES type, 

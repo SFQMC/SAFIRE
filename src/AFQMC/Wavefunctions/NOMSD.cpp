@@ -128,6 +128,30 @@ void NOMSD<MEM,devPsiT>::getReferences(memory::buffered_array<MEM,ComplexType,3>
   }
 }
 
+template<MEMORY_SPACE MEM, class devPsiT>
+WalkerSetInitialGuess NOMSD<MEM,devPsiT>::initial_guess() const {
+  long idet = 0;
+  for(long i = 1; i < ci.size(); ++i) {
+    if(std::abs(ci(i)) > std::abs(ci(idet))) {
+      idet = i;
+    }
+  }
+
+  int const nspin = (walker_type == COLLINEAR ? 2 : 1);
+  WalkerSetInitialGuess::slater_matrices M;
+  M.reserve(nspin);
+  for(int s = 0; s < nspin; ++s) {
+    // the orbitals are stored as the conjugate transpose of the Slater matrix
+    if constexpr (math::sparse::CSRMatrix<devPsiT>) {
+      M.emplace_back(nda::to_host(math::sparse::to_array<'H'>(OrbMats(idet,s)())));
+    } else {
+      auto PsiT = nda::to_host(OrbMats(idet,s)());
+      M.emplace_back(nda::dagger(PsiT));
+    }
+  }
+  return {.walker_type = walker_type, .payload = std::move(M)};
+}
+
 /*
  * Calculates the local energy and overlaps of all the walkers in the set and 
  * returns them in the appropriate data structures
@@ -151,7 +175,7 @@ void NOMSD<MEM,devPsiT>::Energy(WalkerSet<MEM> const& wset,
   memory::buffered_array<MEM,ComplexType,2> G(nw,nel*npol*NMO); 
 
   if(ndet == 1) {
-    DensityMatrix(wset, OrbMats(0,all), G, Ov);
+    with_trial(0, [&](auto&& Ref) { DensityMatrix(wset, Ref, G, Ov); });
     HamOp.energy(E, G(), 0);
     ComplexType val = std::log(std::abs(ci(0)) < 1e-12 ? ComplexType(1e-12) : std::conj(ci(0)));
     memory::buffered_array<MEM,ComplexType,1> buff(nw,val);
@@ -164,7 +188,7 @@ void NOMSD<MEM,devPsiT>::Energy(WalkerSet<MEM> const& wset,
     eloc() = ComplexType(0.0);
 
     for (int id = 0; id < ndet; id++) {
-      DensityMatrix(wset, OrbMats(id,all), G, ovlp(id,all)); 
+      with_trial(id, [&](auto&& Ref) { DensityMatrix(wset, Ref, G, ovlp(id,all)); });
       HamOp.energy(eloc(id,all,all), G(), id);
     }
 
@@ -207,12 +231,13 @@ void NOMSD<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset,
   const int nc    = ( compact ? nel : nspin*npol*NMO );
   auto expected_shape = std::to_array<long>({nw, nc * npol * NMO});
   utils::check(G.shape() == expected_shape, "Size mismatch: given {} != {} expected", G.shape(), expected_shape);
-  G() = ComplexType(0.0);
   Ov() = ComplexType(0.0);
 
   if(ndet == 1) {
-    DensityMatrix(wset, OrbMats(0,all), G, Ov, compact);     
+    with_trial(0, [&](auto&& Ref) { DensityMatrix(wset, Ref, G, Ov, compact); });
   } else {
+    // the determinants accumulate into G
+    G() = 0.0;
     // use the walker's current log_overlap as reference
     memory::buffered_array<MEM,ComplexType,1> log_m(nw); 
     wset.getProperty(OVLP, log_m);
@@ -221,7 +246,7 @@ void NOMSD<MEM,devPsiT>::MixedDensityMatrix(WalkerSet<MEM> const& wset,
 
     for(int d=0; d<ndet; ++d) {
 
-      DensityMatrix(wset, OrbMats(d,all), Gt, Ot, compact);     
+      with_trial(d, [&](auto&& Ref) { DensityMatrix(wset, Ref, Gt, Ot, compact); });
       // G += conj(ci) * exp(Ot-log_m) * Gt
       // Ov += conj(ci) * exp(Ot-log_m)
       // doing in host for now!!!
@@ -264,11 +289,11 @@ void NOMSD<MEM,devPsiT>::Log_Overlap(WalkerSet<MEM> const& wset,
   Ov() = ComplexType(0.0);
 
   if(ndet == 1) {
-    det_ops::Log_Overlap(OrbMats(0,0)(),wset.SlaterMatrices(Alpha),Ov);
+    with_trial(0, [&](auto&& Ref) { det_ops::Log_Overlap(Ref(0)(),wset.SlaterMatrices(Alpha),Ov); });
     if(walker_type == CLOSED) {
       nda::tensor::scale(ComplexType(2.0),Ov);
     } else if (walker_type == COLLINEAR)  {
-      det_ops::Log_Overlap(OrbMats(0,1)(),wset.SlaterMatrices(Beta),Ov);
+      with_trial(0, [&](auto&& Ref) { det_ops::Log_Overlap(Ref(1)(),wset.SlaterMatrices(Beta),Ov); });
     }
     ComplexType val = std::log(std::abs(ci(0)) < 1e-12 ? 1e-12 : std::conj(ci(0)));
     memory::buffered_array<MEM,ComplexType,1> buff(nw,val);
@@ -278,11 +303,11 @@ void NOMSD<MEM,devPsiT>::Log_Overlap(WalkerSet<MEM> const& wset,
     memory::buffered_array<MEM,ComplexType,2> log_ovlps(ndet,nw);
     log_ovlps() = ComplexType(0.0);
     for(int d=0; d<ndet; ++d) {
-      det_ops::Log_Overlap(OrbMats(d,0)(),wset.SlaterMatrices(Alpha),log_ovlps(d,all));
+      with_trial(d, [&](auto&& Ref) { det_ops::Log_Overlap(Ref(0)(),wset.SlaterMatrices(Alpha),log_ovlps(d,all)); });
       if(walker_type == CLOSED) {
         nda::tensor::scale(ComplexType(2.0),log_ovlps(d,all));
       } else if (walker_type == COLLINEAR)  {
-        det_ops::Log_Overlap(OrbMats(d,1)(),wset.SlaterMatrices(Beta),log_ovlps(d,all));
+        with_trial(d, [&](auto&& Ref) { det_ops::Log_Overlap(Ref(1)(),wset.SlaterMatrices(Beta),log_ovlps(d,all)); });
       }
       ComplexType val( std::log( (std::abs(ci(d)) < 1e-12 ? ComplexType(1e-12) : std::conj(ci(d)) ) ) );
       memory::buffered_array<MEM,ComplexType,1> buff(nw,val);
@@ -314,7 +339,6 @@ memory::const_shared_array<HOST_MEMORY,ComplexType,3> NOMSD<MEM,devPsiT>::G_MF()
   using nda::range;
   auto all = range::all;
 
-  int nel   = (walker_type==COLLINEAR ? nup+ndown : nup);
   int nspin = (walker_type==COLLINEAR ? 2 : 1);
   int npol  = (walker_type==NONCOLLINEAR ? 2 : 1);
   int ndet  = ci.size();
@@ -359,10 +383,10 @@ memory::const_shared_array<HOST_MEMORY,ComplexType,3> NOMSD<MEM,devPsiT>::G_MF()
     { // control buffer lifetime
       memory::buffered_array<MEM,ComplexType,1> Ov(1);
       memory::buffered_array<MEM,ComplexType,2> G(1,nspin*npol*NMO*npol*NMO);
-      auto G3d = nda::reshape(G,std::array<long,3>{1,nspin*npol*NMO,npol*NMO});
+      auto G4d = nda::reshape(G,std::array<long,4>{1,nspin,npol*NMO,npol*NMO});
       memory::buffered_array<MEM,ComplexType,3> PsiT(1,npol*NMO,nup);
       memory::buffered_array<MEM,ComplexType,3> PsiTB;
-      if( walker_type == COLLINEAR ) 
+      if( walker_type == COLLINEAR )
         PsiTB.resize(1,npol*NMO,ndown);
       auto Ov_h = nda::to_host(Ov);
 
@@ -370,24 +394,24 @@ memory::const_shared_array<HOST_MEMORY,ComplexType,3> NOMSD<MEM,devPsiT>::G_MF()
         for(int q=p; q<ndet; ++q, ++pq) {
 
           if( pq < n0 ) continue;
-          if( pq >= n1 ) break; 
+          if( pq >= n1 ) break;
           if( last_p != p ) {
             last_p = p;
             PsiT(0,all,all) = math::sparse::to_array<'H'>(OrbMats(p,0)());
-            if( walker_type == COLLINEAR ) 
+            if( walker_type == COLLINEAR )
               PsiTB(0,all,all) = math::sparse::to_array<'H'>(OrbMats(p,1)());
           }
 
-          Ov() = ComplexType(0.0);
-          G() = ComplexType(0.0);
-          det_ops::MixedDensityMatrix(OrbMats(q,0)(),PsiT,G3d(all,nda::range(nup),all),Ov,false);
-          if( walker_type == COLLINEAR ) 
-            det_ops::MixedDensityMatrix(OrbMats(q,1)(),PsiTB,G3d(all,nda::range(nup,nel),all),Ov,false);
+          Ov() = 0.0;
+          G() = 0.0;
+          det_ops::MixedDensityMatrix(OrbMats(q,0)(),PsiT,G4d(all,0,all,all),Ov,false);
+          if( walker_type == COLLINEAR )
+            det_ops::MixedDensityMatrix(OrbMats(q,1)(),PsiTB,G4d(all,1,all,all),Ov,false);
           Ov_h() = nda::to_host(Ov);
           if( std::abs(Ov_h(0)) == ComplexType(0.0) and not found ) {
             found = true;
             app_warning(" WARNING: Found orthogonal determinants in trial wave function of NOMSD.");
-            app_warning("          The mean-field substraction potential is potentially wrong. !");
+            app_warning("          The mean-field subtraction potential is potentially wrong!");
           }
           RealType scl = std::real(std::conj(ci(q)) * ci(p) * std::exp(Ov_h(0))); 
           Osum += scl; 
@@ -479,7 +503,7 @@ void NOMSD<MEM,devPsiT>::vMF(memory::array_view<MEM,ComplexType,1> v, double dt)
           if( std::abs(Ov_h(0)) == ComplexType(0.0) and not found ) {
             found = true;
             app_warning(" WARNING: Found orthogonal determinants in trial wave function of NOMSD.");
-            app_warning("          The mean-field substraction potential is potentially wrong. !");
+            app_warning("          The mean-field subtraction potential is potentially wrong!");
           }
           RealType scl = std::real(std::conj(ci(q)) * ci(p) * std::exp(Ov_h(0))); 
           Osum += scl; 

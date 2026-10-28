@@ -1,6 +1,6 @@
 .. _lattice_model_overview:
 
-SAFIRE for lattice models
+SAFIRE for Lattice Models
 ==========================
 
 .. image:: /images/shared/00_top_level/lattice_model.png
@@ -8,8 +8,8 @@ SAFIRE for lattice models
 
 |
 
-Some preliminaries
-==================
+Some Preliminaries
+------------------
 
 SAFIRE can handle model Hamiltonians of the form
 
@@ -25,9 +25,9 @@ where
 
 .. math::
 
-   \hat{H}_U =  \sum_{\mu} U_i \hat{n}_{\mu\uparrow} \hat{n}_{\mu\downarrow}
-   + \sum_{\mu<\nu} U_{\mu\nu}^1 (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\downarrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\uparrow} )
-   + \sum_{\mu<\nu} U_{\mu\nu}^2 (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\uparrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\downarrow} ),
+   \hat{H}_U =  \sum_{\mu} U_\mu \hat{n}_{\mu\uparrow} \hat{n}_{\mu\downarrow}
+   + \sum_{\mu<\nu} U_{\mu\nu}^{(1)} (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\downarrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\uparrow} )
+   + \sum_{\mu<\nu} U_{\mu\nu}^{(2)} (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\uparrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\downarrow} ),
 
 and,
 
@@ -45,49 +45,32 @@ This is known as the Hubbard-Kanamori Hamiltonian.
 Many standard model Hamiltonians can be written in this language including the standard Hubbard model,
 extended Hubbard with nearest-neighbor :math:`V`, etc.
 SAFIRE is agnostic to the details of the compound indices.
-It simply accepts Hamiltonian "components" which are interpreted as above.
+It simply accepts Hamiltonian components which are interpreted as above.
 This provides great flexibility in specifying Hamiltonians; however, if Hamiltonians are generated externally, care must be taken
 to ensure that consistent index conventions are used.
 
-``afqmctools`` provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
+``safiretools`` provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
 on a variety of lattices, using consistent conventions for indexing.
-The framework consists of a Lattice class which is responsible for geometry (see the `lattice tutorial <03_setting_up_a_lattice/03_setting_up_a_lattice_executed.html>`_),
-a Hamiltonian builder which is responsible for generating specific Hamiltonian terms on demand given a specific Lattice instance,
-and a Hamiltonian *Director* which is responsible for choosing which build steps to perform based on
-a set of input Hamiltonian parameters.
-Each component of the framework can be used directly; however
-the Director class represents the highest-level interface of the lattice Hamiltonian framework and
-can manage the underlying Lattice instance and Builder instance.
-Users who want direct control over the Hamiltonian build steps can directly
-use the Hamiltonian *Builder*. See the `Hamiltonian Builder <05_hamiltonian_builder/05_hamiltonian_builder.html>`_ for
-more detail.
-It is recommended to use the Director whenever possible.
+The framework consists of a Lattice class which is responsible for geometry (see :doc:`03_setting_up_a_lattice/03_setting_up_a_lattice`),
+and a Hamiltonian *Builder* which is responsible for generating specific Hamiltonian terms given a specific Lattice instance.
+``LatticeHamiltonian.from_lattice()`` takes a lattice and the Hamiltonian parameters as keyword arguments
+and runs the corresponding build steps, which covers most use cases.
 
-.. image:: /images/shared/models/00_overview/HamilDirectorSystem.png
-   :width: 1000
-
-
-Imaginary-Time Propagation
---------------------------
-
-Explain the Trotterization, and Hubbard-Stratonovich transformation for the lattice Hamiltonian. 
-Be sure to explicitly show each type of Hubbard-Stratonovich transformation (discrete spin, continuous charge, discrete charge, continuous spin).
-
-Trial wavefunctions
--------------------
+Trial Wavefunctions
+~~~~~~~~~~~~~~~~~~~
 
 A trial wavefunction is used in AFQMC which is, in general, some linear
 combination of Slater determinants,
 
 .. math::
 
-   | \Psi_\mathrm{T} \rangle = \sum_n C_n |\Phi_m\rangle,
+   | \Psi_\mathrm{T} \rangle = \sum_n C_n |\Phi_n\rangle,
 
-where :math:`|\Phi_m\rangle` are Slater determinants,
+where :math:`|\Phi_n\rangle` are Slater determinants,
 and :math:`C_n` is a coefficient.
 There is no need for the set of Slater determinants to be mutually orthogonal.
 
-Using a trial wavefunction which accurately captures the ordering and symmetries 
+Using a trial wavefunction which accurately captures the ordering and symmetries
 of the target system is critical for achieving good AFQMC results.
 Care must always be taken to ensure that the trial wavefunction has the desired properties.
 
@@ -98,31 +81,26 @@ Common methods for computing a trial wavefunction include:
 
 among others.
 
-Typical Workflow
-================
+Software Prerequisites
+----------------------
 
-|
-
-Software prerequisites
-======================
-
-The afqmctools Python package provides tools for generating a broad range of lattice model Hamiltonians.
-Additionally, afqmctools and the autoHF Hartree-Fock solver allow single-Slater determinant trial wavefunctions to be computed.
+The safiretools Python package provides tools for generating a broad range of lattice model Hamiltonians.
+Additionally, safiretools and the autoHF Hartree-Fock solver allow single-Slater determinant trial wavefunctions to be computed.
 In these tutorials, we will use these tools exclusively;
 however, from the tutorials, it should also be clear how to import
 and use wavefunctions and/or Hamiltonians which are generated externally by the user.
 
-See the User manual for details on `the Hamiltonian HDF5 format <https://users.flatironinstitute.org/~beskridge/auxiliary_fields/afqmc.html#lattice-model-hamiltonian>`_ and the possible `Trial wavefunction formats <https://users.flatironinstitute.org/~beskridge/auxiliary_fields/afqmc.html#wavefunction-file-formats>`_.
+See :ref:`lattice_model_hamiltonian` for details on the Hamiltonian HDF5 format and :ref:`Wavefunction-classes` for the possible trial wavefunction formats.
 
 |
 
 The Tutorials
-=============
+-------------
 
 The following tutorials will guide you through AFQMC calculations
 using SAFIRE in order to teach you the typical workflow,
 and some of the main features of SAFIRE.
-Each "basic" tutorial builds on the previous one.
+Each tutorial builds on the previous one.
 We recommend going through them in order.
 
 .. toctree::

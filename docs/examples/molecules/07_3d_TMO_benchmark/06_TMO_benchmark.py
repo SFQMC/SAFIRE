@@ -69,19 +69,17 @@ from pathlib import Path
 import json
 import time
 
-import h5py as h5
 import numpy as np
-from pyscf import gto,scf,mcscf,lib
+from pyscf import gto,scf,mcscf
 import jax
 import jax.numpy as jnp
 
-import afqmctools
 import autohf
+from autohf import solve_hf, AutoHFHamiltonian
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-from afqmctools.wavefunction.mol import write_cas_wfn
-from afqmctools.inputs.from_hdf import write_json
+from safiretools import MolecularHamiltonian
+from safiretools import Wavefunction
+from safiretools import write_jobfile
 
 scratch_dir = Path("data")
 scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -118,26 +116,20 @@ def setup_benchmark(key:str, case:dict):
         verbose = 4
     )
     
-    # set up Hamiltonian for AutoHF
-    onebody = mol.intor("int1e_kin") + mol.intor("int1e_nuc") + mol.intor("ECPscalar")
-    overlap = mol.intor("int1e_ovlp")
-    eri = mol.intor("int2e")
-    nuclear_repulsion = mol.energy_nuc()
-
-    X = afqmctools.utils.linalg.get_ortho_ao_mol(overlap,LINDEP_CUTOFF=1e-8)
-    
-    norb = onebody.shape[0]
+    # set up Hamiltonian for AutoHF in the orthogonalized AO basis,
+    #   X being the transformation from the AOs
+    chol_tol = 1e-6
+    ortho = MolecularHamiltonian.from_pyscf(mol.ROHF(), basis="ortho_ao", chol_cut=chol_tol)
+    X = ortho.basis_rotation
+    norb = ortho.nmo
     print(f"{norb=}")
 
-    chol_tol = 1e-6
-    cholesky_operators = afqmctools.utils.linalg.modified_cholesky_direct(
-        eri.reshape(norb**2, norb**2), tol=chol_tol, verbose=False
-    ).reshape(-1, norb, norb)
+    overlap = mol.intor("int1e_ovlp")
+    nuclear_repulsion = ortho.enuc
+    onebody = ortho.hcore[0, 0, :, 0, :]
+    cholesky_operators = 1j * np.moveaxis(ortho.chol[0, 0, :, 0, :, :], -1, 0)
 
-    onebody = X.T @ onebody @ X
-    cholesky_operators = 1j * np.einsum("ij,njk,kl->nil", X.T, cholesky_operators, X)
-
-    onebody += 0.5 * np.einsum("nij,njk", cholesky_operators, cholesky_operators).real
+    onebody = onebody + 0.5 * np.einsum("nij,njk", cholesky_operators, cholesky_operators).real
 
     # double along spin dimension
     cholesky_operators = np.stack([cholesky_operators, cholesky_operators], axis=1)
@@ -146,7 +138,7 @@ def setup_benchmark(key:str, case:dict):
 
     T = np.zeros((norb, norb))
 
-    H = autohf.AutoHFHamiltonian(T=(T, T), U=0)
+    H = AutoHFHamiltonian(T=(T, T), U=0)
 
     nelec = mol.nelec
     Nup = nelec[0]
@@ -207,7 +199,7 @@ def setup_benchmark(key:str, case:dict):
     state0 = state0_ref + rng.normal(scale=0.05, size=(hf_settings["batch_size"], N, Ne))
 
     ts_autohf = time.time()
-    data, data_functions = autohf.lattice_hf(
+    data, data_functions = solve_hf(
         H, 
         settings=hf_settings, 
         custom_energy_term=molecular_energy,
@@ -235,11 +227,9 @@ def setup_benchmark(key:str, case:dict):
 
     # run HF to generate a starting point
     # run CASSCF to get an orbital basis AND a CAS wavefunction
-    casscf_chkfile = local_scratch_dir / 'rhf_chkfile.h5'
 
     # quick run
     rhf = scf.ROHF(mol)
-    rhf.chkfile = casscf_chkfile
     rhf.max_cycle = -1
     rhf.init_guess = guess_ao_uhf
     E = rhf.kernel(guess_ao_uhf)
@@ -255,43 +245,40 @@ def setup_benchmark(key:str, case:dict):
 
     # run CASSCF to get a basis / trial wavefunction
     mc = mcscf.CASSCF(rhf, ncas, nelec_cas).run()
-    lib.chkfile.save(mc.chkfile, 'mcscf/ci', mc.ci)
-    
-    # write the CAS wavefunction to a file
-    write_cas_wfn(
-        mol=mol,
-        cas_chkfile=casscf_chkfile,
-        tol_trunc=0.001, # from the PRX
-        outname=local_scratch_dir / 'afqmc.h5',
+
+    # the CAS wavefunction
+    wavefunction = Wavefunction.from_pyscf_cas(
+        mc,
+        tol=0.001, # from the PRX
         max_det=2000
     )
-    
-    basis_scf_data = load_from_pyscf_chk_mol(
-        chkfile = casscf_chkfile,
-        base = 'mcscf'
-    )
 
-    # write Hamiltonian
-    write_hamil_mol(
-        basis_scf_data,
-        hamil_file = local_scratch_dir / 'afqmc.h5',
+    # the Hamiltonian in the CASSCF orbital basis, which the CAS
+    #   wavefunction's determinants are occupations of
+    hamiltonian = MolecularHamiltonian.from_pyscf(
+        rhf,
+        basis = mc,
         chol_cut = 1e-6, # from the PRX
         verbose=True
     )
 
-    execute_options = {
-        "timestep": 0.005,
-        "steps": 7000,
-        "measure_interval_multiplier": 1,
-        "population_control_interval" : 10,
-        "walker_ortho_interval" : 10 ,
-        "n_walkers_per_mpi_task": 50,
-        "seed" : 42
-    }    
-    write_json(
+    # the input file, which also writes the wavefunction and the Hamiltonian to HDF5
+    write_jobfile(
         local_scratch_dir/ "afqmc.json",
-        fwfn0=local_scratch_dir / 'afqmc.h5',
-        exec_opts=execute_options
+        {
+            "seed": 42,
+            "execute": {
+                "wavefunction": wavefunction,
+                "hamiltonian": hamiltonian,
+                "timestep": 0.005,
+                "steps": 7000,
+                "equilibration_steps": 1600,
+                "measure_interval": 10,
+                "population_control_interval": 10,
+                "walker_ortho_interval": 10,
+                "num_walkers": 3000
+            }
+        }
     )
 
 # run the setup

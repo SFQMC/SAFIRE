@@ -1,0 +1,223 @@
+/*
+ * This file is distributed under the Apache License, Version 2.0 License.
+ * See LICENSE file in top directory for details.
+ *
+ * Copyright (c) 2021-2025 The Simons Foundation, Inc.
+ *
+ * You may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ */
+
+#include <filesystem>
+#include <format>
+#include <map>
+#include <memory>
+#include <string>
+
+#include "AFQMC/config.h"
+#include "AFQMC/Drivers/run_afqmc.hpp"
+#include "AFQMC/Drivers/run_ftafqmc.hpp"
+#include "AFQMC/Drivers/average_energy.hpp"
+#include "AFQMC/Estimators/Estimators.hpp"
+#include "AFQMC/execute.hpp"
+#include "AFQMC/Hamiltonians/Hamiltonian.hpp"
+#include "AFQMC/parameter_defaults.hpp"
+#include "AFQMC/Propagators/AFQMCBasePropagator.h"
+#include "AFQMC/Propagators/Propagator.hpp"
+#include "AFQMC/Utilities/AFQMCTimer.h"
+#include "AFQMC/Walkers/WalkerSet.hpp"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
+#include "IO/app_loggers.h"
+#include "IO/banner.hpp"
+#include "utilities/check.hpp"
+#include "utilities/FairDivide.hpp"
+#include "utilities/Random.hpp"
+
+namespace sfqmc::afqmc {
+
+namespace {
+
+// Seeds PSEUDO_ELOC_ from the components wfn.Energy(wset) just left on the walkers, so the
+// first propagation step does not read a zero old_eloc out of a freshly allocated walker set.
+template<typename WlkSet>
+void seedPseudoEnergy(WlkSet& wset) {
+  nda::array<ComplexType, 1> e1(wset.size()), exx(wset.size()), ej(wset.size());
+  wset.getProperty(E1_, e1);
+  wset.getProperty(EXX_, exx);
+  wset.getProperty(EJ_, ej);
+
+  nda::array<ComplexType, 1> eloc = e1 + exx + ej;
+  wset.setProperty(PSEUDO_ELOC_, eloc);
+}
+
+// assumes wfn.Energy(Wset) has been called
+// Then prints the energy breakdown
+template<typename WlkSet>
+void print_initial_energy(WlkSet& wset) {
+  app_log(1, "Local Energy of starting determinant ");
+  app_log(1, "  - Total energy    : {:f}", wset[0].energy());
+  app_log(1, "  - One-body energy : {:f}", wset[0].get_property(E1_));
+  app_log(1, "  - Coulomb energy  : {:f}", wset[0].get_property(EJ_));
+  app_log(1, "  - Exchange energy : {:f}", wset[0].get_property(EXX_));
+}
+
+/// The wavefunction named `wavefunction_name`, built on first use and cached afterwards, so that
+/// a later stage or an estimator naming the same wavefunction shares this one.
+///
+/// The hamiltonian is only needed to build a wavefunction, so it is built here and released again
+/// as soon as the wavefunction has taken what it needs from it.
+template<MEMORY_SPACE MEM>
+Wavefunction<MEM>& construct_wavefunction(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                                          std::map<std::string, Wavefunction<MEM>>& wavefunctions,
+                                          AFQMCParameters const& params,
+                                          std::string const& wavefunction_name,
+                                          std::string const& hamiltonian_name,
+                                          WALKER_TYPES walker_type,
+                                          bool finiteT,
+                                          int nwalkers) {
+  auto entry = wavefunctions.find(wavefunction_name);
+  if(entry == wavefunctions.end()) {
+    Hamiltonian hamiltonian =
+        Hamiltonian::from_params(mpi, find_block(params.hamiltonians, hamiltonian_name, "hamiltonian"));
+
+    entry = wavefunctions
+                .emplace(wavefunction_name,
+                         Wavefunction<MEM>::from_params(
+                             mpi, find_block(params.wavefunctions, wavefunction_name, "wavefunction"),
+                             walker_type, finiteT, hamiltonian, nwalkers))
+                .first;
+  }
+
+  // a cached wavefunction was built for the walker type of the stage that first asked for it, and
+  // cannot be reinterpreted as another one
+  utils::check(entry->second.getWalkerType() == walker_type,
+               "The wavefunction \"{}\" was built for {} walkers, but is now used with {} ones.",
+               wavefunction_name, walkerTypeToString(entry->second.getWalkerType()),
+               walkerTypeToString(walker_type));
+
+  return entry->second;
+}
+
+} // namespace
+
+template<MEMORY_SPACE MEM>
+void execute_simulation(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>> mpi,
+                        AFQMCParameters const& params) {
+  // every execute block appends its own stage to one results file, so a stale file from a
+  // previous run has to go before the first stage writes
+  if(mpi->comm.root()) {
+    std::filesystem::remove(std::format("{}.results.h5", params.output_name));
+  }
+  mpi->comm.barrier();
+
+  bool const finiteT = params.driver == DriverType::ftafqmc;
+
+  std::map<std::string, WalkerSet<MEM>> walker_sets;
+  std::map<std::string, Wavefunction<MEM>> wavefunctions;
+
+  // the walkers and the auxiliary fields draw from separate streams of the same seed, so that
+  // the run is reproducible and the two sequences are independent
+  int const seed  = resolved(params.seed, "seed");
+  auto walker_rng = std::make_shared<utils::RandomGenerator_t<HOST_MEMORY>>(utils::split_seed(seed, mpi->comm, 0));
+  auto field_rng  = std::make_shared<utils::RandomGenerator_t<MEM>>(utils::split_seed(seed, mpi->comm, 1));
+
+  int stage_index{};
+  for(auto const& stage : params.execute) {
+    timers.reset_all();
+    app_log(1, banner("Beginning stage initialization"));
+
+    std::string const& walker_set_name   = block_name(stage.walker_set, "walker_set");
+    std::string const& wavefunction_name = block_name(stage.wavefunction, "wavefunction");
+    std::string const& hamiltonian_name  = block_name(stage.hamiltonian, "hamiltonian");
+    std::string const& propagator_name   = block_name(stage.propagator, "propagator");
+
+    WalkerSetParameters const& walker_set_params = find_block(params.walker_sets, walker_set_name, "walker_set");
+    // this rank's share of the walkers; the first num_walkers % size ranks carry one more
+    int const num_walkers = resolved(stage.num_walkers, "num_walkers");
+    auto const [walker0, walkerN] = FairDivideBoundary(mpi->comm.rank(), num_walkers, mpi->comm.size());
+    int const nwalkers = walkerN - walker0;
+
+    auto wavefunction_for = [&](std::string const& wfn_name, std::string const& ham_name) -> Wavefunction<MEM>& {
+      return construct_wavefunction<MEM>(mpi, wavefunctions, params, wfn_name, ham_name,
+                                         resolved(walker_set_params.walker_type, "walker_type"), finiteT, nwalkers);
+    };
+
+    Wavefunction<MEM>& wavefunction = wavefunction_for(wavefunction_name, hamiltonian_name);
+
+    // a walker set carried over from an earlier stage continues where it left off, so only a new
+    // one is initialized from its source
+    auto walker_set_entry = walker_sets.find(walker_set_name);
+    if(walker_set_entry == walker_sets.end()) {
+      WalkerSetInitialGuess const guess = std::visit(
+          [&](WavefunctionSource const& source) {
+            return wavefunction_for(block_name(source.wavefunction, "wavefunction"), hamiltonian_name).initial_guess();
+          },
+          resolved(walker_set_params.from, "from"));
+      walker_set_entry =
+          walker_sets.try_emplace(walker_set_name, mpi, walker_rng, walker_set_params, guess, nwalkers).first;
+    }
+    WalkerSet<MEM>& walker_set = walker_set_entry->second;
+    utils::check(walker_set.get_global_target_population() == num_walkers,
+                 "The walker set \"{}\" carries {} walkers over from an earlier stage, but this stage asks for "
+                 "\"num_walkers\": {}.",
+                 walker_set_name, walker_set.get_global_target_population(), num_walkers);
+    if(finiteT) {
+      walker_set.setTauStep(0); // time-slice initialized to 0
+    }
+
+    // perform runtime optimization; for finite temperature ntau is implicitly 0 here
+    wavefunction.runtime_optimization(walker_set);
+    wavefunction.Energy(walker_set);
+    seedPseudoEnergy(walker_set);
+
+    if(finiteT) {
+      memory::buffered_array<MEM, ComplexType, 1> ovlp0(nwalkers, 0.0);
+      walker_set.getProperty(OVLP, ovlp0);
+      wavefunction.setLogPT0(ovlp0);
+    }
+
+    print_initial_energy(walker_set);
+
+    RealType Eshift = averageEnergy<MEM>(*mpi, walker_set);
+    if(stage.initial_Eshift) {
+      app_warning("user set expert-level parameter, \"initial_Eshift\": Using user-provided initial Eshift = {} instead of initial local energy {}",
+                  *stage.initial_Eshift, Eshift);
+      Eshift = *stage.initial_Eshift;
+    }
+
+    // the propagator builds its 1-body propagator for stage.timestep on construction, so it
+    // is built after the wavefunction has seen the walker set
+    Propagator<MEM> propagator{AFQMCBasePropagator<MEM>(
+        find_block(params.propagators, propagator_name, "propagator"), mpi, wavefunction, field_rng,
+        resolved(stage.timestep, "timestep"))};
+
+
+    Estimators<MEM> estimators{mpi, stage_index, stage, walker_set, wavefunction, propagator, wavefunction_for};
+
+    // free any shared windows that were abandoned during initialization
+    mpi->shared_windows.collective_free_unused();
+
+    if(finiteT) {
+      run_ftafqmc<MEM>(*mpi, params.output_name, stage, Eshift, walker_set, wavefunction, propagator, estimators);
+    } else {
+      run_afqmc<MEM>(*mpi, params.output_name, stage, Eshift, walker_set, propagator, estimators);
+    }
+
+    ++stage_index;
+  }
+}
+
+// Instantiate
+#define __inst__(M)                                                                                \
+  template void execute_simulation<M>(std::shared_ptr<utils::mpi_context_t<boost::mpi3::communicator>>, \
+                                      AFQMCParameters const&);
+
+__inst__(HOST_MEMORY)
+#if defined(ENABLE_DEVICE)
+__inst__(DEVICE_MEMORY)
+#endif
+
+} // namespace sfqmc::afqmc

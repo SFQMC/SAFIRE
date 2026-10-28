@@ -3,7 +3,7 @@ from warnings import warn
 
 import numpy as np
 
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import Results
 scratch_dir = Path("data")
 ecp_dir = Path("./files").resolve()
 
@@ -76,14 +76,14 @@ TestSet = dict(
 )
 
 
-def get_afqmc_results(key:str, case:dict, nequil:int=15, compare_to_ref:bool=True):
+def get_afqmc_results(key:str, case:dict, compare_to_ref:bool=True):
     """
     Process and save the AFQMC result for the benchmark case
-    corresponding to 'key' into the 'case' dictionary 
+    corresponding to 'key' into the 'case' dictionary
     under keywords "E_afqmc" and "dE_afqmc"
     """
     local_scratch_dir = scratch_dir / key
-    result_file = local_scratch_dir/"qmc.s000.scalar.dat"
+    result_file = local_scratch_dir/"afqmc.results.h5"
 
     # skip if local scratch dir does not exist - save None for E, dE
     if not result_file.is_file():
@@ -93,14 +93,8 @@ def get_afqmc_results(key:str, case:dict, nequil:int=15, compare_to_ref:bool=Tru
         return
     
     print(f"Analyzing AFQMC results for {key}")
-    settings = dict(
-        fname = result_file,
-        xaxis = "time",
-        nequil = nequil,
-        trace = True
-    )
-
-    E,dE = analyze_scalar_data(settings)
+    E, dE = Results(result_file).average("Energy")
+    E, dE = E.real, dE.real
 
     case["E_afqmc"] = E
     case["dE_afqmc"] = dE
@@ -116,7 +110,7 @@ def get_afqmc_results(key:str, case:dict, nequil:int=15, compare_to_ref:bool=Tru
 
 if __name__ == '__main__':
     for molecule,data in TestSet.items():
-        get_afqmc_results(molecule,data,nequil=8)
+        get_afqmc_results(molecule,data)
 
     # loop through the cases and generate a results table
     print("======== Benchmark Results ========")

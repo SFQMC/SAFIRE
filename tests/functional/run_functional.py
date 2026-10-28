@@ -19,7 +19,7 @@ For a chosen system it:
      spin-symmetry / implementation rules,
   3. writes `afqmc.json` and runs AFQMC for each case in a directory mirroring
      the `statistical_references` layout,
-  4. records `afqmc.out` (+ AFQMC's native output) and a small `results.h5`,
+  4. records the console output to `afqmc.out` and a digested version of the measurement results to `results.h5`,
   5. compares against the stored reference `results.h5` and prints a plain-text
      PASS/FAIL line per case plus a final tally.
 
@@ -48,6 +48,7 @@ import shutil
 import subprocess as sp
 import sys
 import tempfile
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -57,11 +58,8 @@ import h5py as h5
 import numpy as np
 import scipy.stats
 
-# Reusing SAFIRE library utilities is fine; only the dev test harness is avoided.
-from afqmctools.utils.types import SpinSymm
-from afqmctools.analysis.rdm import average_afqmc_rdm
-from afqmctools.analysis.average import average_pair_correlation, average_spinspin
-from stats.scalar_dat import analyze_scalar_data
+from safiretools import SpinSymm, Results
+from safiretools.results.results import RebinningWarning
 
 from functional_cases import (
     HamiltonianClass,
@@ -84,16 +82,13 @@ class TestType(enum.Enum):
 
 SIGNIFICANCE_LEVEL = 0.001
 MACHINE_EPS = 1e-9
+# observables a statistical test neither averages nor compares, by the last component of
+# their path; a snapshot still records and compares them exactly
+UNCOMPARED_OBSERVABLES = {"Phase", "ProjectionTime", "EffectiveNumWalkers", "TotalWeight"}
 
-# Length of the equilibration phase discarded before averaging a scalar.dat column, in
-# units of imaginary time. Snapshot runs are too short to equilibrate and are compared
-# as they are, so they keep every block.
-NEQUIL = 5.0
-SNAPSHOT_NEQUIL = 0.0
-
-# Back-propagated quantities recorded by record_results, compared whenever a case has them.
-BP_STOCHASTIC_ARRAYS = ("avg_1rdm", "avg_spinspin", "avg_pair_correlation")
-BP_EXACT_DATASETS = ("pair_correlator_names",)
+# AFQMC's own output, named after the stem of the input file write_input writes. One run writes
+# one file, with the observables of each execute block below a Stage<N> group of its own.
+AFQMC_RESULTS = "afqmc.results.h5"
 
 
 @dataclass
@@ -135,30 +130,6 @@ def should_succeed(c: Case) -> bool:
     return all(rules)
 
 
-def should_skip(c: Case) -> bool:
-    return False
-
-
-def should_backprop(c: Case) -> bool:
-    """Back-propagation subset selection from should_succeed.
-
-    BP runs are expensive, so only a representative subset of the successful
-    space is exercised, chosen to cover distinct spin-symmetry transitions.
-    """
-    h, w, walker = c.hamiltonian.spin, c.wavefunction.spin, c.walker
-    if h == SpinSymm.CLOSED:
-        if w == SpinSymm.COLLINEAR:
-            return walker != SpinSymm.CLOSED
-        if w == SpinSymm.NONCOLLINEAR:
-            return walker == SpinSymm.NONCOLLINEAR
-    elif h == SpinSymm.COLLINEAR:
-        if w == SpinSymm.COLLINEAR:
-            return walker in (SpinSymm.COLLINEAR, SpinSymm.NONCOLLINEAR)
-    elif h == SpinSymm.NONCOLLINEAR:
-        return w == SpinSymm.NONCOLLINEAR and walker == SpinSymm.NONCOLLINEAR
-    return False
-
-
 # ============================================================================
 # Case generation
 # ============================================================================
@@ -173,19 +144,32 @@ def merge_runparams(*sources) -> dict:
 
 def generate(system: System) -> List[Case]:
     """Every hamiltonian x wavefunction x walker combination of a system, each
-    keyed to the reference at `<hamiltonian>/<wavefunction>/<walker>/results.h5`."""
+    keyed to the reference at `<hamiltonian>/<wavefunction>/<walker>/results.h5`.
+    Only the combinations in `system.backprop` carry the observables."""
+    if system.backprop and not system.observables:
+        raise ValueError(f"{system.data_dir}: back-propagation cases without observables")
+    unmatched = set(system.backprop)
     cases: List[Case] = []
     for h_name, hamiltonian in system.hamiltonians.items():
         for w_name, wavefunction in system.wavefunctions.items():
             for walker in system.walkers:
                 subdir = Path(h_name) / w_name / walker.name.lower()
-                cases.append(Case(
+                backprop = (h_name, w_name, walker) in unmatched
+                unmatched.discard((h_name, w_name, walker))
+                case = Case(
                     hamiltonian=hamiltonian, wavefunction=wavefunction, walker=walker,
                     data_dir=system.data_dir,
                     out_subdir=subdir,
                     runparams=merge_runparams(hamiltonian.runparams, wavefunction.runparams),
-                    observables=system.observables,
-                ))
+                    observables=system.observables if backprop else {},
+                )
+                if backprop and not should_succeed(case):
+                    raise ValueError(f"{system.data_dir}: back-propagation case {subdir} "
+                                     "is expected to fail")
+                cases.append(case)
+    if unmatched:
+        raise ValueError(f"{system.data_dir}: back-propagation cases not in the cross "
+                         f"product: {sorted(unmatched)}")
     return cases
 
 
@@ -193,13 +177,16 @@ def resolve_observable_inputs(observables: dict, inputs_dir: Path) -> dict:
     """`observables` with every stored-input `filename` made absolute.
 
     The blocks name their inputs relative to the system's afqmc_inputs directory, but AFQMC
-    runs in the case output directory.
+    runs in the case output directory. A stored input is an h5 path block, i.e. a nested
+    `{"filename": ..., "group": ...}`, so the walk goes one level down.
     """
     resolved = {}
     for name, block in observables.items():
-        block = dict(block)
-        if "filename" in block:
-            block["filename"] = str(inputs_dir / block["filename"])
+        block = {key: dict(value) if isinstance(value, dict) else value
+                 for key, value in block.items()}
+        for value in block.values():
+            if isinstance(value, dict) and "filename" in value:
+                value["filename"] = str(inputs_dir / value["filename"])
         resolved[name] = block
     return resolved
 
@@ -209,17 +196,22 @@ def resolve_observable_inputs(observables: dict, inputs_dir: Path) -> dict:
 # ============================================================================
 
 def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
-                n_walkers_per_mpi_task: int, timestep: float, observables: dict,
+                num_walkers: int, timestep: float, observables: dict,
                 snapshot: bool):
-    steps = 10000
-    equil_multiplier = 200
+    steps = 12000
+    if observables: # backprop needs more samples
+        steps *= 4
+
+    equilibration_steps = 3000
     population_control_interval = 10
-    bp_measure_interval_multiplier = 40
+    measure_interval = 10
+    propagation_steps = 100
     if snapshot:
         steps = 20
-        equil_multiplier = 0
+        equilibration_steps = 0
         population_control_interval = 1
-        bp_measure_interval_multiplier = 2
+        measure_interval = 1
+        propagation_steps = 2
 
     execute = {
         "walker_set": {"walker_type": walker.name},
@@ -227,27 +219,28 @@ def write_input(path: Path, hamil_file: Path, wfn_file: Path, walker: SpinSymm,
         "hamiltonian": {"filename": str(hamil_file)},
         "timestep": timestep,
         "steps": steps,
-        "n_walkers_per_mpi_task": n_walkers_per_mpi_task,
+        "num_walkers": num_walkers,
     }
     if observables:
-        execute["estimator"] = {
-            "name": "back_propagation",
-            "path_restoration": True,
-            "bp_walker_ortho_interval": 10,
-            "measure_interval_multiplier": bp_measure_interval_multiplier,
-            "equil_multiplier": equil_multiplier,
-            **observables,
+        execute["estimators"] = {
+            "mixed": {
+                "measure_interval": propagation_steps,
+                **observables,
+            },
+            "backprop": {
+                "path_restoration": True,
+                "propagation_steps": [propagation_steps],
+                **observables,
+            },
         }
     execute["population_control_interval"] = population_control_interval
-    execute["measure_interval_multiplier"] = 1
+    execute["measure_interval"] = measure_interval
     execute["walker_ortho_interval"] = 10
-    execute["seed"] = 42
+    execute["equilibration_steps"] = equilibration_steps
 
     document = {
-        "afqmc": {
-            "project": {"id": "qmc", "series": 0},
-            "execute": execute,
-        }
+        "seed": 42,
+        "execute": execute,
     }
     with open(path, "w") as f:
         json.dump(document, f, indent=2)
@@ -297,77 +290,77 @@ def _write_message_group(f: h5.File, name: str, messages: set):
         g.create_dataset(f"{prefix}_{i}", data=str(m))
 
 
-def _scalar_column(scalar_file: str, column: Optional[str], label: str, nequil: float):
-    """Average a scalar.dat column, returning [value, stoch_error] or None."""
+def _average_observables(results: Path, snapshot: bool) -> dict:
+    """(mean, stochastic error) for every observable AFQMC measured, keyed by the full
+    '/'-separated path it was measured under, e.g. `Stage0/Energy` or
+    `Stage0/BackPropEstimator/Steps=200/OneRDM`. A statistical test leaves out those in
+    `UNCOMPARED_OBSERVABLES`, a snapshot keeps every one.
+
+    Nothing is discarded here: the driver measures nothing before `equilibration_steps`, so
+    every bin in the file is already equilibrated.
+
+    ``stage=""`` reads every stage, which is what keeps the stage on the front of each
+    key.
+    """
     try:
-        params = dict(fname=scalar_file, xaxis="time", nequil=nequil, verbose=False)
-        if column is not None:
-            params["column"] = column
-        v, dv = analyze_scalar_data(params)
-        return np.array([v, dv])
+        measured = Results(results, stage="")
+        return {name: measured.average(name, skip=0)
+                for name in measured.observable_names()
+                if snapshot or name.rpartition("/")[2] not in UNCOMPARED_OBSERVABLES}
     except Exception as e:  # noqa: BLE001
-        print(f"  [warn] could not analyze {label}: {e}")
-        return None
+        print(f"  [warn] could not average {results.name}: {e}")
+        return {}
+
+
+def _write_measurements(f: h5.File, averaged: dict):
+    """Store each observable as `mean` and `error` below a group named after the path it was
+    measured under, so a recorded file mirrors AFQMC's own observable tree."""
+    group = f.create_group("measurements")
+    for name, (mean, error) in averaged.items():
+        observable = group.create_group(name)
+        for dataset, value in (("mean", mean), ("error", error)):
+            value = np.asarray(value)
+            observable.create_dataset(dataset, data=value)
+
+
+def _read_measurements(f: h5.File) -> dict:
+    """{path: (mean, error)} for every observable `_write_measurements` stored."""
+    recorded = {}
+    group = f.get("measurements")
+    if group is None:
+        return recorded
+
+    def visit(name, obj):
+        if isinstance(obj, h5.Group) and "mean" in obj:
+            recorded[name] = (obj["mean"][()], obj["error"][()])
+
+    group.visititems(visit)
+    return recorded
 
 
 def record_results(out_dir: Path, return_code: int, ranks: int, run_time: float,
-                   observables: dict, nequil: float):
-    """Extract a results summary and write results.h5 (schema-compatible with the
-    stored reference files: includes energy, weight, LogOvlpFactor and the
-    error/warning message groups)."""
+                   snapshot: bool):
+    """Extract a results summary and write results.h5: the run metadata, the error/warning
+    message groups, and the observables AFQMC measured, averaged over their bins; for a
+    statistical test without those in `UNCOMPARED_OBSERVABLES`."""
     out_text = (out_dir / "afqmc.out").read_text()
     with h5.File(out_dir / "results.h5", "w") as f:
         f.create_dataset("return_code", data=return_code)
         f.create_dataset("num_ranks", data=ranks)
         f.create_dataset("run_time_seconds", data=run_time)
-        f.create_dataset("afqmc_is_finite", data=is_finite(out_text))
         f.create_dataset("afqmc_raised_error", data=raised_error(out_text))
         f.create_dataset("afqmc_raised_warning", data=raised_warning(out_text))
         f.create_dataset("input_file", data=(out_dir / "afqmc.json").read_text())
         _write_message_group(f, "error_messages", error_messages(out_text))
         _write_message_group(f, "warning_messages", warning_messages(out_text))
+
+        finite = is_finite(out_text)
         if return_code == 0:
-            scalar_file = str(out_dir / "qmc.s000.scalar.dat")
-            energy = _scalar_column(scalar_file, None, "energy", nequil)
-            if energy is not None:
-                f.create_dataset("energy", data=energy)
-            weight = _scalar_column(scalar_file, "weight", "weight", nequil)
-            if weight is not None:
-                f.create_dataset("weight", data=weight)
-            # Log overlap: old name LogOvlpFactor, new name LogOvlp; support both.
-            try:
-                ovlp_col = ("LogOvlpFactor" if "LogOvlpFactor" in open(scalar_file).read()
-                            else "LogOvlp")
-            except OSError:
-                ovlp_col = "LogOvlpFactor"
-            log_ovlp = _scalar_column(scalar_file, ovlp_col, "LogOvlpFactor", nequil)
-            if log_ovlp is not None:
-                f.create_dataset("LogOvlpFactor", data=log_ovlp)
-            # The back-propagated blocks are all recorded after the estimator's own
-            # equilibration, so none of them is discarded here.
-            stat_file = str(out_dir / "qmc.s000.stat.h5")
-            if "onerdm" in observables:
-                try:
-                    rho, drho = average_afqmc_rdm(stat_file)
-                    f.create_dataset("avg_1rdm", data=rho)
-                    f.create_dataset("avg_1rdm_stoch_error", data=drho)
-                except Exception as e:  # noqa: BLE001
-                    print(f"  [warn] could not average back-propagated 1-RDM: {e}")
-            if "spinspin" in observables:
-                try:
-                    ss, dss = average_spinspin(stat_file, eqlb=0)
-                    f.create_dataset("avg_spinspin", data=ss)
-                    f.create_dataset("avg_spinspin_stoch_error", data=dss)
-                except Exception as e:  # noqa: BLE001
-                    print(f"  [warn] could not average back-propagated spin-spin correlator: {e}")
-            if "pair_correlators" in observables:
-                try:
-                    pair, dpair, names = average_pair_correlation(stat_file, eqlb=0)
-                    f.create_dataset("avg_pair_correlation", data=pair)
-                    f.create_dataset("avg_pair_correlation_stoch_error", data=dpair)
-                    f.create_dataset("pair_correlator_names", data=np.array(names, dtype="S"))
-                except Exception as e:  # noqa: BLE001
-                    print(f"  [warn] could not average back-propagated pair correlators: {e}")
+            averaged = _average_observables(out_dir / AFQMC_RESULTS, snapshot)
+            _write_measurements(f, averaged)
+            finite = finite and all(np.all(np.isfinite(v))
+                                    for pair in averaged.values() for v in pair)
+        f.create_dataset("afqmc_is_finite", data=finite)
 
 
 # ============================================================================
@@ -388,120 +381,79 @@ def _h5_messages(f: h5.File, group: str = "error_messages") -> set:
     return {m.decode() if isinstance(m, bytes) else str(m) for m in msgs}
 
 
-def _compare_energy(ft: h5.File, fr: h5.File) -> bool:
-    if "energy" not in ft or "energy" not in fr:
-        print("  [compare] missing energy dataset")
-        return False
-    E, dE = ft["energy"][:]
-    Eref, dEref = fr["energy"][:]
-    sigma = np.sqrt(dE**2 + dEref**2)
+def _compare_measurement(name: str, test, ref) -> bool:
+    """Whether one observable agrees with its reference within the stochastic error.
 
-    z = (E-Eref)/sigma
-    p = 2 * scipy.stats.norm.sf(abs(z))
-    if np.isnan(p) or p < SIGNIFICANCE_LEVEL:
-        print(f"  [compare] energy mismatch: {E:.6f} ± {dE:.6f} vs {Eref:.6f} ± {dEref:.6f} (p = {p:.2g} < {SIGNIFICANCE_LEVEL})")
-        return False
-
-    print(f"  [compare] energy OK: {E:.6f} ± {dE:.6f} vs {Eref:.6f} ± {dEref:.6f} (p = {p:.2g} > {SIGNIFICANCE_LEVEL})")
-    return True
-
-
-def _compare_stochastic_array(ft: h5.File, fr: h5.File, name: str) -> bool:
-    """Compare a back-propagated array observable and its stochastic error. A shape mismatch fails; otherwise we do Bonferroni adjusted test on the worst mismatch."""
-    if name not in ft or name not in fr:
-        print(f"  [compare] missing {name} dataset")
-        return False
-    A, Aerr = ft[name][:], ft[f"{name}_stoch_error"][:]
-    B, Berr = fr[name][:], fr[f"{name}_stoch_error"][:]
+    Any tensor rank, a scalar being the one-component case. A shape mismatch fails; otherwise
+    we do a Bonferroni adjusted test on the worst mismatch.
+    """
+    A, Aerr = np.atleast_1d(test[0]).astype(np.complex128), np.abs(np.atleast_1d(test[1]))
+    B, Berr = np.atleast_1d(ref[0]).astype(np.complex128), np.abs(np.atleast_1d(ref[1]))
     if A.shape != B.shape or Aerr.shape != Berr.shape:
-        print(f"  [compare] {name} shape mismatch: {A.shape} vs {B.shape}")
+        print(f"  [mismatch] {name} shape mismatch: {A.shape} vs {B.shape}")
         return False
-    A = np.asarray(A, dtype=np.complex128)
-    B = np.asarray(B, dtype=np.complex128)
-    sigma = np.sqrt(Aerr ** 2 + Berr ** 2).real
-    # Only test components with a meaningful stochastic error. Off-diagonal spin
-    # blocks that are identically zero (e.g. a collinear-derived noncollinear
-    # reference) have sigma ~ machine epsilon, where (a - b)/sigma is a
-    # tiny/tiny ratio that spuriously inflates the z-score.
-    valid = sigma > MACHINE_EPS
-    n_valid = int(np.count_nonzero(valid))
+    # The tolerance of each component is the larger of the stochastic and the numerical one,
+    # so that components whose stochastic error vanishes (e.g. the identically zero
+    # off-diagonal spin blocks of a collinear-derived noncollinear reference) are held to
+    # machine precision, without a jump at the crossover.
+    z_crit = scipy.stats.norm.ppf(1 - SIGNIFICANCE_LEVEL / (2 * A.size))
+    tol = np.maximum(z_crit * np.sqrt(Aerr ** 2 + Berr ** 2), MACHINE_EPS * (1 + np.abs(B)))
 
-    det = ~valid
-    if det.any():
-        if not np.allclose(A[det], B[det], rtol=MACHINE_EPS, atol=MACHINE_EPS):
-            d = np.abs(A - B)
-            d[valid] = 0.0
-            worst = tuple(map(int, np.unravel_index(np.argmax(d), d.shape)))
-            print(f"  [compare] {name} deterministic (sigma <= {MACHINE_EPS}) mismatch: |Δ| = {d[worst]:.3e} > {MACHINE_EPS} at idx = {worst}")
-            return False
+    d = np.abs(A - B)
+    worst = tuple(map(int, np.unravel_index(np.argmax(d / tol), d.shape)))
+    values = (f"|Δ| = {d[worst]:.3e}, tolerance {tol[worst]:.3e} (z_crit = {z_crit:.2f}), "
+              f"{A[worst]:.6f} ± {Aerr[worst]:.6f} vs "
+              f"{B[worst]:.6f} ± {Berr[worst]:.6f} at idx = {worst}")
 
-    if n_valid == 0:
-        print(f"  [compare] {name}: no components with sigma > {MACHINE_EPS}; matched to machine precision")
+    if d[worst] <= tol[worst]:
+        print(f"  [compare] {name} OK: worst component {values}")
         return True
-    z_crit = scipy.stats.norm.ppf(1 - SIGNIFICANCE_LEVEL / (2 * n_valid))
-    for part in ("real", "imag"):
-        a, b = getattr(A, part), getattr(B, part)
-
-        z = np.zeros_like(sigma)
-        z[valid] = (a[valid] - b[valid]) / sigma[valid]
-        worst = tuple(map(int, np.unravel_index(np.argmax(np.abs(z)), z.shape)))
-
-        if np.abs(z[worst]) <= z_crit:
-            print(f"  [compare] {name} {part} OK: worst component z = {z[worst]:.2f} <= {z_crit:.2f} at idx = {worst}")
-        else:
-            print(f"  [compare] {name} {part} mismatch: worst component z = {z[worst]:.2f} > {z_crit:.2f} at idx = {worst}")
-            return False
-    return True
+    print(f"  [mismatch] {name} mismatch: worst component {values}")
+    return False
 
 
-def _compare_exact_dataset(ft: h5.File, fr: h5.File, name: str) -> bool:
-    """Compare a dataset that carries no stochastic error, e.g. an observable's labels."""
-    if name not in ft or name not in fr:
-        print(f"  [compare] missing {name} dataset")
+def _compare_measurements(ft: h5.File, fr: h5.File) -> bool:
+    """Whether every observable of the run agrees with the reference. The same treatment for
+    all of them: an observable is a tensor of some rank, and the energy is the rank-0 case.
+    Those in `UNCOMPARED_OBSERVABLES` are left out on both sides."""
+    test, ref = (
+        {name: value for name, value in _read_measurements(f).items()
+         if name.rpartition("/")[2] not in UNCOMPARED_OBSERVABLES}
+        for f in (ft, fr)
+    )
+    if set(test) != set(ref):
+        print(f"  [mismatch] recorded observables differ: "
+              f"only in test = {sorted(set(test) - set(ref))}, "
+              f"only in reference = {sorted(set(ref) - set(test))}")
         return False
-    mismatch = _exact_mismatch(ft[name][()], fr[name][()])
-    if mismatch is not None:
-        print(f"  [compare] {name} mismatch: {mismatch}")
+    if not test:
+        print("  [mismatch] no observables were recorded")
         return False
-    print(f"  [compare] {name} OK")
-    return True
+    # a list, not a generator: report every observable rather than stopping at the first bad one
+    return all([_compare_measurement(name, test[name], ref[name]) for name in sorted(test)])
 
 
 def compare_statistically(test_h5: Path, ref_h5: Path, test_type: TestType) -> bool:
     """Whether the run agrees with the reference within the stochastic error."""
     with h5.File(test_h5, "r") as ft, h5.File(ref_h5, "r") as fr:
         if not bool(ft["afqmc_is_finite"][()]):
-            print("  [compare] test results contain NaN")
+            print("  [mismatch] test results contain NaN")
             return False
         test_rc = _rc_class(ft["return_code"][()])
         ref_rc = _rc_class(fr["return_code"][()])
         if test_rc != ref_rc:
-            print(f"  [compare] return-code class mismatch: test={test_rc} ref={ref_rc}")
+            print(f"  [mismatch] return-code class mismatch: test={test_rc} ref={ref_rc}")
             return False
 
         if test_type != TestType.EXPECT_FAILURE:
             if test_rc != 0:
-                print("  [compare] expected success but run exited with error")
+                print("  [mismatch] expected success but run exited with error")
                 return False
-            ok = _compare_energy(ft, fr)
-            if test_type == TestType.BACKPROPAGATION:
-                # Which observables a case records is declared per system, so compare the
-                # ones either side has: a quantity present in only one file is a failure.
-                for name in BP_STOCHASTIC_ARRAYS:
-                    if name in ft or name in fr:
-                        ok = _compare_stochastic_array(ft, fr, name) and ok
-                for name in BP_EXACT_DATASETS:
-                    if name in ft or name in fr:
-                        ok = _compare_exact_dataset(ft, fr, name) and ok
-            for name in ("weight", "LogOvlpFactor"):
-                if name in ft and name in fr:
-                    print(f"  [compare] {name} (print-only): "
-                          f"test={ft[name][:]} ref={fr[name][:]}")
-            return ok
+            return _compare_measurements(ft, fr)
 
         # expected failure: both must have exited with a SAFIRE error.
         if test_rc != 1 or ref_rc != 1:
-            print("  [compare] expected both to exit with error")
+            print("  [mismatch] expected both to exit with error")
             return False
         if _h5_messages(fr) != _h5_messages(ft):
             print("  [compare] error messages differ (still counts as matching error exit)")
@@ -524,22 +476,6 @@ def _exact_mismatch(a, b) -> Optional[str]:
     return f"|Δ| = {d[worst]:.3e} > {MACHINE_EPS} at idx = {worst}"
 
 
-def _input_settings(f: h5.File) -> dict:
-    """The recorded input file, with the hamiltonian/wavefunction/observable paths reduced to
-    bare filenames: those are absolute, so they differ between checkouts even when the run
-    settings are identical."""
-    raw = f["input_file"][()]
-    document = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
-    execute = document["afqmc"]["execute"]
-    for key in ("hamiltonian", "wavefunction"):
-        if key in execute and "filename" in execute[key]:
-            execute[key]["filename"] = Path(execute[key]["filename"]).name
-    for block in execute.get("estimator", {}).values():
-        if isinstance(block, dict) and "filename" in block:
-            block["filename"] = Path(block["filename"]).name
-    return document
-
-
 def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
     """Whether the run reproduces the snapshot to MACHINE_EPS.
 
@@ -551,14 +487,15 @@ def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
     """
     with h5.File(test_h5, "r") as ft, h5.File(snapshot_h5, "r") as fs:
         if not bool(ft["afqmc_is_finite"][()]):
-            print("  [compare] test results contain NaN")
+            print("  [mismatch] test results contain NaN")
             return False
 
-        # run_time_seconds is timing; input_file is compared as parsed settings below.
-        ignored = {"run_time_seconds", "input_file"}
+        # run_time_seconds is timing; input_file is compared as parsed settings below; the
+        # observables are a group tree, compared below rather than as one dataset.
+        ignored = {"run_time_seconds", "input_file", "measurements"}
         test_keys, snap_keys = set(ft.keys()) - ignored, set(fs.keys()) - ignored
         if test_keys != snap_keys:
-            print(f"  [compare] recorded quantities differ: "
+            print(f"  [mismatch] recorded quantities differ: "
                   f"only in test = {sorted(test_keys - snap_keys)}, "
                   f"only in snapshot = {sorted(snap_keys - test_keys)}")
             return False
@@ -569,27 +506,37 @@ def compare_exactly(test_h5: Path, snapshot_h5: Path) -> bool:
         if "num_ranks" in test_keys:
             mismatch = _exact_mismatch(ft["num_ranks"][()], fs["num_ranks"][()])
             if mismatch is not None:
-                print(f"  [compare] rank count differs ({mismatch}); rerun with the "
+                print(f"  [mismatch] rank count differs ({mismatch}); rerun with the "
                       f"launcher the snapshot was recorded with, or re-record it")
                 return False
-
-        if _input_settings(ft) != _input_settings(fs):
-            print("  [compare] the snapshot was recorded with different run settings; "
-                  "re-record it")
-            return False
 
         message_groups = {"error_messages", "warning_messages"}
         for name in sorted(message_groups & test_keys):
             if _h5_messages(ft, name) != _h5_messages(fs, name):
-                print(f"  [compare] {name} differ (not compared)")
+                print(f"  [mismatch] {name} differ (not compared)")
 
         ok = True
         compared = sorted(test_keys - message_groups)
         for name in compared:
             mismatch = _exact_mismatch(ft[name][()], fs[name][()])
             if mismatch is not None:
-                print(f"  [compare] {name} mismatch: {mismatch}")
+                print(f"  [mismatch] {name} mismatch: {mismatch}")
                 ok = False
+
+        test_obs, snap_obs = _read_measurements(ft), _read_measurements(fs)
+        if set(test_obs) != set(snap_obs):
+            print(f"  [mismatch] recorded observables differ: "
+                  f"only in test = {sorted(set(test_obs) - set(snap_obs))}, "
+                  f"only in snapshot = {sorted(set(snap_obs) - set(test_obs))}")
+            return False
+        for name in sorted(test_obs):
+            for i, part in enumerate(("mean", "error")):
+                mismatch = _exact_mismatch(test_obs[name][i], snap_obs[name][i])
+                if mismatch is not None:
+                    print(f"  [mismatch] {name} {part} mismatch: {mismatch}")
+                    ok = False
+                compared.append(f"{name}/{part}")
+
         if ok:
             print(f"  [compare] all {len(compared)} recorded quantities match to "
                   f"{MACHINE_EPS}")
@@ -606,6 +553,7 @@ def store_reference(results: Path, dest: Path, test_type: TestType) -> bool:
     with h5.File(results, "r") as f:
         rc = _rc_class(f["return_code"][()])
         finite = bool(f["afqmc_is_finite"][()])
+        has_measurements = bool(_read_measurements(f))
 
     if test_type == TestType.EXPECT_FAILURE:
         if rc == 0:
@@ -618,6 +566,10 @@ def store_reference(results: Path, dest: Path, test_type: TestType) -> bool:
         return False
     elif not finite:
         print("  [regenerate] refusing to store: results contain NaN")
+        return False
+    elif not has_measurements:
+        print("  [regenerate] refusing to store: no observables were recorded, so AFQMC's "
+              "output file was not read")
         return False
 
     try:
@@ -684,12 +636,11 @@ def run_case(case: Case, test_type: TestType, out_root: Path, mpiexec: str,
     total_walkers = case.runparams.get("total_walkers", 1600)
     if snapshot:
         total_walkers = 50
-    n_walkers = total_walkers // max(1, ranks)
 
     input_file = out_dir / "afqmc.json"
     write_input(
         input_file, hamil_file, wfn_file, case.walker,
-        n_walkers_per_mpi_task=n_walkers,
+        num_walkers=total_walkers,
         timestep=case.runparams.get("timestep", 0.01),
         observables=observables,
         snapshot=snapshot,
@@ -721,13 +672,17 @@ def run_case(case: Case, test_type: TestType, out_root: Path, mpiexec: str,
         run_time = perf_counter() - t0
 
     results = out_dir / "results.h5"
-    record_results(out_dir, return_code, ranks, run_time, observables,
-                   nequil=SNAPSHOT_NEQUIL if snapshot else NEQUIL)
+    with warnings.catch_warnings():
+        if snapshot:
+            # a snapshot compares the error bars as exact numbers, so it does not matter
+            # that a run this short underestimates them
+            warnings.simplefilter("ignore", RebinningWarning)
+        record_results(out_dir, return_code, ranks, run_time, snapshot)
     reference = case.reference(snapshot)
     if regenerate:
         return store_reference(results, reference, test_type)
     if not reference.exists():
-        print(f"  [compare] reference missing: {reference}")
+        print(f"  [mismatch] reference missing: {reference}")
         return None
     if snapshot:
         return compare_exactly(results, reference)
@@ -804,17 +759,12 @@ def main(argv=None) -> int:
     for name in selected:
         system = systems[name]
         all_cases = generate(system)
-        has_bp = bool(system.observables)
-        success = [c for c in all_cases if should_succeed(c) and not should_skip(c) and not (has_bp and should_backprop(c))]
-        fail = [c for c in all_cases if not should_succeed(c) and not should_skip(c)]
-        backprop = [c for c in all_cases if should_succeed(c) and has_bp and should_backprop(c) and not should_skip(c)]
+        success = [c for c in all_cases if should_succeed(c) and not c.observables]
+        fail = [c for c in all_cases if not should_succeed(c)]
+        backprop = [c for c in all_cases if c.observables]
 
         print(f"=== {name}: {len(success)} expected-success, "
               f"{len(fail)} expected-fail, {len(backprop)} back-propagation ===")
-
-        for c in all_cases:
-            if should_skip(c):
-                print(f"  [SKIPPED] {c.out_subdir}")
 
         for test_type, group in (
                 (TestType.EXPECT_FAILURE, fail),
@@ -849,6 +799,7 @@ def main(argv=None) -> int:
         else:
             print(f"\n==== {total_pass} passed, {total_fail} failed, "
                   f"{total_skip} skipped ====")
+
     return 1 if total_fail else 0
 
 

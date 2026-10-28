@@ -1,17 +1,17 @@
 .. _solids_overview:
 
-SAFIRE for ab initio solids
+SAFIRE for Ab Initio Solids
 ============================
 
 .. image:: /images/shared/00_top_level/solid.png
    :width: 500
 
 
-Some preliminaries
-==================
+Some Preliminaries
+------------------
 
 The Hamiltonian
----------------
+~~~~~~~~~~~~~~~
 
 SAFIRE uses an orthonormal orbital basis to represent solid-state Hamiltonians in second quantization.
 These orbitals are typically obtained from plane-wave density functional theory (DFT) calculations
@@ -22,51 +22,55 @@ in terms of k-points in the Brillouin zone. The Hamiltonian takes a k-point fact
 
 .. math::
 
-   \hat{H} = E_0 + \sum_{k} \sum_{ij,\sigma} h^k_{ij} \hat{c}^\dagger_{k,i,\sigma}\hat{c}_{k,j,\sigma} + \frac{1}{2N_k}\sum_{k,q} \sum_{ijkl,\sigma\sigma'} V^{kq}_{ijkl} \hat{c}^\dagger_{k,i,\sigma} \hat{c}^\dagger_{q,j,\sigma'} \hat{c}_{q,l,\sigma'} \hat{c}_{k,k,\sigma},
+   \hat{H} = E_0 + \sum_{\mathbf{k}} \sum_{pq\sigma} h^{\mathbf{k}}_{pq} \hat{c}^\dagger_{\mathbf{k}p\sigma}\hat{c}_{\mathbf{k}q\sigma}
+   + \frac{1}{2}\sum_{\mathbf{k}\mathbf{k}'\mathbf{Q}} \sum_{pqrs\sigma\sigma'} v_{(\mathbf{k}+\mathbf{Q})p,\,(\mathbf{k}'-\mathbf{Q})q,\,\mathbf{k}r,\,\mathbf{k}'s}
+   \hat{c}^\dagger_{(\mathbf{k}+\mathbf{Q})p\sigma} \hat{c}^\dagger_{(\mathbf{k}'-\mathbf{Q})q\sigma'} \hat{c}_{\mathbf{k}'s\sigma'} \hat{c}_{\mathbf{k}r\sigma},
 
-where :math:`k` and :math:`q` are k-point indices sampling the Brillouin zone,
-:math:`i,j,k,l` are orbital indices at each k-point,
+where :math:`\mathbf{k}`, :math:`\mathbf{k}'` and :math:`\mathbf{Q}` are vectors of the k-point mesh sampling the first Brillouin zone,
+with :math:`\mathbf{k}+\mathbf{Q}` and :math:`\mathbf{k}'-\mathbf{Q}` folded back into it,
+:math:`p,q,r,s` are orbital indices at each k-point,
 :math:`\sigma, \sigma'` are spin indices,
 :math:`E_0` includes nuclear repulsion and other constant terms,
-:math:`h^k_{ij}` are one-body matrix elements (kinetic energy and electron-ion interactions),
-and :math:`V^{kq}_{ijkl}` are two-body electron-electron interaction matrix elements.
-The k-point factorization naturally incorporates crystal momentum conservation.
+:math:`h^{\mathbf{k}}_{pq}` are one-body matrix elements (kinetic energy and electron-ion interactions),
+and :math:`v` are two-body electron-electron interaction matrix elements.
+The interaction transfers the momentum :math:`\mathbf{Q}` from one electron to the other, so crystal momentum is conserved.
+See :ref:`k_point_factorized` for how SAFIRE factorizes this interaction.
 
 The underlying plane-wave DFT calculations typically use pseudopotentials to replace core electrons,
 reducing the computational cost while maintaining accuracy for valence properties.
 The orbital basis and matrix elements provided to SAFIRE already incorporate these pseudopotential effects.
 
-**Coquí's Role**: The conversion from plane-wave DFT output to this k-point factorized orbital representation
-is handled by `Coquí <https://github.com/AbInitioQHub/coqui>`_, which extracts the orbitals computed in the
+**CoQuí's Role**: The conversion from plane-wave DFT output to this k-point factorized orbital representation
+is handled by `CoQuí <https://github.com/AbInitioQHub/coqui>`_, which extracts the orbitals computed in the
 plane-wave basis and computes the necessary Hamiltonian matrix elements in the format required by SAFIRE.
 
 |
 
-Trial wavefunctions
--------------------
+Trial Wavefunctions
+~~~~~~~~~~~~~~~~~~~
 
 A trial wavefunction is used in AFQMC which is, in general, some linear
 combination of Slater determinants,
 
 .. math::
 
-   | \Psi_\mathrm{T} \rangle = \sum_n C_n |\Phi_m\rangle,
+   | \Psi_\mathrm{T} \rangle = \sum_n C_n |\Phi_n\rangle,
 
-where :math:`|\Phi_m\rangle` are Slater determinants,
+where :math:`|\Phi_n\rangle` are Slater determinants,
 and :math:`C_n` is a coefficient.
 
 For solid-state systems, the trial wavefunction typically consists of Kohn-Sham orbitals
 obtained from DFT calculations with various exchange-correlation functionals:
 
 - **Local Density Approximation (LDA)**: Simple and computationally efficient
-- **Generalized Gradient Approximation (GGA)**: Improved accuracy for many systems  
+- **Generalized Gradient Approximation (GGA)**: Improved accuracy for many systems
 - **Hybrid functionals**: Incorporate exact exchange, often better for band gaps
 
 The quality of the trial wavefunction is crucial for AFQMC accuracy.
 For solids, the trial wavefunction must properly capture:
 
 - **K-point sampling**: The trial includes orbitals at all k-points in the mesh.
-  Coquí handles the extraction and formatting of these k-point dependent orbitals.
+  CoQuí handles the extraction and formatting of these k-point dependent orbitals.
 - **Symmetries**: Crystal symmetry, spin symmetry, and other relevant quantum numbers
 - **Boundary conditions**: Finite-size effects can be mitigated using twisted boundary conditions
 
@@ -75,29 +79,29 @@ multi-determinant trial wavefunctions may be beneficial for strongly correlated 
 or for capturing specific symmetry-breaking states.
 
 Note that while the orbitals may be computed using a plane-wave basis in the underlying DFT calculation,
-they are represented as orbitals (not plane waves) in the SAFIRE input files prepared by Coquí.
+they are represented as orbitals (not plane waves) in the SAFIRE HDF5 files prepared by CoQuí.
 
 Typical Workflow
-================
+----------------
 
 A typical AFQMC calculation for solids using SAFIRE follows these steps:
 
 1. **Setup crystal structure**: Define the crystal lattice parameters, atomic positions, and choose appropriate pseudopotentials for your system.
 
 2. **Run plane-wave DFT calculation**: Use a plane-wave DFT code (e.g., Quantum Espresso, VASP) with:
-   
+
    - Appropriate k-point mesh for Brillouin zone sampling
    - Converged plane-wave energy cutoff
    - Suitable exchange-correlation functional
 
-3. **Convert with Coquí**: Use Coquí to:
-   
+3. **Convert with CoQuí**: Use CoQuí to:
+
    - Extract the Kohn-Sham orbitals from the DFT calculation
    - Compute Hamiltonian matrix elements in the orbital basis
    - Write k-point factorized HDF5 files for SAFIRE
 
-4. **Prepare SAFIRE input file**: Create an input file specifying:
-   
+4. **Prepare the SAFIRE job file**: Create a JSON job file specifying:
+
    - Hamiltonian and trial wavefunction file paths
    - AFQMC parameters (timestep, number of walkers, etc.)
    - Desired observables
@@ -106,14 +110,10 @@ A typical AFQMC calculation for solids using SAFIRE follows these steps:
 
 6. **Analyze results**: Extract energies, observables, and apply finite-size corrections as needed
 
-.. note::
-
-   A workflow diagram similar to the molecules page could be added here in the future.
-
 |
 
-Software prerequisites
-======================
+Software Prerequisites
+----------------------
 
 Many mature electronic structure codes exist and are widely used for solid-state calculations.
 For this reason, SAFIRE does not implement effective one-body methods
@@ -121,38 +121,39 @@ such as density functional theory (DFT).
 Instead, SAFIRE is designed to use externally generated Hamiltonians and trial wavefunctions
 for easy integration into existing workflows.
 
-SAFIRE can directly run AFQMC calculations using Hamiltonians and trial wavefunctions generated using Coquí.
+SAFIRE can directly run AFQMC calculations using Hamiltonians and trial wavefunctions generated using CoQuí.
 
 **Required Software:**
 
-1. **Coquí** (`https://github.com/AbInitioQHub/coqui <https://github.com/AbInitioQHub/coqui>`_):
-   
+1. **CoQuí** (`https://github.com/AbInitioQHub/coqui <https://github.com/AbInitioQHub/coqui>`_):
+
    - Essential tool for converting plane-wave DFT output to SAFIRE format
-   - Extracts Kohn-Sham orbitals from DFT calculations  
+   - Extracts Kohn-Sham orbitals from DFT calculations
    - Computes Hamiltonian matrix elements in k-point factorized orbital representation
    - Writes HDF5 files with orbitals and matrix elements compatible with SAFIRE
    - Handles k-point sampling and orbital indexing conventions
 
-2. **Plane-wave DFT code** (via Coquí support):
-   
+2. **Plane-wave DFT code** (via CoQuí support):
+
    - **Quantum Espresso**: Widely used open-source plane-wave DFT code
    - **PySCF**: Python-based electronic structure package with pGTO capabilities
-   - Other codes as supported by Coquí
+   - Other codes as supported by CoQuí
 
 **Important Considerations:**
 
 - **K-point convergence**: Ensure the underlying DFT calculation uses a sufficiently dense k-point mesh
-- **Plane-wave cutoff**: The DFT cutoff determines the number of orbitals per k-point in the SAFIRE calculation
+- **Plane-wave cutoff**: Ensure the DFT plane-wave cutoff is converged, since it determines the quality of the orbitals and matrix elements
 - **Pseudopotentials**: Choose well-tested pseudopotentials appropriate for your system
-- **File formats**: Coquí outputs HDF5 files containing the k-point factorized Hamiltonian and trial wavefunction
+- **File formats**: CoQuí outputs HDF5 files containing the k-point factorized Hamiltonian and trial wavefunction
 
 Orbital Basis Considerations
-============================
+----------------------------
 
 **Number of Orbitals per K-point**:
 
-The number of orbitals at each k-point is related to the plane-wave energy cutoff used in the underlying DFT calculation.
-Higher cutoffs produce more orbitals but more accurate results. Convergence studies are essential.
+The number of orbitals (bands) at each k-point is chosen when converting the DFT output, e.g. with ``nbnd`` in CoQuí,
+and can be at most the number of bands computed in the DFT calculation.
+More orbitals give a more complete basis at a higher cost. Convergence studies are essential.
 
 **K-point Mesh Density**:
 
@@ -169,16 +170,16 @@ Higher cutoffs produce more orbitals but more accurate results. Convergence stud
 |
 
 The Tutorials
-=============
+-------------
 
 The following tutorials will guide you through AFQMC calculations
 using SAFIRE in order to teach you the typical workflow,
 and some of the main features of SAFIRE.
 We assume that you are familiar with typical electronic structure calculations using pseudopotentials and a plane-wave basis.
 We also assume that you
-have access to Coquí
+have access to CoQuí
 and that you are familiar with its basic use.
-Each "basic" tutorial builds on the previous one.
+Each tutorial builds on the previous one.
 We recommend going through them in order.
 
 .. toctree::

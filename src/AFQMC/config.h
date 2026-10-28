@@ -40,10 +40,9 @@ namespace afqmc
 {
 
 // Global Constant Definitions
-const int DEFAULT_MEASURE_INTERVAL_MULTIPLIER = 1; // in units of population control interval
+const int DEFAULT_MEASURE_INTERVAL = 10; // in units of steps
 const int DEFAULT_POPULATION_CONTROL_INTERVAL = 10; // in units of steps
 const int DEFAULT_WALKER_ORTHO_INTERVAL = 10; // in units of steps
-const float DEFAULT_TIME_STEP = 0.01f; // in units of inverse energy (depending on Hamiltonian units)
 
 enum WALKER_TYPES
 {
@@ -52,23 +51,6 @@ enum WALKER_TYPES
   COLLINEAR,
   NONCOLLINEAR
 };
-
-inline WALKER_TYPES initWALKER_TYPES(int i)
-{
-  if (i == 0)
-    return UNDEFINED_WALKER_TYPE;
-  else if (i == 1)
-    return CLOSED;
-  else if (i == 2)
-    return COLLINEAR;
-  else if (i == 3)
-    return NONCOLLINEAR;
-  else if (i == 4)
-    utils::check(false, "This wavefunction was generated with the removed FULLYPOLARIZED "
-                        "walker type (dims[3]==4). Regenerate it as COLLINEAR (dims[3]==2) "
-                        "with ndown=0.");
-  return UNDEFINED_WALKER_TYPE;
-}
 
 inline auto walkerTypeToDims(WALKER_TYPES type) {
   int nspin = type == COLLINEAR ? 2 : 1;
@@ -172,14 +154,12 @@ using PsiT_Matrix_t = math::sparse::csr_matrix<T, MEM, int, int>;
 template<MEMORY_SPACE MEM>
 using PsiT_Matrix   = PsiT_Matrix_t<ComplexType,MEM>;
 
-enum HamiltonianTypes
-{
-  THC,
-  KPTHC,
-  KPFactorized,
-  RealDenseFactorized,
-  ModelHamiltonian,  
-  UNKNOWN
+enum class HamiltonianType {
+  thc,
+  kpthc,
+  kp_factorized,
+  real_dense_factorized,
+  model_hamiltonian,
 };
 
 } // namespace afqmc

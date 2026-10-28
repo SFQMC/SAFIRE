@@ -1,0 +1,147 @@
+////////////////////////////////////////////////////////////////////////////////
+// This file is distributed under the Apache License, Version 2.0 License.
+// See LICENSE file in top directory for details.
+//
+// Copyright (c) 2021-2025 The Simons Foundation, Inc.
+//
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// This file includes portions derived from work licensed under the
+// University of Illinois/NCSA Open Source License. See the NOTICE file
+// and LICENSES/NCSA.txt for details.
+////////////////////////////////////////////////////////////////////////////////
+
+#include <algorithm>
+#include <format>
+#include <string>
+#include <vector>
+
+#include "config.h"
+#include "utilities/check.hpp"
+#include "utilities/memory_utils.hpp"
+
+#include "AFQMC/config.h"
+#include "AFQMC/Drivers/average_energy.hpp"
+#include "AFQMC/Drivers/run_ftafqmc.hpp"
+#include "AFQMC/Utilities/AFQMCTimer.h"
+#include "AFQMC/Walkers/population_control.hpp"
+#include "IO/app_loggers.h"
+#include "IO/banner.hpp"
+
+namespace sfqmc::afqmc {
+
+template<MEMORY_SPACE MEM>
+void run_ftafqmc(utils::mpi_context_t<boost::mpi3::communicator>& mpi,
+                 std::string const& output_name,
+                 ExecuteParameters const& exec,
+                 RealType Eshift,
+                 WalkerSet<MEM>& wset,
+                 Wavefunction<MEM>& wavefunction,
+                 Propagator<MEM>& propagator,
+                 Estimators<MEM>& estimators) {
+  app_log(1, banner("Beginning FT-AFQMC calculation"));
+
+  RealType w0   = wset.GlobalWeight();
+  int nwalk_ini = wset.GlobalPopulation();
+  // the ranks need not carry the same number of walkers, so each restores its own count
+  int const nwalk_local = wset.size();
+
+  const int steps         = resolved(exec.steps, "steps");
+  const RealType timestep = resolved(exec.timestep, "timestep");
+
+  int print_interval = std::max(1, steps / 20);
+
+  app_log(1, "Initial weight and number of walkers: {}, {}", w0, nwalk_ini);
+  app_log(1, "Initial Eshift: {} ", Eshift);
+
+  const RealType Eshift0 = Eshift;
+  const RealType beta    = timestep * steps;
+
+  const double Eshift_relaxation_factor = resolved(exec.Eshift_relaxation_factor, "Eshift_relaxation_factor");
+
+  // wset.reset() at the end of each sweep zeroes PSEUDO_ELOC_ along with the rest of the walker
+  // row. Every sweep restarts from the same tau=0 trial state, so snapshot the seed here and
+  // restore it, for the same reason LogPT0 is cached rather than recomputed.
+  nda::array<ComplexType, 1> pseudo_eloc0(wset.size());
+  wset.getProperty(PSEUDO_ELOC_, pseudo_eloc0);
+
+  app_log(1, "Executing {} sweeps, with Beta = {} ", exec.sweeps, beta);
+
+  for(int sweep = 0; sweep < exec.sweeps; ++sweep) {
+    Eshift = Eshift0; // Eshift set to same value at the beginning of each sweep
+    for(int step = 0; step < steps; ++step) {
+      auto step_time = timers.step.start();
+      if(step % print_interval == 0 && exec.print_sweep_step) {
+        app_log(1, "sweep {}, step {} ", sweep, step);
+      }
+      // reset wset log(ovlp), read initial value
+      // from memory after sweep 1, rather than re-computing
+      if(step == 0 && sweep > 0) {
+        auto const& LogPT0 = wavefunction.getLogPT0();
+        utils::check(LogPT0.size() == wset.size(),
+                     "LogPT0 size ({}) does not match walker set size ({})",
+                     LogPT0.size(), wset.size());
+        wset.setProperty(OVLP, LogPT0);
+        wset.setProperty(PSEUDO_ELOC_, pseudo_eloc0);
+        wset.setTauStep(0);
+      }
+
+      propagator.Propagate(wset, Eshift, step + 1);
+
+      if(step % exec.walker_ortho_interval == 0 && step != steps - 1) {
+        auto ortho_time = timers.ortho.start();
+        propagator.Orthogonalize(wset);
+        ortho_time.stop();
+      }
+
+      // KE: should there be a check for population control interval here?
+      if(step % exec.population_control_interval == 0 || step == steps - 1) {
+        auto popcontrol_time = timers.popcontrol.start();
+        population_control(mpi, *wset.getRNG(), wset);
+        popcontrol_time.stop();
+      }
+
+      if(step < exec.equilibration_steps) {
+        Eshift += Eshift_relaxation_factor * (averagePseudoEnergy(mpi, wset, timestep) - Eshift);
+      }
+
+      // resize stack pointers to match maximum buffer use
+      utils::resize_nda_static_allocator();
+    }
+
+    // one sweep is one measurement sample, so an estimator's measure_interval counts sweeps
+    // here rather than steps. The walker set is still at nt = nStep, i.e. the full path has
+    // been constructed.
+    estimators.measure(mpi, sweep, wset);
+
+    wset.clean(); // reset walker buffer
+    // reset weights, UR, DR, VR
+    wset.reset(nwalk_local);
+    // reset logsclL, probably only necessary if backward sweeps are implemented
+    wavefunction.resetLogScale();
+  }
+
+  // print timers
+  if(mpi.comm.root()) {
+    timers.print_all();
+    estimators.write(std::format("{}.results.h5", output_name));
+  }
+
+  app_log(1, banner("Finished FT-AFQMC calculation"));
+}
+
+// Instantiate
+#define __inst__(M)                                                                                  \
+  template void run_ftafqmc<M>(utils::mpi_context_t<boost::mpi3::communicator>&, std::string const&,  \
+                               ExecuteParameters const&, RealType, WalkerSet<M>&, Wavefunction<M>&,   \
+                               Propagator<M>&, Estimators<M>&);
+
+__inst__(HOST_MEMORY)
+#if defined(ENABLE_DEVICE)
+__inst__(DEVICE_MEMORY)
+#endif
+
+} // namespace sfqmc::afqmc

@@ -1,0 +1,67 @@
+# This file is distributed under the Apache License, Version 2.0 License.
+# See LICENSE file in top directory for details.
+#
+# Copyright (c) 2021-2025 The Simons Foundation, Inc.
+#
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safiretools"
+description = "Companion module for the SAFIRE AFQMC code. Contains various helpers to create the input files for molecular, materials and lattice model Hamiltonians."
+version = "1.0.0"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy > 1.11.2",
+    "scipy >= 1.11.0",
+    "h5py > 2.6.0",
+]
+
+# domain-specific dependencies are considered optional!
+[project.optional-dependencies]
+pyscf = ["pyscf >= 2.4.0"]
+vis = ["matplotlib"]
+testing = ["pytest"]
+docs = [
+    "sphinx >= 8.2",
+    "sphinxcontrib-bibtex",
+    "sphinx-autodoc-typehints",
+    "numpydoc",
+    "myst-nb",
+    "jupytext",
+    "pydata-sphinx-theme",
+    "sfqmc-autohf"
+]
+
+[tool.setuptools.packages.find]
+include = ["safiretools*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-m 'not dev and not debug' --strict-config --strict-markers"
+
+testpaths = [
+    "tests",
+]
+pythonpath = ["."]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "pyscf: marks tests as pyscf-dependent (deselect with '-m \"not pyscf\"')",
+    "aimbes: marks tests as aimbes-dependent",
+    "mpi: marks tests that require MPI",
+    "past: marks tests that are related to backward-comptability",
+    "dev: for tests used as used for test-driven development (TDD)",
+    "debug: use only when debugging",
+    "weekly: for weekly testing",
+    "push: tests to run every push"
+]
+
+# configure tools for building documentation
+

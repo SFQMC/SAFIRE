@@ -4,162 +4,118 @@ Installation
 ============
 
 The installation is performed in two essentially independent steps.
-The SAFIRE executable must be compiled, 
-and the afqmctools python package can optionally be installed.
+The SAFIRE executable must be compiled,
+and the safiretools python package can optionally be installed.
 
 Dependencies
 ------------
 
-You must first ensure that you have all of the dependencies
-and install any that are missing.
+Ensure the following dependencies are installed
 
-CPU Build
-~~~~~~~~~
-
-- CMake 3.18+
-- a modern C++ compiler with C++20 support. LLVM or GCC are recommended.
-- MPI (OpenMPI or other MPI implementation)
-- HDF5 (parallel HDF5 recommended)
-- Boost 1.61.0+
-- BLAS library
-- LAPACK library
+- CMake ≥3.25
+- C++20 compiler
+- MPI
+- HDF5
+- Boost ≥1.70.0
+- BLAS, LAPACK
 - Intel oneAPI MKL (for sparse matrices on CPU)
 
 The build system will fetch the following dependencies automatically if they are not installed
 
-- `nda <https://github.com/TRIQS/nda>`_ (tensor branch)
+- `nda <https://github.com/TRIQS/nda>`_
 - cxxopts
 - spdlog
 - cpptrace
 - nlohmann_json
 - Catch2 (for tests)
 
-NVIDIA GPU-build
-~~~~~~~~~~~~~~~~
+For NVIDIA GPU support, you additionally need
 
-All of the above and
-
-- CUDA 12+
-- CuTENSOR
+- CUDA ≥12, compute capability ≥8.0
+- `cuTENSOR <https://developer.nvidia.com/cutensor>`__
 - CCCL (fetched automatically)
-- A GPU with compute compatability >=8
+
+Getting SAFIRE
+--------------
+
+You can download SAFIRE from `GitHub <https://github.com/SFQMC/SAFIRE>`__, either through the latest release tarball or
+
+.. code-block::
+
+    git clone https://github.com/SFQMC/SAFIRE.git
 
 Compiling SAFIRE
 ----------------
 
-Assuming that all dependencies are installed and available, use the following steps to compile SAFIRE.
+Assuming that all dependencies are installed and available, go to the SAFIRE source directory and run
 
-.. code-block:: bash
+.. parsed-literal::
 
-    $ mkdir build
-    $ cd build
-    $ cmake .. -DCMAKE_BUILD_TYPE=Release
-    $ make -j 10
+    $ cmake -S . -B build \\
+            -DCMAKE_INSTALL_PREFIX=$(pwd)/build/install
+    $ cmake --build build -j 10
+    $ cmake --install build
 
-to compile for NVIDIA GPUs use the following.
+This installs the ``safire`` executable to ``build/install/bin``.
+To compile with NVIDIA GPU support use the following:
 
-.. code-block:: bash
+.. parsed-literal::
 
-    $ mkdir build
-    $ cd build
-    $ cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=ON
-    $ make -j 10
+    $ cmake -S . -B build \\
+            -DCMAKE_INSTALL_PREFIX=$(pwd)/build/install \\
+            **-DENABLE_CUDA=ON**
+    $ cmake --build build -j 10
+    $ cmake --install build
 
-Convenience build scripts
-~~~~~~~~~~~~~~~~~~~~~~~~~
+If CMake does not find `cuTENSOR <https://developer.nvidia.com/cutensor>`__, point it to the unpacked archive with ``-DCutensor_ROOT=/path/to/libcutensor``.
 
-For users at Flatiron, we provide compilation scripts for convenience.
-We note that for large system sizes, GPU-accelerated builds are highly recommended,
-but CPU-only builds are also useful for smaller system sizes.
+The GPU build can run both CPU and GPU calculations using the ``--compute`` CLI argument.
 
-CPU-only build at CCQ
-_____________________
+.. admonition:: For Flatiron Users
+    :class: note
 
-For large systems, building and running with GPU acceleration is highly recommended.
-However, for smaller systems, CPU builds are useful.
+    The following snippet will compile SAFIRE in the Rusty environment. Ensure these modules are also loaded whenever you are running SAFIRE.
 
-If you are rusty or sitting at an SCC-managed workstation, a suitable build script is
+    .. code-block::
 
-.. code-block:: bash
+        module purge
+        module load slurm cmake gcc hdf5 boost intel-oneapi-mkl
+        module load openmpi            # CPU-only build, or
+        module load cuda openmpi/cuda  # GPU build
 
-    module purge
-    module load slurm
-    module load cmake
-    module load gcc
-    module load openmpi
-    module load hdf5
-    module load boost
-    module load intel-oneapi-mkl
-
-    mkdir build
-    cd build
-    cmake .. \
-        -DCMAKE_BUILD_TYPE=Release
-
-    make -j 10
+        cmake -S . -B build \
+              -DCMAKE_INSTALL_PREFIX=$(pwd)/build/install \
+              -DENABLE_CUDA=ON -DCutensor_ROOT=... # GPU build only
+        cmake --build build -j 10
+        cmake --install build
 
 
-GPU-accelerated build at CCQ
-____________________________
+Installing Companion Software
+-----------------------------
 
-Currently the GPU build only works with CUDA 11.
-If you are on rusty or using a rusty connected desktop a suitable build script is
+It is highly recommended you install :ref:`safiretools`, the companion Python package that simplifies
+the generation of input files and the processing of output data.
 
-.. code-block:: bash
+.. code-block::
 
-    module purge
-    module load slurm
-    module load cmake
-    module load gcc
-    module load openmpi
-    module load hdf5
-    module load boost
-    module load intel-oneapi-mkl
-    module load cuda
+    cd python
+    pip install ".[vis]" # [vis]ualization support
 
-    mkdir build
-    cd build
-    cmake .. \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DENABLE_CUDA=ON
+For lattice model calculations, the `AutoHF <https://github.com/SFQMC/AutoHF>`__ Hartree-Fock code is very useful.
 
-    make -j 10
+.. code-block::
 
+    pip install sfqmc-autohf
 
-Installing the afqmctools Python package
-________________________________________
+For ab-initio solids calculations, see `CoQuí <https://github.com/AbInitioQHub/coqui>`__ for installation instructions.
 
-See :ref:`the afqmctools documentation <afqmctools>` for details on installing afqmctools.
+For chemistry, SAFIRE can interface with various quantum chemistry codes. If you want to use the PySCF backend, install
 
-Rusty Installation
-__________________
+.. code-block::
 
-If you are connected to Rusty, you can do the following (tested with `modules-2.3`) 
-beginning from the root directory of this repo.
+   pip install pyscf
 
-.. code-block:: bash
+Next Steps
+----------
 
-    $ export VENV_DIR=~/venvs  # replace this with a good directory to install a virtual environment
-    $ export AFQMC_ROOT_DIR=$(pwd)
-    $ module load openmpi hdf5 python-mpi/3.11
-    $ cd $VENV_DIR
-    $ python -m venv --system-site-packages afqmctools
-    $ source afqmctools/bin/activate
-    $ cd $AFQMC_ROOT_DIR/utils
-    $ pip install .[AUTOHF] # add -e to make editable
-    # optional, install jax with gpu support
-    # pip install -U "jax[cuda12]"
-
-
-afqmctools as a library
-_______________________
-
-Additionally, the afqmctools library can be imported and used in Python:
-
-.. code-block:: python
-
-    from afqmctools.hamiltonian.mol import write_hamil_mol
-
-    ... 
-
-See the examples for more.
+You should now be ready for your first calculation. Continue to the :ref:`tutorials`.

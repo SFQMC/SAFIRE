@@ -22,7 +22,6 @@
 #include "AFQMC/config.h"
 
 #include "AFQMC/Propagators/AFQMCBasePropagator.h"
-//#include "AFQMC/Propagators/AFQMCModelPropagator.h"
 
 namespace sfqmc
 {
@@ -57,25 +56,14 @@ public:
   }
 
   template<class... Args>
-  void generateP1(Args&&... args)
-  {
-    std::visit([&](auto&& a) { a.generateP1(std::forward<Args>(args)...); }, var);
-  }
-
-  template<class... Args>
   void Orthogonalize(Args&&... args)
   {
     std::visit([&](auto&& a) { a.Orthogonalize(std::forward<Args>(args)...); }, var);
   }
 
-  bool hybrid_propagation()
+  bool stores_local_energy() const
   {
-    return std::visit([&](auto&& a) { return a.hybrid_propagation(); }, var);
-  }
-
-  bool free_propagation()
-  {
-    return std::visit([&](auto&& a) { return a.free_propagation(); }, var);
+    return std::visit([&](auto&& a) { return a.stores_local_energy(); }, var);
   }
 
   int number_of_cholesky_vectors() const
@@ -89,9 +77,8 @@ public:
     std::visit([&](auto&& a) { a.set_rng_block_size(std::forward<Args>(args)...); }, var);
   }
 
-  void printBoundStatistics()
-  {
-    std::visit([&](auto&& a) { a.printBoundStatistics(); }, var);
+  void printBoundStatistics(RealType Eshift) {
+    std::visit([&](auto&& a) { a.printBoundStatistics(Eshift); }, var);
   }
 
   private:

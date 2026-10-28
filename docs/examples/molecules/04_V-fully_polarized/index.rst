@@ -12,82 +12,67 @@ We will use CASCI to compute the exact energy within the active space as a refer
 Running the Example
 -------------------
 
-The workflow follows three steps:
+The workflow follows these steps:
 
-1. **Generate an orbital basis**: Execute ``scf/scf.py`` to perform ROHF on the vanadium atom which we will use as a basis,
-   and to generate a trial wavefunction for AFQMC.
-   We also run a CASCI(32o,3e) calculation to provide a reference energy.
-   
-   The ROHF energy should be around -942.873080272797 Ha, and the CASCI(32o,3e) energy should be 
-   around -942.901099297148 Ha where the contribution in the active space is -3.53263111527235 Ha.
+1. **Create AFQMC inputs**: Execute ``inputs/setup.py``. It first performs ROHF on the vanadium
+   atom, whose orbitals we will use as a basis and from which the trial wavefunction is built.
+   It also runs a CASCI(32o,3e) calculation to provide a reference energy.
 
-2. **Create AFQMC inputs**: Execute ``input/setup.py`` to generate the SAFIRE inputs.
-   Note that script uses an active space for AFQMC of `cas_afqmc = (3,32)`. 
-   This treats the system as having all electrons in the spin-up channel. 
+   The ROHF energy should be around -942.884910 Ha, and the CASCI(32o,3e) energy should be
+   around -942.902127 Ha, where the contribution from the active space is -3.535253 Ha.
+
+   .. note::
+
+      An isolated vanadium atom has other ROHF solutions, and the CASCI and
+      AFQMC energies quoted in this example all assume the lowest one. ``setup.py`` therefore runs
+      an internal stability analysis, re-solving from any instability it finds, and then checks the
+      total energy against the value above.
+
+   It then generates the SAFIRE inputs.
+   Note that script uses an active space for AFQMC of ``cas_afqmc = (3,32)``.
+   This treats the system as having all electrons in the spin-up channel.
    The script writes both the Hamiltonian and a fully polarized trial wavefunction to ``afqmc.h5``.
+   A trial with no beta electrons is collinear with ``ndown == 0``, so ``walker_type`` in
+   ``afqmc.json`` is ``"collinear"`` and the wavefunction's beta blocks are written with zero width.
 
-3. **Run SAFIRE**: Execute SAFIRE using the provided ``afqmc.json`` input file:
+2. **Run SAFIRE**: Execute SAFIRE using the provided JSON job file ``afqmc.json``:
 
-   First, go to the `inputs` directory, then run SAFIRE with the following command:
+   First, go to the ``inputs`` directory, then run SAFIRE with the following command:
 
    .. code-block:: bash
 
       mpirun -n 64 safire afqmc.json
 
-4. **analyze the results**: Use the `scalar_stats` command-line tool from afqmctools to analyze the energy output:
+3. **Analyze the results**: Use ``safiretools`` to analyze the energy in the results file ``inputs/qmc.results.h5``:
 
-   .. code-block:: bash
+   .. code-block:: python
 
-      $ scalar_stats qmc.s000.scalar.dat -s time -e 5.0 -t --savefig energy_vs_beta.png
+      from safiretools import Results, vis
 
-      ====== [analyze_scalar_data Settings] ======
+      results = Results("qmc.results.h5")
+      vis.plot_timeseries(results)
 
-      [+] fname            = qmc.s000.scalar.dat
-      [+] mark_header      = #               
-      [+] series_column    = time            
-      [+] nequil           = 5.0             
-      [+] estimate_equil   = False           
-      [+] column           = LocalEnergy     
-      [+] reblock          = 1               
-      [+] ndiscard         = None            
-      [+] list             = False           
-      [+] trace            = True            
-      [+] append           = None            
-      [+] dump             = False           
-      [+] dump_fname       = trace.dat       
-      [+] verbose          = True            
-      [+] autocorr         = None            
-      [+] savefig          = energy_vs_beta.png
-      [+] dump_avail_columns = False           
+   This prints the average AFQMC energy and its stochastic uncertainty and plots the energy as a function of imaginary time.
+   The first 1000 steps (an imaginary time of 5.0 :math:`\mathrm{Ha}^{-1}`) are discarded as equilibration, as set by
+   ``equilibration_steps`` in the provided ``afqmc.json``.
+   If you used the same settings, you should get an output compatible with
 
-      AFQMC Energy   -942.901682 +/-   0.000151 32.25  5.0/35.0
+   .. code-block:: text
 
-   This will compute the average AFQMC energy and stochastic uncertainty, using an equilibration time of 5.0 Ha^{-1}.
-   The `-t` flag will generate a plot of the energy as a function of imaginary time if running locally.
-   If running remotely, you can save the plot of the energy vs imaginary time to a file using the `--savefig [name].png` option.
-   In either case, you should see the following output if you used the same settings as in the provided `afqmc.json` file and
-   above.
-
-      .. image:: energy_vs_beta.png
-         :alt: AFQMC local energy as a function of imaginary time for the fully polarized vanadium example.
-         :width: 80%
-         :align: center
+      Energy = -942.90168 ± 0.00015
 
 
-5. compare with the reference CASCI energy: The AFQMC energy, -942.9017(2) Ha, agrees with the CASCI energy, -942.902141 Ha,
+4. compare with the reference CASCI energy: The AFQMC energy, -942.9017(2) Ha, agrees with the CASCI energy, -942.902127 Ha,
    which is the exact energy within the active space, to well within chemical accuracy.
-    
-See ``run.sh`` for execution details. The ``dice/`` directory contains an alternative trial wavefunction generation approach using selected CI.
+
+``inputs/run_safire_cpu.sh`` is a sample Slurm batch script for step 2.
+For an alternative way to build the trial wavefunction, using selected CI instead of a single
+determinant, see :doc:`../02_B_atom_SHCI_trial_wfn/06_SHCI_trial_wavefunction`.
 
 Files
 -----
 
-**SCF/CASCI Calculation** (``scf/scf.py``):
-
-.. literalinclude:: scf/scf.py
-   :language: python
-
-**Hamiltonian Generation** (``inputs/setup.py``):
+**SCF/CASCI Calculation and Input Generation** (``inputs/setup.py``):
 
 .. literalinclude:: inputs/setup.py
    :language: python

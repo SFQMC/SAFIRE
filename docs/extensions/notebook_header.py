@@ -17,15 +17,28 @@ or ``examples/``) this extension:
   pointing at a zip that sits next to the page's HTML output, and
 * builds that zip at the end of the build (``build-finished``). The zip contains
   a real ``.ipynb`` (converted from the MyST source with jupytext) plus the
-  notebook's ``files/`` data directory, if present.
+  notebook's ``files/`` data directory, if present. Symlinked directories are
+  followed; ``__pycache__`` and ``.ipynb_checkpoints`` are skipped.
 
-The only MyST construct that does not survive the ``.md -> .ipynb`` conversion is
-the Sphinx ``{doc}`` cross-reference role; it is rewritten into an absolute
-markdown link to the published HTML docs (using ``html_baseurl``). The source
-``.md`` files are never modified -- rewriting happens on the in-memory notebook
-that jupytext produces, before it is serialized into the zip.
+Two MyST constructs do not survive the ``.md -> .ipynb`` conversion and are
+rewritten:
+
+* ``{include}`` directives (with optional ``:start-after:``/``:end-before:``) are
+  replaced by the included text before jupytext parses the source, so cell
+  breaks inside an included region become real notebook cells. As in MyST, a
+  path starting with ``/`` is relative to the source directory, any other path
+  is relative to the including page, and relative image paths and ``{doc}``
+  targets in the included text resolve against the including page.
+  ``{literalinclude}`` directives become fenced code blocks the same way.
+* The Sphinx ``{doc}``, ``{ref}`` and ``{py:*}`` cross-reference roles are
+  rewritten into absolute markdown links to the published HTML docs (using
+  ``html_baseurl``).
+
+The source ``.md`` files are never modified -- rewriting happens in memory,
+before the notebook is serialized into the zip.
 """
 
+import os
 import posixpath
 import re
 import zipfile
@@ -41,10 +54,25 @@ NOTEBOOK_DIRS = ("tutorials/", "examples/")
 # ... and whose source file is an actual notebook (not the .rst overviews).
 NOTEBOOK_SUFFIXES = (".md", ".ipynb")
 
-# Matches {doc}`target` and {doc}`Title <target>`.
-_DOC_ROLE = re.compile(r"\{doc\}`(?:([^`<]*?)\s*<)?([^`<>]+?)>?`")
+# Directories in files/ that are not bundled into the zip.
+_SKIP_DIRS = {"__pycache__", ".ipynb_checkpoints"}
+
+# Matches {doc}, {ref} and {py:*} roles, as {role}`target` or {role}`Title <target>`.
+_XREF_ROLE = re.compile(r"\{(doc|ref|py:\w+)\}`(?:([^`<]*?)\s*<)?([^`<>]+?)>?`")
 # Matches a markdown link whose target is a sibling .md page: [text](path.md)
 _MD_LINK = re.compile(r"(\]\()([^)]+?)\.md(#[^)]*)?(\))")
+# Matches a fenced {include} or {literalinclude} directive with its option lines.
+_INCLUDE = re.compile(
+    r"^(?P<fence>`{3,}|:{3,})\{(?P<directive>include|literalinclude)\}[ \t]+(?P<path>\S+)[ \t]*\n"
+    r"(?P<options>(?::[\w-]+:.*\n)*)"
+    r"(?P=fence)[ \t]*$",
+    re.MULTILINE,
+)
+_SUPPORTED_OPTIONS = {
+    "include": {"start-after", "end-before"},
+    "literalinclude": {"language"},
+}
+_OPTION = re.compile(r"^:([\w-]+):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
 
 
 def _is_notebook(app, docname):
@@ -85,22 +113,43 @@ def _resolve_target(current_docname, target):
 
 
 def _rewrite_xrefs(text, current_docname, app):
-    """Rewrite {doc} roles (and sibling .md links) into absolute HTML links.
+    """Rewrite {doc}/{ref}/{py:*} roles (and sibling .md links) into absolute HTML links.
 
     Operates on a single markdown cell's source text and returns the rewritten
-    text. Cross-references point at ``html_baseurl/<docname>.html``.
+    text. Cross-references point at ``html_baseurl/<docname>.html[#anchor]``.
+    Unresolvable {ref}/{py:*} targets are reduced to plain text with a warning.
     """
     base = (app.config.html_baseurl or "").rstrip("/")
+    std = app.env.get_domain("std")
+    py = app.env.get_domain("py")
 
-    def doc_repl(match):
-        title, target = match.group(1), match.group(2).strip()
-        target_docname = _resolve_target(current_docname, target)
-        if not title:
-            title_node = app.env.titles.get(target_docname)
-            title = title_node.astext() if title_node is not None else posixpath.basename(target_docname)
-        return f"[{title}]({base}/{target_docname}.html)"
+    def role_repl(match):
+        role, title, target = match.group(1), match.group(2), match.group(3).strip()
+        if role == "doc":
+            target_docname = _resolve_target(current_docname, target)
+            if not title:
+                title_node = app.env.titles.get(target_docname)
+                title = title_node.astext() if title_node is not None else posixpath.basename(target_docname)
+            return f"[{title}]({base}/{target_docname}.html)"
 
-    text = _DOC_ROLE.sub(doc_repl, text)
+        if role == "ref":
+            # std labels are stored lowercased; anonlabels holds every label.
+            label = target.lower()
+            if label not in std.anonlabels:
+                logger.warning("notebook_header: unresolved {ref} %r in %s", target, current_docname)
+                return title or target
+            docname, anchor = std.anonlabels[label]
+            title = title or std.labels.get(label, (None, None, target))[2]
+            return f"[{title}]({base}/{docname}.html#{anchor})"
+
+        title = f"`{title or target}`"
+        entry = py.objects.get(target)
+        if entry is None:
+            logger.warning("notebook_header: unresolved {%s} %r in %s", role, target, current_docname)
+            return title
+        return f"[{title}]({base}/{entry.docname}.html#{entry.node_id})"
+
+    text = _XREF_ROLE.sub(role_repl, text)
 
     def md_link_repl(match):
         target = match.group(2)
@@ -114,9 +163,50 @@ def _rewrite_xrefs(text, current_docname, app):
     return text
 
 
+def _expand_includes(text, page_dir, srcdir):
+    """Replace {include} and {literalinclude} directives in a MyST source by their text.
+
+    {include} becomes the included text, {literalinclude} a fenced code block.
+    Includes are expanded first, so a {literalinclude} inside included text
+    resolves against the including page, as it does in Sphinx. Options other than
+    ``:start-after:``/``:end-before:`` ({include}) and ``:language:``
+    ({literalinclude}) raise, so the notebook zip is skipped with a warning
+    instead of silently containing the wrong text.
+    """
+
+    def include_repl(match):
+        directive, target = match.group("directive"), match.group("path")
+        path = Path(srcdir) / target.lstrip("/") if target.startswith("/") else page_dir / target
+        options = dict(_OPTION.findall(match.group("options")))
+        unsupported = set(options) - _SUPPORTED_OPTIONS[directive]
+        if unsupported:
+            raise ValueError(f"unsupported {{{directive}}} options {sorted(unsupported)} for {target}")
+
+        content = path.read_text(encoding="utf-8")
+        if directive == "literalinclude":
+            fence = "`" * max([3, *(len(run) + 1 for run in re.findall(r"`+", content))])
+            return f"{fence}{options.get('language', '')}\n{content.rstrip()}\n{fence}"
+
+        for option in ("start-after", "end-before"):
+            marker = options.get(option)
+            if marker is None:
+                continue
+            index = content.find(marker)
+            if index < 0:
+                raise ValueError(f"{{include}} {option} text {marker!r} not found in {target}")
+            content = content[index + len(marker):] if option == "start-after" else content[:index]
+        return content.strip("\n")
+
+    for directive in ("include", "literalinclude"):
+        text = _INCLUDE.sub(lambda m: include_repl(m) if m.group("directive") == directive else m.group(0), text)
+    return text
+
+
 def _build_notebook_zip(app, docname, jupytext, nbformat):
     """Convert one notebook to .ipynb and bundle it (plus files/) into a zip."""
-    nb = jupytext.read(Path(app.env.doc2path(docname)))
+    src = Path(app.env.doc2path(docname))
+    text = _expand_includes(src.read_text(encoding="utf-8"), src.parent, app.srcdir)
+    nb = jupytext.reads(text, fmt=src.suffix.lstrip("."))
 
     for cell in nb.cells:
         if cell.get("cell_type") == "markdown":
@@ -131,11 +221,13 @@ def _build_notebook_zip(app, docname, jupytext, nbformat):
     with zipfile.ZipFile(out_dir / f"{base}.zip", "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(f"{base}/{base}.ipynb", nb_json)
         files_dir = _files_dir(app, docname)
-        if files_dir.is_dir():
-            for path in sorted(files_dir.rglob("*")):
-                if path.is_file():
-                    arcname = f"{base}/files/{path.relative_to(files_dir).as_posix()}"
-                    zf.write(path, arcname)
+        # os.walk, unlike Path.rglob before Python 3.13, follows symlinked directories.
+        for dirpath, dirnames, filenames in os.walk(files_dir, followlinks=True):
+            dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+            for name in sorted(filenames):
+                path = Path(dirpath) / name
+                arcname = f"{base}/files/{path.relative_to(files_dir).as_posix()}"
+                zf.write(path, arcname)
 
 
 def on_build_finished(app, exception):

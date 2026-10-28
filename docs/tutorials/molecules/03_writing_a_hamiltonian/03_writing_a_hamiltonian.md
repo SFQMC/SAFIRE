@@ -18,11 +18,11 @@ kernelspec:
 <b>Goal:</b>
 Become acquainted with how to write a Hamiltonian to the SAFIRE HDF5 format.
 
-## What you will learn
+## What You Will Learn
 
 1.  How to write a Hamiltonian to the SAFIRE HDF5 format starting from one-body, and two-body integrals
-2.  How to convert from a FCIDUMP file to the SAFIRE HDF5 format both using the CLI tools and within a Python script
-3.  (For convenience) How to use PySCF and afqmctools to generate and write the Hamiltonian
+2.  How to convert from an FCIDUMP file to the SAFIRE HDF5 format
+3.  (For convenience) How to use PySCF and safiretools to generate and write the Hamiltonian
 
 ## Introduction
 
@@ -30,23 +30,11 @@ In previous tutorials, we learned how to run SAFIRE, and how
 to post process the results to arrive at the AFQMC energy.
 Now, we will learn how to write a Hamiltonian in SAFIRE's HDF5 format.
 
-<!--
-<div>
-<img src="./figs/QChemWorkflow_v2.png" width="1000"/>
-</div>
--->
-
 ![](files/TopLevelFlowChart_v3.png)
 
 In this tutorial,
 we will compute the ground state energy of
 the minimal basis hydrogen dimer with a bond length of 1.4 Bohr radii. 
-
-<!--
-<div>
-<img src="./figs/HyrdogenMolecule.png" width="500"/>
-</div>
---->
 
 ![](files/HyrdogenMolecule.png)
 
@@ -57,29 +45,21 @@ the minimal basis hydrogen dimer with a bond length of 1.4 Bohr radii.
 ```{code-cell} ipython3
 :id: zMSdfeQqyCNd
 
-from pathlib import Path
-
-
-from afqmctools.hamiltonian.mol import write_hamiltonian_generic
-from afqmctools.wavefunction.mol import write_wfn
-from afqmctools.inputs.from_hdf import write_json
-
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 ```
 
 +++ {"id": "J8ieYi3YyCNe"}
 
-##  Setting up
+## Setting Up
 
 As we have seen in previous tutorials, the SAFIRE executable is implemented for generic second quantized Hamiltonians, and wavefunctions.
 Before we can run an AFQMC calculation, we must generate:
 
 1. A Hamiltonian
 2. A trial wavefunction
-3. A json input file
+3. A JSON job file
 
 Implicit in items 1. and 2. is the need for an orthonormal basis in
 which to compute matrix elements of the Hamiltonian,
@@ -92,46 +72,47 @@ from RHF as a basis.
 
 ## The Hamiltonian
 
-We are often interested in the electronic ground state of the Born-Oppenheimer Hamiltonian which is given in first quantization
+We are often interested in the electronic ground state of the Born-Oppenheimer Hamiltonian, which is given in first quantization
 by
 $$
-H_\mathrm{Born-Oppenheimer} = \sum_p^{N_e}\left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_{A}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) + \frac{1}{2} \sum^{N_e}_{q \neq p} \left(\frac{1}{r_{pq}}\right) + \frac{1}{2}\sum_{A' \neq A}^{N_A} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
+H_\mathrm{Born-Oppenheimer} = \sum_i^{N_\mathrm{e}}\left( -\frac{1}{2} \nabla^2_i - \sum_A^{N_\mathrm{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_i | } \right) + \frac{1}{2} \sum^{N_\mathrm{e}}_{i \neq j} \frac{1}{|\vec{r}_i - \vec{r}_j|} + \frac{1}{2}\sum_{A \neq B}^{N_\mathrm{atom}} \frac{Z_A Z_B}{| \vec{R}_A - \vec{R}_B |},
 $$
-where,
-$N_e$ is the number of electrons,
-$\vec{r}_p$ is the position of electron $p$,
-$N_{A}$ is the number of atomic nuclei,
-and $Z_A$ and $\vec{R}_A$ are the atomic number and position, respectively, of atomic nuclei, $A$.
+where
+$N_\mathrm{e}$ is the number of electrons,
+$\vec{r}_i$ is the position of electron $i$,
+$N_\mathrm{atom}$ is the number of atomic nuclei,
+and $Z_A$ and $\vec{R}_A$ are the atomic number and position, respectively, of nucleus $A$.
 
 AFQMC is formulated in terms of the second quantized Hamiltonian.
 In second quantization, we express the Hamiltonian in terms of electronic creation/annihilation operators
-, $\hat{c}^{\dagger}_i$ / $\hat{c}_i$, which create/annihilate an electron in the chosen basis set orbitals,
-$\{ \phi_i (\vec{r})\}$.
-The Hamiltonian takes the form,
+$\hat{c}^\dagger_{p\sigma}$/$\hat{c}_{p\sigma}$, which create/annihilate an electron with spin $\sigma$ in the orbital $\phi_p(\vec{r})$
+of the chosen basis set $\{ \phi_p(\vec{r})\}$.
+The Hamiltonian takes the form (see {ref}`Hamiltonian-classes`)
 $$
-\hat{H} = H^0 + \sum_{ij} H^1_{ij} \hat{c}^{\dagger}_i\hat{c}_j + \frac{1}{2}\sum_{j \neq i} H^2_{ijkl} \hat{c}^{\dagger}_i \hat{c}^{\dagger}_j \hat{c}_k \hat{c}_l
+\hat{H} = E_0 + \sum_{pq\sigma} h_{pq} \hat{c}^\dagger_{p\sigma}\hat{c}_{q\sigma} + \frac{1}{2}\sum_{pqrs\sigma\sigma'} v_{pqrs} \hat{c}^\dagger_{p\sigma} \hat{c}^\dagger_{q\sigma'} \hat{c}_{s\sigma'} \hat{c}_{r\sigma},
 $$
 where
 $$
-H^0 = \frac{1}{2}\sum_{A' \neq A}^{N_A} \frac{Z_{A} Z_{A'}}{| R_A - R_{A'} |},
+E_0 = \frac{1}{2}\sum_{A \neq B}^{N_\mathrm{atom}} \frac{Z_A Z_B}{| \vec{R}_A - \vec{R}_B |}
 $$
 is the constant nuclear repulsion energy,
 $$
-H^1_{ij} = \int d\vec{r}_p  \phi^*_i (\vec{r}_p) \left(  -\frac{1}{2} \nabla^2_p + \sum_A^{N_{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r}_p | }  \right) \phi_j (\vec{r}_p),
+h_{pq} = \int d\vec{r}\, \phi^*_p(\vec{r}) \left( -\frac{1}{2} \nabla^2 - \sum_A^{N_\mathrm{atom}} \frac{Z_A}{ | \vec{R}_A - \vec{r} | } \right) \phi_q(\vec{r})
 $$
-contains the "one-body" kinetic term and electron-nuclei interactions,
+contains the kinetic energy and the electron-nucleus attraction,
 and
 $$
-H^2_{ijkl} = (il|jk) = \frac{1}{2} \int \int d\vec{r}_p d\vec{r}_q  \left( \phi^*_i (\vec{r}_p)  \phi_l (\vec{r}_p)  \frac{1}{|\vec{r}_p - \vec{r}_q|}  \phi^*_j (\vec{r}_q) \phi_k (\vec{r}_q)  \right)
+v_{pqrs} = (pr|qs) = \int \int d\vec{r}\, d\vec{r}'\, \phi^*_p(\vec{r}) \phi_r(\vec{r}) \frac{1}{|\vec{r} - \vec{r}'|} \phi^*_q(\vec{r}') \phi_s(\vec{r}')
 $$
-is the electron-electron Coulomb interaction.
+is the electron-electron Coulomb interaction, written as $(pr|qs)$ in chemists' notation.
+The Born-Oppenheimer Hamiltonian does not act on spin, so $h_{pq}$ and $v_{pqrs}$ carry none of the spin indices $\sigma\sigma'$ of the general form.
 
 Typically, an external quantum chemistry code will be used to generate integrals.
 For this tutorial, we will use the minimal basis Hydrogen dimer since it can be easily written down by hand.
 See, for example, section 3.5.2 in ref. 1.
 
 The code block below contains the Hamiltonian for the $H_2$ molecule at a
-bond length of $\delta_{H-H} = 1.4$ Bohr radii in a standard sto-3g basis.
+bond length of $\delta_\mathrm{H-H} = 1.4$ Bohr radii in a standard STO-3G basis.
 **Run the code block below to load the Hamiltonian into memory**
 
 1. Szabo, A., & Ostlund, N. S. (1996). Modern quantum chemistry: Introduction to advanced electronic structure theory. Dover Publications.
@@ -141,68 +122,67 @@ bond length of $\delta_{H-H} = 1.4$ Bohr radii in a standard sto-3g basis.
 
 import numpy as np
 
-from afqmctools.hamiltonian.mol import write_hamiltonian_generic
-
 number_of_electrons = (1,1) # up, down
 number_of_orbitals = 2
 
-# all energy units are E_Hartree
+# all energy units are Ha
 
-# nuclear repulsion energy
-H0 = 0.714285714285714
+# nuclear repulsion energy E_0
+E0 = 0.714285714285714
 
-# One-Body Integrals in the basis of canonical RHF orbitals
-H1_ij = np.array([[-1.25279706e+00,  0.0           ],
-                  [ 0.0           , -4.75602313e-01]])
+# one-body integrals h_pq in the basis of canonical RHF orbitals
+h = np.array([[-1.25279706e+00,  0.0           ],
+              [ 0.0           , -4.75602313e-01]])
 
 
-# two-body integrals in the basis of canonical RHF orbitals
-H2_ijkl = np.zeros((2,2,2,2))
-H2_ijkl[0,0,:,:] = np.array([[ 6.74976525e-01, 0.0],
-                             [0.0, 6.63461552e-01]])
+# Coulomb integrals in the basis of canonical RHF orbitals,
+#   in chemists' notation: eri[p,r,q,s] = (pr|qs) = v_pqrs
+eri = np.zeros((2,2,2,2))
+eri[0,0,:,:] = np.array([[ 6.74976525e-01, 0.0],
+                         [0.0, 6.63461552e-01]])
 
-H2_ijkl[0,1,:,:] = np.array([[ 0.0,  1.81606342e-01],
-                             [ 1.81606342e-01, 0.0]])
+eri[0,1,:,:] = np.array([[ 0.0,  1.81606342e-01],
+                         [ 1.81606342e-01, 0.0]])
 # equivalent by symmetry
-H2_ijkl[1,0,:,:] = H2_ijkl[0,1,:,:]
-H2_ijkl[1,1,:,:] = np.array([[6.63461552e-01, 0.0],
-                             [0.0, 6.96162129e-01]])
+eri[1,0,:,:] = eri[0,1,:,:]
+eri[1,1,:,:] = np.array([[6.63461552e-01, 0.0],
+                         [0.0, 6.96162129e-01]])
 
 
 # For reference, the RHF orbitals in the STO-3G basis are
-# phi_i(\vec{r}) = \sum_\mu C_{\mu i} g_\mu (\vec{r})
+#   phi_p(r) = sum_mu C[mu,p] g_mu(r)
 phi_hf = np.array([[ 0.54893404,  1.21146407],
                    [ 0.54893404, -1.21146407]])
 
-# and the STO-3G basis overlap matrix for $\delta_{H-H}=1.4 Bohr$ is
-# Sij = <g_\mu | g_\nu>
-Sij = np.array([[1.,         0.65931821],
-                [0.65931821, 1.        ]])
+# and the STO-3G overlap matrix at a bond length of 1.4 Bohr is
+#   S[mu,nu] = <g_mu | g_nu>
+S = np.array([[1.,         0.65931821],
+              [0.65931821, 1.        ]])
 ```
 
 +++ {"id": "grY1VTDdyCNe"}
 
-### Save the Hamiltonian
+### Build the Hamiltonian
 
-`afqmctools` provides Python functions for writing Hamiltonians in an HDF5 file that can be read by the SAFIRE executable as
-shown in the code block below.
+`safiretools` provides Hamiltonian classes that `write_jobfile` writes into an HDF5 file that can be read by the SAFIRE executable.
 AFQMC uses a factorized form of the electron-electron interaction tensor,
 
 $$
- H^2_{ijkl} = \sum_\gamma L^{\gamma}_{il}L^{\gamma}_{jk}.
+v_{pqrs} = V_{(pr),(sq)} \approx \sum_n^{N_\mathrm{chol}} L_{pr,n} L^{*}_{sq,n}.
 $$
 Any decomposition of this form can be used in AFQMC.
-Density fitting integrals, for example can be written in this form.
-A typical strategy in the AFQMC literature is to perform a Cholesky decomposition of the super-matrix $H^2_{(i,l),(j,k)}$
-using a Cholesky tolerance of $\delta_{Chol}$ where a smaller
-value of $\delta_{Chol}$ produces a more accurate representation.
+Density-fitting integrals, for example, can be written in this form.
+A typical strategy in the AFQMC literature is to perform a Cholesky decomposition of the super-matrix $V_{(pr),(sq)}$
+using a Cholesky tolerance of $\delta_\mathrm{Chol}$, where a smaller
+value of $\delta_\mathrm{Chol}$ produces a more accurate representation.
 
-The Cholesky decomposition is automatically performed within `write_hamiltonian_generic()` if you
-provide it with the electron Coulomb interaction tensor.
-Alternatively, 3-index integrals (from density fitting, for example) can be provided to use
+The Cholesky decomposition is automatically performed within
+`MolecularHamiltonian.from_integrals()` if you provide it with the electron Coulomb
+interaction tensor via the `eri` argument, with $\delta_\mathrm{Chol}$ set by `cholesky_tol`.
+Alternatively, 3-index integrals (from density fitting, for example) can be provided via the `chol` argument to use
 directly with no further modifications.
 
-**Run the following codeblock to output the Hamiltonian to an HDF5 file**.
+**Run the following code block to build the Hamiltonian**.
 
 ```{code-cell} ipython3
 ---
@@ -211,11 +191,12 @@ colab:
 id: JyCauZJfyCNe
 outputId: 5e7b4b17-4e40-4189-ac2e-633cfb904805
 ---
-write_hamiltonian_generic(
-    filename=scratch_dir/"hamil.h5",
-    E0=H0,
-    H_one_body=H1_ij,
-    coulomb_repulsion_tensor=H2_ijkl
+from safiretools import MolecularHamiltonian
+
+hamiltonian = MolecularHamiltonian.from_integrals(
+    hcore=h,
+    eri=eri,
+    enuc=E0
 )
 ```
 
@@ -224,67 +205,39 @@ write_hamiltonian_generic(
 ## The Trial Wavefunction
 
 We will explore how to write trial wavefunctions in {doc}`../04_writing_a_trial_wavefunction/04_writing_a_trial_wavefunction`.
-In general, the trial wavefunction is a linear combination of Slater determinants,
-$$
-| \Psi_\mathrm{T} \rangle = \sum^{N_\mathrm{det}}_n C_n | \Phi_n \rangle,
-$$
-where $C_n$ is a coefficient,
-and $|\Phi_n\rangle$ are Slater determinants which are not necessarily
-orthogonal to each other.
-
-**For now, simply run the next code block to save the RHF ground state
-in the same HDF5 file as the Hamiltonian.**
+For now, simply run the following code to manually create an RHF wavefunction in the given molecular orbital basis.
 
 ```{code-cell} ipython3
 :id: Jn_ITkJiyCNf
 
-import numpy as np
+from safiretools import Wavefunction
+from safiretools import write_jobfile
 
-from afqmctools.wavefunction.mol import write_wfn
-from afqmctools.inputs.from_hdf import write_json
+# RHF orbitals represented in the basis of RHF orbitals
+orbitals = np.eye(number_of_orbitals)
 
-# RHF orbtials represented in the basis of RHF orbitals
-orbitals = np.array(
-    [[1.0,0.0],
-    [0.0,1.0]]
-)
+# closed shell: both spins occupy the lowest number_of_electrons[0] orbitals
+wavefunction = Wavefunction.from_single_determinant(orbitals[:, :number_of_electrons[0]])
 
-phi_0 = np.array([
-    orbitals[:, :number_of_electrons[0]]
-])
-C_0 = 1.0
-
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/ "wfn.h5",
-    wfn=wfn,
-    walker_type="rhf",
-    nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
-
-write_json(scratch_dir / "afqmc.json", scratch_dir / "wfn.h5", scratch_dir / "hamil.h5", exec_opts=dict(timestep=0.005, steps=20000))
+# write_jobfile also writes the wavefunction and the Hamiltonian to HDF5 files next to the job file
+write_jobfile("afqmc.json", {
+    "execute": {
+        "wavefunction": wavefunction,
+        "hamiltonian": hamiltonian,
+        "timestep": 0.005,
+        "steps": 20000,
+        "equilibration_steps": 200,
+        "num_walkers": 200
+    }
+})
 ```
 
 +++ {"id": "CXQ3jT_pyCNf"}
 
-## Your Turn: Compute the AFQMC energy
+## Your Turn: Compute the AFQMC Energy
 
-At this point, you should run an AFQMC calculation using SAFIRE
-as we covered earlier in {doc}`../01_hello_safire/01_hello_safire`,
-and use `afqmctools` to obtain the AFQMC energy.
-
-As a reminder, you can run SAFIRE in any of the following ways:
-
-1. the `run_afqmc()` convenience wrapper - we've included a template in the next code cell.
-2. run from the command line as `$ mpirun -np [number of MPI tasks] safire --filenames [input file].json`
-3. (if you are running on a computing cluster) submit a job via a runscript.
-
-As an additional reminder, the `analyze_scalar_data` tool can be invoked by either
-
-1. calling it from the CLI as `$ scalar_stats [id].s[series].scalar.dat`
-2. in a Python script / notebook with `analyze_scalar_data()` - we've also included a template in a code block below that you can use for this exercise.
+At this point, you should run an AFQMC calculation using SAFIRE as we covered earlier in {doc}`../01_hello_safire/01_hello_safire`,
+and use `safiretools` to obtain the AFQMC energy.
 
 ```{code-cell} ipython3
 ---
@@ -292,14 +245,9 @@ colab:
   base_uri: https://localhost:8080/
 id: VhPYIHxeyCNf
 outputId: f8c272ce-fe42-4727-be4e-2abd163c3a79
+tags: [scroll-output]
 ---
-# Use this to run SAFIRE
-run_afqmc(
-    run_dir=scratch_dir,
-    input_file = "afqmc.json",#"your_input_file.json",
-    np=16,             # number of MPI tasks
-    output_file=None,
-)
+!mpirun -n 16 $AFQMC_EXEC afqmc.json
 ```
 
 ```{code-cell} ipython3
@@ -310,194 +258,81 @@ colab:
 id: heaiDcvRyCNg
 outputId: 703d5b1c-4596-4fdd-e544-3708040007de
 ---
-from stats.scalar_dat import analyze_scalar_data
+import matplotlib.pyplot as plt
 
-settings = dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,     # remember to check the equilibration!
-    trace = True
-)
+from safiretools import Results
+from safiretools import vis
 
-E, dE = analyze_scalar_data(settings)
-E_exact = -1.1372759436170439
-(E-E_exact)/dE
+# FCI energy for the STO-3G integrals above
+E_exact = -1.1369935173864893
+
+results = Results("afqmc.results.h5")
+
+vis.plot_timeseries(results)
+plt.axhline(E_exact, color="crimson")
+E, E_err = results.average("Energy")
+
+print(f"E - E_exact = {E.real-E_exact} ± {E_err.real}")
 ```
 
 +++ {"id": "U9KLdBoByCNg"}
 
-### Check your result
+### Check Your Result
 
-Your AFQMC energy should agree with $-1.137024 \pm 0.000195$ Ha
-to within 1-2 $\sigma$.
+Your AFQMC energy should agree with -1.137024 ± 0.000195 Ha
+to within 3 $\sigma$.
 
-For comparison, the FCI energy is $-1.1372759436170439$ Ha.
+For comparison, the FCI energy in the STO-3G basis set used here is -1.1369935173864893 Ha.
 
-Our AFQMC result agrees FCI to within 0.0003(2) Ha which
+Our AFQMC result agrees with FCI to within 0.00003(20) Ha, which
 is well within chemical accuracy.
 
 +++ {"id": "jnupX3Uz1l4q"}
 
-## Starting from a FCIDUMP
+## Starting from an FCIDUMP
 
-`afqmctools` provides tools to convert from a Hamiltonian in a standard
+`safiretools` provides tools to convert from a Hamiltonian in a standard
 FCIDUMP file to the format used by SAFIRE.
 
 We will continue with the example of a Hydrogen dimer in an STO-3G basis to demonstrate the tooling.
 
 ![](files/HyrdogenMolecule.png)
 
-Instructions for generating a FCIDUMP are beyond the scope of this tutorial;
+Instructions for generating an FCIDUMP are beyond the scope of this tutorial;
 however, quantum chemistry codes that can easily generate FCIDUMP files are ubiquitous.
 
-For simplicity, we provide a FCIDUMP file which, starting from the GitHub repo root, can be found in,
-
-```bash
-    tutorial/molecules/03_writing_a_hamiltonian/files/H2_FCIDUMP
-```
-
-+++ {"id": "qYRe4bEt1xSN"}
-
-## CLI: Covert from FCIDUMP to the SAFIRE format.
-
-The `fcidump_to_afqmc` CLI script can be used to directly convert
-from a FCIDUMP file to the HDF5 format used by SAFIRE.
-If you follow the official installation instructions for `afqmctools`, then
-`fcidump_to_afqmc` should already be installed.
-
-It can be used as
-
-```{code-cell} ipython3
-!fcidump_to_afqmc -i files/H2_FCIDUMP  -t 1.0e-5 -o data/H2_Hamiltonian.h5
-```
-
-+++ {"id": "qYRe4bEt1xSN"}
-
-which reads the "input" (`-i`) Hamiltonian from `H2_FCIDUMP`,
-performs a Cholesky decomposition with a tolerance (`-t`) of `1.e-5`,
-and saves the Hamiltonian to the "output" (`-o`) HDF5 file, ` H2_Hamiltonian.h5`.
-
-Additionally, you can use the `--help` option to see what other options are available.
-
-**Your Turn: Run the next code block to run see the help message**
-
-```{code-cell} ipython3
-:id: 7qfvZqBL14Vt
-
-!fcidump_to_afqmc --help
-```
-
-+++ {"id": "pX0yckNd2j9A"}
-
-### CLI: Also write a trial wavefunction
-
-The next input that we will need for AFQMC is a trial wavefunction.
-The `fcidump_to_afqmc` CLI script can also write either an RHF- or ROHF-like
-trial wavefunction to the SAFIRE HDF5 file.
-
-The wavefunction is a single Slater determinant in which the first $N_{\uparrow}$/$N_{\downarrow}$ *by index*
-orbitals are occupied.
-$N_{\uparrow}$ and $N_{\downarrow}$ are determined by the information in the header of the FCIDUMP file.
-It is also possible to explicitly specify orbital occupancies with the `--occ_up` and `--occ_down` switches.
-
-### Your Turn
-Run the following codeblock to output the Wavefunction to an HDF5 file via the CLI.
-
-```{code-cell} ipython3
-:id: 8JgG5DbH24kR
-
-# Use the Command Line Interface (CLI) to convert the Hamiltonian AND write a trial wavefunction
-!fcidump_to_afqmc -i files/H2_FCIDUMP -o {scratch_dir}/H2.h5 --add_wfn --occ_up 0 --occ_down 0
-```
+For simplicity, we provide an FCIDUMP file `files/H2_FCIDUMP`.
 
 +++ {"id": "7NLzntps2CS7"}
 
-## Python: Covert from FCIDUMP to the SAFIRE format.
+`safiretools` provides {py:meth}`safiretools.MolecularHamiltonian.from_fcidump` to read these files.
+It builds a Hamiltonian from an FCIDUMP file, which can be passed to `write_jobfile` just like the one above.
 
-The `afmctools` Python package provides the following functions which allow us to convert form FCIDUMP to
-the SAFIRE format.
+`from_fcidump()` reads the one-body, two-body and constant terms from the file, along with
+the number of electrons in its header, and Cholesky-decomposes the two-electron integrals
+to the accuracy asked for by `cholesky_tol` — the same decomposition
+`MolecularHamiltonian.from_integrals()` performs for an `eri` tensor above.
 
-- `read_fcidump()` in the `afqmctools.hamiltonian.converter` module
-- `write_hamiltonian_generic()` in the `afqmctools.hamiltonian.mol` module
-
-### read_fcidump()
-
-The `read_fcidump()` function reads the Hamiltonian from the FCIDUMP file
-with name `filename`, and separately returns the 1-body, 2-body, and constant Hamiltonian
-terms as well as the number of electrons.
-
-```python
-    from afqmctools.hamiltonian.converter import read_fcidump
-
-    H1_ij, H2_ijkl, E0, _ = read_fcidump(
-        filename="H2_FCIDUMP"
-    )
-```
-
-see the [API documentation for more](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/api/afqmctools.hamiltonian.html#afqmctools.hamiltonian.converter.read_fcidump)
-
-### write_hamiltonian_generic()
-
-As we saw above, the `write_hamiltonian_generic()` function will generate an HDF5 file that can
-be read by the SAFIRE executable containing the Hamiltonian.
-It will automatically generate a Cholesky decomposed form of the interaction if electron-repulsion integrals are provided via the `coulomb_repulsion_tensor` keyword argument.
-Alternatively, any 3-index factorized form of the electron interaction can be provided
-via the `cholesky_vectors` input parameter.
-Exactly one of `cholesky_vectors` or `coulomb_repulsion_tensor` must be provided to
-`write_hamiltonian_generic()`.
-
-```python
-    import numpy as np
-
-    from afqmctools.hamiltonian.mol import write_hamiltonian_generic
-
-
-    # transopose to match conventions for write_hamiltonian_generic
-    H2_ijkl = numpy.transpose(H2_ijkl,(0,1,3,2))
-
-    write_hamiltonian_generic(
-        filename=scratch_dir/"H2_hamiltonian.h5",
-        E0=H0,
-        H_one_body=H1_ij,
-        coulomb_repulsion_tensor=H2_ijkl,
-        cholesky_delta=1.0e-5
-    )
-```
-
-see the [API documentation for more](https://users.flatironinstitute.org/~beskridge/auxiliary_fields/api/afqmctools.hamiltonian.html#afqmctools.hamiltonian.mol.write_hamiltonian_generic).
-
-### Your Turn: Run the following code block to convert from the provided FCIDUMP file to the SAFIRE format
+### Your Turn: Run the Following Code Block to Read the Provided FCIDUMP File
 
 ```{code-cell} ipython3
 :id: 6ej77YPU2JmI
 
-import numpy as np
-from afqmctools.hamiltonian.mol import write_hamiltonian_generic
-from afqmctools.hamiltonian.converter import read_fcidump
-
-H1_ij, H2_ijkl, E0, _ = read_fcidump(
-    filename="files/H2_FCIDUMP"
-)
-
-# transopose to match conventions for write_hamiltonian_generic
-H2_ijkl = np.transpose(H2_ijkl,(0,1,3,2))
-
-write_hamiltonian_generic(
-    filename=scratch_dir/"H2_hamiltonian.h5",
-    E0=E0,
-    H_one_body=H1_ij,
-    coulomb_repulsion_tensor=H2_ijkl,
-    cholesky_delta=1.0e-5
+hamiltonian = MolecularHamiltonian.from_fcidump(
+    "../files/H2_FCIDUMP",
+    cholesky_tol=1.0e-5
 )
 ```
 
 +++ {"id": "jNDV-Ersu9ul"}
 
-## Generate and write the Hamiltonian using PySCF and afqmctools
+## Generate the Hamiltonian Using PySCF and safiretools
 
 Instead of defining the Hamiltonian and the wavefunction from scratch, one can also utilize `PySCF` to obtain the Hamiltonian in a given basis (in this case, the molecular orbital basis) and the trial wavefunction.
-Here, we use `PySCF` to run RHF for the hydrogen dimer and export to a chkfile `h2_rhf.h5`, then use `afqmctools` to obtain the Hamiltonian and the trial wavefunction from the chkfile.
+Here, we use `PySCF` to run RHF for the hydrogen dimer, then hand the SCF object to `safiretools` to obtain the Hamiltonian and the trial wavefunction.
 After this, you may follow the same steps as above to run AFQMC.
+
+For more information, see {py:meth}`safiretools.MolecularHamiltonian.from_pyscf`.
 
 ```{code-cell} ipython3
 :id: TMmTH-7SvFd8
@@ -515,31 +350,14 @@ mol.build()
 
 # run RHF
 mf = scf.RHF(mol)
-mf.chkfile = f"{scratch_dir}/h2_rhf.h5"
 mf.kernel()
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.wavefunction.mol import write_wfn_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-
-# reload the mf data
-mf_data = load_from_pyscf_chk_mol(f"{scratch_dir}/h2_rhf.h5", 'scf')
-
-# dump the Hamiltonian and the wavefunction to the same h5df
-fout = f"{scratch_dir}/h2_from_pyscf.h5"
-write_hamil_mol(
-    mf_data,
-    fout,
+hamiltonian = MolecularHamiltonian.from_pyscf(
+    mf,
     chol_cut=1e-6,
-    real_chol=True,
-    verbose=True
-    )
-
-write_wfn_mol(
-    mf_data,
-    fout,
-    basis_scf_data=mf_data
 )
+
+wavefunction = Wavefunction.from_pyscf(mf)
 ```
 
 +++ {"id": "ZX0-iQdzyCNg"}
@@ -548,141 +366,10 @@ write_wfn_mol(
 
 In this tutorial, you set up and ran a quantum chemistry AFQMC calculation in which we computed the ground state energy of the Hydrogen dimer at a fixed bond length.
 
-The AFQMC code needs a Hamiltonian, a trial wavefunction, and a file containing settings as input, and it outputs stochastic samples as specified in the input file.
+The AFQMC code needs a Hamiltonian, a trial wavefunction, and a JSON job file containing the settings as input, and it outputs stochastic samples as specified in the job file.
 
-### What you learned
+### What You Learned
 
 1. How to write a Hamiltonian to the SAFIRE HDF5 format starting from one-body, and two-body integrals
-2. How to convert from a FCIDUMP file to the SAFIRE HDF5 format both using the CLI tools and within a Python script
-
-+++ {"id": "NaDbzk1jSEB1"}
-
-### Sample Script - Full workflow
-
-Below is a single script based on what you have learned.
-
-```{code-cell} ipython3
-:id: 8FhPN8ETyCNg
-
-from pathlib import Path
-
-import numpy as np
-
-from afqmctools.hamiltonian.mol import write_hamiltonian_generic
-from afqmctools.wavefunction.mol import write_wfn
-from afqmctools.inputs.from_hdf import write_json
-from stats.scalar_dat import analyze_scalar_data
-
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
-
-number_of_electrons = (1,1) # up, down
-number_of_orbitals = 2
-
-# all energy units are E_Hartree
-
-# nuclear repulsion energy
-H0 = 0.714285714285714
-
-# One-Body Integrals in the basis of canonical RHF orbitals
-H1_ij = np.array([[-1.25279706e+00,  0.0           ],
-                  [ 0.0           , -4.75602313e-01]])
-
-# two-body integrals in the basis of canonical RHF orbitals
-H2_ijkl[0,0,:,:] = np.array([[ 6.74976525e-01, 0.0],
-                             [0.0, 6.63461552e-01]])
-
-H2_ijkl[0,1,:,:] = np.array([[ 0.0,  1.81606342e-01],
-                             [ 1.81606342e-01, 0.0]])
-# equivalent by symmetry
-H2_ijkl[1,0,:,:] = H2_ijkl[0,1,:,:]
-H2_ijkl[1,1,:,:] = np.array([[6.63461552e-01, 0.0],
-                             [0.0, 6.96162129e-01]])
-
-
-
-# For reference, the RHF orbitals in the STO-3G basis are
-# phi_i(\vec{r}) = \sum_\mu C_{\mu i} g_\mu (\vec{r})
-phi_hf = np.array([[ 0.54893404,  1.21146407],
-                   [ 0.54893404, -1.21146407]])
-
-# and the STO-3G basis overlap matrix for $\delta_{H-H}=1.4 Bohr$ is
-# Sij = <g_\mu | g_\nu>
-Sij = np.array([[1.,         0.65931821],
-                [0.65931821, 1.        ]])
-
-# Save the Hamiltonian to HDF5
-write_hamiltonian_generic(
-    filename=scratch_dir/"H2_hamiltonian.h5",
-    E0=H0,
-    H_one_body=H1_ij,
-    coulomb_repulsion_tensor=H2_ijkl
-)
-
-# make and save a trial wavefunction
-orbitals = np.array(
-    [[1.0,0.0],
-    [0.0,1.0]]
-)
-
-phi_0 = np.array([
-    orbitals[:, :number_of_electrons[0]]
-])
-C_0 = 1.0
-wfn = ( np.array([C_0]), phi_0)
-
-write_wfn(
-    filename=scratch_dir/"H2_rhf_wfn.h5", # this is the name of the file that will be created
-    wfn=wfn,
-    walker_type="rhf",
-    nelec=number_of_electrons,
-    norb=number_of_orbitals
-)
-
-# make an input file
-
-afqmc_execution_options = {
-    "timestep": 0.01,
-    "steps": 10000,
-    "population_control_interval" : 10, # in units of steps
-    "measure_interval_multiplier": 1,   # in units of population_control_interval
-    "walker_ortho_interval" : 10 ,      # in units of steps
-    "n_walkers_per_mpi_task": 200,
-    "seed" : 42
-}
-
-write_json(
-    scratch_dir/ "H2_afqmc_input.json",
-    fham0=scratch_dir / "H2_hamiltonian.h5",
-    fwfn0=scratch_dir / "H2_rhf_wfn.h5",
-    exec_opts=afqmc_execution_options
-)
-
-# run afqmc
-run_afqmc(
-    run_dir=scratch_dir,
-    run_mode="local_cpu",
-    input_file="H2_afqmc_input.json",
-    np=12,             # number of MPI tasks
-    output_file=None   # optionally direct output to file instead of here
-)
-
-# post process
-
-settings = dict(
-    fname = scratch_dir/"qmc.s000.scalar.dat",
-    xaxis = "time",
-    nequil = 5,
-    trace = True
-)
-
-_ = analyze_scalar_data(settings)
-```
-
-```{code-cell} ipython3
-:id: 1dykyPFNyCNg
-
-
-```
+2. How to convert from an FCIDUMP file to the SAFIRE HDF5 format
+3. How to use PySCF and safiretools to generate and write the Hamiltonian

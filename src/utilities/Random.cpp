@@ -1,59 +1,22 @@
 #include "Random.hpp"
 
+#include "utilities/check.hpp"
+
 namespace sfqmc::utils {
 
-// Return Nth primer number
-template<typename UInt>
-UInt get_prime(UInt N)
-{
-  utils::check(not(N < 1),"N must be positive, provided N = {}", N);
-  if(N==UInt(1)) return UInt(1);
-  if(N==UInt(2)) return UInt(2);
-  if(N==UInt(3)) return UInt(3);
-  N-=UInt(3);
-  std::vector<UInt> primes;
-  primes.reserve(4096);
-  primes.push_back(3);
-  UInt largest = 3;
-  while (N) { 
-    largest += 2; 
-    bool is_prime = true;
-    for (int j = 0; j < primes.size(); j++) { 
-      if (largest % primes[j] == 0) { 
-        is_prime = false;
-        break;
-      }
-      else if (primes[j] * primes[j] > largest) { 
-        break;
-      }
-    }
-    if (is_prime) { 
-      primes.push_back(largest);
-      N--;
-    }
-  }  
-  return largest;
-}
+SeedType split_seed(int seed, boost::mpi3::communicator& comm, unsigned stream) {
+  utils::check(stream < 256, "The stream index {} does not fit into a seed.", stream);
+  utils::check(comm.rank() < (1 << 24), "A run of {} ranks does not fit into a seed.", comm.size());
 
-SeedType make_seed(boost::mpi3::communicator& comm) {
-  // mpi3 has no datatype for SeedType, so the broadcast goes through unsigned long
-  unsigned long baseoffset = 0;
-  if(comm.root()) {
-    baseoffset = static_cast<unsigned long>(std::time(0) % 1024);
-  }
-  comm.broadcast_value(baseoffset);
-  baseoffset += static_cast<unsigned long>(comm.rank());
-  return get_prime<SeedType>(SeedType(baseoffset));
-}
-
-SeedType split_seed(int seed, boost::mpi3::communicator& comm) {
-  /*
-  Splits the given seed across the given comm to guarantee that each MPI rank has a unique, but
-    reproducible seed
-  */
-  SeedType baseoffset = seed;
-  baseoffset += comm.rank();
-  return get_prime<SeedType>(baseoffset);
+  // splitmix64 finalizer. It is a bijection on 64 bits, so distinct (seed, rank, stream)
+  // triples give distinct seeds, and flipping one bit of any of them changes about half of the
+  // output bits. seed + rank would instead have neighbouring ranks start from neighbouring
+  // states, and two runs whose seeds differ by one would share all but one of their streams.
+  SeedType x = SeedType(unsigned(seed)) << 32 | SeedType(stream) << 24 | unsigned(comm.rank());
+  x += 0x9e3779b97f4a7c15ULL;
+  x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+  return x ^ (x >> 31);
 }
 
 #if defined(ENABLE_DEVICE)

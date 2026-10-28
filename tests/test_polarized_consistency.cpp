@@ -51,14 +51,15 @@
 #include <vector>
 #include <complex>
 #include <format>
-#include <filesystem>
 
 #include "AFQMC/config.h"
-#include "AFQMC/Hamiltonians/HamiltonianFactory.h"
-#include "AFQMC/Wavefunctions/WavefunctionFactory.h"
+#include "AFQMC/Hamiltonians/Hamiltonian.hpp"
+#include "AFQMC/Wavefunctions/Wavefunction.hpp"
 #include "AFQMC/Walkers/WalkerSet.hpp"
-#include "AFQMC/Propagators/PropagatorFactory.h"
+#include "AFQMC/Propagators/AFQMCBasePropagator.h"
+#include "AFQMC/Propagators/Propagator.hpp"
 #include "AFQMC/Utilities/readWfn.h"
+#include "AFQMC/Utilities/format_version.hpp"
 #include "numerics/sparse/sparse.hpp"
 #include "test_utils.hpp"
 
@@ -98,14 +99,6 @@ inline PsiT_Matrix<HOST_MEMORY> widen_csr(PsiT_Matrix<HOST_MEMORY> const& up, in
   return out;
 }
 
-// Path for a derived trial file in the scratch dir.
-inline std::string polarized_tmp_path(std::string const& tag, WALKER_TYPES target)
-{
-  auto p = std::filesystem::temp_directory_path() /
-           std::format("polarized_{}_{}_{}.h5", tag, walkerTypeToString(target), getpid());
-  return p.string();
-}
-
 // Derive a polarized trial file (dropping the down block) from a COLLINEAR NOMSD
 // source and write it to out_path. Only the alpha (up) block is used.
 //   NONCOLLINEAR -> up-only spinor: PsiT (nup, 2*NMO), beta columns empty.
@@ -116,22 +109,17 @@ inline void derive_polarized_wfn(std::string const& src_file, WALKER_TYPES targe
   h5::file fin(src_file, 'r');
   h5::group nin = h5::group(fin).open_group("Wavefunction").open_group("NOMSD");
 
-  std::vector<int> dims(5);
-  h5::h5_read(nin, "dims", dims);
-  int NMO = dims[0];
-  int nup = dims[1];
-  utils::check(initWALKER_TYPES(dims[3]) == COLLINEAR,
+  auto const info = read_wavefunction_info(nin);
+  int NMO = info.NMO;
+  int nup = info.nup;
+  utils::check(info.walker_type == COLLINEAR,
                "derive_polarized_wfn expects a COLLINEAR source, got {}",
-               walkerTypeToString(initWALKER_TYPES(dims[3])));
+               walkerTypeToString(info.walker_type));
 
   auto up = math::sparse::HDF2CSR<ComplexType, HOST_MEMORY, int, int>(nin.open_group("PsiT_0"));
   utils::check(up.extent(0) == nup && up.extent(1) == NMO,
                "unexpected up block shape ({}, {}); expected ({}, {})",
                up.extent(0), up.extent(1), nup, NMO);
-
-  nda::matrix<ComplexType> psi0a(NMO, nup);
-  psi0a() = ComplexType(0.0);
-  utils::h5_read(nin, "Psi0_alpha", psi0a);
 
   h5::file fout(out_path, 'w');
   h5::group nout = h5::group(fout).create_group("Wavefunction").create_group("NOMSD");
@@ -139,26 +127,17 @@ inline void derive_polarized_wfn(std::string const& src_file, WALKER_TYPES targe
   nda::array<ComplexType, 1> ci(1);
   ci(0) = ComplexType(1.0);
 
-  nda::vector<int> d = {NMO, nup, 0, int(target), 1};
-  nda::h5_write(nout, "dims", d);
+  write_format_version(nout);
+  h5::h5_write_attribute(nout, "spin_type", walkerTypeToString(target));
   nda::h5_write(nout, "ci_coeffs", ci);
 
   if(target == NONCOLLINEAR) {
     // Alpha orbitals occupy the top NMO rows of the 2*NMO spinor.
-    nda::matrix<ComplexType> psi0_nc(2 * NMO, nup);
-    psi0_nc() = ComplexType(0.0);
-    psi0_nc(range(NMO), range::all) = psi0a;
-    nda::h5_write(nout, "Psi0_alpha", psi0_nc);
-
     auto up2 = widen_csr(up, 2 * NMO);
     h5::group g0 = nout.create_group("PsiT_0");
     math::sparse::CSR2HDF(g0, up2);
   } else if(target == COLLINEAR) {
     // ndown == 0: alpha as-is, empty beta block.
-    nda::h5_write(nout, "Psi0_alpha", psi0a);
-    nda::matrix<ComplexType> psi0b(NMO, 0);
-    nda::h5_write(nout, "Psi0_beta", psi0b);
-
     h5::group g0 = nout.create_group("PsiT_0");
     math::sparse::CSR2HDF(g0, up);
 
@@ -194,36 +173,29 @@ run_result run_polarized(std::shared_ptr<utils::mpi_context_t<boost::mpi3::commu
   std::shared_ptr<utils::RandomGenerator_t<MEM>> rng_dev =
       std::make_shared<utils::RandomGenerator_t<MEM>>(777);
 
-  HamiltonianFactory HamFac;
-  HamFac.push("ham0", HamiltonianParameters{.name = "ham0", .filename = hamil_file});
-  auto& ham = HamFac.getHamiltonian(mpi, "ham0");
+  Hamiltonian ham = Hamiltonian::from_params(mpi, HamiltonianParameters{.name = "ham0", .filename = hamil_file});
 
   int nwalk = 2;
-  WavefunctionFactory<MEM> WfnFac{};
   WavefunctionParameters wfn_params{.name = "wfn0", .filename = wfn_file};
   apply_defaults(wfn_params, ham.getHamType());
-  WfnFac.push("wfn0", wfn_params);
-  auto& wfn = WfnFac.getWavefunction(mpi, "wfn0", type, false, &ham, nwalk);
+  auto wfn = Wavefunction<MEM>::from_params(mpi, wfn_params, type, false, ham, nwalk);
 
   const WalkerSetParameters wlk_params{.name = "wset0", .walker_type = type};
-  auto const& initial_guess = WfnFac.getInitialGuess("wfn0");
-  auto wset = WalkerSet<MEM>(mpi, wlk_params, rng, type, initial_guess, nwalk);
-
-  PropagatorFactory<MEM> PropFac;
-  PropagatorParameters prop_params{.name = "prop0"};
-  apply_defaults(prop_params, ham.getHamType());
-  PropFac.push("prop0", prop_params);
-  auto& prop = PropFac.getPropagator(mpi, "prop0", wfn, rng_dev);
+  auto wset = WalkerSet<MEM>(mpi, rng, wlk_params, wfn.initial_guess(), nwalk);
 
   wfn.Log_Overlap(wset);
   wfn.runtime_optimization(wset);
 
+  RealType dt = 0.01;
+  PropagatorParameters prop_params{.name = "prop0"};
+  apply_defaults(prop_params, ham.getHamType());
+  Propagator<MEM> prop{AFQMCBasePropagator<MEM>(prop_params, mpi, wfn, rng_dev, dt)};
+
   // No population control / weight reset: keep the walker mapping fixed so the
   // two representations remain directly comparable walker-by-walker.
   RealType Eshift = 0.0;
-  RealType dt     = 0.01;
   for(int s = 0; s < nsteps; ++s) {
-    prop.Propagate(wset, Eshift, dt);
+    prop.Propagate(wset, Eshift);
     if((s + 1) % nStab == 0) {
       prop.Orthogonalize(wset);
     }
@@ -288,14 +260,10 @@ void polarized_consistency(std::shared_ptr<utils::mpi_context_t<boost::mpi3::com
   constexpr int nsteps = 6;
   constexpr int nStab  = 3;
 
-  auto stem = [](std::string const& p) {
-    auto s = p.find_last_of("\\/");
-    auto e = p.find_last_of(".");
-    return p.substr(s + 1, e - s - 1);
-  }(src_wfn_file);
+  utils::TemporaryDirectory tmpdir;
 
   // Reference: up-only noncollinear (well-supported path).
-  std::string ref_file = polarized_tmp_path(stem, NONCOLLINEAR);
+  std::string ref_file = (tmpdir / "ref_noncollinear.h5").string();
   if(mpi->comm.root()) {
     derive_polarized_wfn(src_wfn_file, NONCOLLINEAR, ref_file);
   }
@@ -307,15 +275,17 @@ void polarized_consistency(std::shared_ptr<utils::mpi_context_t<boost::mpi3::com
   std::vector<WALKER_TYPES> candidates = {COLLINEAR};
 
   for(auto cand_type : candidates) {
-    std::string cand_file = polarized_tmp_path(stem, cand_type);
+    std::string cand_file = (tmpdir / std::format("cand_{}.h5", walkerTypeToString(cand_type))).string();
     if(mpi->comm.root()) {
       derive_polarized_wfn(src_wfn_file, cand_type, cand_file);
     }
     mpi->comm.barrier();
     auto cand = run_polarized<MEM>(mpi, hamil_file, cand_file, nsteps, nStab);
     compare_to_reference(walkerTypeToString(cand_type), cand, ref);
-    std::filesystem::remove(cand_file);
   }
+
+  // tmpdir removes the derived files on the root rank alone, so no rank may still be reading
+  mpi->comm.barrier();
 }
 
 } // namespace

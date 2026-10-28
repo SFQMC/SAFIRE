@@ -41,8 +41,7 @@ class KP3IndexFactorization
   using csrMat = math::sparse::csr_matrix<T, MEM, int, int>;
 
 public:
-  static const HamiltonianTypes HamOpType = KPFactorized;
-  HamiltonianTypes getHamType() const { return HamOpType; }
+  HamiltonianType getHamType() const { return HamiltonianType::kp_factorized; }
 
   // since arrays can be in host, can't assume that types are consistent
   KP3IndexFactorization(std::shared_ptr<utils::mpi_context_t<mpi3::communicator>> _mpi,
@@ -59,7 +58,7 @@ public:
           nda::array<memory::const_shared_array<MEM,ComplexType,6>,1>&& la_,
           nda::array<memory::const_shared_array<MEM,ComplexType,6>,1>&& lb_,
           memory::const_shared_array<HOST_MEMORY,ComplexType,4>&& vexx_,
-          ComplexType e0_,
+          RealType e0_,
           int bf_size = 4096)
       : mpi(_mpi),
         walker_type(type),
@@ -855,6 +854,7 @@ public:
   }
   int number_of_ke_vectors() const { return 2 * ncvecs; }
   int number_of_cholesky_vectors() const { return 2 * ncvecs; }
+  RealType energy_offset() const { return E0; }
 
   nda::array<ComplexType, 2> getHSPotentials()
   { return nda::array<ComplexType, 2>{}; }
@@ -907,7 +907,7 @@ protected:
 
   int default_buffer_size_in_MB=2000;
 
-  ComplexType E0 = ComplexType(0.0);
+  RealType E0 = 0.0;
 
   // maps Q (only for those with Qmap >=0) to the corresponding sector in vbias
 //  stdIVector Q2vbias;

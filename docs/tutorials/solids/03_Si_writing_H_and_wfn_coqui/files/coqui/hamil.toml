@@ -1,7 +1,7 @@
 [mean_field.qe]
 name = "mf"
 prefix = "pwscf"
-outdir = "../qe/OUT"
+outdir = "OUT"
 nbnd = 20
 
 [interaction.cholesky]
@@ -11,9 +11,8 @@ output      = "hamil.h5"
 write_type  = "single"
 tol         = 1e-4  # you may need to converge this value!
 ecut        = 50
- 
+
 [hamiltonian]
 mean_field  = "mf"
 interaction = "eri"
 output      = "hamil.h5"
- 

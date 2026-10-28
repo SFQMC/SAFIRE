@@ -13,202 +13,26 @@ kernelspec:
 
 +++ {"id": "kEXtY-HpOK_T"}
 
-# Building Lattice Model Hamiltonians Tutorial
+# Building Lattice Model Hamiltonians
 
-SAFIRE can handle model Hamiltonians of the form
+In {doc}`../03_setting_up_a_lattice/03_setting_up_a_lattice`, we learned how to create a {py:class}`safiretools.Lattice` object. The `Lattice` object only describes the geometry of a lattice. To build a lattice model Hamiltonian from a lattice, we need to supply additional information about the physical couplings between electrons on the lattice sites. In this tutorial, we will see how {py:meth}`safiretools.LatticeHamiltonian.from_lattice` can be used to do this and create lattice model Hamiltonian inputs for SAFIRE.
 
-$$
-\hat{H} = \hat{H}_t + \hat{H}_U + \hat{H}_J,
-$$
-where
-$$
-\hat{H}_t = \sum_{\mu\nu,\sigma \sigma'}t^{\sigma \sigma'}_{\mu\nu}\hat{c}^\dagger_{\mu\sigma}\hat{c}_{\nu\sigma'},
-$$
 
-$$
-\hat{H}_U =  \sum_{\mu} U_i \hat{n}_{\mu\uparrow} \hat{n}_{\mu\downarrow}
-+ \sum_{\mu<\nu} U_{\mu\nu}^1 (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\downarrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\uparrow} )
-+ \sum_{\mu<\nu} U_{\mu\nu}^2 (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\uparrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\downarrow} ),
-$$
+SAFIRE can handle general Hubbard-Kanamori Hamiltonians; their form is given in {ref}`lattice_model_hamiltonian`. Below, we go through the terms `from_lattice` can build, first for a single band per site. Their multiband extensions are covered at the end, in the Multiband Models section.
 
-and,
+## Example: Standard Hubbard Model
+
+Below, we construct a Hubbard model on a 4×4 square lattice.
 
 $$
-\hat{H}_J = \sum_{\mu<\nu} J_{\mu\nu} (
-     \hat{c}^\dagger_{\mu\uparrow}\hat{c}^\dagger_{\nu\downarrow}\hat{c}_{\mu\downarrow}\hat{c}_{\nu\uparrow}
-     +\hat{c}^\dagger_{\mu\uparrow}\hat{c}^\dagger_{\mu\downarrow}\hat{c}_{\nu\downarrow}\hat{c}_{\nu\uparrow}
-     +\hat{c}^\dagger_{\nu\uparrow}\hat{c}^\dagger_{\mu\downarrow}\hat{c}_{\nu\downarrow}\hat{c}_{\mu\uparrow}
-     +\hat{c}^\dagger_{\nu\uparrow}\hat{c}^\dagger_{\nu\downarrow}\hat{c}_{\mu\downarrow}\hat{c}_{\mu\uparrow}
-     ).
+\hat{H} = - t \sum_{\langle i,j \rangle,\sigma} \hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma} + \text{h. c.} + U \sum_i \hat{n}_{i\uparrow} \hat{n}_{i\downarrow}
 $$
-
-$\mu$ / $\nu$ are compound indices, $\mu = (i,p,m)$ / $\mu = (j,q,n)$, that include the lattice site index, ($i$ / $j$), sublattice, ($p$ / $q$) and band ($m$ / $n$) indices.
-This is known as the Hubbard-Kanamori Hamiltonian.
-Many standard model Hamiltonians can be written in this language including the standard Hubbard model,
-extended Hubbard with nearest-neighbor $V$, etc.
-SAFIRE is agnostic to the details of the compound indices.
-It simply accepts Hamiltonian "components" which are interpreted as above.
-This provides great flexibility in specifying Hamiltonians, however care must be taken outside of SAFIRE to ensure that consistent index conventions are used.
-
-afqmctools provides a framework for building lattice model Hamiltonians that can generate broad classes of lattice model Hamiltonians
-on a variety of lattices, using consistent conventions for indexing.
-The framework consists of a Lattice class which is responsible for geometry (see {doc}`../03_setting_up_a_lattice/03_setting_up_a_lattice`),
-a Hamiltonian builder which is responsible for generating specific Hamiltonian terms on demand given a specific Lattice instance,
-and a Hamiltonian "Director" which is responsible for choosing which build steps to perform based on
-a set of input Hamiltonian parameters.
-Each component of the framework can be used directly; however
-the Director class represents the highest-level interface of the lattice Hamiltonian framework and
-can manage the underlying Lattice instance and Builder instance.
-Users who want direct control over the Hamiltonian build steps can directly
-use the Hamiltonian "Builder". See {doc}`../05_hamiltonian_builder/05_hamiltonian_builder` for
-more detail.
-It is recommended to use the Director whenever possible.
-
-![](files/HamilDirectorSystem.png)
-
-<b>In this tutorial, we focus on building Hamiltonian terms via the Hamiltonian "Director".</b>
-We will explore the possible input parameters and their respective meanings/conventions.
-
-+++ {"id": "pGSnNnm7Rr54"}
-
-## ▶️ Setup : Run me
-
-Run the cell below to setup a scratch directory.
 
 ```{code-cell} ipython3
-:id: bD2Kcg2dRq0C
-
-# setup scratch dir
-from pathlib import Path
-from tutorial_utils import run_afqmc
-
-scratch_dir = Path("data")
-scratch_dir.mkdir(parents=True, exist_ok=True)
+# create scratch directory in notebook path
+%mkdir -p {_dh[0]}/data
+%cd -q {_dh[0]}/data
 ```
-
-+++ {"id": "WcOH6y7xOK_V"}
-
-## Hamiltonian Director Tutorial
-
-The `afqmctools` Python package provides a framework for generating lattice model Hamiltonians.
-The Hamiltonian Director is the highest-level interface to this framework.
-It may be invoked as a command line tool using an input file, or a directly within a Python script.
-We will briefly demonstrate the command line tool, but we will focus on using the Director within a Python script for most of this tutorial.
-
-The Hamiltonian Director is meant to handle building Hamiltonians which can be expressed in terms of a few simple parameters on relatively simple lattices.
-While SAFIRE supports any combination of lattice, sublattice, and band degrees-of-freedom in the Hamiltonian, it is not always feasible to map such general models onto a few simple parameters.
-For these cases, we provide lower-level classes to assist as much as possible. See {doc}`../03_setting_up_a_lattice/03_setting_up_a_lattice` for example.
-For example, the Hubbard model only needs a single parameter, $U/t$, and a lattice / boundary conditions in order to be fully specified.
-More general Hamiltonians can also be built using the Director; however, it may be useful to some users to work directly with the Lattice and Hamiltonian Builder in a Python script. See {doc}`../05_hamiltonian_builder/05_hamiltonian_builder` for more advance uses.
-
-In this tutorial, we will cover how to request specific Hamiltonian terms from the Hamiltonian Director.
-We will also cover the details of the input conventions for each of the terms needed to build these Hamiltonians.
-
-+++ {"id": "DvPH8LBbOK_V"}
-
-## Invoking the Hamiltonian Director via the CLI
-
-In addition to the ability to invoke the Hamiltonian director directly within a Python script, afqmctools provides a command line tool that invokes the Hamiltonian director.
-If you installed `afqmctools` using the official instructions, you can run the following to see possible options
-
-```bash
-$ make_model_ham --help
-
-usage: make_model_ham [-h] [--input input] [--output outfile] [--free-elec] [--slater-type {closed,collinear,noncollinear}] [--plotlat] [--plot1b] [--plot2b] [--saveplots] [--pair-corr] [--hubbardU HUBBARDU]
-
-options:
-  -h, --help            show this help message and exit
-  --input input, -i input
-                        Input file containing Hamiltonan params (toml)
-  --output outfile, -o outfile
-                        Name of HDF5 file to save model Hamiltonian in
-  --free-elec           Save free-electron wavefunction as well
-  --slater-type {closed,collinear,noncollinear}
-                        type of free-electron Slater determinant (closed,collinear,noncollinear)
-  --plotlat, -pl        plot the lattice
-  --plot1b              plot the 1-body Hamiltonian
-  --plot2b              plot the 2-body Hamiltonian
-  --saveplots, -sp      save plots instead of displaying (useful for remote connections)
-  --pair-corr, -pc      Add pair-correlators to AFQMC input file (s,+x,-x,+y,-y)
-  --hubbardU HUBBARDU, -U HUBBARDU
-                        Hubbard U, if given and '--free-elec' is set, the hubbard U energy is evaluated using the free-electron wavefunction (Note: this is only for reference - does not effect the output wavefunction!)
-```
-
-The primary option that we are interested in here is `-i` which allows an input file (in .toml format) containing Hamiltonian parameters to be specified.
-The parameter input conventions are the same whether we use the `make_model_ham` CLI tool, or use the Hamiltonian Director within a Python script.
-
-Here is a sample input file which will generate a Hubbard model with nearest-neighbor hopping, on a 4x4 square lattice with periodic boundary conditions.
-
-```toml
-[hamiltonian]
-t = 1.0
-U = 4.0
-
-[lattice]
-L1 = 4
-L2 = 4
-boundary1 = "PBC"
-boundary2 = "PBC"
-```
-
-Notice that the Hamiltonian parameters and the lattice parameters are separate.
-We can then build the Hamiltonian with
-
-```bash
-make_model_ham -i input.toml
-```
-which generates the following output,
-
-```bash
-
-$ make_model_ham -i input.toml
-
-No lattice instance supplied: building from parameters
-running build step nth_neighbor_hopping((1.0,))
-computing and storing 1th-nearest neighbors
-Computing distance matrix of lattice
-Reading lattice site positions from Lattice
-computing and storing 1th-nearest image neighbors
-Using same twists for up and down spins
-running build step onsite_hubbard((4,))
-Building Hubbard U term with U=4
-Building onsite hubbard with positive U values: 4
-Combining terms of the same type
-Combining Hubbard U, U1, and U2 terms where possible
-Max spin symmetry is  2
-
-```
-
-Note that the builder will echo what build steps are invoked using which parameters.
-For example, we can see from the line,
-
-```bash
-running build step nth_neighbor_hopping((1.0,))
-```
-
-that the director called the nth_neighbor_hopping() build step with an argument of `1.0`.
-We will see below that this generates nearest-neighbor hopping with t=1.0 (minus sign is implicit).
-We also see that an onsite Hubbard interaction with $U = 4$ was also generated.
-
-By default, `make_model_ham` saves the Hamiltonian in a file called `afqmc.h5`, but you can change this with the `-o [output name]` option.
-For example,
-```bash
-make_model_ham -i input.toml -o example.h5
-```
-will save the Hamiltonian in `example.h5`.
-
-We note that the in Python, the Hamiltonian Director can be given either the name of an input file or a Python dictionary containing the Hamiltonian parameters.
-The Director will interpret the parameters using the same conventions regardless of which input method is used.
-We refer you to the [TOML specification](https://toml.io/en/v1.0.0) for clarification on the TOML format.
-For the remainder of the tutorial, we will be working directly with Python within this notebook.
-
-+++ {"id": "uincH8ATOK_X"}
-
-### ✨ Example : Standard Hubbard Model
-
-Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for "t".
-We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
-Note that the default hopping matrix shape is $2N_{sites} \times N_{sites}$ where the first $N_{sites}$ rows correspond to the spin-up sector and the last $N_{sites}$ rows correspond to the spin-down sector.
 
 ```{code-cell} ipython3
 ---
@@ -218,32 +42,19 @@ colab:
 id: 6QgfLv7kOK_V
 outputId: c3552c28-5791-45f0-ae57-39f29435e27d
 ---
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.visualize import plot_lattice
+from safiretools import Lattice, LatticeHamiltonian
+from safiretools import vis
+import matplotlib.pyplot as plt
+import numpy as np
 
-# Define the lattice parameters
-lattice_params = {
-    'L1': 4,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'))
 
-# define Hamiltonian parameters
-hamiltonian_params = {
-    't': 1.0,
-    'U': 4.0
-}
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0)
 
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-lattice = get_lattice(lattice_params)
-plot_lattice(lattice)
-
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+# plot the hopping matrix
+# hamiltonian.get_one_body() returns a (2*Nsites, Nsites) spin-stacked sparse matrix.
+plt.matshow(hamiltonian.get_one_body().todense())
+plt.colorbar()
 ```
 
 +++ {"id": "_7Wg-_UGQuXr"}
@@ -252,23 +63,17 @@ hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
 
 In the code block below, we demonstrate how to save a lattice model Hamiltonian
 to an HDF5 file that can be read by SAFIRE.
-This works the same way for all Hamiltonians generated by afqmctools.
-We will not repeat this below.
+Every Hamiltonian class in safiretools has a `.to_hdf5()` method that writes the
+format SAFIRE reads for that kind of Hamiltonian, so this works the same way for
+all of them. We will not repeat this below.
 
 ```{code-cell} ipython3
 :id: 1ugXKZ5QQ7ug
 
-from afqmctools.utils.io import write_model_hamiltonian
-
-write_model_hamiltonian(
-    hamiltonian=hamiltonian,
-    fname=scratch_dir/"hamiltonian.h5"
-)
+hamiltonian.to_hdf5("hamiltonian.h5")
 ```
 
-+++ {"id": "wgronaqPSgXY"}
-
-Now, let's check the contents of the scratch directory to see that the Hamiltonian has been generated.
+Now, let's check the contents of the `data` directory to see that the Hamiltonian has been generated.
 
 ```{code-cell} ipython3
 ---
@@ -277,68 +82,17 @@ colab:
 id: xrykuJS4SnBR
 outputId: bfe2522e-2996-43d9-88b3-ed2cd7b84350
 ---
-! ls -l {scratch_dir}
+!ls -l
 ```
 
 +++ {"id": "HEbY-vNOOK_W"}
 
-## Adding more terms to the Hamiltonian
+## Adding More Terms to the Hamiltonian
 
-### Adding Hopping
+### $n^\text{th}$-Nearest Neighbor Hopping
 
-The Hamiltonian Director supports nth-order neighbor hopping and band-dependent hopping.
-$n$ is limited by the condition that sites are not allowed to be their own neighbors via
-periodic boundary conditions.
-In this case, an error will be raised.
-
-The simplest case,
-nearest-neighbor hopping with $t$ = 1, is included in the Hamiltonian by default.
-For multiband Hamiltonians, the hopping is uniform across bands and it is assumed that
-there is no intrasite hopping.
-This is handles by a different Hamiltonian term, which we refer to as $\epsilon$.
-You can change this value by providing a different value of $t$ as
-
-```toml
-[hamiltonian]
-t = 0.5
-```
-
-or as a Python dictionary
-
-```python
-params = {
-    'Hamiltonian' : {
-        't' : 0.5
-    }    
-}
-```
-
-hopping can be turned off by either setting $t$ to 0, or (in Python only) setting t to `None`.
-
-nth-order neighbor hopping can be included by setting $t$ to a list of length $n$
-where the nth-entry is interpreted as the hopping strength for nth-order neighbors.
-Formally, if $t_n$ are the elements of the list, $t$,
-the following term will be added,
-$$
-\hat{H}_t = \sum_n - t_n \sum_{\langle i,j \rangle^n} \hat{c}^\dagger_i \hat{c}_j
-$$
-where $\langle i,j \rangle^n$ indicates that the sum is constrained to run over nth-order neighbors.
-
-> **NOTE**:
-> nth-order neighbors are determined by spatial distance. This is especially important to keep in mind when attempting to use a lattice with a basis.
-
-<div class="alert alert-block alert-warning">
-<b>CAUTION:</b>
-    nth-order neighbors are determined by spatial distance. This is especially important to keep in mind when attempting to use a lattice with a basis.
-</div>
-
-+++ {"id": "Tk2-PveROK_X"}
-
-#### ✨ Example : Hubbard Model with $t'$
-
-Below, we construct a Hubbard model on a 4x4 square lattice with both nearest, and next-nearest neighbor hopping by providing a list of values for "t".
-We plot the hopping matrix to demonstrate that the Hamiltonian includes both terms.
-Note that the default hopping matrix shape is $2N_{sites} \times N_{sites}$ where the first $N_{sites}$ rows correspond to the spin-up sector and the last $N_{sites}$ rows correspond to the spin-down sector.
+Nearest-neighbor hopping with $t = 1$ is included by default; `t=None` turns it off.
+{py:meth}`safiretools.LatticeHamiltonian.from_lattice` supports higher-order hoppings by passing a list for `t`.
 
 ```{code-cell} ipython3
 ---
@@ -348,64 +102,57 @@ colab:
 id: yAa96ZdbOK_X
 outputId: 731d316b-7dbb-4990-f273-0ad6da75081a
 ---
-import matplotlib.pyplot as plt
+# The 4×4 t-t' Hubbard model
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    U=4.0,
+    t=[1.0, 0.2] # implicit minus sign!
+)
 
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.visualize import plot_lattice
+plt.matshow(hamiltonian.get_one_body().todense())
+plt.colorbar()
+plt.show()
+```
 
-# define Hamiltonian parameters
-params = {
-    'lattice': {
-        'L1': 4,
-        'L2': 4,
-        'boundary1': 'PBC',
-        'boundary2': 'PBC'
-    },
-    'hamiltonian': {
-        'U': 4.0,
-        't' : [1.0,0.5] # implicit minus sign!
-    }
-}
++++
 
-# this will make a Hubbard model on a 4x4 lattice with PBCs
-hamiltonian = HamiltonianDirector(source=params).build()
+<div class="alert alert-block alert-warning">
+<b>Caution:</b>
 
-hopping = hamiltonian.get_one_body()
-plt.matshow(hopping.toarray())
+$n^\mathrm{th}$-order neighbors are determined by spatial distance. This is especially important to keep in mind when attempting to use a lattice with a basis.
+
+</div>
+
+### On-Site Energy
+
+An on-site energy,
+
+$$
+\hat{H}_\epsilon = \epsilon \sum_{i\sigma} \hat{n}_{i\sigma},
+$$
+
+is added with the `epsilon` argument. For example, a chemical potential $\mu$ corresponds to `epsilon=-μ`.
+
+```{code-cell} ipython3
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, epsilon=-2.0)
+
+# the on-site energy sits on the diagonal of the one-body matrix
+plt.matshow(hamiltonian.get_one_body().todense())
 plt.colorbar()
 plt.show()
 ```
 
 +++ {"id": "09Ir9dWeOK_W"}
 
-### Adding onsite Hubbard U
+### On-Site Hubbard U
 
-SAFIRE supports arbitrary onsite interactions of the from
+A Hubbard $U$ interaction,
 
 $$
-\hat{H}_U =  \sum_{\mu} U_{\mu} \hat{n}_{\mu\uparrow} \hat{n}_{\mu\downarrow},
+\hat{H}_U =  \sum_{i} U_{i} \hat{n}_{i\uparrow} \hat{n}_{i\downarrow},
 $$
 
-where, again, the combined index $\mu$ may include both lattice site and band indices.
-We've already seen how to add a basic nearest-neighbor onsite Hubbard U, now we see see how to provide a site-, and/or band-dependent onsite interaction.
-<b>This input parameter, $U$, is in general an array. The band/site dependence of the interaction is deduced based on the shape of the $U$ array</b>.
-
-#### Band- and site-dependence deduction rules
-
-1. if U is a scalar (or an array with a single entry), then the onsite Hubbard interaction term is included with strength U and applied to all sites and bands uniformly.
-
-2. if U is 1-dimensional with length nbands (i.e. [U1,U2,…,Um] where for an m-band model), then the onsite Hubbard interaction term is included with strength U_i applied to band i and uniformly across sites.
-
-3. if U is 1-dimensional with length nsites (i.e. [U1,U2,…,Un] where n is the number of sites), then the onsite Hubbard interaction term is included with strength U_i applied to site i and uniformly across bands.
-
-4. If nbands and nsites are equal, then nbands take priority (i.e. rule 2 applies and not rule 3).
-
-+++ {"id": "BskmJL_Kn9Fm"}
-
-#### ✨ Example: site-dependent U
-
-In the example below, we build a site-dependent U with a checkerboard pattern.
+is added using the `U` argument, as we have seen previously. By passing a list with one entry per site, we can make $U_i$ site dependent.
 
 ```{code-cell} ipython3
 ---
@@ -415,39 +162,19 @@ colab:
 id: i0l8VxorOK_W
 outputId: 4113cab3-7b9d-4366-edb5-ff8b22bd89fd
 ---
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.visualize import plot_lattice
-
-import numpy as np
-
-lattice_params = {
-    'L1': 2,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
-
-lattice = get_lattice(lattice_params)
+lattice = Lattice.from_type('square', (2, 4), boundaries=('periodic', 'periodic'))
 
 
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'nbands' : 1,
-    'U': [1.0,2.0,1.0,2.0,2.0,1.0,2.0,1.0]
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# this will make a Hubbard model on a 4x4 lattice with PBCs
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+# this will make a Hubbard model on a 2×4 lattice with periodic boundaries
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    U=[1.0,2.0,1.0,2.0,2.0,1.0,2.0,1.0]
+)
 
 # let's take a look at the U term:
 U = hamiltonian.get_U().toarray().diagonal().reshape(lattice.L)
 
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=U,
     vmin=0.0,
@@ -455,15 +182,244 @@ plot_lattice(
 )
 ```
 
++++ {"id": "pqLN_brHOK_X"}
+
+### Density-Density Interaction
+
+SAFIRE also supports density-density interactions between opposite spins on different sites,
+
+$$
+\hat{H}_{U^{(1)}} = \sum_{n} U^{(1)}_n \sum_{\langle i,j \rangle^n} (\hat{n}_{i\uparrow} \hat{n}_{j\downarrow} + \hat{n}_{i\downarrow} \hat{n}_{j\uparrow} ),
+$$
+
+where $\langle i,j \rangle^n$ runs over each pair of $n^\text{th}$-order neighbors once, the $i<j$ of {ref}`lattice_model_hamiltonian`.
+The `U1` argument takes a list $[U^{(1)}_0, U^{(1)}_1, \dots]$ whose index is the neighbor order $n$, *starting at $n = 0$*, the on-site term.
+With a single band, the on-site term is the Hubbard $U$ and `from_lattice` rejects a nonzero $U^{(1)}_0$, so a nearest-neighbor interaction is `U1=[0.0, 0.5]`. Zero entries are skipped.
+
++++ {"id": "_BXfk70iudQJ"}
+
+### Spin-Spin Interaction
+
+The spin-spin interaction between equal spins,
+
+$$
+\hat{H}_{U^{(2)}} = \sum_{n} U^{(2)}_n \sum_{\langle i,j \rangle^n} (\hat{n}_{i\uparrow} \hat{n}_{j\uparrow} + \hat{n}_{i\downarrow} \hat{n}_{j\downarrow} ),
+$$
+
+is set by the `U2` argument, with the same input conventions as `U1`.
+
++++ {"id": "L-D4VJuBOK_X"}
+
+### Hund's J
+
+The Hund's coupling,
+
+$$
+\hat{H}_J = \sum_{n} J_n \sum_{\langle i,j \rangle^n} (
+     \hat{c}^\dagger_{i\uparrow}\hat{c}^\dagger_{j\downarrow}\hat{c}_{i\downarrow}\hat{c}_{j\uparrow}
+     +\hat{c}^\dagger_{i\uparrow}\hat{c}^\dagger_{i\downarrow}\hat{c}_{j\downarrow}\hat{c}_{j\uparrow}
+     +\hat{c}^\dagger_{j\uparrow}\hat{c}^\dagger_{i\downarrow}\hat{c}_{j\downarrow}\hat{c}_{i\uparrow}
+     +\hat{c}^\dagger_{j\uparrow}\hat{c}^\dagger_{j\downarrow}\hat{c}_{i\downarrow}\hat{c}_{i\uparrow}
+     ),
+$$
+
+is set by the `J` argument, again with the same input conventions as `U1`.
+It is mostly used between the bands of one site, see Multiband Models below.
+
++++ {"id": "W-TfLNDJOK_W"}
+
+### Extended Hubbard V
+
+The extended Hubbard interaction,
+
+$$
+\hat{H}_V = \sum_{n} V_n \sum_{\langle i,j \rangle^n} \hat{n}_i \hat{n}_j, \qquad \hat{n}_i = \hat{n}_{i\uparrow} + \hat{n}_{i\downarrow},
+$$
+
+is the sum of a density-density and a spin-spin interaction of equal strength,
+
+$$
+\hat{H}_V = \hat{H}_{U^{(1)}}[U^{(1)} = V] + \hat{H}_{U^{(2)}}[U^{(2)} = V].
+$$
+
+The `V` argument takes a scalar for nearest neighbors or a list $[V_1, V_2, \dots]$ whose index starts at $n = 1$.
+
++++ {"id": "_MEnzhH0OK_X"}
+
+### Example: Extended Hubbard Model
+
+Below, we build an extended Hubbard model including nearest-neighbor V.
+
+```{code-cell} ipython3
+---
+colab:
+  base_uri: https://localhost:8080/
+id: lAw6245ub5GZ
+outputId: c5bfa756-3d14-4865-ddb6-2c4d9fac99e0
+---
+lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'))
+
+hamiltonian = LatticeHamiltonian.from_lattice(lattice, t=1.0, U=4.0, V=1.0)
+```
+
+### Rashba Spin-Orbit Coupling
+
+Rashba spin-orbit coupling,
+
+$$
+\hat{H}_\mathrm{R} = i \lambda_\mathrm{R} \sum_{n} t_n \sum_{(i,j)^n} \sum_{\sigma\sigma'} (\vec{\sigma} \times \vec{r}_{ij})_z^{\sigma\sigma'} \hat{c}^\dagger_{i\sigma} \hat{c}_{j\sigma'},
+$$
+
+where $\vec{\sigma}$ is the vector of Pauli matrices, $\vec{r}_{ij}$ is the displacement from site $i$ to site $j$, $t_n$ is the $n^\text{th}$-order hopping, and $(i,j)^n$ runs over both orderings of each pair of $n^\text{th}$-order neighbors,
+is added with the `rashba_lambda` argument. Currently Rashba Spin-Orbit coupling is only tested for 1-band models.
+Because the Rashba term flips spins, the one-body matrix becomes a $(2 N_\text{sites}, 2 N_\text{sites})$ spinor matrix whose off-diagonal blocks couple up and down spins.
+
+```{code-cell} ipython3
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    t=1.0,
+    U=4.0,
+    rashba_lambda=0.3
+)
+
+# the Rashba term is imaginary and sits in the spin-flip blocks
+plt.matshow(hamiltonian.get_one_body().toarray().imag)
+plt.colorbar()
+plt.show()
+```
+
+### Pinning Fields
+
+Pinning fields are on-site potentials on the edges of a lattice, usually open ones, that break a symmetry so that the order it induces can be measured.
+They are added with the `pinning` argument, a pair with one {py:class}`safiretools.PinningField` or `None` per lattice axis, acting on the two edges at the ends of that axis.
+`PinningField.afm`, `PinningField.fm` and `PinningField.charge` give antiferromagnetic, ferromagnetic and charge fields $\pm h/2$; with `staggered=True`, the two edges have opposite signs.
+Other patterns can be given as a function `(n, edge) -> (h_up, h_down)` passed to `PinningField`.
+
+Below, we pin the two open edges at the ends of axis 0 antiferromagnetically, as in {doc}`/examples/models/02_stripes/index`.
+
+```{code-cell} ipython3
+from safiretools import PinningField
+
+open_lattice = Lattice.from_type('square', (6, 4), boundaries=('open', 'periodic'))
+
+hamiltonian = LatticeHamiltonian.from_lattice(
+    open_lattice,
+    t=1.0,
+    U=4.0,
+    pinning=(PinningField.afm(0.5, staggered=True), None)
+)
+
+# the spin-down potential is the negative of the spin-up one
+vis.plot_lattice(
+    open_lattice,
+    density=hamiltonian.get_one_body().diagonal(),
+    density_label='spin-up potential'
+)
+```
+
+### Custom One-Body Terms
+
+A one-body term that none of the arguments above cover can be passed as a matrix with `custom_one_body`. It is added to the one-body Hamiltonian as is, without an implicit sign, and must be Hermitian.
+Its rows and columns are the site indices $i$ shown by `vis.plot_lattice`, and it may have one of three shapes:
+
+- $(N_\text{sites}, N_\text{sites})$: the same matrix for both spins,
+- $(2 N_\text{sites}, N_\text{sites})$: the spin-up matrix stacked on the spin-down matrix, e.g. `sps.vstack([h, -h])` for a Zeeman field $h$,
+- $(2 N_\text{sites}, 2 N_\text{sites})$: a full spinor matrix.
+
+Below, we add a staggered potential,
+
+$$
+\hat{H}_\Delta = \Delta \sum_{i\sigma} (-1)^{x_i + y_i} \hat{n}_{i\sigma},
+$$
+
+where $(x_i, y_i)$ is the position of site $i$. With $\Delta = 0.5$, this is the ionic Hubbard model.
+
+```{code-cell} ipython3
+import scipy.sparse as sps
+
+x, y = lattice.get_positions().T
+stagger = (-1.0) ** np.round(x + y)
+
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    t=1.0,
+    U=4.0,
+    custom_one_body=sps.diags_array(0.5 * stagger)
+)
+
+# the diagonal of the spin-up block is the on-site potential
+vis.plot_lattice(
+    lattice,
+    density=hamiltonian.get_one_body().diagonal(),
+    density_label='on-site potential'
+)
+```
+
+## Multiband Models
+
+By passing `nbands` to {py:meth}`safiretools.LatticeHamiltonian.from_lattice`, every lattice site carries $n_\text{bands}$ orbitals, and the operators $\hat{c}_{im\sigma}$ get a band index $m$ (or $p$) next to the site index $i$.
+In the matrices returned by `get_one_body()` and `get_U()`, the band is the fastest index, `site * nbands + band`.
+Each argument above extends to bands as follows.
+
+### One-Body Terms
+
+A scalar `t` corresponds to $t_{mp} = t \delta_{mp}$, i.e. uniform band-diagonal hopping. An $n_\text{bands} \times n_\text{bands}$ matrix $t_{mp}$ also hops between bands on neighboring sites,
+
+$$
+\hat{H}_t = -\sum_{\langle i,j \rangle} \sum_{mp\sigma} t_{mp}\, \hat{c}^\dagger_{im\sigma} \hat{c}_{jp\sigma} + \text{h. c.},
+$$
+
+and a list of such matrices gives higher-order neighbors as before. Hopping never couples bands on the same site; that is the job of `epsilon`.
+A scalar `epsilon` is the same on-site energy for every band. A Hermitian $n_\text{bands} \times n_\text{bands}$ matrix $\epsilon_{mp}$ holds band energies on its diagonal and on-site hybridization off it,
+
+$$
+\hat{H}_\epsilon = \sum_{i} \sum_{mp\sigma} \epsilon_{mp}\, \hat{c}^\dagger_{im\sigma} \hat{c}_{ip\sigma}.
+$$
+
+### On-Site Hubbard U
+
+A list of length $n_\text{bands}$ gives a band-dependent $U_m$ that is uniform across sites,
+
+$$
+\hat{H}_U = \sum_{i} \sum_{m} U_m \hat{n}_{im\uparrow} \hat{n}_{im\downarrow}.
+$$
+
+If $n_\text{bands} = n_\text{sites}$, a list is read as band-dependent.
+
+### Interband Interactions
+
+`U1`, `U2` and `J` share one convention. For each neighbor order $n$, starting at $n = 0$, the amplitude is either a scalar or an $n_\text{bands} \times n_\text{bands}$ matrix. For `U1`,
+
+$$
+\hat{H}_{U^{(1)}} = \sum_{n} \sum_{\langle i,j \rangle^n} \sum_{mp} U^{(1)}_{n,mp} (\hat{n}_{im\uparrow} \hat{n}_{jp\downarrow} + \hat{n}_{im\downarrow} \hat{n}_{jp\uparrow} ),
+$$
+
+where $\langle i,j \rangle^0$ means $i = j$, and `U2` and `J` follow the same pattern. With several bands, the on-site term $n = 0$ is allowed, and a scalar is accepted directly, so `U1=1.5` is a uniform on-site interband interaction.
+
+- On-site ($n = 0$), each pair of bands interacts once, so only $m < p$ enters; a scalar fills all pairs $m < p$. A matrix should only set its upper triangle: SAFIRE ignores the lower triangle, and the diagonal is ignored for `U2` and `J` but added to the Hubbard $U$ for `U1`. The interaction within one band is the Hubbard $U$.
+- Between sites ($n \geq 1$), band $m$ on site $i$ and band $p$ on site $j$ is a different interaction from $p$ on $i$ and $m$ on $j$, so every $(m, p)$ enters; a scalar fills the whole matrix.
+
+A list must be all scalars or all matrices. For example, an on-site interaction between two bands plus a band-dependent nearest-neighbor interaction is
+
+```python
+U1=[[[0.0, 2.0],
+     [0.0, 0.0]],
+    [[0.5, 1.0],
+     [1.0, 0.5]]]
+```
+
+### Extended Hubbard V
+
+`V` takes a scalar or an $n_\text{bands} \times n_\text{bands}$ matrix $V_{mp}$ per neighbor order, starting at $n = 1$, like the intersite part of `U1`.
+
 +++ {"id": "r53E1XbMoJM8"}
 
-#### ✨ Example: band-dependent U
+### Example: Band-Dependent U
 
 Now we will construct a band-dependent U which is *uniform* across lattice sites.
 We will use two bands and the first band will have $U/t = 1$
 and the second will have $U/t = 2$.
-
-As a bonus, we also demonstrate how to include a band-dependent hopping.
+We also include a band-dependent hopping and raise the energy of the second band with `epsilon`.
 
 ```{code-cell} ipython3
 ---
@@ -473,46 +429,27 @@ colab:
 id: jN42bp5cOK_W
 outputId: d257ba45-6561-41df-a581-8a19e1f73a2a
 ---
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.visualize import plot_lattice
+lattice = Lattice.from_type('square', (2, 4), boundaries=('periodic', 'periodic'))
 
-import numpy as np
-
-lattice_params = {
-    'L1': 2,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
-lattice = get_lattice(lattice_params)
-
-
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'nbands' : 2,
-    't' : [np.array([[1.0, -0.2], [-0.2, 1.0]])], # bonus: band-dependent hopping
-    'U': [1.0,2.0]
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# this will make a Hubbard model on a 4x4 lattice with PBCs
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    nbands=2,
+    t=[np.array([[1.0, -0.2], [-0.2, 1.0]])],
+    epsilon=np.diag([0.0, 0.5]),
+    U=[1.0, 2.0]
+)
 
 # let's take a look at the U term:
-U_shape = (lattice.L[0],lattice.L[1],hamiltonian_params['nbands'])
+U_shape = (lattice.L[0],lattice.L[1],hamiltonian.nbands)
 U = hamiltonian.get_U().toarray().diagonal().reshape(U_shape)
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=U[:,:,0],
     title='U for band 0',
     vmin=0.0,
     vmax=3.0
 )
-plot_lattice(
+vis.plot_lattice(
     lattice,
     density=U[:,:,1],
     title='U for band 1',
@@ -520,193 +457,12 @@ plot_lattice(
     vmax=3.0
 )
 ```
-
-```{code-cell} ipython3
-:id: _6grG3FOOK_X
-
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.visualize import plot_lattice
-
-import numpy as np
-
-lattice_params = {
-    'L1': 2,
-    'L2': 4,
-    'boundary1': 'PBC',
-    'boundary2': 'PBC'
-}
-lattice = get_lattice(lattice_params)
-
-
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'nbands' : 2,
-    't' : [np.array([[1.0, -0.2], [-0.2, 1.0]])], # bonus: band-dependent hopping
-    'U': [1.0,2.0]
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-# this will make a Hubbard model on a 4x4 lattice with PBCs
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
-
-# let's take a look at the U term:
-U_shape = (lattice.L[0],lattice.L[1],hamiltonian_params['nbands'])
-U = hamiltonian.get_U().toarray().diagonal().reshape(U_shape)
-plot_lattice(
-    lattice,
-    density=U[:,:,0],
-    title='U for band 0',
-    vmin=0.0,
-    vmax=3.0
-)
-plot_lattice(
-    lattice,
-    density=U[:,:,1],
-    title='U for band 1',
-    vmin=0.0,
-    vmax=3.0
-)
-```
-
-```{code-cell} ipython3
-:id: G1F4jHEyOK_X
-
-
-```
-
-+++ {"id": "pqLN_brHOK_X"}
-
-### Adding Density-Density interaction
-
-SAFIRE supports general interactions of the form,
-
-$$
-\hat{H}_{U1} =  \sum_{\mu<\nu} U_{\mu\nu}^1 (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\downarrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\uparrow} ),
-$$
-
-where $\mu = (i,m)$ / $\nu = (i,p)$ are a composite lattice, $i$ / $j$, and band $m$, $p$ indices.
-
-afqmctools is able to generate a subset of interactions of this type;
-The $U_{\mu\nu}^1$ matrix is constructed based on what information
-the user provides.
-specifically, it handles the following cases.
-
-#### Case 1: Uniform intrasite interaction
-
-The user provides a single value for $U^1$ and keeps the default $n=0$.
-
-In this case, the density-density interaction takes the following form.
-
-$$
-\hat{H}_{U1} = U^1 \sum_{i} \sum_{mp} (\hat{n}_{(i,m)\uparrow} \hat{n}_{(i,p)\downarrow} + \hat{n}_{(i,m)\downarrow} \hat{n}_{(i,p)\uparrow} ),
-$$
-
-where we have replaced the composite indices with site and band indices for clarity.
-
-#### Case 2: Band-dependent intrasite interaction
-
-The user provides a matrix with shape $nbands \times nbands$,
-
-$$
-U^1 = U^1_{mp},
-$$
-
-and keeps the default $n = 0$ for the neighbor order parameter.
-
-In this case, the density-density interaction takes the following form.
-
-$$
-\hat{H}_{U1} =  \sum_{i} \sum_{mp} U_{mp}^1 (\hat{n}_{(i,m)\uparrow} \hat{n}_{(i,p)\downarrow} + \hat{n}_{(i,m)\downarrow} \hat{n}_{(i,p)\uparrow} ),
-$$
-
-where we have replaced the composite indices with site and band indices for clarity.
-
-#### Case 3: Uniform nth-order neighbor interaction
-
-#### Case 4: Band-dependent nth-order neighbor interaction
-
-The user provides the neighbor order, $n$, and a
- matrix with shape $nbands \times nbands$,
-
-$$
-U^1 = U^1_{mp}.
-$$
-
-In this case, the density-density interaction takes the following form.
-
-$$
-\hat{H}_{U1} =  \sum_{\langle i,j \rangle^n} \sum_{mp} U_{mp}^1 (\hat{n}_{(i,m)\uparrow} \hat{n}_{(i,p)\downarrow} + \hat{n}_{(i,m)\downarrow} \hat{n}_{(i,p)\uparrow} ),
-$$
-
-where we have replaced the composite indices with site and band indices for clarity.
-
-#### Case 5: a list of inputs from the cases above
-
-If a user provides a list of valid inputs, then afqmctools will generate each
-term provided <b>using the list index / position for the neighbor order "$n$."</b>
-For example, if a user provides
-
-```toml
-[hamiltonian]
-nbands = 2
-U1= [ 2.0,
-      [[ 0.5, 1.0 ],
-       [ 1.0, 0.5 ]]
-    ]
-```
-
-Both a uniform intrasite interaction with U1 = 2.0 (n=0 / onsite),
-and a band-dependent nearest-neighbor (n=1) interaction will be added to the
-Hamiltonian.
-
-+++ {"id": "_BXfk70iudQJ"}
-
-### Adding Spin-Spin interaction
-
-SAFIRE supports general interactions of the form,
-
-$$
-\hat{H}_{U2} = \sum_{\mu<\nu} U_{\mu\nu}^2 (\hat{n}_{\mu\uparrow} \hat{n}_{\nu\uparrow} + \hat{n}_{\mu\downarrow} \hat{n}_{\nu\downarrow} ),
-$$
-
-where $\mu = (i,m)$ / $\nu = (i,p)$ are a composite lattice, $i$ / $j$, and band $m$, $p$ indices.
-
-afqmctools is able to generate a subset of interactions of this type;
-The $U_{\mu\nu}^2$ matrix is constructed based on what information
-the user provides similarly to the density-density (i.e. the $U^1$) term.
-See the density-density section above for more details.
-
-+++ {"id": "L-D4VJuBOK_X"}
-
-### Adding a Hund's J term
-
-SAFIRE supports general interactions of the form,
-
-$$
-\hat{H}_J = \sum_{\mu<\nu} J_{\mu\nu} (
-     \hat{c}^\dagger_{\mu\uparrow}\hat{c}^\dagger_{\nu\downarrow}\hat{c}_{\mu\downarrow}\hat{c}_{\nu\uparrow}
-     +\hat{c}^\dagger_{\mu\uparrow}\hat{c}^\dagger_{\mu\downarrow}\hat{c}_{\nu\downarrow}\hat{c}_{\nu\uparrow}
-     +\hat{c}^\dagger_{\nu\uparrow}\hat{c}^\dagger_{\mu\downarrow}\hat{c}_{\nu\downarrow}\hat{c}_{\mu\uparrow}
-     +\hat{c}^\dagger_{\nu\uparrow}\hat{c}^\dagger_{\nu\downarrow}\hat{c}_{\mu\downarrow}\hat{c}_{\mu\uparrow}
-     ).
-$$
-
-$\mu$ / $\nu$ are compound indices, $\mu = (i,p,m)$ / $\mu = (j,q,n)$, that include the lattice site index, ($i$ / $j$), sublattice, ($p$ / $q$) and band ($m$ / $n$) indices.
-
-afqmctools is able to generate a subset of interactions of this type;
-The $J_{\mu\nu}$ matrix is constructed based on what information
-the user provides similarly to the density-density (i.e. the $U^1$ term).
-See the density-density section above for more details.
 
 +++ {"id": "CIbAdbiaOK_X"}
 
-#### ✨ Example: 3-band Hubbard-Kanamori Hamiltonian
+### Example: 2-Band Hubbard-Kanamori Hamiltonian
 
-Below we construct a 3-band Hubbard-Kanamori model using uniform values for U,U1,U2, and J as in Table I of [PRB 99, 235142 (2019)](https://doi.org/10.1103/PhysRevB.99.235142)
+Below we construct the 2-band, 6×1 Hubbard-Kanamori model with uniform values for `U`, `U1`, `U2` and `J` from the first row of Table I in [PRB 99, 235142 (2019)](https://doi.org/10.1103/PhysRevB.99.235142).
 
 ```{code-cell} ipython3
 ---
@@ -716,107 +472,26 @@ colab:
 id: D72pRPc6OK_X
 outputId: b6f1c99c-e33b-4574-d108-3a2ea7f66d89
 ---
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.visualize import plot_lattice
+lattice = Lattice.from_type('square', (6, 1), boundaries=('periodic', 'open'))
+vis.plot_lattice(lattice)
 
-# Define the lattice parameters
-lattice_params = {
-    'L1': 6,
-    'L2': 1,
-    'boundary1': 'PBC',
-    'boundary2': 'open'
-}
-
-# define Hamiltonian parameters
-hamiltonian_params = {
-    'nbands' : 3,
-    't' : 1.0,
-    'U': 4.0,
-    'U1': 1.5,
-    'U2': 1.0,
-    'J': 0.5
-}
-
-params = {
-    'hamiltonian': hamiltonian_params
-}
-
-lattice = get_lattice(lattice_params)
-plot_lattice(lattice)
-
-hamiltonian = HamiltonianDirector(source=params, lattice=lattice).build()
+hamiltonian = LatticeHamiltonian.from_lattice(
+    lattice,
+    nbands=2,
+    t=1.0,
+    U=2.0,
+    U1=1.5,
+    U2=1.0,
+    J=0.5
+)
 ```
 
-+++ {"id": "W-TfLNDJOK_W"}
+## Summary
 
-### Adding an extended Hubbard V interaction
+In this tutorial, you learned how to build lattice model Hamiltonians with {py:meth}`safiretools.LatticeHamiltonian.from_lattice` and write them to the SAFIRE HDF5 format.
 
-The $n^{th}$-order neighbor extended Hubbard interaction,
+### What You Learned
 
-$$
-\hat{H}_V = \sum_{\langle i<j \rangle^n} \sum_{\sigma \sigma'} V_{\mu \nu} \hat{n}_{\mu \sigma } \hat{n}_{\nu \sigma'},
-$$
-
-where $\mu = (i,m)$ / $\nu = (i,p)$ are a composite lattice, $i$ / $j$, and band $m$, $p$ indices, can be expressed in terms of $\hat{H}_{U1}$ and $\hat{H}_{U2}$.
-
-$$
-\hat{H}_V = \sum_{\langle i<j \rangle^n} V_{\mu \nu} (\hat{n}_{\mu \uparrow} \hat{n}_{\nu \downarrow} + \hat{n}_{\mu \downarrow} \hat{n}_{\nu \uparrow})
-+ \sum_{\langle i<j \rangle^n} V_{\mu \nu} (\hat{n}_{\mu \uparrow} \hat{n}_{\nu \uparrow} + \hat{n}_{\mu \downarrow} \hat{n}_{\nu \downarrow}),
-$$
-
-which we can identify as,
-
-$$
-\hat{H}_V = \hat{H}_{U1}[U1 = V] + \hat{H}_{U2}[U2 = V],
-$$
-
-for $n^{th}$-order neighbors.e
-
-afqmctools is able to generate a subset of interactions of this type using the
-same input conventions as for $\hat{H}_{U1}$, and $\hat{H}_{U2}$.
-
-+++ {"id": "_MEnzhH0OK_X"}
-
-#### ✨ Example: Extended Hubbard Model
-
-Below, we build an extended Hubbard model including nearest-neighbor V.
-
-If you inspect the output, you will see that behind the scenes, we use a U1 and U2 term to represent the extended Hubbard V since those terms are directly implemented in SAFIRE.
-
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: lAw6245ub5GZ
-outputId: c5bfa756-3d14-4865-ddb6-2c4d9fac99e0
----
-import matplotlib.pyplot as plt
-
-from afqmctools.systems.lattice import get_lattice
-from afqmctools.hamiltonian.model.director import HamiltonianDirector
-from afqmctools.utils.visualize import plot_lattice
-
-# define Hamiltonian parameters
-params = {
-    'lattice': {
-        'L1': 4,
-        'L2': 4,
-        'boundary1': 'PBC',
-        'boundary2': 'PBC'
-    },
-    'hamiltonian': {
-        't' : 1.0,
-        'U': 4.0,
-        'V' : 1.0
-    }
-}
-
-hamiltonian = HamiltonianDirector(source=params).build()
-```
-
-```{code-cell} ipython3
-:id: awcSeCyfon9U
-
-
-```
+1. How to build a Hubbard model on a lattice and write it to an HDF5 file that SAFIRE can read
+2. How to add higher-order hopping, on-site energies, density-density, spin-spin, Hund's and extended Hubbard interactions, Rashba spin-orbit coupling, pinning fields and custom one-body terms
+3. How these terms extend to multiband models

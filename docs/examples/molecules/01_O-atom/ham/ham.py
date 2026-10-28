@@ -8,16 +8,37 @@
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 
-from afqmctools.utils.pyscf_utils import load_from_pyscf_chk_mol
-from afqmctools.hamiltonian.mol import write_hamil_mol
-from afqmctools.wavefunction.mol import write_wfn_mol
+from pyscf import gto, scf
+
+from safiretools import MolecularHamiltonian, Wavefunction
 
 
 def main():
+    """
+    AFQMC inputs for the oxygen atom: a Hamiltonian in the ROHF orbital basis
+    and a UHF trial wavefunction.
+    """
 
-    # inputs
-    orbital_basis_chk = '../scf/rohf.chk'
-    wavefunction_chk = '../scf/uhf.chk'
+    #####################################
+    #                                   #
+    #       Run the SCF calculations    #
+    #                                   #
+    #####################################
+
+    mol = gto.M(
+        atom='O 0. 0. 0.',
+        basis='ccpvdz',
+        spin=2,
+        verbose=4
+    )
+
+    # the orbital basis
+    rohf = scf.ROHF(mol).newton()
+    rohf.kernel()
+
+    # the trial wavefunction
+    uhf = scf.UHF(mol).newton()
+    uhf.kernel()
 
     chol_tol = 1e-5
 
@@ -30,35 +51,23 @@ def main():
     #                                   #
     #####################################
 
-    scf_data = load_from_pyscf_chk_mol(
-        orbital_basis_chk,
-        'scf'
-    )
-
-    write_hamil_mol(
-        scf_data=scf_data,
-        hamil_file=fout, 
-        chol_cut=chol_tol, 
-        real_chol=True, 
+    MolecularHamiltonian.from_pyscf(
+        rohf,
+        chol_cut=chol_tol,
         verbose=True
-    )
-    
+    ).to_hdf5(fout)
+
     #####################################
     #                                   #
     #      Write Trial Wavefunction     #
     #                                   #
     #####################################
 
-    write_wfn_mol(
-        scf_data=load_from_pyscf_chk_mol(
-            wavefunction_chk,
-            'scf'
-        ),
-        basis_scf_data=scf_data,
-        filename=fout
-    )
+    Wavefunction.from_pyscf(
+        uhf,
+        basis=rohf
+    ).to_hdf5(fout)
 
 
 if __name__ == '__main__':
     main()
-

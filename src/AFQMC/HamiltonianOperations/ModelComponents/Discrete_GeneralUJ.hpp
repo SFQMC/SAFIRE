@@ -47,16 +47,14 @@ public:
                      math::sparse::CSRMatrix auto&& vn_,
                      math::sparse::CSRMatrix auto&& vnT_,
                      math::sparse::CSRMatrix auto&& u_,
-                     bool shift_ = false,  
-                     [[maybe_unused]] bool p_shift_ = false,
-                     ComplexType e0 = 0
+                     bool shift_ = false,
+                     [[maybe_unused]] bool p_shift_ = false
                     )
       : mpi(_mpi),
         walker_type(type),
         propg_type(ptype),
         nCV(0),
         shift_one_body_terms(shift_),
-        E0(e0),
         h0(std::move(h0_)),
 	U(std::move(u_)),
         SpVn(std::move(vn_)),
@@ -178,8 +176,6 @@ private:
   // otherwise it is added through vHS
   bool shift_one_body_terms = false;
 
-  ComplexType E0 = 0.0;
-
   // All sparse matrices have a compact representation of IJ, as defined
   // by n2IJ in ModelHamOps. 
 
@@ -200,7 +196,7 @@ private:
   // transposed HS operator 
   csrMat<ComplexType> SpVnT;
 
-  // HS operator and 1-body MF substraction terms depend on timestep
+  // HS operator and 1-body MF subtraction terms depend on timestep
   // and on MF onsite occupations.    
   // follows addComponent from Hamiltonians/ModelHamOpsGenerator.icc, 
   // but uses correct prefactors, which are now functions of dt*U and nMFJ = <nI +- nJ>   

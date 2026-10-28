@@ -156,6 +156,17 @@ block()
   set(Build_Tests ${COMPILE_NDA_TESTS})
   set(ENABLE_SHARED OFF) # tblis: build only static library
   set(PythonSupport OFF)
+  # nda clones h5 from its moving 'unstable' branch; resolving it here first, at a fixed commit,
+  # makes nda's external_dependency(h5 ...) skip it
+  # TODO: once we are compatible with upcoming breaking changes of h5, we can remove this pin
+  FetchContent_Declare(
+          h5
+          GIT_REPOSITORY "https://github.com/TRIQS/h5.git"
+          GIT_TAG        bdbb040157088e156032edb33714a915d7782f3b
+          SYSTEM
+  )
+  FetchContent_MakeAvailable(h5)
+  set_property(GLOBAL PROPERTY h5_FOUND TRUE)
   FetchContent_Declare(
           nda
           GIT_REPOSITORY "https://github.com/TRIQS/nda.git"

@@ -42,7 +42,7 @@ public:
         max_memory_MB(params.max_memory)
   {}
 
-  HamiltonianTypes getHamType() const {return RealDenseFactorized; }
+  HamiltonianType getHamType() const { return HamiltonianType::real_dense_factorized; }
 
   template<MEMORY_SPACE MEM>
   HamiltonianOperations<MEM> getHamiltonianOperations(WALKER_TYPES type,
