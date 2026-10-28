@@ -259,6 +259,31 @@ def test_band_matrix_hopping_never_couples_bands_on_one_site(square_2x2):
         np.testing.assert_array_equal(one_body[block, block], 0.0)
 
 
+@pytest.mark.parametrize("twists", [(np.pi, np.pi), ("1 Pi", 0.0), (3 * np.pi, -np.pi)])
+def test_an_antiperiodic_twist_keeps_the_hopping_real(twists):
+    """
+    A twist of π flips the sign of the boundary hop and nothing else. Stored
+    complex, its ``1e-16`` imaginary rounding lets ``eigh`` pick a complex basis
+    inside degenerate shells of the free-electron trial wavefunction.
+    """
+    lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'),
+                                twists=twists)
+    one_body = HamiltonianBuilder.from_input(
+        lattice, t=1.0, spin_symm=SpinSymm.CLOSED).get_hamiltonian().get_one_body()
+
+    assert np.isrealobj(one_body.toarray())
+    assert set(np.unique(one_body.data)) <= {-1.0, 1.0}
+
+
+def test_a_generic_twist_is_complex():
+    lattice = Lattice.from_type('square', (4, 4), boundaries=('periodic', 'periodic'),
+                                twists=(0.3, 0.0))
+    one_body = HamiltonianBuilder.from_input(
+        lattice, t=1.0, spin_symm=SpinSymm.CLOSED).get_hamiltonian().get_one_body()
+
+    assert np.iscomplexobj(one_body.toarray())
+
+
 def test_negative_and_positive_u_become_separate_components(square_2x2):
     """
     Opposite signs call for different Hubbard-Stratonovich transformations, so
