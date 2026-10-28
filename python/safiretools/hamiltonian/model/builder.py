@@ -60,6 +60,16 @@ def is_hermitian(M, tol=1e-10) -> bool:
     return np.allclose(M, M.conj().T, atol=tol)
 
 
+def twist_factor(phase, tol=1e-12):
+    """
+    The hopping factor ``exp(-i phase)``, as an exact real ``±1`` when `phase` is
+    a multiple of π, so periodic and antiperiodic hops keep the Hamiltonian real.
+    """
+    if abs(np.sin(phase)) < tol:
+        return float(np.sign(np.cos(phase)))
+    return np.exp(-1j * phase)
+
+
 def onsite_band_matrix(value, nbands: int):
     r"""
     Build the ``(nbands, nbands)`` band matrix carrying a single *onsite*
@@ -640,11 +650,7 @@ class HamiltonianBuilder:
 
         row, column, data = [], [], []
         for pair in self._lattice.get_nth_neighbors(n=nth_neighbor):
-            # an untwisted pair stays real, so the Hamiltonian can be written as real
-            if pair.phase != 0.0:
-                data.append(-1 * np.exp(-1j * pair.phase))
-            else:
-                data.append(-1)
+            data.append(-twist_factor(pair.phase))
             row.append(pair.i)
             column.append(pair.j)
 
@@ -833,12 +839,8 @@ class HamiltonianBuilder:
                     row.append(self._index_map(pair.i, m))
                     column.append(self._index_map(pair.j, m))
 
-                    if pair.phase != 0.0:  # phase is the twist
-                        prefactor = rashba_lambda * t * np.exp(-1j * pair.phase)
-                    else:
-                        prefactor = rashba_lambda * t
-
-                    data.append(prefactor * pair.r_relative[axis])
+                    data.append(rashba_lambda * t * twist_factor(pair.phase)
+                                * pair.r_relative[axis])
 
             return sps.csr_array((data, (row, column)), shape=shape)
 
