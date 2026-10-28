@@ -6,12 +6,12 @@ We thank everyone who has contributed to this project.
 
 ### Current
 
-- **(Brandon) Kyle Eskridge**
 - **Miguel Morales**
 - **Lukas Weber**
 
 ### Alumni
 
+- **(Brandon) Kyle Eskridge**
 - **Ryan Levy**
 - **Peter Rosenberg**
 - **Paul Yang**
