@@ -120,16 +120,7 @@ class Hamiltonian(ABC):
     Parameters
     ----------
     spin_symm : SpinSymm or str or int, optional
-        Spin symmetry of the Hamiltonian. Coerced through
-        `SpinSymm.from_input`, so ``'uhf'``, ``'collinear'`` and
-        ``SpinSymm.COLLINEAR`` are all accepted.
-
-    Notes
-    -----
-    ``__init__`` takes already-formed, validated in-memory data. Build a
-    Hamiltonian from an external description with one of the classmethod
-    factories on the concrete subclasses (``from_lattice``, ``from_hdf5``,
-    ...).
+        Spin symmetry of the Hamiltonian.
     """
 
     def __init__(self, spin_symm=SpinSymm.CLOSED) -> None:
