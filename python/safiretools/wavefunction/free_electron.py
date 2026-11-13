@@ -95,8 +95,9 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
     NotImplementedError
         For `SpinSymm.CLOSED`, which has no free-electron construction here.
     ValueError
-        If `hamiltonian` is not a `safiretools.LatticeHamiltonian`, or the
-        one-body term's shape does not match `spin_symm`.
+        If `hamiltonian` is not a `safiretools.LatticeHamiltonian`,
+        `filling_strategy` is unknown, the one-body term's shape does not match
+        `spin_symm`, or it has too few orbitals for `nelec`.
 
     Warns
     -----
@@ -105,11 +106,6 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
         the determinant is not uniquely defined. Build the trial wavefunction
         from a Hamiltonian on a lattice carrying a small irrational twist, which
         lifts the degeneracy.
-
-    Notes
-    -----
-    The occupied orbitals are eigenvectors of a Hermitian one-body matrix, so
-    they are orthonormal by construction and nothing here orthonormalizes them.
     """
     from safiretools.wavefunction.nomsd import NOMSDWavefunction
     from safiretools import LatticeHamiltonian
@@ -120,12 +116,15 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
             "Please provide a LatticeHamiltonian instance."
         )
 
+    if filling_strategy not in FILLING_STRATEGIES:
+        raise ValueError(
+            f"unknown filling strategy '{filling_strategy}': supported "
+            f"strategies are {list(FILLING_STRATEGIES)}"
+        )
+
     if spin_symm is None:
         spin_symm = hamiltonian.spin_symm
     spin_symm = SpinSymm.from_input(spin_symm)
-
-    nmo = hamiltonian.nbands * hamiltonian.nsites
-    one_body = hamiltonian.get_one_body()
 
     if spin_symm is SpinSymm.CLOSED:
         raise NotImplementedError(
@@ -133,271 +132,89 @@ def from_free_electron(hamiltonian, nelec, spin_symm=None,
             "build a collinear one instead"
         )
 
-    if spin_symm is SpinSymm.COLLINEAR:
-        orbitals = _collinear_orbitals(
-            one_body, nelec=nelec, nmo=nmo,
-            filling_strategy=filling_strategy, shell_tol=shell_tol)
+    nmo = hamiltonian.nbands * hamiltonian.nsites
+    one_body = hamiltonian.get_one_body().toarray()
+
+    if one_body.shape == (2 * nmo, 2 * nmo):
+        if spin_symm is not SpinSymm.NONCOLLINEAR:
+            raise ValueError(
+                "the one-body term mixes spins, so it has no collinear "
+                "free-electron determinant"
+            )
+        blocks, nelec_blocks = [one_body], [sum(nelec)]
+    elif one_body.shape == (2 * nmo, nmo):
+        blocks, nelec_blocks = [one_body[:nmo], one_body[nmo:]], nelec
+    elif one_body.shape == (nmo, nmo):
+        blocks, nelec_blocks = [one_body, one_body], nelec
     else:
-        orbitals = _noncollinear_orbitals(
-            one_body, nelec=nelec, nmo=nmo,
-            filling_strategy=filling_strategy, shell_tol=shell_tol)
+        raise ValueError(
+            f"the one-body term has shape {one_body.shape}, which is none of "
+            f"({nmo}, {nmo}) — spin independent — ({2 * nmo}, {nmo}) — one "
+            f"block per spin — or ({2 * nmo}, {2 * nmo}) — noncollinear"
+        )
+
+    orbitals = tuple(_occupy(block, n, filling_strategy, shell_tol)
+                     for block, n in zip(blocks, nelec_blocks))
+
+    if spin_symm is SpinSymm.NONCOLLINEAR:
+        # spinor orbitals, spin-up components first; per-spin blocks land on
+        # the diagonal
+        orbitals = spl.block_diag(*orbitals).reshape(2, nmo, sum(nelec))
+
+    logger.info("built a %s free-electron determinant: %d electrons "
+                "(up: %d, down: %d)", spin_symm.name.lower(), sum(nelec), *nelec)
 
     return NOMSDWavefunction.from_single_determinant(orbitals)
 
 
-# ----------------------------------------------------------------------
-# diagonalization and shell filling
-# ----------------------------------------------------------------------
-
-def to_dense(matrix):
+def _occupy(one_body, nelec: int, filling_strategy: str, shell_tol: float):
     """
-    `matrix` as a dense array, for ``scipy.linalg.eigh``: ``eigsh`` mishandles
-    the complex matrices a twisted lattice produces.
+    Diagonalize `one_body` and return its `nelec` lowest orbitals, filling a
+    partly occupied degenerate shell by `filling_strategy`.
     """
-    return matrix.toarray() if hasattr(matrix, 'toarray') else np.asarray(matrix)
-
-
-def group_by_shell(eigenvalues, orbitals, tol=SHELL_TOL):
-    """
-    Group eigenvalues and their orbitals into shells of degenerate states.
-
-    Orbitals belong to the same shell when their eigenvalues lie within `tol` of
-    the first eigenvalue in that shell.
-
-    Parameters
-    ----------
-    eigenvalues : array_like
-        Ascending eigenvalues.
-    orbitals : numpy.ndarray
-        Corresponding eigenvectors, as columns.
-    tol : float, optional
-        Degeneracy tolerance. Default `SHELL_TOL`.
-
-    Returns
-    -------
-    list of dict
-        One dict per shell, with keys ``energy`` (the shell's mean eigenvalue),
-        ``eigenvalues``, ``orbitals``, ``indices`` (into the input order) and
-        ``degeneracy``.
-    """
-    eigenvalues = np.asarray(eigenvalues)
-    shells = []
-    start = 0
-
-    while start < len(eigenvalues):
-        end = start + 1
-        while end < len(eigenvalues) \
-                and abs(eigenvalues[end] - eigenvalues[start]) < tol:
-            end += 1
-
-        shells.append({
-            'energy': np.mean(eigenvalues[start:end]),
-            'eigenvalues': eigenvalues[start:end],
-            'orbitals': orbitals[:, start:end],
-            'indices': list(range(start, end)),
-            'degeneracy': end - start,
-        })
-        start = end
-
-    return shells
-
-
-def _shell_selection(degeneracy: int, nelec: int, strategy: str):
-    """
-    Which of a shell's `degeneracy` orbitals to occupy with `nelec` electrons.
-
-    A completely filled shell takes all of them whatever the strategy says; the
-    strategies differ only in which orbitals a partial fill picks.
-    """
-    if nelec == degeneracy or strategy == 'aufbau':
-        return list(range(nelec))
-
-    # 'alternating': from the edges inward, 0, -1, 1, -2, ..., which cancels
-    #   momentum in k-space
-    selected = []
-    left, right = 0, degeneracy - 1
-    for step in range(nelec):
-        if step % 2 == 0:
-            selected.append(left)
-            left += 1
-        else:
-            selected.append(right)
-            right -= 1
-    return selected
-
-
-def fill_shells(shells, nelec: int, strategy='aufbau'):
-    """
-    Fill `shells` with `nelec` electrons, lowest shell first.
-
-    Parameters
-    ----------
-    shells : list of dict
-        Shells as `group_by_shell` returns them.
-    nelec : int
-        Number of electrons to place.
-    strategy : {'aufbau', 'alternating'}, optional
-        How to fill a partially occupied shell. Default ``'aufbau'``. See
-        `from_free_electron` for what each one does.
-
-    Returns
-    -------
-    orbitals : numpy.ndarray
-        Occupied orbitals, ``(nrows, nelec)``.
-    indices : list of int
-        Which of the input orbitals were occupied.
-
-    Raises
-    ------
-    ValueError
-        If `strategy` is unknown, or the shells cannot hold `nelec` electrons.
-
-    Warns
-    -----
-    UserWarning
-        If the fill stops part-way through a degenerate shell, see `from_free_electron`.
-    """
-    if strategy not in FILLING_STRATEGIES:
-        raise ValueError(
-            f"unknown filling strategy '{strategy}': supported strategies are "
-            f"{list(FILLING_STRATEGIES)}"
-        )
-
-    if nelec == 0:
-        nrows = shells[0]['orbitals'].shape[0] if shells else 0
-        return np.zeros((nrows, 0), dtype=complex), []
-
-    occupied = []
-    indices = []
-    remaining = nelec
-
-    logger.info("filling %d electrons over %d shell(s) using the '%s' strategy",
-                nelec, len(shells), strategy)
-
-    for ishell, shell in enumerate(shells):
-        if remaining == 0:
-            break
-
-        degeneracy = shell['degeneracy']
-        in_shell = min(remaining, degeneracy)
-        selected = _shell_selection(degeneracy, in_shell, strategy)
-
-        if in_shell < degeneracy:
-            warn(
-                f"the highest occupied shell (energy {shell['energy']:.6f}) is "
-                f"{degeneracy}-fold degenerate but holds only {in_shell} "
-                f"electron(s), so which of its orbitals the determinant occupies "
-                f"is arbitrary. The '{strategy}' strategy picked "
-                f"{sorted(selected)}. Build the trial "
-                "wavefunction's Hamiltonian on a lattice with a small irrational "
-                "twist to break the degeneracy due to "
-                "translational symmetry. A degeneracy between bands or spin sectors "
-                "requires a one-body term that explicitly breaks those symmetries."
-            )
-
-        logger.debug("  shell %d: energy=%.6f, degeneracy=%d, filling %d of %d "
-                     "at %s", ishell, shell['energy'], degeneracy, in_shell,
-                     degeneracy, selected)
-
-        occupied.append(shell['orbitals'][:, selected])
-        indices.extend(shell['indices'][i] for i in selected)
-        remaining -= in_shell
-
-    if remaining > 0:
-        raise ValueError(
-            f"Not enough orbitals to accommodate {nelec} electrons: "
-            f"{remaining} could not be placed"
-        )
-
-    return np.hstack(occupied), indices
-
-
-def _occupy(one_body, nelec: int, filling_strategy: str,
-            shell_tol: float):
-    """Diagonalize `one_body` and return its `nelec` occupied orbitals."""
-    eigenvalues, orbitals = spl.eigh(a=to_dense(one_body))
+    eigenvalues, orbitals = spl.eigh(one_body)
     logger.info("eigenvalues of the non-interacting Hamiltonian: %s", eigenvalues)
 
-    shells = group_by_shell(eigenvalues, orbitals, tol=shell_tol)
-    occupied, _ = fill_shells(shells, nelec, strategy=filling_strategy)
-    return occupied
-
-
-def _collinear_orbitals(one_body, nelec, nmo: int, filling_strategy='aufbau',
-                        shell_tol=SHELL_TOL):
-    """
-    Occupied orbitals for a collinear free-electron determinant: the two spin
-    channels are diagonalized independently.
-
-    Returns
-    -------
-    tuple of numpy.ndarray
-        ``(nmo, nup)`` and ``(nmo, ndown)``.
-    """
-    occupied = []
-    for label, block, nelec_spin in zip(('up', 'down'),
-                                        _collinear_blocks(one_body, nmo),
-                                        nelec):
-        logger.info("processing the spin-%s channel (%d electrons)",
-                    label, nelec_spin)
-        occupied.append(_occupy(block, nelec_spin, filling_strategy,
-                                shell_tol))
-
-    logger.info("built a collinear free-electron determinant: %d electrons "
-                "(up: %d, down: %d)", sum(nelec), *nelec)
-
-    return tuple(occupied)
-
-
-def _collinear_blocks(one_body, nmo: int):
-    """
-    The per-spin blocks of a collinear one-body term.
-
-    A ``(2*nmo, nmo)`` term carries a block per spin; an ``(nmo, nmo)`` one is
-    spin-independent and is used for both.
-    """
-    if one_body.shape == (2 * nmo, nmo):
-        return one_body[:nmo, :], one_body[nmo:, :]
-    if one_body.shape == (nmo, nmo):
-        return one_body, one_body
-
-    raise ValueError(
-        f"the one-body term has shape {one_body.shape}, which is neither "
-        f"({nmo}, {nmo}) — spin independent — nor ({2 * nmo}, {nmo}) — one "
-        "block per spin"
-    )
-
-
-def _noncollinear_orbitals(one_body, nelec, nmo: int,
-                           filling_strategy='aufbau', shell_tol=SHELL_TOL):
-    """
-    Occupied orbitals for a noncollinear free-electron determinant: one
-    diagonalization over the full ``2*nmo`` spinor basis.
-
-    Returns
-    -------
-    numpy.ndarray
-        ``(2, nmo, nup + ndown)``, spin-up components first.
-    """
-    nelec_total = sum(nelec)
-
-    if one_body.shape == (2 * nmo, nmo):
-        one_body = spl.block_diag(to_dense(one_body[:nmo, :]),
-                                  to_dense(one_body[nmo:, :]))
-    elif one_body.shape == (nmo, nmo):
-        one_body = spl.block_diag(to_dense(one_body), to_dense(one_body))
-    elif one_body.shape != (2 * nmo, 2 * nmo):
+    if nelec > len(eigenvalues):
         raise ValueError(
-            f"the one-body term has shape {one_body.shape}, which is none of "
-            f"({nmo}, {nmo}) — closed shell — ({2 * nmo}, {nmo}) — collinear — "
-            f"or ({2 * nmo}, {2 * nmo}) — noncollinear"
+            f"not enough orbitals to accommodate {nelec} electrons: there are "
+            f"only {len(eigenvalues)}"
         )
 
-    logger.info("processing a noncollinear system (%d electrons)", nelec_total)
-    occupied = _occupy(one_body, nelec_total, filling_strategy, shell_tol)
+    # shells of degenerate orbitals, as runs of indices into `eigenvalues`
+    shells = np.split(np.arange(len(eigenvalues)),
+                      np.flatnonzero(np.diff(eigenvalues) >= shell_tol) + 1)
 
-    logger.info("built a noncollinear free-electron determinant: %d electrons "
-                "in %d spinor orbitals (originally up: %d, down: %d)",
-                nelec_total, 2 * nmo, *nelec)
+    occupied = []
+    for shell in shells:
+        remaining = nelec - len(occupied)
+        if remaining >= len(shell):
+            occupied.extend(shell)
+            continue
 
-    return occupied.reshape(2, nmo, nelec_total)
+        if remaining > 0:
+            if filling_strategy == 'alternating':
+                # from the edges inward, 0, -1, 1, -2, ..., which cancels
+                # momentum in k-space
+                picks = [i // 2 if i % 2 == 0 else -(i + 1) // 2
+                         for i in range(remaining)]
+            else:
+                picks = list(range(remaining))
+            selected = shell[picks]
+
+            warn(
+                f"the highest occupied shell (energy "
+                f"{eigenvalues[shell[0]]:.6f}) is {len(shell)}-fold degenerate "
+                f"but holds only {remaining} electron(s), so which of its "
+                "orbitals the determinant occupies is arbitrary. The "
+                f"'{filling_strategy}' strategy picked {sorted(selected.tolist())}. "
+                "Build the trial wavefunction's Hamiltonian on a lattice with "
+                "a small irrational twist to break the degeneracy due to "
+                "translational symmetry. A degeneracy between bands or spin "
+                "sectors requires a one-body term that explicitly breaks those "
+                "symmetries."
+            )
+            occupied.extend(selected)
+        break
+
+    return orbitals[:, occupied]

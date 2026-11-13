@@ -27,9 +27,8 @@ from safiretools.wavefunction.free_electron import (
     DEFAULT_TWIST,
     FILLING_STRATEGIES,
     SHELL_TOL,
-    fill_shells,
+    _occupy,
     from_free_electron,
-    group_by_shell,
 )
 from safiretools.wavefunction.slater import spin_layout_shape
 
@@ -66,68 +65,44 @@ def quiet():
         yield
 
 
-class TestGroupByShell:
+class TestOccupy:
+    """
+    `_occupy` on a diagonal one-body term, whose eigenvectors are the unit
+    vectors in order, so an occupied orbital names its index directly.
+    """
 
-    def test_degenerate_eigenvalues_form_one_shell(self):
-        eigenvalues = np.array([-2.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 1.0])
-        shells = group_by_shell(eigenvalues, np.eye(8, dtype=complex))
+    one_body = np.diag([-1.0] + [0.0] * 6 + [1.0])
 
-        assert [shell['degeneracy'] for shell in shells] == [2, 1, 3, 2]
-        assert [shell['indices'] for shell in shells] == [
-            [0, 1], [2], [3, 4, 5], [6, 7]]
+    @staticmethod
+    def occupied(one_body, nelec, strategy='aufbau', shell_tol=SHELL_TOL):
+        orbitals = _occupy(one_body, nelec, strategy, shell_tol)
+        return np.argmax(abs(orbitals), axis=0).tolist()
+
+    def test_aufbau_takes_the_orbitals_in_order(self, quiet):
+        assert self.occupied(self.one_body, 4, 'aufbau') == [0, 1, 2, 3]
+
+    def test_alternating_works_from_the_edges_inward(self, quiet):
+        assert self.occupied(self.one_body, 4, 'alternating') == [0, 1, 6, 2]
+
+    def test_a_completely_filled_shell_ignores_the_strategy(self):
+        for strategy in FILLING_STRATEGIES:
+            assert self.occupied(self.one_body, 7, strategy) == list(range(7))
 
     def test_near_degeneracy_is_governed_by_the_tolerance(self):
-        eigenvalues = np.array([0.0, 5e-9, 1.2e-8, 1.0])
+        one_body = np.diag([0.0, 5e-9, 1.2e-8, 1.0])
 
-        assert len(group_by_shell(eigenvalues, np.eye(4, dtype=complex),
-                                 tol=1e-6)) == 2
-        assert len(group_by_shell(eigenvalues, np.eye(4, dtype=complex),
-                                 tol=1e-10)) == 4
+        with pytest.warns(UserWarning, match="3-fold degenerate"):
+            self.occupied(one_body, 2, shell_tol=1e-6)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            self.occupied(one_body, 2, shell_tol=1e-10)
 
-    def test_a_shell_boundary_is_measured_from_its_first_eigenvalue(self):
-        # consecutive gaps below tol still split when the total drift exceeds it
-        eigenvalues = np.array([0.0, 0.9e-6, 1.8e-6])
-        shells = group_by_shell(eigenvalues, np.eye(3, dtype=complex),
-                                tol=1e-6)
+    def test_zero_electrons_gives_an_empty_block(self):
+        assert _occupy(self.one_body, 0, 'aufbau', SHELL_TOL).shape == (8, 0)
 
-        assert [shell['degeneracy'] for shell in shells] == [2, 1]
-
-
-class TestFillShells:
-
-    @pytest.fixture
-    def shells(self):
-        eigenvalues = np.array([-1.0] + [0.0] * 6 + [1.0])
-        return group_by_shell(eigenvalues, np.eye(8, dtype=complex))
-
-    def test_aufbau_takes_the_orbitals_in_order(self, shells):
-        _, indices = fill_shells(shells, 4, strategy='aufbau')
-
-        assert indices == [0, 1, 2, 3]
-
-    def test_alternating_works_from_the_edges_inward(self, shells):
-        _, indices = fill_shells(shells, 4, strategy='alternating')
-
-        assert indices == [0, 1, 6, 2]
-
-    def test_a_completely_filled_shell_ignores_the_strategy(self, shells):
-        for strategy in FILLING_STRATEGIES:
-            assert fill_shells(shells, 7, strategy=strategy)[1] \
-                == list(range(7))
-
-    def test_zero_electrons_gives_an_empty_block(self, shells):
-        orbitals, indices = fill_shells(shells, 0)
-
-        assert orbitals.shape == (8, 0)
-        assert indices == []
-
-    def test_too_few_orbitals_is_reported(self, shells):
-        with pytest.raises(ValueError, match="Not enough orbitals"):
-            fill_shells(shells, 99)
-
-    def test_an_unknown_strategy_is_rejected(self, shells):
-        with pytest.raises(ValueError, match="unknown filling strategy"):
-            fill_shells(shells, 3, strategy='nonsense')
+    def test_too_few_orbitals_is_reported(self):
+        with pytest.raises(ValueError, match="not enough orbitals"):
+            _occupy(self.one_body, 99, 'aufbau', SHELL_TOL)
 
 
 class TestFromFreeElectron:
@@ -167,6 +142,34 @@ class TestFromFreeElectron:
         # both polarizations share one channel, so the split is not kept
         assert wavefunction.nelec == (8, 0)
         assert wavefunction.dets.shape == (1, 2, 8, 8)
+
+    def test_a_collinear_term_is_placed_in_the_spinor_basis(self, hubbard,
+                                                            quiet):
+        wavefunction = NOMSDWavefunction.from_free_electron(
+            hubbard, nelec=(8, 6), spin_symm='noncollinear')
+
+        assert wavefunction.spin_symm is SpinSymm.NONCOLLINEAR
+        assert wavefunction.dets.shape == (1, 2, 16, 14)
+        # spin-up orbitals have no down component and vice versa
+        assert np.allclose(wavefunction.dets[0, 1, :, :8], 0.0)
+        assert np.allclose(wavefunction.dets[0, 0, :, 8:], 0.0)
+
+    def test_a_spin_mixing_term_has_no_collinear_determinant(self):
+        hamiltonian = build({
+            'lattice': dict(type='square', Ls=(4, 1), boundaries=('periodic', 'open'),
+                            twists=(0.0, 0.0)),
+            'hamiltonian': dict(t=1.0, U=2.0, nbands=2,
+                                spin_symm='noncollinear'),
+        })
+
+        with pytest.raises(ValueError, match="mixes spins"):
+            NOMSDWavefunction.from_free_electron(hamiltonian, nelec=(4, 4),
+                                                 spin_symm='collinear')
+
+    def test_an_unknown_strategy_is_rejected(self, hubbard):
+        with pytest.raises(ValueError, match="unknown filling strategy"):
+            NOMSDWavefunction.from_free_electron(hubbard, nelec=(8, 8),
+                                                 filling_strategy='nonsense')
 
     def test_the_result_is_orthonormal(self, hubbard, quiet):
         wavefunction = NOMSDWavefunction.from_free_electron(
@@ -277,7 +280,7 @@ class TestOneBodyShapes:
             def get_one_body(self):
                 return sps.csr_array(np.zeros((5, 6)))
 
-        with pytest.raises(ValueError, match="neither"):
+        with pytest.raises(ValueError, match="none of"):
             from_free_electron(FakeHamiltonian(nsites=6, spin_symm='collinear'),
                                nelec=(2, 1))
 
