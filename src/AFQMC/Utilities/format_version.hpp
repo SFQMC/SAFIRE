@@ -25,7 +25,7 @@ namespace sfqmc::afqmc {
 // Version of the Hamiltonian and Wavefunction layouts safiretools writes, and of the results.h5
 // this executable writes, stored as the `format_version` attribute of the Hamiltonian and
 // Wavefunction/NOMSD|PHMSD groups and of the results.h5 root. Bumped with every incompatible change, in step with
-// FORMAT_VERSION in utils/safiretools/hdf5.py. CoQuí files carry none.
+// FORMAT_VERSION in python/safiretools/hdf5.py. CoQuí files carry none.
 inline constexpr int FORMAT_VERSION = 1;
 
 inline void write_format_version(h5::group grp) {
