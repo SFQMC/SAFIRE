@@ -24,6 +24,7 @@
 #include "utilities/check_shape.hpp"
 #include "utilities/mpi_context.h"
 #include "utilities/check_strides.hpp"
+#include "utilities/memory_utils.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
 #include "numerics/nda_functions.hpp"
 #include "numerics/operations/tensor.hpp"
@@ -121,6 +122,11 @@ public:
       nchol_max = std::max(nchol_max,int(LQ(std::min(iq,minusq(iq))).extent(5)));
     }
 
+    auto [gkk_bytes, slot_bytes] = exchange_bytes_per_walker();
+    app_log(2, "KP3IndexFactorization: exchange work arrays per walker: {}, buffer budget: {}",
+            utils::format_bytes(gkk_bytes + slot_bytes),
+            utils::format_bytes(long(default_buffer_size_in_MB) * 1024L * 1024L));
+
     // setup Lakn if needed
     if(ndet == 1) {
       Lakn = std::make_optional<nda::array<memory::const_shared_array<MEM,ComplexType,5>,1>>(nkpts);
@@ -203,7 +209,6 @@ public:
     int nspin  = (walker_type == COLLINEAR) ? 2 : 1;
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
     int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0
-    int nqpts = LQ.extent(0);
     utils::check_shape(E, "E", nwalk, 3);
     utils::check_shape(G, "G", nwalk, nel*npol*nkpts*nbnd);
     utils::check(idet>=0 and idet<haj.extent(0), "Invalid idet:{}",idet);
@@ -221,167 +226,22 @@ public:
     if (not(addEJ || addEXX))
       return;
 
-    memory::buffered_array<MEM,ComplexType,2> Kleft((addEJ?nwalk:0),ncvecs);
-    memory::buffered_array<MEM,ComplexType,2> Kright((addEJ?nwalk:0),ncvecs);
-    if(addEJ) Kright() = zero;
-    if(addEJ) Kleft() = zero;
-
     utils::check(G.is_contiguous(), "Layout mismatch");
     memory::array_view<MEM,const ComplexType,5> G5d(std::array<long,5>{nwalk,nel,npol,nkpts,nbnd},G.data());
 
-    // G in new layout
-    memory::buffered_array<MEM,ComplexType,4> GKK(nkpts,nkpts,nwalk*nocc_max,npol*nbnd);
-
-    if (addEXX)
-    {
-      // MAM: For cpu threading, let batch_size >> 1
-      int batch_size = 1;
-      if constexpr (MEM==DEVICE_MEMORY) {
-        batch_size = nkpts*nkpts;
-        long Bytes = long(default_buffer_size_in_MB) * 1024L * 1024L;
-        Bytes /= size_t(nwalk * nocc_max * nocc_max * nchol_max * sizeof(ComplexType));
-        int bz0 = std::max(1, int(Bytes));
-        // batch_size includes the factor of 2 from Q/Qm pair
-        batch_size = std::min(bz0, (nkpts * nkpts));
+    if(addEXX) {
+      for(int is=0; is<nspin; ++is) {
+        exchange_energy(is, is*nup, idet, G5d, E(all,1));
       }
-      // work array 
-      memory::buffered_array<MEM,ComplexType,1> T1buff(batch_size*nwalk*nocc_max*nocc_max*nchol_max);
-      memory::buffered_array<MEM,ComplexType,1> T2buff(batch_size*nwalk*nocc_max*nocc_max*nchol_max);
-      T1buff() = zero;
-      T2buff() = zero;
-
-      int batch_cnt(0);
-      // Lank(Q)(idet,ispin,nkpts, nocc_max, nchol, npol*nbnd)
-
-      using A_t = decltype(nda::transpose(Lank(0)()(0,0,0,0,all,all))); 
-      using B_t = decltype(GKK(0,0,all,all));
-      std::vector<A_t> Av;
-      std::vector<B_t> Bv;
-      std::vector<B_t> Cv;
-      Av.reserve(2*batch_size);
-      Bv.reserve(2*batch_size);
-      Cv.reserve(2*batch_size);
-
-      // keeps track of diagonal terms, e.g. Ka==Kb
-      std::vector<int> kdiag;
-      kdiag.reserve(batch_size);
-
-      for (int is  = 0; is  < nspin; ++is) {
-
-        // reorder G
-        Gc_to_GKKwaj(is,is*nup,G5d,GKK);
-      
-        for (int Q = 0; Q < nqpts; ++Q)
-        {
-          int Qm    = minusq(Q);
-          int nchol = Lank(Q).extent(4);
-          // Lank(Q)(ndet, nspin, nkpts, nocc_max, nchol, npol*nbnd)
-          auto La = nda::reshape(Lank(Q)()(idet,is,nda::ellipsis{}),std::array<long,3>{nkpts,nocc_max*nchol,npol*nbnd});
-          auto LB = ( Q==Qm ? Lbnk(Qmap(Q))() : Lank(Qm)() ); 
-          auto Lb = nda::reshape(LB(idet,is,nda::ellipsis{}),std::array<long,3>{nkpts,nocc_max*nchol,npol*nbnd}); 
-
-          memory::array_view<MEM,ComplexType,3,nda::C_layout> Tl3d(std::array<long,3>{batch_size,nwalk*nocc_max,nocc_max*nchol},T1buff.data()); 
-          auto Tl5d = nda::reshape(Tl3d,std::array<long,5>{batch_size,nwalk,nocc_max,nocc_max,nchol});   
-          memory::array_view<MEM,ComplexType,3,nda::C_layout> Tr3d(std::array<long,3>{batch_size,nwalk*nocc_max,nocc_max*nchol},T2buff.data()); 
-          auto Tr5d = nda::reshape(Tr3d,std::array<long,5>{batch_size,nwalk,nocc_max,nocc_max,nchol});   
-
-          // simple implementation for now
-          Av.clear();
-          Bv.clear();
-          Cv.clear();
-          kdiag.clear();
-          batch_cnt = 0;
-
-          for (int Ka = 0; Ka < nkpts; ++Ka)
-          {
-            int K0 = (Q==Qm) ? 0 : Ka;
-            for (int Kb = K0; Kb < nkpts; ++Kb)
-            {
-              int Kl = qk_to_k2(Qm,Kb);
-              int Kk  = qk_to_k2(Q,Ka);
-              if( Ka == Kb ) kdiag.emplace_back(batch_cnt);
-
-              // L[Kb][Kl] * G [Ka][Kl]
-              // L(nkpts, nocc_max*nchol, nbnd)
-              Av.emplace_back(nda::transpose(Lb(Kb,all,all)));
-              // GKK(nkpts,nkpts,nwalk*nocc_max,npol*nbnd)
-              Bv.emplace_back(GKK(Ka,Kl,all,all));
-              Cv.emplace_back(Tr3d(batch_cnt,all,all));
-
-              Av.emplace_back(nda::transpose(La(Ka,all,all)));
-              Bv.emplace_back(GKK(Kb,Kk,all,all));
-              Cv.emplace_back(Tl3d(batch_cnt++,all,all));
-
-              if (batch_cnt >= batch_size)
-              {
-                nda::blas::gemm_batch<false>(one,Bv,Av,zero,Cv);
-                
-                // add factor of 0.5 and accumulate on Kleft/Kright if needed
-                // custom kernel will be faster 
-                for(auto i: kdiag) {
-                  if(addEJ) {
-                    // T5d(batch_size,nwalk,nocc_max,nocc_max,nchol)
-                    for(int a=0; a<nocc_max; ++a) {
-                      math::accumulate(one,Tl5d(i,all,a,a,all),Kleft(all,range(ncv0(Q),ncv0(Q)+nchol)));
-                      math::accumulate(one,Tr5d(i,all,a,a,all),Kright(all,range(ncv0(Q),ncv0(Q)+nchol)));
-                    }
-                  }
-                }                     
-                // only scale if Q!=Qm, otherwise full tensor is scaled below 
-                if(Q!=Qm) 
-                  for(auto i: kdiag) 
-                    nda::tensor::scale(0.5,Tl3d(i,all,all));
-                if(Q==Qm) nda::tensor::scale(0.5,Tl3d);
-
-                nda::tensor::contract(-scl,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
-                           Tr5d(range(batch_cnt),nda::ellipsis{}),"lwban",one,E(all,1),"w");
-
-                // reset
-                Av.clear();
-                Bv.clear();
-                Cv.clear();
-                kdiag.clear();
-                batch_cnt = 0;
-              }
-            }
-          }
-
-          if (batch_cnt > 0)
-          {
-            nda::blas::gemm_batch<false>(one,Bv,Av,zero,Cv);
-
-            // add factor of 0.5 and accumulate on Kleft/Kright if needed
-            for(auto i: kdiag) {
-              if(addEJ) {
-                // T5d(batch_size,nwalk,nocc_max,nocc_max,nchol)
-                for(int a=0; a<nocc_max; ++a) {
-                  math::accumulate(one,Tl5d(i,all,a,a,all),Kleft(all,range(ncv0(Q),ncv0(Q)+nchol)));
-                  math::accumulate(one,Tr5d(i,all,a,a,all),Kright(all,range(ncv0(Q),ncv0(Q)+nchol)));
-                }
-              }
-            }
-            // only scale if Q!=Qm, otherwise full tensor is scaled below 
-            if(Q!=Qm) 
-              for(auto i: kdiag) 
-                nda::tensor::scale(0.5,Tl3d(i,all,all));
-            if(Q==Qm) nda::tensor::scale(ComplexType(0.5),Tl3d);
-
-            nda::tensor::contract(-scl,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
-                          Tr5d(range(batch_cnt),nda::ellipsis{}),"lwban",one,E(all,1),"w");
-
-            // reset
-            Av.clear();
-            Bv.clear();
-            Cv.clear();
-            kdiag.clear();
-            batch_cnt = 0;
-          }
-        } // Q
-      } // is
     }
-    if (addEJ)
-    {
-      utils::check(addEXX, "Error: addEJ without addEXX not yet implemented.");
+    if(addEJ) {
+      memory::buffered_array<MEM,ComplexType,2> Kleft(nwalk,ncvecs);
+      memory::buffered_array<MEM,ComplexType,2> Kright(nwalk,ncvecs);
+      Kleft() = zero;
+      Kright() = zero;
+      for(int is=0; is<nspin; ++is) {
+        coulomb_intermediates(is, is*nup, G5d, Kleft, Kright);
+      }
       nda::tensor::contract(ComplexType(0.5*scl*scl),Kleft,"wn",Kright,"wn",zero,E(all,2),"w");
     }
   }
@@ -403,7 +263,6 @@ public:
     int nwalk = G.extent(0);
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
     int nel  = (is==0 ? nup : ndown);
-    int nqpts = LQ.extent(0);
     utils::check_shape(E, "E", nwalk, 3);
     utils::check_shape(G, "G", nwalk, nel*npol*nkpts*nbnd);
     utils::check(idet>=0 and idet<haj.extent(0), "Invalid idet:{}",idet);
@@ -425,179 +284,23 @@ public:
     if (not(addEJ || addEXX))
       return;
 
-    if(addEJ) { 
-      utils::check_shape(EJn, "EJn", nwalk, 2*ncvecs);
-      EJn() = zero;
-    }
-
-    memory::buffered_array<MEM,ComplexType,2> Kleft((addEJ?nwalk:0),ncvecs);
-    memory::buffered_array<MEM,ComplexType,2> Kright((addEJ?nwalk:0),ncvecs);
-    if(addEJ) Kright() = zero;
-    if(addEJ) Kleft() = zero;
-
     utils::check(G.is_contiguous(), "Layout mismatch");
     memory::array_view<MEM,const ComplexType,5> G5d(std::array<long,5>{nwalk,nel,npol,nkpts,nbnd},G.data());
 
-    // G in new layout
-    memory::buffered_array<MEM,ComplexType,4> GKK(nkpts,nkpts,nwalk*nocc_max,npol*nbnd);
-
-    if (addEXX)
-    {
-      // MAM: For cpu threading, let batch_size >> 1
-      int batch_size = 1;
-      if constexpr (MEM==DEVICE_MEMORY) {
-        batch_size = nkpts*nkpts;
-        long Bytes = long(default_buffer_size_in_MB) * 1024L * 1024L;
-        Bytes /= size_t(nwalk * nocc_max * nocc_max * nchol_max * sizeof(ComplexType));
-        int bz0 = std::max(1, int(Bytes));
-        // batch_size includes the factor of 2 from Q/Qm pair
-        batch_size = std::min(bz0, (nkpts * nkpts));
-      }
-      // work array 
-      memory::buffered_array<MEM,ComplexType,1> T1buff(batch_size*nwalk*nocc_max*nocc_max*nchol_max);
-      memory::buffered_array<MEM,ComplexType,1> T2buff(batch_size*nwalk*nocc_max*nocc_max*nchol_max);
-      T1buff() = zero;
-      T2buff() = zero;
-
-      int batch_cnt(0);
-      // Lank(Q)(idet,ispin,nkpts, nocc_max, nchol, npol*nbnd)
-
-      using A_t = decltype(nda::transpose(Lank(0)()(0,0,0,0,all,all))); 
-      using B_t = decltype(GKK(0,0,all,all));
-      std::vector<A_t> Av;
-      std::vector<B_t> Bv;
-      std::vector<B_t> Cv;
-      Av.reserve(2*batch_size);
-      Bv.reserve(2*batch_size);
-      Cv.reserve(2*batch_size);
-
-      // keeps track of diagonal terms, e.g. Ka==Kb
-      std::vector<int> kdiag;
-      kdiag.reserve(batch_size);
-
-      // reorder G
-      Gc_to_GKKwaj(is,0,G5d,GKK);
-    
-      for (int Q = 0; Q < nqpts; ++Q)
-      {
-        int Qm    = minusq(Q);
-        int nchol = Lank(Q).extent(4);
-        // Lank(Q)(ndet, nspin, nkpts, nocc_max, nchol, npol*nbnd)
-        auto La = nda::reshape(Lank(Q)()(idet,is,nda::ellipsis{}),std::array<long,3>{nkpts,nocc_max*nchol,npol*nbnd});
-        auto LB = ( Q==Qm ? Lbnk(Qmap(Q))() : Lank(Qm)() ); 
-        auto Lb = nda::reshape(LB(idet,is,nda::ellipsis{}),std::array<long,3>{nkpts,nocc_max*nchol,npol*nbnd}); 
-
-        auto Tl3d = memory::array_view<MEM,ComplexType,3>({batch_size,nwalk*nocc_max,nocc_max*nchol},T1buff.data());
-        auto Tr3d = memory::array_view<MEM,ComplexType,3>({batch_size,nwalk*nocc_max,nocc_max*nchol},T2buff.data());
-        auto Tl5d = memory::array_view<MEM,ComplexType,5>({batch_size,nwalk,nocc_max,nocc_max,nchol},T1buff.data());
-        auto Tr5d = memory::array_view<MEM,ComplexType,5>({batch_size,nwalk,nocc_max,nocc_max,nchol},T2buff.data());
-
-        // simple implementation for now
-        Av.clear();
-        Bv.clear();
-        Cv.clear();
-        kdiag.clear();
-        batch_cnt = 0;
-
-        for (int Ka = 0; Ka < nkpts; ++Ka)
-        {
-          int K0 = (Q==Qm) ? 0 : Ka;
-          for (int Kb = K0; Kb < nkpts; ++Kb)
-          {
-            int Kl = qk_to_k2(Qm,Kb);
-            int Kk  = qk_to_k2(Q,Ka);
-            if( Ka == Kb ) kdiag.emplace_back(batch_cnt);
-
-            // L[Kb][Kl] * G [Ka][Kl]
-            // L(nkpts, nocc_max*nchol, nbnd)
-            Av.emplace_back(nda::transpose(Lb(Kb,all,all)));
-            // GKK(nkpts,nkpts,nwalk*nocc_max,npol*nbnd)
-            Bv.emplace_back(GKK(Ka,Kl,all,all));
-            Cv.emplace_back(Tr3d(batch_cnt,all,all));
-
-            Av.emplace_back(nda::transpose(La(Ka,all,all)));
-            Bv.emplace_back(GKK(Kb,Kk,all,all));
-            Cv.emplace_back(Tl3d(batch_cnt++,all,all));
-
-            if (batch_cnt >= batch_size)
-            {
-              nda::blas::gemm_batch<false>(ComplexType(1.0),Bv,Av,ComplexType(0.0),Cv);
-              
-              // add factor of 0.5 and accumulate on Kleft/Kright if needed
-              for(auto i: kdiag) {
-                if(addEJ) {
-                  // T5d(batch_size,nwalk,nocc_max,nocc_max,nchol)
-                  for(int a=0; a<nocc_max; ++a) {
-                    math::accumulate(one,Tl5d(i,all,a,a,all),Kleft(all,range(ncv0(Q),ncv0(Q)+nchol)));
-                    math::accumulate(one,Tr5d(i,all,a,a,all),Kright(all,range(ncv0(Q),ncv0(Q)+nchol)));
-                  }
-                }
-              }
-              // only scale if Q!=Qm, otherwise full tensor is scaled below 
-              if(Q!=Qm)
-                for(auto i: kdiag)
-                  nda::tensor::scale(ComplexType(0.5),Tl3d(i,all,all));
-              if(Q==Qm) nda::tensor::scale(ComplexType(0.5),Tl3d);
-              nda::tensor::contract(-scl,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
-                         Tr5d(range(batch_cnt),nda::ellipsis{}),"lwban",one,E(all,1),"w");
-
-              // reset
-              Av.clear();
-              Bv.clear();
-              Cv.clear();
-              kdiag.clear();
-              batch_cnt = 0;
-            }
-          }
-        }
-
-        if (batch_cnt >= batch_size)
-        {
-          nda::blas::gemm_batch<false>(ComplexType(1.0),Bv,Av,ComplexType(0.0),Cv);
-
-          // add factor of 0.5 and accumulate on Kleft/Kright if needed
-          for(auto i: kdiag) {
-            if(addEJ) {
-              // T5d(batch_size,nwalk,nocc_max,nocc_max,nchol)
-              for(int a=0; a<nocc_max; ++a) {
-                math::accumulate(one,Tl5d(i,all,a,a,all),Kleft(all,range(ncv0(Q),ncv0(Q)+nchol)));
-                math::accumulate(one,Tr5d(i,all,a,a,all),Kright(all,range(ncv0(Q),ncv0(Q)+nchol)));
-              }
-            }
-          }
-          // only scale if Q!=Qm, otherwise full tensor is scaled below 
-          if(Q!=Qm)
-            for(auto i: kdiag)
-              nda::tensor::scale(ComplexType(0.5),Tl3d(i,all,all));
-          if(Q==Qm) nda::tensor::scale(ComplexType(0.5),Tl3d);
-
-          nda::tensor::contract(-scl,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
-                        Tr5d(range(batch_cnt),nda::ellipsis{}),"lwban",one,E(all,1),"w");
-
-          // reset
-          Av.clear();
-          Bv.clear();
-          Cv.clear();
-          kdiag.clear();
-          batch_cnt = 0;
-        }
-      } // Q
+    if(addEXX) {
+      exchange_energy(is, 0, idet, G5d, E(all,1));
     }
-
-    if (addEJ)
-    {
-      utils::check(addEXX, "Error: addEJ without addEXX not yet implemented.");
+    if(addEJ) {
+      utils::check_shape(EJn, "EJn", nwalk, 2*ncvecs);
+      EJn() = zero;
+      // Alpha stores [Kleft, Kright], Beta [Kright, Kleft]
+      auto first  = range(0, ncvecs);
+      auto second = range(ncvecs, 2*ncvecs);
+      auto Kleft  = EJn(all, spin_component == Alpha ? first : second);
+      auto Kright = EJn(all, spin_component == Alpha ? second : first);
+      coulomb_intermediates(is, 0, G5d, Kleft, Kright);
       nda::tensor::contract(ComplexType(0.5),Kleft,"wn",Kright,"wn",zero,E(all,2),"w");
-      if(spin_component == Alpha) {
-        // store as Kl,Kr
-        EJn(all,range(0,ncvecs)) = Kleft();
-        EJn(all,range(ncvecs,2*ncvecs)) = Kright();
-      } else {
-        // store as Kr,Kl
-        EJn(all,range(0,ncvecs)) = Kright();
-        EJn(all,range(ncvecs,2*ncvecs)) = Kleft();
-      }
-      // gets multiplied by 2 in PHMSD, so undo it here!	
+      // gets multiplied by 2 in PHMSD, so undo it here!
       nda::tensor::scale(ComplexType(1.0/std::sqrt(2.0)),EJn);
     }
   }
@@ -906,6 +609,171 @@ protected:
 
   // maps Q (only for those with Qmap >=0) to the corresponding sector in vbias
 //  stdIVector Q2vbias;
+
+  // Bytes per walker of the exchange work arrays: {GKK, Tl+Tr of one (Ka,Kb) slot}.
+  std::pair<long,long> exchange_bytes_per_walker() const {
+    long npol = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    long gkk  = long(nkpts) * nkpts * nocc_max * npol * nbnd * sizeof(ComplexType);
+    long slot = 2L * nocc_max * nocc_max * nchol_max * sizeof(ComplexType);
+    return {gkk, slot};
+  }
+
+  // Coulomb intermediates of spin `is`, accumulated on Kleft/Kright(nwalk,ncvecs):
+  //   Kleft(w, n in Q)  = Tr(L^{Q,n} G_w), the Q component of the density,
+  //   Kright(w, n in Q) = Tr(L^{Q,n}^dagger G_w), the -Q component, i.e. the -Q block of Kleft if Q != -Q.
+  // These are the contractions vbias combines as Kleft +- Kright.
+  // `base` is the offset of spin `is`'s block in the occupied dimension of G.
+  void coulomb_intermediates(int is, int base, nda::MemoryArrayOfRank<5> auto const& G5d,
+                             nda::MemoryMatrix auto && Kleft, nda::MemoryMatrix auto && Kright) {
+    using nda::range;
+    auto all = range::all;
+    ComplexType one(1.0), zero(0.0);
+    int npol = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    long nwalk = G5d.extent(0);
+    utils::check(Lakn.has_value(), "KP3IndexFactorization: the Coulomb energy requires a single determinant.");
+
+    memory::buffered_array<MEM,ComplexType,4> GQK(nwalk,nkpts,nocc_max,npol*nbnd);
+    auto G2d = nda::reshape(GQK,std::array<long,2>{nwalk,nkpts*nocc_max*npol*nbnd});
+    for(int Q = 0; Q < nkpts; ++Q) {
+      int Qm = minusq(Q);
+      int nchol = Lank(Q).extent(4);
+      memory::buffered_array<MEM,ComplexType,2> vn(nwalk,nchol);
+      Gc_to_GQKwaj(is,base,Q,G5d,GQK);
+
+      auto La = nda::reshape((*Lakn)(Q)()(is,nda::ellipsis{}),std::array<long,2>{nkpts*nocc_max*npol*nbnd,nchol});
+      nda::blas::gemm(one,G2d,La,zero,vn);
+      math::accumulate(one,vn,Kleft(all,range(ncv0(Q),ncv0(Q)+nchol)));
+      if(Q == Qm) {
+        auto Lb = nda::reshape((*Lbkn)(Qmap(Q))()(is,nda::ellipsis{}),std::array<long,2>{nkpts*nocc_max*npol*nbnd,nchol});
+        nda::blas::gemm(one,G2d,Lb,zero,vn);
+        math::accumulate(one,vn,Kright(all,range(ncv0(Q),ncv0(Q)+nchol)));
+      } else {
+        math::accumulate(one,vn,Kright(all,range(ncv0(Qm),ncv0(Qm)+nchol)));
+      }
+    }
+  }
+
+  // Exchange energy of spin `is`, accumulated on Exx(nwalk). Walkers are processed in chunks so
+  // that GKK and the Tl/Tr work arrays together fit in default_buffer_size_in_MB; on device, what
+  // is left of the budget batches (Ka,Kb) pairs.
+  // `base` is the offset of spin `is`'s block in the occupied dimension of G.
+  void exchange_energy(int is, int base, int idet,
+                       nda::MemoryArrayOfRank<5> auto const& G5d,
+                       nda::MemoryVector auto && Exx) {
+    using nda::range;
+    auto all = range::all;
+    ComplexType one(1.0), zero(0.0);
+    ComplexType scl = (walker_type == CLOSED ? ComplexType(2.0) : ComplexType(1.0));
+    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    int nqpts = LQ.extent(0);
+    long nwalk = G5d.extent(0);
+    if(nwalk == 0) {
+      return;
+    }
+
+    auto [gkk_bytes, slot_bytes] = exchange_bytes_per_walker();
+    long const budget = long(default_buffer_size_in_MB) * 1024L * 1024L;
+    long const nw_chunk = std::clamp(budget / (gkk_bytes + slot_bytes), 1L, nwalk);
+    // MAM: For cpu threading, let batch_size >> 1
+    long batch_size = 1;
+    if constexpr(MEM == DEVICE_MEMORY) {
+      batch_size = std::clamp((budget / nw_chunk - gkk_bytes) / slot_bytes, 1L, long(nkpts) * nkpts);
+    }
+
+    // sized for a full chunk; Tl and Tr are the two halves of Tbuff
+    long const t_size = batch_size * nw_chunk * nocc_max * nocc_max * nchol_max;
+    memory::buffered_array<MEM,ComplexType,1> GKKbuff(long(nkpts) * nkpts * nw_chunk * nocc_max * npol * nbnd);
+    memory::buffered_array<MEM,ComplexType,1> Tbuff(2 * t_size);
+
+    for(long w0 = 0; w0 < nwalk; w0 += nw_chunk) {
+      long nw = std::min(nw_chunk, nwalk - w0);
+      auto wr = range(w0, w0 + nw);
+
+      // reorder G
+      memory::array_view<MEM,ComplexType,4,nda::C_layout> GKK(std::array<long,4>{nkpts,nkpts,nw*nocc_max,npol*nbnd},
+                                                              GKKbuff.data());
+      Gc_to_GKKwaj(is, base, G5d(wr,nda::ellipsis{}), GKK);
+
+      // Lank(Q)(idet,ispin,nkpts, nocc_max, nchol, npol*nbnd)
+      using A_t = decltype(nda::transpose(Lank(0)()(0,0,0,0,all,all)));
+      using B_t = decltype(GKK(0,0,all,all));
+      std::vector<A_t> Av;
+      std::vector<B_t> Bv;
+      std::vector<B_t> Cv;
+      Av.reserve(2*batch_size);
+      Bv.reserve(2*batch_size);
+      Cv.reserve(2*batch_size);
+
+      for(int Q = 0; Q < nqpts; ++Q) {
+        int Qm    = minusq(Q);
+        int nchol = Lank(Q).extent(4);
+        // Lank(Q)(ndet, nspin, nkpts, nocc_max, nchol, npol*nbnd)
+        auto La = nda::reshape(Lank(Q)()(idet,is,nda::ellipsis{}),std::array<long,3>{nkpts,nocc_max*nchol,npol*nbnd});
+        auto LB = (Q==Qm ? Lbnk(Qmap(Q))() : Lank(Qm)());
+        auto Lb = nda::reshape(LB(idet,is,nda::ellipsis{}),std::array<long,3>{nkpts,nocc_max*nchol,npol*nbnd});
+
+        memory::array_view<MEM,ComplexType,3,nda::C_layout> Tl3d(std::array<long,3>{batch_size,nw*nocc_max,nocc_max*nchol},
+                                                                  Tbuff.data());
+        memory::array_view<MEM,ComplexType,3,nda::C_layout> Tr3d(std::array<long,3>{batch_size,nw*nocc_max,nocc_max*nchol},
+                                                                  Tbuff.data() + t_size);
+        auto Tl5d = nda::reshape(Tl3d,std::array<long,5>{batch_size,nw,nocc_max,nocc_max,nchol});
+        auto Tr5d = nda::reshape(Tr3d,std::array<long,5>{batch_size,nw,nocc_max,nocc_max,nchol});
+
+        int batch_cnt = 0;
+        ComplexType batch_pref = zero;
+        auto flush = [&]() {
+          nda::blas::gemm_batch<false>(one,Bv,Av,zero,Cv);
+          nda::tensor::contract(batch_pref,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
+                                Tr5d(range(batch_cnt),nda::ellipsis{}),"lwban",one,Exx(wr),"w");
+          Av.clear();
+          Bv.clear();
+          Cv.clear();
+          batch_cnt = 0;
+        };
+        // queues the (Ka,Kb) term; a batch is contracted with a single prefactor
+        auto push = [&](int Ka, int Kb, ComplexType pref) {
+          if(batch_cnt > 0 && pref != batch_pref) {
+            flush();
+          }
+          batch_pref = pref;
+          int Kl = qk_to_k2(Qm,Kb);
+          int Kk = qk_to_k2(Q,Ka);
+
+          // L[Kb][Kl] * G [Ka][Kl]
+          // L(nkpts, nocc_max*nchol, nbnd)
+          Av.emplace_back(nda::transpose(Lb(Kb,all,all)));
+          // GKK(nkpts,nkpts,nw*nocc_max,npol*nbnd)
+          Bv.emplace_back(GKK(Ka,Kl,all,all));
+          Cv.emplace_back(Tr3d(batch_cnt,all,all));
+
+          Av.emplace_back(nda::transpose(La(Ka,all,all)));
+          Bv.emplace_back(GKK(Kb,Kk,all,all));
+          Cv.emplace_back(Tl3d(batch_cnt++,all,all));
+
+          if(batch_cnt >= batch_size) {
+            flush();
+          }
+        };
+
+        // Q==-Q sums all (Ka,Kb) with a factor of 0.5; Q!=-Q sums Kb>=Ka, with the factor of 0.5
+        // on Ka==Kb only. The Ka==Kb terms go first so the prefactor changes at most once.
+        for(int Ka = 0; Ka < nkpts; ++Ka) {
+          push(Ka, Ka, ComplexType(-0.5) * scl);
+        }
+        ComplexType pref = ComplexType(Q == Qm ? -0.5 : -1.0) * scl;
+        for(int Ka = 0; Ka < nkpts; ++Ka) {
+          for(int Kb = (Q == Qm ? 0 : Ka + 1); Kb < nkpts; ++Kb) {
+            if(Kb != Ka) {
+              push(Ka, Kb, pref);
+            }
+          }
+        }
+        if(batch_cnt > 0) {
+          flush();
+        }
+      } // Q
+    } // walker chunk
+  }
 
   // Changes the layout of G:
   //    From: G(nwalk,nel_tot,npol,nkpts,nbnd)
