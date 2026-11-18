@@ -88,9 +88,8 @@ public:
         E0(e0_)
   {
     // setup
-    int nspin  = (walker_type == COLLINEAR) ? 2 : 1;
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
-    int NMO = nkpts*nbnd;  
+    auto [nspin, npol] = walkerTypeToDims(walker_type);
+    int NMO = nkpts*nbnd;
     int nspin_in_H = hij.extent(0);
     int npol_in_H = hij.extent(2)/nbnd;
     int ndet = haj.extent(0);
@@ -136,8 +135,8 @@ public:
             {nspin,nkpts,nocc_max,npol*nbnd,nc},
             [&](std::array<long,2> idx, auto&& block) {
           auto [is,ik] = idx;
-          nda::tensor::add(ComplexType(1.0),Lank(iq)()(0,is,ik,nda::ellipsis{}),"anj",
-                           ComplexType(0.0),block,"ajn");
+          nda::tensor::add(1.0,Lank(iq)()(0,is,ik,nda::ellipsis{}),"anj",
+                           0.0,block,"ajn");
         });
       }
       int nsymQ = Lbnk.extent(0);
@@ -148,8 +147,8 @@ public:
             {nspin,nkpts,nocc_max,npol*nbnd,nc},
             [&](std::array<long,2> idx, auto&& block) {
           auto [is,ik] = idx;
-          nda::tensor::add(ComplexType(1.0),Lbnk(i)()(0,is,ik,nda::ellipsis{}),"anj",
-                           ComplexType(0.0),block,"ajn");
+          nda::tensor::add(1.0,Lbnk(i)()(0,is,ik,nda::ellipsis{}),"anj",
+                           0.0,block,"ajn");
         });
       }
     }
@@ -160,14 +159,13 @@ public:
   {
     using nda::range;
     auto all = range::all;
-    int nspin  = (walker_type == COLLINEAR) ? 2 : 1;
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    auto [nspin, npol] = walkerTypeToDims(walker_type);
     int NMO = nkpts*nbnd;
     int nspin_in_H = hij.extent(0);
     int npol_in_H = hij.extent(2)/nbnd;
 
     nda::array<ComplexType, 3> H1(nspin, npol*NMO, npol*NMO);
-    H1() = ComplexType(0.0);
+    H1() = 0.0;
 
     memory::buffered_array<MEM,ComplexType,2> vMF_2d(1,vMF.size());
     vMF_2d(0,all) = vMF();
@@ -202,32 +200,29 @@ public:
               bool addEXX = true)
   {
     memory::check_memory_space<MEM>(E,G);
-    using nda::range;
-    auto all = range::all;
-    ComplexType one(1.0), zero(0.0);
+    auto all = nda::range::all;
     int nwalk = G.extent(0);
-    int nspin  = (walker_type == COLLINEAR) ? 2 : 1;
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    auto [nspin, npol] = walkerTypeToDims(walker_type);
     int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0
     utils::check_shape(E, "E", nwalk, 3);
     utils::check_shape(G, "G", nwalk, nel*npol*nkpts*nbnd);
     utils::check(idet>=0 and idet<haj.extent(0), "Invalid idet:{}",idet);
     utils::check_strides(E,G);
-    ComplexType scl = (walker_type == CLOSED ? ComplexType(2.0) : ComplexType(1.0));
+    RealType scl = (walker_type == CLOSED ? 2.0 : 1.0);
 
     // addH1
-    E() = ComplexType(0.0);
+    E() = 0.0;
     if (addH1)
     {
       E(all,0) = E0;
-      auto haj_2d = nda::reshape(haj(),std::array<long,2>{haj.extent(0),haj.extent(1)*haj.extent(2)});
-      nda::tensor::contract(scl, G, "wi", haj_2d(idet,all), "i", one, E(all,0), "w");
+      auto haj_2d = nda::reshape(haj(),haj.extent(0),haj.extent(1)*haj.extent(2));
+      nda::tensor::contract(scl, G, "wi", haj_2d(idet,all), "i", 1.0, E(all,0), "w");
     }
     if (not(addEJ || addEXX))
       return;
 
     utils::check(G.is_contiguous(), "Layout mismatch");
-    memory::array_view<MEM,const ComplexType,5> G5d(std::array<long,5>{nwalk,nel,npol,nkpts,nbnd},G.data());
+    auto G5d = nda::reshape(G,nwalk,nel,npol,nkpts,nbnd);
 
     if(addEXX) {
       for(int is=0; is<nspin; ++is) {
@@ -237,12 +232,12 @@ public:
     if(addEJ) {
       memory::buffered_array<MEM,ComplexType,2> Kleft(nwalk,ncvecs);
       memory::buffered_array<MEM,ComplexType,2> Kright(nwalk,ncvecs);
-      Kleft() = zero;
-      Kright() = zero;
+      Kleft() = 0.0;
+      Kright() = 0.0;
       for(int is=0; is<nspin; ++is) {
         coulomb_intermediates(is, is*nup, G5d, Kleft, Kright);
       }
-      nda::tensor::contract(ComplexType(0.5*scl*scl),Kleft,"wn",Kright,"wn",zero,E(all,2),"w");
+      nda::tensor::contract(0.5*scl*scl,Kleft,"wn",Kright,"wn",0.0,E(all,2),"w");
     }
   }
 
@@ -256,52 +251,50 @@ public:
               bool addEXX = true)
   {
     memory::check_memory_space<MEM>(E,G);
-    using nda::range;
-    auto all = range::all;
-    ComplexType one(1.0), zero(0.0);
+    auto all = nda::range::all;
     int is = (spin_component == Alpha ? 0 : 1);
     int nwalk = G.extent(0);
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    int npol = std::get<1>(walkerTypeToDims(walker_type));
     int nel  = (is==0 ? nup : ndown);
     utils::check_shape(E, "E", nwalk, 3);
     utils::check_shape(G, "G", nwalk, nel*npol*nkpts*nbnd);
     utils::check(idet>=0 and idet<haj.extent(0), "Invalid idet:{}",idet);
     utils::check_strides(E,G);
-    ComplexType scl = (walker_type == CLOSED ? ComplexType(2.0) : ComplexType(1.0));
+    RealType scl = (walker_type == CLOSED ? 2.0 : 1.0);
 
     // addH1
-    E() = ComplexType(0.0);
+    E() = 0.0;
     if (addH1)
     {
       if(spin_component==Alpha)
         E(all,0) = E0;
-      auto haj_2d = nda::reshape(haj(),std::array<long,2>{haj.extent(0),haj.extent(1)*haj.extent(2)});
+      auto haj_2d = nda::reshape(haj(),haj.extent(0),haj.extent(1)*haj.extent(2));
       long n0 = (spin_component==Alpha ? 0l : long(nup));
       long nx = npol*nkpts*nbnd;
-      nda::tensor::contract(scl, G, "wi", haj_2d(idet,range(n0*nx,(n0+nel)*nx)), "i", 
-                            one, E(all,0), "w");
+      nda::tensor::contract(scl, G, "wi", haj_2d(idet,nda::range(n0*nx,(n0+nel)*nx)), "i",
+                            1.0, E(all,0), "w");
     }
     if (not(addEJ || addEXX))
       return;
 
     utils::check(G.is_contiguous(), "Layout mismatch");
-    memory::array_view<MEM,const ComplexType,5> G5d(std::array<long,5>{nwalk,nel,npol,nkpts,nbnd},G.data());
+    auto G5d = nda::reshape(G,nwalk,nel,npol,nkpts,nbnd);
 
     if(addEXX) {
       exchange_energy(is, 0, idet, G5d, E(all,1));
     }
     if(addEJ) {
       utils::check_shape(EJn, "EJn", nwalk, 2*ncvecs);
-      EJn() = zero;
+      EJn() = 0.0;
       // Alpha stores [Kleft, Kright], Beta [Kright, Kleft]
-      auto first  = range(0, ncvecs);
-      auto second = range(ncvecs, 2*ncvecs);
+      auto first  = nda::range(0, ncvecs);
+      auto second = nda::range(ncvecs, 2*ncvecs);
       auto Kleft  = EJn(all, spin_component == Alpha ? first : second);
       auto Kright = EJn(all, spin_component == Alpha ? second : first);
       coulomb_intermediates(is, 0, G5d, Kleft, Kright);
-      nda::tensor::contract(ComplexType(0.5),Kleft,"wn",Kright,"wn",zero,E(all,2),"w");
+      nda::tensor::contract(0.5,Kleft,"wn",Kright,"wn",0.0,E(all,2),"w");
       // gets multiplied by 2 in PHMSD, so undo it here!
-      nda::tensor::scale(ComplexType(1.0/std::sqrt(2.0)),EJn);
+      nda::tensor::scale(1.0/std::sqrt(2.0),EJn);
     }
   }
 
@@ -330,7 +323,6 @@ public:
     static_assert(MEM == MEM_X, "Memory space mismatch");
     using nda::range;
     auto all  = range::all;
-    ComplexType one(1.0), zero(0.0);
     int nwalk = X.extent(0);
     int NMO   = nkpts*nbnd;
     int nspin_in_H = hij.extent(0);
@@ -340,10 +332,10 @@ public:
     // Note: Allocate first, to make better use of memory pool
     // vHS[nspin_in_vHS][nwalk][npol_in_vHS*NMO][NMO]
     memory::buffered_array<MEM_X,ComplexType,4> v(nspin_in_H,nwalk,npol_in_H*NMO,NMO);
-    auto v7d = nda::reshape(v,std::array<long,7>{nspin_in_H,nwalk,npol_in_H,nkpts,nbnd,nkpts,nbnd});
-    v() = ComplexType(0.0);
+    auto v7d = nda::reshape(v,nspin_in_H,nwalk,npol_in_H,nkpts,nbnd,nkpts,nbnd);
+    v() = 0.0;
 
-    auto X3d = nda::reshape(X,std::array<long,3>{nwalk,2,ncvecs});
+    auto X3d = nda::reshape(X,nwalk,2,ncvecs);
     {
       // "rotate" X
       //  XIJ = 0.5*a*(Xn+ -i*Xn-), XJI = 0.5*a*(Xn+ +i*Xn-)
@@ -358,14 +350,14 @@ public:
       for(int iq=0; iq<nkpts; iq++)  {
         int nchol = Lank(iq).extent(4);
         if( iq != minusq(iq) ) 
-          math::accumulate(one,X3d(all,1,range(ncv0(minusq(iq)),ncv0(minusq(iq))+nchol)),
+          math::accumulate(1.0,X3d(all,1,range(ncv0(minusq(iq)),ncv0(minusq(iq))+nchol)),
                                           X3d(all,0,range(ncv0(iq),ncv0(iq)+nchol)));
       }
     }
 
     if constexpr (MEM==HOST_MEMORY) {
       memory::buffered_array<MEM,ComplexType,3> vKK(nwalk,nbnd,nbnd);
-      auto v2d = nda::reshape(vKK,std::array<long,2>{nwalk,nbnd*nbnd});
+      auto v2d = nda::reshape(vKK,nwalk,nbnd*nbnd);
       for(int is=0; is<nspin_in_H; ++is) {
         for (int Q = 0; Q < nkpts; ++Q) {
           int nchol = Lank(Q).extent(4);
@@ -375,37 +367,37 @@ public:
               // v[nw][i(in K)][k(in Q(K))] += sum_n LQK[i][k][n] X[Q][0][n][nw]
               if (Q <= minusq(Q))
               {
-                auto Lq_ = nda::reshape(LQ(Q)()(is,ip,nda::ellipsis{}),std::array<long,3>{nkpts,nbnd*nbnd,nchol});
+                auto Lq_ = nda::reshape(LQ(Q)()(is,ip,nda::ellipsis{}),nkpts,nbnd*nbnd,nchol);
                 // ci^dagger cj term
                 // LQ(Q)(ispin, ipol, ik, i, j, nchol) 
-                nda::blas::gemm(one,X3d(all,0,range(ncv0(Q),ncv0(Q)+nchol)),
-                      nda::transpose(Lq_(ik,all,all)),zero,v2d);
+                nda::blas::gemm(1.0,X3d(all,0,range(ncv0(Q),ncv0(Q)+nchol)),
+                      nda::transpose(Lq_(ik,all,all)),0.0,v2d);
 
                 // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
                 int k2 = qk_to_k2(Q,ik);
-                nda::tensor::add(one,vKK,"wij",one,v7d(is,all,ip,ik,all,k2,all),"wij");
+                nda::tensor::add(1.0,vKK,"wij",1.0,v7d(is,all,ip,ik,all,k2,all),"wij");
               } else {
-                auto Lqm_ = nda::reshape(LQ(minusq(Q))()(is,ip,nda::ellipsis{}),std::array<long,3>{nkpts,nbnd*nbnd,nchol});
+                auto Lqm_ = nda::reshape(LQ(minusq(Q))()(is,ip,nda::ellipsis{}),nkpts,nbnd*nbnd,nchol);
                 // cj^dagger ci term
                 // the kpoint index of LQ(Qm) refers to k2 
                 int k2 = qk_to_k2(Q,ik);
-                nda::blas::gemm(one,X3d(all,0,range(ncv0(Q),ncv0(Q)+nchol)),
-                      nda::dagger(Lqm_(k2,all,all)),zero,v2d);
+                nda::blas::gemm(1.0,X3d(all,0,range(ncv0(Q),ncv0(Q)+nchol)),
+                      nda::dagger(Lqm_(k2,all,all)),0.0,v2d);
 
                 // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
-                nda::tensor::add(one,vKK,"wij",one,v7d(is,all,ip,ik,all,k2,all),"wji");
+                nda::tensor::add(1.0,vKK,"wij",1.0,v7d(is,all,ip,ik,all,k2,all),"wji");
               }
               // v[nw][k(in Q(K))][i(in K)] += sum_n conj(LQK[i][k][n]) X[Q][n-][nw]
               if(Q == minusq(Q)) {
-                auto Lq_ = nda::reshape(LQ(Q)()(is,ip,nda::ellipsis{}),std::array<long,3>{nkpts,nbnd*nbnd,nchol});
+                auto Lq_ = nda::reshape(LQ(Q)()(is,ip,nda::ellipsis{}),nkpts,nbnd*nbnd,nchol);
                 // cj^dagger ci term for Q==minusq(Q)
                 // the kpoint index refers to k2 
-                nda::blas::gemm(one,X3d(all,1,range(ncv0(Q),ncv0(Q)+nchol)),
-                      nda::dagger(Lq_(ik,all,all)),zero,v2d);
+                nda::blas::gemm(1.0,X3d(all,1,range(ncv0(Q),ncv0(Q)+nchol)),
+                      nda::dagger(Lq_(ik,all,all)),0.0,v2d);
 
                 // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
                 int k2 = qk_to_k2(Q,ik);
-                nda::tensor::add(one,vKK,"wij",one,v7d(is,all,ip,k2,all,ik,all),"wji");
+                nda::tensor::add(1.0,vKK,"wij",1.0,v7d(is,all,ip,k2,all,ik,all),"wji");
               }
             } // ik
           } // ip 
@@ -413,7 +405,7 @@ public:
       } // is
     } else {
       memory::buffered_array<MEM,ComplexType,5> vKK(nwalk,npol_in_H,nkpts,nbnd,nbnd);
-      auto v2d = nda::reshape(vKK,std::array<long,2>{nwalk,npol_in_H*nkpts*nbnd*nbnd});
+      auto v2d = nda::reshape(vKK,nwalk,npol_in_H*nkpts*nbnd*nbnd);
       for(int is=0; is<nspin_in_H; ++is) {
         for (int Q = 0; Q < nkpts; ++Q)
         { 
@@ -423,43 +415,43 @@ public:
           {
             // ci^dagger cj term
             // LQ(Q)(ispin, ipol, ik, i, j, nchol) 
-            auto Lq_ = nda::reshape(LQ(Q)()(is,nda::ellipsis{}),std::array<long,2>{npol_in_H*nkpts*nbnd*nbnd,nchol});
-            nda::blas::gemm(one,X3d(all,0,range(ncv0(Q),ncv0(Q)+nchol)),
-                  nda::transpose(Lq_),zero,v2d);
+            auto Lq_ = nda::reshape(LQ(Q)()(is,nda::ellipsis{}),npol_in_H*nkpts*nbnd*nbnd,nchol);
+            nda::blas::gemm(1.0,X3d(all,0,range(ncv0(Q),ncv0(Q)+nchol)),
+                  nda::transpose(Lq_),0.0,v2d);
 
             // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
             for(int ik=0; ik<nkpts; ++ik) {
               int k2 = qk_to_k2(Q,ik);
               for(int ip=0; ip<npol_in_H; ++ip)
-                math::accumulate(one,vKK(all,ip,ik,all,all),v7d(is,all,ip,ik,all,k2,all));
+                math::accumulate(1.0,vKK(all,ip,ik,all,all),v7d(is,all,ip,ik,all,k2,all));
             }
           } else {
             // cj^dagger ci term
             // the kpoint index of LQ(Qm) refers to k2 
-            auto Lq_ = nda::reshape(LQ(minusq(Q))()(is,nda::ellipsis{}),std::array<long,2>{npol_in_H*nkpts*nbnd*nbnd,nchol});
-            nda::blas::gemm(one,X3d(all,0,range(ncv0(Q),ncv0(Q)+nchol)),
-                  nda::dagger(Lq_),zero,v2d);
+            auto Lq_ = nda::reshape(LQ(minusq(Q))()(is,nda::ellipsis{}),npol_in_H*nkpts*nbnd*nbnd,nchol);
+            nda::blas::gemm(1.0,X3d(all,0,range(ncv0(Q),ncv0(Q)+nchol)),
+                  nda::dagger(Lq_),0.0,v2d);
 
             // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
             for(int ik=0; ik<nkpts; ++ik) {
               int k2 = qk_to_k2(Q,ik);
               for(int ip=0; ip<npol_in_H; ++ip)
-                nda::tensor::add(one,vKK(all,ip,k2,all,all),"wij",one,v7d(is,all,ip,ik,all,k2,all),"wji");
+                nda::tensor::add(1.0,vKK(all,ip,k2,all,all),"wij",1.0,v7d(is,all,ip,ik,all,k2,all),"wji");
             }
           }
           // v[nw][k(in Q(K))][i(in K)] += sum_n conj(LQK[i][k][n]) X[Q][n-][nw]
           if(Q == minusq(Q)) {
             // cj^dagger ci term for Q==minusq(Q)
             // the kpoint index refers to k2 
-            auto Lq_ = nda::reshape(LQ(Q)()(is,nda::ellipsis{}),std::array<long,2>{npol_in_H*nkpts*nbnd*nbnd,nchol});
-            nda::blas::gemm(one,X3d(all,1,range(ncv0(Q),ncv0(Q)+nchol)),
-                  nda::dagger(Lq_),zero,v2d);
+            auto Lq_ = nda::reshape(LQ(Q)()(is,nda::ellipsis{}),npol_in_H*nkpts*nbnd*nbnd,nchol);
+            nda::blas::gemm(1.0,X3d(all,1,range(ncv0(Q),ncv0(Q)+nchol)),
+                  nda::dagger(Lq_),0.0,v2d);
 
             // accumulate on v7d(nwalk,nspin_in_H,npol_in_H,nkpts,nbnd,nkpts,nbnd)
             for(int ik=0; ik<nkpts; ++ik) {
               int k2 = qk_to_k2(Q,ik);
               for(int ip=0; ip<npol_in_H; ++ip)
-                nda::tensor::add(one,vKK(all,ip,ik,all,all),"wij",one,v7d(is,all,ip,k2,all,ik,all),"wji");
+                nda::tensor::add(1.0,vKK(all,ip,ik,all,all),"wij",1.0,v7d(is,all,ip,k2,all,ik,all),"wji");
             }
           }
         } // Q
@@ -473,11 +465,9 @@ public:
     memory::check_memory_space<MEM>(G,v);
     using nda::range;
     auto all = range::all;
-    ComplexType one(1.0), zero(0.0);
     int nwalk = G.extent(0);
-    int nspin = (walker_type == COLLINEAR) ? 2 : 1;
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
-    int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0 
+    auto [nspin, npol] = walkerTypeToDims(walker_type);
+    int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0
     utils::check_strides(G,v);
     utils::check_shape(v, "v", nwalk, 2*ncvecs);
     if(haj.extent(0) == 1) { // ndet==1, G half rotated
@@ -495,8 +485,8 @@ public:
     ComplexType ia = ComplexType(0.0,std::sqrt(dt)*0.5*scl);
 
     // v4d
-    auto v3d = nda::reshape(v, std::array<long,3>{nwalk,2,ncvecs});
-    v() = ComplexType(0.0);
+    auto v3d = nda::reshape(v,nwalk,2,ncvecs);
+    v() = 0.0;
 
     utils::check(G.is_contiguous(), "Layout mismatch");
 
@@ -504,7 +494,7 @@ public:
 
     if (haj.extent(0) == 1)
     {
-      memory::array_view<MEM,const ComplexType,5> G5d(std::array<long,5>{nwalk,nel,npol,nkpts,nbnd},G.data());
+      auto G5d = nda::reshape(G,nwalk,nel,npol,nkpts,nbnd);
       for(int is=0; is<nspin; ++is)  {
         for(int iq=0; iq<nkpts; ++iq) {
 
@@ -512,28 +502,28 @@ public:
           int iqm = minusq(iq);
           memory::buffered_array<MEM,ComplexType,4> GQK(nwalk,nkpts,nocc_max,npol*nbnd);
           memory::buffered_array<MEM,ComplexType,2> vn(nwalk,nchol);
-          auto G2d = nda::reshape(GQK,std::array<long,2>{nwalk,nkpts*nocc_max*npol*nbnd});
+          auto G2d = nda::reshape(GQK,nwalk,nkpts*nocc_max*npol*nbnd);
 
           Gc_to_GQKwaj(is,is*nup,iq,G5d,GQK);
-          auto La = nda::reshape((*Lakn)(iq)()(is,nda::ellipsis{}),std::array<long,2>{nkpts*nocc_max*npol*nbnd,nchol});
-          nda::blas::gemm(one,G2d,La,zero,vn);
+          auto La = nda::reshape((*Lakn)(iq)()(is,nda::ellipsis{}),nkpts*nocc_max*npol*nbnd,nchol);
+          nda::blas::gemm(1.0,G2d,La,0.0,vn);
          
           // accumulate on v3d
           // v+ = a*(v[Q]+v[-Q])
-          nda::tensor::add(a,vn,"wn",one,v3d(all,0,range(ncv0(iq),ncv0(iq)+nchol)),"wn");
+          nda::tensor::add(a,vn,"wn",1.0,v3d(all,0,range(ncv0(iq),ncv0(iq)+nchol)),"wn");
           // v- = -a*i*(v[Q]-v[-Q])
-          nda::tensor::add(-ia,vn,"wn",one,v3d(all,1,range(ncv0(iq),ncv0(iq)+nchol)),"wn");
+          nda::tensor::add(-ia,vn,"wn",1.0,v3d(all,1,range(ncv0(iq),ncv0(iq)+nchol)),"wn");
 
           if(iq == iqm) {
-            auto Lb = nda::reshape((*Lbkn)(Qmap(iq))()(is,nda::ellipsis{}),std::array<long,2>{nkpts*nocc_max*npol*nbnd,nchol});
-            nda::blas::gemm(one,G2d,Lb,zero,vn);
+            auto Lb = nda::reshape((*Lbkn)(Qmap(iq))()(is,nda::ellipsis{}),nkpts*nocc_max*npol*nbnd,nchol);
+            nda::blas::gemm(1.0,G2d,Lb,0.0,vn);
 
             // accumulate on v3d
-            nda::tensor::add(a,vn,"wn",one,v3d(all,0,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
-            nda::tensor::add(ia,vn,"wn",one,v3d(all,1,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
+            nda::tensor::add(a,vn,"wn",1.0,v3d(all,0,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
+            nda::tensor::add(ia,vn,"wn",1.0,v3d(all,1,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
           } else {
-            nda::tensor::add(a,vn,"wn",one,v3d(all,0,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
-            nda::tensor::add(ia,vn,"wn",one,v3d(all,1,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
+            nda::tensor::add(a,vn,"wn",1.0,v3d(all,0,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
+            nda::tensor::add(ia,vn,"wn",1.0,v3d(all,1,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
           }
         } // iq
       } // is  
@@ -612,7 +602,7 @@ protected:
 
   // Bytes per walker of the exchange work arrays: {GKK, Tl+Tr of one (Ka,Kb) slot}.
   std::pair<long,long> exchange_bytes_per_walker() const {
-    long npol = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    int npol  = std::get<1>(walkerTypeToDims(walker_type));
     long gkk  = long(nkpts) * nkpts * nocc_max * npol * nbnd * sizeof(ComplexType);
     long slot = 2L * nocc_max * nocc_max * nchol_max * sizeof(ComplexType);
     return {gkk, slot};
@@ -627,28 +617,27 @@ protected:
                              nda::MemoryMatrix auto && Kleft, nda::MemoryMatrix auto && Kright) {
     using nda::range;
     auto all = range::all;
-    ComplexType one(1.0), zero(0.0);
-    int npol = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    int npol = std::get<1>(walkerTypeToDims(walker_type));
     long nwalk = G5d.extent(0);
     utils::check(Lakn.has_value(), "KP3IndexFactorization: the Coulomb energy requires a single determinant.");
 
     memory::buffered_array<MEM,ComplexType,4> GQK(nwalk,nkpts,nocc_max,npol*nbnd);
-    auto G2d = nda::reshape(GQK,std::array<long,2>{nwalk,nkpts*nocc_max*npol*nbnd});
+    auto G2d = nda::reshape(GQK,nwalk,nkpts*nocc_max*npol*nbnd);
     for(int Q = 0; Q < nkpts; ++Q) {
       int Qm = minusq(Q);
       int nchol = Lank(Q).extent(4);
       memory::buffered_array<MEM,ComplexType,2> vn(nwalk,nchol);
       Gc_to_GQKwaj(is,base,Q,G5d,GQK);
 
-      auto La = nda::reshape((*Lakn)(Q)()(is,nda::ellipsis{}),std::array<long,2>{nkpts*nocc_max*npol*nbnd,nchol});
-      nda::blas::gemm(one,G2d,La,zero,vn);
-      math::accumulate(one,vn,Kleft(all,range(ncv0(Q),ncv0(Q)+nchol)));
+      auto La = nda::reshape((*Lakn)(Q)()(is,nda::ellipsis{}),nkpts*nocc_max*npol*nbnd,nchol);
+      nda::blas::gemm(1.0,G2d,La,0.0,vn);
+      math::accumulate(1.0,vn,Kleft(all,range(ncv0(Q),ncv0(Q)+nchol)));
       if(Q == Qm) {
-        auto Lb = nda::reshape((*Lbkn)(Qmap(Q))()(is,nda::ellipsis{}),std::array<long,2>{nkpts*nocc_max*npol*nbnd,nchol});
-        nda::blas::gemm(one,G2d,Lb,zero,vn);
-        math::accumulate(one,vn,Kright(all,range(ncv0(Q),ncv0(Q)+nchol)));
+        auto Lb = nda::reshape((*Lbkn)(Qmap(Q))()(is,nda::ellipsis{}),nkpts*nocc_max*npol*nbnd,nchol);
+        nda::blas::gemm(1.0,G2d,Lb,0.0,vn);
+        math::accumulate(1.0,vn,Kright(all,range(ncv0(Q),ncv0(Q)+nchol)));
       } else {
-        math::accumulate(one,vn,Kright(all,range(ncv0(Qm),ncv0(Qm)+nchol)));
+        math::accumulate(1.0,vn,Kright(all,range(ncv0(Qm),ncv0(Qm)+nchol)));
       }
     }
   }
@@ -662,9 +651,8 @@ protected:
                        nda::MemoryVector auto && Exx) {
     using nda::range;
     auto all = range::all;
-    ComplexType one(1.0), zero(0.0);
-    ComplexType scl = (walker_type == CLOSED ? ComplexType(2.0) : ComplexType(1.0));
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    RealType scl = (walker_type == CLOSED ? 2.0 : 1.0);
+    int npol  = std::get<1>(walkerTypeToDims(walker_type));
     int nqpts = LQ.extent(0);
     long nwalk = G5d.extent(0);
     if(nwalk == 0) {
@@ -690,8 +678,8 @@ protected:
       auto wr = range(w0, w0 + nw);
 
       // reorder G
-      memory::array_view<MEM,ComplexType,4,nda::C_layout> GKK(std::array<long,4>{nkpts,nkpts,nw*nocc_max,npol*nbnd},
-                                                              GKKbuff.data());
+      auto GKK = nda::reshape(GKKbuff(range(long(nkpts) * nkpts * nw * nocc_max * npol * nbnd)),
+                              nkpts, nkpts, nw*nocc_max, npol*nbnd);
       Gc_to_GKKwaj(is, base, G5d(wr,nda::ellipsis{}), GKK);
 
       // Lank(Q)(idet,ispin,nkpts, nocc_max, nchol, npol*nbnd)
@@ -708,30 +696,29 @@ protected:
         int Qm    = minusq(Q);
         int nchol = Lank(Q).extent(4);
         // Lank(Q)(ndet, nspin, nkpts, nocc_max, nchol, npol*nbnd)
-        auto La = nda::reshape(Lank(Q)()(idet,is,nda::ellipsis{}),std::array<long,3>{nkpts,nocc_max*nchol,npol*nbnd});
+        auto La = nda::reshape(Lank(Q)()(idet,is,nda::ellipsis{}),nkpts,nocc_max*nchol,npol*nbnd);
         auto LB = (Q==Qm ? Lbnk(Qmap(Q))() : Lank(Qm)());
-        auto Lb = nda::reshape(LB(idet,is,nda::ellipsis{}),std::array<long,3>{nkpts,nocc_max*nchol,npol*nbnd});
+        auto Lb = nda::reshape(LB(idet,is,nda::ellipsis{}),nkpts,nocc_max*nchol,npol*nbnd);
 
-        memory::array_view<MEM,ComplexType,3,nda::C_layout> Tl3d(std::array<long,3>{batch_size,nw*nocc_max,nocc_max*nchol},
-                                                                  Tbuff.data());
-        memory::array_view<MEM,ComplexType,3,nda::C_layout> Tr3d(std::array<long,3>{batch_size,nw*nocc_max,nocc_max*nchol},
-                                                                  Tbuff.data() + t_size);
-        auto Tl5d = nda::reshape(Tl3d,std::array<long,5>{batch_size,nw,nocc_max,nocc_max,nchol});
-        auto Tr5d = nda::reshape(Tr3d,std::array<long,5>{batch_size,nw,nocc_max,nocc_max,nchol});
+        long const t_n = batch_size * nw * nocc_max * nocc_max * nchol;
+        auto Tl3d = nda::reshape(Tbuff(range(t_n)), batch_size, nw*nocc_max, nocc_max*nchol);
+        auto Tr3d = nda::reshape(Tbuff(range(t_size, t_size + t_n)), batch_size, nw*nocc_max, nocc_max*nchol);
+        auto Tl5d = nda::reshape(Tl3d,batch_size,nw,nocc_max,nocc_max,nchol);
+        auto Tr5d = nda::reshape(Tr3d,batch_size,nw,nocc_max,nocc_max,nchol);
 
         int batch_cnt = 0;
-        ComplexType batch_pref = zero;
+        RealType batch_pref = 0.0;
         auto flush = [&]() {
-          nda::blas::gemm_batch<false>(one,Bv,Av,zero,Cv);
+          nda::blas::gemm_batch<false>(1.0,Bv,Av,0.0,Cv);
           nda::tensor::contract(batch_pref,Tl5d(range(batch_cnt),nda::ellipsis{}),"lwabn",
-                                Tr5d(range(batch_cnt),nda::ellipsis{}),"lwban",one,Exx(wr),"w");
+                                Tr5d(range(batch_cnt),nda::ellipsis{}),"lwban",1.0,Exx(wr),"w");
           Av.clear();
           Bv.clear();
           Cv.clear();
           batch_cnt = 0;
         };
         // queues the (Ka,Kb) term; a batch is contracted with a single prefactor
-        auto push = [&](int Ka, int Kb, ComplexType pref) {
+        auto push = [&](int Ka, int Kb, RealType pref) {
           if(batch_cnt > 0 && pref != batch_pref) {
             flush();
           }
@@ -758,9 +745,9 @@ protected:
         // Q==-Q sums all (Ka,Kb) with a factor of 0.5; Q!=-Q sums Kb>=Ka, with the factor of 0.5
         // on Ka==Kb only. The Ka==Kb terms go first so the prefactor changes at most once.
         for(int Ka = 0; Ka < nkpts; ++Ka) {
-          push(Ka, Ka, ComplexType(-0.5) * scl);
+          push(Ka, Ka, -0.5 * scl);
         }
-        ComplexType pref = ComplexType(Q == Qm ? -0.5 : -1.0) * scl;
+        RealType pref = (Q == Qm ? -0.5 : -1.0) * scl;
         for(int Ka = 0; Ka < nkpts; ++Ka) {
           for(int Kb = (Q == Qm ? 0 : Ka + 1); Kb < nkpts; ++Kb) {
             if(Kb != Ka) {
@@ -785,11 +772,11 @@ protected:
   {
     using nda::range;
     auto all  = range::all;
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    int npol  = std::get<1>(walkerTypeToDims(walker_type));
     int nwalk = G.extent(0);
 
-    auto G6d = nda::reshape(GKK,std::array<long,6>{nkpts,nkpts,nwalk,nocc_max,npol,nbnd});
-    GKK() = ComplexType(0.0);
+    auto G6d = nda::reshape(GKK,nkpts,nkpts,nwalk,nocc_max,npol,nbnd);
+    GKK() = 0.0;
     for(int ik1=0; ik1<nkpts; ++ik1)
     {
       auto const& rows = nocc(is,ik1);
@@ -813,12 +800,12 @@ protected:
       } else {
         if(contig) {
           int r0 = base + rows(0);
-          nda::tensor::add(ComplexType(1.0),G(all,range(r0,r0+nk1),all,all,all),"wapkj",
-                           ComplexType(0.0),G6d(ik1,all,all,range(nk1),all,all),"kwapj");
+          nda::tensor::add(1.0,G(all,range(r0,r0+nk1),all,all,all),"wapkj",
+                           0.0,G6d(ik1,all,all,range(nk1),all,all),"kwapj");
         } else {
           for(int a=0; a<nk1; ++a)
-            nda::tensor::add(ComplexType(1.0),G(all,range(base+rows(a),base+rows(a)+1),all,all,all),"wapkj",
-                             ComplexType(0.0),G6d(ik1,all,all,range(a,a+1),all,all),"kwapj");
+            nda::tensor::add(1.0,G(all,range(base+rows(a),base+rows(a)+1),all,all,all),"wapkj",
+                             0.0,G6d(ik1,all,all,range(a,a+1),all,all),"kwapj");
         }
       }
     }
@@ -833,11 +820,11 @@ protected:
   {
     using nda::range;
     auto all  = range::all;
-    int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
+    int npol  = std::get<1>(walkerTypeToDims(walker_type));
     int nwalk = G.extent(0);
 
-    auto G5d = nda::reshape(GQK,std::array<long,5>{nwalk,nkpts,nocc_max,npol,nbnd});
-    GQK() = ComplexType(0.0);
+    auto G5d = nda::reshape(GQK,nwalk,nkpts,nocc_max,npol,nbnd);
+    GQK() = 0.0;
     for(int ik=0; ik<nkpts; ++ik)
     {
       int k2 = qk_to_k2(iq,ik);
@@ -848,10 +835,10 @@ protected:
       for(int ip=0; ip<npol; ++ip) {
         if(contig) {
           int r0 = base + rows(0);
-          math::accumulate(ComplexType(1.0),G(all,range(r0,r0+nk),ip,k2,all),G5d(all,ik,range(nk),ip,all));
+          math::accumulate(1.0,G(all,range(r0,r0+nk),ip,k2,all),G5d(all,ik,range(nk),ip,all));
         } else {
           for(int a=0; a<nk; ++a)
-            math::accumulate(ComplexType(1.0),G(all,range(base+rows(a),base+rows(a)+1),ip,k2,all),G5d(all,ik,range(a,a+1),ip,all));
+            math::accumulate(1.0,G(all,range(base+rows(a),base+rows(a)+1),ip,k2,all),G5d(all,ik,range(a,a+1),ip,all));
         }
       }
     }
