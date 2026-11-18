@@ -159,13 +159,13 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         // interaction
         h5::group igrp = grp.open_group("Interaction");
 
-        auto expected_shape = std::to_array<long>({nspin_in_H1 * npol_in_H1, nkpts, nbnd, nbnd});
-        nchol.resize(nkpts); 
+        nchol.resize(nkpts);
         for(int Q=0; Q<nkpts; ++Q) {
-          auto l = h5::array_interface::get_dataset_info(igrp,"Vq"+std::to_string(Q));
+          std::string const name = "Vq" + std::to_string(Q);
+          auto l = h5::array_interface::get_dataset_info(igrp, name);
           utils::check(l.rank() == 6, "Rank mismatch");
-          utils::check(std::ranges::equal(std::span(l.lengths).subspan(1,4), expected_shape),
-                       "Interaction/Vq{} size mismatch: {} != {} ", Q, std::span(l.lengths).subspan(1,4), expected_shape);
+          utils::check_shape(l, "Interaction/" + name,
+                             l.lengths[0], nspin_in_H1*npol_in_H1, nkpts, nbnd, nbnd);
           if(Q <= minusq(Q))
             nchol(Q) = l.lengths[0];
           else

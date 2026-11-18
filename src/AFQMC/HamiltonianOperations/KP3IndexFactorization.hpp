@@ -21,6 +21,7 @@
 #include "nda/nda.hpp"
 #include "nda/tensor.hpp"
 #include "utilities/check.hpp"
+#include "utilities/check_shape.hpp"
 #include "utilities/mpi_context.h"
 #include "utilities/check_strides.hpp"
 #include "numerics/shared_array/const_shared_array.hpp"
@@ -94,30 +95,22 @@ public:
     int ndet = haj.extent(0);
     
     // check sizes
-    utils::check( hij.shape()==std::array<long,4>{nspin_in_H,nkpts,npol_in_H*nbnd,npol_in_H*nbnd},
-      "KP3IndexFactorization: Size mismatch.");
-    utils::check( haj.shape()==std::array<long,3>{ndet,nup+ndown,npol*NMO},
-      "KP3IndexFactorization: Size mismatch.");
-    utils::check( vexx.shape()==std::array<long,4>{nspin_in_H*npol_in_H,nkpts,nbnd,nbnd},
-      "KP3IndexFactorization: Size mismatch.");
-    utils::check( LQ.extent(0)==nkpts, "KP3IndexFactorization: Size mismatch.");
-    utils::check( Lank.extent(0)==nkpts, "KP3IndexFactorization: Size mismatch.");
+    utils::check_shape(hij, "hij", nspin_in_H, nkpts, npol_in_H*nbnd, npol_in_H*nbnd);
+    utils::check_shape(haj, "haj", ndet, nup+ndown, npol*NMO);
+    utils::check_shape(vexx, "vexx", nspin_in_H*npol_in_H, nkpts, nbnd, nbnd);
+    utils::check_shape(LQ, "LQ", nkpts);
+    utils::check_shape(Lank, "Lank", nkpts);
     for(int iq=0; iq<nkpts; ++iq) {
       if(iq<=minusq(iq)) {
-        int nc = LQ(iq).extent(5); 
-        utils::check( LQ(iq).shape()==std::array<long,6>{nspin_in_H,npol_in_H,nkpts,nbnd,nbnd,nc},
-          "KP3IndexFactorization: Size mismatch.");
-      } 
-      {
-        int nc = Lank(iq).extent(4); 
-        utils::check(Lank(iq).shape()==std::array<long,6>{ndet,nspin,nkpts,nocc_max,nc,npol*nbnd},
-            "KP3IndexFactorization: Size mismatch.");
+        utils::check_shape(LQ(iq), std::format("LQ({})", iq),
+                           nspin_in_H, npol_in_H, nkpts, nbnd, nbnd, LQ(iq).extent(5));
       }
+      utils::check_shape(Lank(iq), std::format("Lank({})", iq),
+                         ndet, nspin, nkpts, nocc_max, Lank(iq).extent(4), npol*nbnd);
       if(iq==minusq(iq)) {
-        int nc = Lbnk(Qmap(iq)).extent(4); 
-        utils::check( Lbnk(Qmap(iq)).shape()==std::array<long,6>{ndet,nspin,nkpts,nocc_max,nc,npol*nbnd},
-            "KP3IndexFactorization: Size mismatch.");
-      } 
+        utils::check_shape(Lbnk(Qmap(iq)), std::format("Lbnk({})", Qmap(iq)),
+                           ndet, nspin, nkpts, nocc_max, Lbnk(Qmap(iq)).extent(4), npol*nbnd);
+      }
     } // iq
 
     ncvecs = 0;
@@ -211,8 +204,8 @@ public:
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
     int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0
     int nqpts = LQ.extent(0);
-    utils::check(E.shape() == std::array<long,2>{nwalk,3}, "Size mismatch.");
-    utils::check(G.extent(1) == nel*npol*nkpts*nbnd, "Size mismatch.");
+    utils::check_shape(E, "E", nwalk, 3);
+    utils::check_shape(G, "G", nwalk, nel*npol*nkpts*nbnd);
     utils::check(idet>=0 and idet<haj.extent(0), "Invalid idet:{}",idet);
     utils::check_strides(E,G);
     ComplexType scl = (walker_type == CLOSED ? ComplexType(2.0) : ComplexType(1.0));
@@ -411,8 +404,8 @@ public:
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
     int nel  = (is==0 ? nup : ndown);
     int nqpts = LQ.extent(0);
-    utils::check(E.shape() == std::array<long,2>{nwalk,3}, "Size mismatch.");
-    utils::check(G.extent(1) == nel*npol*nkpts*nbnd, "Size mismatch.");
+    utils::check_shape(E, "E", nwalk, 3);
+    utils::check_shape(G, "G", nwalk, nel*npol*nkpts*nbnd);
     utils::check(idet>=0 and idet<haj.extent(0), "Invalid idet:{}",idet);
     utils::check_strides(E,G);
     ComplexType scl = (walker_type == CLOSED ? ComplexType(2.0) : ComplexType(1.0));
@@ -421,7 +414,7 @@ public:
     E() = ComplexType(0.0);
     if (addH1)
     {
-      if(spin_component==Alpha) 
+      if(spin_component==Alpha)
         E(all,0) = E0;
       auto haj_2d = nda::reshape(haj(),std::array<long,2>{haj.extent(0),haj.extent(1)*haj.extent(2)});
       long n0 = (spin_component==Alpha ? 0l : long(nup));
@@ -433,7 +426,7 @@ public:
       return;
 
     if(addEJ) { 
-      utils::check(EJn.extent(0)==nwalk and EJn.extent(1)==2*ncvecs, "Size mismatch");
+      utils::check_shape(EJn, "EJn", nwalk, 2*ncvecs);
       EJn() = zero;
     }
 
@@ -639,6 +632,7 @@ public:
     int NMO   = nkpts*nbnd;
     int nspin_in_H = hij.extent(0);
     int npol_in_H = hij.extent(2)/nbnd;
+    utils::check_shape(X, "X", nwalk, 2*ncvecs);
 
     // Note: Allocate first, to make better use of memory pool
     // vHS[nspin_in_vHS][nwalk][npol_in_vHS*NMO][NMO]
@@ -782,11 +776,12 @@ public:
     int npol  = (walker_type == NONCOLLINEAR) ? 2 : 1;
     int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0 
     utils::check_strides(G,v);
-    utils::check(v.shape() == std::array<long,2>{nwalk,2*ncvecs}, "vbias: Size mismatch.");
-    if(haj.extent(0) == 1) // ndet==1, G half rotated
-      utils::check(G.extent(1) == nel*npol*nkpts*nbnd, "vbias: Size mismatch.");
-    else // ndet>1, full G 
-      utils::check(G.extent(1) == nspin*npol*nkpts*nbnd*npol*nkpts*nbnd, "vbias: Size mismatch.");
+    utils::check_shape(v, "v", nwalk, 2*ncvecs);
+    if(haj.extent(0) == 1) { // ndet==1, G half rotated
+      utils::check_shape(G, "G", nwalk, nel*npol*nkpts*nbnd);
+    } else { // ndet>1, full G
+      utils::check_shape(G, "G", nwalk, nspin*npol*nkpts*nbnd*npol*nkpts*nbnd);
+    }
     // needed to build G3d easily, can build from strides if needed
     utils::check(G.is_contiguous(), "Layout mismatch");
     utils::check(v.is_contiguous(), "Layout mismatch");

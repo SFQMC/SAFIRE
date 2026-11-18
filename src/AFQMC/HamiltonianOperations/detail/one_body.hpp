@@ -206,7 +206,7 @@ kpoint_half_rotate_cholesky(utils::mpi_context_t<mpi3::communicator>& mpi,
                                                  range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
           auto Lijn = LQ(Q)()(is_,ip_,ik,all,all,all);
           auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lijn.extent(2)==L_.extent(1), "Size mismatch.");
+          utils::check_shape(Lijn, "Lijn", nbnd, nbnd, nchol(Q));
           nda::tensor::contract(one,Aai,"ai",Lijn,"ijn",zero,L_,"anj");
         } else {
           // L[Q,k,k2=k-Q]
@@ -215,7 +215,7 @@ kpoint_half_rotate_cholesky(utils::mpi_context_t<mpi3::communicator>& mpi,
                                                  range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
           auto Lljn = LQ(Qm)()(is_,ip_,k2,all,all,all);
           auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lljn.extent(2)==L_.extent(1), "Size mismatch.");
+          utils::check_shape(Lljn, "Lljn", nbnd, nbnd, nchol(Q));
           nda::tensor::contract(one,Abj,"bj",nda::conj(Lljn),"ljn",zero,L_,"bnl");
         }
       } // ip
@@ -244,7 +244,7 @@ kpoint_half_rotate_cholesky(utils::mpi_context_t<mpi3::communicator>& mpi,
                                                  range(ip*NMO+k2*nbnd,ip*NMO+(k2+1)*nbnd));
           auto Lljn = LQ(Q)()(is_,ip_,ik,all,all,all);
           auto L_ = block(range(nb),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lljn.extent(2)==L_.extent(1), "Size mismatch.");
+          utils::check_shape(Lljn, "Lljn", nbnd, nbnd, nchol(Q));
           nda::tensor::contract(one,Abj,"bj",nda::conj(Lljn),"ljn",zero,L_,"bnl");
         }
       });
