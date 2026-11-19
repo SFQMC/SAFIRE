@@ -635,18 +635,12 @@ protected:
       batch_size = std::clamp((budget / nw_chunk - gkk_bytes) / slot_bytes, 1L, long(nkpts) * nkpts);
     }
 
-    // sized for a full chunk; Tl and Tr are the two halves of Tbuff
-    long const t_size = batch_size * nw_chunk * nocc_max * nocc_max * nchol_max;
-    memory::buffered_array<MEM,ComplexType,1> GKKbuff(long(nkpts) * nkpts * nw_chunk * nocc_max * npol * nbnd);
-    memory::buffered_array<MEM,ComplexType,1> Tbuff(2 * t_size);
-
     for(long w0 = 0; w0 < nwalk; w0 += nw_chunk) {
       long nw = std::min(nw_chunk, nwalk - w0);
       auto wr = range(w0, w0 + nw);
 
       // reorder G
-      auto GKK = nda::reshape(GKKbuff(range(long(nkpts) * nkpts * nw * nocc_max * npol * nbnd)),
-                              nkpts, nkpts, nw*nocc_max, npol*nbnd);
+      memory::buffered_array<MEM,ComplexType,4> GKK(nkpts, nkpts, nw*nocc_max, npol*nbnd);
       Gc_to_GKKwaj(is, base, G5d(wr,nda::ellipsis{}), GKK);
 
       // Lank(Q)(idet,ispin,nkpts, nocc_max, nchol, npol*nbnd)
@@ -667,9 +661,8 @@ protected:
         auto LB = (Q==Qm ? Lbnk(Qmap(Q))() : Lank(Qm)());
         auto Lb = nda::reshape(LB(idet,is,nda::ellipsis{}),nkpts,nocc_max*nchol,npol*nbnd);
 
-        long const t_n = batch_size * nw * nocc_max * nocc_max * nchol;
-        auto Tl3d = nda::reshape(Tbuff(range(t_n)), batch_size, nw*nocc_max, nocc_max*nchol);
-        auto Tr3d = nda::reshape(Tbuff(range(t_size, t_size + t_n)), batch_size, nw*nocc_max, nocc_max*nchol);
+        memory::buffered_array<MEM,ComplexType,3> Tl3d(batch_size, nw*nocc_max, nocc_max*nchol);
+        memory::buffered_array<MEM,ComplexType,3> Tr3d(batch_size, nw*nocc_max, nocc_max*nchol);
         auto Tl5d = nda::reshape(Tl3d,batch_size,nw,nocc_max,nocc_max,nchol);
         auto Tr5d = nda::reshape(Tr3d,batch_size,nw,nocc_max,nocc_max,nchol);
 
