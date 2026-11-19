@@ -463,8 +463,7 @@ public:
   void vbias(nda::MemoryArrayOfRank<2> auto const& G, nda::MemoryArrayOfRank<2> auto& v, double dt)
   {
     memory::check_memory_space<MEM>(G,v);
-    using nda::range;
-    auto all = range::all;
+    auto all = nda::range::all;
     int nwalk = G.extent(0);
     auto [nspin, npol] = walkerTypeToDims(walker_type);
     int nel  = (walker_type == COLLINEAR ? nup+ndown : nup); // NONCOLLINEAR has ndown=0
@@ -481,55 +480,23 @@ public:
 
     // scale a by sqrt(dt)
     RealType scl = (walker_type == CLOSED ? 2.0 : 1.0);
-    ComplexType a = ComplexType(std::sqrt(dt)*0.5*scl);
-    ComplexType ia = ComplexType(0.0,std::sqrt(dt)*0.5*scl);
+    RealType a = std::sqrt(dt)*0.5*scl;
 
-    // v4d
-    auto v3d = nda::reshape(v,nwalk,2,ncvecs);
-    v() = 0.0;
-
-    utils::check(G.is_contiguous(), "Layout mismatch");
-
-    // G in new layout
-
-    if (haj.extent(0) == 1)
-    {
+    if(haj.extent(0) == 1) {
+      // Kleft/Kright accumulate on the two halves of v, which are then combined in place into
+      // v+ = a*(Kleft+Kright) and v- = i*a*(Kright-Kleft)
+      auto v3d = nda::reshape(v,nwalk,2,ncvecs);
+      auto Kleft  = v3d(all,0,all);
+      auto Kright = v3d(all,1,all);
+      v() = 0.0;
       auto G5d = nda::reshape(G,nwalk,nel,npol,nkpts,nbnd);
-      for(int is=0; is<nspin; ++is)  {
-        for(int iq=0; iq<nkpts; ++iq) {
-
-          int nchol = Lank(iq).extent(4);
-          int iqm = minusq(iq);
-          memory::buffered_array<MEM,ComplexType,4> GQK(nwalk,nkpts,nocc_max,npol*nbnd);
-          memory::buffered_array<MEM,ComplexType,2> vn(nwalk,nchol);
-          auto G2d = nda::reshape(GQK,nwalk,nkpts*nocc_max*npol*nbnd);
-
-          Gc_to_GQKwaj(is,is*nup,iq,G5d,GQK);
-          auto La = nda::reshape((*Lakn)(iq)()(is,nda::ellipsis{}),nkpts*nocc_max*npol*nbnd,nchol);
-          nda::blas::gemm(1.0,G2d,La,0.0,vn);
-         
-          // accumulate on v3d
-          // v+ = a*(v[Q]+v[-Q])
-          nda::tensor::add(a,vn,"wn",1.0,v3d(all,0,range(ncv0(iq),ncv0(iq)+nchol)),"wn");
-          // v- = -a*i*(v[Q]-v[-Q])
-          nda::tensor::add(-ia,vn,"wn",1.0,v3d(all,1,range(ncv0(iq),ncv0(iq)+nchol)),"wn");
-
-          if(iq == iqm) {
-            auto Lb = nda::reshape((*Lbkn)(Qmap(iq))()(is,nda::ellipsis{}),nkpts*nocc_max*npol*nbnd,nchol);
-            nda::blas::gemm(1.0,G2d,Lb,0.0,vn);
-
-            // accumulate on v3d
-            nda::tensor::add(a,vn,"wn",1.0,v3d(all,0,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
-            nda::tensor::add(ia,vn,"wn",1.0,v3d(all,1,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
-          } else {
-            nda::tensor::add(a,vn,"wn",1.0,v3d(all,0,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
-            nda::tensor::add(ia,vn,"wn",1.0,v3d(all,1,range(ncv0(iqm),ncv0(iqm)+nchol)),"wn");
-          }
-        } // iq
-      } // is  
-    }
-    else
-    {
+      for(int is=0; is<nspin; ++is) {
+        coulomb_intermediates(is, is*nup, G5d, Kleft, Kright);
+      }
+      nda::tensor::add(-1.0, Kleft, 1.0, Kright);    // Kright-Kleft
+      nda::tensor::add(a, Kright, 2.0*a, Kleft);     // a*(Kleft+Kright)
+      nda::tensor::scale(ComplexType(0.0,a), Kright);
+    } else {
       utils::check(false," Error: KP3Index not yet implemented for multiple references.");
     }
   }
@@ -611,7 +578,7 @@ protected:
   // Coulomb intermediates of spin `is`, accumulated on Kleft/Kright(nwalk,ncvecs):
   //   Kleft(w, n in Q)  = Tr(L^{Q,n} G_w), the Q component of the density,
   //   Kright(w, n in Q) = Tr(L^{Q,n}^dagger G_w), the -Q component, i.e. the -Q block of Kleft if Q != -Q.
-  // These are the contractions vbias combines as Kleft +- Kright.
+  // vbias combines them as Kleft +- Kright, the Coulomb energy as Kleft*Kright.
   // `base` is the offset of spin `is`'s block in the occupied dimension of G.
   void coulomb_intermediates(int is, int base, nda::MemoryArrayOfRank<5> auto const& G5d,
                              nda::MemoryMatrix auto && Kleft, nda::MemoryMatrix auto && Kright) {
@@ -619,7 +586,7 @@ protected:
     auto all = range::all;
     int npol = std::get<1>(walkerTypeToDims(walker_type));
     long nwalk = G5d.extent(0);
-    utils::check(Lakn.has_value(), "KP3IndexFactorization: the Coulomb energy requires a single determinant.");
+    utils::check(Lakn.has_value(), "KP3IndexFactorization: Coulomb intermediates require a single determinant.");
 
     memory::buffered_array<MEM,ComplexType,4> GQK(nwalk,nkpts,nocc_max,npol*nbnd);
     auto G2d = nda::reshape(GQK,nwalk,nkpts*nocc_max*npol*nbnd);
