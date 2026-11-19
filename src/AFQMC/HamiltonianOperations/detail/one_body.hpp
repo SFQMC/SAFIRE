@@ -172,9 +172,7 @@ kpoint_half_rotate_cholesky(utils::mpi_context_t<mpi3::communicator>& mpi,
     nda::array<memory::const_shared_array<MEM,ComplexType,6>,1> const& LQ) {
   using nda::range;
   auto all = range::all;
-  ComplexType zero(0.0), one(1.0);
-  long nspin = (type == COLLINEAR ? 2 : 1);
-  long npol  = (type == NONCOLLINEAR ? 2 : 1);
+  auto [nspin, npol] = walkerTypeToDims(type);
   long ndet  = PsiT.extent(0);
   int nkpts  = nocc.extent(1);
   int nocc_max = max_nocc_per_kpoint(nocc);
@@ -206,8 +204,8 @@ kpoint_half_rotate_cholesky(utils::mpi_context_t<mpi3::communicator>& mpi,
                                                  range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
           auto Lijn = LQ(Q)()(is_,ip_,ik,all,all,all);
           auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lijn.extent(2)==L_.extent(1), "Size mismatch.");
-          nda::tensor::contract(one,Aai,"ai",Lijn,"ijn",zero,L_,"anj");
+          utils::check_shape(Lijn, "Lijn", nbnd, nbnd, nchol(Q));
+          nda::tensor::contract(1.0,Aai,"ai",Lijn,"ijn",0.0,L_,"anj");
         } else {
           // L[Q,k,k2=k-Q]
           int k2 = qk_to_k2(Q,ik);
@@ -215,8 +213,8 @@ kpoint_half_rotate_cholesky(utils::mpi_context_t<mpi3::communicator>& mpi,
                                                  range(ip*NMO+ik*nbnd,ip*NMO+(ik+1)*nbnd));
           auto Lljn = LQ(Qm)()(is_,ip_,k2,all,all,all);
           auto L_ = block(range(nk),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lljn.extent(2)==L_.extent(1), "Size mismatch.");
-          nda::tensor::contract(one,Abj,"bj",nda::conj(Lljn),"ljn",zero,L_,"bnl");
+          utils::check_shape(Lljn, "Lljn", nbnd, nbnd, nchol(Q));
+          nda::tensor::contract(1.0,Abj,"bj",nda::conj(Lljn),"ljn",0.0,L_,"bnl");
         }
       } // ip
     });
@@ -244,8 +242,8 @@ kpoint_half_rotate_cholesky(utils::mpi_context_t<mpi3::communicator>& mpi,
                                                  range(ip*NMO+k2*nbnd,ip*NMO+(k2+1)*nbnd));
           auto Lljn = LQ(Q)()(is_,ip_,ik,all,all,all);
           auto L_ = block(range(nb),all,range(ip*nbnd,(ip+1)*nbnd));
-          utils::check(Lljn.extent(2)==L_.extent(1), "Size mismatch.");
-          nda::tensor::contract(one,Abj,"bj",nda::conj(Lljn),"ljn",zero,L_,"bnl");
+          utils::check_shape(Lljn, "Lljn", nbnd, nbnd, nchol(Q));
+          nda::tensor::contract(1.0,Abj,"bj",nda::conj(Lljn),"ljn",0.0,L_,"bnl");
         }
       });
     }

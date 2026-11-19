@@ -57,9 +57,7 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
   std::string base_error(" Error in KPFactorizedHamiltonian::getHamiltonianOperations_shared: \n    ");
   auto all = range::all;
   std::string format;  // only meaningful at root
-  ComplexType zero(0.0),one(1.0);
-  long nspin = (type == COLLINEAR?2:1);
-  long npol = (type == NONCOLLINEAR?2:1);
+  auto [nspin, npol] = walkerTypeToDims(type);
   int nspin_in_PsiT = PsiT.extent(1);
   long ndet = PsiT.extent(0);
   long nel_up = PsiT(0,0).extent(0);
@@ -159,13 +157,13 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         // interaction
         h5::group igrp = grp.open_group("Interaction");
 
-        auto expected_shape = std::to_array<long>({nspin_in_H1 * npol_in_H1, nkpts, nbnd, nbnd});
-        nchol.resize(nkpts); 
+        nchol.resize(nkpts);
         for(int Q=0; Q<nkpts; ++Q) {
-          auto l = h5::array_interface::get_dataset_info(igrp,"Vq"+std::to_string(Q));
+          std::string const name = "Vq" + std::to_string(Q);
+          auto l = h5::array_interface::get_dataset_info(igrp, name);
           utils::check(l.rank() == 6, "Rank mismatch");
-          utils::check(std::ranges::equal(std::span(l.lengths).subspan(1,4), expected_shape),
-                       "Interaction/Vq{} size mismatch: {} != {} ", Q, std::span(l.lengths).subspan(1,4), expected_shape);
+          utils::check_shape(l, "Interaction/" + name,
+                             l.lengths[0], nspin_in_H1*npol_in_H1, nkpts, nbnd, nbnd);
           if(Q <= minusq(Q))
             nchol(Q) = l.lengths[0];
           else
@@ -342,8 +340,8 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
         nda::array<ComplexType,5> L(nchol(Q),nspin_in_H1*npol_in_H1,nkpts,nbnd,nbnd);
         utils::h5_read(igrp,"Vq"+std::to_string(Q),L);
         utils::check_shape(L, "Vq", nchol(Q), nspin_in_H1*npol_in_H1, nkpts, nbnd, nbnd);
-        auto L2d = nda::reshape(L,std::array<long,2>{nchol(Q),nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd});
-        auto LQ2d = nda::reshape(L_h(),std::array<long,2>{nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd,nchol(Q)});
+        auto L2d = nda::reshape(L,nchol(Q),nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd);
+        auto LQ2d = nda::reshape(L_h(),nspin_in_H1*npol_in_H1*nkpts*nbnd*nbnd,nchol(Q));
         LQ2d() = nda::transpose(L2d());
         // normalize
         nda::tensor::scale(ComplexType(1.0/std::sqrt(RealType(nkpts))), L_h());
@@ -399,17 +397,17 @@ KPFactorizedHamiltonian::getHamiltonianOperations(WALKER_TYPES type,
     auto [isp,ik] = idx;
     long is_ = isp/npol_in_H1;
     long ip_ = isp%npol_in_H1;
-    vt() = zero;
+    vt() = 0.0;
     for(long Q=0; Q<nkpts; Q++) {
       if(Q<=minusq(Q)) {
         auto Lijn = LQ(Q)()(is_,ip_,ik,nda::ellipsis{});
-        nda::tensor::contract(ComplexType(-0.5),Lijn,"ijn",nda::conj(Lijn),"ljn",one,vt,"il");
+        nda::tensor::contract(-0.5,Lijn,"ijn",nda::conj(Lijn),"ljn",1.0,vt,"il");
       } else {
         // L[Q,k,k2](i,j,n) = conj( L[-Q,k2,k](j,i,n) )
         int Qm = minusq(Q);
         int k2 = qk_to_k2(Q,ik);
         auto Lijn = LQ(Qm)()(is_,ip_,k2,nda::ellipsis{});
-        nda::tensor::contract(ComplexType(-0.5),nda::conj(Lijn),"jin",Lijn,"jln",one,vt,"il");
+        nda::tensor::contract(-0.5,nda::conj(Lijn),"jin",Lijn,"jln",1.0,vt,"il");
       }
     }
     block = vt();
